@@ -86,6 +86,7 @@ def show() -> None:
     print(json.dumps({
         "YOUTRACK_URL": youtrack_url,
         "YOUTRACK_TOKEN": "configured" if config.get("YOUTRACK_TOKEN") else "missing",
+        "LINEAR_API_TOKEN": "configured" if config.get("LINEAR_API_TOKEN") else "missing",
         "DEVHUB_URL": devhub_url,
         "DEVHUB_TRACKER_TOKEN": "configured" if config.get("DEVHUB_TRACKER_TOKEN") else "missing",
         "DEVHUB_TRACKER_PROOF_SECRET": "configured" if config.get("DEVHUB_TRACKER_PROOF_SECRET") else "missing",
@@ -112,6 +113,7 @@ def main(argv: list[str] | None = None) -> None:
         choices=[
             "YOUTRACK_TOKEN", "DEVHUB_TRACKER_TOKEN",
             "DEVHUB_TRACKER_PROOF_SECRET", "DEVHUB_COMMAND_TOKEN",
+            "LINEAR_API_TOKEN",
         ],
     )
     sub.add_parser("show", help="show resolved settings with the token redacted")

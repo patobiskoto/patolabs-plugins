@@ -44,6 +44,15 @@ class TrackerConflictError(RuntimeError):
     """A provider version/body changed before a bounded tracker mutation."""
 
 
+class TrackerCapabilityUnavailableError(RuntimeError):
+    """The active tracker cannot safely provide one explicitly named capability."""
+
+    def __init__(self, tracker: str, capability: str):
+        super().__init__(f"capability unavailable: {tracker}.{capability}")
+        self.tracker = tracker
+        self.capability = capability
+
+
 class EpicClosureUnavailableError(RuntimeError):
     """The active tracker lacks atomic, audited non-code Epic closure."""
 

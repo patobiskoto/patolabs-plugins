@@ -46,6 +46,11 @@ Provider credentials use the same protected path, for example:
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" configure credential --name DEVHUB_TRACKER_TOKEN
 ```
 
+For Linear, select `--tracker linear`, then store `LINEAR_API_TOKEN` with the same
+interactive `configure credential` command. Register the explicit repository/team/
+project/state IDs described in `docs/linear-tracker.md`; configuration never discovers
+them by name. Live cutover is not part of configuration and remains FOUNDRY-159.
+
 ## 3. Verify
 After the user confirms the token step:
 

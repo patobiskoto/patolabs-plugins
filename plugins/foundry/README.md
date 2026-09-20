@@ -9,7 +9,8 @@ from a rough idea to shipped work — the same, repeatable, on every project:
 
 Foundry owns the **outer loop** (what to do, the source of truth, the decision memory,
 the exit gates). The **inner loop** (design → plan → implement) is delegated to Superpowers
-or Plan mode. It reasons over a **pluggable tracker** (YouTrack today) and **code-host**
+or Plan mode. It reasons over a **pluggable tracker** (YouTrack, DevHubTracker, or an
+explicitly bound Linear issue lifecycle) and **code-host**
 (GitHub today) through adapters — switching to Jira / GitLab later is a new adapter, not a
 rewrite.
 
@@ -74,9 +75,11 @@ codex plugin add foundry@patolabs
 
 After either installation, run `/foundry:configure` and `/foundry:doctor` in Claude Code,
 or `$foundry:configure` and `$foundry:doctor` in Codex. Non-secret settings are shared in
-`~/.config/foundry/config.env`; the token belongs in the macOS keychain (or a secret
-manager-backed `YOUTRACK_TOKEN` on other systems), never in a repository or chat. Both
-runtimes also accept explicit `YOUTRACK_*` and `FOUNDRY_*` environment variables.
+`~/.config/foundry/config.env`; credentials belong in the macOS keychain (or a secret
+manager-backed `YOUTRACK_TOKEN` / `LINEAR_API_TOKEN` on other systems), never in a
+repository or chat. Both runtimes also accept explicit provider and `FOUNDRY_*`
+environment variables. Linear's exact capability and binding contract is documented in
+[`docs/linear-tracker.md`](docs/linear-tracker.md).
 
 The current dual-host upgrade, trusted configuration, override diagnosis, verification,
 and exact-ref rollback are in

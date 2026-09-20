@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Foundry",
     "shortDescription": "Frame, plan, execute, and merge with durable project memory.",
-    "longDescription": "Turn rough ideas into ADR-backed issues, sequence work by value, and run a gated issue-to-merge delivery loop over YouTrack or DevHubTracker and GitHub with Lupin, Eiffel, Maigret, and Vauban.",
+    "longDescription": "Turn rough ideas into ADR-backed issues, sequence work by value, and run a gated issue-to-merge delivery loop over YouTrack, DevHubTracker, or explicitly bound Linear and GitHub with Lupin, Eiffel, Maigret, and Vauban. Linear supports the issue lifecycle and exact PR attachments but not an ADR knowledge base; live cutover is separate work.",
     "developerName": "patolabs",
     "category": "Productivity",
     "capabilities": [
