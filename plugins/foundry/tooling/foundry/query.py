@@ -84,6 +84,9 @@ def _annotate(issues):
 
 
 def _project(tr):
+    resolver = getattr(tr, "resolve_checkout_project", None)
+    if callable(resolver):
+        return resolver()
     return tr.resolve_project(registry.repo_basename())
 
 

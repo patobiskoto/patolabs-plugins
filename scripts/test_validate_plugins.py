@@ -247,8 +247,18 @@ class PublicSurfaceContract(unittest.TestCase):
             self.assertIn(command, readme)
         self.assertIn("fail-closed Linear issue adapter", readme)
         self.assertIn("explicit repository/team/project/", readme)
-        self.assertIn("existing-issue field, state, parent, body, and AC", readme)
+        self.assertIn("Existing-issue field, state, parent, body, and AC", readme)
+        self.assertIn("actual checkout's canonical Git", readme)
+        self.assertIn("GitHub PR projection and Foundry's `issue openpr` / `issue merge`", readme)
+        self.assertNotIn("relations/comments/PR projection", readme)
         self.assertIn("Live cutover and ChatGPT MCP activation remain separate planned work", readme)
+
+        claude = json.loads(self.text("plugins/foundry/.claude-plugin/plugin.json"))
+        codex = json.loads(self.text("plugins/foundry/.codex-plugin/plugin.json"))
+        for facade in (claude["description"], codex["interface"]["longDescription"]):
+            self.assertIn("PR projection", facade)
+            self.assertIn("openpr/merge", facade)
+            self.assertIn("unavailable", facade)
 
     def test_external_contributions_are_explicitly_declined(self) -> None:
         self.assertIn("not accepting external contributions", self.text("README.md"))

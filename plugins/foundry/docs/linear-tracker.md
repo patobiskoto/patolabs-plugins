@@ -1,8 +1,10 @@
 # Linear tracker adapter
 
-Foundry's Linear adapter is an explicit, single-provider binding. It never selects
-Linear from a repository name or discovers a team, project, state, label, milestone, or
-issue from display text. The GraphQL endpoint is fixed to
+Foundry's Linear adapter is an explicit, single-provider binding. Runtime reads, queries,
+proofs, and writes select the binding by comparing the actual checkout's credential-free
+canonical Git remote with `canonical_repo`; `PROJECT_REPO` and repository basenames are
+never identity evidence for Linear. It never discovers a team, project, state, label,
+milestone, or issue from display text. The GraphQL endpoint is fixed to
 `https://api.linear.app/graphql`; there is no YouTrack fallback.
 
 ## Required binding
@@ -15,8 +17,10 @@ python3 <plugin-root>/tooling/foundry_cli.py configure credential --name LINEAR_
 python3 <plugin-root>/tooling/foundry_cli.py configure set --tracker linear --codehost github
 ```
 
-On non-macOS hosts, supply `LINEAR_API_TOKEN` through a secret manager. Register one
-repository basename under the `linear` provider with all of these non-secret values:
+On non-macOS hosts, supply `LINEAR_API_TOKEN` through a secret manager. Registry entries
+still have a local alias key for storage, but runtime selection ignores that alias and
+matches the checkout's canonical remote. Register the `linear` binding with all of these
+non-secret values:
 
 - `key`: the Foundry/project ticker used in normalized issue identifiers;
 - `id`: the Linear project model UUID;
@@ -36,11 +40,16 @@ create using an unmapped value is refused and the adapter never searches by name
 
 Supported reads are issue search/read, including explicitly mapped states, milestones,
 types, and labels. Supported writes are issue creation (with initial priority, estimate,
-state, mapped milestone/type/labels, and optional parent), additive
-blocking/dependency/related relations, additive comments, and GitHub PR projection as a
-Foundry-marked Linear attachment. These operations do not replace an existing issue
-value. Readback validates the provider result, but additive writes are not advertised as
-exactly-once: concurrent identical callers can create duplicates.
+state, mapped milestone/type/labels, and optional parent), non-replacing
+blocking/dependency/related relations, and comments.
+
+These writes have deliberately narrow delivery semantics. Creation sends one
+`issueCreate` with a fresh client UUID and then reads the returned issue; retrying the
+command creates a new request and can duplicate the issue. A relation call first observes
+whether the relation exists, then sends at most one `issueRelationCreate` and reads back;
+concurrent or ambiguous callers can still duplicate a relation. A comment call sends one
+`commentCreate` and reads back that returned comment ID; retry after an ambiguous outcome
+can duplicate the comment. None of these operations is advertised as exactly-once.
 
 Linear exposes no compare-and-swap precondition for an existing issue. Field and state
 replacement, changing the parent of an existing issue, issue-body replacement, and
@@ -49,12 +58,14 @@ pre-write read, or post-write readback cannot prevent an external writer from be
 overwritten, so none is presented as an anti-overwrite guarantee.
 
 Unsupported capabilities fail explicitly with typed errors: existing-issue replacement,
-acceptance synchronization, a true ADR knowledge base, atomic audited non-code Epic
-closure, project provisioning, and free-form provider-native search queries. `query
-issue` still returns the issue and projects the absent ADR knowledge base as a structured
-capability status. Foundry's GitHub PR review, CI, human gate, and merge authority are
-unchanged; the Linear attachment is projection only.
+acceptance synchronization, GitHub PR projection, a true ADR knowledge base, atomic
+audited non-code Epic closure, project provisioning, and free-form provider-native search
+queries. `query issue` still returns the issue and projects the absent ADR knowledge base
+as a structured capability status. Because `issue openpr` requires both a `review` state
+transition and PR projection, and `issue merge` requires a `done` state transition, both
+commands preflight and refuse before any GitHub push, PR creation/update, merge, or branch
+deletion when Linear is active. Foundry does not advertise a gated Linear PR lifecycle.
 
 This implementation and its controlled transport round-trip do not activate a real
-workspace. No Linear binding or live write is performed here. Import, provider proof in
-the target workspace, and the atomic cutover remain FOUNDRY-159 work.
+workspace. No Linear binding or live write is performed here. Import, target-workspace
+validation, and the atomic cutover remain FOUNDRY-159 work.

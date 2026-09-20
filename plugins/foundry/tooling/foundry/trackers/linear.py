@@ -2,7 +2,8 @@
 
 The adapter uses only explicit registry coordinates: canonical repository identity,
 Linear team UUID, Linear project UUID, and a complete normalized-state -> workflow-
-state UUID map.  It never discovers a binding from a name, title, label, or issue key.
+state UUID map. Runtime checkout resolution matches the actual canonical Git remote;
+it never selects a binding from an environment alias, basename, title, or issue key.
 
 Linear does not expose a compare-and-swap precondition for existing-issue replacement.
 Those writes are therefore unavailable: a local lock or a readback cannot prevent an
@@ -42,7 +43,6 @@ _PRIORITY_TO_LINEAR = {"P0": 1, "P1": 2, "P2": 3, "P3": 4, None: 0}
 _LINEAR_TO_PRIORITY = {value: key for key, value in _PRIORITY_TO_LINEAR.items()}
 _AC_CHECKBOX = re.compile(r"(?m)^\s*[-*+]\s+\[(?P<mark>[ xX])\]\s+.+?\s*$")
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{1,255}")
-_PR_METADATA = {"foundry_contract": "foundry.linear.v1", "foundry_kind": "github-pr"}
 
 
 _ISSUE_FIELDS = """
@@ -60,10 +60,6 @@ relations(first: 100) {
 }
 inverseRelations(first: 100) {
   nodes { type issue { id identifier } }
-  pageInfo { hasNextPage endCursor }
-}
-attachments(first: 100) {
-  nodes { id url metadata }
   pageInfo { hasNextPage endCursor }
 }
 """
@@ -116,15 +112,6 @@ query FoundryLinearComment($id: String!) {
   comment(id: $id) { id body issue { id identifier } }
 }
 """
-
-_ATTACHMENT_CREATE = """
-mutation FoundryLinearAttachmentCreate($input: AttachmentCreateInput!) {
-  attachmentCreate(input: $input) {
-    success attachment { id url metadata issue { id identifier } }
-  }
-}
-"""
-
 
 class LinearTrackerError(RuntimeError):
     """Sanitized transport/provider failure with no response or credential echo."""
@@ -324,19 +311,41 @@ class LinearTracker(Tracker):
         return self._active_project
 
     def resolve_project(self, repo: str) -> Project:
-        project = registry.resolve("linear", repo)
+        # The provider-neutral port historically passes a repository basename here.
+        # Linear must never treat that value (or PROJECT_REPO) as identity evidence:
+        # resolve the actual checkout instead, so even an overlooked generic read
+        # remains fail-closed at the adapter boundary.
+        del repo
+        return self.resolve_checkout_project()
+
+    def resolve_checkout_project(
+        self, cwd: str | None = None, *, checkout_identity: str | None = None,
+    ) -> Project:
+        try:
+            observed = (
+                registry.checkout_repository_identity(cwd)
+                if checkout_identity is None else
+                registry.canonical_repository_identity(checkout_identity)
+            )
+        except ValueError:
+            raise SystemExit(
+                "Binding Linear refusé : identité canonique du checkout invalide ou absente."
+            ) from None
+        project = registry.resolve_canonical_repository(self.name, observed)
         self._activate(project)
         return project
 
     def validate_mutation_repository(self, repo: str, checkout_identity: str) -> None:
-        project = registry.resolve("linear", repo)
-        binding = self._activate(project)
-        try:
-            observed = registry.canonical_repository_identity(checkout_identity)
-        except ValueError:
-            raise SystemExit("Binding Linear refusé : canonical_repo invalide.") from None
-        if observed != binding["canonical_repo"]:
-            raise SystemExit("Binding Linear refusé : canonical_repo contradictoire.")
+        del repo
+        self.resolve_checkout_project(checkout_identity=checkout_identity)
+
+    def preflight_issue_operation(self, operation: str) -> None:
+        if operation == "openpr":
+            raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
+        if operation == "merge":
+            raise TrackerCapabilityUnavailableError(
+                self.name, "existing-issue-state-replacement",
+            )
 
     def validate_issue_binding(self, project: Project, *issue_ids: str) -> None:
         binding = self._activate(project)
@@ -437,13 +446,6 @@ class LinearTracker(Tracker):
             elif relation.get("type") == "related":
                 links.append(Link("relates", "inward", target["identifier"]))
 
-        pr_urls = []
-        for attachment in _connection(raw.get("attachments"), "normalize.attachments"):
-            if attachment.get("metadata") == _PR_METADATA and isinstance(attachment.get("url"), str):
-                pr_urls.append(attachment["url"])
-        if len(pr_urls) > 1:
-            raise LinearBindingError("github_pr_ambiguous")
-
         milestone = None
         milestone_raw = raw.get("projectMilestone")
         if milestone_raw is not None:
@@ -473,7 +475,7 @@ class LinearTracker(Tracker):
             id=raw["identifier"], title=raw["title"], state=state_by_id[state["id"]],
             priority=_LINEAR_TO_PRIORITY[priority], estimate=raw.get("estimate"),
             milestone=milestone, type=types[0] if types else None, labels=labels,
-            ac_done=done, ac_total=total, links=links, pr_url=pr_urls[0] if pr_urls else None,
+            ac_done=done, ac_total=total, links=links, pr_url=None,
             body=body, comments=comments, created=_epoch_ms(raw.get("createdAt")),
             updated=_epoch_ms(raw.get("updatedAt")),
         )
@@ -519,7 +521,7 @@ class LinearTracker(Tracker):
     def _field_names(fields: dict) -> None:
         if not isinstance(fields, dict) or not fields:
             raise ValueError("Linear fields must be a non-empty object")
-        supported = {"State", "Priority", "Estimate", "Milestone", "Type", "Labels", "GitHub PR"}
+        supported = {"State", "Priority", "Estimate", "Milestone", "Type", "Labels"}
         unknown = sorted(set(fields) - supported)
         if unknown:
             raise TrackerCapabilityUnavailableError("linear", f"field:{unknown[0]}")
@@ -615,7 +617,7 @@ class LinearTracker(Tracker):
             raise ValueError("Linear issue title/body invalid")
         fields = dict(fields or {})
         if "GitHub PR" in fields:
-            raise TrackerCapabilityUnavailableError(self.name, "create-with-github-pr")
+            raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
         skeleton = {
             "labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}
         }
@@ -642,63 +644,18 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear parent divergent after create; no retry")
         return self._to_issue(raw, project)
 
-    def _validate_pr_url(self, project: Project, value) -> str:
-        if not isinstance(value, str):
-            raise ValueError("GitHub PR must be an HTTPS URL")
-        binding = self._binding(project)
-        try:
-            parsed = urllib.parse.urlsplit(value)
-        except ValueError:
-            raise ValueError("GitHub PR must be an HTTPS URL") from None
-        repo_host, owner, repo_name = binding["canonical_repo"].split("/", 2)
-        expected_prefix = f"/{owner}/{repo_name}/pull/"
-        suffix = parsed.path[len(expected_prefix):] if parsed.path.startswith(expected_prefix) else ""
-        if (parsed.scheme != "https" or (parsed.hostname or "").lower() != repo_host
-                or parsed.username is not None or parsed.password is not None
-                or parsed.query or parsed.fragment or not suffix.isdigit() or "/" in suffix):
-            raise ValueError("GitHub PR URL is outside the registered repository")
-        return value
-
-    def _set_pr(self, raw: dict, project: Project, value) -> Issue:
-        url = self._validate_pr_url(project, value)
-        current = self._to_issue(raw, project)
-        if current.pr_url == url:
-            return current
-        if current.pr_url is not None:
-            raise TrackerConflictError("Linear GitHub PR already bound to a different URL")
-        data = self._graphql(
-            _ATTACHMENT_CREATE,
-            {"input": {
-                "issueId": raw["id"], "title": "Foundry GitHub PR", "url": url,
-                "metadata": dict(_PR_METADATA),
-            }},
-            "attachment.create",
-        )
-        payload = self._mutation_payload(data, "attachmentCreate", "attachment.create")
-        attachment = payload.get("attachment")
-        if (not isinstance(attachment, dict) or attachment.get("url") != url
-                or attachment.get("metadata") != _PR_METADATA
-                or (attachment.get("issue") or {}).get("id") != raw["id"]):
-            raise LinearTrackerError("attachment.create", None, "invalid_response")
-        readback = self._read_raw(raw["identifier"])
-        if self._to_issue(readback, project).pr_url != url:
-            raise TrackerConflictError("Linear GitHub PR divergent after write; no retry")
-        return self._to_issue(readback, project)
-
     def update_fields(
         self, issue_id: str, fields: dict, project: Project | None = None,
     ) -> Issue:
         if project is None:
             raise LinearBindingError("mutation_project_required")
-        binding = self._activate(project)
+        self._activate(project)
+        if isinstance(fields, dict) and "GitHub PR" in fields:
+            raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
         self._field_names(fields)
-        if set(fields) != {"GitHub PR"}:
-            raise TrackerCapabilityUnavailableError(
-                self.name, "existing-issue-field-replacement",
-            )
-        raw = self._read_raw(issue_id)
-        self._assert_issue_project(raw, binding)
-        return self._set_pr(raw, project, fields["GitHub PR"])
+        raise TrackerCapabilityUnavailableError(
+            self.name, "existing-issue-field-replacement",
+        )
 
     def set_state(
         self, issue_id: str, state: str, context=None,

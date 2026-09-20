@@ -9,10 +9,11 @@ from a rough idea to shipped work — the same, repeatable, on every project:
 
 Foundry owns the **outer loop** (what to do, the source of truth, the decision memory,
 the exit gates). The **inner loop** (design → plan → implement) is delegated to Superpowers
-or Plan mode. It reasons over a **pluggable tracker** (YouTrack, DevHubTracker, or
-Linear's explicitly bound read/create/additive-write subset) and **code-host**
-(GitHub today) through adapters — switching to Jira / GitLab later is a new adapter, not a
-rewrite.
+or Plan mode. Its gated PR lifecycle uses YouTrack or DevHubTracker with the GitHub
+**code-host** adapter. Linear is a narrower, checkout-bound tracker subset for reads,
+creation, and non-replacing relations/comments; it does not support GitHub PR projection
+or Foundry's `issue openpr` / `issue merge` cycle. Switching to another tracker or
+code-host later remains an adapter change, not a rewrite.
 
 ## Why
 

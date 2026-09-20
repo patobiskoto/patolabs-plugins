@@ -50,6 +50,150 @@ def test_default_tracker_start_preflight_preserves_youtrack_direct_transition():
     assert Tracker.start_transition_path(object(), "ready") == ("in-progress",)
 
 
+@pytest.mark.parametrize("provider_class", [YouTrackTracker, DevHubTracker])
+def test_existing_real_provider_openpr_path_is_unchanged_by_noop_preflight(
+    monkeypatch, provider_class,
+):
+    events = []
+    tracker = object.__new__(provider_class)
+    tracker.get_issue = lambda _issue_id: events.append("tracker:get-issue") or SimpleNamespace(
+        title="Pilot", type="Feature",
+    )
+    branch = "feat/demo-7-pilot"
+    pull_request = SimpleNamespace(
+        number=12, url="https://github.com/acme/demo/pull/12",
+        sha="a" * 40, base_sha="c" * 40, head=branch, base="main",
+        state="open",
+    )
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: events.append("codehost:resolve") or "acme/demo",
+        list_prs=lambda *_args: events.append("codehost:list-prs") or [],
+        open_pr=lambda *_args: events.append("codehost:open-pr") or pull_request,
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(
+        Tracker, "preflight_issue_operation",
+        lambda self, operation: events.append(f"tracker:preflight:{self.name}:{operation}"),
+    )
+    monkeypatch.setattr(
+        write, "issue_binding", lambda *_args: events.append("tracker:binding"),
+    )
+
+    def command(*args, **_kwargs):
+        if args[-2:] == ("--abbrev-ref", "HEAD"):
+            return branch
+        if args[:2] == ("git", "push"):
+            events.append("codehost:push")
+            return ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(issue, "_sh", command)
+    monkeypatch.setattr(issue, "_default_branch", lambda: "main")
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: "ignored")
+    monkeypatch.setattr(issue, "git_head", lambda: "a" * 40)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: b"exact-diff")
+    monkeypatch.setattr(
+        write, "set_field",
+        lambda *_args, **_kwargs: events.append("tracker:set-pr"),
+    )
+    monkeypatch.setattr(
+        write, "transition",
+        lambda _tracker, _issue_id, state, context=None: events.append(
+            f"tracker:transition:{state}"
+        ),
+    )
+
+    issue.openpr("DEMO-7")
+
+    assert events[:7] == [
+        "tracker:binding",
+        f"tracker:preflight:{tracker.name}:openpr",
+        "tracker:get-issue",
+        "codehost:resolve",
+        "codehost:push",
+        "codehost:list-prs",
+        "codehost:open-pr",
+    ]
+    if tracker.bounded_transition_proofs:
+        assert events[-2:] == ["tracker:set-pr", "tracker:transition:review"]
+    else:
+        assert events[-2:] == ["tracker:transition:review", "tracker:set-pr"]
+
+
+@pytest.mark.parametrize("provider_class", [YouTrackTracker, DevHubTracker])
+def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
+    monkeypatch, provider_class,
+):
+    events = []
+    tracker = object.__new__(provider_class)
+    tracker.get_issue = lambda _issue_id: events.append("tracker:get-issue") or SimpleNamespace(
+        id="DEMO-7", state="review", body="", ac_done=0, ac_total=0,
+    )
+    pull_request = SimpleNamespace(
+        number=12, url="https://github.com/acme/demo/pull/12",
+        sha="a" * 40, base_sha="c" * 40, head="feat/demo-7-pilot",
+        base="main", merged=False,
+    )
+    landed = SimpleNamespace(
+        sha="b" * 40, head=pull_request.head, merged=True,
+    )
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: events.append("codehost:resolve") or "acme/demo",
+        get_pr=lambda *_args: events.append("codehost:get-pr") or pull_request,
+        merge_pr=lambda *_args, **_kwargs: events.append("codehost:merge") or landed,
+        delete_branch=lambda *_args: events.append("codehost:delete-branch"),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(
+        Tracker, "preflight_issue_operation",
+        lambda self, operation: events.append(f"tracker:preflight:{self.name}:{operation}"),
+    )
+    monkeypatch.setattr(
+        write, "issue_binding", lambda *_args: events.append("tracker:binding"),
+    )
+    monkeypatch.setattr(
+        write, "ci_gate", lambda *_args, **_kwargs: events.append("codehost:ci") or {
+            "passed": True, "waived": False, "total": 1,
+            "pending": [], "failing": [],
+        },
+    )
+    monkeypatch.setattr(
+        write, "transition",
+        lambda _tracker, _issue_id, state, context=None: events.append(
+            f"tracker:transition:{state}"
+        ),
+    )
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: "ignored")
+    monkeypatch.setattr(issue, "git_head", lambda: "a" * 40)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: b"exact-diff")
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+
+    issue.merge("DEMO-7", "12")
+
+    assert events[:5] == [
+        "tracker:binding",
+        f"tracker:preflight:{tracker.name}:merge",
+        "codehost:resolve",
+        "codehost:get-pr",
+        "tracker:get-issue",
+    ]
+    assert events.index(f"tracker:preflight:{tracker.name}:merge") < events.index(
+        "codehost:merge"
+    )
+    if tracker.bounded_transition_proofs:
+        assert events.index("tracker:transition:done") < events.index(
+            "codehost:delete-branch"
+        )
+    else:
+        assert events.index("codehost:delete-branch") < events.index(
+            "tracker:transition:done"
+        )
+
+
 def test_issue_start_preflights_before_branch_then_applies_provider_path(monkeypatch):
     events = []
     tracker = SimpleNamespace(

@@ -236,6 +236,7 @@ def openpr(issue_id=None, base=None, flags=()):
                              f"suit pas <type>/<ticker>-<n>-… ; passe l'ID explicitement.")
         issue_id = m.group(1).upper()
     write.issue_binding(tr, issue_id)
+    write.preflight_issue_operation(tr, "openpr")
     it = tr.get_issue(issue_id)
     repo = ch.resolve_repo()
     base = base or _default_branch()
@@ -293,6 +294,7 @@ def merge(issue_id, pr_number, flags=()):
     allow_no_ci = "--allow-no-ci" in flags
     tr, ch = foundry.tracker(), foundry.codehost()
     write.issue_binding(tr, issue_id)
+    write.preflight_issue_operation(tr, "merge")
     repo = ch.resolve_repo()
     pr = ch.get_pr(repo, int(pr_number))
     _observe_receipt(

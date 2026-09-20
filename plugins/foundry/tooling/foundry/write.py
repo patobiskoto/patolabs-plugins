@@ -51,7 +51,17 @@ def mutation_project(tracker):
             "Binding de mutation refusé : identité du remote origin invalide ou absente."
         ) from exc
     validator(repo, checkout_identity)
+    resolver = getattr(tracker, "resolve_checkout_project", None)
+    if callable(resolver):
+        return resolver(checkout_identity=checkout_identity)
     return tracker.resolve_project(repo)
+
+
+def preflight_issue_operation(tracker, operation: str) -> None:
+    """Run the provider's no-effect lifecycle capability preflight."""
+    preflight = getattr(tracker, "preflight_issue_operation", None)
+    if callable(preflight):
+        preflight(operation)
 
 
 def issue_binding(tracker, *issue_ids):

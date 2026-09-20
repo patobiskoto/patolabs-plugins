@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import copy
+from types import SimpleNamespace
 
 import pytest
 
 import foundry
-from foundry import query, registry, routing
+from foundry import issue, query, registry, routing
 from foundry.models import Adr, Issue, Project
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
@@ -59,7 +60,7 @@ def raw_issue(identifier, native_id, *, title="Issue", body="- [ ] acceptance"):
             {"id": "label-pilot", "name": "Pilot display"},
         ]),
         "parent": None, "children": connection([]), "relations": connection([]),
-        "inverseRelations": connection([]), "attachments": connection([]),
+        "inverseRelations": connection([]),
         "comments": connection([]),
     }
 
@@ -127,15 +128,6 @@ class LinearWire:
             return {"data": {"commentCreate": {"success": True, "comment": copy.deepcopy(comment)}}}
         if "FoundryLinearComment(" in document:
             return {"data": {"comment": copy.deepcopy(self.comments.get(variables["id"]))}}
-        if "FoundryLinearAttachmentCreate" in document:
-            value = variables["input"]
-            issue = self._by_native(value["issueId"])
-            attachment = {
-                "id": "attachment-1", "url": value["url"], "metadata": value["metadata"],
-                "issue": {"id": issue["id"], "identifier": issue["identifier"]},
-            }
-            issue["attachments"]["nodes"].append(copy.deepcopy(attachment))
-            return {"data": {"attachmentCreate": {"success": True, "attachment": attachment}}}
         raise AssertionError("unexpected GraphQL document")
 
     @staticmethod
@@ -182,6 +174,10 @@ def proof(issue_id, body):
             "criteria": [{**criterion, "verdict": "pass"} for criterion in criteria],
         },
     }
+
+
+def project_entry(project=PROJECT):
+    return {"key": project.key, "id": project.id, **copy.deepcopy(project.extra)}
 
 
 def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(monkeypatch):
@@ -243,19 +239,22 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
 
     instance.link(created.id, "depends-on", "LIN-2", project=PROJECT)
     instance.add_comment(created.id, "bounded progress", project=PROJECT)
-    instance.update_fields(
-        created.id, {"GitHub PR": "https://github.com/acme/widgets/pull/17"},
-        project=PROJECT,
-    )
 
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     with pytest.raises(LinearBindingError, match="project_not_resolved"):
         fresh.get_issue(created.id)
-    monkeypatch.setattr(registry, "resolve", lambda provider, repo: PROJECT)
-    fresh.resolve_project("widgets")
+    monkeypatch.setenv("PROJECT_REPO", "decoy")
+    monkeypatch.setattr(
+        registry, "checkout_repository_identity",
+        lambda cwd=None: "github.com/acme/widgets",
+    )
+    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+        "actual-checkout": project_entry(),
+    }})
+    fresh.resolve_project("decoy")
     final = fresh.get_issue(created.id)
     assert final.state == "ready"
-    assert final.pr_url == "https://github.com/acme/widgets/pull/17"
+    assert final.pr_url is None
     assert (final.priority, final.estimate, final.type, final.labels) == (
         "P1", 5, "Feature", ["pilot"],
     )
@@ -321,19 +320,33 @@ def test_query_issue_resolves_fresh_binding_and_projects_typed_adr_unavailabilit
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
-    resolved = []
-
-    def resolve(provider, repo):
-        resolved.append((provider, repo))
-        return PROJECT
+    checkout_reads = []
+    decoy = copy.deepcopy(project_entry())
+    decoy.update({
+        "key": "WRONG", "id": "wrong-project",
+        "canonical_repo": "github.com/acme/not-widgets",
+    })
 
     monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
-    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "widgets")
-    monkeypatch.setattr(registry, "resolve", resolve)
+    monkeypatch.setenv("PROJECT_REPO", "widgets")
+    monkeypatch.setattr(
+        registry, "checkout_repository_identity",
+        lambda cwd=None: checkout_reads.append(cwd) or "github.com/acme/widgets",
+    )
+    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+        "widgets": decoy,
+        "actual-checkout": project_entry(),
+        "actual-alias": project_entry(),
+    }})
+    monkeypatch.setattr(
+        registry, "resolve",
+        lambda *_args: pytest.fail("Linear query must not resolve from a basename"),
+    )
 
     result = query.issue("LIN-2")
 
-    assert resolved == [("linear", "widgets")]
+    assert checkout_reads == [None]
+    assert fresh._active_project == PROJECT
     assert result["issue"]["id"] == "LIN-2"
     assert result["adrs"] == {
         "status": "unavailable",
@@ -347,12 +360,8 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
-    resolved = []
+    checkout_reads = []
     captured = {}
-
-    def resolve(provider, repo):
-        resolved.append((provider, repo))
-        return PROJECT
 
     class ProofStore:
         def __init__(self, repository):
@@ -367,8 +376,22 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
         '{"outcomes": [], "quality": {"verdict": "pass"}}', encoding="utf-8",
     )
     monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
-    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "widgets")
-    monkeypatch.setattr(registry, "resolve", resolve)
+    monkeypatch.setenv("PROJECT_REPO", "decoy")
+    monkeypatch.setattr(
+        registry, "checkout_repository_identity",
+        lambda cwd=None: checkout_reads.append(cwd) or "github.com/acme/widgets",
+    )
+    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+        "decoy": {
+            **project_entry(), "key": "WRONG", "id": "wrong-project",
+            "canonical_repo": "github.com/acme/other",
+        },
+        "canonical": project_entry(),
+    }})
+    monkeypatch.setattr(
+        registry, "resolve",
+        lambda *_args: pytest.fail("Linear proof must not resolve from a basename"),
+    )
     monkeypatch.setattr(routing, "repository_identity", lambda root=None: "acme/widgets")
     monkeypatch.setattr(routing, "AcceptanceProofStore", ProofStore)
 
@@ -382,11 +405,113 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
         "--root", str(tmp_path),
     ])
 
-    assert resolved == [("linear", "widgets")]
+    assert checkout_reads == [str(tmp_path)]
     assert captured["repository"] == "acme/widgets"
     assert captured["issue_id"] == "LIN-2"
     assert captured["issue_body"] == "- [ ] acceptance"
     assert '"proof_id": "' + "f" * 64 + '"' in capsys.readouterr().out
+
+
+def test_checkout_resolution_refuses_without_canonical_binding_before_linear_read(
+    tracker, monkeypatch,
+):
+    _, wire = tracker
+    fresh = LinearTracker(token="linear-test-secret", transport=wire)
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
+    monkeypatch.setenv("PROJECT_REPO", "widgets")
+    monkeypatch.setattr(
+        registry, "checkout_repository_identity",
+        lambda cwd=None: "github.com/acme/widgets",
+    )
+    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+        "widgets": {
+            **project_entry(), "canonical_repo": "github.com/acme/other",
+        },
+    }})
+
+    with pytest.raises(SystemExit, match="canonical_repo du checkout"):
+        query.issue("LIN-2")
+
+    assert wire.calls == []
+
+
+def test_checkout_resolution_refuses_contradictory_canonical_bindings(
+    tracker, monkeypatch,
+):
+    _, wire = tracker
+    fresh = LinearTracker(token="linear-test-secret", transport=wire)
+    contradictory = project_entry()
+    contradictory.update({"key": "OTHER", "id": "other-project"})
+    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+        "first": project_entry(),
+        "second": contradictory,
+    }})
+
+    with pytest.raises(SystemExit, match="ambigus"):
+        fresh.resolve_checkout_project(
+            checkout_identity="github.com/acme/widgets",
+        )
+
+    assert wire.calls == []
+
+
+@pytest.mark.parametrize("provider_class", [YouTrackTracker, DevHubTracker])
+def test_existing_provider_operation_preflights_remain_noop(provider_class):
+    provider = object.__new__(provider_class)
+    assert provider.preflight_issue_operation("openpr") is None
+    assert provider.preflight_issue_operation("merge") is None
+
+
+@pytest.mark.parametrize("operation", ["openpr", "merge"])
+def test_linear_lifecycle_preflight_stops_before_every_codehost_effect(
+    tracker, monkeypatch, operation,
+):
+    instance, wire = tracker
+    effects = []
+    codehost = SimpleNamespace(
+        resolve_repo=lambda: effects.append("resolve-repo") or "acme/widgets",
+        list_prs=lambda *_args: effects.append("list-prs") or [],
+        open_pr=lambda *_args: effects.append("open-pr"),
+        update_pr=lambda *_args: effects.append("update-pr"),
+        get_pr=lambda *_args: effects.append("get-pr"),
+        merge_pr=lambda *_args, **_kwargs: effects.append("merge-pr"),
+        delete_branch=lambda *_args: effects.append("delete-branch"),
+    )
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: instance)
+    monkeypatch.setattr(foundry, "codehost", lambda name=None, cwd=None: codehost)
+    monkeypatch.setenv("PROJECT_REPO", "decoy")
+    monkeypatch.setattr(
+        registry, "checkout_repository_identity",
+        lambda cwd=None: "github.com/acme/widgets",
+    )
+    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+        "decoy": {
+            **project_entry(), "key": "WRONG", "id": "wrong-project",
+            "canonical_repo": "github.com/acme/other",
+        },
+        "canonical": project_entry(),
+    }})
+
+    def command(*args, **_kwargs):
+        if args[-2:] == ("--abbrev-ref", "HEAD"):
+            return "feat/lin-2-safe"
+        effects.append(("git", args))
+        return ""
+
+    monkeypatch.setattr(issue, "_sh", command)
+
+    expected = (
+        "linear.github-pr-projection" if operation == "openpr"
+        else "linear.existing-issue-state-replacement"
+    )
+    with pytest.raises(TrackerCapabilityUnavailableError, match=expected):
+        if operation == "openpr":
+            issue.openpr("LIN-2")
+        else:
+            issue.merge("LIN-2", "17")
+
+    assert effects == []
+    assert wire.calls and all("mutation" not in document.lower() for document, _ in wire.calls)
 
 
 def test_malformed_and_provider_error_payloads_are_redacted(tmp_path, monkeypatch):
@@ -422,13 +547,14 @@ def test_unsupported_capabilities_are_typed_and_never_fall_back(tracker):
     assert wire.calls == []
 
 
-def test_pr_projection_rejects_cross_repository_url_before_write(tracker):
+def test_pr_projection_is_typed_unavailable_before_any_provider_write(tracker):
     instance, wire = tracker
-    instance.search(PROJECT)
     before = len(wire.calls)
-    with pytest.raises(ValueError, match="outside"):
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match="linear.github-pr-projection",
+    ):
         instance.update_fields(
-            "LIN-2", {"GitHub PR": "https://github.com/other/widgets/pull/1"},
+            "LIN-2", {"GitHub PR": "https://github.com/acme/widgets/pull/1"},
             project=PROJECT,
         )
-    assert not any("FoundryLinearAttachmentCreate" in call[0] for call in wire.calls[before:])
+    assert wire.calls[before:] == []
