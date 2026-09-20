@@ -1,0 +1,10 @@
+Patolabs Plugins — third-party notices
+
+This source distribution does not bundle or redistribute third-party source code,
+libraries, binaries, or model weights. Its runtime and development tools (for example,
+Python packages, fastlane, and Xcode) are installed separately by the operator or CI and
+remain subject to their own terms.
+
+Consequently, no third-party attribution notice is required for the source files in this
+repository at publication time. Any future vendored or redistributed third-party material
+must retain its required notices and be added to this file before release.

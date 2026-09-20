@@ -1,6 +1,7 @@
 """Stdlib fixtures for the dual-runtime semantic-parity validator."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -12,6 +13,7 @@ SPEC = importlib.util.spec_from_file_location("validate_plugins", MODULE_PATH)
 assert SPEC and SPEC.loader
 validator = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(validator)
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class SemanticParityFixtures(unittest.TestCase):
@@ -206,6 +208,48 @@ class FoundryAgentContractFixtures(unittest.TestCase):
             AssertionError, r"foundry: agents lupin: missing required contract: 'strictly read-only and must not delegate'"
         ):
             validator.validate_foundry_agent_contracts(root)
+
+class PublicSurfaceContract(unittest.TestCase):
+    def text(self, relative_path: str) -> str:
+        return (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
+
+    def test_apache_license_and_third_party_notice_are_explicit(self) -> None:
+        license_digest = hashlib.sha256((REPOSITORY_ROOT / "LICENSE").read_bytes()).hexdigest()
+        notice = self.text("NOTICE")
+
+        self.assertEqual(
+            license_digest,
+            "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        )
+        self.assertIn("does not bundle or redistribute third-party", notice)
+        self.assertIn("future vendored or redistributed third-party material", notice)
+
+    def test_private_security_reporting_never_promises_automatic_disclosure(self) -> None:
+        security = " ".join(self.text("SECURITY.md").split())
+
+        self.assertIn("private vulnerability reporting form", security)
+        self.assertIn("does not trigger an automatic public disclosure", security)
+        self.assertIn("GitHub Issues are disabled", security)
+
+    def test_readme_covers_both_hosts_without_promising_unshipped_integrations(self) -> None:
+        readme = self.text("README.md")
+
+        for command in (
+            "/plugin marketplace add patobiskoto/patolabs-plugins",
+            "/plugin install foundry@patolabs",
+            "/plugin install ship-ios@patolabs",
+            "codex plugin marketplace add patobiskoto/patolabs-plugins",
+            "codex plugin add foundry@patolabs",
+            "codex plugin add ship-ios@patolabs",
+            "/foundry:frame",
+            "$foundry:frame",
+        ):
+            self.assertIn(command, readme)
+        self.assertIn("does not yet ship a Linear adapter or a ChatGPT MCP integration", readme)
+
+    def test_external_contributions_are_explicitly_declined(self) -> None:
+        self.assertIn("not accepting external contributions", self.text("README.md"))
+        self.assertIn("not for\nexternal contribution", self.text("CONTRIBUTING.md"))
 
 
 if __name__ == "__main__":
