@@ -9,11 +9,12 @@
 - Snapshot method: `git archive` of that exact remote commit; no local branch,
   worktree change, pull-request head, or Git history was copied.
 
-## Source CI verification
+## Source CI verification (pre-export observation)
 
-- CI `verified_at` (UTC): `2026-09-20T19:38:55Z`
+- CI pre-export observation `verified_at` (UTC): `2026-09-20T16:19:38.293Z`
 
-GitHub check-runs were queried for the exact source commit before export. The
+GitHub check-runs were queried for the exact source commit at that pre-export
+timestamp. The
 `catalogue`, `foundry`, and `ship-ios` runs concluded `success`; the conditional
 `foundry-benchmark-campaigns` and `foundry-youtrack-smoke` runs concluded `skipped`.
 The legacy commit-status endpoint had no statuses. This satisfies the source snapshot
