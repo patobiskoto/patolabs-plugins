@@ -218,6 +218,8 @@ class PublicSurfaceContract(unittest.TestCase):
 
         self.assertIn("SPDX-License-Identifier: Apache-2.0", license_text)
         self.assertIn("Apache License", license_text)
+        self.assertIn("Notwithstanding the above, nothing herein shall supersede", license_text)
+        self.assertIn("APPENDIX: How to apply the Apache License to your work.", license_text)
         self.assertIn("does not bundle or redistribute third-party", notice)
         self.assertIn("future vendored or redistributed third-party material", notice)
 
