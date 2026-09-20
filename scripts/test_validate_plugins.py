@@ -1,6 +1,7 @@
 """Stdlib fixtures for the dual-runtime semantic-parity validator."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -213,13 +214,13 @@ class PublicSurfaceContract(unittest.TestCase):
         return (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
 
     def test_apache_license_and_third_party_notice_are_explicit(self) -> None:
-        license_text = self.text("LICENSE")
+        license_digest = hashlib.sha256((REPOSITORY_ROOT / "LICENSE").read_bytes()).hexdigest()
         notice = self.text("NOTICE")
 
-        self.assertIn("SPDX-License-Identifier: Apache-2.0", license_text)
-        self.assertIn("Apache License", license_text)
-        self.assertIn("Notwithstanding the above, nothing herein shall supersede", license_text)
-        self.assertIn("APPENDIX: How to apply the Apache License to your work.", license_text)
+        self.assertEqual(
+            license_digest,
+            "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        )
         self.assertIn("does not bundle or redistribute third-party", notice)
         self.assertIn("future vendored or redistributed third-party material", notice)
 
