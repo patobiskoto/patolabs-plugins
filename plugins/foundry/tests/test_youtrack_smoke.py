@@ -28,9 +28,6 @@ BASE_ENV = {
     "YOUTRACK_TOKEN": "token-sentinel-must-not-leak",
 }
 
-ALLOW_FOUNDRY_ENV = "FOUNDRY_YOUTRACK_SMOKE_ALLOW_FOUNDRY"
-
-
 def test_youtrack_advertises_bounded_acceptance_sync():
     tracker = object.__new__(YouTrackTracker)
 
@@ -45,21 +42,6 @@ def _workflow_job(workflow: str, name: str) -> str:
     """Return one top-level workflow job without coupling the job order."""
     tail = workflow.split(f"  {name}:", 1)[1]
     return re.split(r"\n  [A-Za-z][A-Za-z0-9-]*:", tail, maxsplit=1)[0]
-
-
-def _workflow_step(job: str, name: str) -> str:
-    step = job.split(f"      - name: {name}", 1)[1]
-    return step.split("\n      - name:", 1)[0]
-
-
-def _literal_env_value(block: str, name: str) -> str:
-    prefix = f"{name}:"
-    value = next(
-        line.strip().split(":", 1)[1].strip()
-        for line in block.splitlines()
-        if line.strip().startswith(prefix)
-    )
-    return value.strip('"')
 
 
 class FakeTracker:

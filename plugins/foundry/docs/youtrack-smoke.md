@@ -91,24 +91,14 @@ equivalent explicit default ports). It refuses a redirect before the next reques
 the scheme, host, or effective port changes, so the bearer token and request body
 cannot cross an origin boundary.
 
-## GitHub Actions activation
+## Public CI boundary
 
-The separate `foundry-youtrack-smoke` job can run only for a `push` to protected
-`main`, from code that has already passed review, and when the non-secret repository
-variable `FOUNDRY_YOUTRACK_SMOKE` is exactly `1`. It never runs for `pull_request`
-events, including internal and fork PRs. Configure these repository variables:
+The public GitHub workflow never runs this mutating smoke test. Its pull-request jobs
+are secret-free and use only GitHub-hosted ephemeral runners; fork pull requests create
+no executable job. Run the smoke manually only from a trusted developer environment,
+with the required environment above configured for a disposable YouTrack project.
 
-- `FOUNDRY_YOUTRACK_SMOKE=1`
-- `FOUNDRY_YOUTRACK_SMOKE_URL`
-- `FOUNDRY_YOUTRACK_SMOKE_PROJECT_KEY`
-- `FOUNDRY_YOUTRACK_SMOKE_PROJECT_ID`
-- `FOUNDRY_YOUTRACK_SMOKE_CONFIRM_TEST_PROJECT=1`
-
-Store the token only in the repository secret
-`FOUNDRY_YOUTRACK_SMOKE_TOKEN`. Only the step that runs the integration test receives
-that secret and the YouTrack target variables; checkout, virtual-environment creation,
-and dependency installation do not. CI also forces
-`FOUNDRY_YOUTRACK_SMOKE_ALLOW_FOUNDRY=0`, overriding any value inherited from a
-persistent runner. The local disaster-recovery override described above is therefore
-unavailable in this job. If a required variable or secret is absent at runtime, pytest
-reports the explicit skip described above without exposing configuration values.
+Do not add the smoke token or its target configuration as public-repository Actions
+secrets or variables. A missing configuration remains an explicit local pytest skip;
+it is not a reason to weaken the production-project guard or to run this mutation from
+public CI.
