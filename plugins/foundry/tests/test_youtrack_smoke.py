@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import re
 import urllib.parse
 from pathlib import Path
 
@@ -27,9 +28,6 @@ BASE_ENV = {
     "YOUTRACK_TOKEN": "token-sentinel-must-not-leak",
 }
 
-ALLOW_FOUNDRY_ENV = "FOUNDRY_YOUTRACK_SMOKE_ALLOW_FOUNDRY"
-
-
 def test_youtrack_advertises_bounded_acceptance_sync():
     tracker = object.__new__(YouTrackTracker)
 
@@ -40,23 +38,10 @@ def _ci_workflow() -> str:
     return (Path(__file__).parents[3] / ".github/workflows/ci.yml").read_text()
 
 
-def _workflow_job(workflow: str, name: str, next_name: str) -> str:
-    return workflow.split(f"  {name}:", 1)[1].split(f"\n  {next_name}:", 1)[0]
-
-
-def _workflow_step(job: str, name: str) -> str:
-    step = job.split(f"      - name: {name}", 1)[1]
-    return step.split("\n      - name:", 1)[0]
-
-
-def _literal_env_value(block: str, name: str) -> str:
-    prefix = f"{name}:"
-    value = next(
-        line.strip().split(":", 1)[1].strip()
-        for line in block.splitlines()
-        if line.strip().startswith(prefix)
-    )
-    return value.strip('"')
+def _workflow_job(workflow: str, name: str) -> str:
+    """Return one top-level workflow job without coupling the job order."""
+    tail = workflow.split(f"  {name}:", 1)[1]
+    return re.split(r"\n  [A-Za-z][A-Za-z0-9-]*:", tail, maxsplit=1)[0]
 
 
 class FakeTracker:
@@ -1012,102 +997,22 @@ def test_finally_rediscovers_an_issue_if_create_response_fails():
     assert "response-secret-sentinel" not in str(exc.value)
 
 
-def test_secret_smoke_job_cannot_run_for_pull_requests_or_forks():
+def test_public_ci_executes_only_internal_prs_on_ephemeral_secret_free_runners():
     workflow = _ci_workflow()
-    smoke_job = _workflow_job(workflow, "foundry-youtrack-smoke", "ship-ios")
-
-    assert "github.event_name == 'push'" in smoke_job
-    assert "github.ref == 'refs/heads/main'" in smoke_job
-    assert "secrets.FOUNDRY_YOUTRACK_SMOKE_TOKEN" in smoke_job
-    assert "Preflight smoke configuration" not in smoke_job
-
-
-def test_ci_neutralizes_all_ambient_smoke_inputs_before_real_smoke_step():
-    workflow = _ci_workflow()
-    smoke_job = _workflow_job(workflow, "foundry-youtrack-smoke", "ship-ios")
-    job_configuration = smoke_job.split("    steps:", 1)[0]
-    smoke_input_names = tuple(BASE_ENV)
-    runner_env = {
-        name: f"ambient-{index}-sentinel"
-        for index, name in enumerate((*smoke_input_names, ALLOW_FOUNDRY_ENV))
+    public_jobs = {
+        "foundry": "ubuntu-24.04",
+        "ship-ios": "macos-14",
+        "catalogue": "ubuntu-24.04",
     }
-    job_env = {
-        name: _literal_env_value(job_configuration, name)
-        for name in runner_env
-    }
-    preparatory_env = {
-        **runner_env,
-        **job_env,
-    }
-
-    assert {name: job_env[name] for name in smoke_input_names} == {
-        name: "" for name in smoke_input_names
-    }
-    assert job_env[ALLOW_FOUNDRY_ENV] == "0"
-    assert all(preparatory_env[name] == "" for name in smoke_input_names)
-    assert preparatory_env[ALLOW_FOUNDRY_ENV] == "0"
-
-    for step_name in (
-        "Reset persistent workspace",
-        "Checkout",
-        "Create Python 3.13 environment",
-        "Install pytest",
-    ):
-        step = _workflow_step(smoke_job, step_name)
-        assert all(f"{name}:" not in step for name in runner_env)
-
-    assert smoke_job.count(ALLOW_FOUNDRY_ENV) == 1
-    with pytest.raises(SmokeDisabled, match="FOUNDRY_YOUTRACK_SMOKE=1"):
-        SmokeSettings.from_env(preparatory_env)
-
-    smoke_env = {
-        **preparatory_env,
-        **BASE_ENV,
-        "FOUNDRY_YOUTRACK_SMOKE_PROJECT_KEY": "FOUNDRY",
-    }
-    with pytest.raises(SmokeConfigurationError, match="FOUNDRY"):
-        SmokeSettings.from_env(smoke_env)
-
-
-def test_ci_exposes_smoke_inputs_only_to_the_real_smoke_step():
-    workflow = _ci_workflow()
-    smoke_job = _workflow_job(workflow, "foundry-youtrack-smoke", "ship-ios")
-    smoke_step = _workflow_step(smoke_job, "Run real YouTrack smoke")
-    expected_step_env = {
-        "FOUNDRY_YOUTRACK_SMOKE": "${{ vars.FOUNDRY_YOUTRACK_SMOKE }}",
-        "FOUNDRY_YOUTRACK_SMOKE_CONFIRM_TEST_PROJECT": (
-            "${{ vars.FOUNDRY_YOUTRACK_SMOKE_CONFIRM_TEST_PROJECT }}"
-        ),
-        "FOUNDRY_YOUTRACK_SMOKE_PROJECT_KEY": (
-            "${{ vars.FOUNDRY_YOUTRACK_SMOKE_PROJECT_KEY }}"
-        ),
-        "FOUNDRY_YOUTRACK_SMOKE_PROJECT_ID": (
-            "${{ vars.FOUNDRY_YOUTRACK_SMOKE_PROJECT_ID }}"
-        ),
-        "YOUTRACK_URL": "${{ vars.FOUNDRY_YOUTRACK_SMOKE_URL }}",
-        "YOUTRACK_TOKEN": "${{ secrets.FOUNDRY_YOUTRACK_SMOKE_TOKEN }}",
-    }
-    token_secret = "${{ secrets.FOUNDRY_YOUTRACK_SMOKE_TOKEN }}"
-
-    assert all(
-        _literal_env_value(smoke_step, name) == value
-        for name, value in expected_step_env.items()
-    )
-    assert ALLOW_FOUNDRY_ENV not in smoke_step
-    assert token_secret not in smoke_job.split(
-        "      - name: Run real YouTrack smoke", 1
-    )[0]
-    assert workflow.count(token_secret) == 1
-    assert smoke_step.count(token_secret) == 1
-
-
-def test_pull_request_keeps_the_ordinary_non_secret_checks():
-    workflow = _ci_workflow()
-    ordinary_job = workflow.split("jobs:", 1)[1].split(
-        "  foundry-youtrack-smoke:", 1
-    )[0]
 
     assert "pull_request:" in workflow.split("jobs:", 1)[0]
-    assert "Compile all tooling" in ordinary_job
-    assert "Lint" in ordinary_job
-    assert 'pytest -q -m "not integration"' in ordinary_job
+    assert "pull_request_target:" not in workflow
+    assert "self-hosted" not in workflow
+    assert "secrets." not in workflow
+    for name, runner in public_jobs.items():
+        job = _workflow_job(workflow, name)
+        assert "github.event.pull_request.head.repo.fork == false" in job
+        assert f"runs-on: {runner}" in job
+    assert "Compile tooling" in _workflow_job(workflow, "foundry")
+    assert "Lint" in _workflow_job(workflow, "foundry")
+    assert "Validate both marketplaces" in _workflow_job(workflow, "catalogue")
