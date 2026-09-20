@@ -40,13 +40,11 @@ jobs:
       - name: Validate model-routing invocation contract
         run: pytest -q tests/test_routing_contract.py
       - name: Run public pure-logic tests
-        # The frozen benchmark and release-contract fixtures refer to deliberately
-        # excluded historical evidence; the rest of the pure-logic suite still runs.
+        # Only tests marked historical_fixture require evidence deliberately omitted
+        # from the public successor snapshot. Active tests in those modules still run.
         run: >-
-          pytest -q -m "not integration and not benchmark_campaign" tests
+          pytest -q -m "not integration and not benchmark_campaign and not historical_fixture" tests
           --ignore=tests/test_routing_contract.py
-          --ignore=tests/test_query_profiles.py
-          --ignore=tests/test_release_contract.py
 
   ship-ios:
     if: >-

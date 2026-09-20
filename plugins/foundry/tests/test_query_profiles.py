@@ -4,6 +4,7 @@ import statistics
 from pathlib import Path
 
 import foundry
+import pytest
 from foundry import query, registry
 from foundry.models import Issue
 from foundry.query_measure import measure_sequence
@@ -51,6 +52,9 @@ def _without_durations(value):
     return value
 
 
+@pytest.mark.historical_fixture(
+    reason="requires the omitted FOUNDRY-74 historical measurement script",
+)
 def test_historical_measurement_command_order_matches_skill_workflows():
     measurement = _measurement_module()
     expected = {
@@ -67,6 +71,9 @@ def test_historical_measurement_command_order_matches_skill_workflows():
     assert observed == expected
 
 
+@pytest.mark.historical_fixture(
+    reason="requires the omitted FOUNDRY-74 historical measurement script",
+)
 def test_reproducible_five_workflow_measurement_exceeds_reduction_target():
     evidence = _measurement_module().run()
     results = evidence["results"]
@@ -91,6 +98,9 @@ def test_reproducible_five_workflow_measurement_exceeds_reduction_target():
             assert all(row["command"].startswith("query ") for row in aggregate["commands"])
 
 
+@pytest.mark.historical_fixture(
+    reason="requires the omitted FOUNDRY-74 measurement script and baseline",
+)
 def test_versioned_baseline_matches_fresh_generator_except_duration():
     fresh = _measurement_module().run()
     checked_in = json.loads(BASELINE.read_text(encoding="utf-8"))

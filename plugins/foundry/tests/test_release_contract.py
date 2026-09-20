@@ -206,6 +206,9 @@ def test_changelog_publishes_unique_strictly_descending_versions():
         assert body, f"empty CHANGELOG section for {version}"
 
 
+@pytest.mark.historical_fixture(
+    reason="requires unsanitized historical release documents omitted from this snapshot",
+)
 def test_published_release_sections_and_documents_stay_frozen():
     frozen = json.loads(RELEASE_HISTORY.read_text(encoding="utf-8"))["releases"]
     published = changelog_sections()
