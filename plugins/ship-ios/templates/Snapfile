@@ -1,0 +1,20 @@
+# Snapfile — screenshot matrix for `fastlane screenshots`. Scaffolded by ship-ios:setup.
+# The device list must cover the App Store required sizes for your app.
+
+devices([
+  "iPhone 16 Pro Max",   # 6.9" required
+  "iPhone 16",           # 6.1"
+  "iPad Pro 13-inch (M4)" # iPad, if you ship iPad
+])
+
+# Locales you ship — MUST match the dirs under fastlane/metadata/. No default language.
+languages([
+  "en-US",
+  "fr-FR"
+  # "es-ES", …
+])
+
+scheme("{{UITEST_SCHEME}}")     # the scheme that runs the ScreenshotUITests
+output_directory("./fastlane/screenshots")
+clear_previous_screenshots(true)
+override_status_bar(true)       # clean status bar (full battery, fixed time) — Apple-friendly

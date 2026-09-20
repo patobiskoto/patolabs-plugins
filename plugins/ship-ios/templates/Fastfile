@@ -1,0 +1,80 @@
+# Fastfile — release lanes for {{SCHEME}}, scaffolded by ship-ios (Model A).
+#
+# MODEL A: Xcode Cloud builds, signs (cloud-managed signing), and uploads the release
+# build to TestFlight. fastlane NEVER builds the release binary here — it owns metadata,
+# screenshots, and submission only. The one local build that remains is the UITest run
+# for screenshots (unsigned test build, no distribution signing).
+#
+# App Store Connect API key (least-privilege "App Manager"): referenced by env/secret,
+# never committed. Set ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH (path to the .p8).
+
+default_platform(:ios)
+
+SCHEME       = "{{SCHEME}}"
+BUNDLE_ID    = "{{BUNDLE_ID}}"
+# App Store locales you ship — MUST match fastlane/metadata/<locale>/ and Snapfile.
+LOCALES      = %w[en-US fr-FR]   # {{LOCALES}}
+
+def asc_api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID", "{{ASC_KEY_ID}}"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID", "{{ASC_ISSUER_ID}}"),
+    key_filepath: ENV.fetch("ASC_KEY_PATH", "{{ASC_KEY_PATH}}"),
+    in_house: false
+  )
+end
+
+# Guard: every shipped locale must have its metadata before we push anything to Apple.
+# Lanes run with the CWD inside fastlane/, so anchor on __dir__, never on "fastlane/...".
+def verify_locales
+  missing = LOCALES.reject { |l| File.exist?(File.join(__dir__, "metadata", l, "release_notes.txt")) }
+  UI.user_error!("Locales missing release_notes.txt: #{missing.join(', ')}") unless missing.empty?
+end
+
+platform :ios do
+  desc "Report the latest TestFlight build for a version (the beta gate polls this)"
+  lane :testflight_status do |options|
+    n = latest_testflight_build_number(
+      api_key: asc_api_key, app_identifier: BUNDLE_ID,
+      version: options[:version]
+    )
+    UI.message("Latest TestFlight build for #{options[:version] || 'any version'}: #{n}")
+    n
+  end
+
+  desc "Regenerate the store screenshots (device × locale matrix) and frame them"
+  lane :screenshots do
+    capture_screenshots            # runs the UITest scheme from Snapfile (unsigned)
+    frame_screenshots(white: true) # optional device frames — drop for raw captures
+  end
+
+  desc "Push store metadata only (no binary, no screenshots) — iterate store text between versions"
+  lane :metadata do
+    verify_locales
+    upload_to_app_store(
+      api_key: asc_api_key, app_identifier: BUNDLE_ID,
+      skip_binary_upload: true, skip_screenshots: true,
+      run_precheck_before_submit: false, force: true
+    )
+  end
+
+  desc "Attach metadata + screenshots to the Xcode-Cloud build and SUBMIT for review"
+  lane :submit do |options|
+    ensure_git_status_clean                       # don't ship from a dirty tree
+    verify_locales
+    version = options[:version].to_s.strip
+    UI.user_error!("submit requires a non-empty version:") if version.empty?
+    upload_to_app_store(
+      api_key: asc_api_key, app_identifier: BUNDLE_ID,
+      app_version: version,                       # creates the ASC version draft if missing
+      build_number: options[:build],              # the build Xcode Cloud put in ASC
+      skip_binary_upload: true,                   # KEY of Model A: fastlane builds nothing
+      skip_screenshots: false,
+      submit_for_review: true,
+      automatic_release: true,                    # ship on approval (one-line flip to false)
+      force: true,                                # no interactive HTML preview
+      precheck_include_in_app_purchases: false,
+      submission_information: { add_id_info_uses_idfa: false }  # no tracking / no IDFA
+    )
+  end
+end

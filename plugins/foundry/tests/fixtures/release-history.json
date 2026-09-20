@@ -1,0 +1,84 @@
+{
+  "_contract": "Frozen evidence for every published Foundry release (FOUNDRY-136). The release-contract test asserts this file covers exactly the versioned CHANGELOG sections, that each section still hashes to its frozen digest, and that every listed document still exists byte-for-byte. Content assertions for a release are made once, at publication, and frozen here instead of being reconducted literally in the test forever.",
+  "_freeze": "A failing or missing entry prints the exact JSON block to paste. Editing a digest is a deliberate act: it means a published release section or document was rewritten.",
+  "releases": {
+    "0.8.1": {
+      "date": "2026-09-13",
+      "changelog_sha256": "d6b056ea966afbd37ea8042f7cb43f06901202d7d2ecd4e3937f59eb91f89a9b",
+      "documents": {}
+    },
+    "0.8.0": {
+      "date": "2026-08-29",
+      "changelog_sha256": "f024ed49c6afe07c6e557156e0953a8f229cb8028d5e3b27c71af1e22a3aef5e",
+      "documents": {
+        "docs/migration-0.8.0.md": "d7f49ae0c2b673d14fdbd4da618b2fb874a0a297f6607f6dfcc9db66b93ca07c",
+        "docs/release-0.8.0-decision.md": "e91f24a34a67316067779415fb112d83ebddf1e5ede6f1c057064bbf109bf450",
+        "docs/release-0.8.0.md": "6b5d018faa5b16420b69ee495f56fbc48b23da5edbd4925365b408701e9a9fa5",
+        "benchmarks/foundry-46/report-v2/pilot-20260825/results-v2.json": "63614a48e3ea300ab41aaef19601271d6d47b90e74aa8dc295dfebbd604b8493"
+      }
+    },
+    "0.7.0": {
+      "date": "2026-08-22",
+      "changelog_sha256": "7c028725d32c512278831a180222430949a5a1372d6cf4c5725de0c90495507a",
+      "documents": {
+        "docs/migration-0.7.0.md": "c0950cf6986dd0087c4d4d2b14816100d1663cc0217594ca0955d99dbfe29dd0",
+        "docs/release-0.7.0.md": "fdd3b0faf5cde69bff8b77de5706e288d90fe45413e82a123f6f3cd7aff30fe4"
+      }
+    },
+    "0.6.2": {
+      "date": "2026-08-20",
+      "changelog_sha256": "7106a9adbfc6e7569b9fe078430ecbe3fd8ff25c5452a6202010833548e9b0dd",
+      "documents": {}
+    },
+    "0.6.1": {
+      "date": "2026-08-20",
+      "changelog_sha256": "c4c28f2de67d67e2888a66e376631cd4037a01d8a136c6c614f5927cf0e3e530",
+      "documents": {}
+    },
+    "0.6.0": {
+      "date": "2026-07-21",
+      "changelog_sha256": "ef0071623abb6f40b1487b43c3b8ed5903dacccfe6e5403769db12cb858f68a6",
+      "documents": {}
+    },
+    "0.5.0": {
+      "date": "2026-07-02",
+      "changelog_sha256": "96037f9b7914b18007ccfa16622e8ba84c708377ab6f6aa1424b614d3f4592c9",
+      "documents": {}
+    },
+    "0.4.1": {
+      "date": "2026-07-02",
+      "changelog_sha256": "9917d8f99575e304e2dfb19bfd83606dd20779a45dcc248903ed63c53ac5a197",
+      "documents": {}
+    },
+    "0.4.0": {
+      "date": "2026-07-02",
+      "changelog_sha256": "2343b32260f5d55cf806af173be172a111b2cf87eebc52c927179fc1a3ddb9f1",
+      "documents": {}
+    },
+    "0.3.1": {
+      "date": "2026-07-02",
+      "changelog_sha256": "7f8d64c15feaf305c16752b51038ce24ff5db761a857a75f64cf468dd656864f",
+      "documents": {}
+    },
+    "0.3.0": {
+      "date": "2026-07-01",
+      "changelog_sha256": "d99384f924d9db9a45c9e0fdce571ab758d5c02c5fbf7b2f781ce4543c453909",
+      "documents": {}
+    },
+    "0.2.0": {
+      "date": "2026-07-01",
+      "changelog_sha256": "b1022d090d3a8cfa757884dce706f8222bb9048d20b18c4994f5970e2d6fd7a1",
+      "documents": {}
+    },
+    "0.1.1": {
+      "date": "2026-07-01",
+      "changelog_sha256": "387a8f7e55942f5ed3749d2e70019b0d1ddc46c8aeeaddd57a2e28120f036d25",
+      "documents": {}
+    },
+    "0.1.0": {
+      "date": "2026-07-01",
+      "changelog_sha256": "690817c6a637832e061606ae2761293d8bd96d3d66d345c58f384a99eff8b67e",
+      "documents": {}
+    }
+  }
+}

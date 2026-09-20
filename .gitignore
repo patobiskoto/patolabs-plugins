@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+# never commit secrets or the local registry (which holds project ids, harmless, but env-specific)
+*.env
+config.env

@@ -1,0 +1,97 @@
+{
+  "name": "foundry",
+  "description": "The foundation: idea → guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution loop, backed by pluggable trackers (YouTrack or DevHubTracker) and code-hosts. Delegated identities: Lupin, Eiffel, Maigret, and Vauban. Judgment lives in the skills, invariants in the code.",
+  "version": "0.8.1",
+  "author": { "name": "pato" },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/foundry",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": ["project-management", "youtrack", "adr", "workflow", "backlog", "roadmap"],
+  "userConfig": {
+    "YOUTRACK_URL": {
+      "type": "string",
+      "title": "YouTrack instance URL",
+      "description": "e.g. https://yourname.youtrack.cloud"
+    },
+    "YOUTRACK_TOKEN": {
+      "type": "string",
+      "title": "YouTrack permanent token",
+      "description": "perm-… token with project read/write. Stored in your OS keychain.",
+      "sensitive": true
+    },
+    "DEVHUB_URL": {
+      "type": "string",
+      "title": "Dev Hub instance URL",
+      "description": "Base HTTP(S) URL of a DevHubTracker v1 instance"
+    },
+    "DEVHUB_TRACKER_TOKEN": {
+      "type": "string",
+      "title": "DevHubTracker service token",
+      "description": "High-entropy scoped service credential. Stored in your OS keychain.",
+      "sensitive": true
+    },
+    "DEVHUB_TRACKER_PROOF_SECRET": {
+      "type": "string",
+      "title": "DevHubTracker proof secret",
+      "description": "Independent HMAC authority for bounded review/done/ADR proofs.",
+      "sensitive": true
+    },
+    "DEVHUB_COMMAND_TOKEN": {
+      "type": "string",
+      "title": "DevHub Foundry command token",
+      "description": "Narrow service credential with command claim/event scopes only. Stored in your OS keychain.",
+      "sensitive": true
+    },
+    "FOUNDRY_TRACKER": {
+      "type": "string",
+      "title": "Tracker provider",
+      "description": "youtrack (default) | devhub | ghprojects (stub)",
+      "default": "youtrack"
+    },
+    "FOUNDRY_CODEHOST": {
+      "type": "string",
+      "title": "Code-host provider",
+      "description": "github (default)",
+      "default": "github"
+    },
+    "FOUNDRY_CLAUDE_AVAILABLE_MODELS": {
+      "type": "string",
+      "title": "Available Claude routing models",
+      "description": "Optional canonical CSV, e.g. haiku-4.5,sonnet-5,opus-5,fable-5"
+    },
+    "FOUNDRY_LOCAL_SCOUT_ENABLED": {
+      "type": "string",
+      "title": "Enable local preprocessing",
+      "description": "Trusted opt-in only: 0 (default) or 1. This local model never becomes a Foundry role or gate.",
+      "default": "0"
+    },
+    "FOUNDRY_LOCAL_SCOUT_BASE_URL": {
+      "type": "string",
+      "title": "Local Scout loopback URL",
+      "description": "Required only when enabled: exactly http://127.0.0.1:<port> or http://[::1]:<port>."
+    },
+    "FOUNDRY_LOCAL_SCOUT_CONNECTION_TIMEOUT_SECONDS": {
+      "type": "string",
+      "title": "Local Scout connection timeout (seconds)",
+      "description": "Trusted timing budget only: a finite number greater than 0 and at most 10. This does not enable local preprocessing or select an endpoint, model, or fallback.",
+      "default": "2"
+    },
+    "FOUNDRY_LOCAL_SCOUT_TOTAL_TIMEOUT_SECONDS": {
+      "type": "string",
+      "title": "Local Scout total timeout (seconds)",
+      "description": "Trusted timing budget only: a finite number greater than 0, at most 120, and no less than the connection timeout. This does not enable local preprocessing or select an endpoint, model, or fallback.",
+      "default": "8"
+    },
+    "FOUNDRY_LOCAL_SCOUT_CLOUD_FALLBACK": {
+      "type": "string",
+      "title": "Legacy cloud fallback authorization",
+      "description": "Deprecated 0.x compatibility alias: 0 or 1. Migrate to FOUNDRY_LOCAL_SCOUT_ON_FAILURE before 1.0. A legacy 1 remains effective when Claude injects the canonical manifest default error.",
+      "default": "0"
+    },
+    "FOUNDRY_LOCAL_SCOUT_ON_FAILURE": {
+      "type": "string",
+      "title": "Local Scout failure policy",
+      "description": "Trusted canonical policy: error (default) or cloud_economy. An explicit direct canonical value wins; cloud_economy emits one in-process host-facade plan with sanitized evidence and the resolved route, never a cloud invocation.",
+      "default": "error"
+    }
+  }
+}

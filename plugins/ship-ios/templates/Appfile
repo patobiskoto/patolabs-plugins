@@ -1,0 +1,5 @@
+# Appfile — identity for fastlane. Scaffolded by ship-ios:setup.
+app_identifier("{{BUNDLE_ID}}")
+apple_id("{{APPLE_ID}}")        # your Apple account email (App Store Connect)
+team_id("{{TEAM_ID}}")          # Developer Portal team id
+itc_team_id("{{ITC_TEAM_ID}}")  # App Store Connect team id (often same); optional

@@ -1,0 +1,7 @@
+{
+  "claude": {"default": {"version": 1, "levels": ["low", "medium", "high", "xhigh", "max"], "inadmissible": {}}},
+  "codex": {
+    "default": {"version": 1, "levels": ["low", "medium", "high", "xhigh", "max"], "inadmissible": {}},
+    "gpt-6": {"version": 1, "levels": ["low", "medium", "high", "xhigh", "max", "ultra"], "inadmissible": {"ultra": "automatic task delegation is inadmissible pending a Foundry ADR"}}
+  }
+}

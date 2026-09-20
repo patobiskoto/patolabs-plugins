@@ -1,0 +1,36 @@
+{
+  "name": "foundry",
+  "description": "Idea to merge: guided framing, ADRs, precise issues, value-first roadmap, and a gated delivery loop over pluggable tracker and code-host adapters.",
+  "version": "0.8.1",
+  "author": {
+    "name": "pato"
+  },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/foundry",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": [
+    "project-management",
+    "youtrack",
+    "adr",
+    "workflow",
+    "backlog",
+    "roadmap"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Foundry",
+    "shortDescription": "Frame, plan, execute, and merge with durable project memory.",
+    "longDescription": "Turn rough ideas into ADR-backed issues, sequence work by value, and run a gated issue-to-merge delivery loop over YouTrack or DevHubTracker and GitHub with Lupin, Eiffel, Maigret, and Vauban.",
+    "developerName": "patolabs",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/foundry",
+    "defaultPrompt": [
+      "Frame this idea into ADRs and precise issues.",
+      "Recommend the next issue by value and dependencies.",
+      "Review and merge this issue through every gate."
+    ]
+  }
+}

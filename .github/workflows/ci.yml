@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  foundry:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/foundry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test dependencies
+        run: pip install pytest ruff==0.16.1
+      - name: Compile tooling
+        run: python -m compileall tooling
+      - name: Lint
+        run: ruff check tooling tests hooks
+      - name: Validate model-routing invocation contract
+        run: pytest -q tests/test_routing_contract.py
+      - name: Run pure-logic tests
+        run: pytest -q -m "not integration and not benchmark_campaign" tests --ignore=tests/test_routing_contract.py
+
+  ship-ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: plugins/ship-ios
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py'

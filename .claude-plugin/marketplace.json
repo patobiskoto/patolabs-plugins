@@ -1,0 +1,17 @@
+{
+  "name": "patolabs",
+  "description": "Claude Code and Codex plugins for framing, delivering, and shipping software.",
+  "owner": { "name": "pato" },
+  "plugins": [
+    {
+      "name": "foundry",
+      "source": "./plugins/foundry",
+      "description": "Idea→merge: guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution loop, over a pluggable tracker + code-host. Judgment in the skills, invariants in the code."
+    },
+    {
+      "name": "ship-ios",
+      "source": "./plugins/ship-ios",
+      "description": "Merge→live for iOS apps: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. Composes with Foundry by data."
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "ship-ios",
+  "description": "The release loop for iOS apps: turn a cut version into a shipped App Store build. Consumes a locale-neutral changelog (from Foundry or a file), drafts user-facing release notes per App Store locale, drives fastlane (TestFlight beta gate \u2192 metadata + screenshots + submit), and hands back to the tracker. Composes with Foundry; never depends on it.",
+  "version": "0.2.1",
+  "author": {
+    "name": "pato"
+  },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": [
+    "ios",
+    "release",
+    "fastlane",
+    "app-store",
+    "testflight",
+    "changelog"
+  ]
+}

@@ -1,0 +1,5 @@
+# The constraint is deliberately loose: the COMMITTED Gemfile.lock is what pins
+# fastlane so local and CI run the same version — ship-ios:setup requires it in git.
+# Run lanes via `bundle exec fastlane <lane>`. Scaffolded by ship-ios:setup.
+source "https://rubygems.org"
+gem "fastlane"

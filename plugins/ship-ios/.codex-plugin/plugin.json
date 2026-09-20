@@ -1,0 +1,35 @@
+{
+  "name": "ship-ios",
+  "description": "The iOS release loop: locale-aware release notes, Xcode Cloud build, TestFlight beta gate, screenshots, and App Store submission.",
+  "version": "0.2.1",
+  "author": {
+    "name": "pato"
+  },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/ship-ios",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": [
+    "ios",
+    "release",
+    "fastlane",
+    "app-store",
+    "testflight",
+    "changelog"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ship-ios",
+    "shortDescription": "Ship an Xcode Cloud build through TestFlight to the App Store.",
+    "longDescription": "Provision fastlane metadata tooling, draft release notes per locale, trigger Xcode Cloud, enforce a real-device beta gate, and submit to the App Store.",
+    "developerName": "patolabs",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/ship-ios",
+    "defaultPrompt": [
+      "Set up the iOS release workflow in this app.",
+      "Ship the next version through TestFlight and App Store review."
+    ]
+  }
+}

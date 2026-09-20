@@ -1,0 +1,74 @@
+{
+  "artifact": "foundry.local_scout.benchmark_contract",
+  "contract_version": 1,
+  "scope": "candidate-agnostic protocol; contains no benchmark result",
+  "repetitions_per_state": 3,
+  "state_order": ["cold_start", "warm_run", "already_loaded"],
+  "states": [
+    {
+      "state": "cold_start",
+      "loaded_before_timing": false,
+      "preparation_kind": "external_unloaded_reset",
+      "preparation_relation": "one_excluded_preparation_per_repetition",
+      "predecessor_relation": "none",
+      "load_cost_policy": "may_be_in_timed_request"
+    },
+    {
+      "state": "warm_run",
+      "loaded_before_timing": true,
+      "preparation_kind": null,
+      "preparation_relation": "none",
+      "predecessor_relation": "immediately_prior_measured_run_attesting_loaded_after",
+      "load_cost_policy": "model_attested_loaded_before_timing"
+    },
+    {
+      "state": "already_loaded",
+      "loaded_before_timing": true,
+      "preparation_kind": "external_preload",
+      "preparation_relation": "one_excluded_preparation_before_series",
+      "predecessor_relation": "excluded_preparation_not_measured_run",
+      "load_cost_policy": "preparation_excluded_from_timing"
+    }
+  ],
+  "warm_predecessor_max_gap_seconds": 120.0,
+  "effective_limit_maxima_seconds": {
+    "connection_timeout_seconds": 10.0,
+    "total_timeout_seconds": 120.0
+  },
+  "timeout_observation_overhead_max_seconds": 0.25,
+  "required_metadata": [
+    "candidate.identifier",
+    "candidate.checksum_sha256",
+    "candidate.quantization",
+    "runtime.name",
+    "runtime.version",
+    "runtime.instance_id",
+    "prompt_template_sha256",
+    "hardware.host_id",
+    "hardware.architecture",
+    "hardware.cpu_model",
+    "hardware.logical_cpu_count",
+    "hardware.memory_bytes",
+    "hardware.accelerator_model",
+    "hardware.accelerator_count",
+    "hardware.accelerator_memory_bytes",
+    "effective_limits.connection_timeout_seconds",
+    "effective_limits.total_timeout_seconds",
+    "request_parameters.max_output_tokens",
+    "request_parameters.temperature",
+    "request_parameters.top_p",
+    "request_parameters.seed",
+    "request_parameters.stream"
+  ],
+  "reporting": {
+    "group_by": ["state"],
+    "metrics": ["timeout_rate", "median_seconds", "p95_seconds"],
+    "p95_method": "nearest_rank",
+    "aggregate_decimal_places": 6
+  },
+  "classification": {
+    "completed": "completed",
+    "product_timeout": "configured_product_limit_reached",
+    "model_failure": "model_failure"
+  }
+}
