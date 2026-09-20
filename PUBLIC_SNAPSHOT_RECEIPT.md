@@ -11,6 +11,8 @@
 
 ## Source CI verification
 
+- CI `verified_at` (UTC): `2026-09-20T19:38:55Z`
+
 GitHub check-runs were queried for the exact source commit before export. The
 `catalogue`, `foundry`, and `ship-ios` runs concluded `success`; the conditional
 `foundry-benchmark-campaigns` and `foundry-youtrack-smoke` runs concluded `skipped`.
