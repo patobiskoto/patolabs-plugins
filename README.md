@@ -23,6 +23,20 @@ codex plugin add ship-ios@patolabs
 The skill names are identical. Invoke them as `/foundry:frame` in Claude Code and
 `$foundry:frame` in Codex (same rule for `ship-ios`).
 
+## Public scope
+
+This repository is published under [Apache-2.0](LICENSE). It is maintained by the
+Patolabs team, but it is **not accepting external contributions at this stage**: do not
+open a pull request or look for a GitHub Issues backlog. GitHub Issues are disabled and
+the product backlog is kept out of this repository.
+
+To report a vulnerability, use [GitHub private vulnerability reporting](SECURITY.md).
+Do not disclose security details in a pull request, commit, or public discussion.
+
+Foundry's currently shipped tracker and code-host adapters are YouTrack and GitHub. This
+repository does not yet ship a Linear adapter or a ChatGPT MCP integration; those are
+planned work, not installation features.
+
 ## Plugins
 
 | Plugin | Owns | In one line |
