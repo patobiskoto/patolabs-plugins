@@ -245,9 +245,10 @@ class PublicSurfaceContract(unittest.TestCase):
             "$foundry:frame",
         ):
             self.assertIn(command, readme)
-        self.assertIn("fail-closed Linear issue-lifecycle adapter", readme)
+        self.assertIn("fail-closed Linear issue adapter", readme)
         self.assertIn("explicit repository/team/project/", readme)
-        self.assertIn("live cutover and ChatGPT MCP activation remain separate planned work", readme)
+        self.assertIn("existing-issue field, state, parent, body, and AC", readme)
+        self.assertIn("Live cutover and ChatGPT MCP activation remain separate planned work", readme)
 
     def test_external_contributions_are_explicitly_declined(self) -> None:
         self.assertIn("not accepting external contributions", self.text("README.md"))

@@ -3,11 +3,12 @@
 ## Unreleased
 
 ### Added
-- A fail-closed Linear tracker adapter using explicit repository, team, project, and
-  workflow-state identifiers. It supports bounded issue read/create/update/state/body,
-  acceptance sync, relations, comments, and exact GitHub PR attachments; exposes ADR
-  knowledge-base and other unavailable capabilities as typed failures; and leaves live
-  cutover to FOUNDRY-159.
+- A fail-closed Linear tracker adapter using explicit repository, team, project,
+  workflow-state, label, and milestone identifiers. It supports strict issue reads,
+  atomic creation, additive relations/comments, and GitHub PR attachments. Existing
+  issue field/state/parent/body replacement and acceptance sync stay typed-unavailable
+  because Linear exposes no atomic anti-overwrite precondition; the ADR knowledge base
+  is likewise unavailable, and live cutover remains FOUNDRY-159.
 - A dedicated, audit-bound `rearm-remediation` transition for a just-exhausted bounded
   correction window that is not yet halted. It CAS-binds the issue, recorded role,
   original halt generation, controlled human reason, and 1..3 new credits; preserves

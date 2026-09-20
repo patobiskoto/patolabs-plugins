@@ -6,18 +6,21 @@ import copy
 import pytest
 
 import foundry
-from foundry.models import Adr, Project
+from foundry import query, registry, routing
+from foundry.models import Adr, Issue, Project
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
+    AcceptanceSyncUnavailableError,
     BodyUpdateUnavailableError,
     TrackerCapabilityUnavailableError,
-    TrackerConflictError,
 )
+from foundry.trackers.devhub import DevHubTracker
 from foundry.trackers.linear import (
     LinearBindingError,
     LinearTracker,
     LinearTrackerError,
 )
+from foundry.trackers.youtrack import YouTrackTracker
 
 
 STATE_IDS = {
@@ -53,7 +56,7 @@ def raw_issue(identifier, native_id, *, title="Issue", body="- [ ] acceptance"):
         "projectMilestone": {"id": "milestone-m1", "name": "ignored"},
         "labels": connection([
             {"id": "label-feature", "name": "Feature display"},
-            {"id": "label-pilot", "name": "pilot"},
+            {"id": "label-pilot", "name": "Pilot display"},
         ]),
         "parent": None, "children": connection([]), "relations": connection([]),
         "inverseRelations": connection([]), "attachments": connection([]),
@@ -71,7 +74,6 @@ class LinearWire:
         }
         self.comments = {}
         self.calls = []
-        self.after_update = None
 
     def _by_native(self, native):
         return next(value for value in self.issues.values() if value["id"] == native)
@@ -96,15 +98,6 @@ class LinearWire:
             self.issues[identifier] = created
             return {"data": {"issueCreate": {
                 "success": True, "issue": {"id": created["id"], "identifier": identifier},
-            }}}
-        if "FoundryLinearIssueUpdate" in document:
-            issue = self._by_native(variables["id"])
-            self._apply(issue, variables["input"])
-            if self.after_update is not None:
-                self.after_update(issue)
-            return {"data": {"issueUpdate": {
-                "success": True,
-                "issue": {"id": issue["id"], "identifier": issue["identifier"]},
             }}}
         if "FoundryLinearIssueRelationCreate" in document:
             value = variables["input"]
@@ -163,7 +156,7 @@ class LinearWire:
         if "labelIds" in values:
             names = {
                 "label-feature": "Feature display", "label-bug": "Bug display",
-                "label-pilot": "pilot", "label-api": "api",
+                "label-pilot": "Pilot display", "label-api": "API display",
             }
             issue["labels"] = connection([{"id": item, "name": names[item]} for item in values["labelIds"]])
         if "parentId" in values:
@@ -191,9 +184,21 @@ def proof(issue_id, body):
     }
 
 
-def test_factory_recognizes_linear_without_changing_existing_providers(monkeypatch):
-    monkeypatch.setattr(foundry.config, "require", lambda key: "linear-secret")
+def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(monkeypatch):
+    secrets = {
+        "YOUTRACK_URL": "https://example.youtrack.cloud",
+        "YOUTRACK_TOKEN": "youtrack-secret",
+        "LINEAR_API_TOKEN": "linear-secret",
+        "DEVHUB_TRACKER_TOKEN": "t" * 24,
+        "DEVHUB_TRACKER_PROOF_SECRET": "p" * 32,
+    }
+    monkeypatch.setattr(foundry.config, "require", secrets.__getitem__)
+    monkeypatch.setattr(
+        foundry.config, "require_public", lambda key: "https://devhub.example.test",
+    )
     assert isinstance(foundry.tracker("linear"), LinearTracker)
+    assert isinstance(foundry.tracker("youtrack"), YouTrackTracker)
+    assert isinstance(foundry.tracker("devhub"), DevHubTracker)
     assert foundry.tracker("ghprojects").name == "ghprojects"
 
 
@@ -208,14 +213,22 @@ def test_binding_requires_explicit_repository_team_project_and_all_state_ids(tra
     with pytest.raises(LinearBindingError, match="state_ids_incomplete"):
         instance.search(missing_state)
 
+    overlapping_labels = copy.deepcopy(PROJECT)
+    overlapping_labels.extra["label_ids"]["pilot"] = "label-feature"
+    with pytest.raises(LinearBindingError, match="label_ids_overlap"):
+        instance.search(overlapping_labels)
 
-def test_controlled_round_trip_retains_ids_links_state_pr_and_acceptance_text(tracker):
+
+def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_reader(
+    tracker, monkeypatch,
+):
     instance, wire = tracker
     listed = instance.search(PROJECT)
     assert listed[0].id == "LIN-1"
     assert listed[0].state == "ready"
     assert listed[0].milestone == "M1"
     assert listed[0].type == "Feature"
+    assert listed[0].labels == ["pilot"]
 
     created = instance.create_issue(
         PROJECT, "Round trip", "- [ ] exact acceptance",
@@ -228,15 +241,6 @@ def test_controlled_round_trip_retains_ids_links_state_pr_and_acceptance_text(tr
     assert created.id == "LIN-3"
     assert any(link.type == "subtask-of" and link.target == "LIN-1" for link in created.links)
 
-    updated = instance.update_fields(
-        created.id,
-        {"Priority": "P0", "Estimate": 8, "Type": "Bug", "Labels": ["api"]},
-        project=PROJECT,
-    )
-    assert (updated.priority, updated.estimate, updated.type, updated.labels) == (
-        "P0", 8, "Bug", ["api"],
-    )
-    instance.set_state(created.id, "review", project=PROJECT)
     instance.link(created.id, "depends-on", "LIN-2", project=PROJECT)
     instance.add_comment(created.id, "bounded progress", project=PROJECT)
     instance.update_fields(
@@ -244,28 +248,145 @@ def test_controlled_round_trip_retains_ids_links_state_pr_and_acceptance_text(tr
         project=PROJECT,
     )
 
-    expected = "- [ ] exact acceptance"
-    wanted = "- [x] exact acceptance"
-    assert instance.sync_acceptance_body(
-        created.id, expected, wanted, proof(created.id, expected), project=PROJECT,
-    ) is True
-    final = instance.get_issue(created.id)
-    assert final.state == "review"
+    fresh = LinearTracker(token="linear-test-secret", transport=wire)
+    with pytest.raises(LinearBindingError, match="project_not_resolved"):
+        fresh.get_issue(created.id)
+    monkeypatch.setattr(registry, "resolve", lambda provider, repo: PROJECT)
+    fresh.resolve_project("widgets")
+    final = fresh.get_issue(created.id)
+    assert final.state == "ready"
     assert final.pr_url == "https://github.com/acme/widgets/pull/17"
-    assert final.body == wanted and (final.ac_done, final.ac_total) == (1, 1)
+    assert (final.priority, final.estimate, final.type, final.labels) == (
+        "P1", 5, "Feature", ["pilot"],
+    )
+    assert final.body == "- [ ] exact acceptance" and (final.ac_done, final.ac_total) == (0, 1)
     assert any(link.type == "depends-on" and link.target == "LIN-2" for link in final.links)
     assert wire.comments["comment-1"]["body"] == "bounded progress"
 
 
-def test_update_conflict_is_detected_after_one_write_without_retry(tracker):
+def test_existing_issue_replacements_are_unavailable_before_provider_write(tracker):
     instance, wire = tracker
-    instance.search(PROJECT)
-    wire.after_update = lambda issue: issue.update(priority=4)
-    before = len([call for call in wire.calls if "FoundryLinearIssueUpdate" in call[0]])
-    with pytest.raises(TrackerConflictError, match="no retry"):
+    before = len(wire.calls)
+    assert instance.acceptance_sync_supported is False
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match="existing-issue-field-replacement",
+    ):
         instance.update_fields("LIN-2", {"Priority": "P0"}, project=PROJECT)
-    after = len([call for call in wire.calls if "FoundryLinearIssueUpdate" in call[0]])
-    assert after - before == 1
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match="existing-issue-field-replacement",
+    ):
+        instance.set_state("LIN-2", "review", project=PROJECT)
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match="existing-issue-parent-replacement",
+    ):
+        instance.link("LIN-2", "subtask-of", "LIN-1", project=PROJECT)
+    with pytest.raises(BodyUpdateUnavailableError, match="anti-écrasement"):
+        instance.update_body(
+            Issue(id="LIN-2", title="Existing"), "old", "new", project=PROJECT,
+        )
+    with pytest.raises(AcceptanceSyncUnavailableError, match="anti-écrasement"):
+        instance.sync_acceptance_body(
+            "LIN-2", "- [ ] AC", "- [x] AC", proof("LIN-2", "- [ ] AC"),
+            project=PROJECT,
+        )
+    assert len(wire.calls) == before
+
+
+def test_normalization_rejects_missing_or_unknown_label_identifiers(tracker):
+    instance, wire = tracker
+    del wire.issues["LIN-1"]["labels"]["nodes"][0]["id"]
+    with pytest.raises(LinearTrackerError) as missing:
+        instance.search(PROJECT)
+    assert missing.value.code == "invalid_response"
+
+    wire.issues["LIN-1"] = raw_issue("LIN-1", "issue-uuid-1", title="Parent")
+    wire.issues["LIN-1"]["labels"]["nodes"][0]["id"] = "label-unknown"
+    with pytest.raises(LinearBindingError) as unknown:
+        instance.search(PROJECT)
+    assert unknown.value.code == "label_id_unmapped"
+
+
+def test_normalization_rejects_unmapped_milestone_identifier(tracker):
+    instance, wire = tracker
+    wire.issues["LIN-1"]["projectMilestone"] = {
+        "id": "milestone-unknown", "name": "M1",
+    }
+    with pytest.raises(LinearBindingError) as error:
+        instance.search(PROJECT)
+    assert error.value.code == "milestone_id_unmapped"
+
+
+def test_query_issue_resolves_fresh_binding_and_projects_typed_adr_unavailability(
+    tracker, monkeypatch,
+):
+    _, wire = tracker
+    fresh = LinearTracker(token="linear-test-secret", transport=wire)
+    resolved = []
+
+    def resolve(provider, repo):
+        resolved.append((provider, repo))
+        return PROJECT
+
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "widgets")
+    monkeypatch.setattr(registry, "resolve", resolve)
+
+    result = query.issue("LIN-2")
+
+    assert resolved == [("linear", "widgets")]
+    assert result["issue"]["id"] == "LIN-2"
+    assert result["adrs"] == {
+        "status": "unavailable",
+        "tracker": "linear",
+        "capability": "adr-knowledge-base",
+    }
+
+
+def test_record_review_proof_resolves_fresh_binding_before_issue_read(
+    tracker, monkeypatch, tmp_path, capsys,
+):
+    _, wire = tracker
+    fresh = LinearTracker(token="linear-test-secret", transport=wire)
+    resolved = []
+    captured = {}
+
+    def resolve(provider, repo):
+        resolved.append((provider, repo))
+        return PROJECT
+
+    class ProofStore:
+        def __init__(self, repository):
+            captured["repository"] = repository
+
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return {"proof_id": "f" * 64}
+
+    outcomes = tmp_path / "outcomes.json"
+    outcomes.write_text(
+        '{"outcomes": [], "quality": {"verdict": "pass"}}', encoding="utf-8",
+    )
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "widgets")
+    monkeypatch.setattr(registry, "resolve", resolve)
+    monkeypatch.setattr(routing, "repository_identity", lambda root=None: "acme/widgets")
+    monkeypatch.setattr(routing, "AcceptanceProofStore", ProofStore)
+
+    routing.main([
+        "record-review-proof",
+        "--issue", "LIN-2",
+        "--diff-hash", "d" * 64,
+        "--claim-id", "c" * 64,
+        "--outcomes-file", str(outcomes),
+        "--base", "b" * 40,
+        "--root", str(tmp_path),
+    ])
+
+    assert resolved == [("linear", "widgets")]
+    assert captured["repository"] == "acme/widgets"
+    assert captured["issue_id"] == "LIN-2"
+    assert captured["issue_body"] == "- [ ] acceptance"
+    assert '"proof_id": "' + "f" * 64 + '"' in capsys.readouterr().out
 
 
 def test_malformed_and_provider_error_payloads_are_redacted(tmp_path, monkeypatch):
@@ -294,7 +415,7 @@ def test_unsupported_capabilities_are_typed_and_never_fall_back(tracker):
         instance.list_adrs(PROJECT)
     with pytest.raises(TrackerCapabilityUnavailableError, match="provider-native-search-query"):
         instance.search(PROJECT, "display name lookup")
-    with pytest.raises(BodyUpdateUnavailableError, match="ADR"):
+    with pytest.raises(BodyUpdateUnavailableError, match="anti-écrasement"):
         instance.update_body(
             Adr(id="LIN-ADR-0001", title="ADR"), "old", "new", project=PROJECT,
         )

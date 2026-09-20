@@ -49,7 +49,9 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 For Linear, select `--tracker linear`, then store `LINEAR_API_TOKEN` with the same
 interactive `configure credential` command. Register the explicit repository/team/
 project/state IDs described in `docs/linear-tracker.md`; configuration never discovers
-them by name. Live cutover is not part of configuration and remains FOUNDRY-159.
+them by name. That document is also authoritative for the bounded write subset: existing
+issue replacement and AC synchronization remain unavailable without provider CAS. Live
+cutover is not part of configuration and remains FOUNDRY-159.
 
 ## 3. Verify
 After the user confirms the token step:

@@ -27,24 +27,33 @@ repository basename under the `linear` provider with all of these non-secret val
   state UUID.
 
 Optional JSON maps `milestone_ids`, `type_label_ids`, and `label_ids` bind normalized
-values to stable Linear model UUIDs. A write using an unmapped value is refused; the
-adapter never searches by name to make it succeed.
+values to stable Linear model UUIDs. Every label or milestone returned by Linear must
+have an ID in the corresponding map; missing, overlapping, or unknown IDs are binding
+errors. Normalized values come from these maps, never from mutable display names. A
+create using an unmapped value is refused and the adapter never searches by name.
 
 ## Exact support boundary
 
-Supported reads and proof-bounded writes are issue search/read, create, priority,
-estimate, explicitly mapped milestone/type/labels, state transition, parent/child,
-blocking/dependency/related relations, comments, issue body replacement, acceptance
-checkbox synchronization, and GitHub PR projection as a Foundry-marked Linear
-attachment. Every supported write does a binding read, one intended mutation, and an
-exact readback while local Foundry writers are serialized. Linear exposes no CAS
-precondition, so an external writer can still race; any observed divergence raises a
-conflict and is never retried.
+Supported reads are issue search/read, including explicitly mapped states, milestones,
+types, and labels. Supported writes are issue creation (with initial priority, estimate,
+state, mapped milestone/type/labels, and optional parent), additive
+blocking/dependency/related relations, additive comments, and GitHub PR projection as a
+Foundry-marked Linear attachment. These operations do not replace an existing issue
+value. Readback validates the provider result, but additive writes are not advertised as
+exactly-once: concurrent identical callers can create duplicates.
 
-Unsupported capabilities fail explicitly: a true ADR knowledge base, atomic audited
-non-code Epic closure, project provisioning, and free-form provider-native search
-queries. Foundry's GitHub PR review, CI, human gate, and merge authority are unchanged;
-the Linear attachment is projection only.
+Linear exposes no compare-and-swap precondition for an existing issue. Field and state
+replacement, changing the parent of an existing issue, issue-body replacement, and
+acceptance-checkbox synchronization are therefore explicitly unavailable. A local lock,
+pre-write read, or post-write readback cannot prevent an external writer from being
+overwritten, so none is presented as an anti-overwrite guarantee.
+
+Unsupported capabilities fail explicitly with typed errors: existing-issue replacement,
+acceptance synchronization, a true ADR knowledge base, atomic audited non-code Epic
+closure, project provisioning, and free-form provider-native search queries. `query
+issue` still returns the issue and projects the absent ADR knowledge base as a structured
+capability status. Foundry's GitHub PR review, CI, human gate, and merge authority are
+unchanged; the Linear attachment is projection only.
 
 This implementation and its controlled transport round-trip do not activate a real
 workspace. No Linear binding or live write is performed here. Import, provider proof in

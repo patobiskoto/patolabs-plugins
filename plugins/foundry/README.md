@@ -9,8 +9,8 @@ from a rough idea to shipped work — the same, repeatable, on every project:
 
 Foundry owns the **outer loop** (what to do, the source of truth, the decision memory,
 the exit gates). The **inner loop** (design → plan → implement) is delegated to Superpowers
-or Plan mode. It reasons over a **pluggable tracker** (YouTrack, DevHubTracker, or an
-explicitly bound Linear issue lifecycle) and **code-host**
+or Plan mode. It reasons over a **pluggable tracker** (YouTrack, DevHubTracker, or
+Linear's explicitly bound read/create/additive-write subset) and **code-host**
 (GitHub today) through adapters — switching to Jira / GitLab later is a new adapter, not a
 rewrite.
 

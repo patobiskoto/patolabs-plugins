@@ -33,16 +33,18 @@ the product backlog is kept out of this repository.
 To report a vulnerability, use [GitHub private vulnerability reporting](SECURITY.md).
 Do not disclose security details in a pull request, commit, or public discussion.
 
-Foundry ships YouTrack, DevHubTracker, and a fail-closed Linear issue-lifecycle adapter,
-plus the GitHub code-host adapter. Linear requires an explicit repository/team/project/
-workflow-state binding and does not provide Foundry's ADR knowledge-base capability.
-The live cutover and ChatGPT MCP activation remain separate planned work.
+Foundry ships YouTrack, DevHubTracker, and a fail-closed Linear issue adapter, plus the
+GitHub code-host adapter. Linear requires explicit repository/team/project/workflow-state/
+label/milestone IDs. It supports strict reads, atomic issue creation, and additive
+relations/comments/PR projection; existing-issue field, state, parent, body, and AC
+replacement remain unavailable without provider CAS. Linear also has no Foundry ADR
+knowledge base. Live cutover and ChatGPT MCP activation remain separate planned work.
 
 ## Plugins
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | Guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution, over pluggable YouTrack, DevHubTracker, or Linear issue tracking + GitHub. Judgment in the skills, invariants in the code. |
+| [**foundry**](plugins/foundry/) | idea → merge | Guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution, over YouTrack/DevHubTracker or Linear's documented bounded subset + GitHub. Judgment in the skills, invariants in the code. |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog

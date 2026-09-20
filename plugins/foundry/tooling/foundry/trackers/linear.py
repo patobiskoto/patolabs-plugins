@@ -4,20 +4,15 @@ The adapter uses only explicit registry coordinates: canonical repository identi
 Linear team UUID, Linear project UUID, and a complete normalized-state -> workflow-
 state UUID map.  It never discovers a binding from a name, title, label, or issue key.
 
-Linear does not expose a compare-and-swap precondition for issue mutations.  Supported
-writes therefore serialize Foundry writers locally and perform read / one write /
-readback over only the intended fields.  A readback mismatch is a typed conflict; the
-adapter never retries a divergent write.
+Linear does not expose a compare-and-swap precondition for existing-issue replacement.
+Those writes are therefore unavailable: a local lock or a readback cannot prevent an
+external writer from being overwritten.  The supported writes are atomic creation and
+additive provider mutations which do not replace existing issue values.
 """
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
 from datetime import datetime
-import fcntl
-import hashlib
 import json
-import os
-from pathlib import Path
 import re
 import urllib.error
 import urllib.parse
@@ -26,8 +21,8 @@ import uuid
 
 from foundry import config, registry
 from foundry.models import Adr, Issue, Link, Project
-from foundry.routing import RoutingConfigError, synchronize_acceptance_body
 from foundry.trackers.base import (
+    AcceptanceSyncUnavailableError,
     BodyUpdateUnavailableError,
     IssueUnavailableError,
     Tracker,
@@ -99,12 +94,6 @@ query FoundryLinearIssues($teamId: ID!, $projectId: ID!, $after: String) {{
 _ISSUE_CREATE = """
 mutation FoundryLinearIssueCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) { success issue { id identifier } }
-}
-"""
-
-_ISSUE_UPDATE = """
-mutation FoundryLinearIssueUpdate($id: String!, $input: IssueUpdateInput!) {
-  issueUpdate(id: $id, input: $input) { success issue { id identifier } }
 }
 """
 
@@ -227,7 +216,7 @@ def _connection(raw, operation: str) -> list[dict]:
 class LinearTracker(Tracker):
     name = "linear"
     requires_mutation_binding = True
-    acceptance_sync_supported = True
+    acceptance_sync_supported = False
 
     def __init__(
         self, *, token: str | None = None, transport=None,
@@ -308,14 +297,19 @@ class LinearTracker(Tracker):
         states = _mapping(project.extra, "state_ids", required=True)
         if set(states) != _STATES:
             raise LinearBindingError("state_ids_incomplete")
+        milestone_ids = _mapping(project.extra, "milestone_ids")
+        type_label_ids = _mapping(project.extra, "type_label_ids")
+        label_ids = _mapping(project.extra, "label_ids")
+        if set(type_label_ids.values()) & set(label_ids.values()):
+            raise LinearBindingError("label_ids_overlap")
         return {
             "project_id": project_id,
             "team_id": team_id,
             "canonical_repo": canonical,
             "state_ids": states,
-            "milestone_ids": _mapping(project.extra, "milestone_ids"),
-            "type_label_ids": _mapping(project.extra, "type_label_ids"),
-            "label_ids": _mapping(project.extra, "label_ids"),
+            "milestone_ids": milestone_ids,
+            "type_label_ids": type_label_ids,
+            "label_ids": label_ids,
         }
 
     def _activate(self, project: Project) -> dict:
@@ -400,13 +394,21 @@ class LinearTracker(Tracker):
 
         labels_raw = _connection(raw.get("labels"), "normalize.labels")
         type_by_id = {identifier: name for name, identifier in binding["type_label_ids"].items()}
-        types = [type_by_id[node.get("id")] for node in labels_raw if node.get("id") in type_by_id]
+        label_by_id = {identifier: name for name, identifier in binding["label_ids"].items()}
+        label_ids = []
+        for node in labels_raw:
+            identifier = node.get("id")
+            if not isinstance(identifier, str):
+                raise LinearTrackerError("normalize.labels", None, "invalid_response")
+            if identifier not in type_by_id and identifier not in label_by_id:
+                raise LinearBindingError("label_id_unmapped")
+            label_ids.append(identifier)
+        if len(label_ids) != len(set(label_ids)):
+            raise LinearTrackerError("normalize.labels", None, "invalid_response")
+        types = [type_by_id[identifier] for identifier in label_ids if identifier in type_by_id]
         if len(types) > 1:
             raise LinearBindingError("type_labels_ambiguous")
-        labels = [
-            node.get("name") for node in labels_raw
-            if node.get("id") not in type_by_id and isinstance(node.get("name"), str)
-        ]
+        labels = [label_by_id[identifier] for identifier in label_ids if identifier in label_by_id]
 
         links: list[Link] = []
         parent = raw.get("parent")
@@ -450,7 +452,9 @@ class LinearTracker(Tracker):
             milestone_by_id = {
                 identifier: name for name, identifier in binding["milestone_ids"].items()
             }
-            milestone = milestone_by_id.get(milestone_raw["id"])
+            if milestone_raw["id"] not in milestone_by_id:
+                raise LinearBindingError("milestone_id_unmapped")
+            milestone = milestone_by_id[milestone_raw["id"]]
 
         body = raw.get("description") or ""
         if not isinstance(body, str):
@@ -510,37 +514,7 @@ class LinearTracker(Tracker):
         project = self._project()
         return self._to_issue(self._read_raw(issue_id), project)
 
-    # ---- bounded writes -------------------------------------------
-    @contextmanager
-    def _issue_lock(self, issue_id: str):
-        digest = hashlib.sha256(issue_id.encode("utf-8")).hexdigest()
-        directory = Path(registry.data_dir()) / "linear-write-locks"
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        directory.chmod(0o700)
-        descriptor = os.open(directory / f"{digest}.lock", os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-            os.close(descriptor)
-
-    @contextmanager
-    def _issue_locks(self, *issue_ids: str):
-        with ExitStack() as stack:
-            for issue_id in sorted(set(issue_ids)):
-                stack.enter_context(self._issue_lock(issue_id))
-            yield
-
-    def _update(self, native_id: str, values: dict) -> None:
-        data = self._graphql(
-            _ISSUE_UPDATE, {"id": native_id, "input": values}, "issue.update",
-        )
-        payload = self._mutation_payload(data, "issueUpdate", "issue.update")
-        issue = payload.get("issue")
-        if not isinstance(issue, dict) or issue.get("id") != native_id:
-            raise LinearTrackerError("issue.update", None, "invalid_response")
-
+    # ---- writes with provider-demonstrable no-overwrite semantics --
     @staticmethod
     def _field_names(fields: dict) -> None:
         if not isinstance(fields, dict) or not fields:
@@ -718,22 +692,13 @@ class LinearTracker(Tracker):
             raise LinearBindingError("mutation_project_required")
         binding = self._activate(project)
         self._field_names(fields)
-        if "GitHub PR" in fields and len(fields) != 1:
-            raise TrackerCapabilityUnavailableError(self.name, "mixed-pr-field-update")
-        with self._issue_lock(issue_id):
-            raw = self._read_raw(issue_id)
-            self._assert_issue_project(raw, binding)
-            if "GitHub PR" in fields:
-                return self._set_pr(raw, project, fields["GitHub PR"])
-            values, expected = self._desired_update(raw, project, fields)
-            if self._raw_matches(raw, expected):
-                return self._to_issue(raw, project)
-            self._update(raw["id"], values)
-            readback = self._read_raw(issue_id)
-            self._assert_issue_project(readback, binding)
-            if not self._raw_matches(readback, expected):
-                raise TrackerConflictError("Linear fields divergent after write; no retry")
-            return self._to_issue(readback, project)
+        if set(fields) != {"GitHub PR"}:
+            raise TrackerCapabilityUnavailableError(
+                self.name, "existing-issue-field-replacement",
+            )
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, binding)
+        return self._set_pr(raw, project, fields["GitHub PR"])
 
     def set_state(
         self, issue_id: str, state: str, context=None,
@@ -750,50 +715,45 @@ class LinearTracker(Tracker):
         binding = self._activate(project)
         if link_type not in {"subtask-of", "parent-of", "depends-on", "blocks", "relates"}:
             raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
-        with self._issue_locks(src_id, dst_id):
-            src_raw, dst_raw = self._read_raw(src_id), self._read_raw(dst_id)
-            self._assert_issue_project(src_raw, binding)
-            self._assert_issue_project(dst_raw, binding)
-            if any(link.type == link_type and link.target == dst_id for link in self._to_issue(src_raw, project).links):
-                return
-            if link_type == "subtask-of":
-                existing = src_raw.get("parent")
-                if existing is not None and existing.get("id") != dst_raw["id"]:
-                    raise TrackerConflictError("Linear issue already has a different parent")
-                self._update(src_raw["id"], {"parentId": dst_raw["id"]})
-            elif link_type == "parent-of":
-                existing = dst_raw.get("parent")
-                if existing is not None and existing.get("id") != src_raw["id"]:
-                    raise TrackerConflictError("Linear issue already has a different parent")
-                self._update(dst_raw["id"], {"parentId": src_raw["id"]})
-            else:
-                source, target, relation = src_raw, dst_raw, "related"
-                if link_type == "blocks":
-                    relation = "blocks"
-                elif link_type == "depends-on":
-                    source, target, relation = dst_raw, src_raw, "blocks"
-                data = self._graphql(
-                    _RELATION_CREATE,
-                    {"input": {
-                        "issueId": source["id"], "relatedIssueId": target["id"],
-                        "type": relation,
-                    }},
-                    "issue.relation.create",
-                )
-                payload = self._mutation_payload(
-                    data, "issueRelationCreate", "issue.relation.create",
-                )
-                created = payload.get("issueRelation")
-                if (not isinstance(created, dict) or created.get("type") != relation
-                        or (created.get("issue") or {}).get("id") != source["id"]
-                        or (created.get("relatedIssue") or {}).get("id") != target["id"]):
-                    raise LinearTrackerError("issue.relation.create", None, "invalid_response")
-            readback = self._read_raw(src_id)
-            if not any(
-                link.type == link_type and link.target == dst_id
-                for link in self._to_issue(readback, project).links
-            ):
-                raise TrackerConflictError("Linear relation divergent after write; no retry")
+        if link_type in {"subtask-of", "parent-of"}:
+            raise TrackerCapabilityUnavailableError(
+                self.name, "existing-issue-parent-replacement",
+            )
+        src_raw, dst_raw = self._read_raw(src_id), self._read_raw(dst_id)
+        self._assert_issue_project(src_raw, binding)
+        self._assert_issue_project(dst_raw, binding)
+        if any(
+            link.type == link_type and link.target == dst_id
+            for link in self._to_issue(src_raw, project).links
+        ):
+            return
+        source, target, relation = src_raw, dst_raw, "related"
+        if link_type == "blocks":
+            relation = "blocks"
+        elif link_type == "depends-on":
+            source, target, relation = dst_raw, src_raw, "blocks"
+        data = self._graphql(
+            _RELATION_CREATE,
+            {"input": {
+                "issueId": source["id"], "relatedIssueId": target["id"],
+                "type": relation,
+            }},
+            "issue.relation.create",
+        )
+        payload = self._mutation_payload(
+            data, "issueRelationCreate", "issue.relation.create",
+        )
+        created = payload.get("issueRelation")
+        if (not isinstance(created, dict) or created.get("type") != relation
+                or (created.get("issue") or {}).get("id") != source["id"]
+                or (created.get("relatedIssue") or {}).get("id") != target["id"]):
+            raise LinearTrackerError("issue.relation.create", None, "invalid_response")
+        readback = self._read_raw(src_id)
+        if not any(
+            link.type == link_type and link.target == dst_id
+            for link in self._to_issue(readback, project).links
+        ):
+            raise TrackerConflictError("Linear relation divergent after write; no retry")
 
     def add_comment(
         self, issue_id: str, text: str, project: Project | None = None,
@@ -803,69 +763,44 @@ class LinearTracker(Tracker):
         if not isinstance(text, str) or not text:
             raise ValueError("Linear comment must be non-empty")
         binding = self._activate(project)
-        with self._issue_lock(issue_id):
-            raw = self._read_raw(issue_id)
-            self._assert_issue_project(raw, binding)
-            data = self._graphql(
-                _COMMENT_CREATE,
-                {"input": {"issueId": raw["id"], "body": text}},
-                "comment.create",
-            )
-            payload = self._mutation_payload(data, "commentCreate", "comment.create")
-            comment = payload.get("comment")
-            if (not isinstance(comment, dict) or not isinstance(comment.get("id"), str)
-                    or comment.get("body") != text
-                    or (comment.get("issue") or {}).get("id") != raw["id"]):
-                raise LinearTrackerError("comment.create", None, "invalid_response")
-            readback = self._graphql(
-                _COMMENT_QUERY, {"id": comment["id"]}, "comment.readback",
-            ).get("comment")
-            if (not isinstance(readback, dict) or readback.get("body") != text
-                    or (readback.get("issue") or {}).get("id") != raw["id"]):
-                raise TrackerConflictError("Linear comment divergent after write; no retry")
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, binding)
+        data = self._graphql(
+            _COMMENT_CREATE,
+            {"input": {"issueId": raw["id"], "body": text}},
+            "comment.create",
+        )
+        payload = self._mutation_payload(data, "commentCreate", "comment.create")
+        comment = payload.get("comment")
+        if (not isinstance(comment, dict) or not isinstance(comment.get("id"), str)
+                or comment.get("body") != text
+                or (comment.get("issue") or {}).get("id") != raw["id"]):
+            raise LinearTrackerError("comment.create", None, "invalid_response")
+        readback = self._graphql(
+            _COMMENT_QUERY, {"id": comment["id"]}, "comment.readback",
+        ).get("comment")
+        if (not isinstance(readback, dict) or readback.get("body") != text
+                or (readback.get("issue") or {}).get("id") != raw["id"]):
+            raise TrackerConflictError("Linear comment divergent after write; no retry")
 
     def update_body(
         self, resource: Issue | Adr, expected_body: str, updated_body: str,
         project: Project | None = None,
     ) -> bool:
-        if not isinstance(resource, Issue):
-            raise BodyUpdateUnavailableError(
-                "mise à jour de corps ADR indisponible pour le tracker linear"
-            )
-        if project is None:
-            raise LinearBindingError("mutation_project_required")
-        if not isinstance(expected_body, str) or not isinstance(updated_body, str):
-            raise ValueError("Linear expected/updated body must be strings")
-        binding = self._activate(project)
-        with self._issue_lock(resource.id):
-            raw = self._read_raw(resource.id)
-            self._assert_issue_project(raw, binding)
-            current = raw.get("description") or ""
-            if current != expected_body:
-                raise TrackerConflictError("Linear body changed; reload before mutation")
-            if current == updated_body:
-                return False
-            self._update(raw["id"], {"description": updated_body})
-            readback = self._read_raw(resource.id)
-            if (readback.get("description") or "") != updated_body:
-                raise TrackerConflictError("Linear body divergent after write; no retry")
-        return True
+        del resource, expected_body, updated_body, project
+        raise BodyUpdateUnavailableError(
+            "mise à jour de corps indisponible pour le tracker linear : "
+            "aucune précondition atomique anti-écrasement"
+        )
 
     def sync_acceptance_body(
         self, issue_id: str, expected_body: str, updated_body: str, proof: dict,
         project: Project | None = None,
     ) -> bool:
-        proof_id = proof.get("proof_id") if isinstance(proof, dict) else None
-        if not isinstance(proof_id, str) or re.fullmatch(r"[0-9a-f]{64}", proof_id) is None:
-            raise ValueError("proof_id AC invalide")
-        try:
-            authorized_body, _ = synchronize_acceptance_body(issue_id, expected_body, proof)
-        except RoutingConfigError as exc:
-            raise ValueError("synchronisation AC refusée : preuve invalide") from exc
-        if authorized_body != updated_body:
-            raise ValueError("synchronisation AC refusée : diff hors marqueurs autorisés")
-        return self.update_body(
-            Issue(id=issue_id, title=""), expected_body, updated_body, project=project,
+        del issue_id, expected_body, updated_body, proof, project
+        raise AcceptanceSyncUnavailableError(
+            "synchronisation AC indisponible pour le tracker linear : "
+            "aucune précondition atomique anti-écrasement"
         )
 
     # ---- unsupported provider capabilities -------------------------
