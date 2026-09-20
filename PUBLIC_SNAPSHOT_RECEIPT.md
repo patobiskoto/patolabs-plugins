@@ -37,3 +37,14 @@ represent skipped runs as success.
 The root Claude and Codex marketplaces are present, along with both Claude and Codex
 manifests for `plugins/foundry` and `plugins/ship-ios`. The initial public history is
 created in this successor repository only; no GitHub issues are migrated.
+
+## Bootstrap normalization
+
+GitHub cannot create a pull request for an empty repository because no base branch
+exists. The audited snapshot was therefore published once on the named bootstrap
+branch `chore/foundry-154-public-foundation`; GitHub automatically selected that branch
+as its default. It was then renamed to `main` without changing its snapshot commit.
+
+The later placeholder `.gitkeep` commit was not part of the audited snapshot. It is
+removed by the first regular Foundry pull request so every subsequent public change is
+reviewable against `main`.
