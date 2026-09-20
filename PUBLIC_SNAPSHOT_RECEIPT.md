@@ -9,9 +9,12 @@
 - Snapshot method: `git archive` of that exact remote commit; no local branch,
   worktree change, pull-request head, or Git history was copied.
 
-## Source CI verification
+## Source CI verification (pre-export observation)
 
-GitHub check-runs were queried for the exact source commit before export. The
+- CI pre-export observation `verified_at` (UTC): `2026-09-20T16:19:38.293Z`
+
+GitHub check-runs were queried for the exact source commit at that pre-export
+timestamp. The
 `catalogue`, `foundry`, and `ship-ios` runs concluded `success`; the conditional
 `foundry-benchmark-campaigns` and `foundry-youtrack-smoke` runs concluded `skipped`.
 The legacy commit-status endpoint had no statuses. This satisfies the source snapshot
@@ -37,3 +40,14 @@ represent skipped runs as success.
 The root Claude and Codex marketplaces are present, along with both Claude and Codex
 manifests for `plugins/foundry` and `plugins/ship-ios`. The initial public history is
 created in this successor repository only; no GitHub issues are migrated.
+
+## Bootstrap normalization
+
+GitHub cannot create a pull request for an empty repository because no base branch
+exists. The audited snapshot was therefore published once on the named bootstrap
+branch `chore/foundry-154-public-foundation`; GitHub automatically selected that branch
+as its default. It was then renamed to `main` without changing its snapshot commit.
+
+The later placeholder `.gitkeep` commit was not part of the audited snapshot. It is
+removed by the first regular Foundry pull request so every subsequent public change is
+reviewable against `main`.
