@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 
 CONTRACT_SCHEMA = "foundry-delivery-contract.v1"
@@ -262,10 +262,6 @@ class Proof:
     facts: dict[str, object]
 
 
-class _GitHubCheckRunsTransport(Protocol):
-    def get_check_runs(self, *, project: str, sha: str) -> object: ...
-
-
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(
         self,
@@ -279,43 +275,41 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
-class _GitHubPublicCheckRunsTransport:
-    """Fixed-host, unauthenticated, GET-only transport for the public pilot."""
-
-    def get_check_runs(self, *, project: str, sha: str) -> object:
-        project = _project(project)
-        sha = _sha(sha)
-        if project != PILOT_PROJECT:
-            raise DeliveryContractError("GitHub adapter project is outside the pilot")
-        request = urllib.request.Request(
-            f"{_GITHUB_API_ROOT}/repos/{project}/commits/{sha}/check-runs?per_page=100",
-            method="GET",
-            headers={
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "foundry-delivery-proof-pilot",
-            },
-        )
-        # Disable environment-derived proxies as well as redirects so the pilot
-        # cannot inherit proxy credentials or leave its single declared origin.
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}),
-            _NoRedirectHandler(),
-        )
-        try:
-            with opener.open(request, timeout=_GITHUB_TIMEOUT_SECONDS) as response:
-                raw = response.read(_GITHUB_RESPONSE_LIMIT + 1)
-        except urllib.error.HTTPError as exc:
-            exc.close()
-            raise ProofSourceUnavailable("GitHub check-runs source unavailable") from None
-        except (urllib.error.URLError, TimeoutError, OSError):
-            raise ProofSourceUnavailable("GitHub check-runs source unavailable") from None
-        if len(raw) > _GITHUB_RESPONSE_LIMIT:
-            raise ProofSourceUnsupported("GitHub check-runs response is unsupported")
-        try:
-            return json.loads(raw.decode("utf-8"))
-        except (UnicodeError, json.JSONDecodeError):
-            raise ProofSourceUnsupported("GitHub check-runs response is unsupported") from None
+def _get_public_github_check_runs(*, project: str, sha: str) -> object:
+    """Perform the pilot's fixed-host, unauthenticated, GET-only observation."""
+    project = _project(project)
+    sha = _sha(sha)
+    if project != PILOT_PROJECT:
+        raise DeliveryContractError("GitHub adapter project is outside the pilot")
+    request = urllib.request.Request(
+        f"{_GITHUB_API_ROOT}/repos/{project}/commits/{sha}/check-runs?per_page=100",
+        method="GET",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "foundry-delivery-proof-pilot",
+        },
+    )
+    # Disable environment-derived proxies as well as redirects so the pilot
+    # cannot inherit proxy credentials or leave its single declared origin.
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _NoRedirectHandler(),
+    )
+    try:
+        with opener.open(request, timeout=_GITHUB_TIMEOUT_SECONDS) as response:
+            raw = response.read(_GITHUB_RESPONSE_LIMIT + 1)
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        raise ProofSourceUnavailable("GitHub check-runs source unavailable") from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ProofSourceUnavailable("GitHub check-runs source unavailable") from None
+    if len(raw) > _GITHUB_RESPONSE_LIMIT:
+        raise ProofSourceUnsupported("GitHub check-runs response is unsupported")
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError):
+        raise ProofSourceUnsupported("GitHub check-runs response is unsupported") from None
 
 
 class GitHubCheckRunsAdapter:
@@ -325,13 +319,6 @@ class GitHubCheckRunsAdapter:
     adapter = PILOT_ADAPTER
     adapter_version = PILOT_ADAPTER_VERSION
     provenance = PILOT_PROVENANCE
-
-    def __init__(self, *, _transport: _GitHubCheckRunsTransport | None = None):
-        # ``_transport`` is only a private test seam. Production uses the
-        # fixed-host, unauthenticated GET transport above.
-        self._transport = (
-            _GitHubPublicCheckRunsTransport() if _transport is None else _transport
-        )
 
     @staticmethod
     def _proof(
@@ -360,7 +347,7 @@ class GitHubCheckRunsAdapter:
         if project != PILOT_PROJECT:
             raise DeliveryContractError("GitHub adapter project is outside the pilot")
         try:
-            payload = self._transport.get_check_runs(project=project, sha=sha)
+            payload = _get_public_github_check_runs(project=project, sha=sha)
         except ProofSourceUnavailable:
             raise
         except ProofSourceUnsupported:

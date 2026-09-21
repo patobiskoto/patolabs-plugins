@@ -35,11 +35,12 @@ only this unauthenticated request, with a fixed GitHub API host and fixed header
 GET https://api.github.com/repos/patobiskoto/patolabs-plugins/commits/<sha>/check-runs?per_page=100
 ```
 
-There is no URL, HTTP method, header, token, or credential argument. Redirects are not
-followed, and environment proxy configuration is disabled so proxy credentials cannot
-be inherited. The response is size-bounded, and tests replace a private transport seam
-so the mapping is deterministic without network access. Provider payloads, names,
-URLs, messages, and errors are never copied into a proof or receipt.
+There is no URL, HTTP method, header, token, credential, or transport argument. Redirects
+are not followed, and environment proxy configuration is disabled so proxy credentials
+cannot be inherited. The response is size-bounded. Tests patch the module-private GET
+function rather than injecting a transport into the adapter, so the production adapter
+has no caller-supplied execution or observation seam. Provider payloads, names, URLs,
+messages, and errors are never copied into a proof or receipt.
 
 The adapter checks every returned `head_sha` against the requested SHA and maps only the
 following closed cases:

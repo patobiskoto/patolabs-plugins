@@ -43,13 +43,14 @@ class StubTransport:
         return self.value
 
 
-def github_adapter(value=None, *, error=None):
+def github_adapter(monkeypatch, value=None, *, error=None):
     transport = StubTransport(value, error=error)
-    return delivery.GitHubCheckRunsAdapter(_transport=transport), transport
+    monkeypatch.setattr(delivery, "_get_public_github_check_runs", transport.get_check_runs)
+    return delivery.GitHubCheckRunsAdapter(), transport
 
 
-def generated_receipt(value, *, observation_id="receipt1", error=None, sha=SHA):
-    adapter, transport = github_adapter(value, error=error)
+def generated_receipt(monkeypatch, value, *, observation_id="receipt1", error=None, sha=SHA):
+    adapter, transport = github_adapter(monkeypatch, value, error=error)
     result = delivery.delivery_receipt_from_adapter(
         CONTRACT,
         sha=sha,
@@ -84,8 +85,8 @@ def private_receipt(observations, **kwargs):
     )
 
 
-def journal_append(journal, value, *, observation_id="receipt1"):
-    adapter, transport = github_adapter(value)
+def journal_append(monkeypatch, journal, value, *, observation_id="receipt1"):
+    adapter, transport = github_adapter(monkeypatch, value)
     saved = journal.append(
         contract=CONTRACT,
         sha=SHA,
@@ -164,8 +165,10 @@ def test_pilot_is_bound_to_one_concrete_project_source_and_requirement():
         ),
     ],
 )
-def test_concrete_adapter_maps_required_pilot_states_deterministically(payload, error, verdict):
-    result, transport = generated_receipt(payload, error=error)
+def test_concrete_adapter_maps_required_pilot_states_deterministically(
+    monkeypatch, payload, error, verdict,
+):
+    result, transport = generated_receipt(monkeypatch, payload, error=error)
     assert result["verdict"] == verdict
     assert result["proofs"][0]["outcome"] == (
         "success" if verdict == "verified" else verdict
@@ -196,8 +199,8 @@ def test_concrete_adapter_maps_required_pilot_states_deterministically(payload, 
         (check_runs_payload(check_run(), total_count=101), "unsupported-schema"),
     ],
 )
-def test_github_check_run_semantics_are_conservative(payload, verdict):
-    result, _ = generated_receipt(payload)
+def test_github_check_run_semantics_are_conservative(monkeypatch, payload, verdict):
+    result, _ = generated_receipt(monkeypatch, payload)
     assert result["verdict"] == verdict
 
 
@@ -248,8 +251,8 @@ def test_public_path_requires_the_concrete_adapter_not_a_spoofed_protocol():
         delivery.read_delivery_proof(CONTRACT, sha=SHA, adapter=SpoofedAdapter())
 
 
-def test_adapter_binds_the_exact_project_and_sha_before_transport():
-    adapter, transport = github_adapter(check_runs_payload(check_run()))
+def test_adapter_binds_the_exact_project_and_sha_before_transport(monkeypatch):
+    adapter, transport = github_adapter(monkeypatch, check_runs_payload(check_run()))
     with pytest.raises(delivery.DeliveryContractError, match="outside the pilot"):
         adapter.read_proof(project="someone/another-repo", sha=SHA)
     with pytest.raises(delivery.DeliveryContractError, match="exact 40-character"):
@@ -307,7 +310,7 @@ def test_default_network_transport_is_fixed_host_get_only_and_has_no_credentials
     )
     parameters = inspect.signature(delivery.GitHubCheckRunsAdapter).parameters
     assert not {"token", "credential", "headers", "url"} & set(parameters)
-    adapter = delivery.GitHubCheckRunsAdapter(_transport=StubTransport(check_runs_payload()))
+    adapter = delivery.GitHubCheckRunsAdapter()
     assert not any(hasattr(adapter, name) for name in ("write", "post", "deploy", "merge", "rollback"))
 
 
@@ -327,8 +330,10 @@ def test_default_transport_maps_http_failure_to_inaccessible(monkeypatch):
     assert "secret provider text" not in delivery._canonical(result)
 
 
-def test_public_generation_captures_time_internally_and_rejects_caller_timestamp(tmp_path):
-    adapter, _ = github_adapter(check_runs_payload(check_run()))
+def test_public_generation_captures_time_internally_and_rejects_caller_timestamp(
+    monkeypatch, tmp_path,
+):
+    adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
     result = delivery.delivery_receipt_from_adapter(
         CONTRACT,
         sha=SHA,
@@ -337,7 +342,7 @@ def test_public_generation_captures_time_internally_and_rejects_caller_timestamp
     )
     assert result["observed_at"] == FIXED_TIME
 
-    adapter, _ = github_adapter(check_runs_payload(check_run()))
+    adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
     with pytest.raises(TypeError, match="observed_at"):
         delivery.delivery_receipt_from_adapter(
             CONTRACT,
@@ -347,7 +352,7 @@ def test_public_generation_captures_time_internally_and_rejects_caller_timestamp
             observed_at="2000-01-01T00:00:00Z",
         )
 
-    adapter, _ = github_adapter(check_runs_payload(check_run()))
+    adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
     journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl")
     with pytest.raises(TypeError, match="observed_at"):
         journal.append(
@@ -371,22 +376,28 @@ def test_private_evaluator_still_rejects_noncanonical_timestamps(observed_at):
         )
 
 
-def test_journal_derives_from_adapter_and_is_append_only_unique_bounded_and_detached(tmp_path):
+def test_journal_derives_from_adapter_and_is_append_only_unique_bounded_and_detached(
+    monkeypatch, tmp_path,
+):
     journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl", max_receipts=2)
-    first, first_transport = journal_append(journal, check_runs_payload(check_run()))
+    first, first_transport = journal_append(
+        monkeypatch, journal, check_runs_payload(check_run()),
+    )
     assert first_transport.calls == [(delivery.PILOT_PROJECT, SHA)]
     first["verdict"] = "injected"
     assert journal.receipts()[0]["verdict"] == "verified"
 
     with pytest.raises(delivery.DeliveryContractError, match="already exists"):
-        journal_append(journal, check_runs_payload(check_run()))
+        journal_append(monkeypatch, journal, check_runs_payload(check_run()))
     journal_append(
+        monkeypatch,
         journal,
         check_runs_payload(check_run(conclusion="failure")),
         observation_id="receipt2",
     )
     with pytest.raises(delivery.DeliveryContractError, match="full"):
         journal_append(
+            monkeypatch,
             journal,
             check_runs_payload(check_run()),
             observation_id="receipt3",
@@ -403,9 +414,11 @@ def test_journal_cannot_append_a_caller_built_raw_receipt(tmp_path):
     assert not journal.path.exists()
 
 
-def test_journal_revalidates_loaded_entries_and_refuses_append_after_tampering(tmp_path):
+def test_journal_revalidates_loaded_entries_and_refuses_append_after_tampering(
+    monkeypatch, tmp_path,
+):
     journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl")
-    saved, _ = journal_append(journal, check_runs_payload(check_run()))
+    saved, _ = journal_append(monkeypatch, journal, check_runs_payload(check_run()))
     forged = copy.deepcopy(saved)
     forged["verdict"] = "failed-proof"
     journal.path.write_text(delivery._canonical(forged) + "\n", encoding="ascii")
@@ -413,7 +426,7 @@ def test_journal_revalidates_loaded_entries_and_refuses_append_after_tampering(t
 
     with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
         journal.receipts()
-    adapter, _ = github_adapter(check_runs_payload(check_run()))
+    adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
     with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
         journal.append(
             contract=CONTRACT,
@@ -449,9 +462,9 @@ def test_journal_rejects_malformed_json_fail_closed(tmp_path):
         delivery.DeliveryReceiptJournal(path).receipts()
 
 
-def test_facades_are_canonically_identical_except_receipt_identifier():
-    claude_adapter, _ = github_adapter(check_runs_payload(check_run()))
-    codex_adapter, _ = github_adapter(check_runs_payload(check_run()))
+def test_facades_are_canonically_identical_except_receipt_identifier(monkeypatch):
+    claude_adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
+    codex_adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
     claude = delivery.claude_delivery_receipt(
         CONTRACT,
         sha=SHA,
@@ -482,8 +495,10 @@ def test_facades_are_canonically_identical_except_receipt_identifier():
     "facade",
     [delivery.claude_delivery_receipt, delivery.codex_delivery_receipt],
 )
-def test_host_facades_reject_caller_evidence_identity_and_timestamp(facade, forbidden):
-    adapter, _ = github_adapter(check_runs_payload(check_run()))
+def test_host_facades_reject_caller_evidence_identity_and_timestamp(
+    monkeypatch, facade, forbidden,
+):
+    adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
     with pytest.raises(TypeError):
         facade(
             CONTRACT,
@@ -498,8 +513,8 @@ def test_pure_observation_evaluator_is_not_a_public_surface():
     assert not hasattr(delivery, "delivery_receipt")
 
 
-def test_receipt_is_exact_sha_bound_and_has_no_authority_surface():
-    result, _ = generated_receipt(check_runs_payload(check_run()))
+def test_receipt_is_exact_sha_bound_and_has_no_authority_surface(monkeypatch):
+    result, _ = generated_receipt(monkeypatch, check_runs_payload(check_run()))
     assert result["project"] == delivery.PILOT_PROJECT
     assert result["sha"] == SHA
     assert result["contract"]["digest"] == delivery.contract_digest(CONTRACT)
