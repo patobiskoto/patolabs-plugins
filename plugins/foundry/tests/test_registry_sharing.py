@@ -266,6 +266,58 @@ def test_alias_copies_the_project_binding_without_creating_a_project(monkeypatch
     assert registry.register_alias("youtrack", "foundry", "claude-plugins") is False
 
 
+def test_linear_alias_copies_a_complete_safe_binding(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    extra = _linear_binding()
+    registry.register("linear", "trame", "TRAME", _LINEAR_PROJECT_ID, **extra)
+
+    assert registry.register_alias("linear", "trame", "trame-renamed") is True
+    assert registry.load()["linear"]["trame-renamed"] == registry.load()["linear"]["trame"]
+
+
+@pytest.mark.parametrize("alias_source", [
+    _LINEAR_PROJECT_ID,
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000002",
+])
+def test_linear_alias_rejects_identifier_collision_without_writing(
+    monkeypatch, tmp_path, alias_source,
+):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    extra = _linear_binding()
+    registry.register("linear", "trame", "TRAME", _LINEAR_PROJECT_ID, **extra)
+    registry_path = state / "registry.json"
+    before = registry_path.read_bytes()
+
+    with pytest.raises(ValueError, match="binding Linear invalide"):
+        registry.register_alias("linear", "trame", alias_source)
+
+    assert registry_path.read_bytes() == before
+    assert alias_source not in registry.load()["linear"]
+
+
+def test_linear_alias_refresh_revalidates_target_alias_before_writing(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    extra = _linear_binding()
+    registry.register("linear", "trame", "TRAME", _LINEAR_PROJECT_ID, **extra)
+    data = registry.load()
+    data["linear"][_LINEAR_PROJECT_ID] = {"key": "TRAME", "id": _LINEAR_PROJECT_ID}
+    registry._save(data)
+    registry_path = state / "registry.json"
+    before = registry_path.read_bytes()
+
+    with pytest.raises(ValueError, match="binding Linear invalide"):
+        registry.register_alias("linear", "trame", _LINEAR_PROJECT_ID)
+
+    assert registry_path.read_bytes() == before
+
+
 def test_alias_refreshes_metadata_when_project_identity_matches(monkeypatch, tmp_path):
     _clear_data_env(monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path))

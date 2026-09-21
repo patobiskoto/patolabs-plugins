@@ -468,6 +468,21 @@ def register_alias(tracker: str, source_repo: str, alias_repo: str) -> bool:
             f"repo source '{source_repo}' non enregistré pour le tracker '{tracker}'"
         )
     source = bindings[source_repo]
+
+    def copy_source() -> dict[str, object]:
+        """Return the source binding, revalidating a Linear alias before save."""
+        if tracker != "linear":
+            return dict(source)
+        project_id, extra = _validate_linear_binding(
+            alias_repo,
+            source.get("id"),
+            {name: value for name, value in source.items() if name not in {"key", "id"}},
+        )
+        key = source.get("key")
+        if not isinstance(key, str) or not key:
+            raise ValueError("binding Linear invalide : key absent")
+        return {"key": key, "id": project_id, **extra}
+
     current = bindings.get(alias_repo)
     if current:
         source_identity = (source.get("key"), source.get("id"))
@@ -480,10 +495,10 @@ def register_alias(tracker: str, source_repo: str, alias_repo: str) -> bool:
         if current == source:
             return False
         # Same project, stale metadata: the explicitly named source is canonical.
-        data[tracker][alias_repo] = dict(source)
+        data[tracker][alias_repo] = copy_source()
         _save(data)
         return True
-    data.setdefault(tracker, {})[alias_repo] = dict(source)
+    data.setdefault(tracker, {})[alias_repo] = copy_source()
     _save(data)
     return True
 

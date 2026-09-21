@@ -45,8 +45,10 @@ shell-quoted JSON object. For Linear, the command rejects before writing unless 
 project ID, team ID, seven exact state IDs, and four exact type-label IDs are UUIDs and
 paired with an already canonical repository identity. The local repository alias,
 project ID, team ID, and every UUID in the state, type, milestone, and label maps must
-be globally distinct. It also refuses unrecognized extras: a token, endpoint, workspace
-URL, or future setting cannot become a silent registry field.
+be globally distinct. `registry alias` reapplies this validation to a Linear binding
+against the target alias before it writes, so a UUID-shaped alias cannot bypass that
+uniqueness rule. It also refuses unrecognized extras: a token, endpoint, workspace URL,
+or future setting cannot become a silent registry field.
 
 Only a `tracker=linear` registration JSON-decodes `state_ids`, `type_label_ids`,
 `milestone_ids`, and `label_ids`; each must decode to an object. Malformed or non-object
