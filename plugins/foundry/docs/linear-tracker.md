@@ -39,9 +39,18 @@ create using an unmapped value is refused and the adapter never searches by name
 ## Exact support boundary
 
 Supported reads are issue search/read, including explicitly mapped states, milestones,
-types, and labels. Supported writes are issue creation (with initial priority, estimate,
-state, mapped milestone/type/labels, and optional parent), non-replacing
-blocking/dependency/related relations, and comments.
+types, labels, and a deliberately closed relation vocabulary. Hierarchy projects a
+Linear parent as `subtask-of/inward` and each child as `parent-of/outward`. For a native
+`blocks` edge, its source projects `blocks/inward` and its target projects
+`depends-on/outward`; native `related` projects `relates/outward` from its source and
+`relates/inward` from its target. Those are the only native relation kinds Foundry reads:
+`duplicate`, `similar`, or any other kind fails the entire issue/search normalization
+through a sanitized Linear provider error instead of returning partial issue data.
+
+Supported writes are issue creation (with initial priority, estimate, state, mapped
+milestone/type/labels, and optional parent), non-replacing blocking/dependency/related
+relations, and comments. These supported writes round-trip only through the normalized
+relations above; duplicate/similar writes are not exposed.
 
 These writes have deliberately narrow delivery semantics. Creation sends one
 `issueCreate` with a fresh client UUID and then reads the returned issue; retrying the

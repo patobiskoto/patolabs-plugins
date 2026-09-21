@@ -8,7 +8,7 @@ import pytest
 
 import foundry
 from foundry import issue, query, registry, routing
-from foundry.models import Adr, Issue, Project
+from foundry.models import Adr, Issue, Link, Project
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
@@ -235,7 +235,7 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
         parent="LIN-1",
     )
     assert created.id == "LIN-3"
-    assert any(link.type == "subtask-of" and link.target == "LIN-1" for link in created.links)
+    assert Link("subtask-of", "inward", "LIN-1") in created.links
 
     instance.link(created.id, "depends-on", "LIN-2", project=PROJECT)
     instance.add_comment(created.id, "bounded progress", project=PROJECT)
@@ -259,8 +259,61 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
         "P1", 5, "Feature", ["pilot"],
     )
     assert final.body == "- [ ] exact acceptance" and (final.ac_done, final.ac_total) == (0, 1)
-    assert any(link.type == "depends-on" and link.target == "LIN-2" for link in final.links)
+    assert Link("depends-on", "outward", "LIN-2") in final.links
     assert wire.comments["comment-1"]["body"] == "bounded progress"
+
+
+def test_relation_reads_normalize_hierarchy_and_both_blocking_sides(tracker):
+    instance, wire = tracker
+    parent, child = wire.issues["LIN-1"], wire.issues["LIN-2"]
+    parent["children"] = connection([
+        {"id": child["id"], "identifier": child["identifier"]},
+    ])
+    child["parent"] = {"id": parent["id"], "identifier": parent["identifier"]}
+    parent["relations"] = connection([{
+        "type": "blocks",
+        "relatedIssue": {"id": child["id"], "identifier": child["identifier"]},
+    }])
+    child["inverseRelations"] = connection([{
+        "type": "blocks",
+        "issue": {"id": parent["id"], "identifier": parent["identifier"]},
+    }])
+
+    issues = {item.id: item for item in instance.search(PROJECT)}
+
+    assert issues["LIN-1"].links == [
+        Link("parent-of", "outward", "LIN-2"),
+        Link("blocks", "inward", "LIN-2"),
+    ]
+    assert issues["LIN-2"].links == [
+        Link("subtask-of", "inward", "LIN-1"),
+        Link("depends-on", "outward", "LIN-1"),
+    ]
+
+
+@pytest.mark.parametrize("relation_type", ["duplicate", "similar"])
+@pytest.mark.parametrize(
+    ("collection_name", "target_name", "operation"),
+    [
+        ("relations", "relatedIssue", "normalize.relations"),
+        ("inverseRelations", "issue", "normalize.inverse-relations"),
+    ],
+)
+def test_relation_reads_refuse_unsupported_native_types_without_partial_issue(
+    tracker, relation_type, collection_name, target_name, operation,
+):
+    instance, wire = tracker
+    wire.issues["LIN-1"][collection_name] = connection([{
+        "type": relation_type,
+        target_name: {"id": "issue-uuid-2", "identifier": "LIN-2"},
+    }])
+
+    with pytest.raises(LinearTrackerError) as raised:
+        instance.search(PROJECT)
+
+    assert raised.value.operation == operation
+    assert raised.value.status is None
+    assert raised.value.code == "unsupported_relation_type"
 
 
 def test_existing_issue_replacements_are_unavailable_before_provider_write(tracker):

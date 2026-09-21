@@ -200,6 +200,24 @@ def _connection(raw, operation: str) -> list[dict]:
     return raw["nodes"]
 
 
+def _relation_link(relation: dict, *, inverse: bool) -> Link:
+    operation = "normalize.inverse-relations" if inverse else "normalize.relations"
+    relation_type = relation.get("type")
+    if not isinstance(relation_type, str):
+        raise LinearTrackerError(operation, None, "invalid_response")
+    if relation_type not in {"blocks", "related"}:
+        raise LinearTrackerError(operation, None, "unsupported_relation_type")
+
+    target = relation.get("issue" if inverse else "relatedIssue")
+    if not isinstance(target, dict) or not isinstance(target.get("identifier"), str):
+        raise LinearTrackerError(operation, None, "invalid_response")
+    if relation_type == "related":
+        return Link("relates", "inward" if inverse else "outward", target["identifier"])
+    if inverse:
+        return Link("depends-on", "outward", target["identifier"])
+    return Link("blocks", "inward", target["identifier"])
+
+
 class LinearTracker(Tracker):
     name = "linear"
     requires_mutation_binding = True
@@ -424,27 +442,15 @@ class LinearTracker(Tracker):
         if parent is not None:
             if not isinstance(parent, dict) or not isinstance(parent.get("identifier"), str):
                 raise LinearTrackerError("normalize", None, "invalid_response")
-            links.append(Link("subtask-of", "outward", parent["identifier"]))
+            links.append(Link("subtask-of", "inward", parent["identifier"]))
         for child in _connection(raw.get("children"), "normalize.children"):
             if not isinstance(child.get("identifier"), str):
                 raise LinearTrackerError("normalize", None, "invalid_response")
             links.append(Link("parent-of", "outward", child["identifier"]))
         for relation in _connection(raw.get("relations"), "normalize.relations"):
-            target = relation.get("relatedIssue")
-            if not isinstance(target, dict) or not isinstance(target.get("identifier"), str):
-                raise LinearTrackerError("normalize", None, "invalid_response")
-            if relation.get("type") == "blocks":
-                links.append(Link("blocks", "outward", target["identifier"]))
-            elif relation.get("type") == "related":
-                links.append(Link("relates", "outward", target["identifier"]))
+            links.append(_relation_link(relation, inverse=False))
         for relation in _connection(raw.get("inverseRelations"), "normalize.inverse-relations"):
-            target = relation.get("issue")
-            if not isinstance(target, dict) or not isinstance(target.get("identifier"), str):
-                raise LinearTrackerError("normalize", None, "invalid_response")
-            if relation.get("type") == "blocks":
-                links.append(Link("depends-on", "inward", target["identifier"]))
-            elif relation.get("type") == "related":
-                links.append(Link("relates", "inward", target["identifier"]))
+            links.append(_relation_link(relation, inverse=True))
 
         milestone = None
         milestone_raw = raw.get("projectMilestone")
