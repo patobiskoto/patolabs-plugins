@@ -52,6 +52,51 @@ def test_entry_written_without_plugin_env_is_read_with_it(monkeypatch, tmp_path)
     assert registry.load()["youtrack"]["demo"] == {"key": "DEMO", "id": "0-1"}
 
 
+def test_register_cli_decodes_json_object_extras_without_changing_scalars(
+    monkeypatch, tmp_path,
+):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+
+    registry.main([
+        "register", "linear", "demo", "DEMO", "linear-project",
+        'state_ids={"open":"state-open","done":"state-done"}',
+        'type_label_ids={"bug":"label-bug"}',
+        "team_id=team-123",
+    ])
+
+    binding = registry.load()["linear"]["demo"]
+    assert binding == {
+        "key": "DEMO",
+        "id": "linear-project",
+        "state_ids": {"open": "state-open", "done": "state-done"},
+        "type_label_ids": {"bug": "label-bug"},
+        "team_id": "team-123",
+    }
+    raw = json.loads((tmp_path / "state" / "registry.json").read_text())
+    assert raw["linear"]["demo"] == binding
+
+
+def test_register_cli_rejects_malformed_json_object_without_writing(
+    monkeypatch, tmp_path,
+):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    registry.register("linear", "existing", "EXISTING", "project-existing")
+    registry_path = state / "registry.json"
+    before = registry_path.read_bytes()
+
+    with pytest.raises(SystemExit, match="objets JSON valides"):
+        registry.main([
+            "register", "linear", "demo", "DEMO", "linear-project",
+            'state_ids={"open":}',
+        ])
+
+    assert registry_path.read_bytes() == before
+    assert "demo" not in registry.load()["linear"]
+
+
 def test_alias_copies_the_project_binding_without_creating_a_project(monkeypatch, tmp_path):
     _clear_data_env(monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path))

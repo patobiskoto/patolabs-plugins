@@ -36,6 +36,13 @@ have an ID in the corresponding map; missing, overlapping, or unknown IDs are bi
 errors. Normalized values come from these maps, never from mutable display names. A
 create using an unmapped value is refused and the adapter never searches by name.
 
+`registry register` receives scalar extras as `k=v`. Pass each required map as a
+shell-quoted JSON object, for example
+`state_ids='{"backlog":"<uuid>","ready":"<uuid>"}'`. A value beginning with `{`
+must decode to a JSON object; malformed structured input is rejected before the
+registry is written. This keeps a manually provisioned Linear binding explicit without
+ever placing a credential in the command or registry.
+
 ## Exact support boundary
 
 Supported reads are issue search/read, including explicitly mapped states, milestones,

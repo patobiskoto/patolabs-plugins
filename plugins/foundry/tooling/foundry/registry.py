@@ -329,6 +329,38 @@ def register_alias(tracker: str, source_repo: str, alias_repo: str) -> bool:
     return True
 
 
+def _parse_extra_arguments(values: list[str], usage: str) -> dict[str, object]:
+    """Parse CLI ``k=v`` extras, decoding explicitly-object JSON values.
+
+    Scalars retain the historical string representation. A value whose first
+    non-space character is ``{`` is an explicit structured value and must be a
+    JSON object: accepting malformed data here would otherwise persist a binding
+    that a tracker cannot interpret.
+    """
+    try:
+        extras = dict(value.split("=", 1) for value in values)
+    except ValueError:
+        raise SystemExit(
+            f"{usage}\nles extras doivent utiliser la forme k=v"
+        ) from None
+
+    for name, value in extras.items():
+        if not value.lstrip().startswith("{"):
+            continue
+        try:
+            structured_value = json.loads(value)
+        except json.JSONDecodeError:
+            raise SystemExit(
+                f"{usage}\nles extras structurés doivent être des objets JSON valides"
+            ) from None
+        if not isinstance(structured_value, dict):
+            raise SystemExit(
+                f"{usage}\nles extras structurés doivent être des objets JSON valides"
+            )
+        extras[name] = structured_value
+    return extras
+
+
 def main(argv=None) -> None:
     import sys
 
@@ -347,10 +379,7 @@ def main(argv=None) -> None:
         if len(args) < 5:
             raise SystemExit(usage)
         _, tracker, repo, key, pid, *rest = args
-        try:
-            extra = dict(kv.split("=", 1) for kv in rest)
-        except ValueError:
-            raise SystemExit(f"{usage}\nles extras doivent utiliser la forme k=v") from None
+        extra = _parse_extra_arguments(rest, usage)
         register(tracker, repo, key, pid, **extra)
         print(f"registered {repo} -> {key} ({tracker})")
         return
