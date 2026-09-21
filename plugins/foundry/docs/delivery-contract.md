@@ -2,7 +2,7 @@
 
 `foundry.delivery_contract` is an opt-in, read-only prototype for representing a
 project's delivery evidence after merge. It has no CLI command, provider client,
-credential, hook, persistence, tracker transition, merge, deployment, or rollback
+credential, hook, remote persistence, tracker transition, merge, deployment, or rollback
 operation. It cannot execute or request work from a provider.
 
 The closed `foundry-delivery-contract.v1` schema contains only a version, named
@@ -12,14 +12,30 @@ commands, hooks, credentials, and deployment instructions cannot enter the contr
 Proof facts are only nullable booleans, so arbitrary provider payloads cannot enter a
 receipt. Its digest is SHA-256 over canonical JSON.
 
-The caller supplies an already-read `foundry-delivery-proof.v1` observation. The
-resulting `foundry-delivery-receipt.v1` binds the project, exact 40-character SHA,
-contract version and digest, adapter/version, proof-source provenance, and observation
-time. A new observation produces a new caller-supplied receipt id and timestamp.
+`ReadOnlyProofAdapter` is the one-source adapter seam. Its sole operation is
+`read_proof(project, sha)`; before it is called, Foundry binds its source id, adapter,
+adapter version, and provenance to one declared contract source. The legacy direct
+observation input remains available for this prototype, but every proof provenance is
+also compared with the declared source provenance and a mismatch is refused. A proof
+for another project is reported as `cross-project`; a proof for a different SHA is
+`wrong-sha`. `delivery_receipt_from_adapter` reads and evaluates exactly that one
+contract-bound source.
+
+The resulting `foundry-delivery-receipt.v1` binds the project, exact 40-character SHA,
+contract version and digest, adapter/version, proof-source provenance, and a canonical
+UTC observation time (`YYYY-MM-DDTHH:MM:SSZ`). Arbitrary text is rejected rather than
+being persisted as an observation instant.
+
+`DeliveryReceiptJournal` optionally records generated receipts in a bounded local
+append-only JSONL file. It locks appends, rejects duplicate receipt ids, and returns
+detached canonical data so callers cannot mutate an already-recorded receipt. The
+journal is local-only and is explicitly not remote durable storage; it holds only the
+closed receipt schema, never provider raw output, commands, credentials, or secrets.
 
 `verified` is possible only when every required proof is successful and every required
 fact is non-null. Missing proof, pending proof, inaccessible source, unsupported proof
-schema, wrong project/SHA, and unavailable required facts remain separate outcomes;
+schema, provenance mismatch, cross-project/wrong-SHA proof, and unavailable required
+facts remain separate outcomes;
 none is silently converted to true or false. Claude and Codex facades call the same
 canonical core, so their content differs only in caller-provided receipt identifiers
 and observation timestamps.
