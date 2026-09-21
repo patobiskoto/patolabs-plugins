@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import foundry.escalation as escalation_module
 from foundry.escalation import (
     BoundedDiagnostic,
     MAX_ESCALATIONS_PER_ISSUE,
@@ -1948,6 +1949,35 @@ def test_generation_two_consumption_rejects_a_technical_only_generation(tmp_path
         store.record_failure(
             issue, "implementer", "review_blocking_after_fix", "apex",
             idempotency_key="f160-refused-generation-one",
+        )
+    assert path.read_bytes() == malformed
+
+
+def test_hostile_huge_generation_is_rejected_without_enumeration(
+    tmp_path, monkeypatch,
+):
+    store = EscalationStore("owner/f160-hostile-generation", state_dir=tmp_path)
+    issue = "FOUNDRY-164"
+    _generation_two_remediation_window(store, issue)
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    hostile_generation = 10 ** 100
+    payload["halt_generation"] = hostile_generation
+    payload["resume_count"] = hostile_generation - 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    def forbid_generation_range(*_args):
+        raise AssertionError("normalization enumerated an untrusted generation")
+
+    monkeypatch.setattr(
+        escalation_module, "range", forbid_generation_range, raising=False,
+    )
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
         )
     assert path.read_bytes() == malformed
 
