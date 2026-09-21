@@ -22,12 +22,31 @@ import re
 import subprocess
 import tempfile
 import urllib.parse
+import uuid
 
 from foundry.models import Project
 
 
 _REPOSITORY_COMPONENT = re.compile(r"[A-Za-z0-9_.-]+")
 _SSH_CONFIG_TIMEOUT_SECONDS = 5
+_UUID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_LINEAR_STATE_KEYS = frozenset(
+    {"backlog", "ready", "in-progress", "review", "blocked", "done", "dropped"}
+)
+_LINEAR_TYPE_KEYS = frozenset({"Epic", "Feature", "Bug", "Task"})
+_LINEAR_EXTRA_KEYS = frozenset(
+    {
+        "canonical_repo",
+        "team_id",
+        "state_ids",
+        "milestone_ids",
+        "type_label_ids",
+        "label_ids",
+    }
+)
 
 
 def _expand_ssh_alias(host: str) -> str:
@@ -186,6 +205,91 @@ def checkout_repository_identity(cwd: str | None = None) -> str:
     return canonical_repository_identity(value)
 
 
+def _require_uuid(value: object, field: str) -> str:
+    """Return one normalized UUID without ever echoing invalid input."""
+    if not isinstance(value, str) or _UUID.fullmatch(value) is None:
+        raise ValueError(f"binding Linear invalide : {field} doit être un UUID")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        raise ValueError(
+            f"binding Linear invalide : {field} doit être un UUID"
+        ) from None
+
+
+def _require_uuid_map(
+    value: object,
+    field: str,
+    *,
+    expected_keys: frozenset[str] | None = None,
+) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError(f"binding Linear invalide : {field} doit être un objet JSON")
+    if expected_keys is not None and set(value) != expected_keys:
+        raise ValueError(
+            f"binding Linear invalide : {field} doit contenir exactement les identifiants requis"
+        )
+    if not value and expected_keys is None:
+        return {}
+    if any(not isinstance(key, str) or not key for key in value):
+        raise ValueError(f"binding Linear invalide : {field} contient une clé invalide")
+    normalized = {
+        key: _require_uuid(identifier, f"{field}.{key}")
+        for key, identifier in value.items()
+    }
+    if len(set(normalized.values())) != len(normalized):
+        raise ValueError(f"binding Linear invalide : {field} contient des UUID dupliqués")
+    return normalized
+
+
+def _validate_linear_binding(
+    project_id: object, extra: dict[str, object],
+) -> tuple[str, dict[str, object]]:
+    """Validate the complete credential-free Linear binding before persistence.
+
+    This is intentionally structural: it does not discover a workspace or call Linear.
+    The separate qualification record proves live observations; FOUNDRY-159 remains the
+    only activation/cutover path.
+    """
+    unsupported = set(extra) - _LINEAR_EXTRA_KEYS
+    if unsupported:
+        raise ValueError("binding Linear invalide : extra non autorisé")
+
+    canonical_repo = extra.get("canonical_repo")
+    try:
+        canonical = canonical_repository_identity(canonical_repo)
+    except ValueError:
+        raise ValueError("binding Linear invalide : canonical_repo invalide") from None
+    if canonical_repo != canonical:
+        raise ValueError("binding Linear invalide : canonical_repo doit être canonique")
+
+    normalized: dict[str, object] = {
+        "canonical_repo": canonical,
+        "team_id": _require_uuid(extra.get("team_id"), "team_id"),
+        "state_ids": _require_uuid_map(
+            extra.get("state_ids"), "state_ids", expected_keys=_LINEAR_STATE_KEYS,
+        ),
+        "type_label_ids": _require_uuid_map(
+            extra.get("type_label_ids"),
+            "type_label_ids",
+            expected_keys=_LINEAR_TYPE_KEYS,
+        ),
+    }
+    for key in ("milestone_ids", "label_ids"):
+        if key in extra:
+            normalized[key] = _require_uuid_map(extra[key], key)
+
+    seen: set[str] = set()
+    for key in ("state_ids", "type_label_ids", "milestone_ids", "label_ids"):
+        mapping = normalized.get(key, {})
+        assert isinstance(mapping, dict)
+        identifiers = set(mapping.values())
+        if seen & identifiers:
+            raise ValueError("binding Linear invalide : UUID de binding ambigu")
+        seen.update(identifiers)
+    return _require_uuid(project_id, "project_id"), normalized
+
+
 def repo_basename(cwd: str | None = None, use_env: bool = True) -> str:
     """The current repo's basename, from $PROJECT_REPO (unless use_env=False) or the
     git remote. Hooks pass use_env=False: their identity must come from the actual
@@ -284,7 +388,9 @@ def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
 
 def register(tracker: str, repo: str, key: str, project_id: str, **extra) -> None:
     extra = dict(extra)
-    if "canonical_repo" in extra:
+    if tracker == "linear":
+        project_id, extra = _validate_linear_binding(project_id, extra)
+    elif "canonical_repo" in extra:
         try:
             extra["canonical_repo"] = canonical_repository_identity(
                 extra["canonical_repo"],

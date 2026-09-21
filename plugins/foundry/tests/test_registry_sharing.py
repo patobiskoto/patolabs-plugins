@@ -52,6 +52,25 @@ def test_entry_written_without_plugin_env_is_read_with_it(monkeypatch, tmp_path)
     assert registry.load()["youtrack"]["demo"] == {"key": "DEMO", "id": "0-1"}
 
 
+def _linear_binding():
+    identifiers = iter(
+        f"00000000-0000-4000-8000-{index:012d}" for index in range(1, 14)
+    )
+    return {
+        "canonical_repo": "github.com/acme/trame",
+        "team_id": next(identifiers),
+        "state_ids": {
+            state: next(identifiers)
+            for state in (
+                "backlog", "ready", "in-progress", "review", "blocked", "done", "dropped",
+            )
+        },
+        "type_label_ids": {
+            kind: next(identifiers) for kind in ("Epic", "Feature", "Bug", "Task")
+        },
+    }
+
+
 def test_register_cli_decodes_json_object_extras_without_changing_scalars(
     monkeypatch, tmp_path,
 ):
@@ -59,22 +78,89 @@ def test_register_cli_decodes_json_object_extras_without_changing_scalars(
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
 
     registry.main([
-        "register", "linear", "demo", "DEMO", "linear-project",
-        'state_ids={"open":"state-open","done":"state-done"}',
-        'type_label_ids={"bug":"label-bug"}',
-        "team_id=team-123",
+        "register", "devhub", "demo", "DEMO", "project-42",
+        'metadata={"nested":"value"}', "team_id=team-123",
     ])
 
-    binding = registry.load()["linear"]["demo"]
+    binding = registry.load()["devhub"]["demo"]
     assert binding == {
         "key": "DEMO",
-        "id": "linear-project",
-        "state_ids": {"open": "state-open", "done": "state-done"},
-        "type_label_ids": {"bug": "label-bug"},
+        "id": "project-42",
+        "metadata": {"nested": "value"},
         "team_id": "team-123",
     }
     raw = json.loads((tmp_path / "state" / "registry.json").read_text())
-    assert raw["linear"]["demo"] == binding
+    assert raw["devhub"]["demo"] == binding
+
+
+def test_linear_registration_persists_only_a_complete_credential_free_binding(
+    monkeypatch, tmp_path,
+):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    extra = _linear_binding()
+
+    registry.register(
+        "linear", "trame", "TRAME", "00000000-0000-4000-8000-000000000000", **extra,
+    )
+
+    assert registry.load()["linear"]["trame"] == {
+        "key": "TRAME", "id": "00000000-0000-4000-8000-000000000000", **extra,
+    }
+
+
+def test_registry_cli_accepts_a_complete_linear_binding(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    extra = _linear_binding()
+
+    registry.main([
+        "register", "linear", "trame", "TRAME", "00000000-0000-4000-8000-000000000000",
+        f"canonical_repo={extra['canonical_repo']}",
+        f"team_id={extra['team_id']}",
+        f"state_ids={json.dumps(extra['state_ids'])}",
+        f"type_label_ids={json.dumps(extra['type_label_ids'])}",
+    ])
+
+    assert registry.load()["linear"]["trame"] == {
+        "key": "TRAME", "id": "00000000-0000-4000-8000-000000000000", **extra,
+    }
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda extra: extra.pop("state_ids"),
+    lambda extra: extra["state_ids"].pop("ready"),
+    lambda extra: extra["state_ids"].update({"unknown": "00000000-0000-4000-8000-000000000099"}),
+    lambda extra: extra["type_label_ids"].pop("Task"),
+    lambda extra: extra["type_label_ids"].update({"unknown": "00000000-0000-4000-8000-000000000099"}),
+    lambda extra: extra["state_ids"].update({"ready": extra["state_ids"]["backlog"]}),
+    lambda extra: extra["type_label_ids"].update({"Task": extra["type_label_ids"]["Epic"]}),
+    lambda extra: extra["type_label_ids"].update({"Task": extra["state_ids"]["backlog"]}),
+    lambda extra: extra.update({"team_id": "not-a-uuid"}),
+    lambda extra: extra["state_ids"].update({"done": "not-a-uuid"}),
+    lambda extra: extra["type_label_ids"].update({"Bug": "not-a-uuid"}),
+    lambda extra: extra.update({"canonical_repo": "https://github.com/acme/trame.git"}),
+    lambda extra: extra.update({"token": "SENTINEL_DO_NOT_PERSIST"}),
+    lambda extra: extra.update({"endpoint": "https://private.invalid"}),
+])
+def test_linear_registration_refuses_invalid_bindings_without_changing_registry(
+    monkeypatch, tmp_path, mutate,
+):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    registry.register("youtrack", "existing", "EXISTING", "0-1")
+    before = (state / "registry.json").read_bytes()
+    extra = _linear_binding()
+    mutate(extra)
+
+    with pytest.raises(ValueError, match="binding Linear invalide"):
+        registry.register(
+            "linear", "trame", "TRAME", "00000000-0000-4000-8000-000000000000", **extra,
+        )
+
+    assert (state / "registry.json").read_bytes() == before
+    assert registry.load() == {"youtrack": {"existing": {"key": "EXISTING", "id": "0-1"}}}
 
 
 def test_register_cli_rejects_malformed_json_object_without_writing(
@@ -83,7 +169,7 @@ def test_register_cli_rejects_malformed_json_object_without_writing(
     _clear_data_env(monkeypatch)
     state = tmp_path / "state"
     monkeypatch.setenv("FOUNDRY_DATA", str(state))
-    registry.register("linear", "existing", "EXISTING", "project-existing")
+    registry.register("youtrack", "existing", "EXISTING", "0-1")
     registry_path = state / "registry.json"
     before = registry_path.read_bytes()
 
@@ -94,7 +180,7 @@ def test_register_cli_rejects_malformed_json_object_without_writing(
         ])
 
     assert registry_path.read_bytes() == before
-    assert "demo" not in registry.load()["linear"]
+    assert "demo" not in registry.load().get("linear", {})
 
 
 def test_alias_copies_the_project_binding_without_creating_a_project(monkeypatch, tmp_path):
