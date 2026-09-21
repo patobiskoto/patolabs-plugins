@@ -1434,8 +1434,11 @@ class EscalationStore:
             event, event_time = _normalize_consumption_event(value, issue_id)
             event_generation = event["halt_generation"]
             event_role = event["role"]
+            # resume_count is a cardinality, not a generation ceiling: bounded
+            # technical resumes advance halt_generation without incrementing it.
             if (
-                event_generation > resume_count
+                last_resumed_generation is None
+                or event_generation > last_resumed_generation
                 or event_generation < previous_generation
                 or (previous_time is not None and event_time < previous_time)
                 or generation_roles.setdefault(event_generation, event_role) != event_role
@@ -1478,7 +1481,8 @@ class EscalationStore:
             event_generation = event["halt_generation"]
             event_role = event["role"]
             if (
-                event_generation > resume_count
+                last_resumed_generation is None
+                or event_generation > last_resumed_generation
                 or event_generation < previous_rearm_generation
                 or (previous_rearm_time is not None and event_time <= previous_rearm_time)
                 or generation_roles.get(event_generation) != event_role
@@ -1662,7 +1666,35 @@ class EscalationStore:
             prior_generation = event["halt_generation"]
             prior_time = event_time
         expected_clear_count = generation - (1 if halted else 0)
-        if resume_count + len(technical_audit) != expected_clear_count:
+        if (
+            resume_count + len(technical_audit) != expected_clear_count
+            or (
+                technical_audit
+                and technical_audit[-1]["halt_generation"] > expected_clear_count
+            )
+        ):
+            raise _invalid_ledger(issue_id)
+        if (
+            (
+                resume_count > 0
+                and (
+                    last_resumed_generation > expected_clear_count
+                    or last_resumed_generation in technical_counts_by_generation
+                    or sum(
+                        event["halt_generation"] > last_resumed_generation
+                        for event in technical_audit
+                    ) != expected_clear_count - last_resumed_generation
+                )
+            )
+            or any(
+                event["halt_generation"] in technical_counts_by_generation
+                for event in durable_audit
+            )
+            or any(
+                event["halt_generation"] in technical_counts_by_generation
+                for event in rearm_audit
+            )
+        ):
             raise _invalid_ledger(issue_id)
 
         state = {
@@ -1988,19 +2020,20 @@ class EscalationStore:
             last_cleared_generation = (
                 generation - 1 if halted else generation
             )
-            technical_generations = {
-                event["halt_generation"]
+            technical_generation_count = sum(
+                event["halt_generation"] >= first_technical_generation
                 for event in technical_audit
-                if event["halt_generation"] >= first_technical_generation
-            }
+            )
             coherent = (
                 remaining == 0
                 and forfeited > 0
                 and generation >= first_technical_generation
-                and technical_generations == set(range(
-                    first_technical_generation,
-                    last_cleared_generation + 1,
-                ))
+                # Audit generations are already unique, ordered and bounded by
+                # last_cleared_generation. Equal cardinality therefore proves
+                # the complete contiguous suffix without materializing it.
+                and technical_generation_count == (
+                    last_cleared_generation - first_technical_generation + 1
+                )
             )
         else:
             coherent = (

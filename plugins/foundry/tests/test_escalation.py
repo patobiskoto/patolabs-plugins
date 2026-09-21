@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import foundry.escalation as escalation_module
 from foundry.escalation import (
     BoundedDiagnostic,
     MAX_ESCALATIONS_PER_ISSUE,
@@ -215,6 +216,24 @@ def _exhaust_remediation_window(store, issue, credits=1):
             issue, "implementer", "review_blocking_after_fix", "apex",
         )
         assert continued.action == "remediation_continued"
+    return generation
+
+
+def _generation_two_remediation_window(store, issue, credits=1):
+    """Open a human remediation window after one bounded technical resume."""
+    stopped = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert stopped.action == "technical_blocked"
+    assert store.status(issue)["halt_generation"] == 1
+    store.resume_technical_remediation(issue, 1, "a" * 64)
+    verdict = store.record_human_verdict(
+        issue, "implementer", "apex", category="strategy_decision",
+    )
+    assert verdict.action == "human_required"
+    generation = store.status(issue)["halt_generation"]
+    assert generation == 2
+    store.resume(issue, "remediation_reviewed", generation, credits)
     return generation
 
 
@@ -1787,6 +1806,212 @@ def test_remediation_credit_and_decision_are_one_atomic_idempotent_mutation(tmp_
     assert authorization["remaining_credits"] == 1
     assert authorization["consumed_credits"] == 1
     assert len(authorization["consumption_audit"]) == 1
+
+
+def test_generation_two_human_window_consumption_is_atomic_and_idempotent(tmp_path):
+    store = EscalationStore("owner/f160-generation-two", state_dir=tmp_path)
+    issue = "FOUNDRY-160"
+    generation = _generation_two_remediation_window(store, issue)
+    key = "f160-generation-two-review"
+    before = store.status(issue)
+
+    first = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        idempotency_key=key,
+    )
+    persisted = store._path(issue).read_bytes()
+    replay = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        idempotency_key=key,
+    )
+
+    assert first == replay
+    assert first.action == "remediation_continued"
+    assert first.human_required is False
+    assert first.authority_category is None
+    assert first.technical_remediation is None
+    assert first.remediation_authorization == {
+        "state": "exhausted", "role": "implementer",
+        "halt_generation": generation,
+        "maximum_credits": 1, "remaining_credits": 0,
+    }
+    assert store._path(issue).read_bytes() == persisted
+
+    after = store.status(issue)
+    assert after["halted"] is False
+    assert after["halt_generation"] == generation == 2
+    assert after["resume_count"] == 1
+    assert after["last_resumed_halt_generation"] == generation
+    assert after["total_escalations"] == before["total_escalations"]
+    assert after["technical_remediation_audit"] == before[
+        "technical_remediation_audit"
+    ]
+    assert after["roles"]["implementer"]["deterministic_failures"] == (
+        before["roles"]["implementer"]["deterministic_failures"] + 1
+    )
+    raw = json.loads(persisted)
+    window_audit = raw["remediation_authorization"]["consumption_audit"]
+    assert len(window_audit) == 1
+    assert raw["consumption_audit"] == window_audit
+    assert window_audit[0]["halt_generation"] == generation
+    original_receipt = raw["failure_receipts"][key]
+
+    with pytest.raises(RoutingConfigError, match="identité idempotente d'échec invalide"):
+        store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+            idempotency_key="short",
+        )
+    assert store._path(issue).read_bytes() == persisted
+
+    for role, kind, tier in (
+        ("reviewer", "review_blocking_after_fix", "apex"),
+        ("implementer", "test_red", "apex"),
+        ("implementer", "review_blocking_after_fix", "frontier"),
+    ):
+        with pytest.raises(
+            RoutingConfigError,
+            match="identité idempotente d'échec réutilisée avec un autre signal",
+        ):
+            store.record_failure(
+                issue, role, kind, tier, idempotency_key=key,
+            )
+        assert json.loads(store._path(issue).read_bytes())["failure_receipts"][key] == (
+            original_receipt
+        )
+
+
+@pytest.mark.parametrize(
+    ("window_state", "credits", "remaining"),
+    [
+        ("active", 2, 1),
+        ("cancelled", 2, 0),
+        ("invalidated", 2, 0),
+    ],
+)
+def test_generation_two_window_states_remain_fail_closed(
+    tmp_path, window_state, credits, remaining,
+):
+    store = EscalationStore(
+        f"owner/f160-generation-two-{window_state}", state_dir=tmp_path,
+    )
+    issue = "FOUNDRY-161"
+    generation = _generation_two_remediation_window(store, issue, credits)
+    continued = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert continued.action == "remediation_continued"
+
+    if window_state == "cancelled":
+        store.cancel_remediation(issue, generation)
+    elif window_state == "invalidated":
+        store.record_failure(issue, "implementer", "test_red", "apex")
+
+    before_rearm = store._path(issue).read_bytes()
+    with pytest.raises(RoutingConfigError, match="fenêtre de remédiation épuisée"):
+        store.rearm_remediation(
+            issue, "implementer", "manual_retry_approved", generation, 1,
+        )
+    assert store._path(issue).read_bytes() == before_rearm
+    state = store.status(issue)
+    assert state["remediation_authorization"] == {
+        "state": window_state, "role": "implementer",
+        "halt_generation": generation,
+        "maximum_credits": credits, "remaining_credits": remaining,
+    }
+    assert state["consumption_audit"][0]["halt_generation"] == generation
+
+
+def test_generation_two_consumption_rejects_a_technical_only_generation(tmp_path):
+    store = EscalationStore("owner/f160-generation-forgery", state_dir=tmp_path)
+    issue = "FOUNDRY-162"
+    _generation_two_remediation_window(store, issue)
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        idempotency_key="f160-valid-generation-two",
+    )
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    forged = {
+        "code": "review_blocking_after_fix_consumed",
+        "at": payload["technical_remediation_audit"][0]["at"],
+        "role": "implementer",
+        "halt_generation": 1,
+    }
+    payload["consumption_audit"].insert(0, forged)
+    payload["roles"]["implementer"]["deterministic_failures"] += 1
+    payload["roles"]["implementer"]["failures_since_escalation"] += 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+            idempotency_key="f160-refused-generation-one",
+        )
+    assert path.read_bytes() == malformed
+
+
+def test_hostile_huge_generation_is_rejected_without_enumeration(
+    tmp_path, monkeypatch,
+):
+    store = EscalationStore("owner/f160-hostile-generation", state_dir=tmp_path)
+    issue = "FOUNDRY-164"
+    _generation_two_remediation_window(store, issue)
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    hostile_generation = 10 ** 100
+    payload["halt_generation"] = hostile_generation
+    payload["resume_count"] = hostile_generation - 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    def forbid_generation_range(*_args):
+        raise AssertionError("normalization enumerated an untrusted generation")
+
+    monkeypatch.setattr(
+        escalation_module, "range", forbid_generation_range, raising=False,
+    )
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        )
+    assert path.read_bytes() == malformed
+
+
+def test_generation_two_consumption_succeeds_through_the_cli(
+    tmp_path, monkeypatch, capsys,
+):
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    store = EscalationStore.for_root(tmp_path, state_dir=state_dir)
+    issue = "FOUNDRY-163"
+    generation = _generation_two_remediation_window(store, issue)
+    argv = [
+        "escalation", "failure", issue, "implementer",
+        "--kind", "review_blocking_after_fix", "--current-tier", "apex",
+        "--idempotency-key", "f160-cli-generation-two",
+        "--root", str(tmp_path),
+    ]
+
+    main(argv)
+    first = json.loads(capsys.readouterr().out)
+    persisted = store._path(issue).read_bytes()
+    main(argv)
+    replay = json.loads(capsys.readouterr().out)
+
+    assert replay == first
+    assert first["action"] == "remediation_continued"
+    assert first["human_required"] is False
+    assert first["remediation_authorization"] == {
+        "state": "exhausted", "role": "implementer",
+        "halt_generation": generation,
+        "maximum_credits": 1, "remaining_credits": 0,
+    }
+    assert store._path(issue).read_bytes() == persisted
 
 
 @pytest.mark.parametrize("after_halt", [False, True])
