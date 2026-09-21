@@ -146,7 +146,7 @@ def _provider_transport_preflight() -> tuple[str, str | None]:
         devhub_url = config.require_public("DEVHUB_URL").rstrip("/")
         validate_base_url(devhub_url)
         return tracker_name, devhub_url
-    if tracker_name not in {"youtrack", "ghprojects"}:
+    if tracker_name not in {"youtrack", "ghprojects", "linear"}:
         raise SystemExit(f"Tracker inconnu : {tracker_name}")
     return tracker_name, None
 
@@ -361,6 +361,9 @@ def main(argv=None):
             endpoint = "endpoint configured"
         elif tracker_name == "ghprojects":
             endpoint = "provider stub"
+        elif tracker_name == "linear":
+            config.require("LINEAR_API_TOKEN")
+            endpoint = "official GraphQL endpoint"
         else:
             raise SystemExit(f"Tracker inconnu : {tracker_name}")
         check("Config", True, f"tracker={tracker_name} codehost={config.codehost_name()} · {endpoint}")

@@ -248,6 +248,40 @@ def resolve(tracker: str, repo: str) -> Project:
                    extra={k: v for k, v in e.items() if k not in ("key", "id")})
 
 
+def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
+    """Resolve one provider binding by exact credential-free checkout identity.
+
+    Repository basenames and ``PROJECT_REPO`` are deliberately absent from this
+    lookup. Duplicate aliases are accepted only when their complete binding payloads
+    are identical; contradictory projects for one canonical repository fail closed.
+    """
+    try:
+        canonical = canonical_repository_identity(canonical_repo)
+    except ValueError:
+        raise ValueError("identité canonique du checkout invalide") from None
+    bindings = load().get(tracker, {})
+    matches = [
+        entry for entry in bindings.values()
+        if isinstance(entry, dict) and entry.get("canonical_repo") == canonical
+    ]
+    if not matches:
+        raise SystemExit(
+            f"Aucun binding '{tracker}' ne correspond au canonical_repo du checkout."
+        )
+    selected = matches[0]
+    if any(entry != selected for entry in matches[1:]):
+        raise SystemExit(
+            f"Bindings '{tracker}' ambigus pour le canonical_repo du checkout."
+        )
+    if (not isinstance(selected.get("key"), str) or not selected["key"]
+            or not isinstance(selected.get("id"), str) or not selected["id"]):
+        raise SystemExit(f"Binding '{tracker}' invalide pour le canonical_repo du checkout.")
+    return Project(
+        key=selected["key"], id=selected["id"],
+        extra={k: v for k, v in selected.items() if k not in ("key", "id")},
+    )
+
+
 def register(tracker: str, repo: str, key: str, project_id: str, **extra) -> None:
     extra = dict(extra)
     if "canonical_repo" in extra:

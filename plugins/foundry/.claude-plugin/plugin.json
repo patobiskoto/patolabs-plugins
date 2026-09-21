@@ -1,6 +1,6 @@
 {
   "name": "foundry",
-  "description": "The foundation: idea → guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution loop, backed by pluggable trackers (YouTrack or DevHubTracker) and code-hosts. Delegated identities: Lupin, Eiffel, Maigret, and Vauban. Judgment lives in the skills, invariants in the code.",
+  "description": "The foundation: idea → guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution with YouTrack or DevHubTracker and code-hosts. Linear is a checkout-bound read/create/non-replacing relation/comment subset: PR projection, openpr/merge, existing-issue replacement, AC sync, and ADR knowledge-base support are unavailable. Delegated identities: Lupin, Eiffel, Maigret, and Vauban.",
   "version": "0.8.1",
   "author": { "name": "pato" },
   "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/foundry",
@@ -16,6 +16,12 @@
       "type": "string",
       "title": "YouTrack permanent token",
       "description": "perm-… token with project read/write. Stored in your OS keychain.",
+      "sensitive": true
+    },
+    "LINEAR_API_TOKEN": {
+      "type": "string",
+      "title": "Linear personal API key",
+      "description": "Linear API key for the explicitly registered team/project binding. Stored in your OS keychain.",
       "sensitive": true
     },
     "DEVHUB_URL": {
@@ -44,7 +50,7 @@
     "FOUNDRY_TRACKER": {
       "type": "string",
       "title": "Tracker provider",
-      "description": "youtrack (default) | devhub | ghprojects (stub)",
+      "description": "youtrack (default) | devhub | linear (checkout-bound reads, create, relations/comments; no PR projection, openpr/merge, existing-issue replacement, AC sync, or ADR KB) | ghprojects (stub)",
       "default": "youtrack"
     },
     "FOUNDRY_CODEHOST": {

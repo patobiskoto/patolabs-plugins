@@ -22,7 +22,12 @@ def tracker(name: str | None = None) -> Tracker:
     if name == "devhub":
         from foundry.trackers.devhub import DevHubTracker
         return DevHubTracker()
-    raise SystemExit(f"Tracker inconnu : {name}. Connus : youtrack, ghprojects, devhub.")
+    if name == "linear":
+        from foundry.trackers.linear import LinearTracker
+        return LinearTracker()
+    raise SystemExit(
+        f"Tracker inconnu : {name}. Connus : youtrack, ghprojects, devhub, linear."
+    )
 
 
 def codehost(name: str | None = None, cwd: str | None = None) -> CodeHost:

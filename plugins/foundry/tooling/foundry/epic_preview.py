@@ -600,7 +600,11 @@ def main(argv: list[str] | None = None) -> None:
     from foundry import tracker as tracker_factory
 
     active_tracker = tracker_factory()
-    project = active_tracker.resolve_project(registry.repo_basename(args.root))
+    resolver = getattr(active_tracker, "resolve_checkout_project", None)
+    project = (
+        resolver(args.root) if callable(resolver)
+        else active_tracker.resolve_project(registry.repo_basename(args.root))
+    )
     policy = {
         "schema_version": POLICY_CONTRACT,
         "host": args.host,

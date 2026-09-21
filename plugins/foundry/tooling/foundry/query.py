@@ -21,7 +21,10 @@ import sys
 
 import foundry
 from foundry import registry
-from foundry.trackers.base import IssueUnavailableError
+from foundry.trackers.base import (
+    IssueUnavailableError,
+    TrackerCapabilityUnavailableError,
+)
 
 _PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 _TERMINAL_STATES = {"done", "dropped", "fixed"}
@@ -81,6 +84,9 @@ def _annotate(issues):
 
 
 def _project(tr):
+    resolver = getattr(tr, "resolve_checkout_project", None)
+    if callable(resolver):
+        return resolver()
     return tr.resolve_project(registry.repo_basename())
 
 
@@ -383,6 +389,22 @@ def _adr_index(tr, p):
             for a in tr.list_adrs(p)]
 
 
+def _adr_index_or_capability(tr, p):
+    """Keep an issue readable when its tracker has no ADR knowledge base.
+
+    Only the provider's typed capability error is projected. Transport, binding and
+    payload failures still propagate rather than being mistaken for an empty index.
+    """
+    try:
+        return _adr_index(tr, p)
+    except TrackerCapabilityUnavailableError as exc:
+        return {
+            "status": "unavailable",
+            "tracker": exc.tracker,
+            "capability": exc.capability,
+        }
+
+
 def issue(issue_id: str):
     tr = foundry.tracker()
     p = _project(tr)
@@ -400,9 +422,10 @@ def issue(issue_id: str):
         except IssueUnavailableError:
             related[lk.target] = {"id": lk.target, "error": "issue unavailable"}
     return {"project": p.key, "issue": it.to_dict(), "related": related,
-            "note": "adrs is an INDEX — load the full text of the ones constraining "
-                    "this issue with `query adr <ADR-ID>`.",
-            "adrs": _adr_index(tr, p)}
+            "note": "adrs is an INDEX when the provider supports an ADR knowledge "
+                    "base; otherwise it is a typed capability status. Load the full "
+                    "text of constraining ADRs with `query adr <ADR-ID>` when available.",
+            "adrs": _adr_index_or_capability(tr, p)}
 
 
 def adrs(adr_id=None):

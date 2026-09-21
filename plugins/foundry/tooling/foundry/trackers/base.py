@@ -44,6 +44,15 @@ class TrackerConflictError(RuntimeError):
     """A provider version/body changed before a bounded tracker mutation."""
 
 
+class TrackerCapabilityUnavailableError(RuntimeError):
+    """The active tracker cannot safely provide one explicitly named capability."""
+
+    def __init__(self, tracker: str, capability: str):
+        super().__init__(f"capability unavailable: {tracker}.{capability}")
+        self.tracker = tracker
+        self.capability = capability
+
+
 class EpicClosureUnavailableError(RuntimeError):
     """The active tracker lacks atomic, audited non-code Epic closure."""
 
@@ -98,6 +107,32 @@ class Tracker(ABC):
     @abstractmethod
     def resolve_project(self, repo: str) -> Project:
         """Map a repo basename to its tracker project (raises if unknown)."""
+
+    def resolve_checkout_project(
+        self, cwd: str | None = None, *, checkout_identity: str | None = None,
+    ) -> Project:
+        """Resolve the tracker project for one checkout.
+
+        Existing providers retain their repository-name lookup. Providers whose
+        binding contract is repository-identity based may override this method and
+        use ``checkout_identity`` (or derive it from ``cwd``) without trusting an
+        inherited environment alias.
+        """
+        del checkout_identity
+        from foundry import registry
+
+        repo = registry.repo_basename() if cwd is None else registry.repo_basename(cwd)
+        return self.resolve_project(repo)
+
+    def preflight_issue_operation(self, operation: str) -> None:
+        """Refuse an issue lifecycle operation before any code-host effect.
+
+        ``openpr`` and ``merge`` call this seam before pushing, creating/updating a
+        pull request, merging, or deleting a branch. Existing providers intentionally
+        keep this no-op default; an adapter with a narrower capability boundary must
+        fail closed here.
+        """
+        del operation
 
     def validate_issue_binding(self, project: Project, *issue_ids: str) -> None:
         """Fail when an issue mutation would escape ``project`` (default: no-op)."""
