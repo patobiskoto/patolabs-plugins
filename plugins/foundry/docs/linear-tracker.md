@@ -30,11 +30,41 @@ non-secret values:
   `in-progress`, `review`, `blocked`, `done`, `dropped`) to a distinct Linear workflow
   state UUID.
 
-Optional JSON maps `milestone_ids`, `type_label_ids`, and `label_ids` bind normalized
-values to stable Linear model UUIDs. Every label or milestone returned by Linear must
-have an ID in the corresponding map; missing, overlapping, or unknown IDs are binding
-errors. Normalized values come from these maps, never from mutable display names. A
-create using an unmapped value is refused and the adapter never searches by name.
+Optional JSON maps `milestone_ids` and `label_ids` bind normalized values to stable
+Linear model UUIDs. `type_label_ids` is required for a registered Linear binding and
+contains exactly `Epic`, `Feature`, `Bug`, and `Task`; the live qualification record
+must additionally attest that these labels share Linear's exclusive `Type` group. Every
+label or milestone returned by Linear must have an ID in the corresponding map; missing,
+overlapping, or unknown IDs are binding errors. Normalized values come from these maps,
+never from mutable display names. A create using an unmapped value is refused and the
+adapter never searches by name. Keys in the optional maps cannot be URL- or
+credential-shaped, and every map value must be a UUID.
+
+`registry register` receives scalar extras as `k=v`. Pass each required map as a
+shell-quoted JSON object. For Linear, the command rejects before writing unless the
+project ID, team ID, seven exact state IDs, and four exact type-label IDs are UUIDs and
+paired with an already canonical repository identity. The local repository alias,
+project ID, team ID, and every UUID in the state, type, milestone, and label maps must
+be globally distinct. `registry alias` reapplies this validation to a Linear binding
+against the target alias before it writes, so a UUID-shaped alias cannot bypass that
+uniqueness rule. It also refuses unrecognized extras: a token, endpoint, workspace URL,
+or future setting cannot become a silent registry field.
+
+Only a `tracker=linear` registration JSON-decodes `state_ids`, `type_label_ids`,
+`milestone_ids`, and `label_ids`; each must decode to an object. Malformed or non-object
+structured input is rejected before the registry is written. Every non-Linear provider
+retains the historical scalar-extra contract, including for JSON-looking `k=v` values.
+
+## Qualification evidence, distinct from registration
+
+A structurally valid local binding is not evidence that a Linear workspace was observed,
+and it never activates the provider. Record the qualification outside the public source
+tree and registry: workspace/project/team readback, all seven state UUIDs with observed
+labels, the four Type label UUIDs with their exclusive group, selected estimate scale,
+empty or observed milestones, allowed operations, and the qualification-artifact check.
+The record may contain provider identifiers and observations, but never a token, account
+data, or private URL. FOUNDRY-159 alone may activate a verified binding or perform a
+cutover; FOUNDRY-162 creates neither a migration nor a dual-write path.
 
 ## Exact support boundary
 
