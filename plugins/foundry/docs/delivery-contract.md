@@ -1,56 +1,90 @@
 # Delivery-proof contract prototype
 
-`foundry.delivery_contract` is an opt-in, read-only prototype for representing a
-project's delivery evidence after merge. It has no CLI command, provider client,
-credential, hook, remote persistence, tracker transition, merge, deployment, or rollback
-operation. It cannot execute or request work from a provider.
+`foundry.delivery_contract` is an opt-in, read-only prototype for observing one
+existing project-native proof after merge. It is deliberately closed to the public
+repository `patobiskoto/patolabs-plugins` and GitHub's check-runs REST endpoint. It has
+no CLI, hook, command execution, credential parameter, GitHub write, tracker
+transition, merge, deployment, smoke trigger, rollback, or remote receipt store.
 
-The closed `foundry-delivery-contract.v1` schema contains only a version, named
-read-only source declarations (`id`, adapter and adapter version, provenance), and
-requirements that name a source plus required facts. Unknown fields are rejected, so
-commands, hooks, credentials, and deployment instructions cannot enter the contract.
-Proof facts are only nullable booleans, so arbitrary provider payloads cannot enter a
-receipt. Its digest is SHA-256 over canonical JSON.
+## Closed pilot contract
 
-`ReadOnlyProofAdapter` is the one-source adapter seam. Its sole operation is
-`read_proof(project, sha)`; before it is called, Foundry binds its source id, adapter,
-adapter version, and provenance to one declared contract source. The supported
+`github_check_runs_pilot_contract()` returns a detached copy of the only supported
+`foundry-delivery-contract.v1` declaration. The project, contract version, source id,
+adapter id/version, provenance, requirement id, and required fact are closed literals:
+
+- project: `patobiskoto/patolabs-plugins`;
+- source: `github_check_runs`;
+- adapter/version: `github_check_runs_readonly` / `v1`;
+- provenance: `github_rest_check_runs`;
+- requirement/fact: `github_checks` / `check_runs_success`.
+
+The validator requires exactly that single source and requirement. Arbitrary
+identifier-shaped substitutions, including credential-shaped source, adapter, version,
+or provenance strings, are rejected. Unknown fields are also rejected, so commands,
+hooks, credentials, and deployment instructions cannot enter the contract. The digest
+is SHA-256 over its validated canonical JSON. Project identity is a canonical lowercase
+GitHub `owner/repository`, then constrained to the literal pilot repository; every
+observed revision is an exact 40-character lowercase SHA.
+
+## Concrete read-only observation
+
+`GitHubCheckRunsAdapter` is the sole supported adapter. Its production transport sends
+only this unauthenticated request, with a fixed GitHub API host and fixed headers:
+
+```text
+GET https://api.github.com/repos/patobiskoto/patolabs-plugins/commits/<sha>/check-runs?per_page=100
+```
+
+There is no URL, HTTP method, header, token, or credential argument. Redirects are not
+followed, and environment proxy configuration is disabled so proxy credentials cannot
+be inherited. The response is size-bounded, and tests replace a private transport seam
+so the mapping is deterministic without network access. Provider payloads, names,
+URLs, messages, and errors are never copied into a proof or receipt.
+
+The adapter checks every returned `head_sha` against the requested SHA and maps only the
+following closed cases:
+
+- at least one completed `success`, no failure, and optional `neutral`/`skipped` gives
+  `success`;
+- any known non-completed run gives `pending`;
+- an empty response, or only `neutral`/`skipped`, gives `missing-proof`;
+- a known failing conclusion gives `failed-proof` when no run is pending;
+- a returned different valid `head_sha` gives `wrong-sha`;
+- malformed, partial, oversized, invalid-JSON, or future provider shapes give
+  `unsupported-schema`;
+- HTTP, network, timeout, or fixed-source availability failures give `inaccessible`.
+
+This check-runs observation is not the CI merge gate. In particular, it does not read
+the legacy commit-status API and cannot satisfy, bypass, weaken, or retroactively
+change the two-source CI semantics of FOUNDRY-ADR-0002. It proves only what this one
+declared source reported for the exact SHA.
+
+## Canonical generation and journal
+
 `delivery_receipt_from_adapter`, `claude_delivery_receipt`, and
-`codex_delivery_receipt` surfaces always read and evaluate exactly that contract-bound
-source; callers cannot supply observations to them. The pure observation evaluator is
-private and exists only as a deterministic test seam. Every proof provenance is also
-compared with the declared source provenance and a mismatch is refused. A proof for
-another project is reported as `cross-project`; a proof for a different SHA is
-`wrong-sha`.
+`codex_delivery_receipt` accept the closed contract, exact SHA, concrete adapter, and a
+bounded receipt identifier. They do not accept project/source overrides, caller-built
+observations, or an observation timestamp. After the adapter read, the shared core
+captures canonical UTC time internally (`YYYY-MM-DDTHH:MM:SSZ`) and derives the
+receipt. Tests replace only the private clock. Claude and Codex therefore use the same
+canonical core; only their receipt identifiers and independently captured timestamps
+may differ.
 
-An adapter reports expected source unavailability only by raising the bounded
-`ProofSourceUnavailable` exception. Foundry converts that declared path to an
-`inaccessible` proof whose identity and provenance come from the contract. The
-provider exception text is discarded and never persisted. Other exceptions are not
-masked as unavailability and remain adapter programming or integration errors.
+`DeliveryReceiptJournal.append(...)` likewise accepts no receipt mapping. Its public
+path performs a fresh adapter observation, derives the receipt, validates it against
+the exact pilot contract and closed receipt schema, then appends it once to a bounded
+local JSONL file. Every existing row is revalidated before an append and on every
+read; an unsupported field, identity, digest, vocabulary value, provenance shape, or
+verdict/outcome combination fails closed. Returned values are detached copies.
 
-The resulting `foundry-delivery-receipt.v1` binds the project, exact 40-character SHA,
-contract version and digest, adapter/version, proof-source provenance, and a canonical
-UTC observation time (`YYYY-MM-DDTHH:MM:SSZ`). Arbitrary text is rejected rather than
-being persisted as an observation instant.
+The journal is local append-only behavior, not signed or remote durable storage. An
+actor that can replace the file with another fully schema-valid row is outside the
+prototype's trust boundary; the receipt makes no cryptographic authenticity claim.
+Filesystem protection remains the operator's responsibility.
 
-`DeliveryReceiptJournal` optionally records generated receipts in a bounded local
-append-only JSONL file. It locks appends, rejects duplicate receipt ids, and returns
-detached canonical data so callers cannot mutate an already-recorded receipt. Before
-append and on every read, it requires non-empty uniquely named proof rows, validates
-the closed proof-outcome vocabulary and provenance shape, and recomputes the receipt
-verdict from those outcomes. A mismatched positive or negative verdict is rejected.
-The journal is local-only and is explicitly not remote durable storage; it holds only
-the closed receipt schema, never provider raw output, commands, credentials, or
-secrets.
-
-`verified` is possible only when every required proof is successful and every required
-fact is non-null. Missing proof, pending proof, inaccessible source, unsupported proof
-schema, provenance mismatch, cross-project/wrong-SHA proof, and unavailable required
-facts remain separate outcomes;
-none is silently converted to true or false. Claude and Codex facades call the same
-source-bound canonical core, so their content differs only in caller-provided receipt
-identifiers and observation timestamps.
-
-This is distinct from the existing CI gate and does not change merge or tracker-done
-semantics (FOUNDRY-ADR-0011 and FOUNDRY-ADR-0002).
+The receipt binds the literal project, requested SHA, contract schema/version/digest,
+adapter/version, source/provenance, internally captured observation time, and closed
+outcome. A required null/absent fact yields `unavailable`, never true or false. The
+prototype remains distinct from merge, tracker `done`, routing, model calls, and every
+delivery authority governed by FOUNDRY-ADR-0011, FOUNDRY-ADR-0002,
+FOUNDRY-ADR-0005, and FOUNDRY-ADR-0008.

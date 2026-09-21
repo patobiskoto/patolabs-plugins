@@ -1,4 +1,7 @@
 import copy
+import inspect
+import json
+import urllib.error
 
 import pytest
 
@@ -6,270 +9,488 @@ from foundry import delivery_contract as delivery
 
 
 SHA = "a" * 40
-CONTRACT = {
-    "schema": delivery.CONTRACT_SCHEMA, "version": "v1",
-    "sources": [{"id": "github", "adapter": "github_readonly", "adapter_version": "v1", "provenance": "github_api"}],
-    "requirements": [{"id": "release", "source": "github", "required_facts": ["artifact"]}],
-}
+OTHER_SHA = "b" * 40
+FIXED_TIME = "2026-09-22T10:00:00Z"
+CONTRACT = delivery.github_check_runs_pilot_contract()
+
+
+@pytest.fixture(autouse=True)
+def fixed_private_clock(monkeypatch):
+    monkeypatch.setattr(delivery, "_utc_now", lambda: FIXED_TIME)
+
+
+def check_run(*, sha=SHA, status="completed", conclusion="success"):
+    return {"head_sha": sha, "status": status, "conclusion": conclusion}
+
+
+def check_runs_payload(*runs, total_count=None):
+    return {
+        "total_count": len(runs) if total_count is None else total_count,
+        "check_runs": list(runs),
+    }
+
+
+class StubTransport:
+    def __init__(self, value=None, *, error=None):
+        self.value = value
+        self.error = error
+        self.calls = []
+
+    def get_check_runs(self, *, project, sha):
+        self.calls.append((project, sha))
+        if self.error is not None:
+            raise self.error
+        return self.value
+
+
+def github_adapter(value=None, *, error=None):
+    transport = StubTransport(value, error=error)
+    return delivery.GitHubCheckRunsAdapter(_transport=transport), transport
+
+
+def generated_receipt(value, *, observation_id="receipt1", error=None, sha=SHA):
+    adapter, transport = github_adapter(value, error=error)
+    result = delivery.delivery_receipt_from_adapter(
+        CONTRACT,
+        sha=sha,
+        adapter=adapter,
+        observation_id=observation_id,
+    )
+    return result, transport
 
 
 def proof(**overrides):
-    value = {"schema": delivery.PROOF_SCHEMA, "source": "github", "project": "foundry",
-             "sha": SHA, "state": "success", "provenance": "github_api", "facts": {"artifact": True}}
+    value = {
+        "schema": delivery.PROOF_SCHEMA,
+        "source": delivery.PILOT_SOURCE_ID,
+        "project": delivery.PILOT_PROJECT,
+        "sha": SHA,
+        "state": "success",
+        "provenance": delivery.PILOT_PROVENANCE,
+        "facts": {delivery.PILOT_REQUIRED_FACT: True},
+    }
     value.update(overrides)
     return value
 
 
-class StaticReadOnlyAdapter:
-    source_id = "github"
-    adapter = "github_readonly"
-    adapter_version = "v1"
-    provenance = "github_api"
-
-    def __init__(self, value):
-        self.value = value
-        self.calls = []
-
-    def read_proof(self, *, project, sha):
-        self.calls.append((project, sha))
-        return self.value
-
-
-class UnavailableReadOnlyAdapter(StaticReadOnlyAdapter):
-    def read_proof(self, *, project, sha):
-        self.calls.append((project, sha))
-        raise delivery.ProofSourceUnavailable("provider secret detail must not persist")
-
-
-class BrokenReadOnlyAdapter(StaticReadOnlyAdapter):
-    def read_proof(self, *, project, sha):
-        raise RuntimeError("adapter programming error")
-
-
-def receipt(observations, **kwargs):
-    options = {"observation_id": "receipt1", "observed_at": "2026-09-22T10:00:00Z"}
+def private_receipt(observations, **kwargs):
+    options = {"observation_id": "receipt1", "observed_at": FIXED_TIME}
     options.update(kwargs)
     return delivery._delivery_receipt_from_observations(
-        CONTRACT, project="foundry", sha=SHA, observations=observations, **options,
+        CONTRACT,
+        sha=SHA,
+        observations=observations,
+        **options,
     )
 
 
-def test_contract_is_closed_declarative_and_digest_is_canonical():
-    assert delivery.contract_digest(CONTRACT) == delivery.contract_digest(copy.deepcopy(CONTRACT))
+def journal_append(journal, value, *, observation_id="receipt1"):
+    adapter, transport = github_adapter(value)
+    saved = journal.append(
+        contract=CONTRACT,
+        sha=SHA,
+        adapter=adapter,
+        observation_id=observation_id,
+    )
+    return saved, transport
+
+
+def test_pilot_contract_is_detached_closed_and_digest_is_canonical():
+    first = delivery.github_check_runs_pilot_contract()
+    second = delivery.github_check_runs_pilot_contract()
+    first["sources"][0]["id"] = "mutated"
+    assert second == CONTRACT
+    assert delivery.contract_digest(second) == delivery.contract_digest(copy.deepcopy(second))
+
     for forbidden in ("command", "hook", "credential", "deployment"):
         bad = copy.deepcopy(CONTRACT)
         bad[forbidden] = "anything"
-        with pytest.raises(delivery.DeliveryContractError):
+        with pytest.raises(delivery.DeliveryContractError, match="unsupported fields"):
             delivery.validate_contract(bad)
 
 
-@pytest.mark.parametrize(("observation", "verdict"), [
-    (proof(), "verified"),
-    (proof(sha="b" * 40), "wrong-sha"),
-    ({}, "missing-proof"),
-    (proof(state="pending"), "pending"),
-    (proof(state="unavailable"), "inaccessible"),
-    (proof(schema="future-proof.v2"), "unsupported-schema"),
-])
-def test_receipt_covers_all_required_terminal_and_nonterminal_states(observation, verdict):
-    observations = observation if observation == {} else {"github": observation}
-    assert receipt(observations)["verdict"] == verdict
+@pytest.mark.parametrize(
+    ("field", "substitution"),
+    [
+        ("id", "github_token"),
+        ("adapter", "arbitrary_readonly"),
+        ("adapter_version", "personal_access_token"),
+        ("provenance", "secret_source"),
+    ],
+)
+def test_pilot_rejects_credential_shaped_and_arbitrary_source_identity_substitutions(
+    field,
+    substitution,
+):
+    bad = copy.deepcopy(CONTRACT)
+    bad["sources"][0][field] = substitution
+    with pytest.raises(delivery.DeliveryContractError, match="unsupported by the delivery pilot"):
+        delivery.validate_contract(bad)
 
 
-def test_null_required_fact_fails_closed_without_inventing_a_negative_fact():
-    result = receipt({"github": proof(facts={"artifact": None})})
+def test_pilot_is_bound_to_one_concrete_project_source_and_requirement():
+    bad_project = copy.deepcopy(CONTRACT)
+    bad_project["project"] = "someone/another-public-repo"
+    with pytest.raises(delivery.DeliveryContractError, match="contract project is unsupported"):
+        delivery.validate_contract(bad_project)
+
+    extra_source = copy.deepcopy(CONTRACT)
+    extra_source["sources"].append(copy.deepcopy(extra_source["sources"][0]))
+    with pytest.raises(delivery.DeliveryContractError, match="exactly one pilot source"):
+        delivery.validate_contract(extra_source)
+
+    arbitrary_fact = copy.deepcopy(CONTRACT)
+    arbitrary_fact["requirements"][0]["required_facts"] = ["provider_says_yes"]
+    with pytest.raises(delivery.DeliveryContractError, match="facts are unsupported"):
+        delivery.validate_contract(arbitrary_fact)
+
+
+@pytest.mark.parametrize(
+    ("payload", "error", "verdict"),
+    [
+        (check_runs_payload(check_run()), None, "verified"),
+        (check_runs_payload(check_run(sha=OTHER_SHA)), None, "wrong-sha"),
+        (check_runs_payload(), None, "missing-proof"),
+        (
+            check_runs_payload(check_run(status="in_progress", conclusion=None)),
+            None,
+            "pending",
+        ),
+        (None, delivery.ProofSourceUnavailable("provider detail"), "inaccessible"),
+        (
+            check_runs_payload(check_run(conclusion="future_conclusion")),
+            None,
+            "unsupported-schema",
+        ),
+    ],
+)
+def test_concrete_adapter_maps_required_pilot_states_deterministically(payload, error, verdict):
+    result, transport = generated_receipt(payload, error=error)
+    assert result["verdict"] == verdict
+    assert result["proofs"][0]["outcome"] == (
+        "success" if verdict == "verified" else verdict
+    )
+    assert transport.calls == [(delivery.PILOT_PROJECT, SHA)]
+    assert "provider detail" not in delivery._canonical(result)
+
+
+@pytest.mark.parametrize(
+    ("payload", "verdict"),
+    [
+        (
+            check_runs_payload(
+                check_run(conclusion="success"),
+                check_run(conclusion="skipped"),
+            ),
+            "verified",
+        ),
+        (check_runs_payload(check_run(conclusion="skipped")), "missing-proof"),
+        (check_runs_payload(check_run(conclusion="failure")), "failed-proof"),
+        (
+            check_runs_payload(
+                check_run(conclusion="failure"),
+                check_run(status="queued", conclusion=None),
+            ),
+            "pending",
+        ),
+        (check_runs_payload(check_run(), total_count=101), "unsupported-schema"),
+    ],
+)
+def test_github_check_run_semantics_are_conservative(payload, verdict):
+    result, _ = generated_receipt(payload)
+    assert result["verdict"] == verdict
+
+
+def test_required_null_fact_fails_closed_without_inventing_a_negative_fact():
+    result = private_receipt(
+        {
+            delivery.PILOT_SOURCE_ID: proof(
+                facts={delivery.PILOT_REQUIRED_FACT: None},
+            ),
+        },
+    )
     assert result["verdict"] == "unavailable"
     assert result["proofs"][0]["outcome"] == "unavailable"
 
 
 def test_raw_provider_payloads_are_rejected_and_false_facts_do_not_verify():
-    # Invalid proof content stays a missing proof; it is never serialized into the receipt.
-    assert receipt({"github": proof(facts={"artifact": "provider output token=secret"})})["verdict"] == "missing-proof"
-    assert receipt({"github": proof(facts={"artifact": False})})["verdict"] == "failed-proof"
+    invalid = proof(facts={delivery.PILOT_REQUIRED_FACT: "token=secret"})
+    assert private_receipt({delivery.PILOT_SOURCE_ID: invalid})["verdict"] == "missing-proof"
+    negative = proof(facts={delivery.PILOT_REQUIRED_FACT: False})
+    assert private_receipt({delivery.PILOT_SOURCE_ID: negative})["verdict"] == "failed-proof"
 
 
-def test_one_source_readonly_adapter_is_contract_bound_and_provenance_is_checked():
-    adapter = StaticReadOnlyAdapter(proof())
-    observed = delivery.read_delivery_proof(
-        CONTRACT, project="foundry", sha=SHA, source="github", adapter=adapter,
+def test_cross_project_and_provenance_mismatch_are_distinct_and_sanitized():
+    cross_project = private_receipt(
+        {delivery.PILOT_SOURCE_ID: proof(project="someone/another-repo")},
     )
-    assert observed == proof()
-    assert adapter.calls == [("foundry", SHA)]
+    assert cross_project["verdict"] == "cross-project"
+
+    mismatch = private_receipt(
+        {delivery.PILOT_SOURCE_ID: proof(provenance="credential_shaped_value")},
+    )
+    assert mismatch["verdict"] == "provenance-mismatch"
+    assert "credential_shaped_value" not in delivery._canonical(mismatch)
+    assert "provenance" not in mismatch["proofs"][0]
+
+
+def test_public_path_requires_the_concrete_adapter_not_a_spoofed_protocol():
+    class SpoofedAdapter:
+        source_id = delivery.PILOT_SOURCE_ID
+        adapter = delivery.PILOT_ADAPTER
+        adapter_version = delivery.PILOT_ADAPTER_VERSION
+        provenance = delivery.PILOT_PROVENANCE
+
+        def read_proof(self, *, project, sha):
+            return proof(project=project, sha=sha)
+
+    with pytest.raises(delivery.DeliveryContractError, match="requires GitHubCheckRunsAdapter"):
+        delivery.read_delivery_proof(CONTRACT, sha=SHA, adapter=SpoofedAdapter())
+
+
+def test_adapter_binds_the_exact_project_and_sha_before_transport():
+    adapter, transport = github_adapter(check_runs_payload(check_run()))
+    with pytest.raises(delivery.DeliveryContractError, match="outside the pilot"):
+        adapter.read_proof(project="someone/another-repo", sha=SHA)
+    with pytest.raises(delivery.DeliveryContractError, match="exact 40-character"):
+        delivery.read_delivery_proof(CONTRACT, sha="main", adapter=adapter)
+    assert transport.calls == []
+
+    observed = delivery.read_delivery_proof(CONTRACT, sha=SHA, adapter=adapter)
+    assert observed["project"] == delivery.PILOT_PROJECT
+    assert observed["sha"] == SHA
+    assert transport.calls == [(delivery.PILOT_PROJECT, SHA)]
+
+
+def test_default_network_transport_is_fixed_host_get_only_and_has_no_credentials(monkeypatch):
+    requests = []
+    handlers = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(check_runs_payload(check_run())).encode("utf-8")
+
+    class Opener:
+        def open(self, request, *, timeout):
+            requests.append((request, timeout))
+            return Response()
+
+    def build_opener(*configured_handlers):
+        handlers.extend(configured_handlers)
+        return Opener()
+
+    monkeypatch.setattr(delivery.urllib.request, "build_opener", build_opener)
     result = delivery.delivery_receipt_from_adapter(
-        CONTRACT, project="foundry", sha=SHA, source="github", adapter=adapter,
-        observation_id="adapter1", observed_at="2026-09-22T10:00:00Z",
+        CONTRACT,
+        sha=SHA,
+        adapter=delivery.GitHubCheckRunsAdapter(),
+        observation_id="network1",
     )
     assert result["verdict"] == "verified"
-    assert adapter.calls == [("foundry", SHA), ("foundry", SHA)]
-    assert receipt({"github": proof(provenance="other_provider")})["verdict"] == "provenance-mismatch"
+    request, timeout = requests[0]
+    assert request.get_method() == "GET"
+    assert request.full_url == (
+        f"https://api.github.com/repos/{delivery.PILOT_PROJECT}/commits/{SHA}"
+        "/check-runs?per_page=100"
+    )
+    assert request.get_header("Authorization") is None
+    assert timeout == 10.0
+    assert any(
+        isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
+        for handler in handlers
+    )
+    parameters = inspect.signature(delivery.GitHubCheckRunsAdapter).parameters
+    assert not {"token", "credential", "headers", "url"} & set(parameters)
+    adapter = delivery.GitHubCheckRunsAdapter(_transport=StubTransport(check_runs_payload()))
+    assert not any(hasattr(adapter, name) for name in ("write", "post", "deploy", "merge", "rollback"))
 
-    adapter.provenance = "other_provider"
-    with pytest.raises(delivery.DeliveryContractError, match="does not match"):
-        delivery.read_delivery_proof(CONTRACT, project="foundry", sha=SHA, source="github", adapter=adapter)
 
+def test_default_transport_maps_http_failure_to_inaccessible(monkeypatch):
+    class Opener:
+        def open(self, request, *, timeout):
+            raise urllib.error.HTTPError(request.full_url, 403, "secret provider text", {}, None)
 
-def test_declared_adapter_unavailability_is_inaccessible_without_raw_error_text():
-    adapter = UnavailableReadOnlyAdapter(proof())
+    monkeypatch.setattr(delivery.urllib.request, "build_opener", lambda *_handlers: Opener())
     result = delivery.delivery_receipt_from_adapter(
-        CONTRACT, project="foundry", sha=SHA, source="github", adapter=adapter,
-        observation_id="adapter1", observed_at="2026-09-22T10:00:00Z",
+        CONTRACT,
+        sha=SHA,
+        adapter=delivery.GitHubCheckRunsAdapter(),
+        observation_id="network2",
     )
     assert result["verdict"] == "inaccessible"
-    assert result["proofs"][0]["outcome"] == "inaccessible"
-    assert "provider secret detail" not in delivery._canonical(result)
-    assert adapter.calls == [("foundry", SHA)]
+    assert "secret provider text" not in delivery._canonical(result)
 
 
-def test_adapter_programming_errors_are_not_masked_as_unavailability():
-    with pytest.raises(RuntimeError, match="programming error"):
+def test_public_generation_captures_time_internally_and_rejects_caller_timestamp(tmp_path):
+    adapter, _ = github_adapter(check_runs_payload(check_run()))
+    result = delivery.delivery_receipt_from_adapter(
+        CONTRACT,
+        sha=SHA,
+        adapter=adapter,
+        observation_id="clock1",
+    )
+    assert result["observed_at"] == FIXED_TIME
+
+    adapter, _ = github_adapter(check_runs_payload(check_run()))
+    with pytest.raises(TypeError, match="observed_at"):
         delivery.delivery_receipt_from_adapter(
-            CONTRACT, project="foundry", sha=SHA, source="github",
-            adapter=BrokenReadOnlyAdapter(proof()), observation_id="adapter1",
-            observed_at="2026-09-22T10:00:00Z",
+            CONTRACT,
+            sha=SHA,
+            adapter=adapter,
+            observation_id="clock2",
+            observed_at="2000-01-01T00:00:00Z",
+        )
+
+    adapter, _ = github_adapter(check_runs_payload(check_run()))
+    journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl")
+    with pytest.raises(TypeError, match="observed_at"):
+        journal.append(
+            contract=CONTRACT,
+            sha=SHA,
+            adapter=adapter,
+            observation_id="clock3",
+            observed_at="2000-01-01T00:00:00Z",
         )
 
 
-@pytest.mark.parametrize("observed_at", ["one", "2026-09-22T10:00:00+02:00", "2026-99-22T10:00:00Z"])
-def test_observed_at_is_a_canonical_utc_timestamp(observed_at):
+@pytest.mark.parametrize(
+    "observed_at",
+    ["one", "2026-09-22T10:00:00+02:00", "2026-99-22T10:00:00Z"],
+)
+def test_private_evaluator_still_rejects_noncanonical_timestamps(observed_at):
     with pytest.raises(delivery.DeliveryContractError, match="canonical UTC"):
-        receipt({"github": proof()}, observed_at=observed_at)
+        private_receipt(
+            {delivery.PILOT_SOURCE_ID: proof()},
+            observed_at=observed_at,
+        )
 
 
-def test_cross_project_is_not_misreported_as_wrong_sha():
-    result = receipt({"github": proof(project="another")})
-    assert result["verdict"] == "cross-project"
-    assert result["proofs"][0]["outcome"] == "cross-project"
-
-
-@pytest.mark.parametrize("facts", [{"not": "a-list"}, ["artifact", {"bad": "fact"}]])
-def test_malformed_required_facts_raises_delivery_contract_error(facts):
-    contract = copy.deepcopy(CONTRACT)
-    contract["requirements"][0]["required_facts"] = facts
-    with pytest.raises(delivery.DeliveryContractError):
-        delivery.validate_contract(contract)
-
-
-def test_bounded_local_receipt_journal_is_append_only_unique_and_detached(tmp_path):
+def test_journal_derives_from_adapter_and_is_append_only_unique_bounded_and_detached(tmp_path):
     journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl", max_receipts=2)
-    first = receipt({"github": proof()})
-    saved = journal.append(first)
+    first, first_transport = journal_append(journal, check_runs_payload(check_run()))
+    assert first_transport.calls == [(delivery.PILOT_PROJECT, SHA)]
     first["verdict"] = "injected"
-    assert saved["verdict"] == "verified"
-    assert journal.receipts() == (saved,)
+    assert journal.receipts()[0]["verdict"] == "verified"
+
     with pytest.raises(delivery.DeliveryContractError, match="already exists"):
-        journal.append(saved)
-
-    second = receipt({"github": proof()}, observation_id="receipt2")
-    journal.append(second)
+        journal_append(journal, check_runs_payload(check_run()))
+    journal_append(
+        journal,
+        check_runs_payload(check_run(conclusion="failure")),
+        observation_id="receipt2",
+    )
     with pytest.raises(delivery.DeliveryContractError, match="full"):
-        journal.append(receipt({"github": proof()}, observation_id="receipt3"))
+        journal_append(
+            journal,
+            check_runs_payload(check_run()),
+            observation_id="receipt3",
+        )
 
 
-def test_journal_refuses_provider_payloads_in_receipt_rows(tmp_path):
-    unsafe = receipt({"github": proof()})
-    unsafe["proofs"][0]["raw_output"] = "token=secret"
-    with pytest.raises(delivery.DeliveryContractError, match="unsupported fields"):
-        delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(unsafe)
-
-
-def test_journal_requires_non_empty_unique_proof_rows(tmp_path):
+def test_journal_cannot_append_a_caller_built_raw_receipt(tmp_path):
     journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl")
-    empty = receipt({"github": proof()})
-    empty["proofs"] = []
-    with pytest.raises(delivery.DeliveryContractError, match="non-empty"):
-        journal.append(empty)
-
-    duplicate = receipt({"github": proof()})
-    duplicate["proofs"].append(copy.deepcopy(duplicate["proofs"][0]))
-    with pytest.raises(delivery.DeliveryContractError, match="must be unique"):
-        journal.append(duplicate)
+    forged = private_receipt({delivery.PILOT_SOURCE_ID: proof()})
+    with pytest.raises(TypeError):
+        journal.append(forged)
+    with pytest.raises(TypeError, match="receipt"):
+        journal.append(receipt=forged)
+    assert not journal.path.exists()
 
 
-def test_journal_rejects_unknown_proof_outcome(tmp_path):
-    forged = receipt({"github": proof()})
-    forged["proofs"][0]["outcome"] = "provider-says-yes"
-    with pytest.raises(delivery.DeliveryContractError, match="outcome is unsupported"):
-        delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(forged)
-
-
-@pytest.mark.parametrize(("field", "value", "message"), [
-    ("verdict", ["verified"], "receipt verdict is unsupported"),
-    ("outcome", ["success"], "receipt proof outcome is unsupported"),
-])
-def test_journal_rejects_malformed_closed_vocabulary_fields_deterministically(
-    tmp_path, field, value, message,
-):
-    forged = receipt({"github": proof()})
-    if field == "verdict":
-        forged[field] = value
-    else:
-        forged["proofs"][0][field] = value
-    with pytest.raises(delivery.DeliveryContractError, match=message):
-        delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(forged)
-
-
-@pytest.mark.parametrize(("observation", "forged_verdict"), [
-    (proof(), "failed-proof"),
-    (proof(facts={"artifact": False}), "verified"),
-])
-def test_journal_recomputes_and_rejects_forged_positive_or_negative_verdicts(
-    tmp_path, observation, forged_verdict,
-):
-    forged = receipt({"github": observation})
-    forged["verdict"] = forged_verdict
-    with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
-        delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(forged)
-
-
-def test_journal_revalidates_verdict_coherence_when_reading(tmp_path):
-    forged = receipt({"github": proof()})
+def test_journal_revalidates_loaded_entries_and_refuses_append_after_tampering(tmp_path):
+    journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl")
+    saved, _ = journal_append(journal, check_runs_payload(check_run()))
+    forged = copy.deepcopy(saved)
     forged["verdict"] = "failed-proof"
-    path = tmp_path / "delivery-receipts.jsonl"
-    path.write_text(delivery._canonical(forged) + "\n", encoding="ascii")
+    journal.path.write_text(delivery._canonical(forged) + "\n", encoding="ascii")
+    before = journal.path.read_bytes()
+
     with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
+        journal.receipts()
+    adapter, _ = github_adapter(check_runs_payload(check_run()))
+    with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
+        journal.append(
+            contract=CONTRACT,
+            sha=SHA,
+            adapter=adapter,
+            observation_id="receipt2",
+        )
+    assert journal.path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda row: row["contract"].update(digest="0" * 64), "not the pilot contract"),
+        (lambda row: row["proofs"][0].update(adapter="arbitrary_readonly"), "outside the pilot"),
+        (lambda row: row["proofs"][0].update(raw_output="token=secret"), "unsupported fields"),
+        (lambda row: row["proofs"][0].update(outcome="provider_says_yes"), "outcome is unsupported"),
+    ],
+)
+def test_journal_loaded_schema_is_closed_and_pilot_bound(tmp_path, mutation, message):
+    row = private_receipt({delivery.PILOT_SOURCE_ID: proof()})
+    mutation(row)
+    path = tmp_path / "delivery-receipts.jsonl"
+    path.write_text(delivery._canonical(row) + "\n", encoding="ascii")
+    with pytest.raises(delivery.DeliveryContractError, match=message):
         delivery.DeliveryReceiptJournal(path).receipts()
 
-    with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
-        delivery.DeliveryReceiptJournal(path).append(
-            receipt({"github": proof()}, observation_id="receipt2"),
-        )
+
+def test_journal_rejects_malformed_json_fail_closed(tmp_path):
+    path = tmp_path / "delivery-receipts.jsonl"
+    path.write_text("{not-json}\n", encoding="ascii")
+    with pytest.raises(delivery.DeliveryContractError, match="journal is malformed"):
+        delivery.DeliveryReceiptJournal(path).receipts()
 
 
-@pytest.mark.parametrize("observations", [
-    {"github": proof()},
-    {"github": proof(facts={"artifact": False})},
-    {"github": proof(state="pending")},
-    {},
-])
-def test_journal_accepts_receipts_coherent_with_their_proof_outcomes(tmp_path, observations):
-    expected = receipt(observations)
-    saved = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(expected)
-    assert saved == expected
-
-
-def test_facades_are_identical_except_receipt_identifier_and_observation_time():
-    shared = dict(project="foundry", sha=SHA, source="github")
+def test_facades_are_canonically_identical_except_receipt_identifier():
+    claude_adapter, _ = github_adapter(check_runs_payload(check_run()))
+    codex_adapter, _ = github_adapter(check_runs_payload(check_run()))
     claude = delivery.claude_delivery_receipt(
-        CONTRACT, adapter=StaticReadOnlyAdapter(proof()), observation_id="claude1",
-        observed_at="2026-09-22T10:00:00Z", **shared,
+        CONTRACT,
+        sha=SHA,
+        adapter=claude_adapter,
+        observation_id="claude1",
     )
     codex = delivery.codex_delivery_receipt(
-        CONTRACT, adapter=StaticReadOnlyAdapter(proof()), observation_id="codex1",
-        observed_at="2026-09-22T10:01:00Z", **shared,
+        CONTRACT,
+        sha=SHA,
+        adapter=codex_adapter,
+        observation_id="codex1",
     )
-    for item in (claude, codex):
-        item.pop("receipt_id")
-        item.pop("observed_at")
+    claude.pop("receipt_id")
+    codex.pop("receipt_id")
     assert claude == codex
 
 
-@pytest.mark.parametrize("facade", [delivery.claude_delivery_receipt, delivery.codex_delivery_receipt])
-def test_supported_facades_do_not_accept_caller_supplied_observations(facade):
-    with pytest.raises(TypeError, match="observations"):
+@pytest.mark.parametrize(
+    "forbidden",
+    [
+        {"observations": {delivery.PILOT_SOURCE_ID: proof()}},
+        {"project": delivery.PILOT_PROJECT},
+        {"source": delivery.PILOT_SOURCE_ID},
+        {"observed_at": FIXED_TIME},
+    ],
+)
+@pytest.mark.parametrize(
+    "facade",
+    [delivery.claude_delivery_receipt, delivery.codex_delivery_receipt],
+)
+def test_host_facades_reject_caller_evidence_identity_and_timestamp(facade, forbidden):
+    adapter, _ = github_adapter(check_runs_payload(check_run()))
+    with pytest.raises(TypeError):
         facade(
-            CONTRACT, project="foundry", sha=SHA, source="github",
-            observations={"github": proof()}, observation_id="forged1",
-            observed_at="2026-09-22T10:00:00Z",
+            CONTRACT,
+            sha=SHA,
+            adapter=adapter,
+            observation_id="forged1",
+            **forbidden,
         )
 
 
@@ -277,8 +498,18 @@ def test_pure_observation_evaluator_is_not_a_public_surface():
     assert not hasattr(delivery, "delivery_receipt")
 
 
-def test_receipt_is_exact_sha_bound_and_does_not_expose_a_mutation_path():
-    result = receipt({"github": proof()})
+def test_receipt_is_exact_sha_bound_and_has_no_authority_surface():
+    result, _ = generated_receipt(check_runs_payload(check_run()))
+    assert result["project"] == delivery.PILOT_PROJECT
     assert result["sha"] == SHA
     assert result["contract"]["digest"] == delivery.contract_digest(CONTRACT)
-    assert not {"command", "deployment", "rollback", "merge", "tracker"} & set(result)
+    assert result["proofs"][0] == {
+        "requirement": delivery.PILOT_REQUIREMENT_ID,
+        "source": delivery.PILOT_SOURCE_ID,
+        "adapter": delivery.PILOT_ADAPTER,
+        "adapter_version": delivery.PILOT_ADAPTER_VERSION,
+        "source_provenance": delivery.PILOT_PROVENANCE,
+        "provenance": delivery.PILOT_PROVENANCE,
+        "outcome": "success",
+    }
+    assert not {"command", "deployment", "rollback", "merge", "tracker", "credential"} & set(result)
