@@ -35,11 +35,23 @@ class StaticReadOnlyAdapter:
         return self.value
 
 
+class UnavailableReadOnlyAdapter(StaticReadOnlyAdapter):
+    def read_proof(self, *, project, sha):
+        self.calls.append((project, sha))
+        raise delivery.ProofSourceUnavailable("provider secret detail must not persist")
+
+
+class BrokenReadOnlyAdapter(StaticReadOnlyAdapter):
+    def read_proof(self, *, project, sha):
+        raise RuntimeError("adapter programming error")
+
+
 def receipt(observations, **kwargs):
     options = {"observation_id": "receipt1", "observed_at": "2026-09-22T10:00:00Z"}
     options.update(kwargs)
-    return delivery.delivery_receipt(CONTRACT, project="foundry", sha=SHA,
-                                     observations=observations, **options)
+    return delivery._delivery_receipt_from_observations(
+        CONTRACT, project="foundry", sha=SHA, observations=observations, **options,
+    )
 
 
 def test_contract_is_closed_declarative_and_digest_is_canonical():
@@ -96,6 +108,27 @@ def test_one_source_readonly_adapter_is_contract_bound_and_provenance_is_checked
         delivery.read_delivery_proof(CONTRACT, project="foundry", sha=SHA, source="github", adapter=adapter)
 
 
+def test_declared_adapter_unavailability_is_inaccessible_without_raw_error_text():
+    adapter = UnavailableReadOnlyAdapter(proof())
+    result = delivery.delivery_receipt_from_adapter(
+        CONTRACT, project="foundry", sha=SHA, source="github", adapter=adapter,
+        observation_id="adapter1", observed_at="2026-09-22T10:00:00Z",
+    )
+    assert result["verdict"] == "inaccessible"
+    assert result["proofs"][0]["outcome"] == "inaccessible"
+    assert "provider secret detail" not in delivery._canonical(result)
+    assert adapter.calls == [("foundry", SHA)]
+
+
+def test_adapter_programming_errors_are_not_masked_as_unavailability():
+    with pytest.raises(RuntimeError, match="programming error"):
+        delivery.delivery_receipt_from_adapter(
+            CONTRACT, project="foundry", sha=SHA, source="github",
+            adapter=BrokenReadOnlyAdapter(proof()), observation_id="adapter1",
+            observed_at="2026-09-22T10:00:00Z",
+        )
+
+
 @pytest.mark.parametrize("observed_at", ["one", "2026-09-22T10:00:00+02:00", "2026-99-22T10:00:00Z"])
 def test_observed_at_is_a_canonical_utc_timestamp(observed_at):
     with pytest.raises(delivery.DeliveryContractError, match="canonical UTC"):
@@ -139,14 +172,109 @@ def test_journal_refuses_provider_payloads_in_receipt_rows(tmp_path):
         delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(unsafe)
 
 
+def test_journal_requires_non_empty_unique_proof_rows(tmp_path):
+    journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl")
+    empty = receipt({"github": proof()})
+    empty["proofs"] = []
+    with pytest.raises(delivery.DeliveryContractError, match="non-empty"):
+        journal.append(empty)
+
+    duplicate = receipt({"github": proof()})
+    duplicate["proofs"].append(copy.deepcopy(duplicate["proofs"][0]))
+    with pytest.raises(delivery.DeliveryContractError, match="must be unique"):
+        journal.append(duplicate)
+
+
+def test_journal_rejects_unknown_proof_outcome(tmp_path):
+    forged = receipt({"github": proof()})
+    forged["proofs"][0]["outcome"] = "provider-says-yes"
+    with pytest.raises(delivery.DeliveryContractError, match="outcome is unsupported"):
+        delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(forged)
+
+
+@pytest.mark.parametrize(("field", "value", "message"), [
+    ("verdict", ["verified"], "receipt verdict is unsupported"),
+    ("outcome", ["success"], "receipt proof outcome is unsupported"),
+])
+def test_journal_rejects_malformed_closed_vocabulary_fields_deterministically(
+    tmp_path, field, value, message,
+):
+    forged = receipt({"github": proof()})
+    if field == "verdict":
+        forged[field] = value
+    else:
+        forged["proofs"][0][field] = value
+    with pytest.raises(delivery.DeliveryContractError, match=message):
+        delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(forged)
+
+
+@pytest.mark.parametrize(("observation", "forged_verdict"), [
+    (proof(), "failed-proof"),
+    (proof(facts={"artifact": False}), "verified"),
+])
+def test_journal_recomputes_and_rejects_forged_positive_or_negative_verdicts(
+    tmp_path, observation, forged_verdict,
+):
+    forged = receipt({"github": observation})
+    forged["verdict"] = forged_verdict
+    with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
+        delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(forged)
+
+
+def test_journal_revalidates_verdict_coherence_when_reading(tmp_path):
+    forged = receipt({"github": proof()})
+    forged["verdict"] = "failed-proof"
+    path = tmp_path / "delivery-receipts.jsonl"
+    path.write_text(delivery._canonical(forged) + "\n", encoding="ascii")
+    with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
+        delivery.DeliveryReceiptJournal(path).receipts()
+
+    with pytest.raises(delivery.DeliveryContractError, match="does not match proof outcomes"):
+        delivery.DeliveryReceiptJournal(path).append(
+            receipt({"github": proof()}, observation_id="receipt2"),
+        )
+
+
+@pytest.mark.parametrize("observations", [
+    {"github": proof()},
+    {"github": proof(facts={"artifact": False})},
+    {"github": proof(state="pending")},
+    {},
+])
+def test_journal_accepts_receipts_coherent_with_their_proof_outcomes(tmp_path, observations):
+    expected = receipt(observations)
+    saved = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl").append(expected)
+    assert saved == expected
+
+
 def test_facades_are_identical_except_receipt_identifier_and_observation_time():
-    shared = dict(project="foundry", sha=SHA, observations={"github": proof()})
-    claude = delivery.claude_delivery_receipt(CONTRACT, observation_id="claude1", observed_at="2026-09-22T10:00:00Z", **shared)
-    codex = delivery.codex_delivery_receipt(CONTRACT, observation_id="codex1", observed_at="2026-09-22T10:01:00Z", **shared)
+    shared = dict(project="foundry", sha=SHA, source="github")
+    claude = delivery.claude_delivery_receipt(
+        CONTRACT, adapter=StaticReadOnlyAdapter(proof()), observation_id="claude1",
+        observed_at="2026-09-22T10:00:00Z", **shared,
+    )
+    codex = delivery.codex_delivery_receipt(
+        CONTRACT, adapter=StaticReadOnlyAdapter(proof()), observation_id="codex1",
+        observed_at="2026-09-22T10:01:00Z", **shared,
+    )
     for item in (claude, codex):
         item.pop("receipt_id")
         item.pop("observed_at")
     assert claude == codex
+
+
+@pytest.mark.parametrize("facade", [delivery.claude_delivery_receipt, delivery.codex_delivery_receipt])
+def test_supported_facades_do_not_accept_caller_supplied_observations(facade):
+    with pytest.raises(TypeError, match="observations"):
+        facade(
+            CONTRACT, project="foundry", sha=SHA, source="github",
+            observations={"github": proof()}, observation_id="forged1",
+            observed_at="2026-09-22T10:00:00Z",
+        )
+
+
+def test_pure_observation_evaluator_is_not_a_public_surface():
+    assert not hasattr(delivery, "delivery_receipt")
 
 
 def test_receipt_is_exact_sha_bound_and_does_not_expose_a_mutation_path():

@@ -26,12 +26,34 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 _STATES = frozenset(("success", "pending", "missing", "unavailable"))
+_OUTCOME_PRECEDENCE = (
+    "provenance-mismatch",
+    "cross-project",
+    "wrong-sha",
+    "unsupported-schema",
+    "inaccessible",
+    "pending",
+    "missing-proof",
+    "unavailable",
+    "failed-proof",
+)
+_OUTCOMES = frozenset((*_OUTCOME_PRECEDENCE, "success"))
+_VERDICTS = frozenset((*_OUTCOME_PRECEDENCE, "verified"))
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 MAX_LOCAL_RECEIPTS = 128
 
 
 class DeliveryContractError(ValueError):
     """A contract or proof violated the deliberately closed prototype schema."""
+
+
+class ProofSourceUnavailable(Exception):
+    """A bound read-only source could not be observed.
+
+    Adapters may raise this exception for expected provider unavailability.  The
+    exception message is deliberately never copied into a proof or receipt.
+    Other exceptions remain programming or integration errors and are not masked.
+    """
 
 
 def _canonical(value: object) -> str:
@@ -184,8 +206,9 @@ def _proof(value: object, source: str) -> Proof:
         if fact is not None and not isinstance(fact, bool):
             raise DeliveryContractError("proof facts must be boolean or null")
         canonical_facts[key] = fact
+    state = value.get("state")
     return Proof(source, _identifier(value.get("project"), "proof project"), _sha(value.get("sha")),
-                 value.get("state") if value.get("state") in _STATES else _bad_state(),
+                 state if isinstance(state, str) and state in _STATES else _bad_state(),
                  _identifier(value.get("provenance"), "proof provenance"), canonical_facts)
 
 
@@ -217,7 +240,20 @@ def read_delivery_proof(contract: Mapping[str, Any], *, project: str, sha: str,
     if declared is None:
         raise DeliveryContractError("adapter source is not declared by the contract")
     bound = _source_adapter(adapter, declared)
-    proof = bound.read_proof(project=project, sha=sha)
+    try:
+        proof = bound.read_proof(project=project, sha=sha)
+    except ProofSourceUnavailable:
+        # Preserve only the closed, contract-bound identity.  Provider exception
+        # text is neither trusted evidence nor safe receipt content.
+        proof = {
+            "schema": PROOF_SCHEMA,
+            "source": source,
+            "project": project,
+            "sha": sha,
+            "state": "unavailable",
+            "provenance": declared["provenance"],
+            "facts": {},
+        }
     if not isinstance(proof, Mapping):
         raise DeliveryContractError("adapter proof must be an object")
     return dict(proof)
@@ -229,16 +265,17 @@ def delivery_receipt_from_adapter(
 ) -> dict[str, Any]:
     """Evaluate exactly one proof obtained through a contract-bound read-only adapter."""
     proof = read_delivery_proof(contract, project=project, sha=sha, source=source, adapter=adapter)
-    return delivery_receipt(
+    return _delivery_receipt_from_observations(
         contract, project=project, sha=sha, observations={source: proof},
         observation_id=observation_id, observed_at=observed_at,
     )
 
 
-def delivery_receipt(contract: Mapping[str, Any], *, project: str, sha: str,
-                     observations: Mapping[str, object], observation_id: str,
-                     observed_at: str) -> dict[str, Any]:
-    """Evaluate supplied proof observations without contacting or changing anything."""
+def _delivery_receipt_from_observations(
+    contract: Mapping[str, Any], *, project: str, sha: str,
+    observations: Mapping[str, object], observation_id: str, observed_at: str,
+) -> dict[str, Any]:
+    """Pure evaluator retained only as an internal deterministic test seam."""
     canonical = validate_contract(contract)
     project = _identifier(project, "project")
     sha = _sha(sha)
@@ -292,9 +329,7 @@ def delivery_receipt(contract: Mapping[str, Any], *, project: str, sha: str,
         proof_rows.append(row)
     # Order is deliberately conservative and stable: no missing/unknown fact is a
     # failed proof, and only all successes can become verified.
-    verdict = next((state for state in ("provenance-mismatch", "cross-project", "wrong-sha", "unsupported-schema", "inaccessible",
-                                        "pending", "missing-proof", "unavailable", "failed-proof")
-                    if state in outcomes), "verified")
+    verdict = _verdict_from_outcomes(outcomes)
     return {
         "schema": RECEIPT_SCHEMA,
         "receipt_id": observation_id,
@@ -305,6 +340,13 @@ def delivery_receipt(contract: Mapping[str, Any], *, project: str, sha: str,
         "verdict": verdict,
         "proofs": proof_rows,
     }
+
+
+def _verdict_from_outcomes(outcomes: list[str]) -> str:
+    """Return the canonical receipt verdict for a non-empty set of outcomes."""
+    if not outcomes:
+        raise DeliveryContractError("receipt proofs must be non-empty")
+    return next((state for state in _OUTCOME_PRECEDENCE if state in outcomes), "verified")
 
 
 class DeliveryReceiptJournal:
@@ -327,7 +369,10 @@ class DeliveryReceiptJournal:
             try:
                 handle.seek(0)
                 try:
-                    rows = [json.loads(line) for line in handle if line.strip()]
+                    rows = [
+                        self._validated_receipt(json.loads(line))
+                        for line in handle if line.strip()
+                    ]
                 except json.JSONDecodeError as exc:
                     raise DeliveryContractError("local receipt journal is malformed") from exc
                 if len(rows) >= self.max_receipts:
@@ -374,7 +419,8 @@ class DeliveryReceiptJournal:
         _sha(value.get("sha"), "receipt sha")
         _timestamp(value.get("observed_at"))
         # Only receipts emitted by this module's closed vocabulary can be journaled.
-        if value.get("verdict") not in {"verified", "provenance-mismatch", "cross-project", "wrong-sha", "unsupported-schema", "inaccessible", "pending", "missing-proof", "unavailable", "failed-proof"}:
+        verdict = value.get("verdict")
+        if not isinstance(verdict, str) or verdict not in _VERDICTS:
             raise DeliveryContractError("receipt verdict is unsupported")
         contract = value.get("contract")
         if not isinstance(contract, Mapping) or set(contract) != {"schema", "version", "digest"}:
@@ -384,17 +430,39 @@ class DeliveryReceiptJournal:
         _identifier(contract.get("version"), "receipt contract version")
         _digest_value(contract.get("digest"), "receipt contract digest")
         proofs = value.get("proofs")
-        if not isinstance(proofs, list):
-            raise DeliveryContractError("receipt proofs must be a list")
+        if not isinstance(proofs, list) or not proofs:
+            raise DeliveryContractError("receipt proofs must be a non-empty list")
+        outcomes: list[str] = []
+        requirement_ids: set[str] = set()
         for proof in proofs:
             if not isinstance(proof, Mapping):
                 raise DeliveryContractError("receipt proof must be an object")
             _closed(proof, frozenset(("requirement", "source", "adapter", "adapter_version",
                                       "source_provenance", "provenance", "outcome")), "receipt proof")
-            for field in ("requirement", "source", "adapter", "adapter_version", "source_provenance", "outcome"):
+            for field in ("requirement", "source", "adapter", "adapter_version", "source_provenance"):
                 _identifier(proof.get(field), f"receipt proof {field}")
+            requirement = proof["requirement"]
+            if requirement in requirement_ids:
+                raise DeliveryContractError("receipt proof requirements must be unique")
+            requirement_ids.add(requirement)
+            outcome = proof.get("outcome")
+            if not isinstance(outcome, str) or outcome not in _OUTCOMES:
+                raise DeliveryContractError("receipt proof outcome is unsupported")
+            outcomes.append(outcome)
             if "provenance" in proof:
                 _identifier(proof["provenance"], "receipt proof provenance")
+            if outcome in {"missing-proof", "unsupported-schema"}:
+                if "provenance" in proof:
+                    raise DeliveryContractError("receipt proof provenance is incoherent")
+            elif "provenance" not in proof:
+                raise DeliveryContractError("receipt proof provenance is required")
+            elif outcome == "provenance-mismatch":
+                if proof["provenance"] == proof["source_provenance"]:
+                    raise DeliveryContractError("receipt proof provenance is incoherent")
+            elif proof["provenance"] != proof["source_provenance"]:
+                raise DeliveryContractError("receipt proof provenance is incoherent")
+        if verdict != _verdict_from_outcomes(outcomes):
+            raise DeliveryContractError("receipt verdict does not match proof outcomes")
         # Canonical JSON round-trips the closed primitive tree and removes aliases.
         try:
             return json.loads(_canonical(value))
@@ -402,11 +470,23 @@ class DeliveryReceiptJournal:
             raise DeliveryContractError("receipt is not canonical JSON data") from exc
 
 
-def claude_delivery_receipt(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """Claude facade; deliberately just the shared canonical implementation."""
-    return delivery_receipt(*args, **kwargs)
+def claude_delivery_receipt(
+    contract: Mapping[str, Any], *, project: str, sha: str, source: str,
+    adapter: ReadOnlyProofAdapter, observation_id: str, observed_at: str,
+) -> dict[str, Any]:
+    """Claude facade over the shared contract-bound adapter implementation."""
+    return delivery_receipt_from_adapter(
+        contract, project=project, sha=sha, source=source, adapter=adapter,
+        observation_id=observation_id, observed_at=observed_at,
+    )
 
 
-def codex_delivery_receipt(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """Codex facade; deliberately just the shared canonical implementation."""
-    return delivery_receipt(*args, **kwargs)
+def codex_delivery_receipt(
+    contract: Mapping[str, Any], *, project: str, sha: str, source: str,
+    adapter: ReadOnlyProofAdapter, observation_id: str, observed_at: str,
+) -> dict[str, Any]:
+    """Codex facade over the shared contract-bound adapter implementation."""
+    return delivery_receipt_from_adapter(
+        contract, project=project, sha=sha, source=source, adapter=adapter,
+        observation_id=observation_id, observed_at=observed_at,
+    )
