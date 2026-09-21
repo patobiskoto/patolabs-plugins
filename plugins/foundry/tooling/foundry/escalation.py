@@ -1434,8 +1434,11 @@ class EscalationStore:
             event, event_time = _normalize_consumption_event(value, issue_id)
             event_generation = event["halt_generation"]
             event_role = event["role"]
+            # resume_count is a cardinality, not a generation ceiling: bounded
+            # technical resumes advance halt_generation without incrementing it.
             if (
-                event_generation > resume_count
+                last_resumed_generation is None
+                or event_generation > last_resumed_generation
                 or event_generation < previous_generation
                 or (previous_time is not None and event_time < previous_time)
                 or generation_roles.setdefault(event_generation, event_role) != event_role
@@ -1478,7 +1481,8 @@ class EscalationStore:
             event_generation = event["halt_generation"]
             event_role = event["role"]
             if (
-                event_generation > resume_count
+                last_resumed_generation is None
+                or event_generation > last_resumed_generation
                 or event_generation < previous_rearm_generation
                 or (previous_rearm_time is not None and event_time <= previous_rearm_time)
                 or generation_roles.get(event_generation) != event_role
@@ -1663,6 +1667,28 @@ class EscalationStore:
             prior_time = event_time
         expected_clear_count = generation - (1 if halted else 0)
         if resume_count + len(technical_audit) != expected_clear_count:
+            raise _invalid_ledger(issue_id)
+        cleared_generations = set(range(1, expected_clear_count + 1))
+        technical_generations = {
+            event["halt_generation"] for event in technical_audit
+        }
+        human_resume_generations = cleared_generations - technical_generations
+        if (
+            not technical_generations <= cleared_generations
+            or len(human_resume_generations) != resume_count
+            or (
+                resume_count > 0
+                and max(human_resume_generations) != last_resumed_generation
+            )
+            or any(
+                event["halt_generation"] not in human_resume_generations
+                for event in durable_audit
+            )
+            or any(
+                event["halt_generation"] not in human_resume_generations
+                for event in rearm_audit
+            )
+        ):
             raise _invalid_ledger(issue_id)
 
         state = {

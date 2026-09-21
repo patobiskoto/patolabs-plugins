@@ -364,6 +364,11 @@ resume, replacement by a newly credited window, exhaustion, invalidation, and
 cancellation. Events are chronological and cannot contain prompts, prose, diffs,
 provider output, secrets, or other free-form input.
 
+`halt_generation` is the identity of the human-resumed stop, not the ordinal
+`resume_count`: bounded technical resumes may advance the former without incrementing
+the latter. Normalization therefore accepts events only on generations actually cleared
+by a human resume and rejects technical-only generations.
+
 An exhausted authorization remains coherent without a halt only at its authorization
 generation G, allowing the exact just-exhausted correction/reviewer routing decision.
 The next signal stops the issue at exactly G+1. An exhausted window at any other
