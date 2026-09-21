@@ -37,16 +37,21 @@ must additionally attest that these labels share Linear's exclusive `Type` group
 label or milestone returned by Linear must have an ID in the corresponding map; missing,
 overlapping, or unknown IDs are binding errors. Normalized values come from these maps,
 never from mutable display names. A create using an unmapped value is refused and the
-adapter never searches by name.
+adapter never searches by name. Keys in the optional maps cannot be URL- or
+credential-shaped, and every map value must be a UUID.
 
 `registry register` receives scalar extras as `k=v`. Pass each required map as a
 shell-quoted JSON object. For Linear, the command rejects before writing unless the
-project ID, team ID, seven exact state IDs, and four exact type-label IDs are UUIDs,
-unique, credential-free, and paired with an already canonical repository identity. It
-also refuses unrecognized extras: a token, endpoint, workspace URL, or future setting
-cannot become a silent registry field. A value beginning with `{` must decode to a JSON
-object; malformed structured input is rejected before the registry is written. Non-Linear
-providers retain the historical scalar-extra contract.
+project ID, team ID, seven exact state IDs, and four exact type-label IDs are UUIDs and
+paired with an already canonical repository identity. The local repository alias,
+project ID, team ID, and every UUID in the state, type, milestone, and label maps must
+be globally distinct. It also refuses unrecognized extras: a token, endpoint, workspace
+URL, or future setting cannot become a silent registry field.
+
+Only a `tracker=linear` registration JSON-decodes `state_ids`, `type_label_ids`,
+`milestone_ids`, and `label_ids`; each must decode to an object. Malformed or non-object
+structured input is rejected before the registry is written. Every non-Linear provider
+retains the historical scalar-extra contract, including for JSON-looking `k=v` values.
 
 ## Qualification evidence, distinct from registration
 

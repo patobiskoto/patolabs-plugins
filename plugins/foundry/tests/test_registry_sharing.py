@@ -16,6 +16,7 @@ import pytest
 from foundry import registry
 
 _HOOKS = os.path.join(os.path.dirname(__file__), "..", "hooks")
+_LINEAR_PROJECT_ID = "00000000-0000-4000-8000-000000000000"
 
 
 def _clear_data_env(monkeypatch):
@@ -54,7 +55,7 @@ def test_entry_written_without_plugin_env_is_read_with_it(monkeypatch, tmp_path)
 
 def _linear_binding():
     identifiers = iter(
-        f"00000000-0000-4000-8000-{index:012d}" for index in range(1, 14)
+        f"00000000-0000-4000-8000-{index:012d}" for index in range(1, 15)
     )
     return {
         "canonical_repo": "github.com/acme/trame",
@@ -68,29 +69,33 @@ def _linear_binding():
         "type_label_ids": {
             kind: next(identifiers) for kind in ("Epic", "Feature", "Bug", "Task")
         },
+        "milestone_ids": {"M1": next(identifiers)},
+        "label_ids": {"pilot": next(identifiers)},
     }
 
 
-def test_register_cli_decodes_json_object_extras_without_changing_scalars(
-    monkeypatch, tmp_path,
+@pytest.mark.parametrize("tracker", ["youtrack", "devhub", "ghprojects"])
+def test_non_linear_register_cli_preserves_json_looking_extras_as_strings(
+    monkeypatch, tmp_path, tracker,
 ):
     _clear_data_env(monkeypatch)
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
 
     registry.main([
-        "register", "devhub", "demo", "DEMO", "project-42",
-        'metadata={"nested":"value"}', "team_id=team-123",
+        "register", tracker, "demo", "DEMO", "project-42",
+        'metadata={"nested":"value"}', 'malformed={"nested":', "team_id=team-123",
     ])
 
-    binding = registry.load()["devhub"]["demo"]
+    binding = registry.load()[tracker]["demo"]
     assert binding == {
         "key": "DEMO",
         "id": "project-42",
-        "metadata": {"nested": "value"},
+        "metadata": '{"nested":"value"}',
+        "malformed": '{"nested":',
         "team_id": "team-123",
     }
     raw = json.loads((tmp_path / "state" / "registry.json").read_text())
-    assert raw["devhub"]["demo"] == binding
+    assert raw[tracker]["demo"] == binding
 
 
 def test_linear_registration_persists_only_a_complete_credential_free_binding(
@@ -101,11 +106,11 @@ def test_linear_registration_persists_only_a_complete_credential_free_binding(
     extra = _linear_binding()
 
     registry.register(
-        "linear", "trame", "TRAME", "00000000-0000-4000-8000-000000000000", **extra,
+        "linear", "trame", "TRAME", _LINEAR_PROJECT_ID, **extra,
     )
 
     assert registry.load()["linear"]["trame"] == {
-        "key": "TRAME", "id": "00000000-0000-4000-8000-000000000000", **extra,
+        "key": "TRAME", "id": _LINEAR_PROJECT_ID, **extra,
     }
 
 
@@ -115,15 +120,17 @@ def test_registry_cli_accepts_a_complete_linear_binding(monkeypatch, tmp_path):
     extra = _linear_binding()
 
     registry.main([
-        "register", "linear", "trame", "TRAME", "00000000-0000-4000-8000-000000000000",
+        "register", "linear", "trame", "TRAME", _LINEAR_PROJECT_ID,
         f"canonical_repo={extra['canonical_repo']}",
         f"team_id={extra['team_id']}",
         f"state_ids={json.dumps(extra['state_ids'])}",
         f"type_label_ids={json.dumps(extra['type_label_ids'])}",
+        f"milestone_ids={json.dumps(extra['milestone_ids'])}",
+        f"label_ids={json.dumps(extra['label_ids'])}",
     ])
 
     assert registry.load()["linear"]["trame"] == {
-        "key": "TRAME", "id": "00000000-0000-4000-8000-000000000000", **extra,
+        "key": "TRAME", "id": _LINEAR_PROJECT_ID, **extra,
     }
 
 
@@ -156,15 +163,74 @@ def test_linear_registration_refuses_invalid_bindings_without_changing_registry(
 
     with pytest.raises(ValueError, match="binding Linear invalide"):
         registry.register(
-            "linear", "trame", "TRAME", "00000000-0000-4000-8000-000000000000", **extra,
+            "linear", "trame", "TRAME", _LINEAR_PROJECT_ID, **extra,
         )
 
     assert (state / "registry.json").read_bytes() == before
     assert registry.load() == {"youtrack": {"existing": {"key": "EXISTING", "id": "0-1"}}}
 
 
+@pytest.mark.parametrize(
+    "collision",
+    ["repository-project", "team-project", "state-project", "label-team"],
+)
+def test_linear_registration_rejects_global_identifier_collisions_without_writing(
+    monkeypatch, tmp_path, collision,
+):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    registry.register("youtrack", "existing", "EXISTING", "0-1")
+    registry_path = state / "registry.json"
+    before = registry_path.read_bytes()
+    repository = "trame"
+    project_id = _LINEAR_PROJECT_ID
+    extra = _linear_binding()
+
+    if collision == "repository-project":
+        repository = project_id
+    elif collision == "team-project":
+        extra["team_id"] = project_id
+    elif collision == "state-project":
+        project_id = extra["state_ids"]["backlog"]
+    else:
+        extra["label_ids"]["pilot"] = extra["team_id"]
+
+    with pytest.raises(ValueError, match="binding Linear invalide"):
+        registry.register("linear", repository, "TRAME", project_id, **extra)
+
+    assert registry_path.read_bytes() == before
+    assert registry.load() == {"youtrack": {"existing": {"key": "EXISTING", "id": "0-1"}}}
+
+
+@pytest.mark.parametrize(("map_name", "name", "identifier"), [
+    ("label_ids", "https://private.invalid/label", "00000000-0000-4000-8000-000000000099"),
+    ("milestone_ids", "api_token", "00000000-0000-4000-8000-000000000099"),
+    ("label_ids", "pilot", "https://private.invalid/identifier"),
+    ("milestone_ids", "M1", "SENTINEL_SECRET_DO_NOT_PERSIST"),
+])
+def test_linear_registration_rejects_url_or_secret_map_content_without_writing(
+    monkeypatch, tmp_path, map_name, name, identifier,
+):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    registry.register("youtrack", "existing", "EXISTING", "0-1")
+    registry_path = state / "registry.json"
+    before = registry_path.read_bytes()
+    extra = _linear_binding()
+    extra[map_name] = {name: identifier}
+
+    with pytest.raises(ValueError, match="binding Linear invalide"):
+        registry.register("linear", "trame", "TRAME", _LINEAR_PROJECT_ID, **extra)
+
+    assert registry_path.read_bytes() == before
+    assert registry.load() == {"youtrack": {"existing": {"key": "EXISTING", "id": "0-1"}}}
+
+
+@pytest.mark.parametrize("structured_value", ['{"open":}', "[]"])
 def test_register_cli_rejects_malformed_json_object_without_writing(
-    monkeypatch, tmp_path,
+    monkeypatch, tmp_path, structured_value,
 ):
     _clear_data_env(monkeypatch)
     state = tmp_path / "state"
@@ -175,8 +241,8 @@ def test_register_cli_rejects_malformed_json_object_without_writing(
 
     with pytest.raises(SystemExit, match="objets JSON valides"):
         registry.main([
-            "register", "linear", "demo", "DEMO", "linear-project",
-            'state_ids={"open":}',
+            "register", "linear", "demo", "DEMO", _LINEAR_PROJECT_ID,
+            f"state_ids={structured_value}",
         ])
 
     assert registry_path.read_bytes() == before

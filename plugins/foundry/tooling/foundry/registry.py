@@ -37,6 +37,9 @@ _LINEAR_STATE_KEYS = frozenset(
     {"backlog", "ready", "in-progress", "review", "blocked", "done", "dropped"}
 )
 _LINEAR_TYPE_KEYS = frozenset({"Epic", "Feature", "Bug", "Task"})
+_LINEAR_STRUCTURED_EXTRA_KEYS = frozenset(
+    {"state_ids", "milestone_ids", "type_label_ids", "label_ids"}
+)
 _LINEAR_EXTRA_KEYS = frozenset(
     {
         "canonical_repo",
@@ -45,6 +48,21 @@ _LINEAR_EXTRA_KEYS = frozenset(
         "milestone_ids",
         "type_label_ids",
         "label_ids",
+    }
+)
+_LINEAR_FORBIDDEN_IDENTIFIER_KEY_PARTS = frozenset(
+    {
+        "credential",
+        "credentials",
+        "endpoint",
+        "password",
+        "passwords",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+        "uri",
+        "url",
     }
 )
 
@@ -217,6 +235,24 @@ def _require_uuid(value: object, field: str) -> str:
         ) from None
 
 
+def _linear_identifier_key_is_forbidden(value: str) -> bool:
+    """Reject URL/credential-shaped names without echoing them in an error."""
+    camel_case_split = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    parts = tuple(
+        part for part in re.split(r"[^A-Za-z0-9]+", camel_case_split.casefold())
+        if part
+    )
+    return (
+        "://" in value
+        or value.startswith("//")
+        or any(part in _LINEAR_FORBIDDEN_IDENTIFIER_KEY_PARTS for part in parts)
+        or any(
+            left in {"api", "client", "private"} and right == "key"
+            for left, right in zip(parts, parts[1:])
+        )
+    )
+
+
 def _require_uuid_map(
     value: object,
     field: str,
@@ -231,7 +267,12 @@ def _require_uuid_map(
         )
     if not value and expected_keys is None:
         return {}
-    if any(not isinstance(key, str) or not key for key in value):
+    if any(
+        not isinstance(key, str)
+        or not key
+        or _linear_identifier_key_is_forbidden(key)
+        for key in value
+    ):
         raise ValueError(f"binding Linear invalide : {field} contient une clé invalide")
     normalized = {
         key: _require_uuid(identifier, f"{field}.{key}")
@@ -243,7 +284,7 @@ def _require_uuid_map(
 
 
 def _validate_linear_binding(
-    project_id: object, extra: dict[str, object],
+    repository: object, project_id: object, extra: dict[str, object],
 ) -> tuple[str, dict[str, object]]:
     """Validate the complete credential-free Linear binding before persistence.
 
@@ -254,6 +295,11 @@ def _validate_linear_binding(
     unsupported = set(extra) - _LINEAR_EXTRA_KEYS
     if unsupported:
         raise ValueError("binding Linear invalide : extra non autorisé")
+    if (
+        not isinstance(repository, str)
+        or _REPOSITORY_COMPONENT.fullmatch(repository) is None
+    ):
+        raise ValueError("binding Linear invalide : repository invalide")
 
     canonical_repo = extra.get("canonical_repo")
     try:
@@ -263,6 +309,7 @@ def _validate_linear_binding(
     if canonical_repo != canonical:
         raise ValueError("binding Linear invalide : canonical_repo doit être canonique")
 
+    normalized_project_id = _require_uuid(project_id, "project_id")
     normalized: dict[str, object] = {
         "canonical_repo": canonical,
         "team_id": _require_uuid(extra.get("team_id"), "team_id"),
@@ -279,15 +326,21 @@ def _validate_linear_binding(
         if key in extra:
             normalized[key] = _require_uuid_map(extra[key], key)
 
-    seen: set[str] = set()
+    repository_identity = repository
+    if _UUID.fullmatch(repository) is not None:
+        repository_identity = str(uuid.UUID(repository))
+    identifiers = [
+        repository_identity,
+        normalized_project_id,
+        normalized["team_id"],
+    ]
     for key in ("state_ids", "type_label_ids", "milestone_ids", "label_ids"):
         mapping = normalized.get(key, {})
         assert isinstance(mapping, dict)
-        identifiers = set(mapping.values())
-        if seen & identifiers:
-            raise ValueError("binding Linear invalide : UUID de binding ambigu")
-        seen.update(identifiers)
-    return _require_uuid(project_id, "project_id"), normalized
+        identifiers.extend(mapping.values())
+    if len(set(identifiers)) != len(identifiers):
+        raise ValueError("binding Linear invalide : identifiant de binding ambigu")
+    return normalized_project_id, normalized
 
 
 def repo_basename(cwd: str | None = None, use_env: bool = True) -> str:
@@ -389,7 +442,7 @@ def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
 def register(tracker: str, repo: str, key: str, project_id: str, **extra) -> None:
     extra = dict(extra)
     if tracker == "linear":
-        project_id, extra = _validate_linear_binding(project_id, extra)
+        project_id, extra = _validate_linear_binding(repo, project_id, extra)
     elif "canonical_repo" in extra:
         try:
             extra["canonical_repo"] = canonical_repository_identity(
@@ -435,35 +488,39 @@ def register_alias(tracker: str, source_repo: str, alias_repo: str) -> bool:
     return True
 
 
-def _parse_extra_arguments(values: list[str], usage: str) -> dict[str, object]:
-    """Parse CLI ``k=v`` extras, decoding explicitly-object JSON values.
-
-    Scalars retain the historical string representation. A value whose first
-    non-space character is ``{`` is an explicit structured value and must be a
-    JSON object: accepting malformed data here would otherwise persist a binding
-    that a tracker cannot interpret.
-    """
+def _parse_extra_arguments(
+    values: list[str], usage: str, *, tracker: str,
+) -> dict[str, object]:
+    """Parse CLI ``k=v`` extras and decode only Linear's declared JSON maps."""
     try:
-        extras = dict(value.split("=", 1) for value in values)
+        pairs = []
+        for argument in values:
+            name, value = argument.split("=", 1)
+            pairs.append((name, value))
     except ValueError:
         raise SystemExit(
             f"{usage}\nles extras doivent utiliser la forme k=v"
         ) from None
 
-    for name, value in extras.items():
-        if not value.lstrip().startswith("{"):
-            continue
-        try:
-            structured_value = json.loads(value)
-        except json.JSONDecodeError:
-            raise SystemExit(
-                f"{usage}\nles extras structurés doivent être des objets JSON valides"
-            ) from None
-        if not isinstance(structured_value, dict):
-            raise SystemExit(
-                f"{usage}\nles extras structurés doivent être des objets JSON valides"
-            )
-        extras[name] = structured_value
+    if tracker != "linear":
+        return dict(pairs)
+
+    extras: dict[str, object] = {}
+    for name, value in pairs:
+        if name in _LINEAR_STRUCTURED_EXTRA_KEYS:
+            try:
+                structured_value = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                raise SystemExit(
+                    f"{usage}\nles extras structurés doivent être des objets JSON valides"
+                ) from None
+            if not isinstance(structured_value, dict):
+                raise SystemExit(
+                    f"{usage}\nles extras structurés doivent être des objets JSON valides"
+                )
+            extras[name] = structured_value
+        else:
+            extras[name] = value
     return extras
 
 
@@ -485,7 +542,7 @@ def main(argv=None) -> None:
         if len(args) < 5:
             raise SystemExit(usage)
         _, tracker, repo, key, pid, *rest = args
-        extra = _parse_extra_arguments(rest, usage)
+        extra = _parse_extra_arguments(rest, usage, tracker=tracker)
         register(tracker, repo, key, pid, **extra)
         print(f"registered {repo} -> {key} ({tracker})")
         return
