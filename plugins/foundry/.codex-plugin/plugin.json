@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Foundry",
     "shortDescription": "Frame, plan, execute, and merge with durable project memory.",
-    "longDescription": "Turn rough ideas into ADR-backed issues, sequence work by value, and run a gated issue-to-merge delivery loop over YouTrack or DevHubTracker and GitHub with Lupin, Eiffel, Maigret, and Vauban. Linear is a checkout-bound read/create/non-replacing relation/comment subset; PR projection, openpr/merge, existing-issue replacement, AC sync, and ADR knowledge-base support are unavailable, and live cutover is separate work.",
+    "longDescription": "Turn rough ideas into ADR-backed issues, sequence work by value, and run a gated issue-to-merge delivery loop over YouTrack, DevHubTracker, or a Linear append-only lifecycle projection and GitHub with Lupin, Eiffel, Maigret, and Vauban. Linear never replaces existing issue fields; its native board state, atomic Epic closure, and ADR knowledge base remain unavailable to Foundry, and live cutover is separate work.",
     "developerName": "patolabs",
     "category": "Productivity",
     "capabilities": [

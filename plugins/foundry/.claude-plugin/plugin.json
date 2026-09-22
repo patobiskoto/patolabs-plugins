@@ -1,6 +1,6 @@
 {
   "name": "foundry",
-  "description": "The foundation: idea → guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution with YouTrack or DevHubTracker and code-hosts. Linear is a checkout-bound read/create/non-replacing relation/comment subset: PR projection, openpr/merge, existing-issue replacement, AC sync, and ADR knowledge-base support are unavailable. Delegated identities: Lupin, Eiffel, Maigret, and Vauban.",
+  "description": "The foundation: idea → guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution with YouTrack, DevHubTracker, or a Linear append-only lifecycle projection and code-hosts. Linear never replaces existing issue fields; its native board state and ADR knowledge base remain unavailable to Foundry. Delegated identities: Lupin, Eiffel, Maigret, and Vauban.",
   "version": "0.8.1",
   "author": { "name": "pato" },
   "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/foundry",
@@ -50,7 +50,7 @@
     "FOUNDRY_TRACKER": {
       "type": "string",
       "title": "Tracker provider",
-      "description": "youtrack (default) | devhub | linear (checkout-bound reads, create, relations/comments; no PR projection, openpr/merge, existing-issue replacement, AC sync, or ADR KB) | ghprojects (stub)",
+      "description": "youtrack (default) | devhub | linear (checkout-bound reads/create plus append-only projected lifecycle; no existing-field replacement, native board-state sync, atomic Epic closure, or ADR KB) | ghprojects (stub)",
       "default": "youtrack"
     },
     "FOUNDRY_CODEHOST": {

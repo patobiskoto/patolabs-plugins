@@ -38,15 +38,18 @@ GitHub code-host adapter. Linear requires explicit repository/team/project/workf
 label/milestone IDs and resolves them only from the actual checkout's canonical Git
 remote. It supports strict reads, issue creation, and non-replacing relations/comments.
 Existing-issue field, state, parent, body, and AC replacement remain unavailable without
-provider CAS; GitHub PR projection and Foundry's `issue openpr` / `issue merge` cycle are
-therefore explicitly unavailable with Linear. Linear also has no Foundry ADR knowledge
-base. Live cutover and ChatGPT MCP activation remain separate planned work.
+provider CAS. Foundry's PR lifecycle is instead represented by deterministic append-only
+Linear comments: Foundry queries project the proven state, PR link and AC result while
+the native Linear fields remain untouched. A complete cockpit Evidence Plane envelope
+can be journaled but has no state, AC or merge authority. Linear also has no Foundry ADR
+knowledge base or atomic Epic closure. Live cutover and ChatGPT MCP activation remain
+separate planned work.
 
 ## Plugins
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | Guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution with YouTrack/DevHubTracker; Linear is a documented checkout-bound query/create/additive subset without the PR lifecycle. Judgment in the skills, invariants in the code. |
+| [**foundry**](plugins/foundry/) | idea → merge | Guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution with YouTrack/DevHubTracker or an append-only projected Linear lifecycle. Judgment in the skills, invariants in the code. |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog

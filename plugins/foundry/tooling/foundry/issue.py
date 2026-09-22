@@ -280,7 +280,8 @@ def openpr(issue_id=None, base=None, flags=()):
             base_sha=base_sha,
             review_digest=review_diff_hash(git_diff(base=base_sha)),
         )
-        write.set_field(tr, issue_id, "GitHub PR", pr.url)
+        if not getattr(tr, "append_only_lifecycle_supported", False):
+            write.set_field(tr, issue_id, "GitHub PR", pr.url)
         write.transition(tr, issue_id, "review", context=context)
     else:
         # Preserve the established provider call order for adapters without proofs.

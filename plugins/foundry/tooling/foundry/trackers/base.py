@@ -75,6 +75,9 @@ class Tracker(ABC):
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
     epic_subgraph_supported: bool = False
+    append_only_lifecycle_supported: bool = False
+    acceptance_proof_projection_supported: bool = False
+    cockpit_evidence_projection_supported: bool = False
 
     # --- optional read-only graph projection -----------------------------
     def get_epic_subgraph(

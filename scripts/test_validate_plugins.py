@@ -249,15 +249,20 @@ class PublicSurfaceContract(unittest.TestCase):
         self.assertIn("explicit repository/team/project/", readme)
         self.assertIn("Existing-issue field, state, parent, body, and AC", readme)
         self.assertIn("actual checkout's canonical Git", readme)
-        self.assertIn("GitHub PR projection and Foundry's `issue openpr` / `issue merge`", readme)
+        self.assertIn("deterministic append-only", readme)
+        self.assertIn("native Linear fields remain untouched", readme)
+        self.assertIn("no state, AC or merge authority", readme)
         self.assertNotIn("relations/comments/PR projection", readme)
-        self.assertIn("Live cutover and ChatGPT MCP activation remain separate planned work", readme)
+        self.assertIn(
+            "Live cutover and ChatGPT MCP activation remain separate planned work",
+            " ".join(readme.split()),
+        )
 
         claude = json.loads(self.text("plugins/foundry/.claude-plugin/plugin.json"))
         codex = json.loads(self.text("plugins/foundry/.codex-plugin/plugin.json"))
         for facade in (claude["description"], codex["interface"]["longDescription"]):
-            self.assertIn("PR projection", facade)
-            self.assertIn("openpr/merge", facade)
+            self.assertIn("append-only lifecycle projection", facade)
+            self.assertIn("never replaces existing issue fields", facade)
             self.assertIn("unavailable", facade)
 
     def test_external_contributions_are_explicitly_declined(self) -> None:

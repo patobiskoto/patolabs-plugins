@@ -143,6 +143,14 @@ def sync_acceptance(tracker, issue_id: str, expected_body: str, proof: dict) -> 
     updated_body, checked = synchronize_acceptance_body(issue_id, expected_body, proof)
     if checked == 0:
         return {"status": "unchanged", "checked": 0}
+    if getattr(tracker, "acceptance_proof_projection_supported", False):
+        binding = issue_binding(tracker, issue_id)
+        projector = getattr(tracker, "project_acceptance_proof", None)
+        if not callable(projector):
+            raise AcceptanceSyncUnavailableError("projection AC indisponible")
+        projected = projector(issue_id, expected_body, proof, checked=checked, project=binding)
+        return {"status": "proof-projected" if projected else "proof-already-projected",
+                "checked": checked, "audit": "append-only-proof"}
     if not getattr(tracker, "acceptance_sync_supported", False):
         raise AcceptanceSyncUnavailableError(
             f"synchronisation AC indisponible pour le tracker {tracker.name}"
