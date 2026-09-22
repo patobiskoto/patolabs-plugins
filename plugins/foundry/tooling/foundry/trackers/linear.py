@@ -13,6 +13,7 @@ additive provider mutations which do not replace existing issue values.
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 import json
 import re
 import urllib.error
@@ -21,7 +22,7 @@ import urllib.request
 import uuid
 
 from foundry import config, registry
-from foundry.models import Adr, Issue, Link, Project
+from foundry.models import Adr, Issue, Link, Project, TransitionContext
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     BodyUpdateUnavailableError,
@@ -43,6 +44,14 @@ _PRIORITY_TO_LINEAR = {"P0": 1, "P1": 2, "P2": 3, "P3": 4, None: 0}
 _LINEAR_TO_PRIORITY = {value: key for key, value in _PRIORITY_TO_LINEAR.items()}
 _AC_CHECKBOX = re.compile(r"(?m)^\s*[-*+]\s+\[(?P<mark>[ xX])\]\s+.+?\s*$")
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{1,255}")
+_SHA = re.compile(r"[0-9a-f]{40}\Z")
+_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+_LIFECYCLE_SCHEMA = "foundry-linear-lifecycle.v1"
+_LIFECYCLE_HEADER = "Foundry lifecycle proof (append-only)."
+_LIFECYCLE_OPERATIONS = frozenset({
+    "state-in-progress", "state-review", "state-done", "acceptance",
+    "cockpit-evidence",
+})
 
 
 _ISSUE_FIELDS = """
@@ -62,15 +71,14 @@ inverseRelations(first: 100) {
   nodes { type issue { id identifier } }
   pageInfo { hasNextPage endCursor }
 }
+comments(first: 100) {
+  nodes { id body createdAt } pageInfo { hasNextPage endCursor }
+}
 """
 
 _ISSUE_QUERY = f"""
 query FoundryLinearIssue($id: String!) {{
-  issue(id: $id) {{ {_ISSUE_FIELDS}
-    comments(first: 100) {{
-      nodes {{ id body createdAt }} pageInfo {{ hasNextPage endCursor }}
-    }}
-  }}
+  issue(id: $id) {{ {_ISSUE_FIELDS} }}
 }}
 """
 
@@ -222,6 +230,10 @@ class LinearTracker(Tracker):
     name = "linear"
     requires_mutation_binding = True
     acceptance_sync_supported = False
+    bounded_transition_proofs = True
+    append_only_lifecycle_supported = True
+    acceptance_proof_projection_supported = True
+    cockpit_evidence_projection_supported = True
 
     def __init__(
         self, *, token: str | None = None, transport=None,
@@ -358,12 +370,354 @@ class LinearTracker(Tracker):
         self.resolve_checkout_project(checkout_identity=checkout_identity)
 
     def preflight_issue_operation(self, operation: str) -> None:
-        if operation == "openpr":
-            raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
-        if operation == "merge":
-            raise TrackerCapabilityUnavailableError(
-                self.name, "existing-issue-state-replacement",
+        if operation == "openpr" and self.append_only_lifecycle_supported:
+            return
+        if (operation == "merge" and self.append_only_lifecycle_supported
+                and self.acceptance_proof_projection_supported):
+            return
+        if operation not in {"openpr", "merge"}:
+            raise TrackerCapabilityUnavailableError(self.name, f"lifecycle:{operation}")
+        raise TrackerCapabilityUnavailableError(
+            self.name, "append-only-lifecycle-proof",
+        )
+
+    @staticmethod
+    def _lifecycle_marker(
+        operation: str, issue_id: str, payload: dict,
+    ) -> tuple[str, str, str]:
+        if operation not in _LIFECYCLE_OPERATIONS:
+            raise TrackerCapabilityUnavailableError("linear", f"lifecycle:{operation}")
+        canonical = json.dumps({
+            "schema": _LIFECYCLE_SCHEMA,
+            "operation": operation,
+            "issue": issue_id,
+            "payload": payload,
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+        marker = f"{_LIFECYCLE_SCHEMA}:{operation}:{digest}"
+        slot = {
+            "schema": _LIFECYCLE_SCHEMA,
+            "operation": operation,
+            "issue": issue_id,
+        }
+        if operation == "state-review":
+            slot["generation"] = payload.get("generation")
+        elif operation == "acceptance":
+            slot["generation"] = payload.get("review_generation")
+        slot_canonical = json.dumps(
+            slot, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        )
+        slot_digest = hashlib.sha256(slot_canonical.encode("ascii")).hexdigest()
+        comment_id = str(uuid.UUID(slot_digest[:32]))
+        body = f"{_LIFECYCLE_HEADER}\nmarker: {marker}\ncoordinates: {canonical}"
+        return marker, body, comment_id
+
+    @classmethod
+    def _decode_lifecycle_comment(
+        cls, issue_id: str, body: object,
+    ) -> tuple[str, dict, str, str] | None:
+        if not isinstance(body, str) or not body.startswith(_LIFECYCLE_HEADER):
+            return None
+        lines = body.splitlines()
+        if len(lines) != 3 or not lines[1].startswith("marker: ") \
+                or not lines[2].startswith("coordinates: "):
+            raise TrackerConflictError("Linear lifecycle comment malformed")
+        marker = lines[1].removeprefix("marker: ")
+        try:
+            value = json.loads(lines[2].removeprefix("coordinates: "))
+        except (ValueError, TypeError, RecursionError):
+            raise TrackerConflictError("Linear lifecycle comment malformed") from None
+        if (not isinstance(value, dict)
+                or set(value) != {"schema", "operation", "issue", "payload"}
+                or value.get("schema") != _LIFECYCLE_SCHEMA
+                or value.get("issue") != issue_id
+                or value.get("operation") not in _LIFECYCLE_OPERATIONS
+                or not isinstance(value.get("payload"), dict)):
+            raise TrackerConflictError("Linear lifecycle comment malformed")
+        expected_marker, expected_body, expected_id = cls._lifecycle_marker(
+            value["operation"], issue_id, value["payload"],
+        )
+        if marker != expected_marker or body != expected_body:
+            raise TrackerConflictError("Linear lifecycle comment integrity invalid")
+        return value["operation"], value["payload"], body, expected_id
+
+    @staticmethod
+    def _validate_acceptance_projection(
+        issue_id: str, body: str, payload: dict, review: dict | None,
+    ) -> None:
+        if set(payload) != {
+            "native_state_id", "body_digest", "checked", "proof", "review_generation",
+        }:
+            raise TrackerConflictError("Linear acceptance proof malformed")
+        proof = payload.get("proof")
+        if (not isinstance(proof, dict)
+                or set(proof) != {
+                    "schema_version", "proof_id", "issue", "review",
+                    "coordinates", "quality",
+                }):
+            raise TrackerConflictError("Linear acceptance proof malformed")
+        canonical_proof = dict(proof)
+        proof_id = canonical_proof.pop("proof_id", None)
+        calculated = hashlib.sha256(json.dumps(
+            canonical_proof, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode("ascii")).hexdigest()
+        issue = proof.get("issue")
+        coordinates = proof.get("coordinates")
+        criteria = issue.get("criteria") if isinstance(issue, dict) else None
+        from foundry.routing import acceptance_criteria, acceptance_digest
+        expected = acceptance_criteria(body)
+        if (proof.get("schema_version") != 1 or proof_id != calculated
+                or proof.get("quality") != "mergeable"
+                or payload.get("body_digest") != hashlib.sha256(body.encode()).hexdigest()
+                or not isinstance(issue, dict)
+                or set(issue) != {"id", "ac_digest", "criteria"}
+                or issue.get("id") != issue_id
+                or issue.get("ac_digest") != acceptance_digest(expected)
+                or not isinstance(criteria, list)
+                or criteria != [{**item, "verdict": "pass"} for item in expected]
+                or type(payload.get("checked")) is not int
+                or not 1 <= payload["checked"] <= len(expected)
+                or not isinstance(coordinates, dict)
+                or set(coordinates) != {"head", "diff_hash", "base"}
+                or review is None
+                or coordinates.get("head") != review.get("head_sha")
+                or coordinates.get("base") != review.get("base_sha")
+                or coordinates.get("diff_hash") != review.get("review_digest")
+                or payload.get("review_generation") != review.get("generation")):
+            raise TrackerConflictError("Linear acceptance proof malformed or stale")
+
+    @classmethod
+    def _lifecycle_projection(cls, issue_id: str, raw: dict) -> dict:
+        comments = _connection(raw.get("comments"), "lifecycle.comments")
+        rows: dict[str, list[tuple[dict, str]]] = {}
+        for comment in comments:
+            decoded = cls._decode_lifecycle_comment(issue_id, comment.get("body"))
+            if decoded is None:
+                continue
+            operation, payload, body, expected_id = decoded
+            if comment.get("id") != expected_id:
+                raise TrackerConflictError("Linear lifecycle comment id invalid")
+            rows.setdefault(operation, []).append((payload, body))
+        if not rows:
+            return {
+                "state": None, "pr_url": None, "acceptance_complete": False,
+                "review_generation": 0, "latest_review": None,
+                "latest_review_body_digest": None,
+            }
+
+        native_state = raw.get("state")
+        native_state_id = native_state.get("id") if isinstance(native_state, dict) else None
+        if not isinstance(native_state_id, str):
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
+        for operation_rows in rows.values():
+            for payload, _body in operation_rows:
+                if payload.get("native_state_id") != native_state_id:
+                    raise TrackerConflictError("Linear native state changed outside lifecycle")
+
+        for operation in {"state-in-progress", "state-done", "cockpit-evidence"}:
+            if len(rows.get(operation, [])) > 1:
+                raise TrackerConflictError("Linear lifecycle duplicate projection")
+
+        def state_payload(name: str, *, merged: bool = False) -> dict | None:
+            operation_rows = rows.get(f"state-{name}", [])
+            if not operation_rows:
+                return None
+            if len(operation_rows) != 1:
+                raise TrackerConflictError("Linear lifecycle duplicate projection")
+            payload = operation_rows[0][0]
+            keys = {"state", "native_state_id"}
+            if name == "done":
+                keys |= {"pr_url", "head_sha", "base_sha", "review_digest"}
+                keys.add("review_generation")
+            if merged:
+                keys.add("merge_sha")
+            if set(payload) != keys or payload.get("state") != name:
+                raise TrackerConflictError("Linear lifecycle state proof malformed")
+            if name == "done":
+                if (not isinstance(payload.get("pr_url"), str)
+                        or not payload["pr_url"].startswith("https://github.com/")
+                        or _SHA.fullmatch(str(payload.get("head_sha"))) is None
+                        or _SHA.fullmatch(str(payload.get("base_sha"))) is None
+                        or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None):
+                    raise TrackerConflictError("Linear lifecycle state proof malformed")
+            if merged and _SHA.fullmatch(str(payload.get("merge_sha"))) is None:
+                raise TrackerConflictError("Linear lifecycle state proof malformed")
+            return payload
+
+        in_progress = state_payload("in-progress")
+        reviews = []
+        for payload, body in rows.get("state-review", []):
+            expected_keys = {
+                "state", "native_state_id", "pr_url", "head_sha", "base_sha",
+                "review_digest", "generation", "previous_projection_digest",
+            }
+            if (set(payload) != expected_keys or payload.get("state") != "review"
+                    or type(payload.get("generation")) is not int
+                    or payload["generation"] < 1
+                    or not isinstance(payload.get("pr_url"), str)
+                    or not payload["pr_url"].startswith("https://github.com/")
+                    or _SHA.fullmatch(str(payload.get("head_sha"))) is None
+                    or _SHA.fullmatch(str(payload.get("base_sha"))) is None
+                    or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None):
+                raise TrackerConflictError("Linear lifecycle state proof malformed")
+            reviews.append((payload, body))
+        reviews.sort(key=lambda item: item[0]["generation"])
+        previous_body = None
+        for expected_generation, (payload, body) in enumerate(reviews, start=1):
+            previous_digest = (
+                hashlib.sha256(previous_body.encode()).hexdigest()
+                if previous_body is not None else None
             )
+            if (payload["generation"] != expected_generation
+                    or payload.get("previous_projection_digest") != previous_digest):
+                raise TrackerConflictError("Linear lifecycle review chain invalid")
+            previous_body = body
+        review = reviews[-1][0] if reviews else None
+        done = state_payload("done", merged=True)
+        if done is not None:
+            if review is None or any(
+                done[key] != review[key]
+                for key in ("pr_url", "head_sha", "base_sha", "review_digest")
+            ) or done.get("review_generation") != review.get("generation"):
+                raise TrackerConflictError("Linear done proof lacks matching review")
+        projected_state = "done" if done else "review" if review else "in-progress" if in_progress else None
+
+        acceptance_complete = False
+        acceptance_by_generation = {}
+        body = raw.get("description") or ""
+        reviews_by_generation = {item[0]["generation"]: item[0] for item in reviews}
+        for payload, _comment_body in rows.get("acceptance", []):
+            generation = payload.get("review_generation")
+            if generation in acceptance_by_generation:
+                raise TrackerConflictError("Linear lifecycle duplicate projection")
+            bound_review = reviews_by_generation.get(generation)
+            cls._validate_acceptance_projection(issue_id, body, payload, bound_review)
+            acceptance_by_generation[generation] = payload
+        if review is not None:
+            acceptance_complete = review["generation"] in acceptance_by_generation
+        return {
+            "state": projected_state,
+            "pr_url": (done or review or {}).get("pr_url"),
+            "acceptance_complete": acceptance_complete,
+            "review_generation": review.get("generation") if review else 0,
+            "latest_review": review,
+            "latest_review_body_digest": (
+                hashlib.sha256(reviews[-1][1].encode()).hexdigest() if reviews else None
+            ),
+        }
+
+    def _project_lifecycle(
+        self, issue_id: str, operation: str, payload: dict, project: Project,
+    ) -> bool:
+        raw = self._read_raw(issue_id)
+        binding = self._activate(project)
+        self._assert_issue_project(raw, binding)
+        projection = self._lifecycle_projection(issue_id, raw)
+        state = raw.get("state")
+        native_state_id = state.get("id") if isinstance(state, dict) else None
+        if not isinstance(native_state_id, str):
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
+        bounded_payload = {**payload, "native_state_id": native_state_id}
+        if operation == "state-review":
+            latest = projection["latest_review"]
+            coordinate_keys = {"pr_url", "head_sha", "base_sha", "review_digest"}
+            if latest is not None and all(latest[key] == payload.get(key)
+                                          for key in coordinate_keys):
+                bounded_payload.update({
+                    "generation": latest["generation"],
+                    "previous_projection_digest": latest["previous_projection_digest"],
+                })
+            else:
+                bounded_payload.update({
+                    "generation": projection["review_generation"] + 1,
+                    "previous_projection_digest": projection["latest_review_body_digest"],
+                })
+        elif operation == "state-done":
+            if projection["review_generation"] < 1:
+                raise TrackerConflictError("Linear done proof lacks matching review")
+            bounded_payload["review_generation"] = projection["review_generation"]
+        _marker, body, comment_id = self._lifecycle_marker(
+            operation, issue_id, bounded_payload,
+        )
+        existing = []
+        for item in _connection(raw.get("comments"), "lifecycle.comments"):
+            decoded = self._decode_lifecycle_comment(issue_id, item.get("body"))
+            if decoded is not None and decoded[0] == operation:
+                if item.get("id") != decoded[3]:
+                    raise TrackerConflictError("Linear lifecycle comment id invalid")
+                existing.append((item.get("id"), decoded[2]))
+        exact = [item for item in existing if item == (comment_id, body)]
+        if exact == [(comment_id, body)]:
+            prior = self._graphql(
+                _COMMENT_QUERY, {"id": comment_id}, "lifecycle.comment.read",
+            ).get("comment")
+            if (not isinstance(prior, dict) or prior.get("body") != body
+                    or (prior.get("issue") or {}).get("id") != raw["id"]):
+                raise TrackerConflictError("Linear lifecycle replay readback divergent")
+            fresh = self._read_raw(issue_id)
+            self._lifecycle_projection(issue_id, fresh)
+            return False
+        if operation not in {"state-review", "acceptance"} and existing:
+            raise TrackerConflictError("Linear lifecycle divergent before comment")
+        if operation in {"state-review", "acceptance"}:
+            generation = bounded_payload.get(
+                "generation" if operation == "state-review" else "review_generation",
+            )
+            for _item_id, item_body in existing:
+                decoded = self._decode_lifecycle_comment(issue_id, item_body)
+                prior_payload = decoded[1] if decoded is not None else {}
+                prior_generation = prior_payload.get(
+                    "generation" if operation == "state-review" else "review_generation",
+                )
+                if prior_generation == generation:
+                    raise TrackerConflictError("Linear lifecycle divergent before comment")
+
+        prior = self._graphql(
+            _COMMENT_QUERY, {"id": comment_id}, "lifecycle.comment.read",
+        ).get("comment")
+        if prior is not None:
+            if (not isinstance(prior, dict) or prior.get("body") != body
+                    or (prior.get("issue") or {}).get("id") != raw["id"]):
+                raise TrackerConflictError("Linear lifecycle comment id collision")
+            created_now = False
+        else:
+            created_now = True
+            try:
+                data = self._graphql(
+                    _COMMENT_CREATE,
+                    {"input": {"id": comment_id, "issueId": raw["id"], "body": body}},
+                    "lifecycle.comment.create",
+                )
+                created = self._mutation_payload(
+                    data, "commentCreate", "lifecycle.comment.create",
+                ).get("comment")
+                if (not isinstance(created, dict) or created.get("id") != comment_id
+                        or created.get("body") != body
+                        or (created.get("issue") or {}).get("id") != raw["id"]):
+                    raise LinearTrackerError(
+                        "lifecycle.comment.create", None, "invalid_response",
+                    )
+            except LinearTrackerError:
+                # The provider may have committed the deterministic create before the
+                # response was interrupted. Recovery is allowed only through its exact ID.
+                recovered = self._graphql(
+                    _COMMENT_QUERY, {"id": comment_id}, "lifecycle.comment.recover",
+                ).get("comment")
+                if (not isinstance(recovered, dict) or recovered.get("body") != body
+                        or (recovered.get("issue") or {}).get("id") != raw["id"]):
+                    raise
+        fresh = self._read_raw(issue_id)
+        observed = []
+        for item in _connection(fresh.get("comments"), "lifecycle.readback"):
+            decoded = self._decode_lifecycle_comment(issue_id, item.get("body"))
+            if decoded is not None and decoded[0] == operation:
+                if item.get("id") != decoded[3]:
+                    raise TrackerConflictError("Linear lifecycle comment id invalid")
+                observed.append((item.get("id"), decoded[2]))
+        if (comment_id, body) not in observed:
+            raise TrackerConflictError("Linear lifecycle divergent after comment")
+        self._lifecycle_projection(issue_id, fresh)
+        return created_now
 
     def validate_issue_binding(self, project: Project, *issue_ids: str) -> None:
         binding = self._activate(project)
@@ -467,7 +821,13 @@ class LinearTracker(Tracker):
         body = raw.get("description") or ""
         if not isinstance(body, str):
             raise LinearTrackerError("normalize", None, "invalid_response")
-        done, total = self._ac_counts(body)
+        _native_done, total = self._ac_counts(body)
+        # Native checkbox state is not a Linear lifecycle authority: only the
+        # proof-bound append-only projection may make AC complete.
+        done = 0
+        lifecycle = self._lifecycle_projection(raw["identifier"], raw)
+        if lifecycle["acceptance_complete"]:
+            done = total
         priority = raw.get("priority", 0)
         if priority not in _LINEAR_TO_PRIORITY:
             raise LinearTrackerError("normalize", None, "invalid_response")
@@ -478,10 +838,11 @@ class LinearTracker(Tracker):
                     raise LinearTrackerError("normalize", None, "invalid_response")
                 comments.append({"text": comment["body"], "created": _epoch_ms(comment.get("createdAt"))})
         return Issue(
-            id=raw["identifier"], title=raw["title"], state=state_by_id[state["id"]],
+            id=raw["identifier"], title=raw["title"],
+            state=lifecycle["state"] or state_by_id[state["id"]],
             priority=_LINEAR_TO_PRIORITY[priority], estimate=raw.get("estimate"),
             milestone=milestone, type=types[0] if types else None, labels=labels,
-            ac_done=done, ac_total=total, links=links, pr_url=None,
+            ac_done=done, ac_total=total, links=links, pr_url=lifecycle["pr_url"],
             body=body, comments=comments, created=_epoch_ms(raw.get("createdAt")),
             updated=_epoch_ms(raw.get("updatedAt")),
         )
@@ -667,7 +1028,115 @@ class LinearTracker(Tracker):
         self, issue_id: str, state: str, context=None,
         project: Project | None = None,
     ) -> None:
-        self.update_fields(issue_id, {"State": state}, project=project)
+        if project is None:
+            raise LinearBindingError("mutation_project_required")
+        if state not in {"in-progress", "review", "done"}:
+            raise TrackerCapabilityUnavailableError(self.name, "existing-issue-field-replacement")
+        payload = {"state": state}
+        if state in {"review", "done"}:
+            if not isinstance(context, TransitionContext) or not all([
+                context.pr_url, context.head_sha, context.base_sha, context.review_digest,
+            ]):
+                raise TrackerCapabilityUnavailableError(self.name, "lifecycle-proof")
+            payload.update({"pr_url": context.pr_url, "head_sha": context.head_sha,
+                            "base_sha": context.base_sha, "review_digest": context.review_digest})
+            if state == "done":
+                if not context.merge_sha:
+                    raise TrackerCapabilityUnavailableError(self.name, "merge-proof")
+                payload["merge_sha"] = context.merge_sha
+        self._project_lifecycle(issue_id, "state-" + state, payload, project)
+
+    def project_acceptance_proof(
+        self, issue_id: str, expected_body: str, proof: dict, *, checked: int,
+        project: Project | None = None,
+    ) -> bool:
+        if (project is None or not isinstance(proof, dict)
+                or not isinstance(proof.get("proof_id"), str)):
+            raise AcceptanceSyncUnavailableError("preuve AC Linear invalide")
+        self._activate(project)
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, self._binding(project))
+        lifecycle = self._lifecycle_projection(issue_id, raw)
+        body = raw.get("description") or ""
+        if body != expected_body:
+            raise TrackerConflictError("Linear acceptance body changed before projection")
+        review = lifecycle["latest_review"]
+        if review is None:
+            raise TrackerConflictError("Linear acceptance proof lacks one review projection")
+        state = raw.get("state")
+        native_state_id = state.get("id") if isinstance(state, dict) else None
+        projected = {
+            "proof": json.loads(json.dumps(proof)),
+            "body_digest": hashlib.sha256(expected_body.encode()).hexdigest(),
+            "checked": checked,
+            "review_generation": lifecycle["review_generation"],
+        }
+        self._validate_acceptance_projection(
+            issue_id, expected_body,
+            {**projected, "native_state_id": native_state_id}, review,
+        )
+        return self._project_lifecycle(
+            issue_id, "acceptance", projected, project,
+        )
+
+    def project_cockpit_evidence(
+        self, issue_id: str, envelope: dict, *, repository: str, ac_digest: str,
+        pr, diff_hash: str, project: Project | None = None,
+    ) -> bool:
+        """Append one complete advisory cockpit envelope without lifecycle authority."""
+        if project is None:
+            raise LinearBindingError("mutation_project_required")
+        from foundry.evidence_plane import verify_evidence_envelope
+
+        verdict = verify_evidence_envelope(
+            envelope, repository=repository, issue_id=issue_id,
+            ac_digest=ac_digest, pr=pr, diff_hash=diff_hash,
+        )
+        if verdict.get("decision") != "GO":
+            raise TrackerCapabilityUnavailableError(
+                self.name, "cockpit-evidence-complete-go",
+            )
+        if not isinstance(envelope, dict):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "cockpit-evidence-complete-go",
+            )
+        coordinates = envelope.get("coordinates")
+        evidence = envelope.get("evidence")
+        ci = evidence.get("ci") if isinstance(evidence, dict) else None
+        review = evidence.get("review") if isinstance(evidence, dict) else None
+        tests = evidence.get("tests") if isinstance(evidence, dict) else None
+        if not all(isinstance(value, dict) for value in (
+            coordinates, ci, review, tests,
+        )):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "cockpit-evidence-complete-go",
+            )
+        payload = {
+            "envelope_id": envelope.get("envelope_id"),
+            "repository": coordinates.get("repository"),
+            "issue": coordinates.get("issue"),
+            "ac_digest": coordinates.get("ac_digest"),
+            "pr_number": coordinates.get("pr_number"),
+            "base_sha": coordinates.get("base_sha"),
+            "head_sha": coordinates.get("head_sha"),
+            "diff_hash": coordinates.get("diff_hash"),
+            "review_proof_id": review.get("proof_id"),
+            "test_receipt_id": tests.get("receipt_id"),
+            "check_runs_receipt_id": (
+                ci.get("check_runs") or {}
+            ).get("receipt_id"),
+            "commit_statuses_receipt_id": (
+                ci.get("commit_statuses") or {}
+            ).get("receipt_id"),
+        }
+        if (_DIGEST.fullmatch(str(payload["envelope_id"])) is None
+                or any(value is None for value in payload.values())):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "cockpit-evidence-complete-go",
+            )
+        return self._project_lifecycle(
+            issue_id, "cockpit-evidence", payload, project,
+        )
 
     def link(
         self, src_id: str, link_type: str, dst_id: str,

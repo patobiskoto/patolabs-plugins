@@ -9,11 +9,11 @@ from a rough idea to shipped work — the same, repeatable, on every project:
 
 Foundry owns the **outer loop** (what to do, the source of truth, the decision memory,
 the exit gates). The **inner loop** (design → plan → implement) is delegated to Superpowers
-or Plan mode. Its gated PR lifecycle uses YouTrack or DevHubTracker with the GitHub
-**code-host** adapter. Linear is a narrower, checkout-bound tracker subset for reads,
-creation, and non-replacing relations/comments; it does not support GitHub PR projection
-or Foundry's `issue openpr` / `issue merge` cycle. Switching to another tracker or
-code-host later remains an adapter change, not a rewrite.
+or Plan mode. Its gated PR lifecycle uses YouTrack, DevHubTracker, or a Linear
+append-only proof projection with the GitHub **code-host** adapter. Linear never replaces
+an existing issue field without provider CAS: Foundry derives lifecycle state, PR link
+and reviewed AC from deterministic comments while Linear's native fields stay unchanged.
+Switching to another tracker or code-host later remains an adapter change, not a rewrite.
 
 ## Why
 

@@ -7,10 +7,13 @@
   workflow-state, label, and milestone identifiers, resolved from the actual checkout's
   canonical Git remote rather than an environment alias or basename. It supports strict
   issue reads, creation, and non-replacing relations/comments without promising
-  exactly-once delivery. Existing issue field/state/parent/body replacement, acceptance
-  sync, GitHub PR projection, and the `issue openpr` / `issue merge` cycle stay
-  typed-unavailable because Linear exposes no atomic anti-overwrite precondition; the
-  ADR knowledge base is likewise unavailable, and live cutover remains FOUNDRY-159.
+  exactly-once delivery. Existing issue field/state/parent/body replacement stays
+  typed-unavailable because Linear exposes no atomic anti-overwrite precondition.
+  `issue openpr` and `issue merge` instead use deterministic-ID, append-only comments;
+  Foundry validates and projects their PR/state/AC receipts without changing native
+  Linear fields. Complete cockpit Evidence Plane envelopes are append-only advisory
+  audit records and never state, AC, CI or merge authority. The ADR knowledge base and
+  atomic Epic closure remain unavailable, and live cutover remains FOUNDRY-159.
 - A dedicated, audit-bound `rearm-remediation` transition for a just-exhausted bounded
   correction window that is not yet halted. It CAS-binds the issue, recorded role,
   original halt generation, controlled human reason, and 1..3 new credits; preserves

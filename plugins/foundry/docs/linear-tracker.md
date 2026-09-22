@@ -97,13 +97,73 @@ pre-write read, or post-write readback cannot prevent an external writer from be
 overwritten, so none is presented as an anti-overwrite guarantee.
 
 Unsupported capabilities fail explicitly with typed errors: existing-issue replacement,
-acceptance synchronization, GitHub PR projection, a true ADR knowledge base, atomic
+a true ADR knowledge base, atomic
 audited non-code Epic closure, project provisioning, and free-form provider-native search
 queries. `query issue` still returns the issue and projects the absent ADR knowledge base
-as a structured capability status. Because `issue openpr` requires both a `review` state
-transition and PR projection, and `issue merge` requires a `done` state transition, both
-commands preflight and refuse before any GitHub push, PR creation/update, merge, or branch
-deletion when Linear is active. Foundry does not advertise a gated Linear PR lifecycle.
+as a structured capability status.
+
+## Append-only lifecycle guarantee
+
+For `start`, `openpr` and `merge`, Foundry uses no Linear replacement field. It writes
+separate bounded comments for the projected `in-progress`, `review`, reviewed-AC and
+`done` facts. The review receipt carries the exact PR URL, base SHA, head SHA and diff
+digest. The AC receipt embeds the complete canonical all-pass review proof and binds it
+to the byte-exact unchanged description. The done receipt repeats the review coordinates
+and adds the exact merge SHA. Foundry queries validate these comments before deriving the
+effective lifecycle state, PR URL or AC completion; Linear's native state, description,
+priority, labels and parent remain unchanged. Native checked boxes are deliberately not
+counted as proven completion: without the matching append-only review receipt, Foundry
+reports them incomplete and requires the structured proof before merge.
+
+Each receipt uses a deterministic client-supplied Linear comment UUID derived from its
+canonical operation slot. Singleton operations use one issue+operation slot; review and
+AC operations use one issue+operation+generation slot. The canonical payload remains in
+the marker digest and body. Two writers proposing different payloads for one slot race on
+the same provider-enforced UUID, so at most one can be created. Foundry reads before
+creation, rereads that exact comment after the
+effect and rereads the issue projection. An identical marker is a replay no-op. A
+competing marker for a singleton operation or the same review generation, malformed
+content, a broken generation chain, changed native state or divergent readback refuses.
+If the provider accepted
+the deterministic comment but its response was interrupted, retry recovers it by exact
+ID. A corrected PR creates the next review generation, chained to the digest of the
+previous projection; its AC receipt is bound to that generation and supersedes older AC
+evidence. Merge projects and reloads the current head's generation before AC validation,
+then revalidates its state/PR/AC projection before the final exact-coordinate GitHub
+read. Concurrent forks at one generation fail closed. This is idempotence for the
+Foundry lifecycle comments, not a claim that arbitrary
+Linear comments or issue creation are exactly once.
+
+The cockpit evidence path is deliberately separate. Only a complete
+`foundry-evidence-envelope.v1` that the shared verifier classifies `GO` can be projected;
+the comment binds the issue, AC, PR, base/head/diff, review proof, test receipt and both CI
+source receipts, then follows the same exact-ID readback. Missing, stale, failed or
+otherwise incomplete evidence causes no provider write. Even a complete cockpit comment
+is advisory: it never changes the projected lifecycle, checks an AC, authorizes a merge
+or replaces Foundry's review, test and CI gates.
+
+### Provider capability versus concurrency guarantee
+
+- Linear provider capability: additive `commentCreate` with a caller-supplied ID and
+  exact comment/issue readback.
+- Foundry concurrency guarantee: one canonical receipt per issue and singleton operation,
+  and one chained canonical receipt per review generation; replay is idempotent and any
+  competing projection at the same generation fails closed.
+- Unsupported provider capability: replacement of native state, priority, description,
+  checkbox, labels, parent or PR field, plus atomic audited Epic closure. These remain
+  typed refusals rather than best-effort read/write sequences.
+
+Operationally, Linear's web board continues to show its native state and unchecked body;
+the proven state and AC completion are visible through Foundry queries and the audit
+comments. Editing a receipt, changing the native state, duplicating a marker or exceeding
+the bounded 100-comment projection makes reads fail closed. Deleting the only receipt can
+make the derived fact disappear because Linear supplies no immutable append log; the next
+write probes its deterministic comment ID but an ordinary read cannot prove that a row
+was deleted. The marker hash detects modification but is not a Foundry signature: the
+workspace's Linear authorization remains the trust boundary. Linear permits comment
+update/deletion, so “append-only” describes Foundry's write discipline, not
+provider-enforced immutability. Epic closure remains unavailable because it requires a
+provider-atomic parent/child audit.
 
 This implementation and its controlled transport round-trip do not activate a real
 workspace. No Linear binding or live write is performed here. Import, target-workspace

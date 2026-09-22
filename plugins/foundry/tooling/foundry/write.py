@@ -141,6 +141,21 @@ def update_adr_body(tracker, adr_id: str, expected_body: str, updated_body: str)
 def sync_acceptance(tracker, issue_id: str, expected_body: str, proof: dict) -> dict:
     """Apply only proof-authorized checkbox markers through the tracker port."""
     updated_body, checked = synchronize_acceptance_body(issue_id, expected_body, proof)
+    if getattr(tracker, "acceptance_proof_projection_supported", False):
+        binding = issue_binding(tracker, issue_id)
+        projector = getattr(tracker, "project_acceptance_proof", None)
+        if not callable(projector):
+            raise AcceptanceSyncUnavailableError("projection AC indisponible")
+        outcomes = (proof.get("issue") or {}).get("criteria", [])
+        attested = sum(
+            isinstance(outcome, dict) and outcome.get("verdict") == "pass"
+            for outcome in outcomes
+        )
+        projected = projector(
+            issue_id, expected_body, proof, checked=attested, project=binding,
+        )
+        return {"status": "proof-projected" if projected else "proof-already-projected",
+                "checked": attested, "audit": "append-only-proof"}
     if checked == 0:
         return {"status": "unchanged", "checked": 0}
     if not getattr(tracker, "acceptance_sync_supported", False):
