@@ -12,6 +12,7 @@ import http.client
 import json
 import os
 import re
+import secrets
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -36,6 +37,7 @@ PILOT_REQUIRED_FACT = "check_runs_success"
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
+_RECEIPT_ID = re.compile(r"receipt_[0-9a-f]{32}\Z")
 _GITHUB_PROJECT = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,38})/[a-z0-9](?:[a-z0-9._-]{0,99})\Z",
 )
@@ -96,6 +98,17 @@ def _identifier(value: object, field: str) -> str:
     if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
         raise DeliveryContractError(f"{field} must be a lowercase identifier")
     return value
+
+
+def _receipt_id(value: object) -> str:
+    if not isinstance(value, str) or not _RECEIPT_ID.fullmatch(value):
+        raise DeliveryContractError("receipt id must be a generated opaque identifier")
+    return value
+
+
+def _new_receipt_id() -> str:
+    """Generate an opaque identifier internally; caller data never becomes a receipt id."""
+    return f"receipt_{secrets.token_hex(16)}"
 
 
 def _project(value: object, field: str = "project") -> str:
@@ -515,7 +528,6 @@ def delivery_receipt_from_adapter(
     *,
     sha: str,
     adapter: GitHubCheckRunsAdapter,
-    observation_id: str,
 ) -> dict[str, Any]:
     """Observe the pilot source and materialize a canonical exact-SHA receipt."""
     proof = read_delivery_proof(contract, sha=sha, adapter=adapter)
@@ -523,7 +535,7 @@ def delivery_receipt_from_adapter(
         contract,
         sha=sha,
         observations={PILOT_SOURCE_ID: proof},
-        observation_id=observation_id,
+        receipt_id=_new_receipt_id(),
         observed_at=_utc_now(),
     )
 
@@ -533,14 +545,14 @@ def _delivery_receipt_from_observations(
     *,
     sha: str,
     observations: Mapping[str, object],
-    observation_id: str,
+    receipt_id: str,
     observed_at: str,
 ) -> dict[str, Any]:
     """Pure evaluator retained only as a private deterministic test seam."""
     canonical = validate_contract(contract)
     project = canonical["project"]
     sha = _sha(sha)
-    observation_id = _identifier(observation_id, "observation id")
+    receipt_id = _receipt_id(receipt_id)
     observed_at = _timestamp(observed_at)
     if not isinstance(observations, Mapping):
         raise DeliveryContractError("observations must be an object")
@@ -605,7 +617,7 @@ def _delivery_receipt_from_observations(
     verdict = _verdict_from_outcomes(outcomes)
     return {
         "schema": RECEIPT_SCHEMA,
-        "receipt_id": observation_id,
+        "receipt_id": receipt_id,
         "project": project,
         "sha": sha,
         "contract": {
@@ -642,14 +654,12 @@ class DeliveryReceiptJournal:
         contract: Mapping[str, Any],
         sha: str,
         adapter: GitHubCheckRunsAdapter,
-        observation_id: str,
     ) -> dict[str, Any]:
         """Observe, derive, validate, and append; raw receipt input is impossible."""
         derived = delivery_receipt_from_adapter(
             contract,
             sha=sha,
             adapter=adapter,
-            observation_id=observation_id,
         )
         canonical = self._validated_receipt(derived)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -657,10 +667,15 @@ class DeliveryReceiptJournal:
             self._lock(handle)
             try:
                 handle.seek(0)
+                content = handle.read()
+                if content and not content.endswith("\n"):
+                    raise DeliveryContractError(
+                        "local receipt journal must end with a newline before append",
+                    )
                 try:
                     rows = [
                         self._validated_receipt(json.loads(line))
-                        for line in handle
+                        for line in content.splitlines()
                         if line.strip()
                     ]
                 except (json.JSONDecodeError, UnicodeError) as exc:
@@ -725,7 +740,7 @@ class DeliveryReceiptJournal:
         )
         if value.get("schema") != RECEIPT_SCHEMA:
             raise DeliveryContractError("unsupported receipt schema")
-        _identifier(value.get("receipt_id"), "receipt id")
+        _receipt_id(value.get("receipt_id"))
         if _project(value.get("project"), "receipt project") != PILOT_PROJECT:
             raise DeliveryContractError("receipt project is outside the pilot")
         _sha(value.get("sha"), "receipt sha")
@@ -799,14 +814,12 @@ def claude_delivery_receipt(
     *,
     sha: str,
     adapter: GitHubCheckRunsAdapter,
-    observation_id: str,
 ) -> dict[str, Any]:
     """Claude facade over the shared contract-bound adapter implementation."""
     return delivery_receipt_from_adapter(
         contract,
         sha=sha,
         adapter=adapter,
-        observation_id=observation_id,
     )
 
 
@@ -815,12 +828,10 @@ def codex_delivery_receipt(
     *,
     sha: str,
     adapter: GitHubCheckRunsAdapter,
-    observation_id: str,
 ) -> dict[str, Any]:
     """Codex facade over the shared contract-bound adapter implementation."""
     return delivery_receipt_from_adapter(
         contract,
         sha=sha,
         adapter=adapter,
-        observation_id=observation_id,
     )

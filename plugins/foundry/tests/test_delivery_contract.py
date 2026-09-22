@@ -12,12 +12,16 @@ from foundry import delivery_contract as delivery
 SHA = "a" * 40
 OTHER_SHA = "b" * 40
 FIXED_TIME = "2026-09-22T10:00:00Z"
+RECEIPT1 = "receipt_" + "1" * 32
+RECEIPT2 = "receipt_" + "2" * 32
+RECEIPT3 = "receipt_" + "3" * 32
 CONTRACT = delivery.github_check_runs_pilot_contract()
 
 
 @pytest.fixture(autouse=True)
 def fixed_private_clock(monkeypatch):
     monkeypatch.setattr(delivery, "_utc_now", lambda: FIXED_TIME)
+    monkeypatch.setattr(delivery, "_new_receipt_id", lambda: RECEIPT1)
 
 
 def check_run(*, sha=SHA, status="completed", conclusion="success"):
@@ -50,13 +54,13 @@ def github_adapter(monkeypatch, value=None, *, error=None):
     return delivery.GitHubCheckRunsAdapter(), transport
 
 
-def generated_receipt(monkeypatch, value, *, observation_id="receipt1", error=None, sha=SHA):
+def generated_receipt(monkeypatch, value, *, receipt_id=RECEIPT1, error=None, sha=SHA):
     adapter, transport = github_adapter(monkeypatch, value, error=error)
+    monkeypatch.setattr(delivery, "_new_receipt_id", lambda: receipt_id)
     result = delivery.delivery_receipt_from_adapter(
         CONTRACT,
         sha=sha,
         adapter=adapter,
-        observation_id=observation_id,
     )
     return result, transport
 
@@ -76,7 +80,7 @@ def proof(**overrides):
 
 
 def private_receipt(observations, **kwargs):
-    options = {"observation_id": "receipt1", "observed_at": FIXED_TIME}
+    options = {"receipt_id": RECEIPT1, "observed_at": FIXED_TIME}
     options.update(kwargs)
     return delivery._delivery_receipt_from_observations(
         CONTRACT,
@@ -86,13 +90,13 @@ def private_receipt(observations, **kwargs):
     )
 
 
-def journal_append(monkeypatch, journal, value, *, observation_id="receipt1"):
+def journal_append(monkeypatch, journal, value, *, receipt_id=RECEIPT1):
     adapter, transport = github_adapter(monkeypatch, value)
+    monkeypatch.setattr(delivery, "_new_receipt_id", lambda: receipt_id)
     saved = journal.append(
         contract=CONTRACT,
         sha=SHA,
         adapter=adapter,
-        observation_id=observation_id,
     )
     return saved, transport
 
@@ -303,7 +307,6 @@ def test_default_network_transport_is_fixed_host_get_only_and_has_no_credentials
         CONTRACT,
         sha=SHA,
         adapter=delivery.GitHubCheckRunsAdapter(),
-        observation_id="network1",
     )
     assert result["verdict"] == "verified"
     request, timeout = requests[0]
@@ -334,7 +337,6 @@ def test_default_transport_maps_http_failure_to_inaccessible(monkeypatch):
         CONTRACT,
         sha=SHA,
         adapter=delivery.GitHubCheckRunsAdapter(),
-        observation_id="network2",
     )
     assert result["verdict"] == "inaccessible"
     assert "secret provider text" not in delivery._canonical(result)
@@ -350,7 +352,6 @@ def test_default_transport_maps_incomplete_response_to_inaccessible(monkeypatch)
         CONTRACT,
         sha=SHA,
         adapter=delivery.GitHubCheckRunsAdapter(),
-        observation_id="network3",
     )
     assert result["verdict"] == "inaccessible"
 
@@ -375,7 +376,6 @@ def test_default_transport_maps_non_decodable_json_value_to_unsupported(monkeypa
         CONTRACT,
         sha=SHA,
         adapter=delivery.GitHubCheckRunsAdapter(),
-        observation_id="network4",
     )
     assert result["verdict"] == "unsupported-schema"
 
@@ -388,9 +388,9 @@ def test_public_generation_captures_time_internally_and_rejects_caller_timestamp
         CONTRACT,
         sha=SHA,
         adapter=adapter,
-        observation_id="clock1",
     )
     assert result["observed_at"] == FIXED_TIME
+    assert result["receipt_id"] == RECEIPT1
 
     adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
     with pytest.raises(TypeError, match="observed_at"):
@@ -398,7 +398,6 @@ def test_public_generation_captures_time_internally_and_rejects_caller_timestamp
             CONTRACT,
             sha=SHA,
             adapter=adapter,
-            observation_id="clock2",
             observed_at="2000-01-01T00:00:00Z",
         )
 
@@ -409,7 +408,6 @@ def test_public_generation_captures_time_internally_and_rejects_caller_timestamp
             contract=CONTRACT,
             sha=SHA,
             adapter=adapter,
-            observation_id="clock3",
             observed_at="2000-01-01T00:00:00Z",
         )
 
@@ -443,14 +441,14 @@ def test_journal_derives_from_adapter_and_is_append_only_unique_bounded_and_deta
         monkeypatch,
         journal,
         check_runs_payload(check_run(conclusion="failure")),
-        observation_id="receipt2",
+        receipt_id=RECEIPT2,
     )
     with pytest.raises(delivery.DeliveryContractError, match="full"):
         journal_append(
             monkeypatch,
             journal,
             check_runs_payload(check_run()),
-            observation_id="receipt3",
+            receipt_id=RECEIPT3,
         )
 
 
@@ -485,6 +483,51 @@ def test_journal_cannot_append_a_caller_built_raw_receipt(tmp_path):
     assert not journal.path.exists()
 
 
+def test_public_surfaces_generate_receipt_ids_and_reject_caller_values(monkeypatch, tmp_path):
+    adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
+    with pytest.raises(TypeError, match="observation_id"):
+        delivery.delivery_receipt_from_adapter(
+            CONTRACT,
+            sha=SHA,
+            adapter=adapter,
+            observation_id="secret_token_abc",
+        )
+
+    adapter, _ = github_adapter(monkeypatch, check_runs_payload(check_run()))
+    journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl")
+    with pytest.raises(TypeError, match="receipt_id"):
+        journal.append(
+            contract=CONTRACT,
+            sha=SHA,
+            adapter=adapter,
+            receipt_id="secret_token_abc",
+        )
+    assert not journal.path.exists()
+
+
+def test_journal_refuses_append_when_existing_final_line_has_no_newline(
+    monkeypatch,
+    tmp_path,
+):
+    path = tmp_path / "delivery-receipts.jsonl"
+    path.write_text(
+        delivery._canonical(private_receipt({delivery.PILOT_SOURCE_ID: proof()})),
+        encoding="ascii",
+    )
+    before = path.read_bytes()
+    journal = delivery.DeliveryReceiptJournal(path)
+
+    with pytest.raises(delivery.DeliveryContractError, match="end with a newline"):
+        journal_append(
+            monkeypatch,
+            journal,
+            check_runs_payload(check_run()),
+            receipt_id=RECEIPT2,
+        )
+
+    assert path.read_bytes() == before
+
+
 def test_journal_revalidates_loaded_entries_and_refuses_append_after_tampering(
     monkeypatch, tmp_path,
 ):
@@ -503,7 +546,6 @@ def test_journal_revalidates_loaded_entries_and_refuses_append_after_tampering(
             contract=CONTRACT,
             sha=SHA,
             adapter=adapter,
-            observation_id="receipt2",
         )
     assert journal.path.read_bytes() == before
 
@@ -540,13 +582,12 @@ def test_facades_are_canonically_identical_except_receipt_identifier(monkeypatch
         CONTRACT,
         sha=SHA,
         adapter=claude_adapter,
-        observation_id="claude1",
     )
+    monkeypatch.setattr(delivery, "_new_receipt_id", lambda: RECEIPT2)
     codex = delivery.codex_delivery_receipt(
         CONTRACT,
         sha=SHA,
         adapter=codex_adapter,
-        observation_id="codex1",
     )
     claude.pop("receipt_id")
     codex.pop("receipt_id")
@@ -560,6 +601,8 @@ def test_facades_are_canonically_identical_except_receipt_identifier(monkeypatch
         {"project": delivery.PILOT_PROJECT},
         {"source": delivery.PILOT_SOURCE_ID},
         {"observed_at": FIXED_TIME},
+        {"receipt_id": "secret_token_abc"},
+        {"observation_id": "secret_token_abc"},
     ],
 )
 @pytest.mark.parametrize(
@@ -575,7 +618,6 @@ def test_host_facades_reject_caller_evidence_identity_and_timestamp(
             CONTRACT,
             sha=SHA,
             adapter=adapter,
-            observation_id="forged1",
             **forbidden,
         )
 

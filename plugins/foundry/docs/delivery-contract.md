@@ -63,13 +63,14 @@ declared source reported for the exact SHA.
 ## Canonical generation and journal
 
 `delivery_receipt_from_adapter`, `claude_delivery_receipt`, and
-`codex_delivery_receipt` accept the closed contract, exact SHA, concrete adapter, and a
-bounded receipt identifier. They do not accept project/source overrides, caller-built
-observations, or an observation timestamp. After the adapter read, the shared core
-captures canonical UTC time internally (`YYYY-MM-DDTHH:MM:SSZ`) and derives the
-receipt. Tests replace only the private clock. Claude and Codex therefore use the same
-canonical core; only their receipt identifiers and independently captured timestamps
-may differ.
+`codex_delivery_receipt` accept only the closed contract, exact SHA, and concrete
+adapter. They do not accept a receipt identifier, project/source overrides,
+caller-built observations, or an observation timestamp. After the adapter read, the
+shared core generates an opaque `receipt_<32 lowercase hex>` identifier, captures
+canonical UTC time internally (`YYYY-MM-DDTHH:MM:SSZ`), and derives the receipt. Tests
+replace only the private randomness and clock. Claude and Codex therefore use the same
+canonical core; only their generated receipt identifiers and independently captured
+timestamps may differ.
 
 `DeliveryReceiptJournal.append(...)` likewise accepts no receipt mapping. Its public
 path performs a fresh adapter observation, derives the receipt, validates it against
@@ -80,6 +81,8 @@ verdict/outcome combination fails closed. Returned values are detached copies.
 When the concrete source was reached but returned no proving run or an unsupported
 shape, the receipt retains the adapter's fixed declared provenance; a wholly absent or
 invalid proof may omit it, while a provenance mismatch must omit the untrusted value.
+Appending also refuses a pre-existing non-empty journal whose final record lacks its
+newline delimiter, leaving the file unchanged instead of concatenating JSON objects.
 
 The journal is local append-only behavior, not signed or remote durable storage. An
 actor that can replace the file with another fully schema-valid row is outside the
