@@ -10,7 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import foundry
 from foundry import config, configure, registry
+from foundry.models import Project
 
 
 def test_direct_environment_wins_over_claude_option_and_file(monkeypatch, tmp_path):
@@ -178,6 +180,26 @@ def test_data_dir_priority(monkeypatch):
     monkeypatch.setenv("FOUNDRY_DATA", "/foundry")
 
     assert registry.data_dir() == "/foundry"
+
+
+def test_tracker_factory_honors_repository_binding_and_rejects_explicit_conflict(
+    monkeypatch,
+):
+    binding = registry.RepositoryTrackerBinding(
+        tracker="linear",
+        repository="github.com/acme/public",
+        project=Project(key="PAT", id="00000000-0000-4000-8000-000000000000"),
+        registry_binding_digest="sha256:" + "1" * 64,
+        migration_manifest_digest="sha256:" + "2" * 64,
+        configuration_digest="sha256:" + "3" * 64,
+    )
+    monkeypatch.setattr(registry, "repository_tracker_binding", lambda _cwd=None: binding)
+    monkeypatch.setenv("LINEAR_API_TOKEN", "test-token")
+    monkeypatch.setattr(config, "tracker_name", lambda: "youtrack")
+
+    assert foundry.tracker().name == "linear"
+    with pytest.raises(SystemExit, match="actif sur 'linear'"):
+        foundry.tracker("youtrack")
 
 
 def test_public_file_fallback_does_not_invoke_bulk_secret_parser(monkeypatch, tmp_path):

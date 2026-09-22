@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -137,8 +138,11 @@ class LinearWire:
                 "createdAt": "2026-09-20T10:02:00Z",
             })
             return {"data": {"commentCreate": {"success": True, "comment": copy.deepcopy(comment)}}}
-        if "FoundryLinearComment(" in document:
-            return {"data": {"comment": copy.deepcopy(self.comments.get(variables["id"]))}}
+        if "FoundryLinearCommentsById(" in document:
+            comment = self.comments.get(variables["id"])
+            return {"data": {"comments": connection(
+                [] if comment is None else [copy.deepcopy(comment)]
+            )}}
         raise AssertionError("unexpected GraphQL document")
 
     @staticmethod
@@ -203,6 +207,9 @@ def project_entry(project=PROJECT):
 
 
 def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(monkeypatch):
+    monkeypatch.setattr(
+        "foundry.registry.repository_tracker_binding", lambda _cwd=None: None,
+    )
     secrets = {
         "YOUTRACK_URL": "https://example.youtrack.cloud",
         "YOUTRACK_TOKEN": "youtrack-secret",
@@ -436,6 +443,7 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     checkout_reads = []
+    tracker_roots = []
     captured = {}
 
     class ProofStore:
@@ -450,7 +458,11 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
     outcomes.write_text(
         '{"outcomes": [], "quality": {"verdict": "pass"}}', encoding="utf-8",
     )
-    monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
+    monkeypatch.setattr(
+        foundry,
+        "tracker",
+        lambda name=None, cwd=None: tracker_roots.append(cwd) or fresh,
+    )
     monkeypatch.setenv("PROJECT_REPO", "decoy")
     monkeypatch.setattr(
         registry, "checkout_repository_identity",
@@ -480,6 +492,7 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
         "--root", str(tmp_path),
     ])
 
+    assert tracker_roots == [str(tmp_path)]
     assert checkout_reads == [str(tmp_path)]
     assert captured["repository"] == "acme/widgets"
     assert captured["issue_id"] == "LIN-2"
@@ -655,6 +668,9 @@ def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id
 
     assert tuple(wire.comments) == comment_ids
     assert len(comment_ids) == 1
+    parsed = uuid.UUID(comment_ids[0])
+    assert parsed.version == 4
+    assert parsed.variant == uuid.RFC_4122
 
 
 def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, monkeypatch):

@@ -17,12 +17,15 @@ read by the YouTrack adapter to add milestone values on the fly.)
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import subprocess
 import tempfile
 import urllib.parse
 import uuid
+from dataclasses import dataclass
+from pathlib import Path
 
 from foundry.models import Project
 
@@ -65,6 +68,34 @@ _LINEAR_FORBIDDEN_IDENTIFIER_KEY_PARTS = frozenset(
         "url",
     }
 )
+_TRACKER_MARKER_RELATIVE_PATH = Path(".foundry/tracker.json")
+_TRACKER_MARKER_MAX_BYTES = 16 * 1024
+_TRACKER_MARKER_VERSION = 1
+_TRACKER_MARKER_KEYS = frozenset(
+    {
+        "version",
+        "repository",
+        "tracker",
+        "project",
+        "registry_binding_digest",
+        "migration_manifest_digest",
+        "configuration_digest",
+    }
+)
+_SUPPORTED_MARKER_TRACKERS = frozenset({"youtrack", "ghprojects", "devhub", "linear"})
+_SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class RepositoryTrackerBinding:
+    """Validated repository-scoped tracker and its complete registry binding."""
+
+    tracker: str
+    repository: str
+    project: Project
+    registry_binding_digest: str
+    migration_manifest_digest: str
+    configuration_digest: str
 
 
 def _expand_ssh_alias(host: str) -> str:
@@ -223,6 +254,254 @@ def checkout_repository_identity(cwd: str | None = None) -> str:
     return canonical_repository_identity(value)
 
 
+def _checkout_root(cwd: str | None = None) -> Path | None:
+    """Return the checkout root, or ``None`` outside a Git working tree."""
+    start = Path(cwd or os.getcwd()).resolve()
+    if start.is_file():
+        start = start.parent
+    for candidate in (start, *start.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def _json_digest(value: object) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _marker_path(cwd: str | None = None) -> Path | None:
+    root = _checkout_root(cwd)
+    return None if root is None else root / _TRACKER_MARKER_RELATIVE_PATH
+
+
+def _matching_registry_bindings(
+    data: dict, tracker: str, repository: str, repo_name: str,
+) -> list[tuple[str, dict]]:
+    entries = data.get(tracker, {})
+    if not isinstance(entries, dict):
+        return []
+    canonical = [
+        (name, entry) for name, entry in entries.items()
+        if isinstance(entry, dict) and entry.get("canonical_repo") == repository
+    ]
+    if canonical:
+        return canonical
+    entry = entries.get(repo_name)
+    return [(repo_name, entry)] if isinstance(entry, dict) else []
+
+
+def _registry_project_for_marker(
+    data: dict, *, tracker: str, repository: str, repo_name: str,
+    key: str, project_id: str,
+) -> tuple[Project, dict, str]:
+    matches = _matching_registry_bindings(data, tracker, repository, repo_name)
+    if not matches:
+        raise ValueError("binding tracker du marqueur absent du registre")
+    first = matches[0][1]
+    if tracker == "linear" and first.get("canonical_repo") != repository:
+        raise ValueError("binding Linear du marqueur incompatible avec le dépôt")
+    if any(entry != first for _name, entry in matches[1:]):
+        raise ValueError("binding tracker du marqueur ambigu dans le registre")
+    if first.get("archive") is True:
+        raise ValueError("binding tracker du marqueur archivé")
+    if first.get("key") != key or first.get("id") != project_id:
+        raise ValueError("coordonnées du marqueur incompatibles avec le registre")
+    safe_entry = {name: value for name, value in first.items() if name != "archive"}
+    digest = _json_digest(safe_entry)
+    project = Project(
+        key=key, id=project_id,
+        extra={name: value for name, value in safe_entry.items() if name not in {"key", "id"}},
+    )
+    return project, first, digest
+
+
+def repository_tracker_binding(cwd: str | None = None) -> RepositoryTrackerBinding | None:
+    """Load one strict repository marker and bind it to the full registry entry.
+
+    The marker is executable configuration. A malformed, moved or stale marker is
+    refused; it never silently falls back to the host-global tracker.
+    """
+    marker = _marker_path(cwd)
+    if marker is None:
+        return None
+    try:
+        stat = marker.lstat()
+    except FileNotFoundError:
+        return None
+    if (
+        marker.parent.is_symlink()
+        or marker.is_symlink()
+        or not marker.is_file()
+        or stat.st_size > _TRACKER_MARKER_MAX_BYTES
+    ):
+        raise ValueError("marqueur tracker de dépôt invalide")
+    try:
+        data = json.loads(marker.read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        raise ValueError("marqueur tracker de dépôt invalide") from None
+    if not isinstance(data, dict) or set(data) != _TRACKER_MARKER_KEYS:
+        raise ValueError("marqueur tracker de dépôt invalide")
+    project_coordinate = data.get("project")
+    if (
+        data.get("version") != _TRACKER_MARKER_VERSION
+        or not isinstance(data.get("repository"), str)
+        or data.get("tracker") not in _SUPPORTED_MARKER_TRACKERS
+        or not isinstance(project_coordinate, dict)
+        or set(project_coordinate) != {"key", "id"}
+        or any(
+            not isinstance(project_coordinate.get(field), str)
+            or not project_coordinate[field]
+            for field in ("key", "id")
+        )
+        or any(
+            not isinstance(data.get(field), str)
+            or _SHA256.fullmatch(data[field]) is None
+            for field in (
+                "registry_binding_digest",
+                "migration_manifest_digest",
+                "configuration_digest",
+            )
+        )
+    ):
+        raise ValueError("marqueur tracker de dépôt invalide")
+    try:
+        repository = canonical_repository_identity(data["repository"])
+    except ValueError:
+        raise ValueError("marqueur tracker de dépôt invalide") from None
+    if repository != data["repository"]:
+        raise ValueError("marqueur tracker de dépôt invalide")
+    root = marker.parents[1]
+    try:
+        actual_repository = checkout_repository_identity(str(root))
+    except ValueError:
+        raise ValueError("marqueur tracker de dépôt invalide") from None
+    if actual_repository != repository:
+        raise ValueError("marqueur tracker incompatible avec le dépôt courant")
+    configuration = {
+        name: data[name] for name in _TRACKER_MARKER_KEYS
+        if name != "configuration_digest"
+    }
+    if data["configuration_digest"] != _json_digest(configuration):
+        raise ValueError("digest du marqueur tracker invalide")
+    project, _entry, registry_digest = _registry_project_for_marker(
+        load(), tracker=data["tracker"], repository=repository,
+        repo_name=repo_basename(str(root), use_env=False),
+        key=project_coordinate["key"], project_id=project_coordinate["id"],
+    )
+    if data["registry_binding_digest"] != registry_digest:
+        raise ValueError("binding tracker du registre modifié depuis le cutover")
+    return RepositoryTrackerBinding(
+        tracker=data["tracker"], repository=repository, project=project,
+        registry_binding_digest=registry_digest,
+        migration_manifest_digest=data["migration_manifest_digest"],
+        configuration_digest=data["configuration_digest"],
+    )
+
+
+def tracker_name_for_checkout(cwd: str | None = None) -> str:
+    """Select the repository marker first, or the legacy global default."""
+    binding = repository_tracker_binding(cwd)
+    if binding is not None:
+        return binding.tracker
+    from foundry import config
+    return config.tracker_name()
+
+
+def _prepare_marker(root: Path, payload: dict) -> tuple[int, str, Path]:
+    directory = root / _TRACKER_MARKER_RELATIVE_PATH.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    if directory.is_symlink():
+        raise ValueError("répertoire du marqueur tracker invalide")
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".tracker-", suffix=".json.tmp", dir=directory,
+    )
+    return descriptor, temporary, directory / _TRACKER_MARKER_RELATIVE_PATH.name
+
+
+def cutover_repository_tracker(
+    tracker: str, key: str, project_id: str, *,
+    migration_manifest_digest: str, cwd: str | None = None,
+) -> RepositoryTrackerBinding:
+    """Activate a pre-registered target without ever exposing two writable trackers.
+
+    Provider migration and readback happen before this function. Registry archival
+    is published before the marker; an interruption may make the checkout
+    temporarily unavailable, but it cannot restore or create dual-write authority.
+    Repeating the exact operation completes or replays it idempotently.
+    """
+    if (
+        tracker not in _SUPPORTED_MARKER_TRACKERS
+        or any(not isinstance(value, str) or not value for value in (key, project_id))
+        or not isinstance(migration_manifest_digest, str)
+        or _SHA256.fullmatch(migration_manifest_digest) is None
+    ):
+        raise ValueError("binding tracker de cutover invalide")
+    root = _checkout_root(cwd)
+    if root is None:
+        raise ValueError("cutover tracker hors dépôt Git")
+    repository = checkout_repository_identity(str(root))
+    repo_name = repo_basename(str(root), use_env=False)
+    data = load()
+    project, _target_entry, registry_digest = _registry_project_for_marker(
+        data, tracker=tracker, repository=repository, repo_name=repo_name,
+        key=key, project_id=project_id,
+    )
+    base_payload = {
+        "version": _TRACKER_MARKER_VERSION,
+        "repository": repository,
+        "tracker": tracker,
+        "project": {"key": key, "id": project_id},
+        "registry_binding_digest": registry_digest,
+        "migration_manifest_digest": migration_manifest_digest,
+    }
+    payload = {**base_payload, "configuration_digest": _json_digest(base_payload)}
+    expected = RepositoryTrackerBinding(
+        tracker=tracker, repository=repository, project=project,
+        registry_binding_digest=registry_digest,
+        migration_manifest_digest=migration_manifest_digest,
+        configuration_digest=payload["configuration_digest"],
+    )
+    current = repository_tracker_binding(str(root))
+    if current is not None:
+        if current == expected:
+            return current
+        raise ValueError("cutover tracker refusé : un binding actif différent existe déjà")
+
+    source_bindings = []
+    for provider, entries in data.items():
+        if provider == tracker or not isinstance(entries, dict):
+            continue
+        for name, entry in entries.items():
+            if (
+                isinstance(entry, dict)
+                and entry.get("archive") is not True
+                and (entry.get("canonical_repo") == repository or name == repo_name)
+            ):
+                source_bindings.append((provider, name, entry))
+    if len(source_bindings) > 1:
+        raise ValueError("cutover tracker refusé : bindings source actifs ambigus")
+
+    descriptor, temporary, marker = _prepare_marker(root, payload)
+    try:
+        with os.fdopen(descriptor, "w") as file:
+            json.dump(payload, file, indent=2, sort_keys=True)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        if source_bindings:
+            provider, name, entry = source_bindings[0]
+            data[provider][name] = {**entry, "archive": True}
+            _save(data)
+        os.replace(temporary, marker)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return repository_tracker_binding(str(root)) or expected
+
+
 def _require_uuid(value: object, field: str) -> str:
     """Return one normalized UUID without ever echoing invalid input."""
     if not isinstance(value, str) or _UUID.fullmatch(value) is None:
@@ -361,15 +640,39 @@ def entry_for(cwd: str | None = None, use_env: bool = True):
     """(tracker, repo, entry) for the repo at cwd, searched across ALL trackers
     (preferring the configured one) — or None if unregistered. This is THE lookup
     the hooks use: a repo registered under any tracker is a Foundry repo."""
-    from foundry import config
-    repo = repo_basename(cwd, use_env=use_env)
+    binding = repository_tracker_binding(cwd)
+    repo = repo_basename(cwd, use_env=False if binding is not None else use_env)
     if not repo:
         return None
     data = load()
+    if binding is not None:
+        entry = {
+            "key": binding.project.key,
+            "id": binding.project.id,
+            **binding.project.extra,
+        }
+        return binding.tracker, repo, entry
+    try:
+        repository = checkout_repository_identity(cwd)
+    except ValueError:
+        repository = None
+    if repository is not None:
+        providers = {
+            provider
+            for provider, entries in data.items()
+            if isinstance(entries, dict)
+            for entry in entries.values()
+            if isinstance(entry, dict)
+            and entry.get("canonical_repo") == repository
+            and entry.get("archive") is not True
+        }
+        if len(providers) > 1:
+            raise ValueError("bindings tracker actifs ambigus pour le dépôt courant")
+    from foundry import config
     preferred = config.tracker_name()
     for tracker in [preferred, *sorted(k for k in data if k != preferred)]:
         e = data.get(tracker, {}).get(repo)
-        if e:
+        if e and e.get("archive") is not True:
             return tracker, repo, e
     return None
 
@@ -391,8 +694,37 @@ def default_branch(cwd: str | None = None) -> str | None:
     return head[len(prefix):] or None
 
 
-def resolve(tracker: str, repo: str) -> Project:
-    data = load().get(tracker, {})
+def resolve(tracker: str, repo: str, cwd: str | None = None) -> Project:
+    binding = repository_tracker_binding(cwd)
+    if binding is not None:
+        if tracker != binding.tracker:
+            raise SystemExit(
+                f"Binding tracker refusé : '{binding.repository}' est actif sur "
+                f"'{binding.tracker}', pas '{tracker}'."
+            )
+        root = _checkout_root(cwd)
+        expected_repo = repo_basename(str(root), use_env=False) if root else ""
+        if repo != expected_repo:
+            raise SystemExit("Binding tracker refusé : alias de dépôt incompatible.")
+        return binding.project
+    all_data = load()
+    try:
+        repository = checkout_repository_identity(cwd)
+    except ValueError:
+        repository = None
+    if repository is not None:
+        providers = {
+            provider
+            for provider, entries in all_data.items()
+            if isinstance(entries, dict)
+            for entry in entries.values()
+            if isinstance(entry, dict)
+            and entry.get("canonical_repo") == repository
+            and entry.get("archive") is not True
+        }
+        if len(providers) > 1:
+            raise SystemExit("Binding tracker refusé : bindings actifs ambigus.")
+    data = all_data.get(tracker, {})
     if repo not in data:
         known = ", ".join(data) or "(aucun)"
         raise SystemExit(
@@ -401,8 +733,40 @@ def resolve(tracker: str, repo: str) -> Project:
             f"python3 <plugin-root>/tooling/foundry_cli.py registry register "
             f"{tracker} {repo} <KEY> <project-id> — ou lance le skill foundry:doctor.")
     e = data[repo]
+    if e.get("archive") is True:
+        raise SystemExit(
+            f"Binding tracker archivé : '{repo}' ne peut plus recevoir "
+            f"d'écriture via '{tracker}'."
+        )
     return Project(key=e["key"], id=e["id"],
-                   extra={k: v for k, v in e.items() if k not in ("key", "id")})
+                   extra={
+                       k: v for k, v in e.items()
+                       if k not in ("key", "id", "archive")
+                   })
+
+
+def require_writable_project(tracker: str, project: Project) -> None:
+    """Refuse writes once any alias tombstones this provider project.
+
+    A cutover archives the source repository alias while historical aliases remain
+    resolvable for reads.  Because those aliases address the same native provider
+    project, the archived entry is a project-wide mutation tombstone: current
+    Foundry may still query the archive, but it must not write through another alias.
+    """
+    bindings = load().get(tracker, {})
+    if not isinstance(bindings, dict):
+        return
+    if any(
+        isinstance(entry, dict)
+        and entry.get("archive") is True
+        and entry.get("key") == project.key
+        and entry.get("id") == project.id
+        for entry in bindings.values()
+    ):
+        raise SystemExit(
+            f"Mutation tracker refusée : le projet '{project.key}' est une "
+            f"archive lisible via '{tracker}'."
+        )
 
 
 def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
@@ -419,7 +783,9 @@ def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
     bindings = load().get(tracker, {})
     matches = [
         entry for entry in bindings.values()
-        if isinstance(entry, dict) and entry.get("canonical_repo") == canonical
+        if isinstance(entry, dict)
+        and entry.get("canonical_repo") == canonical
+        and entry.get("archive") is not True
     ]
     if not matches:
         raise SystemExit(
@@ -435,7 +801,10 @@ def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
         raise SystemExit(f"Binding '{tracker}' invalide pour le canonical_repo du checkout.")
     return Project(
         key=selected["key"], id=selected["id"],
-        extra={k: v for k, v in selected.items() if k not in ("key", "id")},
+        extra={
+            k: v for k, v in selected.items()
+            if k not in ("key", "id", "archive")
+        },
     )
 
 
@@ -545,7 +914,8 @@ def main(argv=None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     usage = (
         "usage: registry [register <tracker> <repo> <KEY> <project-id> [k=v …] | "
-        "alias <tracker> <source-repo> <alias-repo>]"
+        "alias <tracker> <source-repo> <alias-repo> | "
+        "cutover <tracker> <KEY> <project-id> <migration-manifest-sha256>]"
     )
     if not args:
         print(json.dumps(load(), indent=2))
@@ -571,6 +941,26 @@ def main(argv=None) -> None:
             raise SystemExit(str(exc)) from None
         verb = "registered" if created else "already registered"
         print(f"{verb} alias {alias_repo} -> {source_repo} ({tracker})")
+        return
+    if args[0] == "cutover":
+        if len(args) != 5:
+            raise SystemExit(usage)
+        _, tracker, key, project_id, manifest_digest = args
+        try:
+            binding = cutover_repository_tracker(
+                tracker, key, project_id,
+                migration_manifest_digest=manifest_digest,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+        print(json.dumps({
+            "repository": binding.repository,
+            "tracker": binding.tracker,
+            "project": {"key": binding.project.key, "id": binding.project.id},
+            "registry_binding_digest": binding.registry_binding_digest,
+            "migration_manifest_digest": binding.migration_manifest_digest,
+            "configuration_digest": binding.configuration_digest,
+        }, indent=2, sort_keys=True))
         return
     raise SystemExit(usage)
 

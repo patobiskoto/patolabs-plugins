@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from foundry import edit, write
-from foundry.models import Adr, Issue
+from foundry import edit, registry, write
+from foundry.models import Adr, Issue, Project
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     BodyUpdateUnavailableError,
@@ -26,6 +26,10 @@ def isolated_body_locks(monkeypatch, tmp_path):
 
 class ScriptedYouTrack(YouTrackTracker):
     """A stateful in-memory YouTrack wire fake recording each attempted request."""
+
+    # These tests exercise the bounded provider body algorithm directly. The
+    # separate write-tier regression below enables the real mutation boundary.
+    requires_mutation_binding = False
 
     def __init__(self, *, issue_body="old", article_body="old", after_write=None):
         self.issue_body = issue_body
@@ -212,6 +216,45 @@ def test_write_sync_acceptance_reports_exact_checked_count(monkeypatch):
     assert write.sync_acceptance(tracker, "T-1", tracker.issue_body, proof) == {
         "status": "updated", "checked": 1, "audit": "provider",
     }
+
+
+def test_youtrack_archive_stays_readable_but_write_tier_refuses_before_effect(
+    monkeypatch,
+):
+    project = Project(key="FOUNDRY", id="0-3", extra={"ms_bundle": "163-7"})
+    tracker = ScriptedYouTrack()
+    tracker.requires_mutation_binding = True
+    registry_data = {"youtrack": {
+        "claude-plugins": {
+            "key": "FOUNDRY", "id": "0-3", "ms_bundle": "163-7",
+        },
+        "patolabs-plugins": {
+            "key": "FOUNDRY", "id": "0-3", "ms_bundle": "163-7",
+            "archive": True,
+        },
+    }}
+    monkeypatch.setattr(registry, "load", lambda: registry_data)
+    monkeypatch.setattr(
+        registry,
+        "checkout_repository_identity",
+        lambda _cwd=None: "github.com/patobiskoto/claude-plugins",
+    )
+    monkeypatch.setattr(
+        registry,
+        "resolve",
+        lambda provider, repo, cwd=None: project
+        if (provider, repo) == ("youtrack", "claude-plugins")
+        else pytest.fail((provider, repo, cwd)),
+    )
+    monkeypatch.setattr(
+        registry, "repo_basename", lambda _cwd=None: "claude-plugins",
+    )
+
+    assert tracker.resolve_checkout_project() == project
+    with pytest.raises(SystemExit, match="archive lisible"):
+        write.set_field(tracker, "FOUNDRY-159", "Priority", "P1")
+
+    assert tracker.calls == []
 
 
 def test_unsupported_tracker_body_write_fails_explicitly():

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "cutover_issue": "FOUNDRY-159",
+  "source": {
+    "tracker": "youtrack",
+    "project": "FOUNDRY",
+    "repository": "github.com/patobiskoto/claude-plugins",
+    "mode_after_cutover": "readable-archive"
+  },
+  "target": {
+    "tracker": "linear",
+    "team_key": "PAT",
+    "team_id": "REPLACE_WITH_LINEAR_TEAM_UUID",
+    "project_id": "REPLACE_WITH_LINEAR_PROJECT_UUID",
+    "repository": "github.com/patobiskoto/patolabs-plugins"
+  },
+  "issues": [
+    {
+      "source_id": "FOUNDRY-153",
+      "decision": "migrate-live",
+      "reason": "active epic owning the public-repository cutover",
+      "source_state": "backlog",
+      "target_state": "backlog",
+      "priority": "P0",
+      "estimate": null,
+      "type": "Epic",
+      "acceptance_total": 6,
+      "body_digest": "sha256:REPLACE",
+      "pr_url": null,
+      "target_id": null,
+      "target_readback_digest": null,
+      "links": []
+    },
+    {
+      "source_id": "FOUNDRY-154",
+      "decision": "retain-terminal-archive",
+      "reason": "terminal work remains authoritative in YouTrack",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 5,
+      "type": "Task",
+      "acceptance_total": 6,
+      "body_digest": "sha256:REPLACE",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/1",
+      "links": []
+    }
+  ],
+  "adrs": [
+    {
+      "source_id": "FOUNDRY-ADR-0026",
+      "source_status": "accepted",
+      "body_digest": "sha256:REPLACE",
+      "decision": "archive-reference"
+    }
+  ],
+  "adr_reference_reason": "Linear adapter has no native Foundry ADR knowledge base; source status and digest remain authoritative in the readable YouTrack archive.",
+  "evidence": {
+    "source_snapshot_at": null,
+    "source_snapshot_digest": null,
+    "linear_readback_at": null,
+    "linear_readback_digest": null,
+    "binding_attestation": "recorded-in-operations-log",
+    "operations_log": "plugins/foundry/docs/linear-cutover-operations.json"
+  }
+}

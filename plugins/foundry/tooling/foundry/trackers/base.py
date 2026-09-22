@@ -150,6 +150,15 @@ class Tracker(ABC):
         The write tier invokes this before resolving a mutation project.
         """
 
+    def validate_mutation_project(self, project: Project) -> None:
+        """Fail when a resolved project is not writable through this provider.
+
+        This is distinct from read resolution: an archived provider project may
+        remain queryable while every lifecycle mutation is refused. Providers
+        without such an archive boundary keep the default no-op.
+        """
+        del project
+
     def start_transition_path(self, current_state: str) -> tuple[str, ...]:
         """Provider-valid states needed to start an issue from ``current_state``.
 

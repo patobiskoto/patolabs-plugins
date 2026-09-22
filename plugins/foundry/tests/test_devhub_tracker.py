@@ -277,6 +277,9 @@ def decode_proof(token):
 
 
 def test_factory_instantiates_devhub_without_changing_other_providers(monkeypatch):
+    monkeypatch.setattr(
+        "foundry.registry.repository_tracker_binding", lambda _cwd=None: None,
+    )
     monkeypatch.setattr(foundry.config, "tracker_name", lambda: "devhub")
     monkeypatch.setattr(
         foundry.config, "require_public", lambda key: "http://127.0.0.1:3000",

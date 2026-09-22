@@ -11,8 +11,18 @@ from foundry.codehosts.base import CodeHost
 from foundry.trackers.base import Tracker
 
 
-def tracker(name: str | None = None) -> Tracker:
-    name = name or config.tracker_name()
+def tracker(name: str | None = None, cwd: str | None = None) -> Tracker:
+    """Return the explicitly active tracker for the current repository."""
+    from foundry import registry
+
+    binding = registry.repository_tracker_binding(cwd)
+    if name is None:
+        name = binding.tracker if binding is not None else config.tracker_name()
+    elif binding is not None and name != binding.tracker:
+        raise SystemExit(
+            f"Binding tracker refusé : '{binding.repository}' est actif sur "
+            f"'{binding.tracker}', pas '{name}'."
+        )
     if name == "youtrack":
         from foundry.trackers.youtrack import YouTrackTracker
         return YouTrackTracker()

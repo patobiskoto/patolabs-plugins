@@ -165,6 +165,85 @@ update/deletion, so “append-only” describes Foundry's write discipline, not
 provider-enforced immutability. Epic closure remains unavailable because it requires a
 provider-atomic parent/child audit.
 
-This implementation and its controlled transport round-trip do not activate a real
-workspace. No Linear binding or live write is performed here. Import, target-workspace
-validation, and the atomic cutover remain FOUNDRY-159 work.
+The provider implementation was first proven without activating a real workspace.
+FOUNDRY-159 then activated `github.com/patobiskoto/patolabs-plugins` on Linear after a
+selective live migration and provider readback. The versioned manifest and credential-
+free operations record are respectively
+`linear-selective-migration-manifest.json` and `linear-cutover-operations.json`; they
+record the exact source snapshot, migrated IDs, readback digests and cutover binding.
+
+## Repository-scoped activation and atomic cutover
+
+`FOUNDRY_TRACKER` remains the compatibility default for repositories without a
+versioned binding. A repository that has completed a provider cutover carries
+`.foundry/tracker.json`; that marker takes precedence over the host-global default for
+every normal Foundry lifecycle command. Supplying a different provider explicitly from
+that checkout is refused rather than becoming an archive-write escape hatch.
+
+The marker is resolved from the Git root, including when a command starts in a nested
+directory. Its v1 schema is closed and contains the canonical remote identity, provider,
+project key/UUID, SHA-256 of the complete credential-free registry binding, SHA-256 of
+the selective migration manifest, and a canonical configuration SHA-256 over those
+fields. It contains no token or endpoint. Symlinks, files above 16 KiB, malformed JSON,
+unknown fields, unsupported providers, moved origins, stale registry data and digest
+divergence fail closed.
+
+Activation is available through:
+
+```text
+foundry_cli.py registry cutover linear <KEY> <PROJECT-UUID> sha256:<MANIFEST-DIGEST>
+```
+
+The target binding must already exist in the shared registry and, for Linear, must carry
+the exact canonical repository plus the complete team/state/type mapping. The command
+does no provider I/O: migration and provider readback are prerequisites. It prepares the
+marker, atomically archives the one old binding for this repository in the registry,
+then atomically publishes the marker. A filesystem interruption can leave the checkout
+temporarily unavailable, never dual-writable; replaying the exact command completes the
+transition idempotently. Multiple source bindings, a different existing marker, or a
+changed target binding are refused.
+
+The manifest's `evidence.source_snapshot_digest` hashes canonical compact JSON containing, in
+manifest order, each issue's source ID/state/priority/estimate/type/AC count/body digest
+and PR URL plus each ADR's source ID/status/body digest. Target identifiers and readback
+evidence are deliberately excluded from that source snapshot.
+
+For the live cutover, the whole-file SHA-256 supplied to `registry cutover` is the
+immutable digest of the private operator input:
+`sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77`.
+It remains bound verbatim in `.foundry/tracker.json`; the private input is not published
+because it contained the source tenant URL. The versioned public manifest is a redacted
+derivative whose `source.issue_url_reference` is replaced by the non-addressable archive
+marker. Its distinct whole-file digest is
+`sha256:4589727201ae44a00d0b47c92fca38a6fcc7a5bbde7eba0e8668a07e60d721dc`.
+`linear-cutover-operations.json` records both roles, both digests, the redacted field and
+the derivation edge; a generic `manifest_digest` is intentionally not used for both.
+
+The private `claude-plugins` binding remains resolvable for reads. The archived
+`patolabs-plugins` alias is also a project-wide mutation tombstone for its matching
+YouTrack key and native project ID. In the current public Foundry implementation, the
+YouTrack adapter requires a mutation binding, and the write tier validates that resolved
+project before any issue or ADR lifecycle effect. Consequently, queries through a
+historical alias still read terminal history and ADRs, while a lifecycle write through
+any alias of that same YouTrack project fails closed. The public checkout independently
+rejects an explicit YouTrack override through its Linear marker. Linear has no native
+Foundry ADR knowledge base, so the selective migration manifest records which decisions
+are referenced rather than inventing mutable ADR issues.
+
+This is an operational guarantee of the current versioned Foundry paths, not a claim
+that the YouTrack server revoked write credentials. Direct REST calls, bespoke adapter
+calls that bypass the write tier, or arbitrary execution of obsolete code from the
+historical repository are outside this guarantee. The historical GitHub repository is
+separately private and archived; no server-side YouTrack mutation was performed or is
+attested by this cutover record.
+
+Rollback is permitted only before the first post-cutover Linear lifecycle write and
+requires a separately reviewed recovery that restores one provider while keeping the
+other unavailable. After any such write, recovery is forward-only: preserve both audit
+histories and repair Linear. Removing the marker or re-enabling YouTrack while Linear is
+writable is not a rollback; it is forbidden dual-write.
+
+For the live PAT-10 cutover, this boundary was documented in an append-only local
+session receipt at `2026-09-22T10:22:43.917Z`, before the cutover at
+`2026-09-22T14:10:47Z`. The credential-free operations log records the receipt digest;
+the private receipt itself is deliberately excluded from the public repository.

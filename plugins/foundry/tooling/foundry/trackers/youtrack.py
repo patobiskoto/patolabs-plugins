@@ -103,6 +103,7 @@ class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 class YouTrackTracker(Tracker):
     name = "youtrack"
+    requires_mutation_binding = True
     # YouTrack exposes neither an atomic parent+children compare-and-transition nor
     # a provider-verified receipt store. A read-then-command emulation would race.
     epic_closure_supported = False
@@ -259,6 +260,35 @@ class YouTrackTracker(Tracker):
 
     def resolve_project(self, repo: str) -> Project:
         return registry.resolve("youtrack", repo)
+
+    def resolve_checkout_project(
+        self, cwd: str | None = None, *, checkout_identity: str | None = None,
+    ) -> Project:
+        """Resolve the actual checkout without trusting ``PROJECT_REPO``.
+
+        Read resolution deliberately accepts a historical alias. The write tier
+        separately invokes :meth:`validate_mutation_project` before any mutation.
+        """
+        try:
+            observed = (
+                registry.checkout_repository_identity(cwd)
+                if checkout_identity is None else
+                registry.canonical_repository_identity(checkout_identity)
+            )
+        except ValueError:
+            raise SystemExit(
+                "Binding YouTrack refusé : identité canonique du checkout "
+                "invalide ou absente."
+            ) from None
+        repo = observed.rsplit("/", 1)[-1]
+        return registry.resolve(self.name, repo, cwd=cwd)
+
+    def validate_mutation_repository(self, repo: str, checkout_identity: str) -> None:
+        del repo
+        self.resolve_checkout_project(checkout_identity=checkout_identity)
+
+    def validate_mutation_project(self, project: Project) -> None:
+        registry.require_writable_project(self.name, project)
 
     def search(self, project: Project, query: str = "", page_size: int = 1000) -> list[Issue]:
         """Read every issue page; ``page_size`` is useful for read-only smoke tests."""

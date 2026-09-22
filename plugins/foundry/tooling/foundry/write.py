@@ -53,8 +53,13 @@ def mutation_project(tracker):
     validator(repo, checkout_identity)
     resolver = getattr(tracker, "resolve_checkout_project", None)
     if callable(resolver):
-        return resolver(checkout_identity=checkout_identity)
-    return tracker.resolve_project(repo)
+        project = resolver(checkout_identity=checkout_identity)
+    else:
+        project = tracker.resolve_project(repo)
+    project_validator = getattr(tracker, "validate_mutation_project", None)
+    if callable(project_validator):
+        project_validator(project)
+    return project
 
 
 def preflight_issue_operation(tracker, operation: str) -> None:
