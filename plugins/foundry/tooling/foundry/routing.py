@@ -773,7 +773,7 @@ class ReviewClaim:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class ReviewDeduplicator:
@@ -1543,45 +1543,74 @@ class ReviewDeduplicator:
             generation = record.get("generation")
             claim = record.get("claim")
             claim_id = claim.get("id") if isinstance(claim, Mapping) else None
+            completed_at = record.get("completed_at")
+            coordinates = record.get("coordinates")
             if type(generation) is not int or generation < 1:
                 raise RoutingConfigError(
                     f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
                 )
             self._validate_claim_id(claim_id)
+            if not self._valid_utc_timestamp(completed_at):
+                raise RoutingConfigError(
+                    f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
+                )
+            coordinates = self._validate_coordinates(coordinates)
             return {
                 "proof_id": proof_id,
                 "generation": generation,
                 "claim_digest": hashlib.sha256(claim_id.encode("ascii")).hexdigest(),
+                "completed_at": completed_at,
+                "coordinates": coordinates,
             }
 
-    def validated_completed_proof_binding(
-        self, issue_id: str, diff_hash: str,
+    def validated_terminal_proof_binding(
+        self,
+        issue_id: str,
+        diff_hash: str,
+        *,
+        coordinates: Mapping[str, object] | None = None,
     ) -> dict[str, object] | None:
-        """Return a binding only for an intact, mergeable, all-pass terminal proof."""
+        """Return intact terminal evidence without upgrading a blocked verdict."""
         if not isinstance(issue_id, str) or not issue_id.strip():
             raise RoutingConfigError("preuve AC : identifiant d'issue requis.")
         binding = self.completed_proof_binding(diff_hash)
         if binding is None:
             return None
+        if coordinates is not None:
+            expected_coordinates = self._validate_coordinates(coordinates)
+            if binding["coordinates"] != expected_coordinates:
+                raise RoutingConfigError(
+                    "preuve AC issue de coordonnées de review différentes ; refus fermé."
+                )
         proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
         proof = proof_store._validated_proof(proof_store.directory / binding["proof_id"])
         if (
             proof["issue"]["id"] != issue_id.strip()
-            or
-            proof["coordinates"]["diff_hash"] != diff_hash
+            or proof["coordinates"]["diff_hash"] != diff_hash
+            or proof["coordinates"]["base"] != binding["coordinates"]["base"]
             or proof["review"]["generation"] != binding["generation"]
             or proof["review"]["claim_digest"] != binding["claim_digest"]
         ):
             raise RoutingConfigError(
                 "preuve AC incohérente avec l'issue ou la review terminée ; refus fermé."
             )
-        if (
-            proof["quality"] != "mergeable"
-            or any(
-                criterion["verdict"] != "pass"
+        return {
+            **binding,
+            "quality": proof["quality"],
+            "all_pass": all(
+                criterion["verdict"] == "pass"
                 for criterion in proof["issue"]["criteria"]
-            )
-        ):
+            ),
+        }
+
+    def validated_completed_proof_binding(
+        self, issue_id: str, diff_hash: str,
+    ) -> dict[str, object] | None:
+        """Return a binding only for an intact, mergeable, all-pass terminal proof."""
+        binding = self.validated_terminal_proof_binding(issue_id, diff_hash)
+        if binding is None:
+            return None
+        if binding["quality"] != "mergeable" or not binding["all_pass"]:
             raise RoutingConfigError(
                 "preuve AC non mergeable ou incomplète ; refus fermé."
             )
@@ -2265,12 +2294,17 @@ def main(
                 )
 
             def validate_rearm(previous_diff_hash: str):
-                binding = deduplicator.validated_completed_proof_binding(
-                    args.issue, previous_diff_hash,
+                binding = deduplicator.validated_terminal_proof_binding(
+                    args.issue, previous_diff_hash, coordinates=coordinates,
                 )
                 if binding is None:
                     return None
-                return validate_claim(), binding["proof_id"]
+                return {
+                    "proof_id": binding["proof_id"],
+                    "completed_at": binding["completed_at"],
+                    "quality": binding["quality"],
+                    "all_pass": binding["all_pass"],
+                }
 
             result = EscalationStore.for_root(
                 review_root,

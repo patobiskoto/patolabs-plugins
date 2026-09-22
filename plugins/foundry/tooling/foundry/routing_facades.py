@@ -775,12 +775,17 @@ def codex_review_plan(
         )
 
     def validate_rearm(previous_diff_hash: str):
-        binding = deduplicator.validated_completed_proof_binding(
-            issue_id, previous_diff_hash,
+        binding = deduplicator.validated_terminal_proof_binding(
+            issue_id, previous_diff_hash, coordinates=verifier,
         )
         if binding is None:
             return None
-        return validate_claim(), binding["proof_id"]
+        return {
+            "proof_id": binding["proof_id"],
+            "completed_at": binding["completed_at"],
+            "quality": binding["quality"],
+            "all_pass": binding["all_pass"],
+        }
 
     result = EscalationStore.for_root(
         review_root, state_dir=state_dir,

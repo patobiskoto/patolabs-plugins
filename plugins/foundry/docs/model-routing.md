@@ -451,9 +451,29 @@ The token itself is never persisted. A normal duplicate without the token and re
 flag never receives an active capability.
 
 For the one-review exception after a consumed implementer or reviewer remediation route, the issue
-lock encloses the Git claim validation and the later audit binding. A retry of that hash
+lock encloses the Git claim validation and the later audit binding. The technical slot is
+bound only when the review ledger returns `should_run=true`. An unchanged claim already
+`in_progress` or `completed` remains an idempotent `should_run=false` result: it does not
+set `review_diff_hash`/`review_claimed_at`, does not claim that a reviewer was launched,
+and leaves the slot available for the one corrected diff. A retry of an already bound hash
 can recover an interrupted local handoff; another hash or another coordinate is refused
 before a second reviewer can own it.
+
+Ledgers written before this rule may contain a phantom binding to a review that was already
+terminal when the technical generation recorded it. Reconciliation is deliberately narrow:
+under the same issue lock, Foundry validates the canonical structured proof, issue, diff,
+review generation and claim digest, plus the immutable root/base coordinates. The review
+ledger's `completed_at` must be strictly earlier than the technical
+`review_claimed_at`; equality is ambiguous and fails closed. Only then may a genuinely fresh
+`should_run=true` claim replace the phantom hash. The audit records both timestamps, the
+terminal proof id and quality, the old/new hashes, and
+`terminal_before_binding_reconciliation`. It is append-bounded to one replacement. A
+blocked proof remains blocked and is never promoted to mergeable; it proves chronology only.
+Active claims, missing proof, late or ambiguous terminal evidence, coordinate drift,
+deduplicated replacement claims, concurrent or second replacements all refuse without a
+partial issue-ledger mutation. This repair does not touch escalation/remediation counters,
+floors, budgets, providers, campaigns, tracker, PR, CI or merge authority. The ordinary
+post-binding rearm remains restricted to an intact mergeable all-pass proof.
 
 Both `foundry:merge-pr` and direct `foundry:review-pr` claim before launching a
 reviewer. The nested review receives the already-claimed hash so it does not claim a
@@ -675,7 +695,9 @@ coordinates with the persisted claim before reading or terminalizing it, so clai
 verification cannot silently use different worktrees or bases. An arbitrary `--diff-file` or manual
 repository namespace is deliberately not accepted on this spawn path. A common verdict
 of `should_run=false` produces no `spawn`, so a skill cannot accidentally create the
-reviewer before deduplication.
+reviewer before deduplication. In a consumed technical-remediation generation that same
+verdict is also a no-op for the issue authorization ledger; only the later corrected diff's
+fresh executable claim can occupy the slot.
 
 If the Codex host has no subagent tool, use `--no-subagent`. The plan then has
 `mode=current_context`, no `spawn`, usable `current_context_instructions`, and an
