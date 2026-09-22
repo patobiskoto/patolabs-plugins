@@ -95,6 +95,33 @@ def _concurrent_reviewer_authorization(args):
         return "blocked", str(exc)
 
 
+def _concurrent_in_progress_duplicate_authorization(args):
+    root, state_dir, issue_id, diff_hash, rearm_proof_id = args
+    try:
+        validated_rearm = None
+        if rearm_proof_id is not None:
+            def validated_rearm(_previous):
+                return {
+                    "proof_id": rearm_proof_id,
+                    "completed_at": "2030-01-01T00:00:00Z",
+                    "quality": "mergeable",
+                    "all_pass": True,
+                }
+        result = EscalationStore.for_root(
+            root, state_dir=state_dir,
+        ).claim_fresh_reviewer_authorization(
+            issue_id,
+            diff_hash,
+            validated_claim=lambda: ReviewClaim(
+                diff_hash, False, "in_progress", 1,
+            ),
+            validated_rearm=validated_rearm,
+        )
+        return "bound", result
+    except EscalationTechnicalBlockedError as exc:
+        return "blocked", str(exc)
+
+
 def _controlled_first_creator(
     repository, state_dir, state_created, sidecar_contended, results,
 ):
@@ -2609,6 +2636,93 @@ def test_deduplicated_completed_claim_does_not_bind_the_technical_review_slot(tm
     assert bound["review_claimed_at"] is not None
 
 
+def test_deduplicated_in_progress_claim_reserves_the_technical_review_slot(tmp_path):
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "FOUNDRY-165"
+    path = store._path(issue)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(issue, "reviewer")), encoding="utf-8")
+    store.reclassify_legacy_terminal(issue, 1)
+    store.resume_technical_remediation(issue, 1, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "reviewer", 1, "f165-local-route-0001",
+    )
+    active_hash = "a" * 64
+    duplicate = ReviewClaim(active_hash, False, "in_progress", 1)
+
+    assert store.claim_fresh_reviewer_authorization(
+        issue, active_hash, validated_claim=lambda: duplicate,
+    ) is duplicate
+    bound = store.status(issue)["technical_remediation_audit"][0]
+    assert bound["review_diff_hash"] == active_hash
+    assert bound["review_claimed_at"] is not None
+    before = path.read_bytes()
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="déjà autorisé"):
+        store.claim_fresh_reviewer_authorization(
+            issue,
+            "b" * 64,
+            validated_claim=lambda: _executable_review_claim("b" * 64),
+        )
+    assert path.read_bytes() == before
+
+
+def test_completed_duplicate_is_noop_before_in_progress_rearm_reserves_slot(tmp_path):
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "FOUNDRY-165"
+    path = store._path(issue)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(issue, "reviewer")), encoding="utf-8")
+    store.reclassify_legacy_terminal(issue, 1)
+    store.resume_technical_remediation(issue, 1, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "reviewer", 1, "f165-local-route-0001",
+    )
+    first, completed_hash, active_hash = "a" * 64, "b" * 64, "c" * 64
+    store.claim_fresh_reviewer_authorization(
+        issue, first, validated_claim=lambda: _executable_review_claim(first),
+    )
+    terminal = {
+        "proof_id": "d" * 64,
+        "completed_at": "2030-01-01T00:00:00Z",
+        "quality": "mergeable",
+        "all_pass": True,
+    }
+    completed = ReviewClaim(completed_hash, False, "completed", 1)
+
+    assert store.claim_fresh_reviewer_authorization(
+        issue,
+        completed_hash,
+        validated_claim=lambda: completed,
+        validated_rearm=lambda previous: terminal if previous == first else None,
+    ) is completed
+    unchanged = store.status(issue)["technical_remediation_audit"][0]
+    assert unchanged["review_diff_hash"] == first
+    assert unchanged["review_rearm_audit"] == []
+
+    active = ReviewClaim(active_hash, False, "in_progress", 1)
+    assert store.claim_fresh_reviewer_authorization(
+        issue,
+        active_hash,
+        validated_claim=lambda: active,
+        validated_rearm=lambda previous: terminal if previous == first else None,
+    ) is active
+    rearmed = store.status(issue)["technical_remediation_audit"][0]
+    assert rearmed["review_diff_hash"] == active_hash
+    assert len(rearmed["review_rearm_audit"]) == 1
+    assert rearmed["review_rearm_audit"][0]["new_diff_hash"] == active_hash
+
+    before = path.read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique réarm"):
+        store.claim_fresh_reviewer_authorization(
+            issue,
+            "e" * 64,
+            validated_claim=lambda: _executable_review_claim("e" * 64),
+            validated_rearm=lambda _previous: terminal,
+        )
+    assert path.read_bytes() == before
+
+
 def test_terminal_review_rearm_is_single_use_and_audited(tmp_path):
     store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
     issue = "FOUNDRY-130"
@@ -2713,6 +2827,67 @@ def test_concurrent_reviewer_authorizations_bind_only_one_distinct_diff(tmp_path
     assert "déjà autorisé" in next(message for kind, message in results if kind == "blocked")
     bound = store.status(issue)["technical_remediation_audit"][0]
     assert bound["review_diff_hash"] in {"a" * 64, "b" * 64}
+
+
+def test_concurrent_in_progress_duplicates_bind_only_one_distinct_diff(tmp_path):
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "FOUNDRY-165"
+    path = store._path(issue)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(issue, "reviewer")), encoding="utf-8")
+    store.reclassify_legacy_terminal(issue, 1)
+    store.resume_technical_remediation(issue, 1, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "reviewer", 1, "f165-local-route-0001",
+    )
+
+    args = (
+        (str(tmp_path), str(tmp_path), issue, "a" * 64, None),
+        (str(tmp_path), str(tmp_path), issue, "b" * 64, None),
+    )
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        results = pool.map(_concurrent_in_progress_duplicate_authorization, args)
+
+    assert sorted(kind for kind, _ in results) == ["blocked", "bound"]
+    assert "déjà autorisé" in next(
+        message for kind, message in results if kind == "blocked"
+    )
+    event = store.status(issue)["technical_remediation_audit"][0]
+    assert event["review_diff_hash"] in {"a" * 64, "b" * 64}
+    assert event["review_claimed_at"] is not None
+
+
+def test_concurrent_in_progress_duplicate_rearms_bind_only_one_distinct_diff(tmp_path):
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "FOUNDRY-165"
+    path = store._path(issue)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(issue, "reviewer")), encoding="utf-8")
+    store.reclassify_legacy_terminal(issue, 1)
+    store.resume_technical_remediation(issue, 1, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "reviewer", 1, "f165-local-route-0001",
+    )
+    store.claim_fresh_reviewer_authorization(
+        issue,
+        "a" * 64,
+        validated_claim=lambda: _executable_review_claim("a" * 64),
+    )
+
+    args = (
+        (str(tmp_path), str(tmp_path), issue, "b" * 64, "c" * 64),
+        (str(tmp_path), str(tmp_path), issue, "d" * 64, "c" * 64),
+    )
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        results = pool.map(_concurrent_in_progress_duplicate_authorization, args)
+
+    assert sorted(kind for kind, _ in results) == ["blocked", "bound"]
+    assert "unique réarm" in next(
+        message for kind, message in results if kind == "blocked"
+    )
+    event = store.status(issue)["technical_remediation_audit"][0]
+    assert event["review_diff_hash"] in {"b" * 64, "d" * 64}
+    assert len(event["review_rearm_audit"]) == 1
 
 
 def test_concurrent_polluted_review_reconciliations_bind_only_one_new_diff(tmp_path):

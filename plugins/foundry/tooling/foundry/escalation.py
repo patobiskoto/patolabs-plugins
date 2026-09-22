@@ -2893,8 +2893,11 @@ class EscalationStore:
         ``review_diff_hash``; a competing hash cannot create a review claim.  A
         distinct second diff is possible exactly once, only through
         ``validated_rearm`` after it has verified the terminal structured proof of
-        the first claim.  A claim whose public verdict has ``should_run=false`` is
-        returned idempotently and never binds or replaces the technical review slot.
+        the first claim.  A completed claim whose public verdict has
+        ``should_run=false`` is returned idempotently and never binds or replaces
+        the technical review slot.  An in-progress duplicate still reserves the
+        slot: it represents an already-active reviewer even though this caller does
+        not receive another launch capability.
         """
         issue_id = _validate_issue_id(issue_id)
         if not isinstance(diff_hash, str) or _DIGEST.fullmatch(diff_hash) is None:
@@ -2915,6 +2918,19 @@ class EscalationStore:
             raise RoutingConfigError(
                 f"état d'escalade illisible pour {issue_id}."
             ) from exc
+
+        def claim_reserves_slot(claim: object) -> bool:
+            should_run = getattr(claim, "should_run", None)
+            claim_state = getattr(claim, "state", None)
+            if (
+                type(should_run) is not bool
+                or claim_state not in {"in_progress", "completed"}
+                or (should_run and claim_state != "in_progress")
+            ):
+                raise RoutingConfigError(
+                    "claim reviewer : verdict exécutable et état cohérents requis."
+                )
+            return claim_state == "in_progress"
 
         def mutate(state):
             remediation = self._remediation(state)
@@ -2942,12 +2958,8 @@ class EscalationStore:
             claimed_diff = technical_event["review_diff_hash"]
             if claimed_diff is None:
                 claim = validated_claim()
-                if getattr(claim, "should_run", None) is not True:
-                    if getattr(claim, "should_run", None) is False:
-                        return ("validated", claim), False
-                    raise RoutingConfigError(
-                        "claim reviewer : verdict exécutable booléen requis."
-                    )
+                if not claim_reserves_slot(claim):
+                    return ("validated", claim), False
                 technical_event["review_diff_hash"] = diff_hash
                 technical_event["review_claimed_at"] = self._next_audit_timestamp(state)
                 return ("validated", claim), True
@@ -2981,12 +2993,8 @@ class EscalationStore:
             if not polluted and not mergeable:
                 return "technical_reviewer_terminal_proof_required", False
             claim = validated_claim()
-            if getattr(claim, "should_run", None) is not True:
-                if getattr(claim, "should_run", None) is False:
-                    return ("validated", claim), False
-                raise RoutingConfigError(
-                    "claim reviewer : verdict exécutable booléen requis."
-                )
+            if not claim_reserves_slot(claim):
+                return ("validated", claim), False
             rearmed_at = self._next_audit_timestamp(state)
             technical_event["review_diff_hash"] = diff_hash
             technical_event["review_claimed_at"] = rearmed_at
