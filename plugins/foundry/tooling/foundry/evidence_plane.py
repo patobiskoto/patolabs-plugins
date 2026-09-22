@@ -15,15 +15,16 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from foundry.models import Check, PullRequest
+from foundry.registry import canonical_repository_identity
 
 
 ENVELOPE_SCHEMA = "foundry-evidence-envelope.v1"
 TEST_RECEIPT_SCHEMA = "foundry-test-receipt.v1"
+CI_RECEIPT_SCHEMA = "foundry-ci-receipt.v1"
 VERDICT_SCHEMA = "foundry-evidence-verdict.v1"
 MAX_EVIDENCE_AGE_MS = 15 * 60 * 1_000
 MAX_CLOCK_SKEW_MS = 60 * 1_000
 
-_REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 _ISSUE = re.compile(r"[A-Z][A-Z0-9]{1,15}-[1-9][0-9]*\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -63,9 +64,15 @@ def _closed(value: Mapping[str, Any], expected: frozenset[str], label: str) -> N
 
 
 def _repository(value: object) -> str:
-    if not isinstance(value, str) or _REPOSITORY.fullmatch(value) is None:
+    if not isinstance(value, str):
         raise EvidencePlaneError("repository identity is invalid")
-    return value
+    try:
+        canonical = canonical_repository_identity(value)
+    except ValueError:
+        raise EvidencePlaneError("repository identity is invalid") from None
+    if value != canonical:
+        raise EvidencePlaneError("repository identity is not canonical")
+    return canonical
 
 
 def _issue(value: object) -> str:
@@ -272,32 +279,29 @@ def _test_evidence(value: object) -> dict[str, Any]:
     }
 
 
-def _ci_evidence(checks: Iterable[Check] | None, *, head_sha: str) -> dict[str, Any]:
-    head = _sha(head_sha, "CI head")
-    empty = {
-        "head_sha": head,
-        "total": 0,
-        "success": 0,
-        "pending": 0,
-        "failing": 0,
-        "skipped": 0,
-        "neutral": 0,
-    }
-    if checks is None:
-        return {"state": "unavailable", **empty}
+def _ci_source(value: object) -> str:
+    if value not in {"check_runs", "commit_statuses"}:
+        raise EvidencePlaneError("CI source is unsupported")
+    return str(value)
+
+
+def _ci_counts(checks: Iterable[Check]) -> tuple[dict[str, int], list[dict[str, Any]]]:
+    counts = {key: 0 for key in (
+        "total", "success", "pending", "failing", "skipped", "neutral",
+    )}
     if not isinstance(checks, (list, tuple)):
-        return {"state": "unsupported", **empty}
-    counts = dict(empty)
+        raise EvidencePlaneError("CI observation is unsupported")
     counts["total"] = len(checks)
+    normalized: list[dict[str, Any]] = []
     for check in checks:
         if not isinstance(check, Check) or not isinstance(check.name, str) or not check.name:
-            return {"state": "unsupported", **empty}
+            raise EvidencePlaneError("CI observation is unsupported")
         if check.status in _CI_PENDING:
             if check.conclusion is not None:
-                return {"state": "unsupported", **empty}
+                raise EvidencePlaneError("CI observation is unsupported")
             counts["pending"] += 1
         elif check.status != "completed" or not isinstance(check.conclusion, str):
-            return {"state": "unsupported", **empty}
+            raise EvidencePlaneError("CI observation is unsupported")
         elif check.conclusion == "success":
             counts["success"] += 1
         elif check.conclusion == "skipped":
@@ -307,8 +311,56 @@ def _ci_evidence(checks: Iterable[Check] | None, *, head_sha: str) -> dict[str, 
         elif check.conclusion in _CI_FAILURES:
             counts["failing"] += 1
         else:
-            return {"state": "unsupported", **empty}
-    return {"state": "available", **counts}
+            raise EvidencePlaneError("CI observation is unsupported")
+        normalized.append({"status": check.status, "conclusion": check.conclusion})
+    return counts, normalized
+
+
+def create_ci_receipt(
+    *, source: str, repository: str, head_sha: str, observed_at: int,
+    checks: Iterable[Check],
+) -> dict[str, Any]:
+    """Bind one fresh, normalized CI-source observation to its exact coordinates."""
+    counts, normalized = _ci_counts(checks)
+    receipt = {
+        "schema": CI_RECEIPT_SCHEMA,
+        "source": _ci_source(source),
+        "repository": _repository(repository),
+        "head_sha": _sha(head_sha, "CI head"),
+        "observed_at": _timestamp(observed_at, "CI observation"),
+        **counts,
+        "observation_digest": _digest(normalized),
+    }
+    receipt["receipt_id"] = _digest(receipt)
+    return _detached(receipt)
+
+
+def _validated_ci_receipt(value: object, *, source: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise EvidencePlaneError("CI receipt is unavailable")
+    _closed(value, frozenset({
+        "schema", "receipt_id", "source", "repository", "head_sha", "observed_at",
+        "total", "success", "pending", "failing", "skipped", "neutral",
+        "observation_digest",
+    }), "CI receipt")
+    receipt = dict(value)
+    receipt_id = _digest_value(receipt.pop("receipt_id", None), "CI receipt id")
+    if receipt.get("schema") != CI_RECEIPT_SCHEMA or _digest(receipt) != receipt_id:
+        raise EvidencePlaneError("CI receipt integrity is invalid")
+    if _ci_source(receipt.get("source")) != source:
+        raise EvidencePlaneError("CI receipt source is invalid")
+    _repository(receipt.get("repository"))
+    _sha(receipt.get("head_sha"), "CI receipt head")
+    _timestamp(receipt.get("observed_at"), "CI receipt observation")
+    counts = [receipt.get(key) for key in (
+        "total", "success", "pending", "failing", "skipped", "neutral",
+    )]
+    if any(type(count) is not int or count < 0 for count in counts):
+        raise EvidencePlaneError("CI receipt counts are invalid")
+    if receipt["total"] != sum(counts[1:]):
+        raise EvidencePlaneError("CI receipt counts are inconsistent")
+    _digest_value(receipt.get("observation_digest"), "CI observation")
+    return {"receipt_id": receipt_id, **_detached(receipt)}
 
 
 def _coordinates(
@@ -336,8 +388,8 @@ def evidence_envelope(
     diff_hash: str,
     review_proof: Mapping[str, Any] | None,
     test_receipt: Mapping[str, Any] | None,
-    check_runs: Iterable[Check] | None,
-    commit_statuses: Iterable[Check] | None,
+    check_runs_receipt: Mapping[str, Any] | None,
+    commit_statuses_receipt: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """Compose content-free evidence; no result from this function is an authority."""
     coordinates = _coordinates(
@@ -355,16 +407,25 @@ def evidence_envelope(
             "review": _review_evidence(review_proof),
             "tests": _test_evidence(test_receipt),
             "ci": {
-                "check_runs": _ci_evidence(check_runs, head_sha=coordinates["head_sha"]),
+                "check_runs": _ci_evidence(check_runs_receipt, source="check_runs"),
                 "commit_statuses": _ci_evidence(
-                    commit_statuses,
-                    head_sha=coordinates["head_sha"],
+                    commit_statuses_receipt, source="commit_statuses",
                 ),
             },
         },
     }
     envelope["envelope_id"] = _digest(envelope)
     return _detached(envelope)
+
+
+def _ci_evidence(value: Mapping[str, Any] | None, *, source: str) -> dict[str, Any] | None:
+    """Keep only a closed receipt; composition never accepts raw provider checks."""
+    if value is None:
+        return None
+    try:
+        return _validated_ci_receipt(value, source=source)
+    except (EvidencePlaneError, TypeError, ValueError):
+        return None
 
 
 def claude_evidence_envelope(**kwargs: Any) -> dict[str, Any]:
@@ -455,24 +516,8 @@ def _validated_envelope(value: object) -> dict[str, Any]:
     _closed(ci, frozenset({"check_runs", "commit_statuses"}), "CI evidence")
     for source in ("check_runs", "commit_statuses"):
         row = ci.get(source)
-        if not isinstance(row, Mapping):
-            raise EvidencePlaneError("CI evidence source is incomplete")
-        _closed(row, frozenset({
-            "state", "head_sha", "total", "success", "pending", "failing",
-            "skipped", "neutral",
-        }), "CI source evidence")
-        if row.get("state") not in {"available", "unavailable", "unsupported"}:
-            raise EvidencePlaneError("CI source state is invalid")
-        _sha(row.get("head_sha"), "CI source head")
-        counts = [row.get(key) for key in (
-            "total", "success", "pending", "failing", "skipped", "neutral",
-        )]
-        if any(type(count) is not int or count < 0 for count in counts):
-            raise EvidencePlaneError("CI counts are invalid")
-        if row["state"] == "available" and row["total"] != sum(counts[1:]):
-            raise EvidencePlaneError("CI counts are inconsistent")
-        if row["state"] != "available" and any(counts):
-            raise EvidencePlaneError("unavailable CI source contains counts")
+        if row is not None:
+            _validated_ci_receipt(row, source=source)
     return {"envelope_id": envelope_id, **_detached(envelope)}
 
 
@@ -587,12 +632,19 @@ def verify_evidence_envelope(
     available_rows = []
     for source in ("check_runs", "commit_statuses"):
         row = ci_rows[source]
-        if row["state"] != "available":
-            unknown.append(f"ci-{source}-{row['state']}")
+        if row is None:
+            unknown.append(f"ci-{source}-unavailable")
             continue
         available_rows.append(row)
+        ci_observed_at = row["observed_at"]
+        if ci_observed_at > verified_at + MAX_CLOCK_SKEW_MS:
+            unknown.append(f"ci-{source}-observation-in-future")
+        elif verified_at - ci_observed_at > MAX_EVIDENCE_AGE_MS:
+            unknown.append(f"ci-{source}-stale")
+        if row["repository"] != coordinates["repository"]:
+            stop.append(f"ci-coordinate-mismatch:{source}:repository")
         if row["head_sha"] != coordinates["head_sha"]:
-            stop.append(f"ci-coordinate-mismatch:{source}")
+            stop.append(f"ci-coordinate-mismatch:{source}:head_sha")
     if len(available_rows) == 2:
         total = sum(row["total"] for row in available_rows)
         success = sum(row["success"] for row in available_rows)

@@ -8,7 +8,8 @@ check an acceptance box, run tests, push code, deploy, or grant any permission. 
 
 ## Bound coordinates and sources
 
-Every envelope binds the canonical `owner/repository`, issue id, acceptance-criteria
+Every envelope binds the canonical `host/owner/repository` identity (for example
+`github.com/patobiskoto/patolabs-plugins`), issue id, acceptance-criteria
 digest, PR number, exact base and head SHAs, and exact diff digest. The evidence section
 contains:
 
@@ -17,9 +18,13 @@ contains:
 - a content-free `foundry-test-receipt.v1`, integrity-bound to repository, issue,
   head, diff, terminal status and a result digest; it never carries a command, path,
   output, prompt, provider credential or secret;
-- separate normalized observations for GitHub check-runs and legacy commit statuses.
-  Names and raw provider payloads are discarded; only bounded counts and the exact head
-  remain.
+- one closed, versioned `foundry-ci-receipt.v1` for each GitHub source: `check_runs`
+  and legacy `commit_statuses`. A receipt is integrity-bound to its non-interchangeable
+  source name, canonical repository, exact head SHA, explicit observation instant,
+  bounded counts and normalized-observation digest. Names and raw provider payloads are
+  discarded. The builder may normalize one explicitly fresh provider read into a
+  receipt; envelope composition never receives raw `Check` values and cannot relabel an
+  observation made for another SHA or source.
 
 Claude Code and Codex call the same builder and verifier. No host hook or prompt is part
 of the trust boundary, and the two facades produce the same canonical content outside
@@ -29,7 +34,8 @@ observation identifiers or times.
 
 `GO` requires a fresh, integrity-valid envelope on the current repository, issue, AC,
 PR, base, head and diff; an approved all-AC review; a passed exact-coordinate test
-receipt; both CI sources successfully observed; at least one real CI `success` across
+receipt; both fresh CI source receipts successfully observed for that exact canonical
+repository and head; at least one real CI `success` across
 them; and no pending or failing check. This mirrors the two-source proof semantics of
 FOUNDRY-ADR-0002 without becoming the merge gate.
 
@@ -40,9 +46,12 @@ uncertainty: incomplete or invalid receipts, missing/unsupported CI source, pend
 unavailable tests, stale/future observations, and replays. Missing facts are never
 converted into a positive or negative claim.
 
-Envelope and terminal test observations are fresh for at most 15 minutes, with at most
-60 seconds of tolerated future clock skew. Older evidence remains `UNKNOWN`; composing
-an old test receipt into a fresh envelope does not refresh the test fact.
+Envelope, terminal test, and each CI-source receipt observations are fresh for at most
+15 minutes, with at most 60 seconds of tolerated future clock skew. Older or future
+evidence remains `UNKNOWN`; composing an old receipt into a fresh envelope does not
+refresh that fact. A cross-repository or wrong-SHA CI receipt is `STOP`; a
+source-mismatched, missing, stale, future, malformed, or replayed receipt cannot become
+`GO`.
 
 The verifier receives the current coordinates and an optional set of already-consumed
 envelope digests. A repeated digest is reported as `UNKNOWN/replay`; a changed base,

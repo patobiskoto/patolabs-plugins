@@ -8,7 +8,7 @@ from foundry import evidence_plane as evidence
 from foundry.models import Check, PullRequest
 
 
-REPOSITORY = "patobiskoto/patolabs-plugins"
+REPOSITORY = "github.com/patobiskoto/patolabs-plugins"
 ISSUE = "FOUNDRY-161"
 AC_DIGEST = "a" * 64
 BASE = "b" * 40
@@ -78,6 +78,18 @@ def make_test_receipt(**overrides):
     return evidence.create_test_receipt(**values)
 
 
+def make_ci_receipt(source, checks=None, **overrides):
+    values = {
+        "source": source,
+        "repository": REPOSITORY,
+        "head_sha": HEAD,
+        "observed_at": NOW,
+        "checks": [Check("foundry", "completed", "success")] if checks is None else checks,
+    }
+    values.update(overrides)
+    return evidence.create_ci_receipt(**values)
+
+
 def envelope(**overrides):
     values = {
         "repository": REPOSITORY,
@@ -87,8 +99,8 @@ def envelope(**overrides):
         "diff_hash": DIFF,
         "review_proof": review_proof(),
         "test_receipt": make_test_receipt(),
-        "check_runs": [Check("foundry", "completed", "success")],
-        "commit_statuses": [],
+        "check_runs_receipt": make_ci_receipt("check_runs"),
+        "commit_statuses_receipt": make_ci_receipt("commit_statuses", []),
     }
     values.update(overrides)
     return evidence.evidence_envelope(**values)
@@ -122,7 +134,8 @@ def test_complete_exact_envelope_is_advisory_go_and_binds_every_required_fact():
     }
     assert value["evidence"]["review"]["verdict"] == "approved"
     assert value["evidence"]["tests"]["status"] == "passed"
-    assert set(value["evidence"]["ci"]) == {"check_runs", "commit_statuses"}
+    assert value["evidence"]["ci"]["check_runs"]["source"] == "check_runs"
+    assert value["evidence"]["ci"]["commit_statuses"]["source"] == "commit_statuses"
     assert verify(value)["decision"] == "GO"
     assert not {
         "credential", "command", "merge", "push", "deploy", "tracker_mutation",
@@ -149,19 +162,26 @@ def test_complete_exact_envelope_is_advisory_go_and_binds_every_required_fact():
         ),
         (
             lambda values: values.update(
-                check_runs=[Check("foundry", "in_progress", None)],
+                check_runs_receipt=make_ci_receipt(
+                    "check_runs", [Check("foundry", "in_progress", None)],
+                ),
             ),
             "STOP",
             "ci-pending",
         ),
         (
-            lambda values: values.update(check_runs=[], commit_statuses=[]),
+            lambda values: values.update(
+                check_runs_receipt=make_ci_receipt("check_runs", []),
+                commit_statuses_receipt=make_ci_receipt("commit_statuses", []),
+            ),
             "STOP",
             "ci-zero-checks",
         ),
         (
             lambda values: values.update(
-                check_runs=[Check("foundry", "completed", "skipped")],
+                check_runs_receipt=make_ci_receipt(
+                    "check_runs", [Check("foundry", "completed", "skipped")],
+                ),
             ),
             "STOP",
             "ci-no-success",
@@ -177,8 +197,8 @@ def test_required_negative_and_unknown_cases_are_closed(change, decision, reason
         "diff_hash": DIFF,
         "review_proof": review_proof(),
         "test_receipt": make_test_receipt(),
-        "check_runs": [Check("foundry", "completed", "success")],
-        "commit_statuses": [],
+        "check_runs_receipt": make_ci_receipt("check_runs"),
+        "commit_statuses_receipt": make_ci_receipt("commit_statuses", []),
     }
     change(values)
 
@@ -224,7 +244,10 @@ def test_replay_and_stale_evidence_are_unknown_never_go():
     assert replay["decision"] == "UNKNOWN"
     assert replay["reasons"] == ["replay"]
     assert stale["decision"] == "UNKNOWN"
-    assert stale["reasons"] == ["stale-envelope", "tests-stale"]
+    assert stale["reasons"] == [
+        "stale-envelope", "tests-stale", "ci-check_runs-stale",
+        "ci-commit_statuses-stale",
+    ]
 
 
 def test_stale_test_receipt_and_invalid_replay_context_are_unknown(monkeypatch):
@@ -243,24 +266,26 @@ def test_stale_test_receipt_and_invalid_replay_context_are_unknown(monkeypatch):
     assert invalid_replay["reasons"] == ["invalid-replay-context"]
 
 
-def test_missing_or_unsupported_ci_source_is_unknown_and_never_inferred():
-    missing = verify(envelope(commit_statuses=None))
-    unsupported = verify(envelope(commit_statuses=[Check("legacy", "completed", "future")]))
+def test_missing_or_invalid_ci_source_is_unknown_and_never_inferred():
+    missing = verify(envelope(commit_statuses_receipt=None))
+    invalid = make_ci_receipt("commit_statuses")
+    invalid["extra"] = "unsupported"
+    unsupported = verify(envelope(commit_statuses_receipt=invalid))
 
     assert missing["decision"] == "UNKNOWN"
     assert missing["reasons"] == ["ci-commit_statuses-unavailable"]
     assert unsupported["decision"] == "UNKNOWN"
-    assert unsupported["reasons"] == ["ci-commit_statuses-unsupported"]
+    assert unsupported["reasons"] == ["ci-commit_statuses-unavailable"]
 
 
 def test_failed_review_tests_or_ci_are_stop():
     blocked_proof = review_proof(quality="blocked")
     failed_tests = make_test_receipt(status="failed", result_digest="5" * 64)
-    failing_ci = [Check("foundry", "completed", "failure")]
+    failing_ci = make_ci_receipt("check_runs", [Check("foundry", "completed", "failure")])
 
     assert verify(envelope(review_proof=blocked_proof))["decision"] == "STOP"
     assert verify(envelope(test_receipt=failed_tests))["decision"] == "STOP"
-    assert verify(envelope(check_runs=failing_ci))["decision"] == "STOP"
+    assert verify(envelope(check_runs_receipt=failing_ci))["decision"] == "STOP"
 
 
 def test_tampered_or_incomplete_envelope_is_unknown_not_an_exception():
@@ -282,8 +307,8 @@ def test_claude_and_codex_facades_share_canonical_content_and_verdict():
         "diff_hash": DIFF,
         "review_proof": review_proof(),
         "test_receipt": make_test_receipt(),
-        "check_runs": [Check("foundry", "completed", "success")],
-        "commit_statuses": [],
+        "check_runs_receipt": make_ci_receipt("check_runs"),
+        "commit_statuses_receipt": make_ci_receipt("commit_statuses", []),
     }
     claude = evidence.claude_evidence_envelope(**kwargs)
     codex = evidence.codex_evidence_envelope(**kwargs)
@@ -319,3 +344,54 @@ def test_test_receipt_schema_rejects_authority_and_secret_fields(forbidden):
 
     assert value["evidence"]["tests"] == evidence._empty_tests("invalid")
     assert verify(value)["decision"] == "UNKNOWN"
+
+
+def test_repository_identity_is_host_qualified_canonical_and_noncanonical_forms_fail_closed():
+    assert evidence._repository(REPOSITORY) == REPOSITORY
+    with pytest.raises(evidence.EvidencePlaneError):
+        evidence._repository("patobiskoto/patolabs-plugins")
+    with pytest.raises(evidence.EvidencePlaneError):
+        evidence._repository("GitHub.com/Patobiskoto/Patolabs-Plugins")
+    with pytest.raises(evidence.EvidencePlaneError):
+        make_ci_receipt("check_runs", repository="patobiskoto/patolabs-plugins")
+    with pytest.raises(evidence.EvidencePlaneError):
+        make_test_receipt(repository="patobiskoto/patolabs-plugins")
+
+
+def test_ci_receipts_bind_source_repository_head_and_freshness_independently():
+    wrong_sha = verify(envelope(check_runs_receipt=make_ci_receipt(
+        "check_runs", head_sha="e" * 40,
+    )))
+    assert wrong_sha["decision"] == "STOP"
+    assert "ci-coordinate-mismatch:check_runs:head_sha" in wrong_sha["reasons"]
+
+    wrong_repository = verify(envelope(check_runs_receipt=make_ci_receipt(
+        "check_runs", repository="github.com/other/repository",
+    )))
+    assert wrong_repository["decision"] == "STOP"
+    assert "ci-coordinate-mismatch:check_runs:repository" in wrong_repository["reasons"]
+
+    stale = make_ci_receipt("check_runs", observed_at=NOW - evidence.MAX_EVIDENCE_AGE_MS - 1)
+    future = make_ci_receipt("commit_statuses", [], observed_at=NOW + evidence.MAX_CLOCK_SKEW_MS + 1)
+    verdict = verify(envelope(check_runs_receipt=stale, commit_statuses_receipt=future))
+    assert verdict["decision"] == "UNKNOWN"
+    assert "ci-check_runs-stale" in verdict["reasons"]
+    assert "ci-commit_statuses-observation-in-future" in verdict["reasons"]
+
+
+def test_ci_requires_two_closed_source_bound_receipts_and_rejects_swapping_or_tampering():
+    assert verify(envelope(commit_statuses_receipt=None))["decision"] == "UNKNOWN"
+
+    check_runs = make_ci_receipt("check_runs")
+    statuses = make_ci_receipt("commit_statuses", [])
+    swapped = verify(envelope(
+        check_runs_receipt=statuses,
+        commit_statuses_receipt=check_runs,
+    ))
+    assert swapped["decision"] == "UNKNOWN"
+    assert "ci-check_runs-unavailable" in swapped["reasons"]
+    assert "ci-commit_statuses-unavailable" in swapped["reasons"]
+
+    tampered = make_ci_receipt("check_runs")
+    tampered["extra"] = True
+    assert verify(envelope(check_runs_receipt=tampered))["decision"] == "UNKNOWN"
