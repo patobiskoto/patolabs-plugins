@@ -1,0 +1,12 @@
+{
+  "configuration_digest": "sha256:6ea05b8c0b8ec37f4981999a31783403dd8a038c3a14725eff6612206d453004",
+  "migration_manifest_digest": "sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77",
+  "project": {
+    "id": "aeb77381-f8aa-48d3-a2a5-e6b2d2773007",
+    "key": "PAT"
+  },
+  "registry_binding_digest": "sha256:683bcc34930457c19d1920f8ea24e235fe6b9b5228a1639a8967d6397ea798d6",
+  "repository": "github.com/patobiskoto/patolabs-plugins",
+  "tracker": "linear",
+  "version": 1
+}
