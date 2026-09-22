@@ -654,6 +654,85 @@ def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id
     assert len(comment_ids) == 1
 
 
+def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, monkeypatch):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    body = "- [x] acceptance"
+    wire.issues["LIN-2"]["description"] = body
+    instance._activate(PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+
+    assert instance.get_issue("LIN-2").ac_done == 0
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    result = write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
+
+    assert result["status"] == "proof-projected"
+    assert result["checked"] == 1
+    assert instance.get_issue("LIN-2").ac_done == 1
+
+
+def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypatch):
+    instance, _wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    body = "- [ ] acceptance"
+    first = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    second = TransitionContext(
+        pr_url=first.pr_url,
+        head_sha="d" * 40, base_sha=first.base_sha, review_digest="e" * 64,
+    )
+
+    instance.set_state("LIN-2", "review", context=first, project=PROJECT)
+    write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
+    instance.set_state("LIN-2", "review", context=second, project=PROJECT)
+
+    corrected = instance.get_issue("LIN-2")
+    assert corrected.state == "review"
+    assert corrected.ac_done == 0
+    second_proof = proof(
+        "LIN-2", body, head=second.head_sha, base=second.base_sha,
+        diff_hash=second.review_digest,
+    )
+    write.sync_acceptance(instance, "LIN-2", body, second_proof)
+    instance.set_state(
+        "LIN-2", "done",
+        context=TransitionContext(
+            pr_url=second.pr_url, head_sha=second.head_sha,
+            base_sha=second.base_sha, review_digest=second.review_digest,
+            merge_sha="f" * 40,
+        ),
+        project=PROJECT,
+    )
+
+    completed = instance.get_issue("LIN-2")
+    assert completed.state == "done"
+    assert completed.ac_done == 1
+
+
+def test_linear_lifecycle_readback_revalidates_native_state(tracker):
+    instance, wire = tracker
+    changed = False
+
+    def transport(document, variables):
+        nonlocal changed
+        result = wire(document, variables)
+        if "FoundryLinearCommentCreate" in document and not changed:
+            changed = True
+            wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["blocked"]
+        return result
+
+    instance._transport = transport
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+
+    assert changed is True
+
+
 def test_linear_lifecycle_recovers_interruption_after_provider_comment_effect(tracker):
     instance, wire = tracker
     interrupted = False

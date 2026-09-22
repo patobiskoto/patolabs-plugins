@@ -111,15 +111,21 @@ digest. The AC receipt embeds the complete canonical all-pass review proof and b
 to the byte-exact unchanged description. The done receipt repeats the review coordinates
 and adds the exact merge SHA. Foundry queries validate these comments before deriving the
 effective lifecycle state, PR URL or AC completion; Linear's native state, description,
-priority, labels and parent remain unchanged.
+priority, labels and parent remain unchanged. Native checked boxes are deliberately not
+counted as proven completion: without the matching append-only review receipt, Foundry
+reports them incomplete and requires the structured proof before merge.
 
 Each receipt uses a deterministic client-supplied Linear comment UUID derived from its
 canonical payload. Foundry reads before creation, rereads that exact comment after the
-effect and rereads the issue projection. An identical marker is a replay no-op. A second
-marker for the same operation, a different coordinate, malformed content, duplicate
-projection, changed native state or divergent readback refuses. If the provider accepted
+effect and rereads the issue projection. An identical marker is a replay no-op. A
+competing marker for a singleton operation or the same review generation, malformed
+content, a broken generation chain, changed native state or divergent readback refuses.
+If the provider accepted
 the deterministic comment but its response was interrupted, retry recovers it by exact
-ID. This is idempotence for the Foundry lifecycle comments, not a claim that arbitrary
+ID. A corrected PR creates the next review generation, chained to the digest of the
+previous projection; its AC receipt is bound to that generation and supersedes older AC
+evidence. Concurrent forks at one generation fail closed. This is idempotence for the
+Foundry lifecycle comments, not a claim that arbitrary
 Linear comments or issue creation are exactly once.
 
 The cockpit evidence path is deliberately separate. Only a complete
@@ -134,8 +140,9 @@ or replaces Foundry's review, test and CI gates.
 
 - Linear provider capability: additive `commentCreate` with a caller-supplied ID and
   exact comment/issue readback.
-- Foundry concurrency guarantee: one canonical receipt per issue and operation; replay
-  is idempotent and any competing/different projection fails closed.
+- Foundry concurrency guarantee: one canonical receipt per issue and singleton operation,
+  and one chained canonical receipt per review generation; replay is idempotent and any
+  competing projection at the same generation fails closed.
 - Unsupported provider capability: replacement of native state, priority, description,
   checkbox, labels, parent or PR field, plus atomic audited Epic closure. These remain
   typed refusals rather than best-effort read/write sequences.
