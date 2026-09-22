@@ -8,6 +8,7 @@ append authority.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -302,18 +303,20 @@ def _get_public_github_check_runs(*, project: str, sha: str) -> object:
     except urllib.error.HTTPError as exc:
         exc.close()
         raise ProofSourceUnavailable("GitHub check-runs source unavailable") from None
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
         raise ProofSourceUnavailable("GitHub check-runs source unavailable") from None
     if len(raw) > _GITHUB_RESPONSE_LIMIT:
         raise ProofSourceUnsupported("GitHub check-runs response is unsupported")
     try:
         return json.loads(raw.decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError):
+    except (UnicodeError, ValueError):
         raise ProofSourceUnsupported("GitHub check-runs response is unsupported") from None
 
 
 class GitHubCheckRunsAdapter:
     """Concrete project-native proof adapter with no credential or mutation surface."""
+
+    __slots__ = ()
 
     source_id = PILOT_SOURCE_ID
     adapter = PILOT_ADAPTER
@@ -775,13 +778,11 @@ class DeliveryReceiptJournal:
         outcome = proof.get("outcome")
         if not isinstance(outcome, str) or outcome not in _OUTCOMES:
             raise DeliveryContractError("receipt proof outcome is unsupported")
-        no_observed_provenance = {
-            "missing-proof",
-            "unsupported-schema",
-            "provenance-mismatch",
-        }
-        if outcome in no_observed_provenance:
+        if outcome == "provenance-mismatch":
             if "provenance" in proof:
+                raise DeliveryContractError("receipt proof provenance is incoherent")
+        elif outcome in {"missing-proof", "unsupported-schema"}:
+            if "provenance" in proof and proof.get("provenance") != PILOT_PROVENANCE:
                 raise DeliveryContractError("receipt proof provenance is incoherent")
         elif proof.get("provenance") != PILOT_PROVENANCE:
             raise DeliveryContractError("receipt proof provenance is incoherent")

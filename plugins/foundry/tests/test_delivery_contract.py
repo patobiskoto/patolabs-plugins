@@ -1,4 +1,5 @@
 import copy
+import http.client
 import inspect
 import json
 import urllib.error
@@ -251,6 +252,15 @@ def test_public_path_requires_the_concrete_adapter_not_a_spoofed_protocol():
         delivery.read_delivery_proof(CONTRACT, sha=SHA, adapter=SpoofedAdapter())
 
 
+def test_concrete_adapter_cannot_have_its_read_method_shadowed_per_instance():
+    adapter = delivery.GitHubCheckRunsAdapter()
+
+    with pytest.raises(AttributeError):
+        adapter.read_proof = lambda **_kwargs: proof()
+
+    assert not hasattr(adapter, "__dict__")
+
+
 def test_adapter_binds_the_exact_project_and_sha_before_transport(monkeypatch):
     adapter, transport = github_adapter(monkeypatch, check_runs_payload(check_run()))
     with pytest.raises(delivery.DeliveryContractError, match="outside the pilot"):
@@ -330,6 +340,46 @@ def test_default_transport_maps_http_failure_to_inaccessible(monkeypatch):
     assert "secret provider text" not in delivery._canonical(result)
 
 
+def test_default_transport_maps_incomplete_response_to_inaccessible(monkeypatch):
+    class Opener:
+        def open(self, _request, *, timeout):
+            raise http.client.IncompleteRead(b"partial")
+
+    monkeypatch.setattr(delivery.urllib.request, "build_opener", lambda *_handlers: Opener())
+    result = delivery.delivery_receipt_from_adapter(
+        CONTRACT,
+        sha=SHA,
+        adapter=delivery.GitHubCheckRunsAdapter(),
+        observation_id="network3",
+    )
+    assert result["verdict"] == "inaccessible"
+
+
+def test_default_transport_maps_non_decodable_json_value_to_unsupported(monkeypatch):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return ("1" * 10_000).encode("ascii")
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            return Response()
+
+    monkeypatch.setattr(delivery.urllib.request, "build_opener", lambda *_handlers: Opener())
+    result = delivery.delivery_receipt_from_adapter(
+        CONTRACT,
+        sha=SHA,
+        adapter=delivery.GitHubCheckRunsAdapter(),
+        observation_id="network4",
+    )
+    assert result["verdict"] == "unsupported-schema"
+
+
 def test_public_generation_captures_time_internally_and_rejects_caller_timestamp(
     monkeypatch, tmp_path,
 ):
@@ -402,6 +452,27 @@ def test_journal_derives_from_adapter_and_is_append_only_unique_bounded_and_deta
             check_runs_payload(check_run()),
             observation_id="receipt3",
         )
+
+
+@pytest.mark.parametrize(
+    ("payload", "verdict"),
+    [
+        (check_runs_payload(), "missing-proof"),
+        (check_runs_payload(check_run(conclusion="future_conclusion")), "unsupported-schema"),
+    ],
+)
+def test_journal_persists_nonproving_adapter_observations(
+    monkeypatch,
+    tmp_path,
+    payload,
+    verdict,
+):
+    journal = delivery.DeliveryReceiptJournal(tmp_path / "delivery-receipts.jsonl")
+
+    saved, _ = journal_append(monkeypatch, journal, payload)
+
+    assert saved["verdict"] == verdict
+    assert journal.receipts() == (saved,)
 
 
 def test_journal_cannot_append_a_caller_built_raw_receipt(tmp_path):

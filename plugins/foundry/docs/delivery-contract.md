@@ -77,6 +77,9 @@ the exact pilot contract and closed receipt schema, then appends it once to a bo
 local JSONL file. Every existing row is revalidated before an append and on every
 read; an unsupported field, identity, digest, vocabulary value, provenance shape, or
 verdict/outcome combination fails closed. Returned values are detached copies.
+When the concrete source was reached but returned no proving run or an unsupported
+shape, the receipt retains the adapter's fixed declared provenance; a wholly absent or
+invalid proof may omit it, while a provenance mismatch must omit the untrusted value.
 
 The journal is local append-only behavior, not signed or remote durable storage. An
 actor that can replace the file with another fully schema-valid row is outside the
