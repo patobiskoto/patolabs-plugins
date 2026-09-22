@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import inspect
 import json
 
 import pytest
@@ -87,7 +88,7 @@ def make_ci_receipt(source, checks=None, **overrides):
         "checks": [Check("foundry", "completed", "success")] if checks is None else checks,
     }
     values.update(overrides)
-    return evidence.create_ci_receipt(**values)
+    return evidence._create_ci_receipt(**values)
 
 
 def envelope(**overrides):
@@ -356,6 +357,82 @@ def test_repository_identity_is_host_qualified_canonical_and_noncanonical_forms_
         make_ci_receipt("check_runs", repository="patobiskoto/patolabs-plugins")
     with pytest.raises(evidence.EvidencePlaneError):
         make_test_receipt(repository="patobiskoto/patolabs-plugins")
+    with pytest.raises(evidence.EvidencePlaneError):
+        evidence.capture_ci_receipts(
+            repository="gitlab.com/patobiskoto/patolabs-plugins",
+            head_sha=HEAD,
+        )
+
+
+def test_public_ci_capture_reads_both_configured_sources_with_internal_coordinates_and_time(
+    monkeypatch,
+):
+    class RecordingCodeHost:
+        def __init__(self):
+            self.calls = []
+
+        def check_runs(self, repository, head_sha):
+            self.calls.append(("check_runs", repository, head_sha))
+            return [Check("required", "completed", "success")]
+
+        def commit_statuses(self, repository, head_sha):
+            self.calls.append(("commit_statuses", repository, head_sha))
+            return [Check("legacy", "completed", "neutral")]
+
+    codehost = RecordingCodeHost()
+    observations = iter((NOW + 1, NOW + 2))
+    monkeypatch.setattr(evidence, "_configured_codehost", lambda: codehost)
+    monkeypatch.setattr(evidence, "_now_ms", lambda: next(observations))
+
+    signature = inspect.signature(evidence.capture_ci_receipts)
+    assert tuple(signature.parameters) == ("repository", "head_sha")
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in signature.parameters.values()
+    )
+    assert not hasattr(evidence, "create_ci_receipt")
+
+    check_runs, commit_statuses = evidence.capture_ci_receipts(
+        repository=REPOSITORY,
+        head_sha=HEAD,
+    )
+
+    assert codehost.calls == [
+        ("check_runs", "patobiskoto/patolabs-plugins", HEAD),
+        ("commit_statuses", "patobiskoto/patolabs-plugins", HEAD),
+    ]
+    assert (check_runs["source"], commit_statuses["source"]) == (
+        "check_runs", "commit_statuses",
+    )
+    assert (check_runs["repository"], commit_statuses["repository"]) == (
+        REPOSITORY, REPOSITORY,
+    )
+    assert (check_runs["head_sha"], commit_statuses["head_sha"]) == (HEAD, HEAD)
+    assert (check_runs["observed_at"], commit_statuses["observed_at"]) == (
+        NOW + 1, NOW + 2,
+    )
+    assert check_runs["success"] == 1
+    assert commit_statuses["neutral"] == 1
+
+
+def test_manual_ci_receipt_recycling_is_unknown_and_wrong_coordinates_stop():
+    check_runs = make_ci_receipt("check_runs")
+    recycled = verify(envelope(commit_statuses_receipt=check_runs))
+
+    assert recycled["decision"] == "UNKNOWN"
+    assert recycled["reasons"] == ["ci-commit_statuses-unavailable"]
+
+    wrong_sha = verify(envelope(check_runs_receipt=make_ci_receipt(
+        "check_runs", head_sha="e" * 40,
+    )))
+    wrong_repository = verify(envelope(check_runs_receipt=make_ci_receipt(
+        "check_runs", repository="github.com/other/repository",
+    )))
+
+    assert wrong_sha["decision"] == "STOP"
+    assert "ci-coordinate-mismatch:check_runs:head_sha" in wrong_sha["reasons"]
+    assert wrong_repository["decision"] == "STOP"
+    assert "ci-coordinate-mismatch:check_runs:repository" in wrong_repository["reasons"]
 
 
 def test_ci_receipts_bind_source_repository_head_and_freshness_independently():

@@ -14,6 +14,8 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+import foundry
+from foundry.codehosts.base import CodeHost
 from foundry.models import Check, PullRequest
 from foundry.registry import canonical_repository_identity
 
@@ -316,11 +318,11 @@ def _ci_counts(checks: Iterable[Check]) -> tuple[dict[str, int], list[dict[str, 
     return counts, normalized
 
 
-def create_ci_receipt(
+def _create_ci_receipt(
     *, source: str, repository: str, head_sha: str, observed_at: int,
     checks: Iterable[Check],
 ) -> dict[str, Any]:
-    """Bind one fresh, normalized CI-source observation to its exact coordinates."""
+    """Serialize one already-bound CI-source observation as a closed receipt."""
     counts, normalized = _ci_counts(checks)
     receipt = {
         "schema": CI_RECEIPT_SCHEMA,
@@ -333,6 +335,44 @@ def create_ci_receipt(
     }
     receipt["receipt_id"] = _digest(receipt)
     return _detached(receipt)
+
+
+def _configured_codehost() -> CodeHost:
+    """Resolve the configured read boundary without exposing it as capture input."""
+    return foundry.codehost()
+
+
+def capture_ci_receipts(
+    *, repository: str, head_sha: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read and bind both configured CodeHost CI sources to exact coordinates."""
+    canonical_repository = _repository(repository)
+    canonical_head = _sha(head_sha, "CI head")
+    host, provider_repository = canonical_repository.split("/", 1)
+    if host != "github.com":
+        raise EvidencePlaneError("GitHub CI capture requires a github.com repository")
+    codehost = _configured_codehost()
+
+    check_runs = codehost.check_runs(provider_repository, canonical_head)
+    check_runs_observed_at = _now_ms()
+    check_runs_receipt = _create_ci_receipt(
+        source="check_runs",
+        repository=canonical_repository,
+        head_sha=canonical_head,
+        observed_at=check_runs_observed_at,
+        checks=check_runs,
+    )
+
+    commit_statuses = codehost.commit_statuses(provider_repository, canonical_head)
+    commit_statuses_observed_at = _now_ms()
+    commit_statuses_receipt = _create_ci_receipt(
+        source="commit_statuses",
+        repository=canonical_repository,
+        head_sha=canonical_head,
+        observed_at=commit_statuses_observed_at,
+        checks=commit_statuses,
+    )
+    return check_runs_receipt, commit_statuses_receipt
 
 
 def _validated_ci_receipt(value: object, *, source: str) -> dict[str, Any]:
