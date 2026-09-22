@@ -489,7 +489,12 @@ def test_terminal_proof_rearms_one_technical_review_for_a_new_diff(monkeypatch, 
     def validate_rearm(previous_diff_hash):
         binding = ledger.validated_completed_proof_binding(issue, previous_diff_hash)
         assert binding is not None
-        return validate_claim(), binding["proof_id"]
+        return {
+            "proof_id": binding["proof_id"],
+            "completed_at": binding["completed_at"],
+            "quality": binding["quality"],
+            "all_pass": binding["all_pass"],
+        }
 
     claim = store.claim_fresh_reviewer_authorization(
         issue, second_hash, validated_claim=validate_claim, validated_rearm=validate_rearm,

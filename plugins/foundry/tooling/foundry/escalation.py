@@ -151,9 +151,16 @@ _LEGACY_TECHNICAL_REMEDIATION_AUDIT_KEYS = (
 _PRE_REARM_TECHNICAL_REMEDIATION_AUDIT_KEYS = (
     _TECHNICAL_REMEDIATION_AUDIT_KEYS - {"review_rearm_audit"}
 )
-_TECHNICAL_REVIEW_REARM_AUDIT_KEYS = {
+_LEGACY_TECHNICAL_REVIEW_REARM_AUDIT_KEYS = {
     "code", "previous_diff_hash", "previous_claimed_at", "terminal_proof_id",
     "new_diff_hash", "rearmed_at",
+}
+_TECHNICAL_REVIEW_REARM_AUDIT_KEYS = (
+    _LEGACY_TECHNICAL_REVIEW_REARM_AUDIT_KEYS
+    | {"terminal_completed_at", "terminal_quality", "repair_kind"}
+)
+_TECHNICAL_REVIEW_REARM_BINDING_KEYS = {
+    "proof_id", "completed_at", "quality", "all_pass",
 }
 _RECLASSIFICATION_CODE = "legacy_human_required_reclassified_technical"
 _TECHNICAL_REMEDIATION_RESUME_CODE = "technical_remediation_resumed"
@@ -1615,10 +1622,29 @@ class EscalationStore:
                 raise _invalid_ledger(issue_id)
             if review_rearm_audit:
                 rearm = review_rearm_audit[0]
+                legacy_rearm = (
+                    isinstance(rearm, dict)
+                    and set(rearm) == _LEGACY_TECHNICAL_REVIEW_REARM_AUDIT_KEYS
+                )
+                current_rearm = (
+                    isinstance(rearm, dict)
+                    and set(rearm) == _TECHNICAL_REVIEW_REARM_AUDIT_KEYS
+                )
+                terminal_completed_at = (
+                    _utc_timestamp(rearm.get("terminal_completed_at"))
+                    if isinstance(rearm, dict) else None
+                )
                 if (
                     not isinstance(rearm, dict)
-                    or set(rearm) != _TECHNICAL_REVIEW_REARM_AUDIT_KEYS
-                    or rearm.get("code") != "technical_review_rearmed"
+                    or not (legacy_rearm or current_rearm)
+                    or rearm.get("code") not in {
+                        "technical_review_rearmed",
+                        "technical_review_pollution_reconciled",
+                    }
+                    or (
+                        legacy_rearm
+                        and rearm.get("code") != "technical_review_rearmed"
+                    )
                     or not isinstance(rearm.get("previous_diff_hash"), str)
                     or _DIGEST.fullmatch(rearm["previous_diff_hash"]) is None
                     or not isinstance(rearm.get("terminal_proof_id"), str)
@@ -1629,6 +1655,32 @@ class EscalationStore:
                     or _utc_timestamp(rearm.get("rearmed_at")) is None
                     or rearm["rearmed_at"] != event.get("review_claimed_at")
                     or rearm["previous_claimed_at"] >= rearm["rearmed_at"]
+                    or (
+                        current_rearm
+                        and (
+                            terminal_completed_at is None
+                            or rearm.get("terminal_quality") not in {
+                                "mergeable", "blocked",
+                            }
+                            or rearm.get("repair_kind") not in {
+                                "mergeable_terminal_rearm",
+                                "terminal_before_binding_reconciliation",
+                            }
+                            or (
+                                rearm.get("code")
+                                == "technical_review_pollution_reconciled"
+                            ) != (
+                                rearm.get("repair_kind")
+                                == "terminal_before_binding_reconciliation"
+                            )
+                            or (
+                                rearm.get("repair_kind")
+                                == "terminal_before_binding_reconciliation"
+                                and terminal_completed_at
+                                >= _utc_timestamp(rearm["previous_claimed_at"])
+                            )
+                        )
+                    )
                 ):
                     raise _invalid_ledger(issue_id)
             if (
@@ -2830,7 +2882,7 @@ class EscalationStore:
         diff_hash: str,
         *,
         validated_claim: Callable[[], object],
-        validated_rearm: Callable[[str], tuple[object, str] | None] | None = None,
+        validated_rearm: Callable[[str], object | None] | None = None,
     ) -> object:
         """Validate a Git claim, then bind one bounded reviewer authorization.
 
@@ -2841,7 +2893,11 @@ class EscalationStore:
         ``review_diff_hash``; a competing hash cannot create a review claim.  A
         distinct second diff is possible exactly once, only through
         ``validated_rearm`` after it has verified the terminal structured proof of
-        the first claim and returned its proof id with the new claim.
+        the first claim.  A completed claim whose public verdict has
+        ``should_run=false`` is returned idempotently and never binds or replaces
+        the technical review slot.  An in-progress duplicate still reserves the
+        slot: it represents an already-active reviewer even though this caller does
+        not receive another launch capability.
         """
         issue_id = _validate_issue_id(issue_id)
         if not isinstance(diff_hash, str) or _DIGEST.fullmatch(diff_hash) is None:
@@ -2862,6 +2918,19 @@ class EscalationStore:
             raise RoutingConfigError(
                 f"état d'escalade illisible pour {issue_id}."
             ) from exc
+
+        def claim_reserves_slot(claim: object) -> bool:
+            should_run = getattr(claim, "should_run", None)
+            claim_state = getattr(claim, "state", None)
+            if (
+                type(should_run) is not bool
+                or claim_state not in {"in_progress", "completed"}
+                or (should_run and claim_state != "in_progress")
+            ):
+                raise RoutingConfigError(
+                    "claim reviewer : verdict exécutable et état cohérents requis."
+                )
+            return claim_state == "in_progress"
 
         def mutate(state):
             remediation = self._remediation(state)
@@ -2889,6 +2958,8 @@ class EscalationStore:
             claimed_diff = technical_event["review_diff_hash"]
             if claimed_diff is None:
                 claim = validated_claim()
+                if not claim_reserves_slot(claim):
+                    return ("validated", claim), False
                 technical_event["review_diff_hash"] = diff_hash
                 technical_event["review_claimed_at"] = self._next_audit_timestamp(state)
                 return ("validated", claim), True
@@ -2900,27 +2971,47 @@ class EscalationStore:
             if validated_rearm is None:
                 return "technical_reviewer_terminal_proof_required", False
             previous_claimed_at = technical_event["review_claimed_at"]
-            result = validated_rearm(claimed_diff)
-            if result is None:
+            binding = validated_rearm(claimed_diff)
+            if binding is None:
                 return "technical_reviewer_terminal_proof_required", False
             if (
-                not isinstance(result, tuple)
-                or len(result) != 2
-                or not isinstance(result[1], str)
-                or _DIGEST.fullmatch(result[1]) is None
+                not isinstance(binding, dict)
+                or set(binding) != _TECHNICAL_REVIEW_REARM_BINDING_KEYS
+                or not isinstance(binding.get("proof_id"), str)
+                or _DIGEST.fullmatch(binding["proof_id"]) is None
+                or _utc_timestamp(binding.get("completed_at")) is None
+                or binding.get("quality") not in {"mergeable", "blocked"}
+                or type(binding.get("all_pass")) is not bool
             ):
                 raise RoutingConfigError(
                     "réarm de review : preuve terminale valide requise."
                 )
-            claim, proof_id = result
+            completed_at = _utc_timestamp(binding["completed_at"])
+            claimed_at = _utc_timestamp(previous_claimed_at)
+            polluted = completed_at < claimed_at
+            mergeable = binding["quality"] == "mergeable" and binding["all_pass"]
+            if not polluted and not mergeable:
+                return "technical_reviewer_terminal_proof_required", False
+            claim = validated_claim()
+            if not claim_reserves_slot(claim):
+                return ("validated", claim), False
             rearmed_at = self._next_audit_timestamp(state)
             technical_event["review_diff_hash"] = diff_hash
             technical_event["review_claimed_at"] = rearmed_at
             rearm_audit.append({
-                "code": "technical_review_rearmed",
+                "code": (
+                    "technical_review_pollution_reconciled"
+                    if polluted else "technical_review_rearmed"
+                ),
                 "previous_diff_hash": claimed_diff,
                 "previous_claimed_at": previous_claimed_at,
-                "terminal_proof_id": proof_id,
+                "terminal_proof_id": binding["proof_id"],
+                "terminal_completed_at": binding["completed_at"],
+                "terminal_quality": binding["quality"],
+                "repair_kind": (
+                    "terminal_before_binding_reconciliation"
+                    if polluted else "mergeable_terminal_rearm"
+                ),
                 "new_diff_hash": diff_hash,
                 "rearmed_at": rearmed_at,
             })

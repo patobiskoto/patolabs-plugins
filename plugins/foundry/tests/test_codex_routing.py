@@ -1,15 +1,18 @@
 import json
 import multiprocessing
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from foundry.routing import (
+    AcceptanceProofStore,
     ReviewDeduplicator,
     RoutingConfigError,
     RoutingUnavailableError,
     UserRouteRequest,
+    acceptance_criteria,
     claimed_review_diff,
     main,
     review_diff_hash,
@@ -27,6 +30,7 @@ from foundry.routing_facades import (
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 BASE_SHA = "1" * 40
 CLAIM_ATTEMPT_TOKEN = "a" * 64
+OTHER_CLAIM_ATTEMPT_TOKEN = "b" * 64
 
 
 def _packet(body="Inspect the requested scope."):
@@ -72,6 +76,62 @@ def _consumed_f108_route(tmp_path, route_role="reviewer"):
     generation = store.status(issue)["halt_generation"]
     store.resume_technical_remediation(issue, generation, "d" * 64)
     return store, state_dir, issue, generation
+
+
+def _consumed_route_for_issue(tmp_path, issue, route_role="implementer"):
+    state_dir = tmp_path / "state"
+    store = EscalationStore.for_root(tmp_path, state_dir=state_dir)
+    for tier in (
+        "economy", "economy", "balanced", "balanced", "frontier", "frontier",
+    ):
+        store.record_failure(issue, route_role, "test_red", tier)
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, route_role, generation, f"f165-{route_role}-route-0001",
+    )
+    return store, state_dir
+
+
+def _blocked_review_proof(monkeypatch, tmp_path, state_dir, issue, diff):
+    ledger = ReviewDeduplicator(str(tmp_path), state_dir)
+    coordinates = {"root": str(tmp_path), "base": BASE_SHA}
+    diff_hash = review_diff_hash(diff)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "9" * 40)
+    claim = ledger.claim_git(
+        diff_hash,
+        coordinates=coordinates,
+        claim_attempt_token=CLAIM_ATTEMPT_TOKEN,
+    )
+    body = "- [ ] corrected diff must receive an independent fresh review\n"
+    outcomes = [
+        {**criterion, "verdict": "fail"}
+        for criterion in acceptance_criteria(body)
+    ]
+    proof = AcceptanceProofStore(str(tmp_path), state_dir).create(
+        issue_id=issue,
+        issue_body=body,
+        reviewer_role="reviewer",
+        outcomes=outcomes,
+        quality="blocked",
+        diff_hash=diff_hash,
+        claim_id=claim.claim_id,
+        root=tmp_path,
+        base=BASE_SHA,
+        state_dir=state_dir,
+    )
+    return ledger, diff_hash, proof
+
+
+def _pollute_technical_review_binding(store, issue, diff_hash, claimed_at):
+    path = store._path(issue)
+    state = json.loads(path.read_text(encoding="utf-8"))
+    event = state["technical_remediation_audit"][0]
+    event["review_diff_hash"] = diff_hash
+    event["review_claimed_at"] = claimed_at
+    path.write_text(json.dumps(state), encoding="utf-8")
+    store.status(issue)
 
 
 @pytest.mark.parametrize(
@@ -425,6 +485,249 @@ def test_f108_reviewer_claim_waits_for_a_consumed_local_route(monkeypatch, tmp_p
                 role, _packet(), root=tmp_path, issue_id=issue,
                 escalation_state_dir=state_dir,
             )
+
+
+def test_f165_f70_sequence_keeps_deduplicated_blocked_review_out_of_fresh_slot(
+    monkeypatch, tmp_path,
+):
+    state_dir = tmp_path / "state"
+    issue = "FOUNDRY-165"
+    old_diff = b"FOUNDRY-70 blocked review before local technical remediation"
+    ledger, old_hash, old_proof = _blocked_review_proof(
+        monkeypatch, tmp_path, state_dir, issue, old_diff,
+    )
+    store, _ = _consumed_route_for_issue(tmp_path, issue)
+    before_authorization = store.status(issue)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: old_diff)
+
+    duplicate = codex_review_plan(
+        _packet(), root=tmp_path, base=BASE_SHA, state_dir=state_dir, issue_id=issue,
+    )
+    assert duplicate["mode"] == "deduplicated"
+    assert duplicate["spawn"] is None
+    assert duplicate["review_claim"] == {
+        "diff_hash": old_hash,
+        "should_run": False,
+        "state": "completed",
+        "generation": 1,
+        "root": str(tmp_path),
+        "base": BASE_SHA,
+    }
+    event = store.status(issue)["technical_remediation_audit"][0]
+    assert event["review_diff_hash"] is None
+    assert event["review_claimed_at"] is None
+
+    corrected_diff = b"FOUNDRY-70 corrected commit after local diagnostic"
+    corrected_hash = review_diff_hash(corrected_diff)
+    monkeypatch.setattr(
+        "foundry.routing.git_diff", lambda *_args, **_kwargs: corrected_diff,
+    )
+    fresh = codex_review_plan(
+        _packet(), root=tmp_path, base=BASE_SHA, state_dir=state_dir, issue_id=issue,
+        claim_attempt_token=OTHER_CLAIM_ATTEMPT_TOKEN,
+    )
+    assert fresh["mode"] == "subagent"
+    assert fresh["review_claim"]["should_run"] is True
+    assert fresh["review_claim"]["diff_hash"] == corrected_hash
+    event = store.status(issue)["technical_remediation_audit"][0]
+    assert event["review_diff_hash"] == corrected_hash
+    assert event["review_rearm_audit"] == []
+    after_authorization = store.status(issue)
+    for key in (
+        "total_escalations", "halt_generation", "roles", "resume_count",
+        "consumption_audit", "remediation_rearm_audit", "remediation_authorization",
+        "terminal_outcome", "human_required", "technical_blocked",
+    ):
+        assert after_authorization[key] == before_authorization[key]
+    terminal = ledger.validated_terminal_proof_binding(
+        issue, old_hash, coordinates={"root": str(tmp_path), "base": BASE_SHA},
+    )
+    assert terminal["proof_id"] == old_proof["proof_id"]
+    assert terminal["quality"] == "blocked"
+    assert terminal["all_pass"] is False
+
+
+def test_f165_polluted_blocked_review_is_reconciled_once_from_prior_terminal_evidence(
+    monkeypatch, tmp_path,
+):
+    state_dir = tmp_path / "state"
+    issue = "FOUNDRY-165"
+    old_diff = b"historical blocked diff terminal before phantom technical binding"
+    ledger, old_hash, old_proof = _blocked_review_proof(
+        monkeypatch, tmp_path, state_dir, issue, old_diff,
+    )
+    terminal = ledger.validated_terminal_proof_binding(issue, old_hash)
+    store, _ = _consumed_route_for_issue(tmp_path, issue)
+    route_consumed = datetime.fromisoformat(
+        store.status(issue)["technical_remediation_audit"][0]["route_consumed_at"]
+        .replace("Z", "+00:00")
+    )
+    completed = datetime.fromisoformat(terminal["completed_at"].replace("Z", "+00:00"))
+    polluted_at = max(route_consumed, completed) + timedelta(microseconds=1)
+    _pollute_technical_review_binding(
+        store, issue, old_hash, polluted_at.isoformat().replace("+00:00", "Z"),
+    )
+
+    corrected_diff = b"corrected diff requiring the only actual fresh technical review"
+    corrected_hash = review_diff_hash(corrected_diff)
+    monkeypatch.setattr(
+        "foundry.routing.git_diff", lambda *_args, **_kwargs: corrected_diff,
+    )
+    plan = codex_review_plan(
+        _packet(), root=tmp_path, base=BASE_SHA, state_dir=state_dir, issue_id=issue,
+        claim_attempt_token=OTHER_CLAIM_ATTEMPT_TOKEN,
+    )
+    assert plan["mode"] == "subagent"
+    assert plan["review_claim"]["diff_hash"] == corrected_hash
+    event = store.status(issue)["technical_remediation_audit"][0]
+    assert event["review_diff_hash"] == corrected_hash
+    assert event["review_rearm_audit"] == [{
+        "code": "technical_review_pollution_reconciled",
+        "previous_diff_hash": old_hash,
+        "previous_claimed_at": polluted_at.isoformat().replace("+00:00", "Z"),
+        "terminal_proof_id": old_proof["proof_id"],
+        "terminal_completed_at": terminal["completed_at"],
+        "terminal_quality": "blocked",
+        "repair_kind": "terminal_before_binding_reconciliation",
+        "new_diff_hash": corrected_hash,
+        "rearmed_at": event["review_claimed_at"],
+    }]
+    assert ledger.validated_terminal_proof_binding(issue, old_hash)["quality"] == "blocked"
+
+    third_diff = b"a second replacement is never authorized"
+    third_hash = review_diff_hash(third_diff)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: third_diff)
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique réarm"):
+        codex_review_plan(
+            _packet(), root=tmp_path, base=BASE_SHA,
+            state_dir=state_dir, issue_id=issue,
+            claim_attempt_token="c" * 64,
+        )
+    assert ledger.is_claimed(third_hash) is False
+
+
+def test_f165_polluted_active_claim_is_refused_without_partial_new_claim(
+    monkeypatch, tmp_path,
+):
+    issue = "FOUNDRY-165"
+    store, state_dir = _consumed_route_for_issue(tmp_path, issue)
+    ledger = ReviewDeduplicator(str(tmp_path), state_dir)
+    old_diff = b"active review cannot prove historical terminal pollution"
+    old_hash = review_diff_hash(old_diff)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: old_diff)
+    ledger.claim_git(
+        old_hash,
+        coordinates={"root": str(tmp_path), "base": BASE_SHA},
+        claim_attempt_token=CLAIM_ATTEMPT_TOKEN,
+    )
+    route_consumed = datetime.fromisoformat(
+        store.status(issue)["technical_remediation_audit"][0]["route_consumed_at"]
+        .replace("Z", "+00:00")
+    )
+    _pollute_technical_review_binding(
+        store,
+        issue,
+        old_hash,
+        (route_consumed + timedelta(microseconds=1)).isoformat().replace("+00:00", "Z"),
+    )
+    before = store._path(issue).read_bytes()
+    new_diff = b"must not be claimed without terminal evidence"
+    new_hash = review_diff_hash(new_diff)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: new_diff)
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="preuve AC terminale"):
+        codex_review_plan(
+            _packet(), root=tmp_path, base=BASE_SHA,
+            state_dir=state_dir, issue_id=issue,
+            claim_attempt_token=OTHER_CLAIM_ATTEMPT_TOKEN,
+        )
+    assert store._path(issue).read_bytes() == before
+    assert ledger.is_claimed(new_hash) is False
+
+
+def test_f165_terminal_hash_without_structured_proof_cannot_reconcile(
+    monkeypatch, tmp_path,
+):
+    issue = "FOUNDRY-165"
+    store, state_dir = _consumed_route_for_issue(tmp_path, issue)
+    ledger = ReviewDeduplicator(str(tmp_path), state_dir)
+    old_hash = review_diff_hash(b"legacy terminal marker without structured proof")
+    ledger.directory.mkdir(parents=True, exist_ok=True)
+    (ledger.directory / old_hash).write_text(
+        json.dumps({"diff_hash": old_hash}), encoding="utf-8",
+    )
+    route_consumed = datetime.fromisoformat(
+        store.status(issue)["technical_remediation_audit"][0]["route_consumed_at"]
+        .replace("Z", "+00:00")
+    )
+    _pollute_technical_review_binding(
+        store,
+        issue,
+        old_hash,
+        (route_consumed + timedelta(microseconds=1)).isoformat().replace("+00:00", "Z"),
+    )
+    before = store._path(issue).read_bytes()
+    new_diff = b"new diff cannot rely on proof-free legacy terminal marker"
+    new_hash = review_diff_hash(new_diff)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: new_diff)
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="preuve AC terminale"):
+        codex_review_plan(
+            _packet(), root=tmp_path, base=BASE_SHA,
+            state_dir=state_dir, issue_id=issue,
+            claim_attempt_token=OTHER_CLAIM_ATTEMPT_TOKEN,
+        )
+    assert store._path(issue).read_bytes() == before
+    assert ledger.is_claimed(new_hash) is False
+
+
+@pytest.mark.parametrize("chronology", ["equal", "terminal_after_binding"])
+def test_f165_ambiguous_or_late_blocked_terminal_proof_cannot_reconcile(
+    monkeypatch, tmp_path, chronology,
+):
+    issue = "FOUNDRY-165"
+    store, state_dir = _consumed_route_for_issue(tmp_path, issue)
+    old_diff = f"blocked proof with {chronology}".encode()
+    ledger, old_hash, _ = _blocked_review_proof(
+        monkeypatch, tmp_path, state_dir, issue, old_diff,
+    )
+    terminal = ledger.validated_terminal_proof_binding(issue, old_hash)
+    completed = datetime.fromisoformat(terminal["completed_at"].replace("Z", "+00:00"))
+    claimed = completed if chronology == "equal" else completed - timedelta(microseconds=1)
+    _pollute_technical_review_binding(
+        store, issue, old_hash, claimed.isoformat().replace("+00:00", "Z"),
+    )
+    before = store._path(issue).read_bytes()
+    new_diff = f"new diff after {chronology}".encode()
+    new_hash = review_diff_hash(new_diff)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: new_diff)
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="preuve AC terminale"):
+        codex_review_plan(
+            _packet(), root=tmp_path, base=BASE_SHA,
+            state_dir=state_dir, issue_id=issue,
+            claim_attempt_token=OTHER_CLAIM_ATTEMPT_TOKEN,
+        )
+    assert store._path(issue).read_bytes() == before
+    assert ledger.is_claimed(new_hash) is False
+
+
+def test_f165_terminal_evidence_from_different_coordinates_is_refused(
+    monkeypatch, tmp_path,
+):
+    state_dir = tmp_path / "state"
+    issue = "FOUNDRY-165"
+    old_diff = b"terminal evidence is tied to its original immutable coordinates"
+    ledger, old_hash, _ = _blocked_review_proof(
+        monkeypatch, tmp_path, state_dir, issue, old_diff,
+    )
+
+    with pytest.raises(RoutingConfigError, match="coordonnées de review différentes"):
+        ledger.validated_terminal_proof_binding(
+            issue,
+            old_hash,
+            coordinates={"root": str(tmp_path / "other"), "base": BASE_SHA},
+        )
 
 
 def test_f152_reviewer_diagnostic_is_claimless_and_local(tmp_path):
