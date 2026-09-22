@@ -322,7 +322,7 @@ def _get_public_github_check_runs(*, project: str, sha: str) -> object:
         raise ProofSourceUnsupported("GitHub check-runs response is unsupported")
     try:
         return json.loads(raw.decode("utf-8"))
-    except (UnicodeError, ValueError):
+    except (UnicodeError, ValueError, RecursionError):
         raise ProofSourceUnsupported("GitHub check-runs response is unsupported") from None
 
 
@@ -385,6 +385,7 @@ class GitHubCheckRunsAdapter:
             return self._proof(project=project, sha=sha, state="missing")
 
         conclusions: list[str] = []
+        wrong_shas: set[str] = set()
         pending = False
         for run in runs:
             if not isinstance(run, Mapping):
@@ -393,9 +394,7 @@ class GitHubCheckRunsAdapter:
             if not isinstance(observed_sha, str) or not _SHA.fullmatch(observed_sha):
                 return self._proof(project=project, sha=sha, state="unsupported")
             if observed_sha != sha:
-                # Preserve only the bounded SHA necessary for the evaluator to
-                # classify the observation as wrong-SHA.
-                return self._proof(project=project, sha=observed_sha, state="success")
+                wrong_shas.add(observed_sha)
             status = run.get("status")
             conclusion = run.get("conclusion")
             if status in _GITHUB_PENDING_STATUSES:
@@ -414,6 +413,10 @@ class GitHubCheckRunsAdapter:
                 return self._proof(project=project, sha=sha, state="unsupported")
             conclusions.append(conclusion)
 
+        if wrong_shas:
+            # Validate every row before classifying a valid but mismatched SHA,
+            # so provider ordering cannot hide an unsupported row.
+            return self._proof(project=project, sha=min(wrong_shas), state="success")
         if pending:
             return self._proof(project=project, sha=sha, state="pending")
         if any(item in _GITHUB_FAILING_CONCLUSIONS for item in conclusions):

@@ -55,6 +55,10 @@ following closed cases:
   `unsupported-schema`;
 - HTTP, network, timeout, or fixed-source availability failures give `inaccessible`.
 
+Every returned run is validated before a valid-but-different SHA is classified, so a
+malformed or future run always yields `unsupported-schema` regardless of provider row
+order. Excessively nested JSON is likewise treated as an unsupported source shape.
+
 This check-runs observation is not the CI merge gate. In particular, it does not read
 the legacy commit-status API and cannot satisfy, bypass, weaken, or retroactively
 change the two-source CI semantics of FOUNDRY-ADR-0002. It proves only what this one

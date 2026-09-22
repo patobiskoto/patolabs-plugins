@@ -380,6 +380,52 @@ def test_default_transport_maps_non_decodable_json_value_to_unsupported(monkeypa
     assert result["verdict"] == "unsupported-schema"
 
 
+def test_default_transport_maps_excessively_nested_json_to_unsupported(monkeypatch):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return b"[" * 2_000 + b"0" + b"]" * 2_000
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            return Response()
+
+    monkeypatch.setattr(delivery.urllib.request, "build_opener", lambda *_handlers: Opener())
+    result = delivery.delivery_receipt_from_adapter(
+        CONTRACT,
+        sha=SHA,
+        adapter=delivery.GitHubCheckRunsAdapter(),
+    )
+    assert result["verdict"] == "unsupported-schema"
+
+
+@pytest.mark.parametrize(
+    "runs",
+    [
+        (
+            check_run(sha=OTHER_SHA),
+            check_run(conclusion="future_conclusion"),
+        ),
+        (
+            check_run(conclusion="future_conclusion"),
+            check_run(sha=OTHER_SHA),
+        ),
+    ],
+)
+def test_unsupported_run_precedes_wrong_sha_independently_of_provider_order(
+    monkeypatch,
+    runs,
+):
+    result, _ = generated_receipt(monkeypatch, check_runs_payload(*runs))
+
+    assert result["verdict"] == "unsupported-schema"
+
+
 def test_public_generation_captures_time_internally_and_rejects_caller_timestamp(
     monkeypatch, tmp_path,
 ):
