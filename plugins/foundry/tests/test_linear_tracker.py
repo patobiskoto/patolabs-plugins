@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -709,6 +712,116 @@ def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypa
         project=PROJECT,
     )
 
+    completed = instance.get_issue("LIN-2")
+    assert completed.state == "done"
+    assert completed.ac_done == 1
+
+
+def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
+    _instance, wire = tracker
+    barrier = threading.Barrier(2)
+    seen_threads = set()
+    seen_lock = threading.Lock()
+
+    def transport(document, variables):
+        result = wire(document, variables)
+        if "FoundryLinearIssue(" in document:
+            thread_id = threading.get_ident()
+            with seen_lock:
+                first_read = thread_id not in seen_threads
+                seen_threads.add(thread_id)
+            if first_read:
+                barrier.wait(timeout=5)
+        return result
+
+    first = LinearTracker(token="linear-test-secret", transport=transport)
+    second = LinearTracker(token="linear-test-secret", transport=transport)
+    contexts = (
+        TransitionContext(
+            pr_url="https://github.com/acme/widgets/pull/17",
+            head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        ),
+        TransitionContext(
+            pr_url="https://github.com/acme/widgets/pull/17",
+            head_sha="d" * 40, base_sha="b" * 40, review_digest="e" * 64,
+        ),
+    )
+
+    def publish(instance, context):
+        try:
+            instance.set_state("LIN-2", "review", context=context, project=PROJECT)
+            return "created"
+        except (LinearTrackerError, TrackerConflictError):
+            return "refused"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(pool.map(publish, (first, second), contexts))
+
+    assert sorted(results) == ["created", "refused"]
+    assert len(wire.comments) == 1
+    first._transport = wire
+    winner = first.get_issue("LIN-2")
+    assert winner.state == "review"
+
+
+def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
+    tracker, monkeypatch,
+):
+    instance, _wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+    old = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=old, project=PROJECT)
+    write.sync_acceptance(
+        instance, "LIN-2", "- [ ] acceptance",
+        proof("LIN-2", "- [ ] acceptance"),
+    )
+
+    new_diff = b"corrected-diff"
+    new_digest = hashlib.sha256(new_diff).hexdigest()
+    pr = PullRequest(
+        number=17, url=old.pr_url, head="feat/lin-2", base="main",
+        base_sha="b" * 40, sha="d" * 40,
+    )
+    landed = SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
+    codehost = SimpleNamespace(
+        name="github", resolve_repo=lambda: "acme/widgets",
+        get_pr=lambda *_args: pr,
+        merge_pr=lambda *_args, **_kwargs: landed,
+        delete_branch=lambda *_args: None,
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "git_head", lambda: pr.sha)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: new_diff)
+    monkeypatch.setattr(issue, "repository_identity", lambda: "github.com/acme/widgets")
+    monkeypatch.setattr(write, "ci_gate", lambda *_args, **_kwargs: {
+        "passed": True, "waived": False, "total": 1,
+        "pending": [], "failing": [],
+    })
+    requested = []
+
+    class Store:
+        def __init__(self, _repository):
+            pass
+
+        def valid_for_merge(self, **coordinates):
+            requested.append(coordinates)
+            return proof(
+                "LIN-2", "- [ ] acceptance", head=pr.sha,
+                base=pr.base_sha, diff_hash=new_digest,
+            )
+
+    monkeypatch.setattr(issue, "AcceptanceProofStore", Store)
+
+    issue.merge("LIN-2", "17")
+
+    assert len(requested) == 1
+    assert requested[0]["head"] == pr.sha
     completed = instance.get_issue("LIN-2")
     assert completed.state == "done"
     assert completed.ac_done == 1

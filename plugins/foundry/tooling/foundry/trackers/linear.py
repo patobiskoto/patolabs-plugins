@@ -395,7 +395,20 @@ class LinearTracker(Tracker):
         }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
         marker = f"{_LIFECYCLE_SCHEMA}:{operation}:{digest}"
-        comment_id = str(uuid.UUID(digest[:32]))
+        slot = {
+            "schema": _LIFECYCLE_SCHEMA,
+            "operation": operation,
+            "issue": issue_id,
+        }
+        if operation == "state-review":
+            slot["generation"] = payload.get("generation")
+        elif operation == "acceptance":
+            slot["generation"] = payload.get("review_generation")
+        slot_canonical = json.dumps(
+            slot, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        )
+        slot_digest = hashlib.sha256(slot_canonical.encode("ascii")).hexdigest()
+        comment_id = str(uuid.UUID(slot_digest[:32]))
         body = f"{_LIFECYCLE_HEADER}\nmarker: {marker}\ncoordinates: {canonical}"
         return marker, body, comment_id
 

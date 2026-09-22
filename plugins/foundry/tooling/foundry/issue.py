@@ -346,6 +346,13 @@ def merge(issue_id, pr_number, flags=()):
             base_sha=pr_base_sha,
             review_digest=review_diff_hash(review_diff),
         )
+        if getattr(tr, "append_only_lifecycle_supported", False):
+            # Publish the exact current PR generation before deciding whether its
+            # AC are complete. A previous head's acceptance receipt must never
+            # suppress review-proof validation for this head.
+            write.transition(tr, issue_id, "in-progress")
+            write.transition(tr, issue_id, "review", context=transition_context)
+            current = tr.get_issue(issue_id)
 
     # AC checkboxes remain the normal tracker signal.  When they lag behind, only a
     # structured, current review proof can replace that administrative signal.
@@ -451,7 +458,8 @@ def merge(issue_id, pr_number, flags=()):
         # receipts. A second read below closes the race introduced by those writes.
         _require_unchanged_pr_coordinates(ch, repo, pr_number, pr, pr_base_sha)
 
-    if transition_context is not None:
+    if (transition_context is not None
+            and not getattr(tr, "append_only_lifecycle_supported", False)):
         # A correction may have moved the PR head after openpr recorded its first
         # receipt. Refresh the provider receipt on the exact head that just passed
         # review/CI, without giving the tracker any review or merge authority.
@@ -466,6 +474,15 @@ def merge(issue_id, pr_number, flags=()):
         merged_observation = pr
         merged_operation = "codehost.get_pr"
     else:
+        if getattr(tr, "append_only_lifecycle_supported", False):
+            projected = tr.get_issue(issue_id)
+            if (projected.state != "review" or projected.pr_url != pr.url
+                    or (projected.ac_done != projected.ac_total
+                        and acceptance_sync["status"] != "human-override")):
+                raise SystemExit(
+                    "⛔ Merge refusé — la projection tracker de la génération "
+                    "courante est incomplète ou a divergé."
+                )
         if pr_base_sha is not None and not pr.merged:
             # GitHub's merge endpoint can pin the reviewed head but has no equivalent
             # expected-base parameter. This exact-coordinate re-read must remain the

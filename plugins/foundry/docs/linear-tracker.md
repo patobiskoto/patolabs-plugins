@@ -116,7 +116,11 @@ counted as proven completion: without the matching append-only review receipt, F
 reports them incomplete and requires the structured proof before merge.
 
 Each receipt uses a deterministic client-supplied Linear comment UUID derived from its
-canonical payload. Foundry reads before creation, rereads that exact comment after the
+canonical operation slot. Singleton operations use one issue+operation slot; review and
+AC operations use one issue+operation+generation slot. The canonical payload remains in
+the marker digest and body. Two writers proposing different payloads for one slot race on
+the same provider-enforced UUID, so at most one can be created. Foundry reads before
+creation, rereads that exact comment after the
 effect and rereads the issue projection. An identical marker is a replay no-op. A
 competing marker for a singleton operation or the same review generation, malformed
 content, a broken generation chain, changed native state or divergent readback refuses.
@@ -124,7 +128,9 @@ If the provider accepted
 the deterministic comment but its response was interrupted, retry recovers it by exact
 ID. A corrected PR creates the next review generation, chained to the digest of the
 previous projection; its AC receipt is bound to that generation and supersedes older AC
-evidence. Concurrent forks at one generation fail closed. This is idempotence for the
+evidence. Merge projects and reloads the current head's generation before AC validation,
+then revalidates its state/PR/AC projection before the final exact-coordinate GitHub
+read. Concurrent forks at one generation fail closed. This is idempotence for the
 Foundry lifecycle comments, not a claim that arbitrary
 Linear comments or issue creation are exactly once.
 
