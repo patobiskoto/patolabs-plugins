@@ -484,10 +484,19 @@ def merge(issue_id, pr_number, flags=()):
                     "courante est incomplète ou a divergé."
                 )
         if pr_base_sha is not None and not pr.merged:
+            # The provider guard belongs in this final pre-merge segment.  Re-read
+            # the GitHub coordinates after it so that this remains the last network
+            # observation before merge_pr.
+            write.preflight_merge_effect(tr)
             # GitHub's merge endpoint can pin the reviewed head but has no equivalent
             # expected-base parameter. This exact-coordinate re-read must remain the
             # final network operation before merge_pr.
             _require_unchanged_pr_coordinates(ch, repo, pr_number, pr, pr_base_sha)
+        else:
+            # A Linear team can otherwise react to this GitHub merge by completing
+            # every linked issue.  No coordinate re-read is available for this legacy
+            # path, but generic trackers retain their normal behavior.
+            write.preflight_merge_effect(tr)
         try:
             # pass the gated sha: GitHub refuses if the head moved since the CI verdict
             merged = ch.merge_pr(repo, int(pr_number), sha=pr.sha)

@@ -50,6 +50,11 @@ def test_default_tracker_start_preflight_preserves_youtrack_direct_transition():
     assert Tracker.start_transition_path(object(), "ready") == ("in-progress",)
 
 
+def test_merge_effect_preflight_is_optional_for_existing_trackers():
+    tracker = SimpleNamespace()
+    assert write.preflight_merge_effect(tracker) is None
+
+
 @pytest.mark.parametrize("provider_class", [YouTrackTracker, DevHubTracker])
 def test_existing_real_provider_openpr_path_is_unchanged_by_noop_preflight(
     monkeypatch, provider_class,
@@ -162,6 +167,10 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
         },
     )
     monkeypatch.setattr(
+        write, "preflight_merge_effect",
+        lambda _tracker: events.append("tracker:preflight-merge-effect"),
+    )
+    monkeypatch.setattr(
         write, "transition",
         lambda _tracker, _issue_id, state, context=None: events.append(
             f"tracker:transition:{state}"
@@ -182,6 +191,9 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
         "tracker:get-issue",
     ]
     assert events.index(f"tracker:preflight:{tracker.name}:merge") < events.index(
+        "codehost:merge"
+    )
+    assert events.index("tracker:preflight-merge-effect") < events.index(
         "codehost:merge"
     )
     if tracker.bounded_transition_proofs:

@@ -64,6 +64,13 @@ def preflight_issue_operation(tracker, operation: str) -> None:
         preflight(operation)
 
 
+def preflight_merge_effect(tracker) -> None:
+    """Run a provider-specific, read-only check immediately before a merge effect."""
+    preflight = getattr(tracker, "preflight_merge_effect", None)
+    if callable(preflight):
+        preflight()
+
+
 def issue_binding(tracker, *issue_ids):
     """Resolve and validate the current project before any issue-derived side effect."""
     project = mutation_project(tracker)

@@ -79,12 +79,18 @@ class LinearWire:
         }
         self.comments = {}
         self.calls = []
+        self.git_automation_states = connection([])
 
     def _by_native(self, native):
         return next(value for value in self.issues.values() if value["id"] == native)
 
     def __call__(self, document, variables):
         self.calls.append((document, copy.deepcopy(variables)))
+        if "FoundryLinearTeamGitAutomationStates" in document:
+            return {"data": {"team": {
+                "id": "team-uuid",
+                "gitAutomationStates": copy.deepcopy(self.git_automation_states),
+            }}}
         if "FoundryLinearIssues" in document:
             return {"data": {"issues": connection([copy.deepcopy(v) for v in self.issues.values()])}}
         if "FoundryLinearIssue(" in document:
@@ -603,6 +609,63 @@ def test_linear_lifecycle_preflight_advertises_only_bounded_operations(tracker):
     assert len(wire.calls) == before
 
 
+def test_linear_merge_effect_preflight_allows_safe_team_automation(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection([
+        {
+            "id": "automation-started", "event": "start",
+            "state": {"id": STATE_IDS["in-progress"], "type": "started"},
+        },
+        {
+            "id": "automation-review", "event": "review",
+            "state": {"id": STATE_IDS["review"], "type": "started"},
+        },
+    ])
+    instance._activate(PROJECT)
+
+    assert instance.preflight_merge_effect() is None
+    assert wire.calls[-1][1] == {"id": "team-uuid"}
+
+
+def test_linear_merge_effect_preflight_refuses_completed_merge_automation(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection([
+        {
+            "id": "automation-merge", "event": "merge",
+            "state": {"id": STATE_IDS["done"], "type": "completed"},
+        },
+    ])
+    instance._activate(PROJECT)
+    linked_pr = SimpleNamespace(linked_issue_ids=("LIN-2", "LIN-1"))
+    merge_calls = []
+
+    def external_merge_effect():
+        # Mirrors the final Foundry pre-merge boundary: the code-host effect is
+        # external, and must not run when Linear would complete both linked issues.
+        write.preflight_merge_effect(instance)
+        merge_calls.append(linked_pr.linked_issue_ids)
+
+    with pytest.raises(
+        TrackerConflictError,
+        match="merge maps to completed state",
+    ):
+        external_merge_effect()
+
+    assert linked_pr.linked_issue_ids == ("LIN-2", "LIN-1")
+    assert merge_calls == []
+
+
+def test_linear_merge_effect_preflight_fails_closed_on_unreadable_team_config(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = {
+        "nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": "next"},
+    }
+    instance._activate(PROJECT)
+
+    with pytest.raises(LinearTrackerError, match="nested_pagination_unavailable"):
+        instance.preflight_merge_effect()
+
+
 def test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement(
     tracker, monkeypatch,
 ):
@@ -715,6 +778,9 @@ def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypa
     completed = instance.get_issue("LIN-2")
     assert completed.state == "done"
     assert completed.ac_done == 1
+    # The PR's delivery issue is the only one Foundry projects done.  A safe team
+    # config cannot let Linear complete a separately linked prerequisite.
+    assert instance.get_issue("LIN-1").state == "ready"
 
 
 def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
@@ -764,10 +830,10 @@ def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
     assert winner.state == "review"
 
 
-def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
+def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_completing_prerequisite(
     tracker, monkeypatch,
 ):
-    instance, _wire = tracker
+    instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
@@ -787,11 +853,21 @@ def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
         number=17, url=old.pr_url, head="feat/lin-2", base="main",
         base_sha="b" * 40, sha="d" * 40,
     )
+    # This is GitHub/Linear linkage metadata owned by the external integration, not
+    # a Foundry authority: one delivery PR is linked to its own issue and a separate
+    # prerequisite.  Foundry receives only LIN-2 as its requested merge target.
+    pr.linked_issue_ids = ("LIN-2", "LIN-1")
     landed = SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
+    merge_calls = []
+
+    def merge_pr(*_args, **_kwargs):
+        merge_calls.append(pr.linked_issue_ids)
+        return landed
+
     codehost = SimpleNamespace(
         name="github", resolve_repo=lambda: "acme/widgets",
         get_pr=lambda *_args: pr,
-        merge_pr=lambda *_args, **_kwargs: landed,
+        merge_pr=merge_pr,
         delete_branch=lambda *_args: None,
     )
     monkeypatch.setattr(issue.foundry, "tracker", lambda: instance)
@@ -822,9 +898,14 @@ def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
 
     assert len(requested) == 1
     assert requested[0]["head"] == pr.sha
+    assert merge_calls == [("LIN-2", "LIN-1")]
     completed = instance.get_issue("LIN-2")
     assert completed.state == "done"
     assert completed.ac_done == 1
+    # Under the safe automation configuration, no external GitHub event changes the
+    # prerequisite and Foundry writes lifecycle receipts only for its target issue.
+    assert instance.get_issue("LIN-1").state == "ready"
+    assert {comment["issue"]["identifier"] for comment in wire.comments.values()} == {"LIN-2"}
 
 
 def test_linear_lifecycle_readback_revalidates_native_state(tracker):

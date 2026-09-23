@@ -153,6 +153,50 @@ or replaces Foundry's review, test and CI gates.
   checkbox, labels, parent or PR field, plus atomic audited Epic closure. These remain
   typed refusals rather than best-effort read/write sequences.
 
+## GitHub merge automation interlock
+
+Linear may link a GitHub pull request to more than one issue.  A team-level Git
+automation rule mapping the `merge` event to a workflow state of type `completed`
+would consequently complete every linked issue when any one of those PRs lands.  That
+is not delivery evidence for the other issues.
+
+Immediately before its irreversible GitHub `merge_pr` call, the Linear adapter reads
+the active bound team's `gitAutomationStates`.  A `merge` mapping to any `completed`
+workflow state, an unavailable/malformed response, or a response requiring another
+page refuses the merge before GitHub is called.  This is a read-only preflight; it does
+not change Linear configuration and does not claim an atomic compare-and-swap over it.
+The existing `start` and `review` automations are not prohibited by this check.
+
+For a Foundry-managed Linear project, keep the team `merge -> Done` automation
+disabled.  Foundry alone projects `done`, and only after its exact merged PR receipt,
+current acceptance proof, review and CI gates.  The GitHub/Linear integration can still
+link PRs; linking is not authority to complete every linked issue.
+
+### Incident record and bounded rollback procedure
+
+The Pato incident that motivated this interlock was PR #14 for PAT-21, merged at
+`2026-09-23T14:49:20Z`.  At `14:49:22Z`, Linear's GitHub automation moved PAT-10 from
+native In Progress (`49aa24ba-848c-4ccf-87c3-35569ad000ec`) to Done
+(`f888eba8-d8b8-4a0c-911f-9dcbf0beb57e`; history event
+`210e188f-c7a3-44f1-ba79-8ba862a05d5a`).  PAT-10's PR #12 was still draft, its ten
+acceptance criteria were all open, and its Foundry lifecycle receipt was only
+`state-review`.  This distinguishes a merged prerequisite from delivery of PAT-10.
+
+The repaired team configuration has no `merge -> Done` git automation state; its
+linking, start, and review rules remain in place.  PAT-10 was restored to its native
+In Progress state and Foundry projects it as `review`; this was a guarded
+preflight/readback repair, not a compare-and-swap `issueUpdate` guarantee (Linear does
+not expose one).
+
+If an authorized operator must roll back the configuration change, first stop all
+Foundry merge attempts, record the exact current team automation IDs and workflow-state
+IDs, and have the Linear administrator restore only the previously removed `merge`
+mapping.  Read the active team's configuration back, then run the Foundry preflight
+regression: it must refuse while that mapping targets a completed state.  Do not resume
+Foundry merges until a separately authorized change removes that mapping again and a
+fresh readback shows no `merge -> completed` rule.  This is a procedure only; Foundry
+does not execute this rollback.
+
 Operationally, Linear's web board continues to show its native state and unchecked body;
 the proven state and AC completion are visible through Foundry queries and the audit
 comments. Editing a receipt, changing the native state, duplicating a marker or exceeding

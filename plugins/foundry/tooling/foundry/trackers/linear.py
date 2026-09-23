@@ -121,6 +121,23 @@ query FoundryLinearComment($id: String!) {
 }
 """
 
+_TEAM_GIT_AUTOMATION_STATES_QUERY = """
+query FoundryLinearTeamGitAutomationStates($id: String!) {
+  team(id: $id) {
+    id
+    gitAutomationStates(first: 100) {
+      nodes { id event state { id type } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+_GIT_AUTOMATION_EVENTS = frozenset({"draft", "merge", "mergeable", "review", "start"})
+_WORKFLOW_STATE_TYPES = frozenset(
+    {"backlog", "triage", "unstarted", "started", "completed", "canceled"}
+)
+
 class LinearTrackerError(RuntimeError):
     """Sanitized transport/provider failure with no response or credential echo."""
 
@@ -380,6 +397,45 @@ class LinearTracker(Tracker):
         raise TrackerCapabilityUnavailableError(
             self.name, "append-only-lifecycle-proof",
         )
+
+    def preflight_merge_effect(self) -> None:
+        """Refuse a GitHub merge while Linear can auto-complete linked issues.
+
+        This is deliberately a final, read-only provider check: PR linkage is allowed,
+        but a team-level ``merge -> completed`` rule would let Linear close every
+        linked issue, including an unfinished prerequisite.  The API does not expose
+        a CAS for this configuration, so an unavailable, malformed, or paginated
+        response is also unsafe and refuses the irreversible code-host effect.
+        """
+        binding = self._binding(self._project())
+        data = self._graphql(
+            _TEAM_GIT_AUTOMATION_STATES_QUERY,
+            {"id": binding["team_id"]},
+            "team.git-automation-states",
+        )
+        team = data.get("team")
+        if not isinstance(team, dict) or team.get("id") != binding["team_id"]:
+            raise LinearTrackerError(
+                "team.git-automation-states", None, "invalid_response",
+            )
+        states = _connection(
+            team.get("gitAutomationStates"), "team.git-automation-states",
+        )
+        for automation in states:
+            event = automation.get("event")
+            state = automation.get("state")
+            if (not isinstance(automation.get("id"), str)
+                    or event not in _GIT_AUTOMATION_EVENTS
+                    or not isinstance(state, dict)
+                    or not isinstance(state.get("id"), str)
+                    or state.get("type") not in _WORKFLOW_STATE_TYPES):
+                raise LinearTrackerError(
+                    "team.git-automation-states", None, "invalid_response",
+                )
+            if event == "merge" and state["type"] == "completed":
+                raise TrackerConflictError(
+                    "Linear Git automation unsafe: merge maps to completed state",
+                )
 
     @staticmethod
     def _lifecycle_marker(
