@@ -355,12 +355,12 @@ recipe performs no tracker/provider write itself):
    diagnostic is still needed, replay only the identical `resume-technical` inputs and
    route ID for its current halt generation; a stale generation or a new route ID must
    remain refused.
-2. Create one bounded adapter implementation issue whose acceptance criteria prove the
+2. Use PAT-22, the bounded adapter implementation issue whose acceptance criteria prove the
    Linear provider surface independently.  Move only the reviewable adapter code from
    the separate PAT-10 checkout into that issue's worktree; do not copy a PAT-10
    technical receipt or claim into it.  Its ordinary implementation, review, CI, and
    merge flow starts under that new issue's authority.
-3. Create one bounded ADR-import issue, dependent on the merged adapter.
+3. Use PAT-23, the bounded ADR-import issue dependent on merged PAT-22.
    Its acceptance criteria name the 27 required ADRs, a stable source snapshot/digest,
    idempotent import behavior, and Linear read-back evidence. Before each Linear write,
    this issue must have its own current authorization and project/operation preflight;
@@ -371,9 +371,9 @@ recipe performs no tracker/provider write itself):
    diff; changed or stale diffs are refused, and a replay only recovers the same claim.
    Run PAT-10's normal final cutover/acceptance gates then.
 
-What remains is deliberately explicit: the coordinator must create/authorize the two
-follow-up issues, the adapter issue must deliver its provider proof, and the import
-issue must migrate and read back the 27 ADRs.  PAT-10 remains open until those proofs
+What remains is deliberately explicit: PAT-22 and PAT-23 are created in Linear but
+remain unstarted; each needs its own authorization and gates. PAT-22 must deliver its
+provider proof, and PAT-23 must migrate and read back the 27 ADRs. PAT-10 remains open until those proofs
 exist and its own final cutover AC pass.  This recovery guidance does not close PAT-10.
 
 The offline route-isolation recipe is `test_pat10_recovery_isolated_from_separately_authorized_follow_up`
