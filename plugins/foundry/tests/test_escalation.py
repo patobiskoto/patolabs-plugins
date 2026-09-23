@@ -29,6 +29,13 @@ from foundry.routing import (
     main,
 )
 from foundry.routing_facades import codex_spawn_plan
+from offline_provider_handoff import (
+    CrashPoint,
+    HandoffCoordinates,
+    HandoffRejected,
+    InjectedHandoffCrash,
+    OfflineProviderHandoff,
+)
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -2474,6 +2481,355 @@ def test_f106_technical_remediation_leaves_f89_human_gate_byte_identical(tmp_pat
     assert f89["halted"] is True
     assert f89["human_required"] is True
     assert f89["technical_blocked"] is False
+
+
+class _OfflineLocalCorrectionDouble:
+    """Produces a ready local diff only from the no-provider route envelope."""
+
+    def __init__(self, coordinates):
+        self.coordinates = coordinates
+        self.calls = []
+
+    def correct(self, plan):
+        assert plan["mode"] == "local_diagnostic"
+        assert plan["spawn"] is None
+        assert plan["escalation"]["provider_effect_allowed"] is False
+        assert plan["escalation"]["technical_remediation_claimed"] is True
+        self.calls.append(("local_correction", self.coordinates))
+        return _OfflineLocalCorrectionReceipt(self.coordinates)
+
+
+class _OfflineLocalCorrectionReceipt:
+    """Non-authorizing output of the PAT-10 local correction fixture."""
+
+    def __init__(self, coordinates):
+        self.issue_id = coordinates["issue_id"]
+        self.ready_diff_hash = coordinates["ready_diff_hash"]
+
+
+class _OfflinePat22DeliveryProof:
+    """Object minted only by the PAT-22 adapter/delivery mock stage."""
+
+    def __init__(self, *, coordinates, source_issue_id, source_diff_hash):
+        self.coordinates = dict(coordinates)
+        self.source_issue_id = source_issue_id
+        self.source_diff_hash = source_diff_hash
+        self.proof_id = "offline-pat22-delivery-proof-v1"
+
+
+class _OfflinePat22AdapterDouble:
+    """Adapts the local correction under PAT-22, then mock-delivers it."""
+
+    def __init__(self, coordinates):
+        self.coordinates = dict(coordinates)
+        self.calls = []
+        self._candidate = None
+
+    def adapt(self, *, plan, local_correction):
+        if not isinstance(local_correction, _OfflineLocalCorrectionReceipt):
+            raise PermissionError("PAT-10 local correction receipt required")
+        if (
+            plan["mode"] != "subagent"
+            or plan["spawn"] is None
+            or plan["escalation"]["issue_id"] != self.coordinates["issue_id"]
+        ):
+            raise PermissionError("independent PAT-22 implementation plan required")
+        self._candidate = {
+            "coordinates": dict(self.coordinates),
+            "source_issue_id": local_correction.issue_id,
+            "source_diff_hash": local_correction.ready_diff_hash,
+        }
+        self.calls.append(("adapt", dict(self._candidate)))
+        return self._candidate
+
+    def mock_deliver(self, *, candidate):
+        if candidate is not self._candidate:
+            raise PermissionError("PAT-22 adapter candidate required")
+        proof = _OfflinePat22DeliveryProof(
+            coordinates=candidate["coordinates"],
+            source_issue_id=candidate["source_issue_id"],
+            source_diff_hash=candidate["source_diff_hash"],
+        )
+        self.calls.append(("mock_delivery", dict(proof.coordinates)))
+        return proof
+
+
+
+
+def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
+    """Prove PAT-10 local recovery cannot authorize PAT-22/PAT-23 effects."""
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    pat10 = "PAT-10"
+    local_coordinates = {
+        "issue_id": pat10,
+        "halt_generation": 1,
+        "route_id": "pat10-local-route-0001",
+        "authority_id": "pat10-local-route-0001",
+        "ready_diff_hash": "a" * 64,
+        "ac_digest": "b" * 64,
+    }
+    adapter_coordinates = {
+        "issue_id": "PAT-22",
+        "generation": 1,
+        "ready_diff_hash": "c" * 64,
+        "authority_id": "pat22-independent-delivery-authority-v1",
+        "ac_digest": "d" * 64,
+    }
+    migration_coordinates = {
+        "issue_id": "PAT-23",
+        "generation": 1,
+        "authority_id": "pat23-independent-migration-authority-v1",
+        "ac_digest": "e" * 64,
+        "operation_id": "pat23-import-operation-0001",
+    }
+    path = store._path(pat10)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(pat10)), encoding="utf-8")
+    store.reclassify_legacy_terminal(pat10, local_coordinates["halt_generation"])
+    store.resume_technical_remediation(
+        pat10, local_coordinates["halt_generation"], local_coordinates["ac_digest"],
+    )
+    route_id = local_coordinates["route_id"]
+    claimed = store.claim_technical_remediation_route(
+        pat10, "implementer", local_coordinates["halt_generation"], route_id,
+    )
+    assert claimed["provider_effect_allowed"] is False
+    assert claimed["campaign_restart_allowed"] is False
+    assert store.status(pat10)["human_required"] is False
+
+    local = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=pat10,
+        escalation_state_dir=tmp_path, technical_remediation=True,
+        technical_remediation_id=route_id,
+    )
+    assert local["mode"] == "local_diagnostic"
+    assert local["spawn"] is None
+    assert local["escalation"]["provider_effect_allowed"] is False
+    assert local["escalation"]["fresh_review_required"] is True
+
+    # The bounded local correction can make this exact local diff ready, but it
+    # cannot make PAT-10's final review executable while the independently
+    # authorized adapter and ADR-import proofs are still absent.
+    local_correction = _OfflineLocalCorrectionDouble(local_coordinates)
+    local_receipt = local_correction.correct(local)
+    ready_local_diff = local_receipt.ready_diff_hash
+    assert len(ready_local_diff) == 64
+    assert local_correction.calls == [("local_correction", local_coordinates)]
+    review_before = path.read_bytes()
+
+    def final_pat10_review_claim():
+        raise EscalationTechnicalBlockedError(
+            "PAT-10 final review requires PAT-22 delivery and PAT-23 read-back."
+        )
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="PAT-22 delivery"):
+        store.claim_fresh_reviewer_authorization(
+            pat10, ready_local_diff, validated_claim=final_pat10_review_claim,
+        )
+    assert path.read_bytes() == review_before
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=pat10,
+            escalation_state_dir=tmp_path,
+        )
+
+    pat10_before_follow_up = path.read_bytes()
+    follow_up = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id="PAT-22",
+        escalation_state_dir=tmp_path,
+    )
+    assert follow_up["mode"] == "subagent"
+    assert follow_up["spawn"] is not None
+    assert follow_up["route"]["selected_tier"] == "balanced"
+    assert path.read_bytes() == pat10_before_follow_up
+
+    with pytest.raises(RoutingConfigError, match="aucune remédiation"):
+        store.claim_technical_remediation_route(
+            "PAT-22", "implementer", 1, route_id,
+        )
+    with pytest.raises(EscalationTechnicalBlockedError, match="identifiant différent"):
+        store.technical_remediation_floor(pat10, "implementer", "pat10-local-route-0002")
+    assert path.read_bytes() == pat10_before_follow_up
+
+    # The PAT-22 mock stages receive the ready local correction only as source
+    # material.  Their separate issue plan supplies the issue-scoped execution
+    # boundary, and only their delivery stage can mint the proof PAT-23 accepts.
+    adapter = _OfflinePat22AdapterDouble(adapter_coordinates)
+    with pytest.raises(PermissionError, match="independent PAT-22"):
+        adapter.adapt(plan=local, local_correction=local_receipt)
+    candidate = adapter.adapt(
+        plan=follow_up,
+        local_correction=local_receipt,
+    )
+    adapter_delivery = adapter.mock_deliver(candidate=candidate)
+    assert adapter.calls == [
+        ("adapt", {
+            "coordinates": adapter_coordinates,
+            "source_issue_id": "PAT-10",
+            "source_diff_hash": "a" * 64,
+        }),
+        ("mock_delivery", adapter_coordinates),
+    ]
+    assert adapter_delivery.source_issue_id == "PAT-10"
+    assert adapter_delivery.source_diff_hash == ready_local_diff
+    assert adapter_delivery.coordinates["authority_id"] != local_coordinates["authority_id"]
+
+    # A provider-shaped migration is a distinct, pending PAT-23 operation.  The
+    # local route is deliberately not one of its coordinates.  No workspace or
+    # provider is touched: this double models the authorization/read-back proof
+    # that PAT-23 must reproduce before any real Linear migration.
+    handoff_paths = {
+        "provider_state_path": tmp_path / "pat23-provider.json",
+        "local_ledger_path": tmp_path / "pat23-ledger.json",
+    }
+    migration = OfflineProviderHandoff(**handoff_paths)
+    coordinates = HandoffCoordinates(
+        issue_id="PAT-23",
+        operation_id=migration_coordinates["operation_id"],
+        diff_sha256=adapter_coordinates["ready_diff_hash"],
+        ac_sha256=migration_coordinates["ac_digest"],
+        generation=migration_coordinates["generation"],
+        authority_id=migration_coordinates["authority_id"],
+    )
+    adrs = tuple(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28))
+
+    def fixture_capacity_from_delivery(
+        proof, *, now, ttl, target=coordinates, handoff=migration,
+    ):
+        if not isinstance(proof, _OfflinePat22DeliveryProof):
+            raise PermissionError("mock PAT-22 delivery proof required")
+        if proof.coordinates != adapter_coordinates:
+            raise PermissionError("exact PAT-22 delivery proof required")
+        return handoff.issue_fixture_capability(target, now=now, ttl=ttl)
+
+    # PAT-22's separate delivery proof is required before even the offline
+    # fixture can issue capacity. This never represents a real Linear grant.
+    with pytest.raises(PermissionError, match="mock PAT-22 delivery proof"):
+        fixture_capacity_from_delivery(adapter_coordinates, now=100, ttl=10)
+    for field, drifted_value in (
+        ("issue_id", "PAT-220"),
+        ("generation", 2),
+        ("ready_diff_hash", "9" * 64),
+        ("authority_id", "pat22-wrong-delivery-authority"),
+        ("ac_digest", "8" * 64),
+    ):
+        drifted_adapter = _OfflinePat22AdapterDouble({
+            **adapter_coordinates,
+            field: drifted_value,
+        })
+        drifted_plan = follow_up
+        if field == "issue_id":
+            drifted_plan = codex_spawn_plan(
+                "implementer", _packet(), root=tmp_path,
+                issue_id=drifted_value, escalation_state_dir=tmp_path,
+            )
+        drifted_candidate = drifted_adapter.adapt(
+            plan=drifted_plan, local_correction=local_receipt,
+        )
+        drifted_delivery = drifted_adapter.mock_deliver(candidate=drifted_candidate)
+        with pytest.raises(PermissionError, match="exact PAT-22 delivery proof"):
+            fixture_capacity_from_delivery(drifted_delivery, now=100, ttl=10)
+
+    missing_coordinates = HandoffCoordinates(
+        **{**coordinates.frozen(), "operation_id": "pat23-import-missing-capability"},
+    )
+    with pytest.raises(HandoffRejected, match="capability required"):
+        migration.execute(missing_coordinates, capability=None, now=100)
+    expired_coordinates = HandoffCoordinates(
+        **{**coordinates.frozen(), "operation_id": "pat23-import-expired-capability"},
+    )
+    expired = fixture_capacity_from_delivery(
+        adapter_delivery, now=100, ttl=1, target=expired_coordinates,
+    )
+    with pytest.raises(HandoffRejected, match="expired"):
+        migration.execute(expired_coordinates, capability=expired, now=101)
+    fresh = fixture_capacity_from_delivery(adapter_delivery, now=101, ttl=10)
+    for changes in (
+        {"generation": 2},
+        {"authority_id": "pat23-wrong-migration-authority"},
+        {"ac_sha256": "7" * 64},
+        {"operation_id": "pat23-import-operation-0002"},
+    ):
+        drifted = HandoffCoordinates(**{**coordinates.frozen(), **changes})
+        with pytest.raises(HandoffRejected, match="context drift"):
+            migration.provider.apply(
+                drifted, capability=fresh, now=102, crash_before_effect=False,
+            )
+    assert migration.provider.snapshot()["effect_count"] == 0
+    assert migration.ledger.snapshot()["receipt_count"] == 0
+
+    # The reusable PAT-24 double keeps provider and local state in different
+    # files. First prove a crash before effect cannot turn an expired intent
+    # into a first effect.
+    with pytest.raises(InjectedHandoffCrash, match="before provider effect"):
+        migration.execute(
+            coordinates, capability=fresh, now=102,
+            crash_at=CrashPoint.BEFORE_EFFECT,
+        )
+    recovered = OfflineProviderHandoff(**handoff_paths)
+    with pytest.raises(HandoffRejected, match="expired"):
+        recovered.execute(coordinates, capability=fresh, now=111)
+    assert recovered.provider.snapshot()["effect_count"] == 0
+    assert recovered.ledger.snapshot()["receipt_count"] == 0
+
+    # A fresh distinct fixture capacity is needed for the first effect after
+    # that expiry. The old intent cannot transfer to it; use another operation
+    # identity for the positive post-effect crash proof.
+    post_effect_coordinates = HandoffCoordinates(
+        **{**coordinates.frozen(), "operation_id": "pat23-import-operation-0003"},
+    )
+    post_effect = OfflineProviderHandoff(
+        provider_state_path=tmp_path / "pat23-post-effect-provider.json",
+        local_ledger_path=tmp_path / "pat23-post-effect-ledger.json",
+    )
+    post_effect_paths = {
+        "provider_state_path": post_effect.provider.state_path,
+        "local_ledger_path": post_effect.ledger.state_path,
+    }
+    post_effect_capacity = fixture_capacity_from_delivery(
+        adapter_delivery, now=112, ttl=10,
+        target=post_effect_coordinates, handoff=post_effect,
+    )
+    with pytest.raises(InjectedHandoffCrash, match="after provider effect"):
+        post_effect.execute(
+            post_effect_coordinates, capability=post_effect_capacity, now=113,
+            crash_at=CrashPoint.AFTER_EFFECT_BEFORE_RECEIPT,
+        )
+    assert post_effect.provider.snapshot()["effect_count"] == 1
+    assert post_effect.ledger.snapshot()["receipt_count"] == 0
+    replay = OfflineProviderHandoff(**post_effect_paths)
+    receipt = replay.execute(
+        post_effect_coordinates, capability=post_effect_capacity, now=1_000,
+    )
+    assert receipt["coordinates"] == post_effect_coordinates.frozen()
+    assert receipt["provider_effect_replayed"] is True
+    assert replay.provider.snapshot()["effect_count"] == 1
+    assert replay.ledger.snapshot()["receipt_count"] == 1
+    assert replay.execute(
+        post_effect_coordinates, capability=post_effect_capacity, now=1_001,
+    ) == receipt
+    with pytest.raises(HandoffRejected, match="effect scope already committed"):
+        replay.execute(coordinates, capability=post_effect_capacity, now=1_002)
+    assert replay.provider.snapshot()["effect_count"] == 1
+
+    # Read-back is deliberately only a fixture projection. Real PAT-23 must
+    # obtain and verify these 27 ADRs from Linear before PAT-10 can be reviewed.
+    read_back = {
+        "issue_id": receipt["coordinates"]["issue_id"],
+        "generation": receipt["coordinates"]["generation"],
+        "ac_digest": receipt["coordinates"]["ac_sha256"],
+        "operation_id": receipt["coordinates"]["operation_id"],
+        "adrs": adrs,
+    }
+    assert read_back == {
+        "issue_id": "PAT-23",
+        "generation": 1,
+        "ac_digest": "e" * 64,
+        "operation_id": "pat23-import-operation-0003",
+        "adrs": adrs,
+    }
+    assert len(read_back["adrs"]) == 27
 
 
 def test_technical_resume_is_atomic_and_idempotent_under_concurrency(tmp_path):

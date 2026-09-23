@@ -324,6 +324,124 @@ event. A pending route, a different role or route identity, a stale generation, 
 distinct hash, or a coordinate mismatch is refused without a claim or binding. This
 never authorizes a provider invocation or campaign effect.
 
+### PAT-10 recovery: separate authorized work from the final cutover
+
+PAT-10 is a final Linear cutover and acceptance issue.  A consumed technical-local
+route on PAT-10 is not a deadlock-breaking provider capability: it remains a local
+diagnostic receipt and reports `provider_effect_allowed=false` and
+`fresh_review_required=true`.  In particular, it cannot be reinterpreted as authority
+to implement the Linear adapter, import ADR data, run a migration, or resume a campaign.
+
+The recovery choice is to separate those prerequisites into independently authorized
+issues, then keep PAT-10 as the final cutover/acceptance issue.  This follows the
+issue-scoped state machine and FOUNDRY-ADR-0001's normal gated pipeline, preserves
+FOUNDRY-ADR-0013's bounded coordinator authority, and respects
+FOUNDRY-ADR-0014: technical exhaustion is `technical_blocked`, not a fabricated human
+verdict.  It also preserves FOUNDRY-ADR-0026: the adapter and the selective import are
+pre-cutover work; PAT-10 alone validates and publishes the final repository binding
+once its acceptance criteria are independently proven. "Selective" concerns ticket
+history, not the required 27-ADR reference corpus. A local or registry binding that
+already resolves to Linear is evidence to reconcile, not proof of the final cutover.
+
+Do not add a "fresh capability" transition to PAT-10.  Such a transition would turn a
+technical receipt into new provider authority and would bypass the normal per-issue
+authorization, review, CI, and human gates.  It is therefore not an implementation
+option without a new accepted ADR.
+
+Both options were evaluated against the same frozen recovery input used by the
+offline test: PAT-10 at halt generation `1`, local route
+`pat10-local-route-0001`, ready diff `a×64`, AC digest `b×64`, and authority
+`local_diagnostic` with `provider_effect_allowed=false`. The representative
+prerequisite coordinates are PAT-22 generation `1` / diff `c×64` / AC digest
+`d×64`, then PAT-23 generation `1` / AC digest `e×64`; these are fixture values,
+not claims about the live issues.
+
+| Option on those coordinates | Authority transition | Outcome |
+| --- | --- | --- |
+| Separate PAT-22 then PAT-23 | Keep the PAT-10 receipt bound to PAT-10 generation `1`, diff `a×64`, AC `b×64`; obtain distinct issue-scoped authority and proof for PAT-22 (`c×64`, `d×64`) and PAT-23 (`e×64`). | Chosen: a failed or stale PAT-10 final claim grants nothing, while the independent migration can resume and produce its own read-back. PAT-10 is reviewed only after those proofs exist. |
+| Add a fresh provider capability to PAT-10 | On that same PAT-10 generation `1`, diff `a×64`, AC `b×64`, promote `pat10-local-route-0001` from `local_diagnostic` to provider-write authority. | Rejected: this changes the receipt's authority rather than correcting the exhausted technical route. It would need a new accepted ADR and implementation before it could be considered; none is implied by PAT-21. |
+
+Operator recipe (the coordinator creates and authorizes the follow-up issues; this
+recipe performs no tracker/provider write itself):
+
+1. Preserve PAT-10's halted ledger and its local route/audit as evidence.  If a local
+   diagnostic is still needed, replay only the identical `resume-technical` inputs and
+   route ID for its current halt generation; a stale generation or a new route ID must
+   remain refused.
+2. Use PAT-22, the bounded adapter implementation issue whose acceptance criteria prove the
+   Linear provider surface independently.  Move only the reviewable adapter code from
+   the separate PAT-10 checkout into that issue's worktree; do not copy a PAT-10
+   technical receipt or claim into it.  Its ordinary implementation, review, CI, and
+   merge flow starts under that new issue's authority.
+3. Use PAT-23, the bounded ADR-import issue dependent on merged PAT-22.
+   Its acceptance criteria name the 27 required ADRs, a stable source snapshot/digest,
+   idempotent import behavior, and Linear read-back evidence. Before each Linear write,
+   this issue must have its own current authorization and project/operation preflight;
+   a PAT-10 technical receipt is not such authorization. It must not publish PAT-10's
+   final binding, write both trackers, or migrate terminal ticket history.
+4. After both follow-ups have independent review and delivery proof, re-read PAT-10's
+   AC and current binding.  Obtain a fresh PAT-10 review claim for the exact current
+   diff; changed or stale diffs are refused, and a replay only recovers the same claim.
+   Run PAT-10's normal final cutover/acceptance gates then.
+
+What remains is deliberately explicit: PAT-22 and PAT-23 are created in Linear but
+remain unstarted; each needs its own authorization and gates. PAT-22 must deliver its
+provider proof, and PAT-23 must migrate and read back the 27 ADRs. PAT-10 remains open until those proofs
+exist and its own final cutover AC pass.  This recovery guidance does not close PAT-10.
+
+The executable offline recovery recipe is:
+
+```bash
+cd plugins/foundry
+pytest -q \
+  tests/test_escalation.py::test_pat10_recovery_isolated_from_separately_authorized_follow_up
+```
+
+It must report `1 passed`. The fixture fixes all comparison coordinates: PAT-10 halt
+generation `1`, its local route authority/ID, ready local-diff hash, and AC digest; PAT-22
+generation `1`, ready adapter-diff hash, independent delivery authority, and AC digest;
+and PAT-23 generation `1`, independent migration authority, AC digest, and stable fixture
+operation ID. It first proves the actual PAT-10 ledger path (`resume-technical` → atomic
+local-route claim → Codex `local_diagnostic` with no spawn), then keeps the ready local
+diff unable to claim the PAT-10 final review because PAT-22 delivery and PAT-23 read-back
+are absent.
+
+The causal double recipe has explicit stages. The PAT-10 correction emits only a
+non-authorizing ready-diff receipt. A separate PAT-22 adapter double requires both that
+receipt as source material and PAT-22's ordinary `subagent` plan, produces the candidate
+on PAT-22 coordinates, then mock-delivers an issue-scoped proof object. A raw coordinate
+dictionary cannot replace that proof object. Generated proofs with a different issue,
+generation, diff, authority, or AC digest are refused. Thus PAT-23 receives the output
+of the adapter/delivery path rather than a predeclared delivery dictionary, while the
+PAT-10 route ID and authority never cross that boundary.
+
+The PAT-23 stage reuses PAT-24's `OfflineProviderHandoff`, with provider state and
+local ledger persisted in separate files under `tmp_path`. Missing, expired, or
+drifted fixture capabilities yield zero provider effects and zero receipts. A crash
+before the first effect leaves only a local intent; replay after capacity expiry is
+refused, so that intent cannot create a first provider effect. In a separate positive
+operation, the test crashes after the provider effect but before the local receipt:
+the new double instance observes one durable provider effect and zero local receipts.
+Exact replay reconstructs one receipt without repeating the effect, even after
+capacity expiry. A different operation ID cannot claim the same provider-effect
+scope. The 27-ADR read-back is an explicitly simulated fixture projection after this
+receipt, not evidence of a Linear import; PAT-23 must perform the real read-back.
+
+This is deliberately an offline provider-double proof: it mutates neither a workspace
+nor Linear and does not assert that a real migration or final PAT-10 review happened.
+Its tmp-backed bearer, mock delivery proof, operation receipt, simulated effect, and all
+authority IDs are fixture mechanisms, not live Linear grants or evidence that
+PAT-22/PAT-23 is currently authorized or delivered. Persistence proves only the
+double's crash/replay contract; it does not turn the state file into provider evidence.
+Those remain PAT-23's independently authorized provider/read-back evidence and PAT-10's
+later exact-diff review/CI/human gates, respectively. Existing exact-diff and AC guards remain separate:
+`test_codex_recovered_reviewer_refuses_a_changed_git_diff` and
+`test_structured_ac_proof_is_exact_redacted_and_fails_closed_when_stale`.
+`test_technical_resume_is_atomic_and_idempotent_under_concurrency` separately covers
+the production routing ledger's `resume-technical` concurrency.
+The import issue must still bring its own live authorization and provider read-back
+before any real workspace migration.
+
 ### Audited human resume
 
 When `escalation show` reports `human_required=true`, only a human may lift that exact
