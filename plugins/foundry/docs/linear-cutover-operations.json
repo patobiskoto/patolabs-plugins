@@ -63,6 +63,22 @@
     "youtrack_source_lifecycle_writes": "refused-by-current-foundry-project-tombstone",
     "obsolete_code_or_direct_rest_write_prevention": "not-claimed",
     "github_issues_backlog": false,
+    "github_main_protection": {
+      "observed_at": "2026-09-22T16:06:32Z",
+      "required_pull_request": true,
+      "strict_status_checks": [
+        "foundry",
+        "catalogue",
+        "ship-ios"
+      ],
+      "enforce_admins": true,
+      "required_linear_history": true,
+      "required_conversation_resolution": true,
+      "allow_force_pushes": false,
+      "allow_deletions": false,
+      "concurrent_rulesets": 0,
+      "rollback_receipt": "PAT-12 pre-change Linear comment"
+    },
     "linear_api_token": "keychain-configured"
   }
 }

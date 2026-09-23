@@ -7,10 +7,12 @@ dir — and both hooks silently no-op (they fail open). These tests pin the fix:
 plugin-private env vars are ignored; only an explicit FOUNDRY_DATA overrides
 the stable ~/.config/foundry home.
 """
+import concurrent.futures
 import hashlib
 import json
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -707,6 +709,57 @@ def test_cutover_archives_only_public_source_and_replays_idempotently(
             "linear", "PAT", _LINEAR_PROJECT_ID,
             migration_manifest_digest="sha256:" + "b" * 64, cwd=str(repo),
         )
+
+
+def test_concurrent_conflicting_cutovers_serialize_and_refuse_loser(
+    monkeypatch, tmp_path,
+):
+    repo, _extra = _prepare_cutover(monkeypatch, tmp_path)
+    real_prepare = registry._prepare_marker
+    first_prepared = threading.Event()
+    release_first = threading.Event()
+    second_reached_prepare = threading.Event()
+    calls_lock = threading.Lock()
+    calls = 0
+
+    def controlled_prepare(root, payload):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+            call = calls
+        if call == 1:
+            first_prepared.set()
+            assert release_first.wait(timeout=5)
+        else:
+            second_reached_prepare.set()
+        return real_prepare(root, payload)
+
+    monkeypatch.setattr(registry, "_prepare_marker", controlled_prepare)
+
+    def cutover(digest):
+        return registry.cutover_repository_tracker(
+            "linear", "PAT", _LINEAR_PROJECT_ID,
+            migration_manifest_digest=digest, cwd=str(repo),
+        )
+
+    first_digest = _MANIFEST_DIGEST
+    second_digest = "sha256:" + "b" * 64
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(cutover, first_digest)
+        assert first_prepared.wait(timeout=5)
+        second = pool.submit(cutover, second_digest)
+        assert not second_reached_prepare.wait(timeout=0.25)
+        assert not second.done()
+        release_first.set()
+
+        assert first.result(timeout=5).migration_manifest_digest == first_digest
+        with pytest.raises(ValueError, match="binding actif différent"):
+            second.result(timeout=5)
+
+    assert calls == 1
+    assert registry.repository_tracker_binding(str(repo)).migration_manifest_digest == (
+        first_digest
+    )
 
 
 def test_cutover_refuses_ambiguous_sources_without_publishing(monkeypatch, tmp_path):

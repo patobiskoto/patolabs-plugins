@@ -16,6 +16,7 @@ read by the YouTrack adapter to add milestone values on the fly.)
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import hashlib
 import os
@@ -24,6 +25,7 @@ import subprocess
 import tempfile
 import urllib.parse
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -183,6 +185,22 @@ def _save(data: dict) -> None:
     finally:
         if os.path.exists(temporary_path):
             os.unlink(temporary_path)
+
+
+@contextmanager
+def _cutover_lock():
+    """Serialize registry + repository-marker cutovers across local processes."""
+    directory = Path(data_dir())
+    directory.mkdir(parents=True, exist_ok=True)
+    lock_path = directory / ".registry-cutover.lock"
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def canonical_repository_identity(
@@ -444,62 +462,72 @@ def cutover_repository_tracker(
         raise ValueError("cutover tracker hors dépôt Git")
     repository = checkout_repository_identity(str(root))
     repo_name = repo_basename(str(root), use_env=False)
-    data = load()
-    project, _target_entry, registry_digest = _registry_project_for_marker(
-        data, tracker=tracker, repository=repository, repo_name=repo_name,
-        key=key, project_id=project_id,
-    )
-    base_payload = {
-        "version": _TRACKER_MARKER_VERSION,
-        "repository": repository,
-        "tracker": tracker,
-        "project": {"key": key, "id": project_id},
-        "registry_binding_digest": registry_digest,
-        "migration_manifest_digest": migration_manifest_digest,
-    }
-    payload = {**base_payload, "configuration_digest": _json_digest(base_payload)}
-    expected = RepositoryTrackerBinding(
-        tracker=tracker, repository=repository, project=project,
-        registry_binding_digest=registry_digest,
-        migration_manifest_digest=migration_manifest_digest,
-        configuration_digest=payload["configuration_digest"],
-    )
-    current = repository_tracker_binding(str(root))
-    if current is not None:
-        if current == expected:
-            return current
-        raise ValueError("cutover tracker refusé : un binding actif différent existe déjà")
+    with _cutover_lock():
+        # Re-read every compare-and-publish input under one process-shared lock.
+        # A waiting caller observes the winner instead of replacing it from a
+        # stale snapshot with last-writer-wins semantics.
+        data = load()
+        project, _target_entry, registry_digest = _registry_project_for_marker(
+            data, tracker=tracker, repository=repository, repo_name=repo_name,
+            key=key, project_id=project_id,
+        )
+        base_payload = {
+            "version": _TRACKER_MARKER_VERSION,
+            "repository": repository,
+            "tracker": tracker,
+            "project": {"key": key, "id": project_id},
+            "registry_binding_digest": registry_digest,
+            "migration_manifest_digest": migration_manifest_digest,
+        }
+        payload = {**base_payload, "configuration_digest": _json_digest(base_payload)}
+        expected = RepositoryTrackerBinding(
+            tracker=tracker, repository=repository, project=project,
+            registry_binding_digest=registry_digest,
+            migration_manifest_digest=migration_manifest_digest,
+            configuration_digest=payload["configuration_digest"],
+        )
+        current = repository_tracker_binding(str(root))
+        if current is not None:
+            if current == expected:
+                return current
+            raise ValueError(
+                "cutover tracker refusé : un binding actif différent existe déjà"
+            )
 
-    source_bindings = []
-    for provider, entries in data.items():
-        if provider == tracker or not isinstance(entries, dict):
-            continue
-        for name, entry in entries.items():
-            if (
-                isinstance(entry, dict)
-                and entry.get("archive") is not True
-                and (entry.get("canonical_repo") == repository or name == repo_name)
-            ):
-                source_bindings.append((provider, name, entry))
-    if len(source_bindings) > 1:
-        raise ValueError("cutover tracker refusé : bindings source actifs ambigus")
+        source_bindings = []
+        for provider, entries in data.items():
+            if provider == tracker or not isinstance(entries, dict):
+                continue
+            for name, entry in entries.items():
+                if (
+                    isinstance(entry, dict)
+                    and entry.get("archive") is not True
+                    and (entry.get("canonical_repo") == repository or name == repo_name)
+                ):
+                    source_bindings.append((provider, name, entry))
+        if len(source_bindings) > 1:
+            raise ValueError("cutover tracker refusé : bindings source actifs ambigus")
 
-    descriptor, temporary, marker = _prepare_marker(root, payload)
-    try:
-        with os.fdopen(descriptor, "w") as file:
-            json.dump(payload, file, indent=2, sort_keys=True)
-            file.write("\n")
-            file.flush()
-            os.fsync(file.fileno())
-        if source_bindings:
-            provider, name, entry = source_bindings[0]
-            data[provider][name] = {**entry, "archive": True}
-            _save(data)
-        os.replace(temporary, marker)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    return repository_tracker_binding(str(root)) or expected
+        descriptor, temporary, marker = _prepare_marker(root, payload)
+        try:
+            with os.fdopen(descriptor, "w") as file:
+                json.dump(payload, file, indent=2, sort_keys=True)
+                file.write("\n")
+                file.flush()
+                os.fsync(file.fileno())
+            if source_bindings:
+                provider, name, entry = source_bindings[0]
+                data[provider][name] = {**entry, "archive": True}
+                _save(data)
+            os.replace(temporary, marker)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+        published = repository_tracker_binding(str(root))
+        if published != expected:
+            raise ValueError("cutover tracker refusé : relecture du binding divergente")
+        return published
 
 
 def _require_uuid(value: object, field: str) -> str:

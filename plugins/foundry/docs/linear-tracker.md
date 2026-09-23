@@ -615,6 +615,14 @@ temporarily unavailable, never dual-writable; replaying the exact command comple
 transition idempotently. Multiple source bindings, a different existing marker, or a
 changed target binding are refused.
 
+The complete local publication transaction is serialized by a process-shared registry
+lock. Marker absence, target binding, source archival, marker replacement and exact
+readback are evaluated within that lock. Two concurrent calls with different manifest
+digests therefore cannot both succeed: the first exact publication wins, while the
+second observes and refuses the already-active different binding. This is a local
+Foundry CAS boundary; it does not claim a distributed lock against tools that bypass
+Foundry and edit its state files directly.
+
 The manifest's `evidence.source_snapshot_digest` hashes canonical compact JSON containing, in
 manifest order, each issue's source ID/state/priority/estimate/type/AC count/body digest
 and PR URL plus each ADR's source ID/status/body digest. Target identifiers and readback
@@ -659,6 +667,6 @@ For the live PAT-10 cutover, this boundary was documented in an append-only loca
 session receipt at `2026-09-22T10:22:43.917Z`, before the cutover at
 `2026-09-22T14:10:47Z`. The credential-free operations log records the receipt digest;
 the private receipt itself is deliberately excluded from the public repository.
-This implementation and its controlled transport round-trip do not activate a real
-workspace. No Linear binding or live write is performed here. Import, target-workspace
-validation, and the atomic cutover remain PAT-23/PAT-10 work.
+The historical ADR import is complete under PAT-23: its audit and gaps are recorded on
+PAT-23 in Linear, and its private receipts stay outside this repository. Public `main`
+branch protection is documented in `public-repository-security.md` (PAT-12).
