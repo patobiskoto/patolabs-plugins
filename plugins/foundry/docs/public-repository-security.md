@@ -1,8 +1,8 @@
 # Public repository security boundary
 
 `github.com/patobiskoto/patolabs-plugins` is public but does not accept an external
-contribution path. GitHub Issues is disabled and Linear project `PAT` is the repository
-tracker selected by `.foundry/tracker.json`.
+contribution path. GitHub Issues is disabled. This PAT-12 change does not publish a
+tracker marker or move tracker authority; the repository's Linear cutover is PAT-10.
 
 The `main` branch is protected server-side. Every merge requires a pull request, a
 branch current with `main`, and successful `foundry`, `catalogue`, and `ship-ios`

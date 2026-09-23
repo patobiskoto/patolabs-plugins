@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "observed_at": "2026-09-22T16:06:32Z",
+  "observed_at": "2026-09-23T06:11:21Z",
   "repository": "github.com/patobiskoto/patolabs-plugins",
   "default_branch": "main",
   "protection": {
@@ -24,9 +24,9 @@
   },
   "rulesets": [],
   "github_issues_enabled": false,
-  "tracker": {
-    "kind": "linear",
-    "project": "PAT"
+  "tracker_authority": {
+    "changed_by_this_issue": false,
+    "cutover_issue": "PAT-10"
   },
   "rollback": {
     "precondition": "explicitly reviewed operational failure",
