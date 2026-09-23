@@ -400,28 +400,44 @@ pytest -q \
 It must report `1 passed`. The fixture fixes all comparison coordinates: PAT-10 halt
 generation `1`, its local route authority/ID, ready local-diff hash, and AC digest; PAT-22
 generation `1`, ready adapter-diff hash, independent delivery authority, and AC digest;
-and PAT-23 generation `1`, independent migration authority, and AC digest. It first
-proves the actual PAT-10 ledger path (`resume-technical` → atomic local-route claim →
-Codex `local_diagnostic` with no spawn), then keeps the ready local diff unable to claim
-the PAT-10 final review because PAT-22 delivery and PAT-23 read-back are absent. The
-stateful provider double refuses a missing capability, an expired capability, and a
-capability presented with drifted PAT-23 coordinates; every refusal leaves the import
-pending and records no `resume` or `read_back` effect. Only a still-fresh, single-use
-capability minted by the double after the exact PAT-22 delivery prerequisite and bound
-to the exact PAT-23 coordinates may resume the import and return the fixed 27-ADR
-read-back. Successful replay of that capability is refused after consumption. The
-double records only `resume` then `read_back`; it receives neither the PAT-10 receipt
-nor provider authority from the routing plan.
+and PAT-23 generation `1`, independent migration authority, AC digest, and stable fixture
+operation ID. It first proves the actual PAT-10 ledger path (`resume-technical` → atomic
+local-route claim → Codex `local_diagnostic` with no spawn), then keeps the ready local
+diff unable to claim the PAT-10 final review because PAT-22 delivery and PAT-23 read-back
+are absent.
+
+The causal double recipe has explicit stages. The PAT-10 correction emits only a
+non-authorizing ready-diff receipt. A separate PAT-22 adapter double requires both that
+receipt as source material and PAT-22's ordinary `subagent` plan, produces the candidate
+on PAT-22 coordinates, then mock-delivers an issue-scoped proof object. A raw coordinate
+dictionary cannot replace that proof object. Generated proofs with a different issue,
+generation, diff, authority, or AC digest are refused. Thus PAT-23 receives the output
+of the adapter/delivery path rather than a predeclared delivery dictionary, while the
+PAT-10 route ID and authority never cross that boundary.
+
+The PAT-23 double persists its fixture capability and idempotency state under
+`tmp_path`. Missing and expired capabilities, or capabilities presented with drifted
+generation, authority, AC digest, or operation ID, leave the import pending with zero
+effects. On the positive path it first persists a capability-bound intent for the stable
+operation ID. The test injects a crash at exactly that point, proves that no effect
+exists and the capability is not yet consumed, then reloads a new double from disk.
+Exact replay recovers the intent, records one simulated `resume` effect, marks the
+capability consumed with the completion receipt, and returns the fixed 27-ADR read-back.
+Later exact replays return that same receipt even after capability expiry; a different
+capability cannot claim the operation ID, and the effect count remains one.
 
 This is deliberately an offline provider-double proof: it mutates neither a workspace
 nor Linear and does not assert that a real migration or final PAT-10 review happened.
-Its opaque in-memory capability and all authority IDs are fixture mechanisms, not live
-Linear grants or evidence that PAT-22/PAT-23 is currently authorized or delivered.
+Its tmp-backed bearer, mock delivery proof, operation receipt, simulated effect, and all
+authority IDs are fixture mechanisms, not live Linear grants or evidence that
+PAT-22/PAT-23 is currently authorized or delivered. Persistence proves only the
+double's crash/replay contract; it does not turn the state file into provider evidence.
 Those remain PAT-23's independently authorized provider/read-back evidence and PAT-10's
 later exact-diff review/CI/human gates, respectively. Existing exact-diff and AC guards remain separate:
 `test_codex_recovered_reviewer_refuses_a_changed_git_diff` and
 `test_structured_ac_proof_is_exact_redacted_and_fails_closed_when_stale`.
-`test_technical_resume_is_atomic_and_idempotent_under_concurrency` covers replay.
+`test_technical_resume_is_atomic_and_idempotent_under_concurrency` separately covers
+the production routing ledger's `resume-technical` concurrency.
 The import issue must still bring its own live authorization and provider read-back
 before any real workspace migration.
 

@@ -2489,71 +2489,229 @@ class _OfflineLocalCorrectionDouble:
         assert plan["escalation"]["provider_effect_allowed"] is False
         assert plan["escalation"]["technical_remediation_claimed"] is True
         self.calls.append(("local_correction", self.coordinates))
-        return self.coordinates["ready_diff_hash"]
+        return _OfflineLocalCorrectionReceipt(self.coordinates)
+
+
+class _OfflineLocalCorrectionReceipt:
+    """Non-authorizing output of the PAT-10 local correction fixture."""
+
+    def __init__(self, coordinates):
+        self.issue_id = coordinates["issue_id"]
+        self.ready_diff_hash = coordinates["ready_diff_hash"]
+
+
+class _OfflinePat22DeliveryProof:
+    """Object minted only by the PAT-22 adapter/delivery mock stage."""
+
+    def __init__(self, *, coordinates, source_issue_id, source_diff_hash):
+        self.coordinates = dict(coordinates)
+        self.source_issue_id = source_issue_id
+        self.source_diff_hash = source_diff_hash
+        self.proof_id = "offline-pat22-delivery-proof-v1"
+
+
+class _OfflinePat22AdapterDouble:
+    """Adapts the local correction under PAT-22, then mock-delivers it."""
+
+    def __init__(self, coordinates):
+        self.coordinates = dict(coordinates)
+        self.calls = []
+        self._candidate = None
+
+    def adapt(self, *, plan, local_correction):
+        if not isinstance(local_correction, _OfflineLocalCorrectionReceipt):
+            raise PermissionError("PAT-10 local correction receipt required")
+        if (
+            plan["mode"] != "subagent"
+            or plan["spawn"] is None
+            or plan["escalation"]["issue_id"] != self.coordinates["issue_id"]
+        ):
+            raise PermissionError("independent PAT-22 implementation plan required")
+        self._candidate = {
+            "coordinates": dict(self.coordinates),
+            "source_issue_id": local_correction.issue_id,
+            "source_diff_hash": local_correction.ready_diff_hash,
+        }
+        self.calls.append(("adapt", dict(self._candidate)))
+        return self._candidate
+
+    def mock_deliver(self, *, candidate):
+        if candidate is not self._candidate:
+            raise PermissionError("PAT-22 adapter candidate required")
+        proof = _OfflinePat22DeliveryProof(
+            coordinates=candidate["coordinates"],
+            source_issue_id=candidate["source_issue_id"],
+            source_diff_hash=candidate["source_diff_hash"],
+        )
+        self.calls.append(("mock_delivery", dict(proof.coordinates)))
+        return proof
 
 
 class _PendingAdrMigrationDouble:
     """Offline Linear-shaped double for the separately-authorized PAT-23 handoff.
 
     The routing ledger does not perform migrations.  This double makes that
-    boundary executable in the recovery proof: it will resume a pending import
-    only after the independent PAT-22 delivery fixture mints a fresh, bounded
-    PAT-23 capability for the exact migration coordinates, then exposes a
-    deterministic read-back.  The in-memory capability models the boundary; it
-    is not a real Linear authorization.
+    boundary executable in the recovery proof.  A PAT-22 delivery object minted
+    by the mock adapter stage may issue a distinct, bounded PAT-23 capability.
+    The double persists an operation intent before the simulated effect, binds
+    both to one operation ID, and completes exact replays without duplicating
+    the effect.  None of these fixture objects is a real Linear authorization.
     """
 
-    def __init__(self, *, adapter_coordinates, migration_coordinates, adrs):
-        self.adapter_coordinates = adapter_coordinates
-        self.migration_coordinates = migration_coordinates
+    def __init__(
+        self, *, state_path, adapter_coordinates, migration_coordinates, adrs,
+    ):
+        self.state_path = Path(state_path)
+        self.adapter_coordinates = dict(adapter_coordinates)
+        self.migration_coordinates = dict(migration_coordinates)
         self.adrs = tuple(adrs)
-        self.calls = []
-        self.pending = True
-        self._capabilities = {}
+        if self.state_path.exists():
+            state = self._load()
+            if (
+                state["adapter_coordinates"] != self.adapter_coordinates
+                or state["migration_coordinates"] != self.migration_coordinates
+                or tuple(state["adrs"]) != self.adrs
+            ):
+                raise PermissionError("persisted PAT-23 fixture coordinates changed")
+        else:
+            self._save({
+                "schema": 1,
+                "adapter_coordinates": self.adapter_coordinates,
+                "migration_coordinates": self.migration_coordinates,
+                "adrs": list(self.adrs),
+                "pending": True,
+                "next_capability": 1,
+                "capabilities": {},
+                "operations": {},
+                "effects": [],
+            })
+
+    @property
+    def pending(self):
+        return self._load()["pending"]
+
+    @property
+    def effects(self):
+        return tuple(self._load()["effects"])
+
+    def persisted_operation(self, operation_id):
+        return self._load()["operations"].get(operation_id)
+
+    def _load(self):
+        return json.loads(self.state_path.read_text(encoding="utf-8"))
+
+    def _save(self, state):
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.state_path.with_name(f".{self.state_path.name}.tmp")
+        temporary.write_text(
+            json.dumps(state, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(temporary, self.state_path)
 
     def issue_capability_after_adapter_delivery(
         self, *, adapter_delivery, migration_coordinates, now, ttl,
     ):
-        if adapter_delivery != self.adapter_coordinates:
+        if not isinstance(adapter_delivery, _OfflinePat22DeliveryProof):
+            raise PermissionError("mock PAT-22 delivery proof required")
+        if adapter_delivery.coordinates != self.adapter_coordinates:
             raise PermissionError("exact PAT-22 delivery proof required")
         if migration_coordinates != self.migration_coordinates:
             raise PermissionError("exact PAT-23 coordinates required")
         if not isinstance(ttl, int) or ttl <= 0:
             raise PermissionError("positive PAT-23 capability lifetime required")
-        capability = object()
-        self._capabilities[capability] = {
+        state = self._load()
+        capability = (
+            f"offline-pat23-capability-{state['next_capability']:04d}"
+        )
+        state["next_capability"] += 1
+        state["capabilities"][capability] = {
             "coordinates": dict(migration_coordinates),
             "expires_at": now + ttl,
-            "consumed": False,
+            "delivery_proof_id": adapter_delivery.proof_id,
+            "status": "issued",
         }
+        self._save(state)
         return capability
 
-    def resume(self, *, capability, migration_coordinates, now):
-        grant = self._capabilities.get(capability)
+    def resume(
+        self, *, capability, migration_coordinates, now, crash_after_intent=False,
+    ):
+        state = self._load()
+        grant = state["capabilities"].get(capability)
         if grant is None:
             raise PermissionError("fresh PAT-23 capability required")
-        if grant["consumed"]:
-            raise PermissionError("PAT-23 capability already consumed")
-        if now >= grant["expires_at"]:
-            raise PermissionError("PAT-23 capability expired")
         if migration_coordinates != grant["coordinates"]:
             raise PermissionError("PAT-23 capability coordinate drift")
-        if self.pending is not True:
-            raise PermissionError("PAT-23 import is not pending")
-        grant["consumed"] = True
-        self.calls.append(("resume", migration_coordinates))
-        self.pending = False
+        operation_id = migration_coordinates["operation_id"]
+        operation = state["operations"].get(operation_id)
+        replayed = operation is not None
+        if operation is None:
+            if grant["status"] != "issued":
+                raise PermissionError("PAT-23 capability bound elsewhere")
+            if now >= grant["expires_at"]:
+                raise PermissionError("PAT-23 capability expired")
+            if state["pending"] is not True:
+                raise PermissionError("PAT-23 import is not pending")
+            operation = {
+                "capability": capability,
+                "coordinates": dict(migration_coordinates),
+                "delivery_proof_id": grant["delivery_proof_id"],
+                "status": "intent",
+                "receipt": None,
+            }
+            state["operations"][operation_id] = operation
+            grant["status"] = "bound"
+            self._save(state)
+        else:
+            if (
+                operation["capability"] != capability
+                or operation["coordinates"] != migration_coordinates
+            ):
+                raise PermissionError("PAT-23 operation identity conflict")
+            if operation["status"] == "completed":
+                return {**operation["receipt"], "replayed": True}
+            if operation["status"] != "intent" or grant["status"] != "bound":
+                raise PermissionError("invalid PAT-23 operation receipt")
+
+        if crash_after_intent:
+            raise OSError("injected crash after PAT-23 intent")
+
+        state = self._load()
+        operation = state["operations"][operation_id]
+        duplicate = any(
+            effect["operation_id"] == operation_id for effect in state["effects"]
+        )
+        if not duplicate:
+            state["effects"].append({
+                "kind": "resume",
+                "operation_id": operation_id,
+                "coordinates": dict(migration_coordinates),
+            })
+        receipt = {
+            "issue_id": migration_coordinates["issue_id"],
+            "generation": migration_coordinates["generation"],
+            "ac_digest": migration_coordinates["ac_digest"],
+            "operation_id": operation_id,
+        }
+        operation["status"] = "completed"
+        operation["receipt"] = receipt
+        state["capabilities"][capability]["status"] = "consumed"
+        state["pending"] = False
+        self._save(state)
+        return {**receipt, "replayed": replayed}
 
     def read_back(self, *, migration_coordinates):
-        if self.pending is not False:
+        state = self._load()
+        if state["pending"] is not False:
             raise PermissionError("PAT-23 import has not resumed")
         if migration_coordinates != self.migration_coordinates:
             raise PermissionError("PAT-23 read-back coordinate drift")
-        self.calls.append(("read_back", migration_coordinates))
         return {
             "issue_id": migration_coordinates["issue_id"],
             "generation": migration_coordinates["generation"],
             "ac_digest": migration_coordinates["ac_digest"],
+            "operation_id": migration_coordinates["operation_id"],
             "adrs": self.adrs,
         }
 
@@ -2582,6 +2740,7 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
         "generation": 1,
         "authority_id": "pat23-independent-migration-authority-v1",
         "ac_digest": "e" * 64,
+        "operation_id": "pat23-import-operation-0001",
     }
     path = store._path(pat10)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2612,7 +2771,8 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
     # cannot make PAT-10's final review executable while the independently
     # authorized adapter and ADR-import proofs are still absent.
     local_correction = _OfflineLocalCorrectionDouble(local_coordinates)
-    ready_local_diff = local_correction.correct(local)
+    local_receipt = local_correction.correct(local)
+    ready_local_diff = local_receipt.ready_diff_hash
     assert len(ready_local_diff) == 64
     assert local_correction.calls == [("local_correction", local_coordinates)]
     review_before = path.read_bytes()
@@ -2652,24 +2812,91 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
         store.technical_remediation_floor(pat10, "implementer", "pat10-local-route-0002")
     assert path.read_bytes() == pat10_before_follow_up
 
+    # The PAT-22 mock stages receive the ready local correction only as source
+    # material.  Their separate issue plan supplies the issue-scoped execution
+    # boundary, and only their delivery stage can mint the proof PAT-23 accepts.
+    adapter = _OfflinePat22AdapterDouble(adapter_coordinates)
+    with pytest.raises(PermissionError, match="independent PAT-22"):
+        adapter.adapt(plan=local, local_correction=local_receipt)
+    candidate = adapter.adapt(
+        plan=follow_up,
+        local_correction=local_receipt,
+    )
+    adapter_delivery = adapter.mock_deliver(candidate=candidate)
+    assert adapter.calls == [
+        ("adapt", {
+            "coordinates": adapter_coordinates,
+            "source_issue_id": "PAT-10",
+            "source_diff_hash": "a" * 64,
+        }),
+        ("mock_delivery", adapter_coordinates),
+    ]
+    assert adapter_delivery.source_issue_id == "PAT-10"
+    assert adapter_delivery.source_diff_hash == ready_local_diff
+    assert adapter_delivery.coordinates["authority_id"] != local_coordinates["authority_id"]
+
     # A provider-shaped migration is a distinct, pending PAT-23 operation.  The
     # local route is deliberately not one of its coordinates.  No workspace or
     # provider is touched: this double models the authorization/read-back proof
     # that PAT-23 must reproduce before any real Linear migration.
+    migration_state = tmp_path / "pat23-migration-double.json"
     migration = _PendingAdrMigrationDouble(
+        state_path=migration_state,
         adapter_coordinates=adapter_coordinates,
         migration_coordinates=migration_coordinates,
         adrs=(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28)),
     )
 
-    # Missing capability, expired capability, and coordinate drift all fail
-    # before either resume or read-back can have an observable effect.
+    # A raw dictionary cannot stand in for the PAT-22 delivery stage.  Proofs
+    # produced by that stage for the wrong issue/generation/diff/AC are also
+    # rejected before PAT-23 can receive a capability.
+    with pytest.raises(PermissionError, match="mock PAT-22 delivery proof"):
+        migration.issue_capability_after_adapter_delivery(
+            adapter_delivery=adapter_coordinates,
+            migration_coordinates=migration_coordinates,
+            now=100,
+            ttl=10,
+        )
+    for field, drifted_value in (
+        ("issue_id", "PAT-220"),
+        ("generation", 2),
+        ("ready_diff_hash", "9" * 64),
+        ("authority_id", "pat22-wrong-delivery-authority"),
+        ("ac_digest", "8" * 64),
+    ):
+        drifted_adapter = _OfflinePat22AdapterDouble({
+            **adapter_coordinates,
+            field: drifted_value,
+        })
+        drifted_plan = follow_up
+        if field == "issue_id":
+            drifted_plan = codex_spawn_plan(
+                "implementer", _packet(), root=tmp_path,
+                issue_id=drifted_value, escalation_state_dir=tmp_path,
+            )
+        drifted_candidate = drifted_adapter.adapt(
+            plan=drifted_plan,
+            local_correction=local_receipt,
+        )
+        drifted_delivery = drifted_adapter.mock_deliver(
+            candidate=drifted_candidate,
+        )
+        with pytest.raises(PermissionError, match="exact PAT-22 delivery proof"):
+            migration.issue_capability_after_adapter_delivery(
+                adapter_delivery=drifted_delivery,
+                migration_coordinates=migration_coordinates,
+                now=100,
+                ttl=10,
+            )
+
+    # Missing, expired, and coordinate-drifted PAT-23 capabilities fail before
+    # either resume or read-back can have an observable effect.
     with pytest.raises(PermissionError, match="fresh PAT-23 capability"):
         migration.resume(
             capability=None, migration_coordinates=migration_coordinates, now=100,
         )
     expired_capability = migration.issue_capability_after_adapter_delivery(
-        adapter_delivery=adapter_coordinates,
+        adapter_delivery=adapter_delivery,
         migration_coordinates=migration_coordinates,
         now=100,
         ttl=1,
@@ -2681,51 +2908,116 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
             now=101,
         )
     fresh_capability = migration.issue_capability_after_adapter_delivery(
-        adapter_delivery=adapter_coordinates,
+        adapter_delivery=adapter_delivery,
         migration_coordinates=migration_coordinates,
         now=101,
         ttl=10,
     )
-    drifted_coordinates = {**migration_coordinates, "generation": 2}
-    with pytest.raises(PermissionError, match="coordinate drift"):
-        migration.resume(
-            capability=fresh_capability,
-            migration_coordinates=drifted_coordinates,
-            now=102,
-        )
+    for field, drifted_value in (
+        ("generation", 2),
+        ("authority_id", "pat23-wrong-migration-authority"),
+        ("ac_digest", "7" * 64),
+        ("operation_id", "pat23-import-operation-0002"),
+    ):
+        with pytest.raises(PermissionError, match="coordinate drift"):
+            migration.resume(
+                capability=fresh_capability,
+                migration_coordinates={
+                    **migration_coordinates,
+                    field: drifted_value,
+                },
+                now=102,
+            )
     with pytest.raises(PermissionError, match="has not resumed"):
         migration.read_back(migration_coordinates=migration_coordinates)
     assert migration.pending is True
-    assert migration.calls == []
+    assert migration.effects == ()
+    assert migration.persisted_operation(
+        migration_coordinates["operation_id"],
+    ) is None
 
-    # Only the still-fresh PAT-23 capability, minted after the PAT-22 delivery
-    # prerequisite and bound to the exact PAT-23 coordinates, may be consumed.
-    migration.resume(
+    # Persist intent while the capability is fresh, then crash before the
+    # simulated provider effect.  The capability is bound, not consumed, and a
+    # newly loaded double can recover the exact operation identity.
+    with pytest.raises(OSError, match="injected crash"):
+        migration.resume(
+            capability=fresh_capability,
+            migration_coordinates=migration_coordinates,
+            now=102,
+            crash_after_intent=True,
+        )
+    crashed_state = json.loads(migration_state.read_text(encoding="utf-8"))
+    operation_id = migration_coordinates["operation_id"]
+    assert crashed_state["pending"] is True
+    assert crashed_state["effects"] == []
+    assert crashed_state["capabilities"][fresh_capability]["status"] == "bound"
+    assert crashed_state["operations"][operation_id]["status"] == "intent"
+
+    recovered_migration = _PendingAdrMigrationDouble(
+        state_path=migration_state,
+        adapter_coordinates=adapter_coordinates,
+        migration_coordinates=migration_coordinates,
+        adrs=(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28)),
+    )
+    recovery_receipt = recovered_migration.resume(
         capability=fresh_capability,
         migration_coordinates=migration_coordinates,
         now=102,
     )
-    read_back = migration.read_back(migration_coordinates=migration_coordinates)
+    assert recovery_receipt == {
+        "issue_id": "PAT-23",
+        "generation": 1,
+        "ac_digest": "e" * 64,
+        "operation_id": operation_id,
+        "replayed": True,
+    }
+    assert recovered_migration.effects == ({
+        "kind": "resume",
+        "operation_id": operation_id,
+        "coordinates": migration_coordinates,
+    },)
+    completed_state = json.loads(migration_state.read_text(encoding="utf-8"))
+    assert completed_state["capabilities"][fresh_capability]["status"] == "consumed"
+    assert completed_state["operations"][operation_id]["status"] == "completed"
+
+    read_back = recovered_migration.read_back(
+        migration_coordinates=migration_coordinates,
+    )
     assert read_back == {
         "issue_id": "PAT-23",
         "generation": 1,
         "ac_digest": "e" * 64,
+        "operation_id": operation_id,
         "adrs": tuple(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28)),
     }
-    assert migration.calls == [
-        ("resume", migration_coordinates),
-        ("read_back", migration_coordinates),
-    ]
-    with pytest.raises(PermissionError, match="already consumed"):
-        migration.resume(
-            capability=fresh_capability,
+
+    # Exact replay returns the same durable receipt, even after expiry, and
+    # never appends a second effect.  A distinct capability cannot steal the
+    # completed operation identity.
+    assert recovered_migration.resume(
+        capability=fresh_capability,
+        migration_coordinates=migration_coordinates,
+        now=1_000,
+    ) == recovery_receipt
+    conflicting_capability = (
+        recovered_migration.issue_capability_after_adapter_delivery(
+            adapter_delivery=adapter_delivery,
+            migration_coordinates=migration_coordinates,
+            now=103,
+            ttl=10,
+        )
+    )
+    with pytest.raises(PermissionError, match="operation identity conflict"):
+        recovered_migration.resume(
+            capability=conflicting_capability,
             migration_coordinates=migration_coordinates,
             now=103,
         )
-    assert migration.calls == [
-        ("resume", migration_coordinates),
-        ("read_back", migration_coordinates),
-    ]
+    assert recovered_migration.effects == ({
+        "kind": "resume",
+        "operation_id": operation_id,
+        "coordinates": migration_coordinates,
+    },)
 
 
 def test_technical_resume_is_atomic_and_idempotent_under_concurrency(tmp_path):
