@@ -403,14 +403,20 @@ generation `1`, ready adapter-diff hash, independent delivery authority, and AC 
 and PAT-23 generation `1`, independent migration authority, and AC digest. It first
 proves the actual PAT-10 ledger path (`resume-technical` → atomic local-route claim →
 Codex `local_diagnostic` with no spawn), then keeps the ready local diff unable to claim
-the PAT-10 final review because PAT-22 delivery and PAT-23 read-back are absent. Only a
-stateful provider double may resume the separately pending PAT-23 import with the exact
-PAT-22/PAT-23 coordinates and return the fixed 27-ADR read-back. The double records
-only `resume` then `read_back`; it receives neither the PAT-10 receipt nor provider
-authority from the routing plan.
+the PAT-10 final review because PAT-22 delivery and PAT-23 read-back are absent. The
+stateful provider double refuses a missing capability, an expired capability, and a
+capability presented with drifted PAT-23 coordinates; every refusal leaves the import
+pending and records no `resume` or `read_back` effect. Only a still-fresh, single-use
+capability minted by the double after the exact PAT-22 delivery prerequisite and bound
+to the exact PAT-23 coordinates may resume the import and return the fixed 27-ADR
+read-back. Successful replay of that capability is refused after consumption. The
+double records only `resume` then `read_back`; it receives neither the PAT-10 receipt
+nor provider authority from the routing plan.
 
 This is deliberately an offline provider-double proof: it mutates neither a workspace
 nor Linear and does not assert that a real migration or final PAT-10 review happened.
+Its opaque in-memory capability and all authority IDs are fixture mechanisms, not live
+Linear grants or evidence that PAT-22/PAT-23 is currently authorized or delivered.
 Those remain PAT-23's independently authorized provider/read-back evidence and PAT-10's
 later exact-diff review/CI/human gates, respectively. Existing exact-diff and AC guards remain separate:
 `test_codex_recovered_reviewer_refuses_a_changed_git_diff` and

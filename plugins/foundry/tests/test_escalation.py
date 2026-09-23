@@ -2497,8 +2497,10 @@ class _PendingAdrMigrationDouble:
 
     The routing ledger does not perform migrations.  This double makes that
     boundary executable in the recovery proof: it will resume a pending import
-    only when the independent PAT-22 delivery and PAT-23 authorization carry
-    the exact fixture coordinates, then exposes a deterministic read-back.
+    only after the independent PAT-22 delivery fixture mints a fresh, bounded
+    PAT-23 capability for the exact migration coordinates, then exposes a
+    deterministic read-back.  The in-memory capability models the boundary; it
+    is not a real Linear authorization.
     """
 
     def __init__(self, *, adapter_coordinates, migration_coordinates, adrs):
@@ -2507,17 +2509,46 @@ class _PendingAdrMigrationDouble:
         self.adrs = tuple(adrs)
         self.calls = []
         self.pending = True
+        self._capabilities = {}
 
-    def resume(self, *, adapter_coordinates, migration_coordinates):
-        assert self.pending is True
-        assert adapter_coordinates == self.adapter_coordinates
-        assert migration_coordinates == self.migration_coordinates
-        self.calls.append(("resume", adapter_coordinates, migration_coordinates))
+    def issue_capability_after_adapter_delivery(
+        self, *, adapter_delivery, migration_coordinates, now, ttl,
+    ):
+        if adapter_delivery != self.adapter_coordinates:
+            raise PermissionError("exact PAT-22 delivery proof required")
+        if migration_coordinates != self.migration_coordinates:
+            raise PermissionError("exact PAT-23 coordinates required")
+        if not isinstance(ttl, int) or ttl <= 0:
+            raise PermissionError("positive PAT-23 capability lifetime required")
+        capability = object()
+        self._capabilities[capability] = {
+            "coordinates": dict(migration_coordinates),
+            "expires_at": now + ttl,
+            "consumed": False,
+        }
+        return capability
+
+    def resume(self, *, capability, migration_coordinates, now):
+        grant = self._capabilities.get(capability)
+        if grant is None:
+            raise PermissionError("fresh PAT-23 capability required")
+        if grant["consumed"]:
+            raise PermissionError("PAT-23 capability already consumed")
+        if now >= grant["expires_at"]:
+            raise PermissionError("PAT-23 capability expired")
+        if migration_coordinates != grant["coordinates"]:
+            raise PermissionError("PAT-23 capability coordinate drift")
+        if self.pending is not True:
+            raise PermissionError("PAT-23 import is not pending")
+        grant["consumed"] = True
+        self.calls.append(("resume", migration_coordinates))
         self.pending = False
 
     def read_back(self, *, migration_coordinates):
-        assert self.pending is False
-        assert migration_coordinates == self.migration_coordinates
+        if self.pending is not False:
+            raise PermissionError("PAT-23 import has not resumed")
+        if migration_coordinates != self.migration_coordinates:
+            raise PermissionError("PAT-23 read-back coordinate drift")
         self.calls.append(("read_back", migration_coordinates))
         return {
             "issue_id": migration_coordinates["issue_id"],
@@ -2623,16 +2654,56 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
 
     # A provider-shaped migration is a distinct, pending PAT-23 operation.  The
     # local route is deliberately not one of its coordinates.  No workspace or
-    # provider is touched: this double is the explicit authorization/read-back
-    # proof that PAT-23 must reproduce before any real Linear migration.
+    # provider is touched: this double models the authorization/read-back proof
+    # that PAT-23 must reproduce before any real Linear migration.
     migration = _PendingAdrMigrationDouble(
         adapter_coordinates=adapter_coordinates,
         migration_coordinates=migration_coordinates,
         adrs=(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28)),
     )
-    migration.resume(
-        adapter_coordinates=adapter_coordinates,
+
+    # Missing capability, expired capability, and coordinate drift all fail
+    # before either resume or read-back can have an observable effect.
+    with pytest.raises(PermissionError, match="fresh PAT-23 capability"):
+        migration.resume(
+            capability=None, migration_coordinates=migration_coordinates, now=100,
+        )
+    expired_capability = migration.issue_capability_after_adapter_delivery(
+        adapter_delivery=adapter_coordinates,
         migration_coordinates=migration_coordinates,
+        now=100,
+        ttl=1,
+    )
+    with pytest.raises(PermissionError, match="capability expired"):
+        migration.resume(
+            capability=expired_capability,
+            migration_coordinates=migration_coordinates,
+            now=101,
+        )
+    fresh_capability = migration.issue_capability_after_adapter_delivery(
+        adapter_delivery=adapter_coordinates,
+        migration_coordinates=migration_coordinates,
+        now=101,
+        ttl=10,
+    )
+    drifted_coordinates = {**migration_coordinates, "generation": 2}
+    with pytest.raises(PermissionError, match="coordinate drift"):
+        migration.resume(
+            capability=fresh_capability,
+            migration_coordinates=drifted_coordinates,
+            now=102,
+        )
+    with pytest.raises(PermissionError, match="has not resumed"):
+        migration.read_back(migration_coordinates=migration_coordinates)
+    assert migration.pending is True
+    assert migration.calls == []
+
+    # Only the still-fresh PAT-23 capability, minted after the PAT-22 delivery
+    # prerequisite and bound to the exact PAT-23 coordinates, may be consumed.
+    migration.resume(
+        capability=fresh_capability,
+        migration_coordinates=migration_coordinates,
+        now=102,
     )
     read_back = migration.read_back(migration_coordinates=migration_coordinates)
     assert read_back == {
@@ -2642,7 +2713,17 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
         "adrs": tuple(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28)),
     }
     assert migration.calls == [
-        ("resume", adapter_coordinates, migration_coordinates),
+        ("resume", migration_coordinates),
+        ("read_back", migration_coordinates),
+    ]
+    with pytest.raises(PermissionError, match="already consumed"):
+        migration.resume(
+            capability=fresh_capability,
+            migration_coordinates=migration_coordinates,
+            now=103,
+        )
+    assert migration.calls == [
+        ("resume", migration_coordinates),
         ("read_back", migration_coordinates),
     ]
 
