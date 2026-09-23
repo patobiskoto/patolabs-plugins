@@ -415,16 +415,17 @@ generation, diff, authority, or AC digest are refused. Thus PAT-23 receives the 
 of the adapter/delivery path rather than a predeclared delivery dictionary, while the
 PAT-10 route ID and authority never cross that boundary.
 
-The PAT-23 double persists its fixture capability and idempotency state under
-`tmp_path`. Missing and expired capabilities, or capabilities presented with drifted
-generation, authority, AC digest, or operation ID, leave the import pending with zero
-effects. On the positive path it first persists a capability-bound intent for the stable
-operation ID. The test injects a crash at exactly that point, proves that no effect
-exists and the capability is not yet consumed, then reloads a new double from disk.
-Exact replay recovers the intent, records one simulated `resume` effect, marks the
-capability consumed with the completion receipt, and returns the fixed 27-ADR read-back.
-Later exact replays return that same receipt even after capability expiry; a different
-capability cannot claim the operation ID, and the effect count remains one.
+The PAT-23 stage reuses PAT-24's `OfflineProviderHandoff`, with provider state and
+local ledger persisted in separate files under `tmp_path`. Missing, expired, or
+drifted fixture capabilities yield zero provider effects and zero receipts. A crash
+before the first effect leaves only a local intent; replay after capacity expiry is
+refused, so that intent cannot create a first provider effect. In a separate positive
+operation, the test crashes after the provider effect but before the local receipt:
+the new double instance observes one durable provider effect and zero local receipts.
+Exact replay reconstructs one receipt without repeating the effect, even after
+capacity expiry. A different operation ID cannot claim the same provider-effect
+scope. The 27-ADR read-back is an explicitly simulated fixture projection after this
+receipt, not evidence of a Linear import; PAT-23 must perform the real read-back.
 
 This is deliberately an offline provider-double proof: it mutates neither a workspace
 nor Linear and does not assert that a real migration or final PAT-10 review happened.
