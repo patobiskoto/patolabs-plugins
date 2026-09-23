@@ -324,6 +324,67 @@ event. A pending route, a different role or route identity, a stale generation, 
 distinct hash, or a coordinate mismatch is refused without a claim or binding. This
 never authorizes a provider invocation or campaign effect.
 
+### PAT-10 recovery: separate authorized work from the final cutover
+
+PAT-10 is a final Linear cutover and acceptance issue.  A consumed technical-local
+route on PAT-10 is not a deadlock-breaking provider capability: it remains a local
+diagnostic receipt and reports `provider_effect_allowed=false` and
+`fresh_review_required=true`.  In particular, it cannot be reinterpreted as authority
+to implement the Linear adapter, import ADR data, run a migration, or resume a campaign.
+
+The recovery choice is to separate those prerequisites into independently authorized
+issues, then keep PAT-10 as the final cutover/acceptance issue.  This follows the
+issue-scoped state machine and FOUNDRY-ADR-0001's normal gated pipeline, preserves
+FOUNDRY-ADR-0013's bounded coordinator authority, and respects
+FOUNDRY-ADR-0014: technical exhaustion is `technical_blocked`, not a fabricated human
+verdict.  It also preserves FOUNDRY-ADR-0026: the adapter and the selective import are
+pre-cutover work; PAT-10 alone validates and publishes the final repository binding
+once its acceptance criteria are independently proven. "Selective" concerns ticket
+history, not the required 27-ADR reference corpus. A local or registry binding that
+already resolves to Linear is evidence to reconcile, not proof of the final cutover.
+
+Do not add a "fresh capability" transition to PAT-10.  Such a transition would turn a
+technical receipt into new provider authority and would bypass the normal per-issue
+authorization, review, CI, and human gates.  It is therefore not an implementation
+option without a new accepted ADR.
+
+Operator recipe (the coordinator creates and authorizes the follow-up issues; this
+recipe performs no tracker/provider write itself):
+
+1. Preserve PAT-10's halted ledger and its local route/audit as evidence.  If a local
+   diagnostic is still needed, replay only the identical `resume-technical` inputs and
+   route ID for its current halt generation; a stale generation or a new route ID must
+   remain refused.
+2. Create one bounded adapter implementation issue whose acceptance criteria prove the
+   Linear provider surface independently.  Move only the reviewable adapter code from
+   the separate PAT-10 checkout into that issue's worktree; do not copy a PAT-10
+   technical receipt or claim into it.  Its ordinary implementation, review, CI, and
+   merge flow starts under that new issue's authority.
+3. Create one bounded ADR-import issue, dependent on the merged adapter.
+   Its acceptance criteria name the 27 required ADRs, a stable source snapshot/digest,
+   idempotent import behavior, and Linear read-back evidence. Before each Linear write,
+   this issue must have its own current authorization and project/operation preflight;
+   a PAT-10 technical receipt is not such authorization. It must not publish PAT-10's
+   final binding, write both trackers, or migrate terminal ticket history.
+4. After both follow-ups have independent review and delivery proof, re-read PAT-10's
+   AC and current binding.  Obtain a fresh PAT-10 review claim for the exact current
+   diff; changed or stale diffs are refused, and a replay only recovers the same claim.
+   Run PAT-10's normal final cutover/acceptance gates then.
+
+What remains is deliberately explicit: the coordinator must create/authorize the two
+follow-up issues, the adapter issue must deliver its provider proof, and the import
+issue must migrate and read back the 27 ADRs.  PAT-10 remains open until those proofs
+exist and its own final cutover AC pass.  This recovery guidance does not close PAT-10.
+
+The offline route-isolation recipe is `test_pat10_recovery_isolated_from_separately_authorized_follow_up`
+in `tests/test_escalation.py`. Existing exact-diff and AC guards remain separate:
+`test_codex_recovered_reviewer_refuses_a_changed_git_diff` and
+`test_structured_ac_proof_is_exact_redacted_and_fails_closed_when_stale`.
+`test_technical_resume_is_atomic_and_idempotent_under_concurrency` covers replay.
+These doubles prove routing safety only; they do not claim a live Linear ADR import or
+the final PAT-10 review. The import issue must bring its own provider-double and
+read-back recipe before any real workspace migration.
+
 ### Audited human resume
 
 When `escalation show` reports `human_required=true`, only a human may lift that exact

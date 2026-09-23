@@ -2476,6 +2476,58 @@ def test_f106_technical_remediation_leaves_f89_human_gate_byte_identical(tmp_pat
     assert f89["technical_blocked"] is False
 
 
+def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
+    """A local PAT-10 receipt cannot finance a normal route on another issue."""
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    pat10 = "PAT-10"
+    path = store._path(pat10)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(pat10)), encoding="utf-8")
+    store.reclassify_legacy_terminal(pat10, 1)
+    store.resume_technical_remediation(pat10, 1, "a" * 64)
+    route_id = "pat10-local-route-0001"
+    claimed = store.claim_technical_remediation_route(
+        pat10, "implementer", 1, route_id,
+    )
+    assert claimed["provider_effect_allowed"] is False
+    assert claimed["campaign_restart_allowed"] is False
+    assert store.status(pat10)["human_required"] is False
+
+    local = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=pat10,
+        escalation_state_dir=tmp_path, technical_remediation=True,
+        technical_remediation_id=route_id,
+    )
+    assert local["mode"] == "local_diagnostic"
+    assert local["spawn"] is None
+    assert local["escalation"]["provider_effect_allowed"] is False
+    assert local["escalation"]["fresh_review_required"] is True
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=pat10,
+            escalation_state_dir=tmp_path,
+        )
+
+    pat10_before_follow_up = path.read_bytes()
+    follow_up = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id="PAT-22",
+        escalation_state_dir=tmp_path,
+    )
+    assert follow_up["mode"] == "subagent"
+    assert follow_up["spawn"] is not None
+    assert follow_up["route"]["selected_tier"] == "balanced"
+    assert path.read_bytes() == pat10_before_follow_up
+
+    with pytest.raises(RoutingConfigError, match="aucune remédiation"):
+        store.claim_technical_remediation_route(
+            "PAT-22", "implementer", 1, route_id,
+        )
+    with pytest.raises(EscalationTechnicalBlockedError, match="identifiant différent"):
+        store.technical_remediation_floor(pat10, "implementer", "pat10-local-route-0002")
+    assert path.read_bytes() == pat10_before_follow_up
+
+
 def test_technical_resume_is_atomic_and_idempotent_under_concurrency(tmp_path):
     store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
     issue = "FOUNDRY-106"
