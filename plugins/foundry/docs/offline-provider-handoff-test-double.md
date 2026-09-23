@@ -7,11 +7,15 @@ durable JSON file. Tests supply both paths under pytest's `tmp_path`; the double
 does not read or mutate a real workspace, tracker, provider, credential, or
 campaign.
 
-The stable effect identity binds issue ID, operation ID, diff SHA-256, acceptance
-criteria SHA-256, generation, and the fixture authority ID. A first effect
-revalidates the offline capacity immediately before persistence. Missing,
-expired, consumed, or context-drifted capacity fails closed. A durable local
-intent does not extend capacity lifetime.
+The exact replay identity binds issue ID, operation ID, diff SHA-256, acceptance
+criteria SHA-256, generation, and the fixture authority ID. A separate stable
+effect scope binds the same values except `operation_id`. Once an effect is
+durable, another operation ID cannot repeat that scope, even with its own fresh,
+matching fixture capability; the second operation remains an intent with no
+receipt and its capability is not consumed. A genuinely different scope remains
+a distinct offline operation. A first effect revalidates the offline capacity
+immediately before persistence. Missing, expired, consumed, or context-drifted
+capacity fails closed. A durable local intent does not extend capacity lifetime.
 
 The two explicit crash points are `before_effect` and
 `after_effect_before_receipt`. After the first crash, a retry still needs live
@@ -19,7 +23,9 @@ capacity because no provider effect exists. After the second crash, an exact
 retry may read the provider's durable idempotency result and reconstruct one
 local receipt even if the capacity has since expired; it never performs a
 second effect. Any drift in issue, operation, diff, acceptance criteria,
-generation, fixture authority, or capability identity is rejected.
+generation, fixture authority, or capability identity is rejected. A changed
+operation ID is specifically rejected when every stable effect-scope coordinate
+still matches the already committed effect.
 
 Run the focused recipe from the repository root:
 

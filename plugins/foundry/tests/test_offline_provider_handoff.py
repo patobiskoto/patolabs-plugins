@@ -202,7 +202,9 @@ def test_durable_effect_replay_fails_closed_on_any_identity_drift(
         )
 
     reloaded = handoff(tmp_path, name)
-    with pytest.raises(HandoffRejected, match="conflict|context drift|consumed"):
+    with pytest.raises(
+        HandoffRejected, match="conflict|context drift|consumed|scope already committed"
+    ):
         reloaded.execute(replace(exact, **{field: value}), capability=capability, now=20)
 
     assert reloaded.provider.snapshot()["effect_count"] == 1
@@ -228,3 +230,54 @@ def test_replay_requires_the_same_fixture_capability_identity(tmp_path):
 
     assert reloaded.provider.snapshot()["effect_count"] == 1
     assert reloaded.ledger.snapshot()["receipt_count"] == 0
+
+
+def test_new_operation_and_matching_capability_cannot_repeat_committed_scope(tmp_path):
+    operation_a = coordinates()
+    operation_b = replace(
+        operation_a, operation_id="pat23-import-operation-0002"
+    )
+    double = handoff(tmp_path, "same-effect-scope")
+    capability_a = double.issue_fixture_capability(operation_a, now=10, ttl=20)
+    receipt_a = double.execute(operation_a, capability=capability_a, now=11)
+    capability_b = double.issue_fixture_capability(operation_b, now=12, ttl=20)
+
+    assert operation_a.effect_scope() == operation_b.effect_scope()
+    assert operation_a.effect_scope_sha256 == operation_b.effect_scope_sha256
+    assert capability_a.capability_id != capability_b.capability_id
+    assert double.provider.snapshot()["capabilities"][capability_b.capability_id][
+        "coordinates"
+    ] == operation_b.frozen()
+
+    with pytest.raises(HandoffRejected, match="scope already committed"):
+        double.execute(operation_b, capability=capability_b, now=13)
+
+    provider = double.provider.snapshot()
+    ledger = double.ledger.snapshot()
+    assert provider["effect_count"] == 1
+    assert list(provider["effects"]) == [operation_a.operation_id]
+    assert provider["capabilities"][capability_b.capability_id]["status"] == "issued"
+    assert ledger["receipt_count"] == 1
+    assert ledger["operations"][operation_a.operation_id]["receipt"] == receipt_a
+    assert ledger["operations"][operation_b.operation_id]["status"] == "intent"
+    assert ledger["operations"][operation_b.operation_id]["receipt"] is None
+
+
+def test_new_operation_with_a_different_effect_scope_is_distinct(tmp_path):
+    operation_a = coordinates()
+    operation_b = replace(
+        operation_a,
+        operation_id="pat23-import-operation-0002",
+        diff_sha256="c" * 64,
+    )
+    double = handoff(tmp_path, "different-effect-scope")
+    capability_a = double.issue_fixture_capability(operation_a, now=10, ttl=20)
+    capability_b = double.issue_fixture_capability(operation_b, now=10, ttl=20)
+
+    receipt_a = double.execute(operation_a, capability=capability_a, now=11)
+    receipt_b = double.execute(operation_b, capability=capability_b, now=12)
+
+    assert operation_a.effect_scope_sha256 != operation_b.effect_scope_sha256
+    assert receipt_a["provider_effect_id"] != receipt_b["provider_effect_id"]
+    assert double.provider.snapshot()["effect_count"] == 2
+    assert double.ledger.snapshot()["receipt_count"] == 2

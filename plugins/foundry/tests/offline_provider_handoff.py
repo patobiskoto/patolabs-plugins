@@ -58,10 +58,27 @@ class HandoffCoordinates:
     def frozen(self) -> dict[str, Any]:
         return asdict(self)
 
+    def effect_scope(self) -> dict[str, Any]:
+        """Return the stable provider-effect scope, independent of retry IDs."""
+        return {
+            "issue_id": self.issue_id,
+            "diff_sha256": self.diff_sha256,
+            "ac_sha256": self.ac_sha256,
+            "generation": self.generation,
+            "authority_id": self.authority_id,
+        }
+
     @property
     def identity_sha256(self) -> str:
         encoded = json.dumps(
             self.frozen(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @property
+    def effect_scope_sha256(self) -> str:
+        encoded = json.dumps(
+            self.effect_scope(), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
@@ -100,7 +117,7 @@ def _read(path: Path) -> dict[str, Any]:
 class DurableOfflineProvider:
     """Provider-side idempotency and capacity state, isolated from local receipts."""
 
-    _SCHEMA = "foundry-offline-provider.v1"
+    _SCHEMA = "foundry-offline-provider.v2"
 
     def __init__(self, state_path: Path) -> None:
         self.state_path = Path(state_path)
@@ -115,6 +132,7 @@ class DurableOfflineProvider:
                     "next_capability": 1,
                     "capabilities": {},
                     "effects": {},
+                    "effect_scopes": {},
                     "effect_count": 0,
                 },
             )
@@ -126,6 +144,7 @@ class DurableOfflineProvider:
             or state.get("fixture_authority") is not False
             or not isinstance(state.get("capabilities"), dict)
             or not isinstance(state.get("effects"), dict)
+            or not isinstance(state.get("effect_scopes"), dict)
             or not isinstance(state.get("effect_count"), int)
         ):
             raise HandoffRejected("invalid offline provider state")
@@ -182,6 +201,18 @@ class DurableOfflineProvider:
             self._require_exact_effect(existing, coordinates, capability)
             return dict(existing["result"]), True
 
+        scope_claim = state["effect_scopes"].get(coordinates.effect_scope_sha256)
+        if scope_claim is not None:
+            if (
+                not isinstance(scope_claim, dict)
+                or scope_claim.get("effect_scope") != coordinates.effect_scope()
+                or not isinstance(scope_claim.get("operation_id"), str)
+            ):
+                raise HandoffRejected("invalid provider effect scope state")
+            raise HandoffRejected(
+                "provider effect scope already committed by another operation"
+            )
+
         grant = self._require_first_effect_capacity(state, coordinates, capability, now)
         if crash_before_effect:
             raise InjectedHandoffCrash("injected crash before provider effect")
@@ -191,14 +222,21 @@ class DurableOfflineProvider:
         ).hexdigest()
         result = {
             "effect_id": effect_id,
+            "effect_scope_sha256": coordinates.effect_scope_sha256,
             "identity_sha256": coordinates.identity_sha256,
             "operation_id": coordinates.operation_id,
         }
         state["effects"][coordinates.operation_id] = {
             "capability_id": capability.capability_id,
             "coordinates": coordinates.frozen(),
+            "effect_scope": coordinates.effect_scope(),
+            "effect_scope_sha256": coordinates.effect_scope_sha256,
             "identity_sha256": coordinates.identity_sha256,
             "result": result,
+        }
+        state["effect_scopes"][coordinates.effect_scope_sha256] = {
+            "effect_scope": coordinates.effect_scope(),
+            "operation_id": coordinates.operation_id,
         }
         grant["status"] = "consumed"
         grant["consumed_by"] = coordinates.operation_id
@@ -330,6 +368,8 @@ class DurableLocalLedger:
             raise HandoffRejected("invalid local operation state")
         if (
             provider_result.get("identity_sha256") != coordinates.identity_sha256
+            or provider_result.get("effect_scope_sha256")
+            != coordinates.effect_scope_sha256
             or provider_result.get("operation_id") != coordinates.operation_id
         ):
             raise HandoffRejected("provider result identity conflict")
@@ -339,6 +379,7 @@ class DurableLocalLedger:
             "coordinates": coordinates.frozen(),
             "identity_sha256": coordinates.identity_sha256,
             "provider_effect_id": provider_result["effect_id"],
+            "provider_effect_scope_sha256": coordinates.effect_scope_sha256,
             "provider_effect_replayed": provider_replayed,
         }
         operation["status"] = "completed"
