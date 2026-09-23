@@ -2694,12 +2694,14 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
     )
     adrs = tuple(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28))
 
-    def fixture_capacity_from_delivery(proof, *, now, ttl, target=coordinates):
+    def fixture_capacity_from_delivery(
+        proof, *, now, ttl, target=coordinates, handoff=migration,
+    ):
         if not isinstance(proof, _OfflinePat22DeliveryProof):
             raise PermissionError("mock PAT-22 delivery proof required")
         if proof.coordinates != adapter_coordinates:
             raise PermissionError("exact PAT-22 delivery proof required")
-        return migration.issue_fixture_capability(target, now=now, ttl=ttl)
+        return handoff.issue_fixture_capability(target, now=now, ttl=ttl)
 
     # PAT-22's separate delivery proof is required before even the offline
     # fixture can issue capacity. This never represents a real Linear grant.
@@ -2785,8 +2787,9 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
         "provider_state_path": post_effect.provider.state_path,
         "local_ledger_path": post_effect.ledger.state_path,
     }
-    post_effect_capacity = post_effect.issue_fixture_capability(
-        post_effect_coordinates, now=112, ttl=10,
+    post_effect_capacity = fixture_capacity_from_delivery(
+        adapter_delivery, now=112, ttl=10,
+        target=post_effect_coordinates, handoff=post_effect,
     )
     with pytest.raises(InjectedHandoffCrash, match="after provider effect"):
         post_effect.execute(
