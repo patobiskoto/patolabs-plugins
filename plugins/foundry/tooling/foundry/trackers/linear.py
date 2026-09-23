@@ -135,7 +135,7 @@ query FoundryLinearTeamGitAutomationStates($id: String!) {
 
 _GIT_AUTOMATION_EVENTS = frozenset({"draft", "merge", "mergeable", "review", "start"})
 _WORKFLOW_STATE_TYPES = frozenset(
-    {"backlog", "triage", "unstarted", "started", "completed", "canceled"}
+    {"backlog", "triage", "unstarted", "started", "completed", "canceled", "duplicate"}
 )
 
 class LinearTrackerError(RuntimeError):
@@ -426,13 +426,15 @@ class LinearTracker(Tracker):
             state = automation.get("state")
             if (not isinstance(automation.get("id"), str)
                     or event not in _GIT_AUTOMATION_EVENTS
-                    or not isinstance(state, dict)
-                    or not isinstance(state.get("id"), str)
-                    or state.get("type") not in _WORKFLOW_STATE_TYPES):
+                    or (state is not None and (
+                        not isinstance(state, dict)
+                        or not isinstance(state.get("id"), str)
+                        or state.get("type") not in _WORKFLOW_STATE_TYPES
+                    ))):
                 raise LinearTrackerError(
                     "team.git-automation-states", None, "invalid_response",
                 )
-            if event == "merge" and state["type"] == "completed":
+            if event == "merge" and state is not None and state["type"] == "completed":
                 raise TrackerConflictError(
                     "Linear Git automation unsafe: merge maps to completed state",
                 )

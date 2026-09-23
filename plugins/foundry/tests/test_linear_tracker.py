@@ -627,6 +627,33 @@ def test_linear_merge_effect_preflight_allows_safe_team_automation(tracker):
     assert wire.calls[-1][1] == {"id": "team-uuid"}
 
 
+def test_linear_merge_effect_preflight_allows_merge_no_action(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection([
+        {"id": "automation-merge-no-action", "event": "merge", "state": None},
+    ])
+    instance._activate(PROJECT)
+    merge_calls = []
+
+    write.preflight_merge_effect(instance)
+    merge_calls.append("github-merge")
+
+    assert merge_calls == ["github-merge"]
+
+
+def test_linear_merge_effect_preflight_allows_duplicate_workflow_state(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection([
+        {
+            "id": "automation-merge-duplicate", "event": "merge",
+            "state": {"id": "duplicate-state", "type": "duplicate"},
+        },
+    ])
+    instance._activate(PROJECT)
+
+    assert instance.preflight_merge_effect() is None
+
+
 def test_linear_merge_effect_preflight_refuses_completed_merge_automation(tracker):
     instance, wire = tracker
     wire.git_automation_states = connection([

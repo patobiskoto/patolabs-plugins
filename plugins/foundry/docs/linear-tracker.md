@@ -165,7 +165,9 @@ the active bound team's `gitAutomationStates`.  A `merge` mapping to any `comple
 workflow state, an unavailable/malformed response, or a response requiring another
 page refuses the merge before GitHub is called.  This is a read-only preflight; it does
 not change Linear configuration and does not claim an atomic compare-and-swap over it.
-The existing `start` and `review` automations are not prohibited by this check.
+An automation with `state: null` is a valid no-action rule.  The existing `start` and
+`review` automations, and a `merge` mapping to Linear's distinct `duplicate` state, are
+not prohibited by this check.
 
 For a Foundry-managed Linear project, keep the team `merge -> Done` automation
 disabled.  Foundry alone projects `done`, and only after its exact merged PR receipt,
