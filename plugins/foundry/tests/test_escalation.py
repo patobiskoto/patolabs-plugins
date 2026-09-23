@@ -2476,18 +2476,92 @@ def test_f106_technical_remediation_leaves_f89_human_gate_byte_identical(tmp_pat
     assert f89["technical_blocked"] is False
 
 
+class _OfflineLocalCorrectionDouble:
+    """Produces a ready local diff only from the no-provider route envelope."""
+
+    def __init__(self, coordinates):
+        self.coordinates = coordinates
+        self.calls = []
+
+    def correct(self, plan):
+        assert plan["mode"] == "local_diagnostic"
+        assert plan["spawn"] is None
+        assert plan["escalation"]["provider_effect_allowed"] is False
+        assert plan["escalation"]["technical_remediation_claimed"] is True
+        self.calls.append(("local_correction", self.coordinates))
+        return self.coordinates["ready_diff_hash"]
+
+
+class _PendingAdrMigrationDouble:
+    """Offline Linear-shaped double for the separately-authorized PAT-23 handoff.
+
+    The routing ledger does not perform migrations.  This double makes that
+    boundary executable in the recovery proof: it will resume a pending import
+    only when the independent PAT-22 delivery and PAT-23 authorization carry
+    the exact fixture coordinates, then exposes a deterministic read-back.
+    """
+
+    def __init__(self, *, adapter_coordinates, migration_coordinates, adrs):
+        self.adapter_coordinates = adapter_coordinates
+        self.migration_coordinates = migration_coordinates
+        self.adrs = tuple(adrs)
+        self.calls = []
+        self.pending = True
+
+    def resume(self, *, adapter_coordinates, migration_coordinates):
+        assert self.pending is True
+        assert adapter_coordinates == self.adapter_coordinates
+        assert migration_coordinates == self.migration_coordinates
+        self.calls.append(("resume", adapter_coordinates, migration_coordinates))
+        self.pending = False
+
+    def read_back(self, *, migration_coordinates):
+        assert self.pending is False
+        assert migration_coordinates == self.migration_coordinates
+        self.calls.append(("read_back", migration_coordinates))
+        return {
+            "issue_id": migration_coordinates["issue_id"],
+            "generation": migration_coordinates["generation"],
+            "ac_digest": migration_coordinates["ac_digest"],
+            "adrs": self.adrs,
+        }
+
+
 def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
-    """A local PAT-10 receipt cannot finance a normal route on another issue."""
+    """Prove PAT-10 local recovery cannot authorize PAT-22/PAT-23 effects."""
     store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
     pat10 = "PAT-10"
+    local_coordinates = {
+        "issue_id": pat10,
+        "halt_generation": 1,
+        "route_id": "pat10-local-route-0001",
+        "authority_id": "pat10-local-route-0001",
+        "ready_diff_hash": "a" * 64,
+        "ac_digest": "b" * 64,
+    }
+    adapter_coordinates = {
+        "issue_id": "PAT-22",
+        "generation": 1,
+        "ready_diff_hash": "c" * 64,
+        "authority_id": "pat22-independent-delivery-authority-v1",
+        "ac_digest": "d" * 64,
+    }
+    migration_coordinates = {
+        "issue_id": "PAT-23",
+        "generation": 1,
+        "authority_id": "pat23-independent-migration-authority-v1",
+        "ac_digest": "e" * 64,
+    }
     path = store._path(pat10)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_f106_legacy_ledger(pat10)), encoding="utf-8")
-    store.reclassify_legacy_terminal(pat10, 1)
-    store.resume_technical_remediation(pat10, 1, "a" * 64)
-    route_id = "pat10-local-route-0001"
+    store.reclassify_legacy_terminal(pat10, local_coordinates["halt_generation"])
+    store.resume_technical_remediation(
+        pat10, local_coordinates["halt_generation"], local_coordinates["ac_digest"],
+    )
+    route_id = local_coordinates["route_id"]
     claimed = store.claim_technical_remediation_route(
-        pat10, "implementer", 1, route_id,
+        pat10, "implementer", local_coordinates["halt_generation"], route_id,
     )
     assert claimed["provider_effect_allowed"] is False
     assert claimed["campaign_restart_allowed"] is False
@@ -2502,6 +2576,26 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
     assert local["spawn"] is None
     assert local["escalation"]["provider_effect_allowed"] is False
     assert local["escalation"]["fresh_review_required"] is True
+
+    # The bounded local correction can make this exact local diff ready, but it
+    # cannot make PAT-10's final review executable while the independently
+    # authorized adapter and ADR-import proofs are still absent.
+    local_correction = _OfflineLocalCorrectionDouble(local_coordinates)
+    ready_local_diff = local_correction.correct(local)
+    assert len(ready_local_diff) == 64
+    assert local_correction.calls == [("local_correction", local_coordinates)]
+    review_before = path.read_bytes()
+
+    def final_pat10_review_claim():
+        raise EscalationTechnicalBlockedError(
+            "PAT-10 final review requires PAT-22 delivery and PAT-23 read-back."
+        )
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="PAT-22 delivery"):
+        store.claim_fresh_reviewer_authorization(
+            pat10, ready_local_diff, validated_claim=final_pat10_review_claim,
+        )
+    assert path.read_bytes() == review_before
 
     with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
         codex_spawn_plan(
@@ -2526,6 +2620,31 @@ def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
     with pytest.raises(EscalationTechnicalBlockedError, match="identifiant différent"):
         store.technical_remediation_floor(pat10, "implementer", "pat10-local-route-0002")
     assert path.read_bytes() == pat10_before_follow_up
+
+    # A provider-shaped migration is a distinct, pending PAT-23 operation.  The
+    # local route is deliberately not one of its coordinates.  No workspace or
+    # provider is touched: this double is the explicit authorization/read-back
+    # proof that PAT-23 must reproduce before any real Linear migration.
+    migration = _PendingAdrMigrationDouble(
+        adapter_coordinates=adapter_coordinates,
+        migration_coordinates=migration_coordinates,
+        adrs=(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28)),
+    )
+    migration.resume(
+        adapter_coordinates=adapter_coordinates,
+        migration_coordinates=migration_coordinates,
+    )
+    read_back = migration.read_back(migration_coordinates=migration_coordinates)
+    assert read_back == {
+        "issue_id": "PAT-23",
+        "generation": 1,
+        "ac_digest": "e" * 64,
+        "adrs": tuple(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28)),
+    }
+    assert migration.calls == [
+        ("resume", adapter_coordinates, migration_coordinates),
+        ("read_back", migration_coordinates),
+    ]
 
 
 def test_technical_resume_is_atomic_and_idempotent_under_concurrency(tmp_path):

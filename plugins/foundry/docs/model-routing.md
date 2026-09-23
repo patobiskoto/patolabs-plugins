@@ -348,6 +348,19 @@ technical receipt into new provider authority and would bypass the normal per-is
 authorization, review, CI, and human gates.  It is therefore not an implementation
 option without a new accepted ADR.
 
+Both options were evaluated against the same frozen recovery input used by the
+offline test: PAT-10 at halt generation `1`, local route
+`pat10-local-route-0001`, ready diff `a×64`, AC digest `b×64`, and authority
+`local_diagnostic` with `provider_effect_allowed=false`. The representative
+prerequisite coordinates are PAT-22 generation `1` / diff `c×64` / AC digest
+`d×64`, then PAT-23 generation `1` / AC digest `e×64`; these are fixture values,
+not claims about the live issues.
+
+| Option on those coordinates | Authority transition | Outcome |
+| --- | --- | --- |
+| Separate PAT-22 then PAT-23 | Keep the PAT-10 receipt bound to PAT-10 generation `1`, diff `a×64`, AC `b×64`; obtain distinct issue-scoped authority and proof for PAT-22 (`c×64`, `d×64`) and PAT-23 (`e×64`). | Chosen: a failed or stale PAT-10 final claim grants nothing, while the independent migration can resume and produce its own read-back. PAT-10 is reviewed only after those proofs exist. |
+| Add a fresh provider capability to PAT-10 | On that same PAT-10 generation `1`, diff `a×64`, AC `b×64`, promote `pat10-local-route-0001` from `local_diagnostic` to provider-write authority. | Rejected: this changes the receipt's authority rather than correcting the exhausted technical route. It would need a new accepted ADR and implementation before it could be considered; none is implied by PAT-21. |
+
 Operator recipe (the coordinator creates and authorizes the follow-up issues; this
 recipe performs no tracker/provider write itself):
 
@@ -376,14 +389,35 @@ remain unstarted; each needs its own authorization and gates. PAT-22 must delive
 provider proof, and PAT-23 must migrate and read back the 27 ADRs. PAT-10 remains open until those proofs
 exist and its own final cutover AC pass.  This recovery guidance does not close PAT-10.
 
-The offline route-isolation recipe is `test_pat10_recovery_isolated_from_separately_authorized_follow_up`
-in `tests/test_escalation.py`. Existing exact-diff and AC guards remain separate:
+The executable offline recovery recipe is:
+
+```bash
+cd plugins/foundry
+pytest -q \
+  tests/test_escalation.py::test_pat10_recovery_isolated_from_separately_authorized_follow_up
+```
+
+It must report `1 passed`. The fixture fixes all comparison coordinates: PAT-10 halt
+generation `1`, its local route authority/ID, ready local-diff hash, and AC digest; PAT-22
+generation `1`, ready adapter-diff hash, independent delivery authority, and AC digest;
+and PAT-23 generation `1`, independent migration authority, and AC digest. It first
+proves the actual PAT-10 ledger path (`resume-technical` → atomic local-route claim →
+Codex `local_diagnostic` with no spawn), then keeps the ready local diff unable to claim
+the PAT-10 final review because PAT-22 delivery and PAT-23 read-back are absent. Only a
+stateful provider double may resume the separately pending PAT-23 import with the exact
+PAT-22/PAT-23 coordinates and return the fixed 27-ADR read-back. The double records
+only `resume` then `read_back`; it receives neither the PAT-10 receipt nor provider
+authority from the routing plan.
+
+This is deliberately an offline provider-double proof: it mutates neither a workspace
+nor Linear and does not assert that a real migration or final PAT-10 review happened.
+Those remain PAT-23's independently authorized provider/read-back evidence and PAT-10's
+later exact-diff review/CI/human gates, respectively. Existing exact-diff and AC guards remain separate:
 `test_codex_recovered_reviewer_refuses_a_changed_git_diff` and
 `test_structured_ac_proof_is_exact_redacted_and_fails_closed_when_stale`.
 `test_technical_resume_is_atomic_and_idempotent_under_concurrency` covers replay.
-These doubles prove routing safety only; they do not claim a live Linear ADR import or
-the final PAT-10 review. The import issue must bring its own provider-double and
-read-back recipe before any real workspace migration.
+The import issue must still bring its own live authorization and provider read-back
+before any real workspace migration.
 
 ### Audited human resume
 
