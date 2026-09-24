@@ -820,12 +820,14 @@ class ReviewDeduplicator:
         diff_hash: str,
         coordinates: Mapping[str, str],
         claim_attempt_token: str,
+        head: str,
     ) -> str:
         material = json.dumps(
             {
                 "domain": "foundry-review-claim-v1",
                 "diff_hash": diff_hash,
                 "coordinates": dict(coordinates),
+                "head": head,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -847,6 +849,35 @@ class ReviewDeduplicator:
                 "sont requis."
             )
         return {"root": coordinates["root"], "base": coordinates["base"]}
+
+    @classmethod
+    def _claimed_head(cls, record: Mapping[str, object]) -> str | None:
+        """Return the immutable Git HEAD bound to a Git-native claim, if any."""
+        head = record.get("head")
+        if head is None:
+            # ``claim()`` predates Git-native claims and remains a deliberately
+            # narrow compatibility fixture. New reviewer claims use claim_git.
+            return None
+        if (not isinstance(head, str) or len(head) != 40 or
+                any(character not in "0123456789abcdef" for character in head)):
+            raise RoutingConfigError(
+                "claim Git sans HEAD immuable ; refus fermé."
+            )
+        return head
+
+    @classmethod
+    def _assert_current_head(cls, record: Mapping[str, object], root: str) -> str | None:
+        """Refuse a claim when its worktree no longer names its reviewed commit."""
+        claimed_head = cls._claimed_head(record)
+        if claimed_head is None:
+            return None
+        current_head = git_head(root)
+        if current_head != claimed_head:
+            raise RoutingConfigError(
+                "le HEAD a changé depuis le claim : réservez le nouveau diff avant "
+                "de relancer un reviewer."
+            )
+        return claimed_head
 
     @contextmanager
     def _locked(self):
@@ -1219,7 +1250,13 @@ class ReviewDeduplicator:
                     "claim Git neuf : token secret de tentative requis avant "
                     "publication."
                 )
+            claimed_head = git_head(coordinates["root"])
             diff = git_diff(coordinates["root"], coordinates["base"])
+            if (claimed_head is not None and
+                    git_head(coordinates["root"]) != claimed_head):
+                raise RoutingConfigError(
+                    "le HEAD a changé pendant le claim ; aucune claim créée."
+                )
             actual_hash = review_diff_hash(diff)
             if actual_hash != expected_hash:
                 raise RoutingConfigError(
@@ -1227,6 +1264,7 @@ class ReviewDeduplicator:
                     f"actuel {actual_hash} ; aucune claim créée."
                 )
             if marker.is_file() and legacy_record is None:
+                self._assert_current_head(record, coordinates["root"])
                 if replay_interrupted:
                     return self._replay_interrupted_git_claim(
                         expected_hash,
@@ -1243,7 +1281,7 @@ class ReviewDeduplicator:
                     expected_hash, legacy_record,
                 )
             claim_id = self._claim_id_for_attempt(
-                expected_hash, coordinates, claim_attempt_token,
+                expected_hash, coordinates, claim_attempt_token, claimed_head,
             )
             record = {
                 "schema_version": 1,
@@ -1253,6 +1291,7 @@ class ReviewDeduplicator:
                 "claim": {"id": claim_id, "started_at": _utc_now()},
                 "recoveries": [],
                 "coordinates": coordinates,
+                "head": claimed_head,
             }
             record["claim_publication"] = {
                 "attempt_digest": hashlib.sha256(
@@ -1300,7 +1339,7 @@ class ReviewDeduplicator:
                 "publication de claim invalide ; intervention humaine requise."
             )
         claim_id = self._claim_id_for_attempt(
-            diff_hash, coordinates, claim_attempt_token,
+            diff_hash, coordinates, claim_attempt_token, self._claimed_head(record),
         )
         if not hmac.compare_digest(str(claim.get("id")), claim_id):
             raise RoutingConfigError(
@@ -1325,9 +1364,16 @@ class ReviewDeduplicator:
             _, record = self._record_for(expected_hash)
             self._assert_active_generation(record, claim_id)
             self._assert_coordinates(record, coordinates)
+            claimed_head = self._assert_current_head(record, coordinates["root"])
             actual_hash = review_diff_hash(
                 git_diff(coordinates["root"], coordinates["base"])
             )
+            if (claimed_head is not None and
+                    git_head(coordinates["root"]) != claimed_head):
+                raise RoutingConfigError(
+                    "le HEAD a changé depuis le claim : réservez le nouveau diff avant "
+                    "de relancer un reviewer."
+                )
             if actual_hash != expected_hash:
                 raise RoutingConfigError(
                     f"le diff a changé depuis le claim : attendu {expected_hash}, "
@@ -1479,7 +1525,13 @@ class ReviewDeduplicator:
         with self._locked():
             marker, record = self._record_for(diff_hash)
             self._assert_recoverable(diff_hash, record, generation, claim_id, coordinates)
+            claimed_head = self._assert_current_head(record, coordinates["root"])
             verified = git_diff(coordinates["root"], coordinates["base"])
+            if (claimed_head is not None and
+                    git_head(coordinates["root"]) != claimed_head):
+                raise RoutingConfigError(
+                    "le HEAD a changé depuis le claim ; aucune récupération n'a été créée."
+                )
             if review_diff_hash(verified) != diff_hash:
                 raise RoutingConfigError(
                     "le diff a changé depuis le claim ; aucune récupération n'a été créée."
@@ -1584,10 +1636,15 @@ class ReviewDeduplicator:
                 )
         proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
         proof = proof_store._validated_proof(proof_store.directory / binding["proof_id"])
+        with self._locked():
+            _, record = self._record_for(diff_hash)
+            claimed_head = self._claimed_head(record)
         if (
             proof["issue"]["id"] != issue_id.strip()
             or proof["coordinates"]["diff_hash"] != diff_hash
             or proof["coordinates"]["base"] != binding["coordinates"]["base"]
+            or (claimed_head is not None and
+                proof["coordinates"]["head"] != claimed_head)
             or proof["review"]["generation"] != binding["generation"]
             or proof["review"]["claim_digest"] != binding["claim_digest"]
         ):
@@ -1879,7 +1936,13 @@ class AcceptanceProofStore:
             marker, record = ledger._record_for(diff_hash)
             ledger._assert_active_generation(record, claim_id)
             ledger._assert_coordinates(record, coordinates)
+            claimed_head = ledger._assert_current_head(record, coordinates["root"])
             verified = git_diff(root, base)
+            if claimed_head is not None and git_head(root) != claimed_head:
+                raise RoutingConfigError(
+                    "le HEAD a changé depuis le claim : réservez le nouveau diff avant "
+                    "de relancer un reviewer."
+                )
             if review_diff_hash(verified) != diff_hash:
                 raise RoutingConfigError(
                     "le diff a changé depuis le claim : réservez le nouveau diff avant de relancer un reviewer."
@@ -1890,7 +1953,7 @@ class AcceptanceProofStore:
                           "criteria": normalized},
                 "review": {"role": reviewer_role, "generation": record["generation"],
                            "claim_digest": hashlib.sha256(claim_id.encode("ascii")).hexdigest()},
-                "coordinates": {"head": git_head(root), "diff_hash": review_diff_hash(verified),
+                "coordinates": {"head": claimed_head or git_head(root), "diff_hash": review_diff_hash(verified),
                                 "base": coordinates["base"]},
                 "quality": quality,
             }
@@ -2026,7 +2089,13 @@ def claimed_review_diff(
         _, record = deduplicator._record_for(expected_hash)
         deduplicator._assert_active_generation(record, claim_id)
         deduplicator._assert_coordinates(record, coordinates)
+        claimed_head = deduplicator._assert_current_head(record, coordinates["root"])
         diff = git_diff(root, base)
+        if claimed_head is not None and git_head(root) != claimed_head:
+            raise RoutingConfigError(
+                "le HEAD a changé depuis le claim : réservez le nouveau diff avant "
+                "de relancer un reviewer."
+            )
         actual_hash = review_diff_hash(diff)
         if actual_hash != expected_hash:
             raise RoutingConfigError(

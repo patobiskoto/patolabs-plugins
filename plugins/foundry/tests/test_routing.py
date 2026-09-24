@@ -40,6 +40,12 @@ def _review_coordinates(root: Path) -> dict[str, str]:
     return {"root": str(root.resolve()), "base": BASE_SHA}
 
 
+@pytest.fixture(autouse=True)
+def _synthetic_git_head(monkeypatch):
+    """Keep Git-native ledger unit fixtures independent of a real worktree."""
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "a" * 40)
+
+
 def _write_config(root: Path, payload: dict) -> Path:
     path = root / ".foundry" / "model-routing.json"
     path.parent.mkdir()
@@ -68,6 +74,7 @@ def _claim_git_once(args):
     state_dir, repository, diff, coordinates = args
     import foundry.routing as routing
     routing.git_diff = lambda *_args, **_kwargs: diff
+    routing.git_head = lambda *_args, **_kwargs: "a" * 40
     try:
         return ReviewDeduplicator(repository, state_dir).claim_git(
             review_diff_hash(diff), coordinates=coordinates,
@@ -81,6 +88,7 @@ def _replay_interrupted_claim_once(args):
     state_dir, repository, diff, coordinates, claim_attempt_token = args
     import foundry.routing as routing
     routing.git_diff = lambda *_args, **_kwargs: diff
+    routing.git_head = lambda *_args, **_kwargs: "9" * 40
     try:
         return ReviewDeduplicator(repository, state_dir).claim_git(
             review_diff_hash(diff),

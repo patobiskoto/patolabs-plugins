@@ -33,6 +33,14 @@ CLAIM_ATTEMPT_TOKEN = "a" * 64
 OTHER_CLAIM_ATTEMPT_TOKEN = "b" * 64
 
 
+@pytest.fixture(autouse=True)
+def _synthetic_git_head(monkeypatch):
+    """These routing fixtures model diff bytes without creating a Git checkout."""
+    monkeypatch.setattr(
+        "foundry.routing.git_head", lambda *_args, **_kwargs: "a" * 40,
+    )
+
+
 def _packet(body="Inspect the requested scope."):
     return (
         f"Goal:\n{body}\n"
@@ -57,6 +65,7 @@ def _concurrent_f108_review_plan(args):
     import foundry.routing as routing
 
     routing.git_diff = lambda *_args, **_kwargs: diff
+    routing.git_head = lambda *_args, **_kwargs: "a" * 40
     plan = codex_review_plan(
         _packet(), root=root, base=BASE_SHA,
         state_dir=state_dir, issue_id=issue_id,

@@ -759,8 +759,9 @@ redacted deduplication path.
 The reviewer reads through `routing read-review --diff-hash <hash> --claim-id <id>
 --root <root> --base <base-sha>`.
 That command retains the ledger lock from the current active-generation and immutable
-coordinate checks through the current diff hash and byte emission, so a recovery cannot
-deliver bytes to its replaced owner. It rejects a stale or invented claim. After a
+coordinate and immutable-HEAD checks through the current diff hash and byte emission,
+so a recovery cannot deliver bytes to its replaced owner. An empty commit is HEAD drift
+even when it leaves the diff hash unchanged. It rejects a stale or invented claim. After a
 complete verdict, the caller runs `routing record-review-proof` with the exact structured
 AC and quality outcomes while the claim is still active. That operation atomically binds
 the proof and terminalizes the generation; `complete-review` is a deprecated compatibility

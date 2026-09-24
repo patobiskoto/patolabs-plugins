@@ -2671,6 +2671,22 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     assert rearm[0]["previous_diff_hash"] == diff_hash
     assert rearm[0]["new_diff_hash"] == corrected_diff
 
+    # PAT-31 AC2/AC3: an empty commit leaves base...HEAD diff bytes unchanged,
+    # but it must not let the already-issued reviewer capability read bytes for
+    # a different immutable HEAD.
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-qm", "head-only drift"],
+        cwd=repository_root, check=True,
+    )
+    with pytest.raises(SystemExit, match="HEAD a changé"):
+        main([
+            "read-review", "--diff-hash", corrected_diff,
+            "--claim-id", corrected_claim["claim_id"],
+            "--root", str(repository_root), "--base", base,
+            *repository_arg,
+        ])
+    assert capsys.readouterr().out == ""
+
     (repository_root / "reviewed.txt").write_text(
         "base\nreviewed correction\ncredited correction\nreplay\n",
         encoding="utf-8",
@@ -4555,6 +4571,7 @@ def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(
     coordinates = {"root": str(tmp_path), "base": base_sha}
     dedup = ReviewDeduplicator("patobiskoto/patolabs-plugins", state_dir=tmp_path)
     monkeypatch.setattr("foundry.routing.git_diff", lambda *_args: b"changed")
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args: head_sha)
     with pytest.raises(RoutingConfigError, match="le diff a changé"):
         dedup.claim_git(
             review_diff_hash(diff_bytes), coordinates=coordinates,
