@@ -635,7 +635,14 @@ class LinearTracker(Tracker):
             if comment.get("id") != expected_id:
                 raise TrackerConflictError("Linear lifecycle comment id invalid")
             rows.setdefault(operation, []).append((payload, body))
+        native_state = raw.get("state")
+        native_state_id = native_state.get("id") if isinstance(native_state, dict) else None
+        if not isinstance(native_state_id, str):
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
         if not rows:
+            done_state_id = self._binding(self._project())["state_ids"]["done"]
+            if native_state_id == done_state_id:
+                raise TrackerConflictError("Linear native state changed outside lifecycle")
             return {
                 "state": None, "pr_url": None, "acceptance_complete": False,
                 "in_progress": None, "acceptance_by_generation": {},
@@ -643,10 +650,6 @@ class LinearTracker(Tracker):
                 "latest_review_body_digest": None,
             }
 
-        native_state = raw.get("state")
-        native_state_id = native_state.get("id") if isinstance(native_state, dict) else None
-        if not isinstance(native_state_id, str):
-            raise TrackerConflictError("Linear lifecycle native state unavailable")
         for operation in {"state-in-progress", "state-done", "cockpit-evidence"}:
             if len(rows.get(operation, [])) > 1:
                 raise TrackerConflictError("Linear lifecycle duplicate projection")

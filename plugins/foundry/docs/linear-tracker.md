@@ -157,11 +157,13 @@ an ordinary query remains fail-closed until that receipt exists.
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
 matches the latest reviewed generation and its AC proof, and carries the exact merge
-SHA. The bounded `state-done` write path may recover the interval after GitHub has moved
-the native issue to Done only when the reviewed AC proof is already durable; its
-readback must then include the valid done receipt. Replays retain the receipt's original
-native-state snapshot so a later legitimate snapshot cannot change a deterministic
-comment slot.
+SHA. This includes issues with zero Foundry lifecycle comments: search and direct reads
+fail closed instead of exposing native `done` through the native-state fallback.
+Zero-receipt nonterminal issues keep their explicitly mapped native state. The
+bounded `state-done` write path may recover the interval after GitHub has moved the native
+issue to Done only when the reviewed AC proof is already durable; its readback must then
+include the valid done receipt. Replays retain the receipt's original native-state
+snapshot so a later legitimate snapshot cannot change a deterministic comment slot.
 
 The cockpit evidence path is deliberately separate. Only a complete
 `foundry-evidence-envelope.v1` that the shared verifier classifies `GO` can be projected;

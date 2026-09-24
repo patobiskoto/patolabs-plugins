@@ -766,6 +766,27 @@ def test_linear_lifecycle_refuses_comment_with_mismatched_deterministic_id(track
         instance.get_issue("LIN-2")
 
 
+def test_linear_zero_receipt_native_done_fails_closed_for_search_and_get_issue(tracker):
+    instance, wire = tracker
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    instance._activate(PROJECT)
+
+    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
+        instance.get_issue("LIN-2")
+    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
+        instance.search(PROJECT)
+
+
+def test_linear_zero_receipt_nonterminal_native_state_remains_readable(tracker):
+    instance, _wire = tracker
+    instance._activate(PROJECT)
+
+    assert instance.get_issue("LIN-2").state == "ready"
+    assert {item.id: item.state for item in instance.search(PROJECT)} == {
+        "LIN-1": "ready", "LIN-2": "ready",
+    }
+
+
 def test_linear_exact_comment_lookup_returns_none_only_for_empty_filter_result(tracker):
     instance, wire = tracker
 
