@@ -1100,8 +1100,9 @@ def test_linear_lifecycle_accepts_only_receipted_forward_native_evolution(
 
 
 @pytest.mark.parametrize("source_state", ["backlog", "ready"])
+@pytest.mark.parametrize("has_start_receipt", [False, True])
 def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
-    tracker, monkeypatch, source_state,
+    tracker, monkeypatch, source_state, has_start_receipt,
 ):
     instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
@@ -1114,6 +1115,8 @@ def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
     # This is the production order: Foundry has durably recorded review while the
     # native issue is still Backlog/Ready, then Linear's integration starts it later.
     wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[source_state]
+    if has_start_receipt:
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
     comments_before_drift = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
@@ -1124,6 +1127,11 @@ def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
     assert projected.state == "review"
     assert projected.pr_url == review.pr_url
     assert (projected.ac_done, projected.ac_total) == (1, 1)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
+    # This is the actual transition sequence issue.merge() retries before CI.
+    # Both start and review must replay without a new receipt after the drift.
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
 
 

@@ -609,7 +609,7 @@ class LinearTracker(Tracker):
         # supplies a new receipt.  Keep the exception deliberately narrower than
         # the normal pending-write forward window.
         reviewed_start_drift = (
-            pending_operation is None
+            pending_operation in {None, "state-in-progress"}
             and done is None
             and rows.get("state-review")
             and latest_name in {"backlog", "ready"}
@@ -787,6 +787,17 @@ class LinearTracker(Tracker):
         native_state_id = state.get("id") if isinstance(state, dict) else None
         if not isinstance(native_state_id, str):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
+        if (
+            operation == "state-in-progress"
+            and projection["state"] == "review"
+            and projection["latest_review"]["native_state_id"]
+            in {binding["state_ids"]["backlog"], binding["state_ids"]["ready"]}
+            and native_state_id == binding["state_ids"]["in-progress"]
+        ):
+            # merge() replays this step before the current exact review/CI gates.
+            # A delayed native start is only observed: do not create a new
+            # in-progress proof or downgrade the already receipted review.
+            return False
         bounded_payload = {**payload, "native_state_id": native_state_id}
         if operation == "state-in-progress" and projection["in_progress"] is not None:
             bounded_payload["native_state_id"] = projection["in_progress"]["native_state_id"]
