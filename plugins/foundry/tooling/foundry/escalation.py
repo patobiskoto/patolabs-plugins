@@ -1464,6 +1464,7 @@ class EscalationStore:
             # technical resumes advance halt_generation without incrementing it.
             if (
                 last_resumed_generation is None
+                or event_generation > generation
                 or event_generation < previous_generation
                 or (previous_time is not None and event_time < previous_time)
                 or generation_roles.setdefault(event_generation, event_role) != event_role
@@ -1499,7 +1500,6 @@ class EscalationStore:
             raise _invalid_ledger(issue_id)
         rearm_audit = []
         rearm_by_generation = {}
-        rearm_by_exhausted_generation = {}
         bridge_rearm_times = {}
         rearm_times = []
         previous_rearm_time = None
@@ -1534,11 +1534,11 @@ class EscalationStore:
             ):
                 raise _invalid_ledger(issue_id)
 
-            generation_rearms = rearm_by_exhausted_generation.setdefault(
+            source_generation_rearms = rearm_by_generation.get(
                 exhausted_generation, [],
             )
-            if generation_rearms:
-                previous_event, previous_event_time = generation_rearms[-1]
+            if source_generation_rearms:
+                previous_event, previous_event_time = source_generation_rearms[-1]
                 if (
                     event["exhausted_window_armed_at"] != previous_event["at"]
                     or event["exhausted_window_maximum_credits"]
@@ -1566,10 +1566,9 @@ class EscalationStore:
                     for durable_event, durable_time in zip(
                         durable_audit, durable_times, strict=True,
                     )
-                ) and not generation_rearms
+                ) and not source_generation_rearms
             ):
                 raise _invalid_ledger(issue_id)
-            generation_rearms.append((event, event_time))
             rearm_by_generation.setdefault(event_generation, []).append(
                 (event, event_time),
             )
@@ -1603,7 +1602,7 @@ class EscalationStore:
         if not isinstance(technical_raw, list):
             raise _invalid_ledger(issue_id)
         technical_audit = []
-        technical_times = []
+        technical_route_times = {}
         technical_counts_by_generation = {}
         prior_generation = 0
         prior_time = None
@@ -1747,7 +1746,10 @@ class EscalationStore:
             normalized_event.setdefault("review_claimed_at", None)
             normalized_event.setdefault("review_rearm_audit", [])
             technical_audit.append(normalized_event)
-            technical_times.append(event_time)
+            if route_consumed_time is not None:
+                technical_route_times[
+                    (event_generation, event["role"])
+                ] = route_consumed_time
             prior_generation = event["halt_generation"]
             prior_time = event_time
         expected_clear_count = generation - (1 if halted else 0)
@@ -1792,26 +1794,17 @@ class EscalationStore:
                 "exhausted_halt_generation", event["halt_generation"],
             )
             event_generation = event["halt_generation"]
+            route_consumed_time = technical_route_times.get(
+                (event_generation, event["role"]),
+            )
             if event_generation > last_resumed_generation and (
                 (
                     exhausted_generation == event_generation
                     and (event_generation, event["role"]) not in prior_bridges
                 )
                 or event_generation not in technical_counts_by_generation
-                or not any(
-                    technical["halt_generation"] == event_generation
-                    and technical["role"] == event["role"]
-                    and technical["route_id"] is not None
-                    and technical["route_consumed_at"] is not None
-                    for technical in technical_audit
-                )
-                or event_time is None
-                or event_time <= technical_times[
-                    next(
-                        index for index, technical in enumerate(technical_audit)
-                        if technical["halt_generation"] == event_generation
-                    )
-                ]
+                or route_consumed_time is None
+                or event_time <= route_consumed_time
             ):
                 raise _invalid_ledger(issue_id)
             if exhausted_generation != event_generation:
