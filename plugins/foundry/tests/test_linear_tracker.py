@@ -52,6 +52,8 @@ STATE_IDS = {
     "done": "state-done",
     "dropped": "state-dropped",
 }
+ISSUE_1_ID = "00000000-0000-4000-8000-000000000001"
+ISSUE_2_ID = "00000000-0000-4000-8000-000000000002"
 PROJECT = Project(
     key="LIN",
     id="project-uuid",
@@ -103,8 +105,8 @@ class LinearWire:
 
     def __init__(self):
         self.issues = {
-            "LIN-1": raw_issue("LIN-1", "issue-uuid-1", title="Parent"),
-            "LIN-2": raw_issue("LIN-2", "issue-uuid-2", title="Existing"),
+            "LIN-1": raw_issue("LIN-1", ISSUE_1_ID, title="Parent"),
+            "LIN-2": raw_issue("LIN-2", ISSUE_2_ID, title="Existing"),
         }
         self.comments = {}
         self.documents = {}
@@ -113,6 +115,19 @@ class LinearWire:
 
     def _by_native(self, native):
         return next(value for value in self.issues.values() if value["id"] == native)
+
+    def _by_reference(self, reference):
+        if not isinstance(reference, str):
+            return None
+        matches = [
+            value
+            for identifier, value in self.issues.items()
+            if value["id"] == reference
+            or identifier.casefold() == reference.casefold()
+        ]
+        if len(matches) > 1:
+            raise AssertionError("ambiguous fake Linear issue reference")
+        return matches[0] if matches else None
 
     def __call__(self, document, variables):
         self.calls.append((document, copy.deepcopy(variables)))
@@ -182,7 +197,11 @@ class LinearWire:
                 }
             }
         if "FoundryLinearIssue(" in document:
-            return {"data": {"issue": copy.deepcopy(self.issues.get(variables["id"]))}}
+            return {
+                "data": {
+                    "issue": copy.deepcopy(self._by_reference(variables["id"]))
+                }
+            }
         if "FoundryLinearIssueCreate" in document:
             value = variables["input"]
             identifier = f"LIN-{len(self.issues) + 1}"
@@ -616,7 +635,7 @@ def test_relation_reads_refuse_unsupported_native_types_without_partial_issue(
         [
             {
         "type": relation_type,
-        target_name: {"id": "issue-uuid-2", "identifier": "LIN-2"},
+        target_name: {"id": ISSUE_2_ID, "identifier": "LIN-2"},
             }
         ]
     )
@@ -673,7 +692,7 @@ def test_normalization_rejects_missing_or_unknown_label_identifiers(tracker):
         instance.search(PROJECT)
     assert missing.value.code == "invalid_response"
 
-    wire.issues["LIN-1"] = raw_issue("LIN-1", "issue-uuid-1", title="Parent")
+    wire.issues["LIN-1"] = raw_issue("LIN-1", ISSUE_1_ID, title="Parent")
     wire.issues["LIN-1"]["labels"]["nodes"][0]["id"] = "label-unknown"
     with pytest.raises(LinearBindingError) as unknown:
         instance.search(PROJECT)
@@ -1197,7 +1216,7 @@ def test_linear_exact_comment_lookup_rejects_wrong_filtered_id(tracker):
                 {
                     "id": "wrong-id",
                     "body": "wrong",
-                "issue": {"id": "issue-uuid-2", "identifier": "LIN-2"},
+                    "issue": {"id": ISSUE_2_ID, "identifier": "LIN-2"},
                 }
             ]
         return result
@@ -1248,7 +1267,7 @@ def test_linear_lifecycle_refuses_exact_comment_id_collision_before_create(track
     wire.comments[comment_id] = {
         "id": comment_id,
         "body": body + "\ndivergent",
-        "issue": {"id": "issue-uuid-2", "identifier": "LIN-2"},
+        "issue": {"id": ISSUE_2_ID, "identifier": "LIN-2"},
     }
 
     with pytest.raises(TrackerConflictError, match="comment id collision"):
@@ -1973,6 +1992,168 @@ def test_linear_adr_supersession_and_historical_import_preserve_relations_origin
     ]
 
 
+@pytest.mark.parametrize(
+    "issue_refs",
+    [
+        ("LIN-2", "lin-2"),
+        ("Lin-2", ISSUE_2_ID),
+    ],
+)
+def test_linear_adr_import_refuses_issue_alias_identity_collision_before_effect(
+    tracker, issue_refs
+):
+    instance, wire = tracker
+    call_offset = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="duplicate provider identity"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Alias collision",
+            body="old",
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            issue_refs=issue_refs,
+        )
+
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_adr_import_canonicalizes_single_issue_alias_and_replays_by_uuid(
+    tracker,
+):
+    instance, wire = tracker
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Canonical issue relation",
+        "body": "old",
+        "historical_status": "deprecated",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"old").hexdigest(),
+    }
+
+    imported = instance.import_adr(PROJECT, **kwargs, issue_refs=("lin-2",))
+    binding = instance._binding(PROJECT)
+    metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported.ref], binding
+    )
+    assert metadata["relations"]["issues"] == ["LIN-2"]
+    comment_id, expected_body = linear_module._adr_issue_link(
+        binding, imported.id, "LIN-2"
+    )
+    assert wire.comments[comment_id] == {
+        "id": comment_id,
+        "body": expected_body,
+        "issue": {"id": ISSUE_2_ID, "identifier": "LIN-2"},
+    }
+
+    call_offset = len(wire.calls)
+    replay = instance.import_adr(PROJECT, **kwargs, issue_refs=(ISSUE_2_ID,))
+
+    assert replay.ref == imported.ref
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [imported.id]
+    assert len(wire.comments) == 1
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+
+
+def test_linear_adr_import_refuses_malformed_provider_issue_identifier_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    wire.issues["LIN-2"]["identifier"] = "LIN-two"
+    call_offset = len(wire.calls)
+
+    with pytest.raises(LinearTrackerError) as raised:
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Malformed provider identifier",
+            body="old",
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            issue_refs=("LIN-2",),
+        )
+
+    assert raised.value.operation == "adr.issue.resolve"
+    assert raised.value.code == "invalid_response"
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_adr_issue_relation_limit_accepts_100_and_refuses_101_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    for number in range(3, 102):
+        identifier = f"LIN-{number}"
+        native_id = str(uuid.UUID(int=number, version=4))
+        wire.issues[identifier] = raw_issue(identifier, native_id)
+    over_limit = tuple(f"LIN-{number}" for number in range(1, 102))
+    call_offset = len(wire.calls)
+
+    with pytest.raises(ValueError, match="historical import invalid"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Over issue relation bound",
+            body="old",
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            issue_refs=over_limit,
+        )
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+
+    at_limit = over_limit[:-1]
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0099",
+        title="Exact issue relation bound",
+        body="old",
+        historical_status="deprecated",
+        source_ref="YT-ADR-99",
+        source_created=1,
+        source_updated=2,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        issue_refs=at_limit,
+    )
+    metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported.ref], instance._binding(PROJECT)
+    )
+    assert len(metadata["relations"]["issues"]) == 100
+    assert set(metadata["relations"]["issues"]) == set(at_limit)
+    assert len(wire.comments) == 100
+
+
 @pytest.mark.parametrize("operation", ["supersede", "historical_import"])
 @pytest.mark.parametrize(("existing_relations", "accepted"), [(99, True), (100, False)])
 def test_linear_adr_supersedes_limit_is_prevalidated_before_provider_effect(
@@ -2163,7 +2344,7 @@ def test_linear_fake_rejects_uuid_v5_creation_ids(mutation):
     else:
         response = wire(
             linear_module._COMMENT_CREATE,
-            {"input": {"id": bad_id, "body": "relation", "issueId": "issue-uuid-2"}},
+            {"input": {"id": bad_id, "body": "relation", "issueId": ISSUE_2_ID}},
         )
     assert response["errors"]
     assert wire.documents == {}
@@ -2323,6 +2504,51 @@ def test_linear_adr_issue_relation_requires_reciprocal_project_comment(tracker):
     del wire.comments[comment_id]
     with pytest.raises(TrackerConflictError, match="issue relation is not reciprocal"):
         instance.list_adrs(PROJECT)
+
+
+@pytest.mark.parametrize("damage", ["stored_alias", "comment_alias"])
+def test_linear_adr_issue_relation_read_refuses_alias_identity_drift(
+    tracker, damage
+):
+    instance, wire = tracker
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0097",
+        title="Canonical issue relation",
+        body="old",
+        historical_status="deprecated",
+        source_ref="YT-ADR-97",
+        source_created=1,
+        source_updated=2,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        issue_refs=("LIN-2",),
+    )
+    binding = instance._binding(PROJECT)
+    comment_id, _expected_body = linear_module._adr_issue_link(
+        binding, imported.id, "LIN-2"
+    )
+    if damage == "stored_alias":
+        raw = wire.documents[imported.ref]
+        metadata, body = linear_module._parse_adr_document(raw, binding)
+        metadata["relations"]["issues"] = ["lin-2"]
+        raw["content"] = linear_module._adr_document_content(metadata, body)
+        witness_id = linear_module._adr_witness_id(PROJECT.id, imported.id, 0)
+        wire.documents[witness_id] = linear_module._adr_witness_document(
+            binding, metadata, raw
+        )
+        match = "identifier is not canonical"
+    else:
+        wire.comments[comment_id]["issue"]["identifier"] = "lin-2"
+        match = "issue relation is not reciprocal"
+    call_offset = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match=match):
+        instance.list_adrs(PROJECT)
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
 
 
 def test_linear_adr_missing_relations_are_distinct_from_provider_outage(tracker):

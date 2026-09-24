@@ -67,6 +67,8 @@ _ADR_WITNESS_HEADER = "<!-- foundry-linear-adr-witness.v1\n"
 _ADR_WITNESS_PREFIX = "[Foundry ADR witness] "
 _ADR_ISSUE_LINK_SCHEMA = "foundry-linear-adr-issue-link.v1"
 _ADR_ID = re.compile(r"[A-Z][A-Z0-9_-]*-ADR-[0-9]{4}\Z")
+_ISSUE_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,255}\Z")
+_ISSUE_NUMBER = re.compile(r"[1-9][0-9]*\Z")
 _ADR_STATUSES = frozenset({"proposed", "accepted", "deprecated", "superseded"})
 _ADR_RELATION_LIMIT = 100
 _ADR_TRANSITIONS = {
@@ -769,6 +771,12 @@ class LinearTracker(Tracker):
     def _binding(project: Project) -> dict:
         if not isinstance(project, Project):
             raise LinearBindingError("project_missing")
+        project_key = project.key
+        if (
+            not isinstance(project_key, str)
+            or _ISSUE_KEY.fullmatch(project_key) is None
+        ):
+            raise LinearBindingError("project_key_invalid")
         project_id = _safe_id(project.id, "project_id_invalid")
         team_id = _safe_id(project.extra.get("team_id"), "team_id_invalid")
         canonical = project.extra.get("canonical_repo")
@@ -785,6 +793,7 @@ class LinearTracker(Tracker):
         if set(type_label_ids.values()) & set(label_ids.values()):
             raise LinearBindingError("label_ids_overlap")
         return {
+            "key": project_key,
             "project_id": project_id,
             "team_id": team_id,
             "canonical_repo": canonical,
@@ -1492,6 +1501,84 @@ class LinearTracker(Tracker):
             or project.get("id") != binding["project_id"]
         ):
             raise LinearBindingError("issue_outside_binding")
+
+    @staticmethod
+    def _adr_issue_identity(
+        raw: dict, binding: dict, operation: str
+    ) -> tuple[str, str]:
+        """Return the canonical readable and native IDs for one bound issue."""
+        LinearTracker._assert_issue_project(raw, binding)
+        native_id = raw.get("id") if isinstance(raw, dict) else None
+        identifier = raw.get("identifier") if isinstance(raw, dict) else None
+        team = raw.get("team") if isinstance(raw, dict) else None
+        prefix = f"{binding['key']}-"
+        number = (
+            identifier[len(prefix) :]
+            if isinstance(identifier, str) and identifier.startswith(prefix)
+            else None
+        )
+        if (
+            not isinstance(native_id, str)
+            or _SAFE_ID.fullmatch(native_id) is None
+            or not isinstance(identifier, str)
+            or _SAFE_ID.fullmatch(identifier) is None
+            or not isinstance(team, dict)
+            or team.get("key") != binding["key"]
+            or not isinstance(number, str)
+            or _ISSUE_NUMBER.fullmatch(number) is None
+        ):
+            raise LinearTrackerError(operation, None, "invalid_response")
+        return identifier, native_id
+
+    def _resolve_adr_issue_reference(
+        self, issue_ref: str, binding: dict
+    ) -> tuple[str, str]:
+        """Resolve an alias and corroborate both provider identity coordinates."""
+        operation = "adr.issue.resolve"
+        raw = self._read_raw(issue_ref)
+        identity = self._adr_issue_identity(raw, binding, operation)
+        for exact_ref in dict.fromkeys(identity):
+            if exact_ref == issue_ref:
+                continue
+            try:
+                exact = self._read_raw(exact_ref)
+            except IssueUnavailableError:
+                raise TrackerConflictError(
+                    "Linear ADR issue alias resolved ambiguously"
+                ) from None
+            if self._adr_issue_identity(exact, binding, operation) != identity:
+                raise TrackerConflictError(
+                    "Linear ADR issue alias resolved ambiguously"
+                )
+        return identity
+
+    def _canonicalize_adr_issue_refs(
+        self, issue_refs: tuple[str, ...], binding: dict
+    ) -> tuple[tuple[str, ...], dict[str, str]]:
+        canonical_to_native = {}
+        native_to_canonical = {}
+        for issue_ref in sorted(issue_refs):
+            identifier, native_id = self._resolve_adr_issue_reference(
+                issue_ref, binding
+            )
+            if identifier in canonical_to_native:
+                if canonical_to_native[identifier] != native_id:
+                    raise TrackerConflictError(
+                        "Linear ADR issue alias resolved ambiguously"
+                    )
+                raise TrackerConflictError(
+                    "Linear ADR issue references duplicate provider identity"
+                )
+            if native_id in native_to_canonical:
+                raise TrackerConflictError(
+                    "Linear ADR issue references duplicate provider identity"
+                )
+            canonical_to_native[identifier] = native_id
+            native_to_canonical[native_id] = identifier
+        if len(canonical_to_native) > _ADR_RELATION_LIMIT:
+            raise TrackerConflictError("Linear ADR issue relation limit exceeded")
+        identifiers = tuple(sorted(canonical_to_native))
+        return identifiers, canonical_to_native
 
     # ---- reads / normalization ------------------------------------
     def _read_raw(self, issue_id: str) -> dict:
@@ -2282,16 +2369,33 @@ class LinearTracker(Tracker):
                     raise TrackerConflictError(
                         "Linear ADR supersession relation is not reciprocal"
                     )
-            issue_refs.extend((adr_id, issue_id) for issue_id in relations["issues"])
-        for adr_id, issue_id in sorted(issue_refs):
-            raw = self._read_raw(issue_id)
-            self._assert_issue_project(raw, binding)
+            observed_native_ids = set()
+            for issue_id in relations["issues"]:
+                canonical_id, native_id = self._resolve_adr_issue_reference(
+                    issue_id, binding
+                )
+                if canonical_id != issue_id:
+                    raise TrackerConflictError(
+                        "Linear ADR issue relation identifier is not canonical"
+                    )
+                if native_id in observed_native_ids:
+                    raise TrackerConflictError(
+                        "Linear ADR issue references duplicate provider identity"
+                    )
+                observed_native_ids.add(native_id)
+                issue_refs.append((adr_id, canonical_id, native_id))
+        for adr_id, issue_id, native_id in sorted(issue_refs):
             comment_id, body = _adr_issue_link(binding, adr_id, issue_id)
             reciprocal = self._read_comment(comment_id, "adr.issue-link.read")
+            reciprocal_issue = (
+                reciprocal.get("issue") if isinstance(reciprocal, dict) else None
+            )
             if (
                 not isinstance(reciprocal, dict)
                 or reciprocal.get("body") != body
-                or (reciprocal.get("issue") or {}).get("id") != raw.get("id")
+                or not isinstance(reciprocal_issue, dict)
+                or reciprocal_issue.get("id") != native_id
+                or reciprocal_issue.get("identifier") != issue_id
             ):
                 raise TrackerConflictError(
                     "Linear ADR issue relation is not reciprocal"
@@ -2428,19 +2532,39 @@ class LinearTracker(Tracker):
         return readback
 
     def _create_adr_issue_link(
-        self, binding: dict, adr_id: str, issue_id: str
+        self,
+        binding: dict,
+        adr_id: str,
+        issue_id: str,
+        native_id: str,
     ) -> None:
-        raw = self._read_raw(issue_id)
-        self._assert_issue_project(raw, binding)
+        prefix = f"{binding['key']}-"
+        number = (
+            issue_id[len(prefix) :]
+            if isinstance(issue_id, str) and issue_id.startswith(prefix)
+            else None
+        )
+        if (
+            not isinstance(native_id, str)
+            or _SAFE_ID.fullmatch(native_id) is None
+            or not isinstance(number, str)
+            or _ISSUE_NUMBER.fullmatch(number) is None
+        ):
+            raise TrackerConflictError("Linear ADR issue identity is not canonical")
         comment_id, body = _adr_issue_link(binding, adr_id, issue_id)
 
         def verify(comment):
             if comment is None:
                 return None
+            comment_issue = (
+                comment.get("issue") if isinstance(comment, dict) else None
+            )
             if (
                 not isinstance(comment, dict)
                 or comment.get("body") != body
-                or (comment.get("issue") or {}).get("id") != raw.get("id")
+                or not isinstance(comment_issue, dict)
+                or comment_issue.get("id") != native_id
+                or comment_issue.get("identifier") != issue_id
             ):
                 raise TrackerConflictError(
                     "Linear ADR issue relation slot already has different content"
@@ -2457,7 +2581,7 @@ class LinearTracker(Tracker):
                     {
                         "input": {
                             "id": comment_id,
-                            "issueId": raw["id"],
+                            "issueId": native_id,
                             "body": body,
                         }
                     },
@@ -2662,6 +2786,11 @@ class LinearTracker(Tracker):
             or len(supersedes) > _ADR_RELATION_LIMIT
             or len(issue_refs) > _ADR_RELATION_LIMIT
             or len(supersedes) != len(set(supersedes))
+            or any(
+                not isinstance(issue_ref, str)
+                or _SAFE_ID.fullmatch(issue_ref) is None
+                for issue_ref in issue_refs
+            )
             or len(issue_refs) != len(set(issue_refs))
             or adr_id in supersedes
             or superseded_by == adr_id
@@ -2684,9 +2813,9 @@ class LinearTracker(Tracker):
         for related_id in sorted(related_ids):
             if related_id not in chains:
                 raise AdrUnavailableError(related_id)
-        for issue_id in sorted(issue_refs):
-            raw_issue = self._read_raw(issue_id)
-            self._assert_issue_project(raw_issue, binding)
+        canonical_issue_refs, issue_native_ids = self._canonicalize_adr_issue_refs(
+            issue_refs, binding
+        )
         metadata = {
             "schema": _ADR_SCHEMA,
             "project_id": binding["project_id"],
@@ -2709,7 +2838,7 @@ class LinearTracker(Tracker):
             "relations": {
                 "supersedes": list(supersedes),
                 "superseded_by": superseded_by,
-                "issues": list(issue_refs),
+                "issues": list(canonical_issue_refs),
             },
         }
         candidate = {
@@ -2750,8 +2879,10 @@ class LinearTracker(Tracker):
             changes.append(
                 (replacement[-1], replacement_metadata, replacement_body)
             )
-        for issue_id in sorted(issue_refs):
-            self._create_adr_issue_link(binding, adr_id, issue_id)
+        for issue_id in canonical_issue_refs:
+            self._create_adr_issue_link(
+                binding, adr_id, issue_id, issue_native_ids[issue_id]
+            )
         self._create_adr_document(binding, metadata, body)
         for _previous, related_metadata, related_body in changes:
             self._create_adr_document(binding, related_metadata, related_body)

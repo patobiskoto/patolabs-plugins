@@ -118,9 +118,16 @@ supersession, or one reciprocal `supersedes` addition; combined deltas fail clos
 when a matching witness exists.
 `supersedes` and `superseded_by` must be reciprocal in the latest project snapshot;
 self-links, duplicates, missing ADRs, and more than 100 relations of either kind are
-refused. Every issue relation is re-read and must belong to the configured team and
-project, and the issue must retain its deterministic reciprocal Foundry comment bound to
-the project, ADR, and issue IDs. Its deterministic client ID is UUIDv4, as Linear requires.
+refused. Before an import can write anything, every supplied issue reference is resolved
+through Linear and corroborated by both its returned readable identifier and native ID.
+Case variants and native UUID aliases are stored only as the canonical readable identifier;
+two inputs that resolve to the same native issue are a conflict, not two relations. The
+100-link bound applies before resolution and to the resulting canonical identity set.
+Reads and replay reject noncanonical stored aliases or malformed provider identities.
+Every issue relation is re-read and must belong to the configured team and project, and
+the issue must retain its deterministic reciprocal Foundry comment bound to the project,
+ADR, canonical readable issue ID, and exact native issue ID. Its deterministic client ID
+is UUIDv4, as Linear requires.
 The comment is created additively before the imported ADR
 version, uses exact-ID readback, and is replay-safe; an interrupted import can leave a
 harmless orphan comment but cannot expose a one-sided ADR relation. A missing issue/ADR
