@@ -111,9 +111,9 @@ digest. The AC receipt embeds the complete canonical all-pass review proof and b
 to the byte-exact unchanged description. The done receipt repeats the review coordinates
 and adds the exact merge SHA. Foundry queries validate these comments before deriving the
 effective lifecycle state, PR URL or AC completion; Linear's native state, description,
-priority, labels and parent remain unchanged. Native checked boxes are deliberately not
-counted as proven completion: without the matching append-only review receipt, Foundry
-reports them incomplete and requires the structured proof before merge.
+priority, labels and parent are never replaced by Foundry. Native checked boxes are
+deliberately not counted as proven completion: without the matching append-only review
+receipt, Foundry reports them incomplete and requires the structured proof before merge.
 
 Each receipt uses a deterministic client-supplied Linear comment UUID derived from its
 canonical operation slot. Singleton operations use one issue+operation slot; review and
@@ -123,7 +123,8 @@ the same provider-enforced UUID, so at most one can be created. Foundry reads be
 creation, rereads that exact comment after the
 effect and rereads the issue projection. An identical marker is a replay no-op. A
 competing marker for a singleton operation or the same review generation, malformed
-content, a broken generation chain, changed native state or divergent readback refuses.
+content, a broken generation chain, unauthorized native-state drift or divergent
+readback refuses.
 If the provider accepted
 the deterministic comment but its response was interrupted, retry recovers it by exact
 ID. A corrected PR creates the next review generation, chained to the digest of the
@@ -133,6 +134,26 @@ then revalidates its state/PR/AC projection before the final exact-coordinate Gi
 read. Concurrent forks at one generation fail closed. This is idempotence for the
 Foundry lifecycle comments, not a claim that arbitrary
 Linear comments or issue creation are exactly once.
+
+Native workflow snapshots may legitimately evolve while those receipts accumulate.
+Foundry first validates every receipt's shape, integrity, review generation, AC proof and
+merge coordinates, then orders their native-state IDs by lifecycle causality:
+`state-in-progress`, each review generation and its acceptance proof, then `state-done`.
+Every ID must belong to the repository's explicit Linear binding. Repeated IDs and
+forward movement through `backlog|ready → in-progress → review → done` are accepted;
+skipped stages are allowed, but regressions and movement through `blocked`, `dropped` or
+an unmapped state are not. The issue's present native state must be the last durable
+snapshot. A review or acceptance write may record one next forward native snapshot, but
+an ordinary query remains fail-closed until that receipt exists.
+
+Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
+normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
+matches the latest reviewed generation and its AC proof, and carries the exact merge
+SHA. The bounded `state-done` write path may recover the interval after GitHub has moved
+the native issue to Done only when the reviewed AC proof is already durable; its
+readback must then include the valid done receipt. Replays retain the receipt's original
+native-state snapshot so a later legitimate snapshot cannot change a deterministic
+comment slot.
 
 The cockpit evidence path is deliberately separate. Only a complete
 `foundry-evidence-envelope.v1` that the shared verifier classifies `GO` can be projected;
@@ -201,15 +222,15 @@ does not execute this rollback.
 
 Operationally, Linear's web board continues to show its native state and unchecked body;
 the proven state and AC completion are visible through Foundry queries and the audit
-comments. Editing a receipt, changing the native state, duplicating a marker or exceeding
-the bounded 100-comment projection makes reads fail closed. Deleting the only receipt can
-make the derived fact disappear because Linear supplies no immutable append log; the next
-write probes its deterministic comment ID but an ordinary read cannot prove that a row
-was deleted. The marker hash detects modification but is not a Foundry signature: the
-workspace's Linear authorization remains the trust boundary. Linear permits comment
-update/deletion, so “append-only” describes Foundry's write discipline, not
-provider-enforced immutability. Epic closure remains unavailable because it requires a
-provider-atomic parent/child audit.
+comments. Editing a receipt, changing native state without the bounded forward receipt
+chain above, duplicating a marker or exceeding the bounded 100-comment projection makes
+reads fail closed. Deleting the only receipt can make the derived fact disappear because
+Linear supplies no immutable append log; the next write probes its deterministic comment
+ID but an ordinary read cannot prove that a row was deleted. The marker hash detects
+modification but is not a Foundry signature: the workspace's Linear authorization remains
+the trust boundary. Linear permits comment update/deletion, so “append-only” describes
+Foundry's write discipline, not provider-enforced immutability. Epic closure remains
+unavailable because it requires a provider-atomic parent/child audit.
 
 This implementation and its controlled transport round-trip do not activate a real
 workspace. No Linear binding or live write is performed here. Import, target-workspace

@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -745,6 +746,21 @@ def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id
 
     assert tuple(wire.comments) == comment_ids
     assert len(comment_ids) == 1
+    comment_id = comment_ids[0]
+    parsed = uuid.UUID(comment_id)
+    assert comment_id == "e16710eb-46d7-43d8-ba0d-0931e9882d7b"
+    assert parsed.version == 4
+    assert parsed.variant == uuid.RFC_4122
+
+
+def test_linear_lifecycle_refuses_comment_with_mismatched_deterministic_id(tracker):
+    instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    persisted = wire.issues["LIN-2"]["comments"]["nodes"][0]
+    persisted["id"] = str(uuid.UUID(int=uuid.UUID(persisted["id"]).int ^ 1))
+
+    with pytest.raises(TrackerConflictError, match="comment id invalid"):
+        instance.get_issue("LIN-2")
 
 
 def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, monkeypatch):
@@ -952,6 +968,118 @@ def test_linear_lifecycle_readback_revalidates_native_state(tracker):
         instance.set_state("LIN-2", "in-progress", project=PROJECT)
 
     assert changed is True
+
+
+def test_linear_lifecycle_accepts_only_receipted_forward_native_evolution(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    done = TransitionContext(
+        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
+        review_digest=review.review_digest, merge_sha="e" * 40,
+    )
+
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    assert instance.get_issue("LIN-2").state == "review"
+
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
+    write.sync_acceptance(
+        instance, "LIN-2", "- [ ] acceptance",
+        proof("LIN-2", "- [ ] acceptance"),
+    )
+    assert instance.get_issue("LIN-2").ac_done == 1
+
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+    instance.set_state("LIN-2", "done", context=done, project=PROJECT)
+    projected = instance.get_issue("LIN-2")
+    assert projected.state == "done"
+    assert projected.ac_done == 1
+
+
+def test_linear_lifecycle_refuses_unrelated_native_drift_even_for_next_review(tracker):
+    instance, wire = tracker
+    first = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    second = TransitionContext(
+        pr_url=first.pr_url,
+        head_sha="d" * 40, base_sha=first.base_sha, review_digest="e" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=first, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["blocked"]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.set_state("LIN-2", "review", context=second, project=PROJECT)
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+    assert len(wire.comments) == 1
+
+
+def test_linear_native_done_requires_well_formed_foundry_done_receipt(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    done = TransitionContext(
+        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
+        review_digest=review.review_digest, merge_sha="e" * 40,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    write.sync_acceptance(
+        instance, "LIN-2", "- [ ] acceptance",
+        proof("LIN-2", "- [ ] acceptance"),
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    instance.set_state("LIN-2", "done", context=done, project=PROJECT)
+
+    row = next(
+        item for item in wire.issues["LIN-2"]["comments"]["nodes"]
+        if ":state-done:" in item["body"]
+    )
+    decoded = instance._decode_lifecycle_comment("LIN-2", row["body"])
+    assert decoded is not None
+    malformed = dict(decoded[1])
+    malformed.pop("merge_sha")
+    _marker, row["body"], row["id"] = instance._lifecycle_marker(
+        "state-done", "LIN-2", malformed,
+    )
+
+    with pytest.raises(TrackerConflictError, match="state proof malformed"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_lifecycle_refuses_unmapped_historical_native_state_receipt(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    row = wire.issues["LIN-2"]["comments"]["nodes"][0]
+    decoded = instance._decode_lifecycle_comment("LIN-2", row["body"])
+    assert decoded is not None
+    malformed = {**decoded[1], "native_state_id": "state-unrelated"}
+    _marker, row["body"], row["id"] = instance._lifecycle_marker(
+        "state-review", "LIN-2", malformed,
+    )
+
+    with pytest.raises(TrackerConflictError, match="native state proof malformed"):
+        instance.get_issue("LIN-2")
 
 
 def test_linear_lifecycle_recovers_interruption_after_provider_comment_effect(tracker):
