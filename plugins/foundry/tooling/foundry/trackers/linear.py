@@ -603,6 +603,18 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
         latest_name = names[-1]
         current_is_durable = native_state_id == ordered_ids[-1]
+        # Linear's GitHub integration can asynchronously apply its native ``start``
+        # automation after Foundry has already durably projected a PR review.  This
+        # is observation-only: it neither changes the lifecycle projection nor
+        # supplies a new receipt.  Keep the exception deliberately narrower than
+        # the normal pending-write forward window.
+        reviewed_start_drift = (
+            pending_operation in {None, "state-in-progress"}
+            and done is None
+            and rows.get("state-review")
+            and latest_name in {"backlog", "ready"}
+            and current_name == "in-progress"
+        )
         pending_forward = (
             pending_operation in {"state-review", "acceptance"}
             and current_name != "done"
@@ -615,7 +627,7 @@ class LinearTracker(Tracker):
             and acceptance_complete
             and self._native_state_can_advance(latest_name, current_name)
         )
-        if not (current_is_durable or pending_forward or pending_done):
+        if not (current_is_durable or reviewed_start_drift or pending_forward or pending_done):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
         if current_name == "done" and not pending_done and (
             done is None or done.get("native_state_id") != native_state_id
@@ -775,6 +787,13 @@ class LinearTracker(Tracker):
         native_state_id = state.get("id") if isinstance(state, dict) else None
         if not isinstance(native_state_id, str):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
+        if operation == "state-in-progress" and projection["state"] == "review":
+            # merge() replays this step before the current exact review/CI gates.
+            # A start receipt written after any durable review generation would be
+            # reordered before that review during validation and can poison the
+            # append-only chain. The review is already stronger evidence; never
+            # append or rewrite an in-progress receipt in this state.
+            return False
         bounded_payload = {**payload, "native_state_id": native_state_id}
         if operation == "state-in-progress" and projection["in_progress"] is not None:
             bounded_payload["native_state_id"] = projection["in_progress"]["native_state_id"]

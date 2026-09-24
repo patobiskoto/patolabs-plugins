@@ -1099,6 +1099,111 @@ def test_linear_lifecycle_accepts_only_receipted_forward_native_evolution(
     assert projected.ac_done == 1
 
 
+@pytest.mark.parametrize("source_state", ["backlog", "ready"])
+@pytest.mark.parametrize("has_start_receipt", [False, True])
+def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
+    tracker, monkeypatch, source_state, has_start_receipt,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    body = "- [ ] acceptance"
+
+    # This is the production order: Foundry has durably recorded review while the
+    # native issue is still Backlog/Ready, then Linear's integration starts it later.
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[source_state]
+    if has_start_receipt:
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
+    comments_before_drift = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+
+    projected = instance.get_issue("LIN-2")
+
+    assert projected.state == "review"
+    assert projected.pr_url == review.pr_url
+    assert (projected.ac_done, projected.ac_total) == (1, 1)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
+    # This is the actual transition sequence issue.merge() retries before CI.
+    # Both start and review must replay without a new receipt after the drift.
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
+
+    # A corrected PR creates a new review generation on the now-native
+    # In Progress state. A later merge retry must not insert a late start
+    # receipt before either review or poison every subsequent read.
+    corrected = TransitionContext(
+        pr_url=review.pr_url, head_sha="d" * 40,
+        base_sha=review.base_sha, review_digest="e" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=corrected, project=PROJECT)
+    comments_after_correction = copy.deepcopy(
+        wire.issues["LIN-2"]["comments"]["nodes"]
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=corrected, project=PROJECT)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_after_correction
+    corrected_projection = instance.get_issue("LIN-2")
+    assert corrected_projection.state == "review"
+    assert corrected_projection.pr_url == review.pr_url
+
+
+@pytest.mark.parametrize("native_state", ["done", "blocked"])
+def test_linear_review_receipt_refuses_non_start_native_drift(tracker, native_state):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[native_state]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_review_receipt_refuses_start_drift_from_non_backlog_source(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_start_drift_does_not_relax_project_binding(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    wire.issues["LIN-2"]["project"] = {"id": "other-project"}
+
+    with pytest.raises(LinearBindingError, match="issue_outside_binding"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_start_drift_without_durable_review_receipt_fails_closed(tracker):
+    instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+
 def test_linear_lifecycle_refuses_unrelated_native_drift_even_for_next_review(tracker):
     instance, wire = tracker
     first = TransitionContext(
