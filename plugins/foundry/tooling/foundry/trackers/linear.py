@@ -2399,7 +2399,9 @@ class LinearTracker(Tracker):
         self._create_adr_document(binding, metadata, parsed_body)
         return True
 
-    def _validate_adr_graph(self, chains: dict, binding: dict) -> None:
+    def _validate_adr_graph(
+        self, chains: dict, binding: dict, *, pending_comments: set[str] | None = None
+    ) -> None:
         latest = {adr_id: versions[-1][0] for adr_id, versions in chains.items()}
         issue_refs = []
         for adr_id, metadata in latest.items():
@@ -2446,6 +2448,8 @@ class LinearTracker(Tracker):
             reciprocal_issue = (
                 reciprocal.get("issue") if isinstance(reciprocal, dict) else None
             )
+            if reciprocal is None and comment_id in (pending_comments or set()):
+                continue
             if (
                 not isinstance(reciprocal, dict)
                 or reciprocal.get("body") != body
@@ -2929,6 +2933,149 @@ class LinearTracker(Tracker):
         # this write but before the version append, the exact call can reuse it.
         self._create_adr_issue_link(binding, adr.id, issue_id, native_id)
         return self._append_adr_version(project, versions[-1], metadata, body)
+
+    def import_adr_batch(
+        self, project: Project, records: tuple[dict, ...]
+    ) -> list[Adr]:
+        """Import a finite, fully reciprocal historical closure as one manifest.
+
+        Linear has no multi-Document transaction. The complete hypothetical graph is
+        checked before the first effect; a partial write is unreadable and replay of
+        the identical manifest fills only deterministic, byte-identical slots.
+        """
+        keys = {
+            "adr_id", "title", "body", "historical_status", "source_ref",
+            "source_created", "source_updated", "expected_source_sha256",
+            "supersedes", "superseded_by", "issue_refs",
+        }
+        if not isinstance(records, tuple) or not 1 <= len(records) <= 100:
+            raise ValueError("Linear ADR batch requires 1..100 records")
+        binding, documents = self._adr_documents(project)
+        candidates = []
+        comments = []
+        seen_ids = set()
+        for record in records:
+            if not isinstance(record, dict) or set(record) != keys:
+                raise ValueError("Linear ADR batch record fields invalid")
+            adr_id = record["adr_id"]
+            title = record["title"]
+            body = record["body"]
+            status = record["historical_status"]
+            source_ref = record["source_ref"]
+            supersedes = record["supersedes"]
+            superseded_by = record["superseded_by"]
+            issue_refs = record["issue_refs"]
+            if (
+                not isinstance(adr_id, str)
+                or _ADR_ID.fullmatch(adr_id) is None
+                or adr_id in seen_ids
+                or not isinstance(title, str) or not title.strip()
+                or not isinstance(body, str)
+                or not isinstance(status, str) or status not in _ADR_STATUSES
+                or not isinstance(source_ref, str) or not source_ref
+                or record["expected_source_sha256"] != hashlib.sha256(body.encode()).hexdigest()
+                or any(
+                    value is not None and (type(value) is not int or value < 0)
+                    for value in (record["source_created"], record["source_updated"])
+                )
+                or not isinstance(supersedes, tuple)
+                or not isinstance(issue_refs, tuple)
+                or len(supersedes) > _ADR_RELATION_LIMIT
+                or len(issue_refs) > _ADR_RELATION_LIMIT
+                or any(not isinstance(value, str) or _ADR_ID.fullmatch(value) is None for value in supersedes)
+                or len(set(supersedes)) != len(supersedes)
+                or any(not isinstance(value, str) or _SAFE_ID.fullmatch(value) is None for value in issue_refs)
+                or len(set(issue_refs)) != len(issue_refs)
+                or (superseded_by is not None and (
+                    not isinstance(superseded_by, str)
+                    or _ADR_ID.fullmatch(superseded_by) is None
+                ))
+                or adr_id in supersedes
+                or superseded_by == adr_id
+                or superseded_by in supersedes
+                or (status == "superseded") != (superseded_by is not None)
+                or (bool(supersedes) and status not in {"accepted", "superseded"})
+            ):
+                raise ValueError("Linear ADR batch record invalid")
+            seen_ids.add(adr_id)
+            canonical_refs, native_ids = self._canonicalize_adr_issue_refs(
+                issue_refs, binding
+            )
+            metadata = {
+                "schema": _ADR_SCHEMA,
+                "project_id": binding["project_id"],
+                "team_id": binding["team_id"],
+                "id": adr_id,
+                "title": title.strip(),
+                "status": status,
+                "sequence": 0,
+                "previous_id": None,
+                "previous_sha256": None,
+                "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+                "origin": {
+                    "kind": "migration",
+                    "source_tracker": "youtrack",
+                    "source_ref": source_ref,
+                    "source_created": record["source_created"],
+                    "source_updated": record["source_updated"],
+                    "source_body_sha256": record["expected_source_sha256"],
+                    "missing_relations": [],
+                },
+                "relations": {
+                    "supersedes": sorted(supersedes),
+                    "superseded_by": superseded_by,
+                    "issues": list(canonical_refs),
+                },
+            }
+            candidate = {
+                "id": _adr_document_id(binding["project_id"], adr_id, 0),
+                "title": _adr_document_title(metadata),
+                "content": _adr_document_content(metadata, body),
+                "project": {"id": binding["project_id"]},
+                "archivedAt": None,
+            }
+            _parse_adr_document(candidate, binding)
+            witness = _adr_witness_document(binding, metadata, candidate)
+            candidates.append((metadata, body, candidate, witness))
+            comments.extend(
+                (adr_id, issue_id, native_ids[issue_id])
+                for issue_id in canonical_refs
+            )
+
+        by_id = {}
+        for raw in documents:
+            if raw.get("id") in by_id:
+                raise TrackerConflictError("Linear ADR batch document slot has a fork")
+            by_id[raw.get("id")] = raw
+        hypothetical = list(documents)
+        for _metadata, _body, candidate, witness in candidates:
+            for expected in (candidate, witness):
+                current = by_id.get(expected["id"])
+                if current is None:
+                    hypothetical.append(expected)
+                elif any(current.get(key) != value for key, value in expected.items()):
+                    raise TrackerConflictError("Linear ADR batch slot diverged")
+        chains = _adr_chain(hypothetical, binding)
+        for metadata, _body, _candidate, _witness in candidates:
+            versions = chains.get(metadata["id"])
+            if versions is None or len(versions) != 1 or versions[0][0] != metadata:
+                raise TrackerConflictError("Linear ADR batch history diverged")
+        pending_comments = {
+            _adr_issue_link(binding, adr_id, issue_id)[0]
+            for adr_id, issue_id, _native_id in comments
+        }
+        self._validate_adr_graph(
+            chains, binding, pending_comments=pending_comments
+        )
+        for adr_id, issue_id, native_id in comments:
+            self._create_adr_issue_link(binding, adr_id, issue_id, native_id)
+        for metadata, body, _candidate, _witness in candidates:
+            self._create_adr_document(binding, metadata, body)
+        _, fresh = self._adr_snapshot(project)
+        return [
+            self._adr_model(fresh[metadata["id"]])
+            for metadata, _body, _candidate, _witness in candidates
+        ]
 
     def import_adr(
         self,

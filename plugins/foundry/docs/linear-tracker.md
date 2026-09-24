@@ -171,7 +171,15 @@ source relation, and an exact replay cannot replace it with a newly asserted emp
 value. The production import must pass all three relation arguments explicitly after
 source qualification. A related ADR must already be present and accepted
 where it serves as a replacement; arbitrary mutually referencing batches are not seeded
-by the single-record port. Bulk ordering belongs to PAT-23 and cutover to PAT-10.
+by the single-record port. The separate `import_adr_batch(project, records)` port
+accepts a finite manifest of 1–100 complete historical snapshots with all three
+relation fields explicit. It constructs every deterministic version-0 Document,
+witness and reciprocal issue comment, validates the full hypothetical graph before
+the first write, then creates the exact slots additively. Ordinary reads fail closed
+through a partial batch; replay of the same manifest can complete matching slots,
+while a changed slot or unrelated conflict is refused. This is not a provider-atomic
+transaction and is not permission to migrate the entire archive. PAT-23 owns the
+authorized manifest and audit; PAT-10 owns cutover.
 When import stops after version 0 (with or without its witness) but before reciprocal
 relation versions, an exact replay preflights the completed hypothetical graph before
 adding the missing witness and versions. It also completes a multi-relation import that
@@ -190,11 +198,11 @@ operator must separately, under the cutover authority:
 2. export only the authorized live YouTrack ADR closure, retain each source reference and
    timestamps, compute the SHA-256 of the byte-exact body, and map every issue relation to
    an already qualified target-project issue;
-3. validate the import order offline with the same closed metadata and relation rules;
-   records with unresolved or mutually unseedable ADR relations stop the run for an
-   explicit batch/cutover decision;
-4. in a maintenance window, call the tracker import port one record at a time, replacement
-   prerequisites first, then read the complete Linear ADR index back and compare IDs,
+3. validate the entire authorized manifest offline with the same closed metadata and
+   relation rules; unresolved or out-of-scope references stop the run;
+4. in a maintenance window, use the single-record port for independently seedable
+   records and the batch port for a closed reciprocal group, then read the complete
+   Linear ADR index back and compare IDs,
    status, provenance, body digests, reciprocal relations, version/witness pairs, team and
    project IDs;
 5. only after that independent readback may PAT-10 atomically change the repository

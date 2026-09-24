@@ -2345,6 +2345,116 @@ def test_linear_adr_list_rejects_non_object_nodes(tracker):
         instance.list_adrs(PROJECT)
 
 
+def _historical_batch_pair():
+    source = {
+        "adr_id": "LIN-ADR-0041", "title": "Historical source", "body": "old",
+        "historical_status": "superseded", "source_ref": "YT-A-41",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"old").hexdigest(),
+        "supersedes": (), "superseded_by": "LIN-ADR-0042",
+        "issue_refs": ("LIN-2",),
+    }
+    replacement = {
+        "adr_id": "LIN-ADR-0042", "title": "Historical replacement", "body": "new",
+        "historical_status": "accepted", "source_ref": "YT-A-42",
+        "source_created": None, "source_updated": None,
+        "expected_source_sha256": hashlib.sha256(b"new").hexdigest(),
+        "supersedes": ("LIN-ADR-0041",), "superseded_by": None,
+        "issue_refs": (),
+    }
+    return source, replacement
+
+
+def test_linear_historical_batch_imports_reciprocal_closure_into_empty_project(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair()
+    imported = instance.import_adr_batch(PROJECT, records)
+    assert [(item.id, item.status) for item in imported] == [
+        ("LIN-ADR-0041", "superseded"),
+        ("LIN-ADR-0042", "accepted"),
+    ]
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    replay = instance.import_adr_batch(PROJECT, records)
+    assert [item.ref for item in replay] == [item.ref for item in imported]
+    assert (wire.documents, wire.comments) == before
+    assert {item.id for item in instance.list_adrs(PROJECT)} == {
+        "LIN-ADR-0041", "LIN-ADR-0042",
+    }
+
+
+def test_linear_historical_batch_refuses_bad_or_changed_manifest_before_effect(tracker):
+    instance, wire = tracker
+    source, replacement = _historical_batch_pair()
+    wrong = {**replacement, "supersedes": ()}
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.import_adr_batch(PROJECT, (source, wrong))
+    assert wire.documents == {}
+    assert wire.comments == {}
+    missing = {**source, "superseded_by": "LIN-ADR-0099"}
+    with pytest.raises(AdrUnavailableError):
+        instance.import_adr_batch(PROJECT, (missing, replacement))
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+    instance.import_adr_batch(PROJECT, (source, replacement))
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    changed = {**source, "title": "Changed source"}
+    with pytest.raises(TrackerConflictError, match="slot diverged"):
+        instance.import_adr_batch(PROJECT, (changed, replacement))
+    assert (wire.documents, wire.comments) == before
+
+
+def test_linear_historical_batch_recovers_exact_partial_version_witness(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair()
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR witness]")
+        ):
+            raise OSError("interrupted witness")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr_batch(PROJECT, records)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="witness is missing"):
+        instance.list_adrs(PROJECT)
+    instance.import_adr_batch(PROJECT, records)
+    assert len(instance.list_adrs(PROJECT)) == 2
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+
+
+def test_linear_historical_batch_recovers_completed_first_half(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair()
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR] LIN-ADR-0042")
+        ):
+            raise OSError("interrupted second ADR")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr_batch(PROJECT, records)
+    instance._transport = original
+    with pytest.raises(AdrUnavailableError, match="LIN-ADR-0042"):
+        instance.list_adrs(PROJECT)
+    instance.import_adr_batch(PROJECT, records)
+    assert len(instance.list_adrs(PROJECT)) == 2
+    assert len(wire.documents) == 4
+
+
 def test_linear_supersession_partial_pair_refuses_wrong_replacement_before_effect(
     tracker,
 ):

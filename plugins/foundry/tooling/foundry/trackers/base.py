@@ -343,6 +343,13 @@ class Tracker(ABC):
         )
         raise TrackerCapabilityUnavailableError(self.name, "adr_historical_import")
 
+    def import_adr_batch(
+        self, project: Project, records: tuple[dict, ...]
+    ) -> list[Adr]:
+        """Import one closed historical ADR manifest without implicit acceptance."""
+        del project, records
+        raise TrackerCapabilityUnavailableError(self.name, "adr_historical_batch_import")
+
     @abstractmethod
     def set_adr_status(
         self, adr: Adr, status: str, project: Project | None = None
