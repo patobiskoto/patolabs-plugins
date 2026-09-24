@@ -114,7 +114,8 @@ write remains fail-closed and requires a separately authorized repair capability
 
 Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
 Each additive version must have exactly one typed delta: body, status, source
-supersession, or one reciprocal `supersedes` addition; combined deltas fail closed even
+supersession, one reciprocal `supersedes` addition, or one canonical ADR↔issue link;
+combined deltas fail closed even
 when a matching witness exists.
 `supersedes` and `superseded_by` must be reciprocal in the latest project snapshot;
 self-links, duplicates, missing ADRs, and more than 100 relations of either kind are
@@ -128,18 +129,27 @@ Every issue relation is re-read and must belong to the configured team and proje
 the issue must retain its deterministic reciprocal Foundry comment bound to the project,
 ADR, canonical readable issue ID, and exact native issue ID. Its deterministic client ID
 is UUIDv4, as Linear requires.
-The comment is created additively before the imported ADR
-version, uses exact-ID readback, and is replay-safe; an interrupted import can leave a
+The comment is created additively before the imported or native ADR
+version, uses exact-ID readback, and is replay-safe; an interrupted link can leave a
 harmless orphan comment but cannot expose a one-sided ADR relation. A missing issue/ADR
 has its own typed unavailable error; a transport or GraphQL failure remains a provider
 error and is never reclassified as a missing relation.
 Supersession appends both sides. These multiple Document creates are provider-additive but
-not provider-atomic: a partial effect makes the graph unreadable until an authorized exact
-repair completes it; PAT-22 exposes no automatic repair path, and the ordinary command
-replay remains fail-closed rather than accepting a one-sided relation.
+not provider-atomic. The exact command replay returns idempotently when both sides are
+present; if the replacement side completed and the source side did not, the same command
+may append only the missing source after checking both complete chains and the hypothetical
+reciprocal graph. If that exact source Document exists but its witness is missing,
+the replay verifies the byte-exact source candidate before completing only its witness.
+A different pair or a missing replacement-side witness remains fail-closed and requires
+a separately authorized repair. No incomplete graph is accepted as a read.
 
 Writes append a version rather than updating a document. Native creation starts
 `proposed`; status transitions and supersession are typed and constrained. The provider-
+neutral `link_adr_issue` port is exposed as `adr link-issue <ADR-ID> <ISSUE-ID>` and
+`frame` links newly created issues to their constraining ADRs when the provider supports
+that port. The one-relation append stores the canonical readable Linear identifier and
+requires the deterministic reciprocal comment; replay of the exact link is idempotent.
+The provider-
 neutral historical-import port is distinct from native creation and defaults to a typed
 unsupported capability on trackers that do not implement it. Linear records the source
 reference, timestamps, source digest, historical status, relations, and exact target issue

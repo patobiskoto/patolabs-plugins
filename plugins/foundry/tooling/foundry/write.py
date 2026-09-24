@@ -465,6 +465,13 @@ def supersede_adr(tracker, adr, replacement_id: str) -> None:
     )
 
 
+def link_adr_issue(tracker, adr, issue_ref: str):
+    binding = adr_binding(tracker, adr.id)
+    return tracker.link_adr_issue(
+        adr, issue_ref, **({"project": binding} if binding is not None else {})
+    )
+
+
 def ci_gate(codehost, repo: str, sha: str, allow_no_ci: bool = False) -> dict:
     """The merge invariant, in code. Returns a verdict; callers MUST honor `passed`.
 

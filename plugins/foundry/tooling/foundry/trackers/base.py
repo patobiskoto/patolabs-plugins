@@ -351,3 +351,9 @@ class Tracker(ABC):
     ) -> None:
         """Supersede one accepted ADR with another, when supported."""
         raise TrackerCapabilityUnavailableError(self.name, "adr_supersession")
+
+    def link_adr_issue(
+        self, adr: Adr, issue_ref: str, project: Project | None = None
+    ) -> Adr:
+        """Append a reciprocal ADR-to-issue relation when supported."""
+        raise TrackerCapabilityUnavailableError(self.name, "adr_issue_link")

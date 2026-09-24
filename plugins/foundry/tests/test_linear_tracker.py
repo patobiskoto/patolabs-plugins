@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import foundry
-from foundry import evidence_plane, issue, query, registry, routing, write
+from foundry import evidence_plane, frame, issue, query, registry, routing, write
 from foundry.trackers import linear as linear_module
 from foundry.models import (
     Adr,
@@ -1990,6 +1990,122 @@ def test_linear_adr_supersession_and_historical_import_preserve_relations_origin
         first.id,
         imported.id,
     ]
+
+
+def test_linear_native_adr_issue_link_is_canonical_reciprocal_and_replay_safe(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Native link", "decision")
+    linked = instance.link_adr_issue(created, "lin-2", project=PROJECT)
+    assert linked.ref != created.ref
+    metadata, _ = linear_module._parse_adr_document(
+        wire.documents[linked.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert metadata["relations"]["issues"] == ["LIN-2"]
+    comment_id, _ = linear_module._adr_issue_link(
+        instance._binding(PROJECT), linked.id, "LIN-2"
+    )
+    assert wire.comments[comment_id]["issue"]["id"] == ISSUE_2_ID
+    before = (len(wire.documents), len(wire.comments))
+    replay = instance.link_adr_issue(linked, ISSUE_2_ID, project=PROJECT)
+    assert replay.ref == linked.ref
+    assert (len(wire.documents), len(wire.comments)) == before
+    assert instance.list_adrs(PROJECT)[0].ref == linked.ref
+
+
+def test_linear_frame_materializes_native_reciprocal_adr_issue_link(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    created = frame.materialize(
+        {
+            "adrs": [{"title": "Frame decision", "body": "Decision"}],
+            "issues": [
+                {
+                    "title": "Implement decision",
+                    "body": "- [ ] Done",
+                    "constrained_by": ["Frame decision"],
+                }
+            ],
+        }
+    )
+    adr_id = created["adrs"][0]
+    issue_id = created["issues"][0]
+    adr = instance.list_adrs(PROJECT)[0]
+    metadata, _ = linear_module._parse_adr_document(
+        wire.documents[adr.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert metadata["relations"]["issues"] == [issue_id]
+    assert adr.id == adr_id
+
+
+@pytest.mark.parametrize("source_document_without_witness", [False, True])
+def test_linear_supersession_replay_is_idempotent_and_completes_exact_partial_pair(
+    tracker, source_document_without_witness,
+):
+    instance, wire = tracker
+    source = instance.create_adr(PROJECT, "Source", "old")
+    replacement = instance.create_adr(PROJECT, "Replacement", "new")
+    instance.set_adr_status(source, "accepted", project=PROJECT)
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}
+    binding, chains = instance._adr_snapshot(PROJECT)
+    replacement_metadata, replacement_body = instance._next_adr_metadata(
+        chains[replacement.id][-1], supersedes_id=source.id
+    )
+    instance._create_adr_document(binding, replacement_metadata, replacement_body)
+    if source_document_without_witness:
+        source_metadata, source_body = instance._next_adr_metadata(
+            chains[source.id][-1], status="superseded", replacement_id=replacement.id
+        )
+        raw = {
+            "id": linear_module._adr_document_id(
+                PROJECT.id, source.id, source_metadata["sequence"]
+            ),
+            "title": linear_module._adr_document_title(source_metadata),
+            "content": linear_module._adr_document_content(
+                source_metadata, source_body
+            ),
+            "project": {"id": PROJECT.id},
+            "archivedAt": None,
+        }
+        wire.documents[raw["id"]] = raw
+    with pytest.raises(
+        TrackerConflictError,
+        match="witness is missing" if source_document_without_witness else "not reciprocal",
+    ):
+        instance.list_adrs(PROJECT)
+
+    instance.supersede_adr(accepted[source.id], replacement.id, project=PROJECT)
+    complete = {item.id: item for item in instance.list_adrs(PROJECT)}
+    assert complete[source.id].status == "superseded"
+    before = len(wire.documents)
+    instance.supersede_adr(complete[source.id], replacement.id, project=PROJECT)
+    assert len(wire.documents) == before
+
+
+def test_linear_supersession_partial_pair_refuses_wrong_replacement_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    source = instance.create_adr(PROJECT, "Source", "old")
+    replacement = instance.create_adr(PROJECT, "Replacement", "new")
+    wrong = instance.create_adr(PROJECT, "Wrong", "other")
+    for adr in (source, replacement, wrong):
+        instance.set_adr_status(adr, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}
+    binding, chains = instance._adr_snapshot(PROJECT)
+    metadata, body = instance._next_adr_metadata(
+        chains[replacement.id][-1], supersedes_id=source.id
+    )
+    instance._create_adr_document(binding, metadata, body)
+    before = len(wire.documents)
+    with pytest.raises(TrackerConflictError, match="does not match exact pair"):
+        instance.supersede_adr(accepted[source.id], wrong.id, project=PROJECT)
+    assert len(wire.documents) == before
 
 
 @pytest.mark.parametrize(

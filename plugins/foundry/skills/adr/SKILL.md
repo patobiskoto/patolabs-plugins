@@ -5,7 +5,7 @@ description: >
   from the current project), or accepts an existing one. USE WHEN a durable architectural
   decision is made, or the user invokes /foundry:adr (Claude Code), $foundry:adr
   (Codex), "note une ADR", or "on décide que".
-argument-hint: "<title> | accept <ADR-ID> | supersede <ADR-ID> <REPLACEMENT-ID>"
+argument-hint: "<title> | accept <ADR-ID> | supersede <ADR-ID> <REPLACEMENT-ID> | link-issue <ADR-ID> <ISSUE-ID>"
 allowed-tools: Bash(python3:*)
 ---
 
@@ -33,6 +33,7 @@ Created as `proposed`. It becomes `accepted` when the work it frames merges (via
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr accept <ADR-ID>
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr edit <ADR-ID> /path/to/body-read.md /path/to/amended-body.md
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr supersede <ADR-ID> <REPLACEMENT-ID>
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr link-issue <ADR-ID> <ISSUE-ID>
 ```
 
 On Linear, each command above uses project-scoped version Documents plus a separate

@@ -580,8 +580,20 @@ def _valid_adr_version_delta(previous: dict, current: dict) -> bool:
             return not body_changed and current["status"] != "superseded"
         return body_changed
 
-    if body_changed or new_relations["issues"] != old_relations["issues"]:
+    if body_changed:
         return False
+    if new_relations["issues"] != old_relations["issues"]:
+        old_issues = old_relations["issues"]
+        new_issues = new_relations["issues"]
+        return (
+            not status_changed
+            and current["status"] in {"proposed", "accepted"}
+            and new_relations["supersedes"] == old_relations["supersedes"]
+            and new_relations["superseded_by"] == old_relations["superseded_by"]
+            and len(new_issues) == len(old_issues) + 1
+            and set(old_issues).issubset(new_issues)
+            and new_issues == sorted(new_issues)
+        )
     if previous["status"] == "accepted" and current["status"] == "superseded":
         return (
             old_relations["superseded_by"] is None
@@ -648,8 +660,6 @@ def _adr_chain(documents: list[dict], binding: dict) -> dict:
                     != hashlib.sha256(previous_raw["content"].encode()).hexdigest()
                     or metadata["title"] != previous["title"]
                     or metadata["origin"] != previous["origin"]
-                    or metadata["relations"]["issues"]
-                    != previous["relations"]["issues"]
                     or previous["status"] in {"deprecated", "superseded"}
                     or (
                         metadata["status"] != previous["status"]
@@ -678,6 +688,7 @@ def _adr_chain(documents: list[dict], binding: dict) -> dict:
 
 class LinearTracker(Tracker):
     name = "linear"
+    adr_issue_link_supported = True
     requires_mutation_binding = True
     acceptance_sync_supported = False
     bounded_transition_proofs = True
@@ -2611,6 +2622,7 @@ class LinearTracker(Tracker):
         body=None,
         replacement_id=None,
         supersedes_id=None,
+        issue_id=None,
     ):
         old, raw = previous
         _, old_body = _parse_adr_document(
@@ -2631,6 +2643,10 @@ class LinearTracker(Tracker):
         if supersedes_id is not None:
             metadata["relations"]["supersedes"] = sorted(
                 {*metadata["relations"]["supersedes"], supersedes_id}
+            )
+        if issue_id is not None:
+            metadata["relations"]["issues"] = sorted(
+                {*metadata["relations"]["issues"], issue_id}
             )
         candidate = {
             "id": _adr_document_id(
@@ -2753,6 +2769,30 @@ class LinearTracker(Tracker):
         if metadata["id"] not in fresh or fresh[metadata["id"]][-1][0] != metadata:
             raise TrackerConflictError("Linear ADR creation diverged")
         return self._adr_model(fresh[metadata["id"]])
+
+    def link_adr_issue(
+        self, adr: Adr, issue_ref: str, project: Project | None = None
+    ) -> Adr:
+        """Append one native ADR↔issue relation after canonical identity preflight."""
+        project = project or self._project()
+        binding, chains = self._adr_snapshot(project)
+        versions = chains.get(adr.id)
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+            raise TrackerConflictError("Linear ADR snapshot is stale")
+        if versions[-1][0]["status"] not in {"proposed", "accepted"}:
+            raise TrackerConflictError("Linear ADR issue link requires active ADR")
+        if not isinstance(issue_ref, str) or _SAFE_ID.fullmatch(issue_ref) is None:
+            raise ValueError("Linear ADR issue reference invalid")
+        issue_id, native_id = self._resolve_adr_issue_reference(issue_ref, binding)
+        if issue_id in versions[-1][0]["relations"]["issues"]:
+            return self._adr_model(versions)
+        metadata, body = self._next_adr_metadata(
+            versions[-1], issue_id=issue_id
+        )
+        # The comment is a deterministic reciprocal slot. If a process stops after
+        # this write but before the version append, the exact call can reuse it.
+        self._create_adr_issue_link(binding, adr.id, issue_id, native_id)
+        return self._append_adr_version(project, versions[-1], metadata, body)
 
     def import_adr(
         self,
@@ -2918,8 +2958,25 @@ class LinearTracker(Tracker):
         self, adr: Adr, replacement_id: str, project: Project | None = None
     ) -> None:
         project = project or self._project()
-        _, chains = self._adr_snapshot(project)
+        try:
+            _, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) not in {
+                "Linear ADR supersession relation is not reciprocal",
+                "Linear ADR version witness is missing",
+            }:
+                raise
+            self._recover_supersession_pair(project, adr, replacement_id)
+            return
         versions, replacement = chains.get(adr.id), chains.get(replacement_id)
+        if (
+            versions is not None
+            and replacement is not None
+            and versions[-1][0]["status"] == "superseded"
+            and versions[-1][0]["relations"]["superseded_by"] == replacement_id
+            and adr.id in replacement[-1][0]["relations"]["supersedes"]
+        ):
+            return
         if (
             versions is None
             or replacement is None
@@ -2942,6 +2999,85 @@ class LinearTracker(Tracker):
                 (versions[-1], metadata, body),
             ],
         )
+
+    def _recover_supersession_pair(
+        self, project: Project, adr: Adr, replacement_id: str
+    ) -> None:
+        """Complete only the exact second half of a proven interrupted pair."""
+        binding, documents = self._adr_documents(project)
+        dangling_source = None
+        try:
+            chains = _adr_chain(documents, binding)
+        except TrackerConflictError as error:
+            if str(error) != "Linear ADR version witness is missing":
+                raise
+            candidates = []
+            document_ids = {
+                raw.get("id") for raw in documents if isinstance(raw, dict)
+            }
+            for raw in documents:
+                if not isinstance(raw, dict) or not str(raw.get("content", "")).startswith(
+                    _ADR_HEADER
+                ):
+                    continue
+                metadata, _ = _parse_adr_document(raw, binding)
+                if (
+                    metadata["id"] == adr.id
+                    and metadata["status"] == "superseded"
+                    and metadata["relations"]["superseded_by"] == replacement_id
+                    and _adr_witness_id(
+                        binding["project_id"], adr.id, metadata["sequence"]
+                    ) not in document_ids
+                ):
+                    candidates.append(raw)
+            if len(candidates) != 1:
+                raise TrackerConflictError(
+                    "Linear ADR interrupted supersession has ambiguous witness"
+                ) from None
+            dangling_source = candidates[0]
+            chains = _adr_chain(
+                [raw for raw in documents if raw is not dangling_source], binding
+            )
+        source, replacement = chains.get(adr.id), chains.get(replacement_id)
+        if (
+            source is None
+            or replacement is None
+            or len(replacement) < 2
+            or source[-1][1]["id"] != adr.ref
+            or source[-1][0]["status"] != "accepted"
+            or source[-1][0]["relations"]["superseded_by"] is not None
+            or replacement[-1][0]["status"] != "accepted"
+            or adr.id not in replacement[-1][0]["relations"]["supersedes"]
+            or adr.id in replacement[-2][0]["relations"]["supersedes"]
+            or replacement[-1][0]["relations"]["supersedes"]
+            != sorted({*replacement[-2][0]["relations"]["supersedes"], adr.id})
+        ):
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
+            )
+        metadata, body = self._next_adr_metadata(
+            source[-1], status="superseded", replacement_id=replacement_id
+        )
+        candidate = {
+            "id": _adr_document_id(binding["project_id"], adr.id, metadata["sequence"]),
+            "title": _adr_document_title(metadata),
+            "content": _adr_document_content(metadata, body),
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+        hypothetical = {key: list(value) for key, value in chains.items()}
+        hypothetical[adr.id].append((metadata, candidate))
+        self._validate_adr_graph(hypothetical, binding)
+        if dangling_source is not None and any(
+            dangling_source.get(key) != value for key, value in candidate.items()
+        ):
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession source slot diverged"
+            )
+        self._create_adr_document(binding, metadata, body)
+        _, fresh = self._adr_snapshot(project)
+        if fresh[adr.id][-1][0] != metadata:
+            raise TrackerConflictError("Linear ADR supersession recovery diverged")
 
     def _update_adr_body(
         self, adr: Adr, expected_body: str, updated_body: str, project: Project | None

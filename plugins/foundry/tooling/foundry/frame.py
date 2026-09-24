@@ -39,10 +39,12 @@ def materialize(spec: dict) -> dict:
 
     # 1) ADRs first — they are the frame the issues reference.
     adr_by_key = {}
+    adr_by_id = {}
     for idx, a in enumerate(spec.get("adrs", [])):
         adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
         adr_by_key[str(idx)] = adr.id
         adr_by_key[a["title"]] = adr.id
+        adr_by_id[adr.id] = adr
         created["adrs"].append(adr.id)
         print(f"📐 {adr.id} — {a['title']}")
 
@@ -66,6 +68,14 @@ def materialize(spec: dict) -> dict:
         if fields.get("Estimate") is not None:
             fields["Estimate"] = int(fields["Estimate"])
         issue = tr.create_issue(p, it["title"], body, fields=fields, parent=epic_id)
+        if getattr(tr, "adr_issue_link_supported", False):
+            for ref in dict.fromkeys(refs):
+                current = adr_by_id.get(ref)
+                if current is None:
+                    current = next((a for a in tr.list_adrs(p) if a.id == ref), None)
+                if current is None:
+                    raise ValueError(f"ADR inconnue pour relation Linear : {ref}")
+                adr_by_id[ref] = write.link_adr_issue(tr, current, issue.id)
         created["issues"].append(issue.id)
         print(f"   ✓ {issue.id} — {it['title']}  [{fields.get('Priority','?')} · "
               f"est {fields.get('Estimate','?')}]")

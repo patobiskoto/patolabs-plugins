@@ -80,6 +80,16 @@ def supersede(adr_id, replacement_id):
     print(f"↪️  {adr_id} → superseded by {replacement_id}")
 
 
+def link_issue(adr_id, issue_id):
+    tr = foundry.tracker()
+    p = _project(tr)
+    current = next((a for a in tr.list_adrs(p) if a.id == adr_id), None)
+    if current is None:
+        raise SystemExit(f"ADR introuvable : {adr_id}")
+    linked = write.link_adr_issue(tr, current, issue_id)
+    print(f"🔗 {linked.id} ↔ {issue_id}")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "create":
@@ -90,9 +100,12 @@ if __name__ == "__main__":
         edit(sys.argv[2], sys.argv[3], sys.argv[4])
     elif cmd == "supersede":
         supersede(sys.argv[2], sys.argv[3])
+    elif cmd == "link-issue":
+        link_issue(sys.argv[2], sys.argv[3])
     else:
         raise SystemExit(
             "usage: adr.py <create '<title>' [status] | accept <ADR-ID> | "
             "edit <ADR-ID> <expected-body.md> <updated-body.md> | "
-            "supersede <ADR-ID> <replacement-ADR-ID>>"
+            "supersede <ADR-ID> <replacement-ADR-ID> | "
+            "link-issue <ADR-ID> <ISSUE-ID>>"
         )
