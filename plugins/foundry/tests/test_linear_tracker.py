@@ -355,6 +355,88 @@ def project_entry(project=PROJECT):
     return {"key": project.key, "id": project.id, **copy.deepcopy(project.extra)}
 
 
+def seed_linear_adr(
+    wire,
+    *,
+    adr_id,
+    status,
+    supersedes=(),
+    superseded_by=None,
+):
+    binding = {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]}
+    body = f"seed body for {adr_id}"
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    metadata = {
+        "schema": linear_module._ADR_SCHEMA,
+        "project_id": binding["project_id"],
+        "team_id": binding["team_id"],
+        "id": adr_id,
+        "title": f"Seed {adr_id}",
+        "status": status,
+        "sequence": 0,
+        "previous_id": None,
+        "previous_sha256": None,
+        "body_sha256": digest,
+        "origin": {
+            "kind": "migration",
+            "source_tracker": "youtrack",
+            "source_ref": f"YT-{adr_id}",
+            "source_created": None,
+            "source_updated": None,
+            "source_body_sha256": digest,
+        },
+        "relations": {
+            "supersedes": list(supersedes),
+            "superseded_by": superseded_by,
+            "issues": [],
+        },
+    }
+    raw = {
+        "id": linear_module._adr_document_id(PROJECT.id, adr_id, 0),
+        "title": linear_module._adr_document_title(metadata),
+        "content": linear_module._adr_document_content(metadata, body),
+        "project": {"id": PROJECT.id},
+        "archivedAt": None,
+    }
+    linear_module._parse_adr_document(raw, binding)
+    witness = linear_module._adr_witness_document(binding, metadata, raw)
+    wire.documents[raw["id"]] = raw
+    wire.documents[witness["id"]] = witness
+    return Adr(
+        id=adr_id,
+        title=metadata["title"],
+        status=status,
+        body=raw["content"],
+        ref=raw["id"],
+    )
+
+
+def seed_linear_adr_relation_boundary(wire, relation_count):
+    replacement_id = "LIN-ADR-9000"
+    target_ids = tuple(
+        f"LIN-ADR-{number:04d}" for number in range(1, relation_count + 1)
+    )
+    for target_id in target_ids:
+        seed_linear_adr(
+            wire,
+            adr_id=target_id,
+            status="superseded",
+            superseded_by=replacement_id,
+        )
+    replacement = seed_linear_adr(
+        wire,
+        adr_id=replacement_id,
+        status="accepted",
+        supersedes=target_ids,
+    )
+    source = seed_linear_adr(
+        wire,
+        adr_id="LIN-ADR-8000",
+        status="accepted",
+    )
+    return source, replacement
+
+
 def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(
     monkeypatch,
 ):
@@ -1875,6 +1957,63 @@ def test_linear_adr_supersession_and_historical_import_preserve_relations_origin
         first.id,
         imported.id,
     ]
+
+
+@pytest.mark.parametrize("operation", ["supersede", "historical_import"])
+@pytest.mark.parametrize(("existing_relations", "accepted"), [(99, True), (100, False)])
+def test_linear_adr_supersedes_limit_is_prevalidated_before_provider_effect(
+    tracker,
+    operation,
+    existing_relations,
+    accepted,
+):
+    instance, wire = tracker
+    source, replacement = seed_linear_adr_relation_boundary(
+        wire, existing_relations
+    )
+    before_documents = copy.deepcopy(wire.documents)
+    before_comments = copy.deepcopy(wire.comments)
+    call_offset = len(wire.calls)
+
+    def mutate():
+        if operation == "supersede":
+            instance.supersede_adr(source, replacement.id, project=PROJECT)
+            return
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-7000",
+            title="Imported boundary ADR",
+            body="historical body",
+            historical_status="superseded",
+            source_ref="YT-ADR-boundary",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"historical body").hexdigest(),
+            superseded_by=replacement.id,
+            issue_refs=("LIN-2",),
+        )
+
+    if accepted:
+        mutate()
+        models = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+        replacement_metadata, _ = linear_module._parse_adr_document(
+            wire.documents[models[replacement.id].ref], instance._binding(PROJECT)
+        )
+        assert len(replacement_metadata["relations"]["supersedes"]) == 100
+        return
+
+    with pytest.raises(TrackerConflictError, match="derived candidate is invalid"):
+        mutate()
+
+    provider_creates = [
+        document
+        for document, _variables in wire.calls[call_offset:]
+        if "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+    ]
+    assert provider_creates == []
+    assert wire.documents == before_documents
+    assert wire.comments == before_comments
 
 
 @pytest.mark.parametrize("damage", ["archive", "tamper", "delete_previous"])

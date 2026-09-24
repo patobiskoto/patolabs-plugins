@@ -92,5 +92,7 @@ if __name__ == "__main__":
         supersede(sys.argv[2], sys.argv[3])
     else:
         raise SystemExit(
-            "usage: adr.py <create '<title>' [status] | accept|edit <ADR-ID>>"
+            "usage: adr.py <create '<title>' [status] | accept <ADR-ID> | "
+            "edit <ADR-ID> <expected-body.md> <updated-body.md> | "
+            "supersede <ADR-ID> <replacement-ADR-ID>>"
         )

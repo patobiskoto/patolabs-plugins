@@ -2475,6 +2475,27 @@ class LinearTracker(Tracker):
             metadata["relations"]["supersedes"] = sorted(
                 {*metadata["relations"]["supersedes"], supersedes_id}
             )
+        candidate = {
+            "id": _adr_document_id(
+                metadata["project_id"], metadata["id"], metadata["sequence"]
+            ),
+            "title": _adr_document_title(metadata),
+            "content": _adr_document_content(metadata, new_body),
+            "project": {"id": metadata["project_id"]},
+            "archivedAt": None,
+        }
+        try:
+            _parse_adr_document(
+                candidate,
+                {
+                    "project_id": metadata["project_id"],
+                    "team_id": metadata["team_id"],
+                },
+            )
+        except LinearTrackerError:
+            raise TrackerConflictError(
+                "Linear ADR derived candidate is invalid"
+            ) from None
         return metadata, new_body
 
     def _append_adr_version(self, project, previous, metadata, body):
