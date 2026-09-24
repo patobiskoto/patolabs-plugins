@@ -126,7 +126,10 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 `<STABLE-FAILURE-ID>` identifies that exact observed failure; a transport or tool replay
 must reuse it, while a distinct failure needs a distinct value. Use `review_blocking` for the first blocking review and
 `review_blocking_after_fix` when its correction is blocked again. Rebuild the next
-Claude/Codex invocation through the façade so its persistent floor is applied. Every
+Claude/Codex invocation through the façade so its persistent floor is applied. A
+`review_blocking_after_fix` CLI signal must also pass `--root <ROOT> --base <IMMUTABLE-BASE-SHA>`;
+Foundry authenticates a terminal blocked review proof before any credited correction.
+Every
 decision reports role, initial/final tier, counters, and deterministic reason. If the
 command exits non-zero with `human_required=true`, STOP and ask the human; never create
 another agent. If it reports `technical_blocked`, keep campaign effects stopped and use

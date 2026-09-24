@@ -1603,6 +1603,84 @@ class ReviewDeduplicator:
             ),
         }
 
+    def revalidate_terminal_proof_for_current_git(
+        self,
+        issue_id: str,
+        expected_binding: Mapping[str, object],
+        *,
+        root: str | os.PathLike,
+    ) -> dict[str, object]:
+        """Revalidate one historical terminal proof against the calling worktree.
+
+        The escalation ledger is shared by worktrees that resolve to the same
+        repository identity.  A credited correction therefore cannot trust the
+        historical proof digest alone: the caller must still be in the exact root,
+        base, HEAD, and diff that the canonical proof reviewed.
+        """
+        if not isinstance(expected_binding, Mapping):
+            raise RoutingConfigError(
+                "preuve terminale bloquante invalide au claim de correction."
+            )
+        diff_hash = self._validate_hash(expected_binding.get("diff_hash"))
+        coordinates = self._validate_coordinates(
+            expected_binding.get("coordinates")
+        )
+        review_root, review_base = review_diff_coordinates(
+            root, coordinates["base"],
+        )
+        current_coordinates = {
+            "root": str(review_root),
+            "base": review_base,
+        }
+        if current_coordinates != coordinates:
+            raise RoutingConfigError(
+                "le worktree courant ne correspond pas aux coordonnées immuables "
+                "de la preuve bloquante ; plan de correction refusé."
+            )
+
+        durable = self.validated_terminal_proof_binding(
+            issue_id, diff_hash, coordinates=current_coordinates,
+        )
+        if durable is None or any(
+            expected_binding.get(key) != durable.get(key)
+            for key in (
+                "proof_id", "completed_at", "quality", "all_pass",
+                "generation", "claim_digest", "coordinates",
+            )
+        ):
+            raise RoutingConfigError(
+                "la preuve terminale bloquante ne correspond plus à son binding "
+                "canonique ; plan de correction refusé."
+            )
+
+        proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
+        proof = proof_store._validated_proof(
+            proof_store.directory / durable["proof_id"]
+        )
+        head_before = git_head(review_root)
+        current_diff_hash = review_diff_hash(git_diff(review_root, review_base))
+        head_after = git_head(review_root)
+        proof_coordinates = proof["coordinates"]
+        if (
+            head_before != head_after
+            or proof_coordinates["head"] != head_after
+            or proof_coordinates["base"] != review_base
+            or proof_coordinates["diff_hash"] != diff_hash
+            or current_diff_hash != diff_hash
+        ):
+            raise RoutingConfigError(
+                "preuve terminale bloquante périmée : HEAD ou diff Git courant "
+                "ne correspond pas aux octets revus ; plan de correction refusé."
+            )
+        return {
+            **durable,
+            "diff_hash": diff_hash,
+            **(
+                {"repository": self.__repository}
+                if "repository" in expected_binding else {}
+            ),
+        }
+
     def validated_completed_proof_binding(
         self, issue_id: str, diff_hash: str,
     ) -> dict[str, object] | None:
@@ -2218,7 +2296,33 @@ def main(
             "exactement cette valeur"
         ),
     )
+    escalation_failure.add_argument(
+        "--base",
+        help=("SHA Git figé requis pour consommer un crédit après "
+              "review_blocking_after_fix"),
+    )
+    escalation_failure.add_argument(
+        "--repository",
+        help="namespace du dépôt de review ; par défaut, identité du root Git",
+    )
     escalation_failure.add_argument("--root")
+    escalation_legacy_attest = escalation_actions.add_parser(
+        "attest-legacy-blocking-proof",
+        help="lie une consommation legacy à sa preuve canonique bloquante exacte",
+    )
+    escalation_legacy_attest.add_argument("issue")
+    escalation_legacy_attest.add_argument("role", choices=tuple(ROLE_DEFAULTS))
+    escalation_legacy_attest.add_argument(
+        "--halt-generation", required=True, type=_positive_int,
+    )
+    escalation_legacy_attest.add_argument(
+        "--base", required=True, help="SHA Git figé de la review historique",
+    )
+    escalation_legacy_attest.add_argument(
+        "--repository",
+        help="namespace canonique de la preuve ; par défaut, identité du root Git",
+    )
+    escalation_legacy_attest.add_argument("--root", required=True)
     escalation_risk = escalation_actions.add_parser("risk")
     escalation_risk.add_argument("issue")
     escalation_risk.add_argument("role", choices=tuple(ROLE_DEFAULTS))
@@ -2390,12 +2494,79 @@ def main(
                 payload = store.cancel_remediation(args.issue, args.halt_generation)
                 human_required = False
             elif args.escalation_action == "failure":
+                validated_blocking_proof = None
+                if args.kind == "review_blocking_after_fix":
+                    if args.root is None or args.base is None:
+                        raise RoutingConfigError(
+                            "review bloquante : --root et --base Git figés requis."
+                        )
+                    review_root, review_base = review_diff_coordinates(args.root, args.base)
+                    coordinates = {"root": str(review_root), "base": review_base}
+                    repository = args.repository or repository_identity(review_root)
+                    deduplicator = ReviewDeduplicator(repository)
+
+                    def validated_blocking_proof():
+                        # This callback runs while the escalation issue lock is held.
+                        # Re-read the trusted Git bytes here so a pre-lock race cannot
+                        # consume credit against an obsolete proof.
+                        expected_hash = review_diff_hash(
+                            git_diff(review_root, review_base),
+                        )
+                        binding = deduplicator.validated_terminal_proof_binding(
+                            args.issue, expected_hash, coordinates=coordinates,
+                        )
+                        if (
+                            binding is None or binding["quality"] != "blocked"
+                            or binding["all_pass"] is not False
+                        ):
+                            raise RoutingConfigError(
+                                "preuve terminale bloquante authentifiée requise."
+                            )
+                        return {
+                            **binding,
+                            "diff_hash": expected_hash,
+                            "repository": repository,
+                        }
+
                 decision = store.record_failure(
                     args.issue, args.role, args.kind, args.current_tier,
                     idempotency_key=args.idempotency_key,
+                    authorization_aware=True,
+                    validated_blocking_proof=validated_blocking_proof,
                 )
                 payload = decision.to_dict()
                 human_required = decision.human_required
+            elif args.escalation_action == "attest-legacy-blocking-proof":
+                review_root, review_base = review_diff_coordinates(args.root, args.base)
+                coordinates = {"root": str(review_root), "base": review_base}
+                repository = args.repository or repository_identity(review_root)
+                deduplicator = ReviewDeduplicator(repository)
+
+                def validated_legacy_blocking_proof():
+                    expected_hash = review_diff_hash(
+                        git_diff(review_root, review_base),
+                    )
+                    binding = deduplicator.validated_terminal_proof_binding(
+                        args.issue, expected_hash, coordinates=coordinates,
+                    )
+                    if (
+                        binding is None or binding["quality"] != "blocked"
+                        or binding["all_pass"] is not False
+                    ):
+                        raise RoutingConfigError(
+                            "preuve terminale bloquante authentifiée requise."
+                        )
+                    return {
+                        **binding,
+                        "diff_hash": expected_hash,
+                        "repository": repository,
+                    }
+
+                payload = store.attest_legacy_blocking_proof(
+                    args.issue, args.role, args.halt_generation,
+                    validated_blocking_proof=validated_legacy_blocking_proof,
+                )
+                human_required = False
             elif args.escalation_action == "risk":
                 decision = store.record_risk(
                     args.issue, args.role, args.kind, args.current_tier,

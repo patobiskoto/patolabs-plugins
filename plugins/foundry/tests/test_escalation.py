@@ -12,7 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import foundry
 import foundry.escalation as escalation_module
+import foundry.routing as routing_module
 from foundry import issue as issue_module, write
 from foundry.escalation import (
     BoundedDiagnostic,
@@ -24,13 +26,16 @@ from foundry.escalation import (
     EscalationStore,
 )
 from foundry.routing import (
+    AcceptanceProofStore,
     ReviewDeduplicator,
     ReviewClaim,
     RoutingConfigError,
     RoutingPolicy,
     RoutingUnavailableError,
     UserRouteRequest,
+    acceptance_criteria,
     main,
+    git_diff,
     review_diff_hash,
 )
 from foundry.routing_facades import codex_spawn_plan
@@ -59,11 +64,115 @@ def _packet():
     )
 
 
+def _git_review_fixture(root: Path) -> tuple[str, bytes]:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Foundry Test"], cwd=root, check=True)
+    tracked = root / "reviewed.txt"
+    tracked.write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    tracked.write_text("base\nreviewed correction\n", encoding="utf-8")
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "correction"], cwd=root, check=True)
+    return base, git_diff(root, base)
+
+
+def _credited_correction_state(
+    root: Path, state_dir: Path, issue: str,
+    review_repository: str | None = None,
+) -> EscalationStore:
+    base, diff = _git_review_fixture(root)
+    store = EscalationStore.for_root(root, state_dir=state_dir)
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, f"{issue.lower()}-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+    coordinates = {"root": str(root.resolve()), "base": base}
+    repository = review_repository or coordinates["root"]
+    diff_hash = review_diff_hash(diff)
+    ledger = ReviewDeduplicator(repository, state_dir)
+    claim = ledger.claim_git(
+        diff_hash, coordinates=coordinates, claim_attempt_token="b" * 64,
+    )
+    store.claim_fresh_reviewer_authorization(
+        issue, diff_hash, validated_claim=lambda: claim,
+    )
+    body = "- [ ] exactly one current correction plan can be claimed\n"
+    proof = AcceptanceProofStore(repository, state_dir).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=[
+            {**criterion, "verdict": "fail"}
+            for criterion in acceptance_criteria(body)
+        ],
+        quality="blocked", diff_hash=diff_hash, claim_id=claim.claim_id,
+        root=root, base=base, state_dir=state_dir,
+    )
+    binding = ledger.validated_terminal_proof_binding(
+        issue, diff_hash, coordinates=coordinates,
+    )
+    assert binding["proof_id"] == proof["proof_id"]
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        validated_blocking_proof=lambda: {
+            **binding, "diff_hash": diff_hash,
+            **({"repository": repository} if review_repository else {}),
+        },
+    )
+    return store
+
+
+def _open_generation_nine_legacy_window(store: EscalationStore, issue: str) -> int:
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    for generation in range(2, 10):
+        stopped = store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        )
+        assert stopped.action == "technical_blocked"
+        assert store.status(issue)["halt_generation"] == generation
+        store.resume_technical_remediation(issue, generation, f"{generation:x}" * 64)
+        store.claim_technical_remediation_route(
+            issue, "implementer", generation, f"pat22-gen{generation}-legacy-route",
+        )
+        store.rearm_remediation(
+            issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+            current_halt_generation=generation,
+        )
+        if generation < 9:
+            store.record_failure(
+                issue, "implementer", "review_blocking_after_fix", "apex",
+            )
+            exhausted_generation = generation
+    return 9
+
+
 def _concurrent_failure(args):
     repository, state_dir = args
     return EscalationStore(repository, state_dir=state_dir).record_failure(
         "FOUNDRY-42", "implementer", "test_red", "balanced",
     ).to_dict()
+
+
+def _concurrent_credited_correction_plan(args):
+    root, issue, role = args
+    try:
+        EscalationStore.for_root(root, state_dir=root).claim_credited_correction_plan(
+            issue, role, root=root,
+        )
+        return "claimed"
+    except EscalationTechnicalBlockedError:
+        return "blocked"
 
 
 def _concurrent_technical_resume(args):
@@ -1358,20 +1467,14 @@ def test_failure_cli_serializes_atomic_redacted_remediation_authorization(tmp_pa
     generation = store.status("FOUNDRY-65")["halt_generation"]
     store.resume("FOUNDRY-65", "remediation_reviewed", generation, 2)
 
-    main([
-        "escalation", "failure", "FOUNDRY-65", "implementer", "--kind",
-        "review_blocking_after_fix", "--current-tier", "frontier",
-        "--idempotency-key", "f107-remediation-65", "--root", str(tmp_path),
-    ])
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["action"] == "remediation_continued"
-    assert payload["human_required"] is False
-    assert payload["remediation_authorization"] == {
-        "state": "active", "role": "implementer", "halt_generation": generation,
-        "maximum_credits": 2, "remaining_credits": 1,
-    }
-    assert payload["remediation_authorization"] == store.status("FOUNDRY-65")["remediation_authorization"]
+    before = store._path("FOUNDRY-65").read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main([
+            "escalation", "failure", "FOUNDRY-65", "implementer", "--kind",
+            "review_blocking_after_fix", "--current-tier", "frontier",
+            "--idempotency-key", "f107-remediation-65", "--root", str(tmp_path),
+        ])
+    assert store._path("FOUNDRY-65").read_bytes() == before
 
 
 def test_failure_cli_returns_the_exact_just_exhausted_credit_snapshot(
@@ -1383,19 +1486,14 @@ def test_failure_cli_returns_the_exact_just_exhausted_credit_snapshot(
     generation = store.status("FOUNDRY-68")["halt_generation"]
     store.resume("FOUNDRY-68", "remediation_reviewed", generation, 1)
 
-    main([
-        "escalation", "failure", "FOUNDRY-68", "implementer", "--kind",
-        "review_blocking_after_fix", "--current-tier", "frontier",
-        "--idempotency-key", "f107-remediation-68", "--root", str(tmp_path),
-    ])
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["action"] == "remediation_continued"
-    assert payload["human_required"] is False
-    assert payload["remediation_authorization"] == {
-        "state": "exhausted", "role": "implementer", "halt_generation": generation,
-        "maximum_credits": 1, "remaining_credits": 0,
-    }
+    before = store._path("FOUNDRY-68").read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main([
+            "escalation", "failure", "FOUNDRY-68", "implementer", "--kind",
+            "review_blocking_after_fix", "--current-tier", "frontier",
+            "--idempotency-key", "f107-remediation-68", "--root", str(tmp_path),
+        ])
+    assert store._path("FOUNDRY-68").read_bytes() == before
 
 
 def test_serialized_released_v1_ledger_without_remediation_fields_remains_readable(tmp_path):
@@ -2115,7 +2213,7 @@ def test_generation_two_consumption_succeeds_through_the_cli(
     monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
     store = EscalationStore.for_root(tmp_path, state_dir=state_dir)
     issue = "FOUNDRY-163"
-    generation = _generation_two_remediation_window(store, issue)
+    _generation_two_remediation_window(store, issue)
     argv = [
         "escalation", "failure", issue, "implementer",
         "--kind", "review_blocking_after_fix", "--current-tier", "apex",
@@ -2123,21 +2221,10 @@ def test_generation_two_consumption_succeeds_through_the_cli(
         "--root", str(tmp_path),
     ]
 
-    main(argv)
-    first = json.loads(capsys.readouterr().out)
-    persisted = store._path(issue).read_bytes()
-    main(argv)
-    replay = json.loads(capsys.readouterr().out)
-
-    assert replay == first
-    assert first["action"] == "remediation_continued"
-    assert first["human_required"] is False
-    assert first["remediation_authorization"] == {
-        "state": "exhausted", "role": "implementer",
-        "halt_generation": generation,
-        "maximum_credits": 1, "remaining_credits": 0,
-    }
-    assert store._path(issue).read_bytes() == persisted
+    before = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main(argv)
+    assert store._path(issue).read_bytes() == before
 
 
 @pytest.mark.parametrize("after_halt", [False, True])
@@ -2347,6 +2434,402 @@ def test_rearm_after_later_technical_generation_binds_both_generations(tmp_path)
     )
     assert continued.action == "remediation_continued"
     assert store.status(issue)["remediation_authorization"]["remaining_credits"] == 1
+
+
+def test_consumed_technical_route_allows_only_its_credited_review_correction(
+    tmp_path,
+):
+    """PAT-30: a credited, bound blocking review can continue its correction."""
+    base, diff = _git_review_fixture(tmp_path)
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "PAT-30"
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, "pat30-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+
+    repository = str(tmp_path.resolve())
+    coordinates = {"root": repository, "base": base}
+    review_proof = review_diff_hash(diff)
+    ledger = ReviewDeduplicator(repository, tmp_path)
+    claim = ledger.claim_git(
+        review_proof, coordinates=coordinates, claim_attempt_token="b" * 64,
+    )
+    store.claim_fresh_reviewer_authorization(
+        issue, review_proof, validated_claim=lambda: claim,
+    )
+    body = "- [ ] the bound review remains blocked\n"
+    AcceptanceProofStore(repository, tmp_path).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=[
+            {**criterion, "verdict": "fail"}
+            for criterion in acceptance_criteria(body)
+        ],
+        quality="blocked", diff_hash=review_proof, claim_id=claim.claim_id,
+        root=tmp_path, base=base, state_dir=tmp_path,
+    )
+    blocking_proof = {
+        **ledger.validated_terminal_proof_binding(
+            issue, review_proof, coordinates=coordinates,
+        ),
+        "diff_hash": review_proof,
+    }
+    continued = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        validated_blocking_proof=lambda: blocking_proof,
+    )
+    assert continued.action == "remediation_continued"
+
+    before = store._path(issue).read_bytes()
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=issue,
+        escalation_state_dir=tmp_path,
+    )
+    assert plan["role"] == "implementer"
+    assert plan["route"]["selected_tier"] == "apex"
+    assert store.active_floor(issue, "implementer") == "apex"
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
+    assert store.active_floor(issue, "implementer") == "apex"
+    assert store._path(issue).read_bytes() != before
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique plan"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+    # Reviewer retains its pre-existing separately-claimed-review preflight;
+    # no other foreign role inherits the credited implementer correction.
+    for foreign_role in ("scout", "coordinator", "architect"):
+        with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+            store.active_floor(issue, foreign_role)
+
+
+@pytest.mark.parametrize("review_namespace", [None, "alternate/proof-store"])
+def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
+    monkeypatch, tmp_path, capsys, review_namespace,
+):
+    """PAT-30: exercise the released PAT-22 gen9 shape, not a new bound event."""
+    state_dir = tmp_path / "state"
+    repository_root = tmp_path / "repo"
+    repository_root.mkdir()
+    base, diff = _git_review_fixture(repository_root)
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    store = EscalationStore.for_root(repository_root, state_dir=state_dir)
+    issue = "PAT-22"
+    generation = _open_generation_nine_legacy_window(store, issue)
+    body = "- [ ] the exact correction remains blocked by review\n"
+    tracker = SimpleNamespace(
+        resolve_checkout_project=lambda _root: None,
+        get_issue=lambda _issue: SimpleNamespace(id=issue, body=body),
+    )
+    monkeypatch.setattr(foundry, "tracker", lambda: tracker)
+
+    repository_arg = ["--repository", review_namespace] if review_namespace else []
+    proof_repository = review_namespace or str(repository_root.resolve())
+    main([
+        "claim-review", "--git-diff", "--issue", issue,
+        "--root", str(repository_root), "--base", base,
+        "--claim-attempt-token", "9" * 64,
+        *repository_arg,
+    ])
+    claim = json.loads(capsys.readouterr().out)
+    diff_hash = review_diff_hash(diff)
+    assert claim["diff_hash"] == diff_hash
+
+    outcomes = [
+        {**criterion, "verdict": "fail"}
+        for criterion in acceptance_criteria(body)
+    ]
+    outcomes_file = tmp_path / "outcomes.json"
+    outcomes_file.write_text(json.dumps({
+        "outcomes": outcomes, "quality": "blocked",
+    }), encoding="utf-8")
+    main([
+        "record-review-proof", "--issue", issue, "--diff-hash", diff_hash,
+        "--claim-id", claim["claim_id"], "--outcomes-file", str(outcomes_file),
+        "--root", str(repository_root), "--base", base, *repository_arg,
+    ])
+    proof_result = json.loads(capsys.readouterr().out)
+    assert AcceptanceProofStore(
+        proof_repository, state_dir,
+    )._validated_proof(
+        AcceptanceProofStore(
+            proof_repository, state_dir,
+        ).directory / proof_result["proof_id"]
+    )["quality"] == "blocked"
+
+    # Released code consumed the credit without embedding the later PAT-30 field.
+    continued = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert continued.action == "remediation_continued"
+    legacy = store.status(issue)["consumption_audit"][-1]
+    assert legacy["halt_generation"] == 9
+    assert set(legacy) == {"code", "at", "role", "halt_generation"}
+    counters = store.status(issue)["roles"]["implementer"].copy()
+    authorization = store.status(issue)["remediation_authorization"].copy()
+
+    # A repository namespace with no canonical proof cannot authorize backfill.
+    before_missing = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="pas réservé"):
+        main([
+            "escalation", "attest-legacy-blocking-proof", issue, "implementer",
+            "--halt-generation", str(generation), "--root", str(repository_root),
+            "--base", base, "--repository", "missing/proof-store",
+        ])
+    assert store._path(issue).read_bytes() == before_missing
+
+    binding = ReviewDeduplicator(
+        proof_repository, state_dir,
+    ).validated_terminal_proof_binding(
+        issue, diff_hash,
+        coordinates={"root": str(repository_root.resolve()), "base": base},
+    )
+    before_wrong = store._path(issue).read_bytes()
+    with pytest.raises(RoutingConfigError, match="autre review"):
+        store.attest_legacy_blocking_proof(
+            issue, "implementer", generation,
+            validated_blocking_proof=lambda: {
+                **binding, "diff_hash": "f" * 64,
+            },
+        )
+    assert store._path(issue).read_bytes() == before_wrong
+
+    main([
+        "escalation", "attest-legacy-blocking-proof", issue, "implementer",
+        "--halt-generation", str(generation), "--root", str(repository_root),
+        "--base", base, *repository_arg,
+    ])
+    attestation = json.loads(capsys.readouterr().out)
+    assert attestation["consumption_at"] == legacy["at"]
+    assert attestation["blocking_proof"]["proof_id"] == proof_result["proof_id"]
+    assert attestation["blocking_proof"]["repository"] == proof_repository
+    assert store.status(issue)["roles"]["implementer"] == counters
+    assert store.status(issue)["remediation_authorization"] == authorization
+
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=repository_root, issue_id=issue,
+        escalation_state_dir=state_dir,
+    )
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique plan"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=repository_root, issue_id=issue,
+            escalation_state_dir=state_dir,
+        )
+    assert store.status(issue)["roles"]["implementer"] == counters
+    assert store.status(issue)["remediation_authorization"] == authorization
+
+    # A later HEAD makes the old proof stale; even replay revalidates before CAS.
+    (repository_root / "reviewed.txt").write_text(
+        "base\nreviewed correction\nhostile change\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=repository_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "hostile"], cwd=repository_root, check=True)
+    persisted = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="pas réservé"):
+        main([
+            "escalation", "attest-legacy-blocking-proof", issue, "implementer",
+            "--halt-generation", str(generation), "--root", str(repository_root),
+            "--base", base, *repository_arg,
+        ])
+    assert store._path(issue).read_bytes() == persisted
+
+
+def test_failure_cli_rehashes_inside_escalation_lock_before_credit_consumption(
+    monkeypatch, tmp_path,
+):
+    state_dir = tmp_path / "state"
+    repository_root = tmp_path / "repo"
+    repository_root.mkdir()
+    base, old_diff = _git_review_fixture(repository_root)
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    store = EscalationStore.for_root(repository_root, state_dir=state_dir)
+    issue = "PAT-33"
+    store.record_risk(issue, "implementer", "adr_creation", "apex")
+    _human_stop(store, issue, "implementer")
+    store.resume(
+        issue, "manual_retry_approved", store.status(issue)["halt_generation"], 1,
+    )
+
+    repository = str(repository_root.resolve())
+    coordinates = {"root": repository, "base": base}
+    diff_hash = review_diff_hash(old_diff)
+    ledger = ReviewDeduplicator(repository, state_dir)
+    claim = ledger.claim_git(
+        diff_hash, coordinates=coordinates, claim_attempt_token="a" * 64,
+    )
+    body = "- [ ] hostile races cannot consume a stale review proof\n"
+    AcceptanceProofStore(repository, state_dir).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=[
+            {**criterion, "verdict": "fail"}
+            for criterion in acceptance_criteria(body)
+        ],
+        quality="blocked", diff_hash=diff_hash, claim_id=claim.claim_id,
+        root=repository_root, base=base, state_dir=state_dir,
+    )
+    before = store._path(issue).read_bytes()
+
+    def hostile_diff(*_args, **_kwargs):
+        descriptor = os.open(store._lock_path(issue), os.O_RDWR)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return b"hostile diff installed while waiting for issue lock"
+            else:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                return old_diff
+        finally:
+            os.close(descriptor)
+
+    monkeypatch.setattr("foundry.routing.git_diff", hostile_diff)
+    with pytest.raises(SystemExit, match="pas réservé"):
+        main([
+            "escalation", "failure", issue, "implementer",
+            "--kind", "review_blocking_after_fix", "--current-tier", "apex",
+            "--idempotency-key", "pat33-hostile-race-0001",
+            "--root", str(repository_root), "--base", base,
+        ])
+    assert store._path(issue).read_bytes() == before
+    assert store.status(issue)["remediation_authorization"]["remaining_credits"] == 1
+
+
+def test_credited_correction_plan_is_single_use_under_concurrency(tmp_path):
+    issue = "PAT-32"
+    _credited_correction_state(tmp_path, tmp_path, issue)
+
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        results = pool.map(_concurrent_credited_correction_plan, [
+            (str(tmp_path), issue, "implementer"),
+            (str(tmp_path), issue, "implementer"),
+        ])
+    assert sorted(results) == ["blocked", "claimed"]
+
+
+def test_credited_correction_uses_authenticated_alternate_proof_namespace(tmp_path):
+    issue = "PAT-38"
+    store = _credited_correction_state(
+        tmp_path, tmp_path, issue, review_repository="alternate/proof-store",
+    )
+    consumed = store.status(issue)["consumption_audit"][-1]
+    assert consumed["blocking_proof"]["repository"] == "alternate/proof-store"
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=issue,
+        escalation_state_dir=tmp_path,
+    )
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
+
+
+def test_tampered_proof_namespace_cannot_consume_credited_plan(tmp_path):
+    issue = "PAT-39"
+    store = _credited_correction_state(
+        tmp_path, tmp_path, issue, review_repository="alternate/proof-store",
+    )
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["consumption_audit"][-1]["blocking_proof"]["repository"] = (
+        "missing/proof-store"
+    )
+    payload["remediation_authorization"]["consumption_audit"][-1][
+        "blocking_proof"
+    ]["repository"] = "missing/proof-store"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="pas réservé"):
+        store.claim_credited_correction_plan(issue, "implementer", root=tmp_path)
+    assert path.read_bytes() == before
+
+
+def test_credited_correction_rechecks_head_inside_issue_lock(monkeypatch, tmp_path):
+    issue = "PAT-35"
+    store = _credited_correction_state(tmp_path, tmp_path, issue)
+    original_git_head = routing_module.git_head
+    before = store._path(issue).read_bytes()
+
+    def hostile_head(root):
+        descriptor = os.open(store._lock_path(issue), os.O_RDWR)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return "f" * 40
+            else:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                return original_git_head(root)
+        finally:
+            os.close(descriptor)
+
+    monkeypatch.setattr(routing_module, "git_head", hostile_head)
+    with pytest.raises(RoutingConfigError, match="HEAD ou diff"):
+        store.claim_credited_correction_plan(
+            issue, "implementer", root=tmp_path,
+        )
+    assert store._path(issue).read_bytes() == before
+    assert store.status(issue)["credited_correction_claim_audit"] == []
+
+    monkeypatch.setattr(routing_module, "git_head", original_git_head)
+    assert store.claim_credited_correction_plan(
+        issue, "implementer", root=tmp_path,
+    ) is True
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
+
+
+def test_credited_correction_refuses_missing_review_binding_and_stale_generation(
+    tmp_path,
+):
+    store = EscalationStore("owner/pat-30-refusals", state_dir=tmp_path)
+    issue = "PAT-31"
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "c" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, "pat31-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        store.active_floor(issue, "implementer")
+
+    # A later generation cannot inherit the prior review/credit relationship.
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    assert store.status(issue)["halted"] is True
+    later_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, later_generation, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", later_generation, "pat31-local-route-0002",
+    )
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        store.active_floor(issue, "implementer")
+
+    # A forged review timestamp cannot manufacture the missing exact binding.
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["technical_remediation_audit"][-1]["review_claimed_at"] = (
+        payload["technical_remediation_audit"][-1]["route_consumed_at"]
+    )
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
 
 
 def test_bridged_rearm_rejects_forged_consumption_before_bridge(tmp_path):
