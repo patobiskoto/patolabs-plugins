@@ -563,17 +563,30 @@ python3 tooling/foundry_cli.py routing escalation rearm-remediation FOUNDRY-42 i
   --remediation-credits <1..3>
 ```
 
-The positional role must equal the exhausted authorization's recorded role and
-`--halt-generation` must equal both its original generation and the current non-halted
-generation. The locked CAS refuses active, cancelled, invalidated, malformed, differently
-attributed, stale, or already re-halted state without changing the ledger. Success is the
-distinct action `remediation_rearmed`, never `resumed`; it replaces only the current
-window with a fresh 1..3-credit active window.
+The positional role must equal the exhausted authorization's recorded role. When no later
+technical generation exists, `--halt-generation` remains the exact original and current
+non-halted generation. When the exhausted window at generation `G` was followed by a
+separately recorded technical stop and `resume-technical` diagnostic at `H`, the operator
+must bind both facts explicitly:
+
+```bash
+python3 tooling/foundry_cli.py routing escalation rearm-remediation FOUNDRY-42 implementer \
+  --reason manual_retry_approved --halt-generation <EXHAUSTED-G> \
+  --current-halt-generation <DIAGNOSTIC-H> --remediation-credits <1..3>
+```
+
+`H` must be the current non-halted generation and the latest locally recorded diagnostic
+and claimed local route must be for `H` and the same role. The locked CAS refuses a missing, stale, concurrent,
+halted, differently attributed, active, cancelled, invalidated, or malformed state without
+changing the ledger. Success is the distinct action `remediation_rearmed`, never `resumed`;
+it replaces only the current window with a fresh 1..3-credit active window.
 
 Every successful rearm appends one bounded `remediation_rearm_audit` event with the fixed
-code `remediation_window_rearmed`, UTC `at`, controlled public `reason`, role, original
-halt generation, granted credits, and the exhausted window's `armed_at` plus original
-maximum as its link. The previous consumption events stay unchanged in the issue-level
+code `remediation_window_rearmed`, UTC `at`, controlled public `reason`, role, active
+generation, granted credits, and the exhausted window's `armed_at` plus original maximum
+as its link. A rearm after a later technical diagnostic also records
+`exhausted_halt_generation`, so the audit binds the new authorization to both `G` and `H`.
+The previous consumption events stay unchanged in the issue-level
 `consumption_audit`; together with the link and rearm timestamp they keep the replaced
 window's exact audit interval accessible. Both Claude and Codex plans expose the same
 current authorization and rearm audit. The transition does not touch resume counts,
