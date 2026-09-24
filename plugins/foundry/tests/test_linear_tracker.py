@@ -2421,9 +2421,19 @@ def test_linear_historical_batch_imports_reciprocal_closure_into_empty_project(t
     ]
     assert len(wire.documents) == 4
     assert len(wire.comments) == 1
+    batch_digests = {
+        linear_module._parse_adr_document(raw, {
+            "project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"],
+        })[0]["origin"]["batch_sha256"]
+        for raw in wire.documents.values()
+        if raw["title"].startswith("[Foundry ADR]")
+    }
+    assert len(batch_digests) == 1
     before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
     replay = instance.import_adr_batch(PROJECT, records)
     assert [item.ref for item in replay] == [item.ref for item in imported]
+    reordered = instance.import_adr_batch(PROJECT, records[::-1])
+    assert [item.ref for item in reordered] == [item.ref for item in imported[::-1]]
     assert (wire.documents, wire.comments) == before
     assert {item.id for item in instance.list_adrs(PROJECT)} == {
         "LIN-ADR-0041", "LIN-ADR-0042",
@@ -2449,6 +2459,9 @@ def test_linear_historical_batch_refuses_bad_or_changed_manifest_before_effect(t
     changed = {**source, "title": "Changed source"}
     with pytest.raises(TrackerConflictError, match="slot diverged"):
         instance.import_adr_batch(PROJECT, (changed, replacement))
+    assert (wire.documents, wire.comments) == before
+    with pytest.raises(TrackerConflictError, match="slot diverged"):
+        instance.import_adr_batch(PROJECT, (replacement,))
     assert (wire.documents, wire.comments) == before
 
 
@@ -2496,6 +2509,10 @@ def test_linear_historical_batch_recovers_completed_first_half(tracker):
     instance._transport = original
     with pytest.raises(AdrUnavailableError, match="LIN-ADR-0042"):
         instance.list_adrs(PROJECT)
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    with pytest.raises(TrackerConflictError, match="slot diverged"):
+        instance.import_adr_batch(PROJECT, (records[0],))
+    assert (wire.documents, wire.comments) == before
     instance.import_adr_batch(PROJECT, records)
     assert len(instance.list_adrs(PROJECT)) == 2
     assert len(wire.documents) == 4

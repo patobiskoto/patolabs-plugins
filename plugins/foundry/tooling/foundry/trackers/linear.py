@@ -547,17 +547,24 @@ def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
             sequence != 0 or metadata["status"] == "proposed"
         )
     else:
+        migration_keys = {
+            "kind",
+            "source_tracker",
+            "source_ref",
+            "source_created",
+            "source_updated",
+            "source_body_sha256",
+            "missing_relations",
+        }
         valid_origin = (
-            set(origin)
-            == {
-                "kind",
-                "source_tracker",
-                "source_ref",
-                "source_created",
-                "source_updated",
-                "source_body_sha256",
-                "missing_relations",
-            }
+            set(origin) in (migration_keys, migration_keys | {"batch_sha256"})
+            and (
+                "batch_sha256" not in origin
+                or (
+                    isinstance(origin["batch_sha256"], str)
+                    and _DIGEST.fullmatch(origin["batch_sha256"]) is not None
+                )
+            )
             and origin["source_tracker"] == "youtrack"
             and isinstance(origin["source_ref"], str)
             and bool(origin["source_ref"])
@@ -2962,6 +2969,7 @@ class LinearTracker(Tracker):
         if not isinstance(records, tuple) or not 1 <= len(records) <= 100:
             raise ValueError("Linear ADR batch requires 1..100 records")
         binding, documents = self._adr_documents(project)
+        prepared = []
         candidates = []
         comments = []
         seen_ids = set()
@@ -3038,8 +3046,25 @@ class LinearTracker(Tracker):
                     "issues": list(canonical_refs),
                 },
             }
+            prepared.append((metadata, body))
+            comments.extend(
+                (adr_id, issue_id, native_ids[issue_id])
+                for issue_id in canonical_refs
+            )
+
+        # Bind every version-0 slot to the entire normalized manifest, not only
+        # its own record. A reordered exact replay is equivalent, but a subset or
+        # a changed member has different slot bytes and must fail before effects.
+        manifest = [metadata for metadata, _body in sorted(
+            prepared, key=lambda item: item[0]["id"]
+        )]
+        batch_sha256 = hashlib.sha256(json.dumps(
+            manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        for metadata, body in prepared:
+            metadata["origin"]["batch_sha256"] = batch_sha256
             candidate = {
-                "id": _adr_document_id(binding["project_id"], adr_id, 0),
+                "id": _adr_document_id(binding["project_id"], metadata["id"], 0),
                 "title": _adr_document_title(metadata),
                 "content": _adr_document_content(metadata, body),
                 "project": {"id": binding["project_id"]},
@@ -3048,10 +3073,6 @@ class LinearTracker(Tracker):
             _parse_adr_document(candidate, binding)
             witness = _adr_witness_document(binding, metadata, candidate)
             candidates.append((metadata, body, candidate, witness))
-            comments.extend(
-                (adr_id, issue_id, native_ids[issue_id])
-                for issue_id in canonical_refs
-            )
 
         by_id = {}
         for raw in documents:

@@ -179,9 +179,11 @@ accepts a finite manifest of 1–100 complete historical snapshots with all thre
 relation fields explicit. It constructs every deterministic version-0 Document,
 witness and reciprocal issue comment, validates the full hypothetical graph before
 the first write, then creates the exact slots additively. Ordinary reads fail closed
-through a partial batch; replay of the same manifest can complete matching slots,
-while a changed slot or unrelated conflict is refused. This is not a provider-atomic
-transaction and is not permission to migrate the entire archive. PAT-23 owns the
+through a partial batch; each version-0 migration origin persists a SHA-256 digest of
+the complete normalized manifest, propagated to later versions. An exact replay can
+complete matching slots regardless of record order; a subset or changed manifest
+collides before effects, while unrelated conflicts are also refused. This is not a
+provider-atomic transaction and is not permission to migrate the entire archive. PAT-23 owns the
 authorized manifest and audit; PAT-10 owns cutover.
 When import stops after version 0 (with or without its witness) but before reciprocal
 relation versions, an exact replay preflights the completed hypothetical graph before
