@@ -2282,6 +2282,37 @@ def test_rearm_after_later_technical_generation_binds_both_generations(tmp_path)
     assert store.status(issue)["remediation_authorization"]["remaining_credits"] == 1
 
 
+def test_rearm_again_after_bridged_technical_generation(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-technical-repeat", state_dir=tmp_path)
+    issue = "FOUNDRY-99"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-technical-99",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    exhausted = store.status(issue)
+    assert exhausted["remediation_authorization"]["state"] == "exhausted"
+
+    rearmed = store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", technical_generation, 1,
+    )
+
+    assert rearmed["halt_generation"] == technical_generation
+    assert rearmed["exhausted_halt_generation"] == technical_generation
+    state = store.status(issue)
+    assert state["remediation_authorization"]["remaining_credits"] == 1
+    assert state["remediation_rearm_audit"][-2]["exhausted_halt_generation"] == exhausted_generation
+    assert "exhausted_halt_generation" not in state["remediation_rearm_audit"][-1]
+    assert state["technical_remediation_audit"] == exhausted["technical_remediation_audit"]
+
+
 def test_rearm_after_later_technical_generation_rejects_missing_or_stale_anchor(tmp_path):
     store = EscalationStore("owner/remediation-rearm-technical-cas", state_dir=tmp_path)
     issue = "FOUNDRY-97"

@@ -538,10 +538,11 @@ resume, replacement by a newly credited window, exhaustion, invalidation, and
 cancellation. Events are chronological and cannot contain prompts, prose, diffs,
 provider output, secrets, or other free-form input.
 
-`halt_generation` is the identity of the human-resumed stop, not the ordinal
+`halt_generation` identifies the authorization's stop, not the ordinal
 `resume_count`: bounded technical resumes may advance the former without incrementing
-the latter. Normalization therefore accepts events only on generations actually cleared
-by a human resume and rejects technical-only generations.
+the latter. Normalization accepts consumption on a technical generation only after an
+audited rearm has bridged an exhausted earlier window to that generation; a diagnostic
+or claimed local route alone grants no credit.
 
 An exhausted authorization remains coherent without a halt only at its authorization
 generation G, allowing the exact just-exhausted correction/reviewer routing decision.
@@ -586,6 +587,9 @@ code `remediation_window_rearmed`, UTC `at`, controlled public `reason`, role, a
 generation, granted credits, and the exhausted window's `armed_at` plus original maximum
 as its link. A rearm after a later technical diagnostic also records
 `exhausted_halt_generation`, so the audit binds the new authorization to both `G` and `H`.
+If that new window is subsequently exhausted at `H`, an ordinary same-generation rearm
+may use `--halt-generation H`; normalization requires the earlier `G` to `H` bridge in
+the audit and rejects an unbridged technical generation.
 The previous consumption events stay unchanged in the issue-level
 `consumption_audit`; together with the link and rearm timestamp they keep the replaced
 window's exact audit interval accessible. Both Claude and Codex plans expose the same

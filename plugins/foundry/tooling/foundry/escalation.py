@@ -1774,25 +1774,24 @@ class EscalationStore:
                     != rearm["halt_generation"]
                 }
             )
-            or any(
-                event["halt_generation"] in technical_counts_by_generation
-                for event in rearm_audit
-                if event.get("exhausted_halt_generation")
-                == event["halt_generation"]
-            )
         ):
             raise _invalid_ledger(issue_id)
+        prior_bridges = set()
         for event, event_time in zip(rearm_audit, (
             _utc_timestamp(item["at"]) for item in rearm_audit
         ), strict=True):
             exhausted_generation = event.get(
                 "exhausted_halt_generation", event["halt_generation"],
             )
-            if event["halt_generation"] > last_resumed_generation and (
-                exhausted_generation == event["halt_generation"]
-                or event["halt_generation"] not in technical_counts_by_generation
+            event_generation = event["halt_generation"]
+            if event_generation > last_resumed_generation and (
+                (
+                    exhausted_generation == event_generation
+                    and (event_generation, event["role"]) not in prior_bridges
+                )
+                or event_generation not in technical_counts_by_generation
                 or not any(
-                    technical["halt_generation"] == event["halt_generation"]
+                    technical["halt_generation"] == event_generation
                     and technical["role"] == event["role"]
                     and technical["route_id"] is not None
                     and technical["route_consumed_at"] is not None
@@ -1802,11 +1801,13 @@ class EscalationStore:
                 or event_time <= technical_times[
                     next(
                         index for index, technical in enumerate(technical_audit)
-                        if technical["halt_generation"] == event["halt_generation"]
+                        if technical["halt_generation"] == event_generation
                     )
                 ]
             ):
                 raise _invalid_ledger(issue_id)
+            if exhausted_generation != event_generation:
+                prior_bridges.add((event_generation, event["role"]))
 
         state = {
             "version": 1,
