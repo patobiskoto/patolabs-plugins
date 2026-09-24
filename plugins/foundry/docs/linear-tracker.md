@@ -135,6 +135,14 @@ read. Concurrent forks at one generation fail closed. This is idempotence for th
 Foundry lifecycle comments, not a claim that arbitrary
 Linear comments or issue creation are exactly once.
 
+Exact comment lookup uses Linear's filtered `comments` connection with
+`id == <deterministic UUID>` and `first: 1`; it does not use `comment(id:)`, whose
+not-found response is a GraphQL error rather than a nullable absence. Only a valid empty
+connection means “absent”. More than one row, a row with another ID, missing or malformed
+pagination metadata, or `hasNextPage=true` fails closed before creation or recovery.
+When the exact ID exists, its byte-exact body and bound issue must still match; otherwise
+the slot is treated as a collision, never as a replay or an absent comment.
+
 Native workflow snapshots may legitimately evolve while those receipts accumulate.
 Foundry first validates every receipt's shape, integrity, review generation, AC proof and
 merge coordinates, then orders their native-state IDs by lifecycle causality:

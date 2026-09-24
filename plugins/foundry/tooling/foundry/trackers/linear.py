@@ -116,8 +116,11 @@ mutation FoundryLinearCommentCreate($input: CommentCreateInput!) {
 """
 
 _COMMENT_QUERY = """
-query FoundryLinearComment($id: String!) {
-  comment(id: $id) { id body issue { id identifier } }
+query FoundryLinearCommentsById($id: ID!) {
+  comments(filter: { id: { eq: $id } }, first: 1) {
+    nodes { id body issue { id identifier } }
+    pageInfo { hasNextPage endCursor }
+  }
 }
 """
 
@@ -315,6 +318,15 @@ class LinearTracker(Tracker):
         if (not isinstance(payload, dict) or payload.get("success") is not True):
             raise LinearTrackerError(operation, None, "mutation_failed")
         return payload
+
+    def _read_comment(self, comment_id: str, operation: str) -> dict | None:
+        data = self._graphql(_COMMENT_QUERY, {"id": comment_id}, operation)
+        comments = _connection(data.get("comments"), operation)
+        if len(comments) > 1:
+            raise LinearTrackerError(operation, None, "invalid_response")
+        if comments and comments[0].get("id") != comment_id:
+            raise LinearTrackerError(operation, None, "invalid_response")
+        return comments[0] if comments else None
 
     # ---- explicit binding -----------------------------------------
     @staticmethod
@@ -800,9 +812,7 @@ class LinearTracker(Tracker):
                 existing.append((item.get("id"), decoded[2]))
         exact = [item for item in existing if item == (comment_id, body)]
         if exact == [(comment_id, body)]:
-            prior = self._graphql(
-                _COMMENT_QUERY, {"id": comment_id}, "lifecycle.comment.read",
-            ).get("comment")
+            prior = self._read_comment(comment_id, "lifecycle.comment.read")
             if (not isinstance(prior, dict) or prior.get("body") != body
                     or (prior.get("issue") or {}).get("id") != raw["id"]):
                 raise TrackerConflictError("Linear lifecycle replay readback divergent")
@@ -824,9 +834,7 @@ class LinearTracker(Tracker):
                 if prior_generation == generation:
                     raise TrackerConflictError("Linear lifecycle divergent before comment")
 
-        prior = self._graphql(
-            _COMMENT_QUERY, {"id": comment_id}, "lifecycle.comment.read",
-        ).get("comment")
+        prior = self._read_comment(comment_id, "lifecycle.comment.read")
         if prior is not None:
             if (not isinstance(prior, dict) or prior.get("body") != body
                     or (prior.get("issue") or {}).get("id") != raw["id"]):
@@ -852,9 +860,9 @@ class LinearTracker(Tracker):
             except LinearTrackerError:
                 # The provider may have committed the deterministic create before the
                 # response was interrupted. Recovery is allowed only through its exact ID.
-                recovered = self._graphql(
-                    _COMMENT_QUERY, {"id": comment_id}, "lifecycle.comment.recover",
-                ).get("comment")
+                recovered = self._read_comment(
+                    comment_id, "lifecycle.comment.recover",
+                )
                 if (not isinstance(recovered, dict) or recovered.get("body") != body
                         or (recovered.get("issue") or {}).get("id") != raw["id"]):
                     raise
@@ -1362,9 +1370,7 @@ class LinearTracker(Tracker):
                 or comment.get("body") != text
                 or (comment.get("issue") or {}).get("id") != raw["id"]):
             raise LinearTrackerError("comment.create", None, "invalid_response")
-        readback = self._graphql(
-            _COMMENT_QUERY, {"id": comment["id"]}, "comment.readback",
-        ).get("comment")
+        readback = self._read_comment(comment["id"], "comment.readback")
         if (not isinstance(readback, dict) or readback.get("body") != text
                 or (readback.get("issue") or {}).get("id") != raw["id"]):
             raise TrackerConflictError("Linear comment divergent after write; no retry")

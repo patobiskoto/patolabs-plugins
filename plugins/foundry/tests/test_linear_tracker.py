@@ -144,8 +144,11 @@ class LinearWire:
                 "createdAt": "2026-09-20T10:02:00Z",
             })
             return {"data": {"commentCreate": {"success": True, "comment": copy.deepcopy(comment)}}}
-        if "FoundryLinearComment(" in document:
-            return {"data": {"comment": copy.deepcopy(self.comments.get(variables["id"]))}}
+        if "FoundryLinearCommentsById(" in document:
+            comment = self.comments.get(variables["id"])
+            return {"data": {"comments": connection(
+                [] if comment is None else [copy.deepcopy(comment)]
+            )}}
         raise AssertionError("unexpected GraphQL document")
 
     @staticmethod
@@ -761,6 +764,75 @@ def test_linear_lifecycle_refuses_comment_with_mismatched_deterministic_id(track
 
     with pytest.raises(TrackerConflictError, match="comment id invalid"):
         instance.get_issue("LIN-2")
+
+
+def test_linear_exact_comment_lookup_returns_none_only_for_empty_filter_result(tracker):
+    instance, wire = tracker
+
+    assert instance._read_comment(
+        "00000000-0000-4000-8000-000000000099", "lifecycle.comment.read",
+    ) is None
+    document, variables = wire.calls[-1]
+    assert "comments(filter: { id: { eq: $id } }, first: 1)" in document
+    assert "comment(id:" not in document
+    assert variables == {"id": "00000000-0000-4000-8000-000000000099"}
+
+
+def test_linear_exact_comment_lookup_rejects_wrong_filtered_id(tracker):
+    instance, wire = tracker
+
+    def transport(document, variables):
+        result = wire(document, variables)
+        if "FoundryLinearCommentsById(" in document:
+            result["data"]["comments"]["nodes"] = [{
+                "id": "wrong-id", "body": "wrong",
+                "issue": {"id": "issue-uuid-2", "identifier": "LIN-2"},
+            }]
+        return result
+
+    instance._transport = transport
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance._read_comment(
+            "00000000-0000-4000-8000-000000000099", "lifecycle.comment.read",
+        )
+
+
+@pytest.mark.parametrize("page_info", [
+    {"hasNextPage": True, "endCursor": "next"},
+    {"endCursor": None},
+])
+def test_linear_lifecycle_refuses_unbounded_or_malformed_exact_comment_page(
+    tracker, page_info,
+):
+    instance, wire = tracker
+
+    def transport(document, variables):
+        result = wire(document, variables)
+        if "FoundryLinearCommentsById(" in document:
+            result["data"]["comments"]["pageInfo"] = page_info
+        return result
+
+    instance._transport = transport
+    with pytest.raises(LinearTrackerError):
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    assert wire.comments == {}
+
+
+def test_linear_lifecycle_refuses_exact_comment_id_collision_before_create(tracker):
+    instance, wire = tracker
+    _marker, body, comment_id = instance._lifecycle_marker(
+        "state-in-progress", "LIN-2", {
+            "state": "in-progress", "native_state_id": STATE_IDS["ready"],
+        },
+    )
+    wire.comments[comment_id] = {
+        "id": comment_id, "body": body + "\ndivergent",
+        "issue": {"id": "issue-uuid-2", "identifier": "LIN-2"},
+    }
+
+    with pytest.raises(TrackerConflictError, match="comment id collision"):
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == []
 
 
 def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, monkeypatch):
