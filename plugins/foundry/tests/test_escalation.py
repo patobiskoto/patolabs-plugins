@@ -84,6 +84,7 @@ def _git_review_fixture(root: Path) -> tuple[str, bytes]:
 
 def _credited_correction_state(
     root: Path, state_dir: Path, issue: str,
+    review_repository: str | None = None,
 ) -> EscalationStore:
     base, diff = _git_review_fixture(root)
     store = EscalationStore.for_root(root, state_dir=state_dir)
@@ -98,8 +99,8 @@ def _credited_correction_state(
         issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
         current_halt_generation=generation,
     )
-    repository = str(root.resolve())
-    coordinates = {"root": repository, "base": base}
+    coordinates = {"root": str(root.resolve()), "base": base}
+    repository = review_repository or coordinates["root"]
     diff_hash = review_diff_hash(diff)
     ledger = ReviewDeduplicator(repository, state_dir)
     claim = ledger.claim_git(
@@ -124,7 +125,10 @@ def _credited_correction_state(
     assert binding["proof_id"] == proof["proof_id"]
     store.record_failure(
         issue, "implementer", "review_blocking_after_fix", "apex",
-        validated_blocking_proof=lambda: {**binding, "diff_hash": diff_hash},
+        validated_blocking_proof=lambda: {
+            **binding, "diff_hash": diff_hash,
+            **({"repository": repository} if review_repository else {}),
+        },
     )
     return store
 
@@ -2512,8 +2516,9 @@ def test_consumed_technical_route_allows_only_its_credited_review_correction(
             store.active_floor(issue, foreign_role)
 
 
+@pytest.mark.parametrize("review_namespace", [None, "alternate/proof-store"])
 def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
-    monkeypatch, tmp_path, capsys,
+    monkeypatch, tmp_path, capsys, review_namespace,
 ):
     """PAT-30: exercise the released PAT-22 gen9 shape, not a new bound event."""
     state_dir = tmp_path / "state"
@@ -2531,10 +2536,13 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     )
     monkeypatch.setattr(foundry, "tracker", lambda: tracker)
 
+    repository_arg = ["--repository", review_namespace] if review_namespace else []
+    proof_repository = review_namespace or str(repository_root.resolve())
     main([
         "claim-review", "--git-diff", "--issue", issue,
         "--root", str(repository_root), "--base", base,
         "--claim-attempt-token", "9" * 64,
+        *repository_arg,
     ])
     claim = json.loads(capsys.readouterr().out)
     diff_hash = review_diff_hash(diff)
@@ -2551,14 +2559,14 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     main([
         "record-review-proof", "--issue", issue, "--diff-hash", diff_hash,
         "--claim-id", claim["claim_id"], "--outcomes-file", str(outcomes_file),
-        "--root", str(repository_root), "--base", base,
+        "--root", str(repository_root), "--base", base, *repository_arg,
     ])
     proof_result = json.loads(capsys.readouterr().out)
     assert AcceptanceProofStore(
-        str(repository_root.resolve()), state_dir,
+        proof_repository, state_dir,
     )._validated_proof(
         AcceptanceProofStore(
-            str(repository_root.resolve()), state_dir,
+            proof_repository, state_dir,
         ).directory / proof_result["proof_id"]
     )["quality"] == "blocked"
 
@@ -2584,7 +2592,7 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     assert store._path(issue).read_bytes() == before_missing
 
     binding = ReviewDeduplicator(
-        str(repository_root.resolve()), state_dir,
+        proof_repository, state_dir,
     ).validated_terminal_proof_binding(
         issue, diff_hash,
         coordinates={"root": str(repository_root.resolve()), "base": base},
@@ -2602,11 +2610,12 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     main([
         "escalation", "attest-legacy-blocking-proof", issue, "implementer",
         "--halt-generation", str(generation), "--root", str(repository_root),
-        "--base", base,
+        "--base", base, *repository_arg,
     ])
     attestation = json.loads(capsys.readouterr().out)
     assert attestation["consumption_at"] == legacy["at"]
     assert attestation["blocking_proof"]["proof_id"] == proof_result["proof_id"]
+    assert attestation["blocking_proof"]["repository"] == proof_repository
     assert store.status(issue)["roles"]["implementer"] == counters
     assert store.status(issue)["remediation_authorization"] == authorization
 
@@ -2634,7 +2643,7 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
         main([
             "escalation", "attest-legacy-blocking-proof", issue, "implementer",
             "--halt-generation", str(generation), "--root", str(repository_root),
-            "--base", base,
+            "--base", base, *repository_arg,
         ])
     assert store._path(issue).read_bytes() == persisted
 
@@ -2709,6 +2718,41 @@ def test_credited_correction_plan_is_single_use_under_concurrency(tmp_path):
             (str(tmp_path), issue, "implementer"),
         ])
     assert sorted(results) == ["blocked", "claimed"]
+
+
+def test_credited_correction_uses_authenticated_alternate_proof_namespace(tmp_path):
+    issue = "PAT-38"
+    store = _credited_correction_state(
+        tmp_path, tmp_path, issue, review_repository="alternate/proof-store",
+    )
+    consumed = store.status(issue)["consumption_audit"][-1]
+    assert consumed["blocking_proof"]["repository"] == "alternate/proof-store"
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=issue,
+        escalation_state_dir=tmp_path,
+    )
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
+
+
+def test_tampered_proof_namespace_cannot_consume_credited_plan(tmp_path):
+    issue = "PAT-39"
+    store = _credited_correction_state(
+        tmp_path, tmp_path, issue, review_repository="alternate/proof-store",
+    )
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["consumption_audit"][-1]["blocking_proof"]["repository"] = (
+        "missing/proof-store"
+    )
+    payload["remediation_authorization"]["consumption_audit"][-1][
+        "blocking_proof"
+    ]["repository"] = "missing/proof-store"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="pas réservé"):
+        store.claim_credited_correction_plan(issue, "implementer", root=tmp_path)
+    assert path.read_bytes() == before
 
 
 def test_credited_correction_rechecks_head_inside_issue_lock(monkeypatch, tmp_path):

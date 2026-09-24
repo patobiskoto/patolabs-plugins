@@ -68,6 +68,7 @@ _BLOCKING_PROOF_KEYS = {
     "proof_id", "completed_at", "quality", "all_pass", "diff_hash",
     "generation", "claim_digest", "coordinates",
 }
+_BLOCKING_PROOF_OPTIONAL_KEYS = {"repository"}
 _LEGACY_PROOF_ATTESTATION_CODE = "legacy_blocking_proof_attested"
 _LEGACY_PROOF_ATTESTATION_KEYS = {
     "code", "at", "role", "halt_generation", "consumption_at", "blocking_proof",
@@ -899,7 +900,9 @@ def _normalize_consumption_event(
 
 def _normalize_blocking_proof(value: object, issue_id: str) -> dict:
     if (
-        not isinstance(value, dict) or set(value) != _BLOCKING_PROOF_KEYS
+        not isinstance(value, dict)
+        or not _BLOCKING_PROOF_KEYS.issubset(value)
+        or not set(value).issubset(_BLOCKING_PROOF_KEYS | _BLOCKING_PROOF_OPTIONAL_KEYS)
         or _DIGEST.fullmatch(value.get("proof_id", "")) is None
         or _DIGEST.fullmatch(value.get("diff_hash", "")) is None
         or _DIGEST.fullmatch(value.get("claim_digest", "")) is None
@@ -907,6 +910,15 @@ def _normalize_blocking_proof(value: object, issue_id: str) -> dict:
         or _utc_timestamp(value.get("completed_at")) is None
         or value.get("quality") != "blocked" or value.get("all_pass") is not False
         or not isinstance(value.get("coordinates"), dict)
+        or (
+            "repository" in value
+            and (
+                not isinstance(value["repository"], str)
+                or not value["repository"].strip()
+                or value["repository"] != value["repository"].strip()
+                or len(value["repository"]) > 2048
+            )
+        )
     ):
         raise _invalid_ledger(issue_id)
     try:
@@ -1343,7 +1355,7 @@ class EscalationStore:
                     "la revalidation atomique."
                 )
             current = ReviewDeduplicator(
-                self._repository, self._state_dir,
+                proof.get("repository", self._repository), self._state_dir,
             ).revalidate_terminal_proof_for_current_git(
                 issue_id, proof, root=root,
             )
@@ -3971,26 +3983,11 @@ class EscalationStore:
                     )
                 binding = None
                 if validated_blocking_proof is not None:
-                    binding = validated_blocking_proof()
-                    if (
-                        not isinstance(binding, dict)
-                        or set(binding) != _BLOCKING_PROOF_KEYS
-                        or _DIGEST.fullmatch(binding.get("proof_id", "")) is None
-                        or _DIGEST.fullmatch(binding.get("diff_hash", "")) is None
-                        or _DIGEST.fullmatch(binding.get("claim_digest", "")) is None
-                        or type(binding.get("generation")) is not int
-                        or binding["generation"] < 1
-                        or _utc_timestamp(binding.get("completed_at")) is None
-                        or binding.get("quality") != "blocked"
-                        or binding.get("all_pass") is not False
-                    ):
-                        raise RoutingConfigError(
-                            "preuve terminale bloquante authentifiée invalide."
-                        )
+                    candidate_binding = validated_blocking_proof()
                     try:
-                        binding = {**binding, "coordinates": ReviewDeduplicator._validate_coordinates(
-                            binding.get("coordinates")
-                        )}
+                        binding = _normalize_blocking_proof(
+                            candidate_binding, issue_id,
+                        )
                     except RoutingConfigError as exc:
                         raise RoutingConfigError(
                             "preuve terminale bloquante authentifiée invalide."

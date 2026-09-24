@@ -413,8 +413,10 @@ Both this transition and `routing escalation failure ...
 --kind review_blocking_after_fix` expose `--repository` for the uncommon case where the
 canonical review namespace is not the repository identity resolved from `--root`. Its
 value must be the exact namespace used by `claim-review` and `record-review-proof`; it
-only locates that proof store and grants no authority. Omit it for the normal
-root-derived namespace. `--root` and `--base` remain mandatory trusted coordinates,
+is persisted with the authenticated blocking-proof binding so the later single-use
+plan claim reopens that same proof store. It grants no authority of its own. Existing
+consumption records without that field retain the root-derived default namespace.
+Omit it for the normal root-derived namespace. `--root` and `--base` remain mandatory trusted coordinates,
 and the diff is re-read while the escalation transition is locked.
 
 After either an exact reviewer or implementer route is consumed, it may unlock one fresh

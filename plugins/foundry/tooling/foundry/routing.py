@@ -1672,7 +1672,14 @@ class ReviewDeduplicator:
                 "preuve terminale bloquante périmée : HEAD ou diff Git courant "
                 "ne correspond pas aux octets revus ; plan de correction refusé."
             )
-        return {**durable, "diff_hash": diff_hash}
+        return {
+            **durable,
+            "diff_hash": diff_hash,
+            **(
+                {"repository": self.__repository}
+                if "repository" in expected_binding else {}
+            ),
+        }
 
     def validated_completed_proof_binding(
         self, issue_id: str, diff_hash: str,
@@ -2515,7 +2522,11 @@ def main(
                             raise RoutingConfigError(
                                 "preuve terminale bloquante authentifiée requise."
                             )
-                        return {**binding, "diff_hash": expected_hash}
+                        return {
+                            **binding,
+                            "diff_hash": expected_hash,
+                            "repository": repository,
+                        }
 
                 decision = store.record_failure(
                     args.issue, args.role, args.kind, args.current_tier,
@@ -2545,7 +2556,11 @@ def main(
                         raise RoutingConfigError(
                             "preuve terminale bloquante authentifiée requise."
                         )
-                    return {**binding, "diff_hash": expected_hash}
+                    return {
+                        **binding,
+                        "diff_hash": expected_hash,
+                        "repository": repository,
+                    }
 
                 payload = store.attest_legacy_blocking_proof(
                     args.issue, args.role, args.halt_generation,
