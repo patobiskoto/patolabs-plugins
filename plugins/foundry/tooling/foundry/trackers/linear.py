@@ -303,20 +303,18 @@ def _relation_link(relation: dict, *, inverse: bool) -> Link:
     return Link("blocks", "inward", target["identifier"])
 
 
+def _adr_client_uuid(slot: str) -> str:
+    digest = hashlib.sha256(slot.encode("utf-8")).hexdigest()
+    return str(uuid.UUID(digest[:32], version=4))
+
+
 def _adr_document_id(project_id: str, adr_id: str, sequence: int) -> str:
-    return str(
-        uuid.uuid5(
-            uuid.NAMESPACE_URL, f"{_ADR_SCHEMA}:{project_id}:{adr_id}:{sequence}"
-        )
-    )
+    return _adr_client_uuid(f"{_ADR_SCHEMA}:{project_id}:{adr_id}:{sequence}")
 
 
 def _adr_witness_id(project_id: str, adr_id: str, sequence: int) -> str:
-    return str(
-        uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"{_ADR_WITNESS_SCHEMA}:{project_id}:{adr_id}:{sequence}",
-        )
+    return _adr_client_uuid(
+        f"{_ADR_WITNESS_SCHEMA}:{project_id}:{adr_id}:{sequence}"
     )
 
 
@@ -333,11 +331,8 @@ def _adr_issue_link(
     canonical = json.dumps(
         payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
     )
-    comment_id = str(
-        uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"{_ADR_ISSUE_LINK_SCHEMA}:{binding['project_id']}:{adr_id}:{issue_id}",
-        )
+    comment_id = _adr_client_uuid(
+        f"{_ADR_ISSUE_LINK_SCHEMA}:{binding['project_id']}:{adr_id}:{issue_id}"
     )
     return comment_id, f"Foundry ADR relation (reciprocal).\n\n{canonical}"
 

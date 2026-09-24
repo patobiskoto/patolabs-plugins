@@ -99,9 +99,9 @@ overwritten, so none is presented as an anti-overwrite guarantee.
 Unsupported capabilities fail explicitly with typed errors: existing-issue replacement,
 atomic audited non-code Epic closure, project provisioning, and free-form provider-native
 search queries. ADRs are stored as project-scoped Linear Documents, never substituted by
-a Git catalogue or YouTrack read. A document has a deterministic client ID for its
+a Git catalogue or YouTrack read. A document has a deterministic UUIDv4 client ID for its
 `(project, ADR, version)` slot, a closed metadata header and body/content digests. Every
-version also has a second deterministic project Document: its witness binds the version
+version also has a second deterministic UUIDv4 project Document: its witness binds the version
 ID and exact content hash. Reads require the pair in both directions. An isolated deletion
 of the only version, the head version, or its witness is therefore a conflict rather than
 an empty/older history. The two creates are not a Linear transaction: an interrupted
@@ -117,7 +117,8 @@ Reads also reject holes, forks, archive/deletion, metadata edits and project mis
 self-links, duplicates, missing ADRs, and more than 100 relations of either kind are
 refused. Every issue relation is re-read and must belong to the configured team and
 project, and the issue must retain its deterministic reciprocal Foundry comment bound to
-the project, ADR, and issue IDs. The comment is created additively before the imported ADR
+the project, ADR, and issue IDs. Its deterministic client ID is UUIDv4, as Linear requires.
+The comment is created additively before the imported ADR
 version, uses exact-ID readback, and is replay-safe; an interrupted import can leave a
 harmless orphan comment but cannot expose a one-sided ADR relation. A missing issue/ADR
 has its own typed unavailable error; a transport or GraphQL failure remains a provider

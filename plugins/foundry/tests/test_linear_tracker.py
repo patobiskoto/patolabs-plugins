@@ -138,6 +138,12 @@ class LinearWire:
             return {"data": {"documents": connection(nodes)}}
         if "FoundryLinearAdrDocumentCreate" in document:
             value = variables["input"]
+            try:
+                valid_uuid = uuid.UUID(value["id"]).version == 4
+            except (KeyError, TypeError, ValueError):
+                valid_uuid = False
+            if not valid_uuid:
+                return {"errors": [{"message": "Document id must be UUID v4"}], "data": {}}
             if value["id"] in self.documents:
                 return {"errors": [{"message": "duplicate id"}], "data": {}}
             created = {
@@ -239,6 +245,13 @@ class LinearWire:
             }
         if "FoundryLinearCommentCreate" in document:
             value = variables["input"]
+            if "id" in value:
+                try:
+                    valid_uuid = uuid.UUID(value["id"]).version == 4
+                except (TypeError, ValueError):
+                    valid_uuid = False
+                if not valid_uuid:
+                    return {"errors": [{"message": "Comment id must be UUID v4"}], "data": {}}
             issue = self._by_native(value["issueId"])
             comment = {
                 "id": value.get("id", f"comment-{len(self.comments) + 1}"),
@@ -2081,6 +2094,42 @@ def test_linear_adr_witness_refuses_semantically_equal_reencoding(
         or "FoundryLinearCommentCreate" in document
         for document, _variables in wire.calls[call_offset:]
     )
+
+
+def test_linear_adr_client_ids_are_stable_distinct_uuid_v4():
+    binding = {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]}
+    ids = (
+        linear_module._adr_document_id(PROJECT.id, "LIN-ADR-7000", 0),
+        linear_module._adr_witness_id(PROJECT.id, "LIN-ADR-7000", 0),
+        linear_module._adr_issue_link(binding, "LIN-ADR-7000", "LIN-2")[0],
+    )
+    assert len(set(ids)) == 3
+    assert all(uuid.UUID(value).version == 4 for value in ids)
+    assert all(uuid.UUID(value).variant == uuid.RFC_4122 for value in ids)
+    assert ids[0] == linear_module._adr_document_id(PROJECT.id, "LIN-ADR-7000", 0)
+    assert ids[1] == linear_module._adr_witness_id(PROJECT.id, "LIN-ADR-7000", 0)
+    assert ids[2] == linear_module._adr_issue_link(
+        binding, "LIN-ADR-7000", "LIN-2"
+    )[0]
+
+
+@pytest.mark.parametrize("mutation", ["document", "comment"])
+def test_linear_fake_rejects_uuid_v5_creation_ids(mutation):
+    wire = LinearWire()
+    bad_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "production-invalid"))
+    if mutation == "document":
+        response = wire(
+            linear_module._ADR_DOCUMENT_CREATE,
+            {"input": {"id": bad_id, "title": "ADR", "content": "body", "projectId": PROJECT.id}},
+        )
+    else:
+        response = wire(
+            linear_module._COMMENT_CREATE,
+            {"input": {"id": bad_id, "body": "relation", "issueId": "issue-uuid-2"}},
+        )
+    assert response["errors"]
+    assert wire.documents == {}
+    assert wire.comments == {}
 
 
 def test_linear_adr_missing_witness_fails_closed_and_exact_pair_replays(tracker):
