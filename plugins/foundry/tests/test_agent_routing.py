@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -11,10 +12,15 @@ import pytest
 
 import foundry.routing_facades as routing_facades
 from foundry.routing import (
-    ReviewClaim,
+    AcceptanceProofStore,
+    ReviewDeduplicator,
     RoutingConfigError,
     RoutingUnavailableError,
     UserRouteRequest,
+    acceptance_criteria,
+    git_diff,
+    repository_identity,
+    review_diff_hash,
 )
 from foundry.escalation import EscalationStore, EscalationTechnicalBlockedError
 from foundry.routing_facades import (
@@ -58,6 +64,34 @@ def _packet(body="Inspect the requested scope."):
     )
 
 
+def _git_review_fixture(root: Path) -> tuple[str, bytes]:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=root, check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Foundry Test"], cwd=root, check=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://example.invalid/pat-30.git"],
+        cwd=root, check=True,
+    )
+    tracked = root / "reviewed.txt"
+    tracked.write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    tracked.write_text("base\nreviewed correction\n", encoding="utf-8")
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "correction"], cwd=root, check=True)
+    return base, git_diff(root, base)
+
+
 def _concurrent_cross_host_correction(args):
     host, root, state_dir, issue = args
     os.environ["FOUNDRY_DATA"] = state_dir
@@ -79,7 +113,23 @@ def _concurrent_cross_host_correction(args):
         return host, False
 
 
+def _credited_correction_plan(host, root, state_dir, issue):
+    if host == "claude":
+        return claude_route_plan(
+            "implementer",
+            f'FOUNDRY_ROUTE_REQUEST={{"issue":"{issue}"}}\n' + _packet(),
+            root=root,
+            environ={},
+        )
+    return codex_spawn_plan(
+        "implementer", _packet(), root=root, issue_id=issue,
+        escalation_state_dir=state_dir,
+    )
+
+
 def _credited_cross_host_state(root, state_dir, issue):
+    root = Path(root)
+    base, diff = _git_review_fixture(root)
     store = EscalationStore.for_root(root, state_dir=state_dir)
     store.record_risk(issue, "implementer", "adr_creation", "apex")
     store.record_failure(issue, "implementer", "test_red", "economy")
@@ -99,23 +149,33 @@ def _credited_cross_host_state(root, state_dir, issue):
         issue, "implementer", "manual_retry_approved", first_generation, 1,
         current_halt_generation=generation,
     )
-    diff_hash = "b" * 64
-    store.claim_fresh_reviewer_authorization(
-        issue, diff_hash,
-        validated_claim=lambda: ReviewClaim(
-            diff_hash, True, "in_progress", 1, "f" * 64,
-        ),
+    repository = repository_identity(root)
+    coordinates = {"root": str(root.resolve()), "base": base}
+    diff_hash = review_diff_hash(diff)
+    ledger = ReviewDeduplicator(repository, state_dir)
+    claim = ledger.claim_git(
+        diff_hash, coordinates=coordinates, claim_attempt_token="b" * 64,
     )
+    store.claim_fresh_reviewer_authorization(
+        issue, diff_hash, validated_claim=lambda: claim,
+    )
+    body = "- [ ] exact correction plan remains single-use across hosts\n"
+    proof = AcceptanceProofStore(repository, state_dir).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=[
+            {**criterion, "verdict": "fail"}
+            for criterion in acceptance_criteria(body)
+        ],
+        quality="blocked", diff_hash=diff_hash, claim_id=claim.claim_id,
+        root=root, base=base, state_dir=state_dir,
+    )
+    binding = ledger.validated_terminal_proof_binding(
+        issue, diff_hash, coordinates=coordinates,
+    )
+    assert binding["proof_id"] == proof["proof_id"]
     store.record_failure(
         issue, "implementer", "review_blocking_after_fix", "apex",
-        validated_blocking_proof=lambda: {
-            "proof_id": "c" * 64,
-            "completed_at": "2030-01-01T00:00:00Z",
-            "quality": "blocked", "all_pass": False,
-            "diff_hash": diff_hash, "generation": 1,
-            "claim_digest": "d" * 64,
-            "coordinates": {"root": str(Path(root).resolve()), "base": "e" * 40},
-        },
+        validated_blocking_proof=lambda: {**binding, "diff_hash": diff_hash},
     )
     return store
 
@@ -738,6 +798,126 @@ def test_concurrent_claude_and_codex_contenders_share_one_correction_claim(
             root=tmp_path,
             environ={},
         )
+
+
+@pytest.mark.parametrize("host", ["claude", "codex"])
+def test_credited_correction_refuses_stale_head_without_burning_claim(
+    monkeypatch, tmp_path, host,
+):
+    root = tmp_path / "primary"
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    issue = "PAT-35"
+    store = _credited_cross_host_state(root, state_dir, issue)
+    reviewed_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-qm", "same diff, stale head"],
+        cwd=root, check=True,
+    )
+
+    before = store.status(issue)["credited_correction_claim_audit"]
+    with pytest.raises(RoutingConfigError, match="HEAD ou diff"):
+        _credited_correction_plan(host, root, state_dir, issue)
+    assert store.status(issue)["credited_correction_claim_audit"] == before == []
+
+    subprocess.run(
+        ["git", "checkout", "-q", "--detach", reviewed_head], cwd=root, check=True,
+    )
+    _credited_correction_plan(host, root, state_dir, issue)
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
+
+
+@pytest.mark.parametrize("host", ["claude", "codex"])
+def test_credited_correction_refuses_foreign_worktree_without_burning_claim(
+    monkeypatch, tmp_path, host,
+):
+    root = tmp_path / "primary"
+    foreign = tmp_path / "foreign"
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    issue = "PAT-36"
+    store = _credited_cross_host_state(root, state_dir, issue)
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "--detach", str(foreign), "HEAD"],
+        cwd=root, check=True,
+    )
+    assert repository_identity(foreign) == repository_identity(root)
+
+    before = store.status(issue)["credited_correction_claim_audit"]
+    with pytest.raises(RoutingConfigError, match="worktree.*coordonnées"):
+        _credited_correction_plan(host, foreign, state_dir, issue)
+    assert store.status(issue)["credited_correction_claim_audit"] == before == []
+
+    _credited_correction_plan(host, root, state_dir, issue)
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
+
+
+def test_invalid_codex_task_name_does_not_burn_credited_correction_claim(
+    monkeypatch, tmp_path,
+):
+    root = tmp_path / "primary"
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    issue = "PAT-37"
+    store = _credited_cross_host_state(root, state_dir, issue)
+
+    with pytest.raises(RoutingConfigError, match="task_name Codex invalide"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=root, issue_id=issue,
+            escalation_state_dir=state_dir, task_name="Bad-name",
+        )
+    assert store.status(issue)["credited_correction_claim_audit"] == []
+
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=root, issue_id=issue,
+        escalation_state_dir=state_dir,
+    )
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
+
+
+def test_invalid_claude_hook_request_does_not_burn_credited_correction_claim(
+    monkeypatch, tmp_path,
+):
+    root = tmp_path / "primary"
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    issue = "PAT-38"
+    store = _credited_cross_host_state(root, state_dir, issue)
+    prompt = f'FOUNDRY_ROUTE_REQUEST={{"issue":"{issue}"}}\n' + _packet()
+    original_role_contract = route_agent._role_contract
+
+    def invalid_role_contract(_role):
+        raise RoutingConfigError("frontmatter invalide pour le rôle Claude implementer.")
+
+    monkeypatch.setattr(route_agent, "_role_contract", invalid_role_contract)
+    with pytest.raises(RoutingConfigError, match="frontmatter invalide"):
+        route_agent.route_tool_input(
+            {"subagent_type": "foundry:implementer", "prompt": prompt},
+            cwd=root, environ={},
+        )
+    assert store.status(issue)["credited_correction_claim_audit"] == []
+
+    monkeypatch.setattr(route_agent, "_role_contract", original_role_contract)
+    with pytest.raises(RoutingConfigError, match="Agent.max_turns"):
+        route_agent.route_tool_input(
+            {
+                "subagent_type": "foundry:implementer",
+                "prompt": prompt,
+                "max_turns": 0,
+            },
+            cwd=root, environ={},
+        )
+    assert store.status(issue)["credited_correction_claim_audit"] == []
+
+    route_agent.route_tool_input(
+        {"subagent_type": "foundry:implementer", "prompt": prompt},
+        cwd=root, environ={},
+    )
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
 
 
 def test_claude_and_codex_expose_exhaustion_and_the_same_rearm_audit(

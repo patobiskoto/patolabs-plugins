@@ -167,6 +167,68 @@ def route_tool_input(
         return None
     environ = os.environ if environ is None else environ
     prompt = tool_input.get("prompt")
+    prepared = {}
+
+    def preclaim_validate(resolution):
+        if resolution.get("technical_remediation_local_only", False):
+            return
+        route = resolution["route"]
+        task_prompt = resolution["task_prompt"]
+        issue_id = resolution["issue_id"]
+        remediation_authorization = resolution["remediation_authorization"]
+        remediation_rearm_audit = resolution["remediation_rearm_audit"]
+        technical_remediation_open = resolution["technical_remediation_open"]
+        technical_remediation_requested = resolution["technical_remediation_requested"]
+        technical_remediation_claimed = resolution.get(
+            "technical_remediation_claimed", False,
+        )
+        _validate_task_packet(task_prompt, role)
+        profile = CLAUDE_ROLES[role]
+        role_contract = _role_contract(role)
+        bounded_turns = _bounded_turns(
+            tool_input.get("max_turns"), profile.max_turns,
+        )
+        invocation_model = claude_invocation_model(
+            route.model, project_models=resolution["claude_models"],
+        )
+        routed_prompt = (
+            f"{_ROUTED_MARKER}\n"
+            f"Resolved role: {role}\n"
+            "Follow this routed role contract:\n"
+            "--- BEGIN ROLE CONTRACT ---\n"
+            f"{role_contract}\n"
+            "--- END ROLE CONTRACT ---\n"
+            "Do not delegate to another agent. The task packet follows.\n\n"
+            f"{task_prompt}"
+        )
+        updated = dict(tool_input)
+        # maxTurns belongs to AgentDefinition/frontmatter, never to the Agent tool wire.
+        updated.pop("maxTurns", None)
+        updated.update({
+            "subagent_type": f"foundry:routed-{profile.capability}-{route.effort}",
+            "prompt": routed_prompt,
+            "model": invocation_model,
+            "max_turns": bounded_turns,
+        })
+        prepared["updated"] = updated
+        prepared["unclaimed_context"] = _warning_context(
+            route, issue_id, remediation_authorization, remediation_rearm_audit,
+            technical_remediation_open, technical_remediation_requested,
+            technical_remediation_claimed, False,
+        )
+        prepared["claimed_context"] = _warning_context(
+            route, issue_id, remediation_authorization, remediation_rearm_audit,
+            technical_remediation_open, technical_remediation_requested,
+            technical_remediation_claimed, True,
+        )
+        if correlation:
+            prepared["telemetry"] = (
+                TelemetryObserver.from_environ(
+                    environ, effort_scopes=resolution["effort_scopes"],
+                    project_models=resolution["project_models"],
+                ), route, correlation,
+            )
+
     resolution = claude_route_plan(
         role,
         prompt if isinstance(prompt, str) else "",
@@ -176,61 +238,20 @@ def route_tool_input(
             tool_input.get("model")
             if isinstance(tool_input.get("model"), str) else None
         ),
-    )
-    route = resolution["route"]
-    task_prompt = resolution["task_prompt"]
-    issue_id = resolution["issue_id"]
-    remediation_authorization = resolution["remediation_authorization"]
-    remediation_rearm_audit = resolution["remediation_rearm_audit"]
-    technical_remediation_open = resolution["technical_remediation_open"]
-    technical_remediation_requested = resolution["technical_remediation_requested"]
-    technical_remediation_claimed = resolution.get(
-        "technical_remediation_claimed", False,
-    )
-    credited_correction_plan_claimed = resolution.get(
-        "credited_correction_plan_claimed", False,
+        _preclaim_validate=preclaim_validate,
     )
     if resolution.get("technical_remediation_local_only", False):
         raise RoutingConfigError(
             "remédiation technique locale : l'invocation Agent/provider est refusée ; "
             "utilisez le plan local Foundry et conservez une review sous claim frais."
         )
-    _validate_task_packet(task_prompt, role)
-    if correlation:
-        prepare_claude_invocation(
-            TelemetryObserver.from_environ(
-                environ, effort_scopes=resolution["effort_scopes"],
-                project_models=resolution["project_models"],
-            ),
-            route,
-            correlation,
-        )
-    profile = CLAUDE_ROLES[role]
-    routed_prompt = (
-        f"{_ROUTED_MARKER}\n"
-        f"Resolved role: {role}\n"
-        "Follow this routed role contract:\n"
-        "--- BEGIN ROLE CONTRACT ---\n"
-        f"{_role_contract(role)}\n"
-        "--- END ROLE CONTRACT ---\n"
-        "Do not delegate to another agent. The task packet follows.\n\n"
-        f"{task_prompt}"
-    )
-    updated = dict(tool_input)
-    # maxTurns belongs to AgentDefinition/frontmatter, never to the Agent tool wire.
-    updated.pop("maxTurns", None)
-    updated.update({
-        "subagent_type": f"foundry:routed-{profile.capability}-{route.effort}",
-        "prompt": routed_prompt,
-        "model": claude_invocation_model(
-            route.model, project_models=resolution["claude_models"],
-        ),
-        "max_turns": _bounded_turns(tool_input.get("max_turns"), profile.max_turns),
-    })
-    return updated, _warning_context(
-        route, issue_id, remediation_authorization, remediation_rearm_audit,
-        technical_remediation_open, technical_remediation_requested,
-        technical_remediation_claimed, credited_correction_plan_claimed,
+    telemetry = prepared.get("telemetry")
+    if telemetry is not None:
+        prepare_claude_invocation(*telemetry)
+    return prepared["updated"], (
+        prepared["claimed_context"]
+        if resolution.get("credited_correction_plan_claimed", False)
+        else prepared["unclaimed_context"]
     )
 
 

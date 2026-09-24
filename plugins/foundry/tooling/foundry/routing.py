@@ -1603,6 +1603,77 @@ class ReviewDeduplicator:
             ),
         }
 
+    def revalidate_terminal_proof_for_current_git(
+        self,
+        issue_id: str,
+        expected_binding: Mapping[str, object],
+        *,
+        root: str | os.PathLike,
+    ) -> dict[str, object]:
+        """Revalidate one historical terminal proof against the calling worktree.
+
+        The escalation ledger is shared by worktrees that resolve to the same
+        repository identity.  A credited correction therefore cannot trust the
+        historical proof digest alone: the caller must still be in the exact root,
+        base, HEAD, and diff that the canonical proof reviewed.
+        """
+        if not isinstance(expected_binding, Mapping):
+            raise RoutingConfigError(
+                "preuve terminale bloquante invalide au claim de correction."
+            )
+        diff_hash = self._validate_hash(expected_binding.get("diff_hash"))
+        coordinates = self._validate_coordinates(
+            expected_binding.get("coordinates")
+        )
+        review_root, review_base = review_diff_coordinates(
+            root, coordinates["base"],
+        )
+        current_coordinates = {
+            "root": str(review_root),
+            "base": review_base,
+        }
+        if current_coordinates != coordinates:
+            raise RoutingConfigError(
+                "le worktree courant ne correspond pas aux coordonnées immuables "
+                "de la preuve bloquante ; plan de correction refusé."
+            )
+
+        durable = self.validated_terminal_proof_binding(
+            issue_id, diff_hash, coordinates=current_coordinates,
+        )
+        if durable is None or any(
+            expected_binding.get(key) != durable.get(key)
+            for key in (
+                "proof_id", "completed_at", "quality", "all_pass",
+                "generation", "claim_digest", "coordinates",
+            )
+        ):
+            raise RoutingConfigError(
+                "la preuve terminale bloquante ne correspond plus à son binding "
+                "canonique ; plan de correction refusé."
+            )
+
+        proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
+        proof = proof_store._validated_proof(
+            proof_store.directory / durable["proof_id"]
+        )
+        head_before = git_head(review_root)
+        current_diff_hash = review_diff_hash(git_diff(review_root, review_base))
+        head_after = git_head(review_root)
+        proof_coordinates = proof["coordinates"]
+        if (
+            head_before != head_after
+            or proof_coordinates["head"] != head_after
+            or proof_coordinates["base"] != review_base
+            or proof_coordinates["diff_hash"] != diff_hash
+            or current_diff_hash != diff_hash
+        ):
+            raise RoutingConfigError(
+                "preuve terminale bloquante périmée : HEAD ou diff Git courant "
+                "ne correspond pas aux octets revus ; plan de correction refusé."
+            )
+        return {**durable, "diff_hash": diff_hash}
+
     def validated_completed_proof_binding(
         self, issue_id: str, diff_hash: str,
     ) -> dict[str, object] | None:

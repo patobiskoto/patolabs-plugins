@@ -105,8 +105,12 @@ the immutable `--root` and `--base`: Foundry recomputes the diff and authenticat
 issue/diff/root/base/claim/generation/proof binding from its review store. Do not pass a
 proof ID or digest as authority. The resulting ordinary Codex correction plan is
 single-use: the first plan CAS-claims it, while replay or a concurrent second plan is
-refused. That exception never reopens the technical route or grants provider/campaign
-authority.
+refused. The claim boundary revalidates the canonical proof against the exact current
+worktree root, immutable base, reviewed HEAD, and current diff bytes while holding the
+issue lock; a sibling worktree or stale HEAD cannot consume it. Codex task-name and
+Claude Agent role/turn-bound validations complete before that CAS, so an invalid launch
+request leaves the sole plan available for one corrected retry. That exception never
+reopens the technical route or grants provider/campaign authority.
 For a released v1 stop
 without a terminal classification, first run
 `reclassify-legacy-terminal` with the exact generation. It accepts either an exact

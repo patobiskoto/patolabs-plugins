@@ -11,7 +11,7 @@ import os
 import re
 import secrets
 from dataclasses import dataclass, replace
-from typing import Mapping
+from typing import Callable, Mapping
 
 from foundry.routing import (
     ReviewDeduplicator,
@@ -600,14 +600,6 @@ def codex_spawn_plan(
                 "Une review utilisera un claim et une capacité fraîche séparés."
             ),
         }
-    correction_plan_claimed = False
-    if issue_id is not None and role != "reviewer":
-        # A credited correction is a one-shot capability, not a read-only floor.
-        # Claim it only after policy resolution succeeded, immediately before the
-        # plan can become a launchable response.
-        correction_plan_claimed = escalation_store.claim_credited_correction_plan(
-            issue_id, role,
-        )
     task_name, execution_id = _codex_execution_name(role, task_name)
     message = _codex_message(role, packet, diff_hash, claim_id, verifier)
     spawn = {
@@ -634,8 +626,6 @@ def codex_spawn_plan(
             "remediation_rearm_audit": plan_rearm_audit,
             "technical_remediation_open": technical_remediation_open,
             "technical_remediation_requested": technical_remediation,
-            **({"credited_correction_plan_claimed": True}
-               if correction_plan_claimed else {}),
             **(
                 {"technical_remediation_claimed": True}
                 if technical_remediation else {}
@@ -663,6 +653,16 @@ def codex_spawn_plan(
                 "du contexte est perdue."
             ),
         }
+    correction_plan_claimed = False
+    if issue_id is not None and role != "reviewer":
+        # A credited correction is a one-shot capability, not a read-only floor.
+        # Claim it only after every deterministic plan field has been validated,
+        # immediately before the plan can become a launchable response.
+        correction_plan_claimed = escalation_store.claim_credited_correction_plan(
+            issue_id, role, root=root,
+        )
+    if correction_plan_claimed:
+        result["escalation"]["credited_correction_plan_claimed"] = True
     telemetry = _prepare_codex_invocation(
         route, mode=result["mode"], effort_scopes=policy.effort_scopes,
         project_models=(*policy.project_models, route.model),
@@ -1012,8 +1012,11 @@ def claude_route_plan(
     root: str | os.PathLike,
     environ: Mapping[str, str] | None = None,
     invocation_model: str | None = None,
+    _preclaim_validate: Callable[[Mapping[str, object]], None] | None = None,
 ) -> dict[str, object]:
     """Resolve the exact shared Claude route used by the Agent pre-tool facade."""
+    if _preclaim_validate is not None and not callable(_preclaim_validate):
+        raise RoutingConfigError("préflight Claude avant claim invalide.")
     environ = os.environ if environ is None else environ
     request, task_prompt, issue_id = claude_user_request(prompt, invocation_model)
     escalation_floor = None
@@ -1051,18 +1054,7 @@ def claude_route_plan(
     # again by the launcher so this remains a pure validation boundary.
     claude_invocation_model(route.model, project_models=policy.claude_models)
     task_prompt = _validate_task_packet(task_prompt, role, "Claude")
-    correction_plan_claimed = False
-    if (
-        issue_id is not None
-        and role != "reviewer"
-        and not request.technical_remediation
-    ):
-        # Claude and Codex share this same durable CAS immediately before a
-        # launchable plan is returned. Neither host gains a second provider use.
-        correction_plan_claimed = escalation_store.claim_credited_correction_plan(
-            issue_id, role,
-        )
-    return {
+    result = {
         "route": route,
         "effort_scopes": policy.effort_scopes,
         "project_models": policy.project_models,
@@ -1076,11 +1068,23 @@ def claude_route_plan(
         "technical_remediation_requested": request.technical_remediation,
         "technical_remediation_local_only": request.technical_remediation,
         **(
-            {"credited_correction_plan_claimed": True}
-            if correction_plan_claimed else {}
-        ),
-        **(
             {"technical_remediation_claimed": True}
             if request.technical_remediation else {}
         ),
     }
+    if _preclaim_validate is not None:
+        _preclaim_validate(result)
+    correction_plan_claimed = False
+    if (
+        issue_id is not None
+        and role != "reviewer"
+        and not request.technical_remediation
+    ):
+        # Claude and Codex share this same durable CAS immediately before a
+        # launchable plan is returned. Neither host gains a second provider use.
+        correction_plan_claimed = escalation_store.claim_credited_correction_plan(
+            issue_id, role, root=root,
+        )
+    if correction_plan_claimed:
+        result["credited_correction_plan_claimed"] = True
+    return result

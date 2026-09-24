@@ -388,7 +388,15 @@ durable consumption record, or a later generation remains technically blocked. T
 recognition does not reopen the local route or create provider, campaign, PR, CI, or
 merge authority beyond the human remediation window already recorded. The ordinary
 Claude or Codex correction plan is then CAS-claimed in the durable credit audit:
-exactly one cross-host caller can receive it; replay and concurrent second plans are refused. This claim
+exactly one cross-host caller can receive it; replay and concurrent second plans are
+refused. At this one-shot boundary, the façade reopens the canonical proof and, while
+holding the same issue lock as the audit append, requires the caller's resolved worktree
+root and base to equal the proof coordinates, a stable current `HEAD` to equal the
+reviewed `HEAD`, and the current Git diff bytes to hash to the reviewed diff. A sibling
+worktree sharing the repository ledger, an empty commit with unchanged diff bytes, or a
+changed diff therefore fails without consuming the claim. Deterministic host validation
+(`task_name` for Codex; role contract, model and `max_turns` for the Claude hook) also
+finishes before this CAS, so a corrected retry can still claim the sole plan. This claim
 creates no provider, campaign, PR, CI, merge, or additional-review authority.
 
 Released ledgers may contain the same consumed generation without the newer embedded

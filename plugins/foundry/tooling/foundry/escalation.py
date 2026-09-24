@@ -1011,8 +1011,10 @@ class EscalationStore:
     ):
         if not isinstance(repository, str) or not repository.strip():
             raise RoutingConfigError("dépôt d'escalade : identité non vide attendue.")
-        namespace = hashlib.sha256(repository.strip().encode("utf-8")).hexdigest()
+        self._repository = repository.strip()
+        namespace = hashlib.sha256(self._repository.encode("utf-8")).hexdigest()
         root = Path(state_dir) if state_dir is not None else Path(registry.data_dir())
+        self._state_dir = root
         self.directory = root / "model-routing" / "escalations" / namespace
 
     @classmethod
@@ -1299,11 +1301,19 @@ class EscalationStore:
         _, result = self._locked(issue_id, mutate)
         return result
 
-    def claim_credited_correction_plan(self, issue_id: str, role: str) -> bool:
+    def claim_credited_correction_plan(
+        self,
+        issue_id: str,
+        role: str,
+        *,
+        root: str | os.PathLike | None = None,
+    ) -> bool:
         """CAS-claim the sole ordinary plan backed by a credited correction.
 
         This is deliberately separate from reading ``active_floor``: observing a
-        credit must not let concurrent callers emit unlimited correction plans.
+        credit must not let concurrent callers emit unlimited correction plans.  The
+        canonical proof and the caller's current Git bytes are revalidated while the
+        same issue lock still protects the one-shot audit append.
         """
         issue_id = _validate_issue_id(issue_id)
         role = _validate_role(role)
@@ -1327,6 +1337,21 @@ class EscalationStore:
                 for claim in state["credited_correction_claim_audit"]
             ) or event.get("correction_plan_claimed_at") is not None:
                 return "credited_correction_plan_consumed", False
+            if root is None:
+                raise RoutingConfigError(
+                    "plan de correction crédité : root Git courant requis pour "
+                    "la revalidation atomique."
+                )
+            current = ReviewDeduplicator(
+                self._repository, self._state_dir,
+            ).revalidate_terminal_proof_for_current_git(
+                issue_id, proof, root=root,
+            )
+            if current != proof:
+                raise RoutingConfigError(
+                    "plan de correction crédité : preuve courante contradictoire ; "
+                    "refus fermé."
+                )
             state["credited_correction_claim_audit"].append({
                 "code": _CORRECTION_PLAN_CLAIM_CODE,
                 "at": self._next_audit_timestamp(state),
