@@ -168,7 +168,10 @@ reference, timestamps, source digest, historical status, relations, and exact ta
 scope without invoking acceptance. Omitted relation arguments remain explicit in
 `origin.missing_relations`; an omitted value is never presented as a known-empty
 source relation, and an exact replay cannot replace it with a newly asserted empty
-value. The production import must pass all three relation arguments explicitly after
+value. In particular, a historical `superseded` status with an unknown successor is
+preserved as `superseded` only when `superseded_by` is omitted and recorded as unknown;
+an explicitly known-empty successor is invalid. The production import must pass all
+three relation arguments explicitly after
 source qualification. A related ADR must already be present and accepted
 where it serves as a replacement; arbitrary mutually referencing batches are not seeded
 by the single-record port. The separate `import_adr_batch(project, records)` port
@@ -187,6 +190,10 @@ stopped after the first reciprocal version, including when that exact version ex
 its witness does not. The replay requires that this is the only incomplete version pair
 and that it is one of the reciprocal versions derived from the byte-identical import;
 other graph conflicts and a changed source snapshot remain fail-closed.
+For Linear `frame`, every `constrained_by` reference is resolved before creating any
+ADR, epic or issue; an unknown second reference cannot leave an issue with only its
+first reciprocal link. Provider multi-object failure after this preflight remains
+non-atomic and must not be mistaken for a completed frame.
 
 ### Controlled production recipe
 

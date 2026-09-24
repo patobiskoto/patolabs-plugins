@@ -36,11 +36,27 @@ def materialize(spec: dict) -> dict:
     tr = foundry.tracker()
     p = _project(tr)
     created = {"adrs": [], "epic": None, "issues": []}
+    incoming_adrs = spec.get("adrs", [])
+    incoming_issues = spec.get("issues", [])
+    existing_adrs = {}
+    if getattr(tr, "adr_issue_link_supported", False) and any(
+        it.get("constrained_by") for it in incoming_issues
+    ):
+        # Resolve every reference before the first write. Otherwise a late bad
+        # reference can leave a durable issue and only a subset of ADR links.
+        existing_adrs = {adr.id: adr for adr in tr.list_adrs(p)}
+        upcoming = {str(index) for index in range(len(incoming_adrs))}
+        upcoming.update(a["title"] for a in incoming_adrs)
+        for it in incoming_issues:
+            for ref in it.get("constrained_by", []):
+                key = str(ref)
+                if key not in upcoming and key not in existing_adrs:
+                    raise ValueError(f"ADR inconnue pour relation Linear : {key}")
 
     # 1) ADRs first — they are the frame the issues reference.
     adr_by_key = {}
     adr_by_id = {}
-    for idx, a in enumerate(spec.get("adrs", [])):
+    for idx, a in enumerate(incoming_adrs):
         adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
         adr_by_key[str(idx)] = adr.id
         adr_by_key[a["title"]] = adr.id
@@ -59,7 +75,7 @@ def materialize(spec: dict) -> dict:
         print(f"🏛️  epic {epic_id} — {e['title']}")
 
     # 3) Issues, linked under the epic, citing their ADRs.
-    for it in spec.get("issues", []):
+    for it in incoming_issues:
         body = it.get("body", "")
         refs = [adr_by_key.get(str(k), str(k)) for k in it.get("constrained_by", [])]
         if refs:
@@ -70,9 +86,7 @@ def materialize(spec: dict) -> dict:
         issue = tr.create_issue(p, it["title"], body, fields=fields, parent=epic_id)
         if getattr(tr, "adr_issue_link_supported", False):
             for ref in dict.fromkeys(refs):
-                current = adr_by_id.get(ref)
-                if current is None:
-                    current = next((a for a in tr.list_adrs(p) if a.id == ref), None)
+                current = adr_by_id.get(ref) or existing_adrs.get(ref)
                 if current is None:
                     raise ValueError(f"ADR inconnue pour relation Linear : {ref}")
                 adr_by_id[ref] = write.link_adr_issue(tr, current, issue.id)

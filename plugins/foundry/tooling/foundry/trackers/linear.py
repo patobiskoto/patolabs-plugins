@@ -523,8 +523,19 @@ def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
                 or _ADR_ID.fullmatch(relations["superseded_by"]) is None
             )
         )
-        or (metadata["status"] == "superseded")
-        != (relations["superseded_by"] is not None)
+        or (
+            (metadata["status"] == "superseded")
+            != (relations["superseded_by"] is not None)
+            and not (
+                sequence == 0
+                and metadata["status"] == "superseded"
+                and relations["superseded_by"] is None
+                and isinstance(origin, dict)
+                and origin.get("kind") == "migration"
+                and isinstance(origin.get("missing_relations"), list)
+                and "superseded_by" in origin["missing_relations"]
+            )
+        )
         or adr_id in relations["supersedes"]
         or relations["superseded_by"] == adr_id
         or not isinstance(origin, dict)
@@ -3131,7 +3142,14 @@ class LinearTracker(Tracker):
             or adr_id in supersedes
             or superseded_by == adr_id
             or (superseded_by is not None and superseded_by in supersedes)
-            or (historical_status == "superseded") != (superseded_by is not None)
+            or (
+                (historical_status == "superseded") != (superseded_by is not None)
+                and not (
+                    historical_status == "superseded"
+                    and superseded_by is None
+                    and "superseded_by" in missing_relations
+                )
+            )
             or (
                 bool(supersedes)
                 and historical_status not in {"accepted", "superseded"}

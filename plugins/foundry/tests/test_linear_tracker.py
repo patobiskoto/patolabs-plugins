@@ -2135,6 +2135,31 @@ def test_linear_adr_import_preserves_unknown_vs_known_empty_relations(tracker):
         instance.import_adr(PROJECT, **explicit)
 
 
+def test_linear_import_preserves_superseded_with_unknown_successor(tracker):
+    instance, wire = tracker
+    source = dict(
+        adr_id="LIN-ADR-0091", title="Unknown successor", body="historic",
+        historical_status="superseded", source_ref="YT-A-91",
+        source_created=None, source_updated=None,
+        expected_source_sha256=hashlib.sha256(b"historic").hexdigest(),
+    )
+    imported = instance.import_adr(PROJECT, **source)
+    assert imported.status == "superseded"
+    metadata, _ = linear_module._parse_adr_document(
+        wire.documents[imported.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert "superseded_by" in metadata["origin"]["missing_relations"]
+    assert metadata["relations"]["superseded_by"] is None
+    before = copy.deepcopy(wire.documents)
+    assert instance.import_adr(PROJECT, **source).ref == imported.ref
+    assert wire.documents == before
+    assert instance.list_adrs(PROJECT)[0].status == "superseded"
+    with pytest.raises(ValueError, match="historical import invalid"):
+        instance.import_adr(PROJECT, **source, superseded_by=None)
+    assert wire.documents == before
+
+
 def test_linear_native_adr_issue_link_is_canonical_reciprocal_and_replay_safe(tracker):
     instance, wire = tracker
     created = instance.create_adr(PROJECT, "Native link", "decision")
@@ -2216,6 +2241,27 @@ def test_linear_frame_materializes_native_reciprocal_adr_issue_link(
     )
     assert metadata["relations"]["issues"] == [issue_id]
     assert adr.id == adr_id
+
+
+def test_linear_frame_rejects_any_unknown_adr_before_first_write(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+    with pytest.raises(ValueError, match="ADR inconnue"):
+        frame.materialize({
+            "adrs": [{"title": "Known upcoming", "body": "decision"}],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": ["Known upcoming", "LIN-ADR-9999"],
+            }],
+        })
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
 
 
 @pytest.mark.parametrize("source_document_without_witness", [False, True])
