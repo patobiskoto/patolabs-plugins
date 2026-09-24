@@ -289,6 +289,62 @@ Each following `technical_blocked` generation can still open its one exact,
 contiguous `resume-technical` diagnostic; this preserves history without reviving that
 window or granting a campaign, provider, reservation, PR, CI, or merge effect.
 
+### PAT-22 generation-4 strategy recovery
+
+Live incident coordinates captured on 2026-09-24 (read-only ledger and GitHub
+readback): PAT-22, PR #17, head `229f634263ddcf46323d7ce42b7fb996baaf2bb8`,
+`review`, with a later `technical_blocked` stop at generation 5. The technical
+audit preceding the generation-4 strategy decision is preserved exactly:
+
+| Stop generation | Diagnostic digest | Local route ID | Reviewed diff hash |
+|---|---|---|---|
+| 1 | `ca3df663b17fea06633d001f9e4c35ad96723d3e37be1b6cd0a2c82467b98b29` | `pat22-witness-canonical-a514bbc` | `ea2bd529c28489adf76c5cc739b56752048ac694967a9d0641dd9bb06d8fc322` |
+| 2 | `c889a6b92aafd5753e2bf7cb50ea1891f905d0f6c8f4b70d4c1196d055d6f905` | `pat22-adr-uuidv4-6e743f0` | `489be79ac318bbb50126d395f17df2f7e47ea18d870494bca61f272ffe99ec00` |
+| 3 | `c5f231c1fc79816ccbdb7f24df347a2874325013c65d4c5f6a408c7a1847aee4` | `pat22-adr-exact-deltas-ea6dda7` | `70ee39e82391a599e9485f9a84a11001e5f4496ea4739c5e257e71f2101cb65b` |
+
+These are incident identifiers, not a new authorization. Read the live ledger
+again before acting; a changed generation, head or receipt invalidates this
+snapshot. PAT-23 remains in backlog; PAT-10 remains open and depends on the
+separate PAT-22/PAT-23 delivery proofs.
+
+PAT-22 at generation 4 retains its three consumed technical-diagnostic audit events and
+its apex floor. Those local receipts do not authorize a provider or campaign effect.
+If, after inspecting the evidence, a human independently records a typed
+`strategy_decision`, Foundry changes that exact stopped generation to `human_required`.
+The human may then run `resume --reason manual_retry_approved --halt-generation 4 --remediation-credits 1`.
+This opens exactly one bounded remediation credit; it does not
+rearm or alter the technical audit, lower the floor, or manufacture provider, campaign,
+PR, CI, or merge authority. Stale/wrong issue or generation coordinates, replay, and an
+exhausted credit remain fail-closed.
+
+After that credit is consumed and a later blocking review creates a new
+`technical_blocked` generation, `resume-technical` may clear exactly that generation
+for one local diagnostic. The exhausted human window remains exhausted. The ledger
+validator requires a contiguous technical-audit suffix after the authorization
+generation; a gap, duplicate, stale generation, provider effect, or campaign restart
+is refused. This fixes the mismatch that previously emitted a valid generation-5 stop
+but rejected its own local diagnostic transition; it grants no further review or merge.
+
+Offline gate recipe from the public checkout:
+
+```bash
+pytest -q plugins/foundry/tests/test_escalation.py::test_pat22_generation_four_requires_human_strategy_before_one_credit_retry
+pytest -q plugins/foundry/tests/test_routing.py::test_claimed_review_diff_requires_ledger_claim_and_exact_current_hash
+pytest -q plugins/foundry/tests/test_issue_merge.py::test_proof_bound_merge_refuses_a_base_that_moves_after_validation
+```
+
+Each command must report `1 passed`. The first double preserves the three old
+diagnostics, exercises the strategy decision and one-credit resume, then supplies a
+fresh PAT-22 diff to the ordinary merge path. Its fake PR #17 has a fixed base/head;
+an invalid/stale review proof produces zero merge effects, a valid review with red CI
+still produces zero effects, and only valid review plus green CI on that exact head
+calls Foundry's `issue.merge` once with the checked SHA. It also refuses a stale Git
+diff before a review claim and shows that the generation-5 local diagnostic has no
+spawn, provider, or campaign permission. The other tests exercise exact claimed-diff
+readback and base movement at the production merge gate. These are doubles, not a
+claim that PR #17 currently passed review, CI or merge; live gates must still be
+rerun on its eventual pushed head.
+
 ```bash
 python3 tooling/foundry_cli.py routing escalation resume-technical FOUNDRY-42 \
   --halt-generation <HALT-GENERATION-FROM-SHOW> \
@@ -384,8 +440,8 @@ recipe performs no tracker/provider write itself):
    diff; changed or stale diffs are refused, and a replay only recovers the same claim.
    Run PAT-10's normal final cutover/acceptance gates then.
 
-What remains is deliberately explicit: PAT-22 and PAT-23 are created in Linear but
-remain unstarted; each needs its own authorization and gates. PAT-22 must deliver its
+What remains is deliberately explicit: PAT-22 is in review with PR #17 open, while
+PAT-23 is created in Linear but unstarted; each needs its own authorization and gates. PAT-22 must deliver its
 provider proof, and PAT-23 must migrate and read back the 27 ADRs. PAT-10 remains open until those proofs
 exist and its own final cutover AC pass.  This recovery guidance does not close PAT-10.
 

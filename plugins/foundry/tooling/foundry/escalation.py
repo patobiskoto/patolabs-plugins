@@ -2054,13 +2054,29 @@ class EscalationStore:
                 and halted_role == authorization_role
             )
         elif authorization_state == "exhausted":
+            # Exhaustion closes the human retry budget, not the separately
+            # audited local technical-diagnostic lane. Every later cleared
+            # generation must have exactly one contiguous technical receipt.
+            first_technical_generation = authorization_generation + 1
+            last_cleared_generation = (
+                generation - 1 if halted else generation
+            )
+            technical_generation_count = sum(
+                event["halt_generation"] >= first_technical_generation
+                for event in technical_audit
+            )
             coherent = (
                 remaining == 0
                 and forfeited == 0
                 and consumed == maximum
                 and (
                     (not halted and generation == authorization_generation)
-                    or (halted and generation == authorization_generation + 1)
+                    or (
+                        generation >= first_technical_generation
+                        and technical_generation_count == (
+                            last_cleared_generation - first_technical_generation + 1
+                        )
+                    )
                 )
             )
         elif authorization_state == "invalidated":
