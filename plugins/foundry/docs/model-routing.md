@@ -761,7 +761,14 @@ The reviewer reads through `routing read-review --diff-hash <hash> --claim-id <i
 That command retains the ledger lock from the current active-generation and immutable
 coordinate and immutable-HEAD checks through the current diff hash and byte emission,
 so a recovery cannot deliver bytes to its replaced owner. An empty commit is HEAD drift
-even when it leaves the diff hash unchanged. It rejects a stale or invented claim. After a
+even when it leaves the diff hash unchanged. A Git-coordinated ledger record (one with
+immutable coordinates or a durable claim publication) that has no `head` fails closed
+before diff bytes, proof creation, active validation, or recovery. Only a bare non-Git
+`claim()` fixture retains headless compatibility. A canonical terminal proof recorded
+before HEAD binding remains readable solely for the bounded PAT-22 legacy
+attestation/rearm path; it cannot authorize any active reviewer operation, and the proof's
+own HEAD and remaining ledger coordinates are still revalidated. The command rejects a
+stale or invented claim. After a
 complete verdict, the caller runs `routing record-review-proof` with the exact structured
 AC and quality outcomes while the claim is still active. That operation atomically binds
 the proof and terminalizes the generation; `complete-review` is a deprecated compatibility

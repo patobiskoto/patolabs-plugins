@@ -2570,6 +2570,16 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
         ).directory / proof_result["proof_id"]
     )["quality"] == "blocked"
 
+    # The released generation-9 ledger predates immutable-HEAD claims.  Its
+    # terminal canonical proof remains eligible for the bounded PAT-22
+    # attestation/rearm compatibility path, while no active operation may use
+    # the headless record.
+    legacy_ledger = ReviewDeduplicator(proof_repository, state_dir)
+    legacy_marker = legacy_ledger.directory / diff_hash
+    legacy_review = json.loads(legacy_marker.read_text(encoding="utf-8"))
+    del legacy_review["head"]
+    legacy_marker.write_text(json.dumps(legacy_review), encoding="utf-8")
+
     # Released code consumed the credit without embedding the later PAT-30 field.
     continued = store.record_failure(
         issue, "implementer", "review_blocking_after_fix", "apex",

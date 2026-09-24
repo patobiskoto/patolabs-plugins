@@ -851,13 +851,41 @@ class ReviewDeduplicator:
         return {"root": coordinates["root"], "base": coordinates["base"]}
 
     @classmethod
-    def _claimed_head(cls, record: Mapping[str, object]) -> str | None:
-        """Return the immutable Git HEAD bound to a Git-native claim, if any."""
+    def _claimed_head(
+        cls,
+        record: Mapping[str, object],
+        *,
+        allow_legacy_terminal: bool = False,
+    ) -> str | None:
+        """Return the immutable HEAD, rejecting headless Git authorization.
+
+        Bare ``claim()`` records predate every Git coordinate and remain a
+        deliberately narrow non-Git fixture.  Once either coordinates or a
+        durable claim publication is present, the record is Git-coordinated
+        and may not authorize active work without its immutable HEAD.
+
+        A terminal proof created before HEAD binding shipped is different: it
+        cannot authorize new bytes, proof creation, or recovery, but its
+        canonical append-only evidence must remain readable for the PAT-22
+        legacy attestation/rearm path.  That caller validates the proof's own
+        immutable HEAD and all remaining ledger coordinates.
+        """
         head = record.get("head")
         if head is None:
-            # ``claim()`` predates Git-native claims and remains a deliberately
-            # narrow compatibility fixture. New reviewer claims use claim_git.
-            return None
+            git_coordinated = (
+                "coordinates" in record or "claim_publication" in record
+            )
+            if not git_coordinated:
+                return None
+            if (
+                allow_legacy_terminal
+                and record.get("state") == "completed"
+                and isinstance(record.get("acceptance_proof_id"), str)
+            ):
+                return None
+            raise RoutingConfigError(
+                "claim Git sans HEAD immuable ; refus fermé."
+            )
         if (not isinstance(head, str) or len(head) != 40 or
                 any(character not in "0123456789abcdef" for character in head)):
             raise RoutingConfigError(
@@ -1155,6 +1183,7 @@ class ReviewDeduplicator:
             record = self._read_record(
                 marker, diff_hash, migrate_bare_legacy=False,
             )
+            self._claimed_head(record)
             return "coordinates" not in record
 
     def verdict(self, diff_hash: str) -> ReviewClaim:
@@ -1230,6 +1259,7 @@ class ReviewDeduplicator:
                 )
                 if "coordinates" in record:
                     self._assert_coordinates(record, coordinates)
+                    self._claimed_head(record)
                 else:
                     if replay_interrupted:
                         raise RoutingConfigError(
@@ -1467,6 +1497,7 @@ class ReviewDeduplicator:
             )
         self._assert_no_orphaned_acceptance_proof(diff_hash, record)
         self._assert_coordinates(record, coordinates)
+        self._claimed_head(record)
 
     def assert_coordinates(
         self,
@@ -1480,6 +1511,7 @@ class ReviewDeduplicator:
         with self._locked():
             _, record = self._record_for(diff_hash)
             self._assert_coordinates(record, coordinates)
+            self._claimed_head(record)
 
     def assert_recoverable(
         self,
@@ -1638,7 +1670,9 @@ class ReviewDeduplicator:
         proof = proof_store._validated_proof(proof_store.directory / binding["proof_id"])
         with self._locked():
             _, record = self._record_for(diff_hash)
-            claimed_head = self._claimed_head(record)
+            claimed_head = self._claimed_head(
+                record, allow_legacy_terminal=True,
+            )
         if (
             proof["issue"]["id"] != issue_id.strip()
             or proof["coordinates"]["diff_hash"] != diff_hash

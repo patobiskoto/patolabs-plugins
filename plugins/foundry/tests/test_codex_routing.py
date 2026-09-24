@@ -53,7 +53,7 @@ def _packet(body="Inspect the requested scope."):
 def _review_claim(tmp_path, diff=b"review me"):
     return {
         **ReviewDeduplicator("owner/repo", tmp_path / "state").claim(
-            diff, coordinates={"root": str(tmp_path), "base": BASE_SHA},
+            diff,
         ).to_dict(),
         "root": str(tmp_path),
         "base": BASE_SHA,
