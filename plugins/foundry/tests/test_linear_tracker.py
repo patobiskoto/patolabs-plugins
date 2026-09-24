@@ -1134,6 +1134,24 @@ def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
 
+    # A corrected PR creates a new review generation on the now-native
+    # In Progress state. A later merge retry must not insert a late start
+    # receipt before either review or poison every subsequent read.
+    corrected = TransitionContext(
+        pr_url=review.pr_url, head_sha="d" * 40,
+        base_sha=review.base_sha, review_digest="e" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=corrected, project=PROJECT)
+    comments_after_correction = copy.deepcopy(
+        wire.issues["LIN-2"]["comments"]["nodes"]
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=corrected, project=PROJECT)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_after_correction
+    corrected_projection = instance.get_issue("LIN-2")
+    assert corrected_projection.state == "review"
+    assert corrected_projection.pr_url == review.pr_url
+
 
 @pytest.mark.parametrize("native_state", ["done", "blocked"])
 def test_linear_review_receipt_refuses_non_start_native_drift(tracker, native_state):

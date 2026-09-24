@@ -787,16 +787,12 @@ class LinearTracker(Tracker):
         native_state_id = state.get("id") if isinstance(state, dict) else None
         if not isinstance(native_state_id, str):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
-        if (
-            operation == "state-in-progress"
-            and projection["state"] == "review"
-            and projection["latest_review"]["native_state_id"]
-            in {binding["state_ids"]["backlog"], binding["state_ids"]["ready"]}
-            and native_state_id == binding["state_ids"]["in-progress"]
-        ):
+        if operation == "state-in-progress" and projection["state"] == "review":
             # merge() replays this step before the current exact review/CI gates.
-            # A delayed native start is only observed: do not create a new
-            # in-progress proof or downgrade the already receipted review.
+            # A start receipt written after any durable review generation would be
+            # reordered before that review during validation and can poison the
+            # append-only chain. The review is already stronger evidence; never
+            # append or rewrite an in-progress receipt in this state.
             return False
         bounded_payload = {**payload, "native_state_id": native_state_id}
         if operation == "state-in-progress" and projection["in_progress"] is not None:

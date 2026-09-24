@@ -170,7 +170,9 @@ After an exact, durable `state-review` receipt whose last native snapshot is
 `backlog` or `ready`, a normal Foundry read may observe native `in-progress` and still
 project the already-receipted `review`, PR coordinates and AC result. It creates,
 rewrites and infers no receipt. The `state-in-progress` step replayed by Foundry's
-merge path is a no-op for this exact observation; the following exact review and CI
+merge path is a no-op once any durable review generation exists, including after a
+corrected PR adds a later review on native `in-progress`. This avoids a late start
+receipt being reordered before earlier reviews; the following exact review and CI
 gates remain mandatory. Native `done`, `blocked`, `dropped`, a different source
 state, an unmapped state, or no valid review receipt still fail closed. This does not
 authorize review, AC, CI, Done or merge: their existing exact-coordinate gates reread
@@ -241,8 +243,9 @@ After PAT-28, no rollback is needed for precisely that receipt-backed
 is still no Linear CAS for a native-state repair. The regression recipe uses the fake
 transport in `tests/test_linear_tracker.py`: publish a review receipt with and without
 a prior start receipt, mutate only the fake native state after review, replay the
-start and review steps that `issue.merge` uses, and assert review/PR/AC and comments
-remain byte-for-byte unchanged; then assert Done, Blocked, a non-backlog source and an
+start and review steps that `issue.merge` uses, add a corrected PR review generation,
+replay again, and assert review/PR/AC and comments remain byte-for-byte unchanged;
+then assert Done, Blocked, a non-backlog source and an
 absent review receipt are refused. It performs no YouTrack or live Linear write.
 
 If an authorized operator must roll back the configuration change, first stop all
