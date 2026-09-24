@@ -372,6 +372,53 @@ budget/capacity. A reviewer may consume only its own technical route as a local
 diagnostic: this requires no Git diff or review claim and returns no spawn, provider,
 campaign, push, PR, CI, or merge authority. The route never finances a review.
 
+The sole exception to the ordinary-route refusal is a credited correction after an
+exact terminal **blocked** review bound to a consumed technical route. The trusted
+`routing escalation failure ... --kind review_blocking_after_fix` boundary requires
+the immutable `--root` and `--base`, recomputes the current diff, and re-reads the
+canonical review/proof store while holding the escalation transition. A missing,
+in-progress, passing, stale, wrong issue/diff/root/base/claim/generation, or malformed
+proof is refused; callers never supply a proof ID or digest as authority. It exists
+only when a human has
+rearmed an exhausted remediation window onto the same role and generation, that bound
+review has blocked, and its `review_blocking_after_fix` consumption audit follows the
+review claim. The ordinary plan remains limited to that stopped role and recorded
+generation; a foreign role, missing or malformed review binding, replay without this
+durable consumption record, or a later generation remains technically blocked. This
+recognition does not reopen the local route or create provider, campaign, PR, CI, or
+merge authority beyond the human remediation window already recorded. The ordinary
+Claude or Codex correction plan is then CAS-claimed in the durable credit audit:
+exactly one cross-host caller can receive it; replay and concurrent second plans are
+refused. At this one-shot boundary, the façade reopens the canonical proof and, while
+holding the same issue lock as the audit append, requires the caller's resolved worktree
+root and base to equal the proof coordinates, a stable current `HEAD` to equal the
+reviewed `HEAD`, and the current Git diff bytes to hash to the reviewed diff. A sibling
+worktree sharing the repository ledger, an empty commit with unchanged diff bytes, or a
+changed diff therefore fails without consuming the claim. Deterministic host validation
+(`task_name` for Codex; role contract, model and `max_turns` for the Claude hook) also
+finishes before this CAS, so a corrected retry can still claim the sole plan. This claim
+creates no provider, campaign, PR, CI, merge, or additional-review authority.
+
+Released ledgers may contain the same consumed generation without the newer embedded
+`blocking_proof` member. They are never rewritten or credited again. The explicit
+`routing escalation attest-legacy-blocking-proof <ISSUE> <ROLE>
+--halt-generation <N> --root <ROOT> --base <BASE-SHA>` transition holds the issue CAS,
+re-hashes that exact Git range, authenticates the already-terminal canonical blocked
+proof, and appends a separate attestation bound to the one legacy consumption. Missing,
+wrong, stale, ambiguous, already-bound, or non-blocking proof state fails closed. The
+subsequent correction plan is claimed through the same append-only CAS journal used by
+new ledgers, so concurrent Claude and Codex callers still yield exactly one plan.
+
+Both this transition and `routing escalation failure ...
+--kind review_blocking_after_fix` expose `--repository` for the uncommon case where the
+canonical review namespace is not the repository identity resolved from `--root`. Its
+value must be the exact namespace used by `claim-review` and `record-review-proof`; it
+is persisted with the authenticated blocking-proof binding so the later single-use
+plan claim reopens that same proof store. It grants no authority of its own. Existing
+consumption records without that field retain the root-derived default namespace.
+Omit it for the normal root-derived namespace. `--root` and `--base` remain mandatory trusted coordinates,
+and the diff is re-read while the escalation transition is locked.
+
 After either an exact reviewer or implementer route is consumed, it may unlock one fresh
 review only.
 Foundry first validates the claim, current Git diff, and immutable root/base coordinates
