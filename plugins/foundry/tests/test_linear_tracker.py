@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -79,12 +80,18 @@ class LinearWire:
         }
         self.comments = {}
         self.calls = []
+        self.git_automation_states = connection([])
 
     def _by_native(self, native):
         return next(value for value in self.issues.values() if value["id"] == native)
 
     def __call__(self, document, variables):
         self.calls.append((document, copy.deepcopy(variables)))
+        if "FoundryLinearTeamGitAutomationStates" in document:
+            return {"data": {"team": {
+                "id": "team-uuid",
+                "gitAutomationStates": copy.deepcopy(self.git_automation_states),
+            }}}
         if "FoundryLinearIssues" in document:
             return {"data": {"issues": connection([copy.deepcopy(v) for v in self.issues.values()])}}
         if "FoundryLinearIssue(" in document:
@@ -137,8 +144,11 @@ class LinearWire:
                 "createdAt": "2026-09-20T10:02:00Z",
             })
             return {"data": {"commentCreate": {"success": True, "comment": copy.deepcopy(comment)}}}
-        if "FoundryLinearComment(" in document:
-            return {"data": {"comment": copy.deepcopy(self.comments.get(variables["id"]))}}
+        if "FoundryLinearCommentsById(" in document:
+            comment = self.comments.get(variables["id"])
+            return {"data": {"comments": connection(
+                [] if comment is None else [copy.deepcopy(comment)]
+            )}}
         raise AssertionError("unexpected GraphQL document")
 
     @staticmethod
@@ -603,6 +613,90 @@ def test_linear_lifecycle_preflight_advertises_only_bounded_operations(tracker):
     assert len(wire.calls) == before
 
 
+def test_linear_merge_effect_preflight_allows_safe_team_automation(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection([
+        {
+            "id": "automation-started", "event": "start",
+            "state": {"id": STATE_IDS["in-progress"], "type": "started"},
+        },
+        {
+            "id": "automation-review", "event": "review",
+            "state": {"id": STATE_IDS["review"], "type": "started"},
+        },
+    ])
+    instance._activate(PROJECT)
+
+    assert instance.preflight_merge_effect() is None
+    assert wire.calls[-1][1] == {"id": "team-uuid"}
+
+
+def test_linear_merge_effect_preflight_allows_merge_no_action(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection([
+        {"id": "automation-merge-no-action", "event": "merge", "state": None},
+    ])
+    instance._activate(PROJECT)
+    merge_calls = []
+
+    write.preflight_merge_effect(instance)
+    merge_calls.append("github-merge")
+
+    assert merge_calls == ["github-merge"]
+
+
+def test_linear_merge_effect_preflight_allows_duplicate_workflow_state(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection([
+        {
+            "id": "automation-merge-duplicate", "event": "merge",
+            "state": {"id": "duplicate-state", "type": "duplicate"},
+        },
+    ])
+    instance._activate(PROJECT)
+
+    assert instance.preflight_merge_effect() is None
+
+
+def test_linear_merge_effect_preflight_refuses_completed_merge_automation(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection([
+        {
+            "id": "automation-merge", "event": "merge",
+            "state": {"id": STATE_IDS["done"], "type": "completed"},
+        },
+    ])
+    instance._activate(PROJECT)
+    linked_pr = SimpleNamespace(linked_issue_ids=("LIN-2", "LIN-1"))
+    merge_calls = []
+
+    def external_merge_effect():
+        # Mirrors the final Foundry pre-merge boundary: the code-host effect is
+        # external, and must not run when Linear would complete both linked issues.
+        write.preflight_merge_effect(instance)
+        merge_calls.append(linked_pr.linked_issue_ids)
+
+    with pytest.raises(
+        TrackerConflictError,
+        match="merge maps to completed state",
+    ):
+        external_merge_effect()
+
+    assert linked_pr.linked_issue_ids == ("LIN-2", "LIN-1")
+    assert merge_calls == []
+
+
+def test_linear_merge_effect_preflight_fails_closed_on_unreadable_team_config(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = {
+        "nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": "next"},
+    }
+    instance._activate(PROJECT)
+
+    with pytest.raises(LinearTrackerError, match="nested_pagination_unavailable"):
+        instance.preflight_merge_effect()
+
+
 def test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement(
     tracker, monkeypatch,
 ):
@@ -655,6 +749,111 @@ def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id
 
     assert tuple(wire.comments) == comment_ids
     assert len(comment_ids) == 1
+    comment_id = comment_ids[0]
+    parsed = uuid.UUID(comment_id)
+    assert comment_id == "e16710eb-46d7-43d8-ba0d-0931e9882d7b"
+    assert parsed.version == 4
+    assert parsed.variant == uuid.RFC_4122
+
+
+def test_linear_lifecycle_refuses_comment_with_mismatched_deterministic_id(tracker):
+    instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    persisted = wire.issues["LIN-2"]["comments"]["nodes"][0]
+    persisted["id"] = str(uuid.UUID(int=uuid.UUID(persisted["id"]).int ^ 1))
+
+    with pytest.raises(TrackerConflictError, match="comment id invalid"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_zero_receipt_native_done_fails_closed_for_search_and_get_issue(tracker):
+    instance, wire = tracker
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    instance._activate(PROJECT)
+
+    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
+        instance.get_issue("LIN-2")
+    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
+        instance.search(PROJECT)
+
+
+def test_linear_zero_receipt_nonterminal_native_state_remains_readable(tracker):
+    instance, _wire = tracker
+    instance._activate(PROJECT)
+
+    assert instance.get_issue("LIN-2").state == "ready"
+    assert {item.id: item.state for item in instance.search(PROJECT)} == {
+        "LIN-1": "ready", "LIN-2": "ready",
+    }
+
+
+def test_linear_exact_comment_lookup_returns_none_only_for_empty_filter_result(tracker):
+    instance, wire = tracker
+
+    assert instance._read_comment(
+        "00000000-0000-4000-8000-000000000099", "lifecycle.comment.read",
+    ) is None
+    document, variables = wire.calls[-1]
+    assert "comments(filter: { id: { eq: $id } }, first: 1)" in document
+    assert "comment(id:" not in document
+    assert variables == {"id": "00000000-0000-4000-8000-000000000099"}
+
+
+def test_linear_exact_comment_lookup_rejects_wrong_filtered_id(tracker):
+    instance, wire = tracker
+
+    def transport(document, variables):
+        result = wire(document, variables)
+        if "FoundryLinearCommentsById(" in document:
+            result["data"]["comments"]["nodes"] = [{
+                "id": "wrong-id", "body": "wrong",
+                "issue": {"id": "issue-uuid-2", "identifier": "LIN-2"},
+            }]
+        return result
+
+    instance._transport = transport
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance._read_comment(
+            "00000000-0000-4000-8000-000000000099", "lifecycle.comment.read",
+        )
+
+
+@pytest.mark.parametrize("page_info", [
+    {"hasNextPage": True, "endCursor": "next"},
+    {"endCursor": None},
+])
+def test_linear_lifecycle_refuses_unbounded_or_malformed_exact_comment_page(
+    tracker, page_info,
+):
+    instance, wire = tracker
+
+    def transport(document, variables):
+        result = wire(document, variables)
+        if "FoundryLinearCommentsById(" in document:
+            result["data"]["comments"]["pageInfo"] = page_info
+        return result
+
+    instance._transport = transport
+    with pytest.raises(LinearTrackerError):
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    assert wire.comments == {}
+
+
+def test_linear_lifecycle_refuses_exact_comment_id_collision_before_create(tracker):
+    instance, wire = tracker
+    _marker, body, comment_id = instance._lifecycle_marker(
+        "state-in-progress", "LIN-2", {
+            "state": "in-progress", "native_state_id": STATE_IDS["ready"],
+        },
+    )
+    wire.comments[comment_id] = {
+        "id": comment_id, "body": body + "\ndivergent",
+        "issue": {"id": "issue-uuid-2", "identifier": "LIN-2"},
+    }
+
+    with pytest.raises(TrackerConflictError, match="comment id collision"):
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == []
 
 
 def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, monkeypatch):
@@ -715,6 +914,9 @@ def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypa
     completed = instance.get_issue("LIN-2")
     assert completed.state == "done"
     assert completed.ac_done == 1
+    # The PR's delivery issue is the only one Foundry projects done.  A safe team
+    # config cannot let Linear complete a separately linked prerequisite.
+    assert instance.get_issue("LIN-1").state == "ready"
 
 
 def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
@@ -764,10 +966,10 @@ def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
     assert winner.state == "review"
 
 
-def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
+def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_completing_prerequisite(
     tracker, monkeypatch,
 ):
-    instance, _wire = tracker
+    instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
@@ -787,11 +989,21 @@ def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
         number=17, url=old.pr_url, head="feat/lin-2", base="main",
         base_sha="b" * 40, sha="d" * 40,
     )
+    # This is GitHub/Linear linkage metadata owned by the external integration, not
+    # a Foundry authority: one delivery PR is linked to its own issue and a separate
+    # prerequisite.  Foundry receives only LIN-2 as its requested merge target.
+    pr.linked_issue_ids = ("LIN-2", "LIN-1")
     landed = SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
+    merge_calls = []
+
+    def merge_pr(*_args, **_kwargs):
+        merge_calls.append(pr.linked_issue_ids)
+        return landed
+
     codehost = SimpleNamespace(
         name="github", resolve_repo=lambda: "acme/widgets",
         get_pr=lambda *_args: pr,
-        merge_pr=lambda *_args, **_kwargs: landed,
+        merge_pr=merge_pr,
         delete_branch=lambda *_args: None,
     )
     monkeypatch.setattr(issue.foundry, "tracker", lambda: instance)
@@ -822,9 +1034,14 @@ def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
 
     assert len(requested) == 1
     assert requested[0]["head"] == pr.sha
+    assert merge_calls == [("LIN-2", "LIN-1")]
     completed = instance.get_issue("LIN-2")
     assert completed.state == "done"
     assert completed.ac_done == 1
+    # Under the safe automation configuration, no external GitHub event changes the
+    # prerequisite and Foundry writes lifecycle receipts only for its target issue.
+    assert instance.get_issue("LIN-1").state == "ready"
+    assert {comment["issue"]["identifier"] for comment in wire.comments.values()} == {"LIN-2"}
 
 
 def test_linear_lifecycle_readback_revalidates_native_state(tracker):
@@ -844,6 +1061,118 @@ def test_linear_lifecycle_readback_revalidates_native_state(tracker):
         instance.set_state("LIN-2", "in-progress", project=PROJECT)
 
     assert changed is True
+
+
+def test_linear_lifecycle_accepts_only_receipted_forward_native_evolution(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    done = TransitionContext(
+        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
+        review_digest=review.review_digest, merge_sha="e" * 40,
+    )
+
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    assert instance.get_issue("LIN-2").state == "review"
+
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
+    write.sync_acceptance(
+        instance, "LIN-2", "- [ ] acceptance",
+        proof("LIN-2", "- [ ] acceptance"),
+    )
+    assert instance.get_issue("LIN-2").ac_done == 1
+
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+    instance.set_state("LIN-2", "done", context=done, project=PROJECT)
+    projected = instance.get_issue("LIN-2")
+    assert projected.state == "done"
+    assert projected.ac_done == 1
+
+
+def test_linear_lifecycle_refuses_unrelated_native_drift_even_for_next_review(tracker):
+    instance, wire = tracker
+    first = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    second = TransitionContext(
+        pr_url=first.pr_url,
+        head_sha="d" * 40, base_sha=first.base_sha, review_digest="e" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=first, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["blocked"]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.set_state("LIN-2", "review", context=second, project=PROJECT)
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+    assert len(wire.comments) == 1
+
+
+def test_linear_native_done_requires_well_formed_foundry_done_receipt(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    done = TransitionContext(
+        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
+        review_digest=review.review_digest, merge_sha="e" * 40,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    write.sync_acceptance(
+        instance, "LIN-2", "- [ ] acceptance",
+        proof("LIN-2", "- [ ] acceptance"),
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    instance.set_state("LIN-2", "done", context=done, project=PROJECT)
+
+    row = next(
+        item for item in wire.issues["LIN-2"]["comments"]["nodes"]
+        if ":state-done:" in item["body"]
+    )
+    decoded = instance._decode_lifecycle_comment("LIN-2", row["body"])
+    assert decoded is not None
+    malformed = dict(decoded[1])
+    malformed.pop("merge_sha")
+    _marker, row["body"], row["id"] = instance._lifecycle_marker(
+        "state-done", "LIN-2", malformed,
+    )
+
+    with pytest.raises(TrackerConflictError, match="state proof malformed"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_lifecycle_refuses_unmapped_historical_native_state_receipt(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    row = wire.issues["LIN-2"]["comments"]["nodes"][0]
+    decoded = instance._decode_lifecycle_comment("LIN-2", row["body"])
+    assert decoded is not None
+    malformed = {**decoded[1], "native_state_id": "state-unrelated"}
+    _marker, row["body"], row["id"] = instance._lifecycle_marker(
+        "state-review", "LIN-2", malformed,
+    )
+
+    with pytest.raises(TrackerConflictError, match="native state proof malformed"):
+        instance.get_issue("LIN-2")
 
 
 def test_linear_lifecycle_recovers_interruption_after_provider_comment_effect(tracker):
