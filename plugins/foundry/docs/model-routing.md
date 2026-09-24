@@ -372,6 +372,16 @@ budget/capacity. A reviewer may consume only its own technical route as a local
 diagnostic: this requires no Git diff or review claim and returns no spawn, provider,
 campaign, push, PR, CI, or merge authority. The route never finances a review.
 
+The sole exception to the ordinary-route refusal is a credited correction after an
+exact review bound to a consumed technical route. It exists only when a human has
+rearmed an exhausted remediation window onto the same role and generation, that bound
+review has blocked, and its `review_blocking_after_fix` consumption audit follows the
+review claim. The ordinary plan remains limited to that stopped role and recorded
+generation; a foreign role, missing or malformed review binding, replay without this
+durable consumption record, or a later generation remains technically blocked. This
+recognition does not reopen the local route or create provider, campaign, PR, CI, or
+merge authority beyond the human remediation window already recorded.
+
 After either an exact reviewer or implementer route is consumed, it may unlock one fresh
 review only.
 Foundry first validates the claim, current Git diff, and immutable root/base coordinates

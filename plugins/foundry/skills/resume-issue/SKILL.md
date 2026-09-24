@@ -98,7 +98,10 @@ because the remediation receipt is never an authority to call a provider. A revi
 route can only unlock its separately claimed fresh review; a provider invocation,
 including review, must independently acquire fresh capacity and revalidate its campaign
 authority, budget, snapshot, and gates. Do not rebuild an ordinary route from this
-response. For a released v1 stop
+response, except for the narrow credited correction recognized from the same role,
+generation, bound review, and durable `review_blocking_after_fix` consumption audit.
+That exception never reopens the technical route or grants provider/campaign authority.
+For a released v1 stop
 without a terminal classification, first run
 `reclassify-legacy-terminal` with the exact generation. It accepts either an exact
 failure receipt, or a receipt-free v1 ledger frozen into a causal snapshot digest; mixed

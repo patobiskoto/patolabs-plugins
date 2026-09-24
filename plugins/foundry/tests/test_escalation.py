@@ -2349,6 +2349,100 @@ def test_rearm_after_later_technical_generation_binds_both_generations(tmp_path)
     assert store.status(issue)["remediation_authorization"]["remaining_credits"] == 1
 
 
+def test_consumed_technical_route_allows_only_its_credited_review_correction(
+    tmp_path,
+):
+    """PAT-30: a credited, bound blocking review can continue its correction."""
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "PAT-30"
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, "pat30-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+
+    review_proof = "b" * 64
+    store.claim_fresh_reviewer_authorization(
+        issue, review_proof,
+        validated_claim=lambda: _executable_review_claim(review_proof),
+    )
+    continued = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert continued.action == "remediation_continued"
+
+    before = store._path(issue).read_bytes()
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=issue,
+        escalation_state_dir=tmp_path,
+    )
+    assert plan["role"] == "implementer"
+    assert plan["route"]["selected_tier"] == "apex"
+    assert store.active_floor(issue, "implementer") == "apex"
+    assert store.active_floor(issue, "implementer") == "apex"
+    assert store._path(issue).read_bytes() == before
+    # Reviewer retains its pre-existing separately-claimed-review preflight;
+    # no other foreign role inherits the credited implementer correction.
+    for foreign_role in ("scout", "coordinator", "architect"):
+        with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+            store.active_floor(issue, foreign_role)
+
+
+def test_credited_correction_refuses_missing_review_binding_and_stale_generation(
+    tmp_path,
+):
+    store = EscalationStore("owner/pat-30-refusals", state_dir=tmp_path)
+    issue = "PAT-31"
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "c" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, "pat31-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        store.active_floor(issue, "implementer")
+
+    # A later generation cannot inherit the prior review/credit relationship.
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    assert store.status(issue)["halted"] is True
+    later_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, later_generation, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", later_generation, "pat31-local-route-0002",
+    )
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        store.active_floor(issue, "implementer")
+
+    # A forged review timestamp cannot manufacture the missing exact binding.
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["technical_remediation_audit"][-1]["review_claimed_at"] = (
+        payload["technical_remediation_audit"][-1]["route_consumed_at"]
+    )
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+
+
 def test_bridged_rearm_rejects_forged_consumption_before_bridge(tmp_path):
     store = EscalationStore("owner/remediation-rearm-forged-order", state_dir=tmp_path)
     issue = "FOUNDRY-96"

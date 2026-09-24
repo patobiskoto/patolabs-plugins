@@ -1131,6 +1131,42 @@ class EscalationStore:
         event = cls._technical_remediation_event(state)
         return event is not None and event["route_id"] is None
 
+    @classmethod
+    def _continued_remediation_correction(cls, state: dict, role: str) -> bool:
+        """Whether one credited blocked review can continue its exact correction.
+
+        A consumed technical route normally keeps ordinary delegation closed. The
+        narrow exception is the correction evidenced by a consumed human
+        remediation credit: it must concern the same stopped role and generation,
+        and must follow the exact review already bound to that technical route.
+        This recognizes the durable, validated audit only; it creates neither a
+        route nor any provider or campaign capability.
+        """
+        technical = cls._technical_remediation_event(state)
+        authorization = state.get("remediation_authorization")
+        if (
+            technical is None
+            or technical["role"] != role
+            or technical["route_id"] is None
+            or technical["route_consumed_at"] is None
+            or technical["review_diff_hash"] is None
+            or technical["review_claimed_at"] is None
+            or not isinstance(authorization, dict)
+            or authorization.get("state") not in {"active", "exhausted"}
+            or authorization.get("role") != role
+            or authorization.get("halt_generation")
+            != technical["halt_generation"]
+        ):
+            return False
+        review_claimed_at = _utc_timestamp(technical["review_claimed_at"])
+        return any(
+            event["code"] == _REMEDIATION_CONSUMPTION_CODE
+            and event["role"] == role
+            and event["halt_generation"] == technical["halt_generation"]
+            and _utc_timestamp(event["at"]) > review_claimed_at
+            for event in authorization["consumption_audit"]
+        )
+
     @staticmethod
     def _next_audit_timestamp(state: dict) -> str:
         """Order grant and consumption audits even if the wall clock moves back."""
@@ -3232,6 +3268,11 @@ class EscalationStore:
                 return self._terminal_outcome(state)["action"], False
             technical_event = self._technical_remediation_event(state)
             if technical_event is not None:
+                # A consumed, exact blocking review inside a human-credited
+                # remediation window may continue only its stopped role. This
+                # does not reopen the technical route or general delegation.
+                if self._continued_remediation_correction(state, role):
+                    return state["roles"].get(role, {}).get("minimum_tier"), False
                 # Either bounded local route may preflight one separately claimed,
                 # independent quality review; neither grants a general delegation.
                 if (
