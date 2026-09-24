@@ -387,9 +387,27 @@ generation; a foreign role, missing or malformed review binding, replay without 
 durable consumption record, or a later generation remains technically blocked. This
 recognition does not reopen the local route or create provider, campaign, PR, CI, or
 merge authority beyond the human remediation window already recorded. The ordinary
-Codex correction plan is then CAS-claimed in the durable credit audit: exactly one
-caller can receive it; replay and concurrent second plans are refused. This claim
+Claude or Codex correction plan is then CAS-claimed in the durable credit audit:
+exactly one cross-host caller can receive it; replay and concurrent second plans are refused. This claim
 creates no provider, campaign, PR, CI, merge, or additional-review authority.
+
+Released ledgers may contain the same consumed generation without the newer embedded
+`blocking_proof` member. They are never rewritten or credited again. The explicit
+`routing escalation attest-legacy-blocking-proof <ISSUE> <ROLE>
+--halt-generation <N> --root <ROOT> --base <BASE-SHA>` transition holds the issue CAS,
+re-hashes that exact Git range, authenticates the already-terminal canonical blocked
+proof, and appends a separate attestation bound to the one legacy consumption. Missing,
+wrong, stale, ambiguous, already-bound, or non-blocking proof state fails closed. The
+subsequent correction plan is claimed through the same append-only CAS journal used by
+new ledgers, so concurrent Claude and Codex callers still yield exactly one plan.
+
+Both this transition and `routing escalation failure ...
+--kind review_blocking_after_fix` expose `--repository` for the uncommon case where the
+canonical review namespace is not the repository identity resolved from `--root`. Its
+value must be the exact namespace used by `claim-review` and `record-review-proof`; it
+only locates that proof store and grants no authority. Omit it for the normal
+root-derived namespace. `--root` and `--base` remain mandatory trusted coordinates,
+and the diff is re-read while the escalation transition is locked.
 
 After either an exact reviewer or implementer route is consumed, it may unlock one fresh
 review only.

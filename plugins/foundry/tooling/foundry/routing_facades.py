@@ -351,23 +351,27 @@ def codex_available_models(environ: Mapping[str, str] | None = None) -> set[str]
     return values
 
 
-def _validate_codex_task_packet(packet: str, role: str) -> str:
+def _validate_task_packet(packet: str, role: str, host: str) -> str:
     if not isinstance(packet, str) or not packet.strip():
-        raise RoutingConfigError("task packet Codex non vide attendu.")
+        raise RoutingConfigError(f"task packet {host} non vide attendu.")
     profile = CODEX_ROLES[role]
     if len(packet) > profile.max_prompt_chars:
         raise RoutingConfigError(
-            f"task packet Codex de {role} trop long : {len(packet)} caractères ; "
+            f"task packet {host} de {role} trop long : {len(packet)} caractères ; "
             f"maximum {profile.max_prompt_chars}. Fournissez des chemins/références "
             "plutôt que l'historique complet."
         )
     missing = [heading for heading in _PACKET_HEADINGS if heading not in packet]
     if missing:
         raise RoutingConfigError(
-            f"task packet Codex de {role} incomplet ; sections requises : "
+            f"task packet {host} de {role} incomplet ; sections requises : "
             f"{', '.join(_PACKET_HEADINGS)} (manquantes : {', '.join(missing)})."
         )
     return packet.strip()
+
+
+def _validate_codex_task_packet(packet: str, role: str) -> str:
+    return _validate_task_packet(packet, role, "Codex")
 
 
 def _codex_message(
@@ -1046,6 +1050,18 @@ def claude_route_plan(
     # create telemetry state.  The host translation is intentionally checked
     # again by the launcher so this remains a pure validation boundary.
     claude_invocation_model(route.model, project_models=policy.claude_models)
+    task_prompt = _validate_task_packet(task_prompt, role, "Claude")
+    correction_plan_claimed = False
+    if (
+        issue_id is not None
+        and role != "reviewer"
+        and not request.technical_remediation
+    ):
+        # Claude and Codex share this same durable CAS immediately before a
+        # launchable plan is returned. Neither host gains a second provider use.
+        correction_plan_claimed = escalation_store.claim_credited_correction_plan(
+            issue_id, role,
+        )
     return {
         "route": route,
         "effort_scopes": policy.effort_scopes,
@@ -1059,6 +1075,10 @@ def claude_route_plan(
         "technical_remediation_open": technical_remediation_open,
         "technical_remediation_requested": request.technical_remediation,
         "technical_remediation_local_only": request.technical_remediation,
+        **(
+            {"credited_correction_plan_claimed": True}
+            if correction_plan_claimed else {}
+        ),
         **(
             {"technical_remediation_claimed": True}
             if request.technical_remediation else {}

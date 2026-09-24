@@ -96,6 +96,7 @@ def _warning_context(
     technical_remediation_open: bool = False,
     technical_remediation_requested: bool = False,
     technical_remediation_claimed: bool = False,
+    credited_correction_plan_claimed: bool = False,
 ) -> str:
     visible = {
         "role": route.role,
@@ -122,6 +123,10 @@ def _warning_context(
             **(
                 {"technical_remediation_claimed": True}
                 if technical_remediation_claimed else {}
+            ),
+            **(
+                {"credited_correction_plan_claimed": True}
+                if credited_correction_plan_claimed else {}
             ),
         },
         "warnings": [
@@ -182,6 +187,9 @@ def route_tool_input(
     technical_remediation_claimed = resolution.get(
         "technical_remediation_claimed", False,
     )
+    credited_correction_plan_claimed = resolution.get(
+        "credited_correction_plan_claimed", False,
+    )
     if resolution.get("technical_remediation_local_only", False):
         raise RoutingConfigError(
             "remédiation technique locale : l'invocation Agent/provider est refusée ; "
@@ -222,7 +230,7 @@ def route_tool_input(
     return updated, _warning_context(
         route, issue_id, remediation_authorization, remediation_rearm_audit,
         technical_remediation_open, technical_remediation_requested,
-        technical_remediation_claimed,
+        technical_remediation_claimed, credited_correction_plan_claimed,
     )
 
 

@@ -1,6 +1,8 @@
 import importlib.util
 import io
 import json
+import multiprocessing
+import os
 import re
 import sys
 from pathlib import Path
@@ -8,7 +10,12 @@ from pathlib import Path
 import pytest
 
 import foundry.routing_facades as routing_facades
-from foundry.routing import RoutingConfigError, RoutingUnavailableError, UserRouteRequest
+from foundry.routing import (
+    ReviewClaim,
+    RoutingConfigError,
+    RoutingUnavailableError,
+    UserRouteRequest,
+)
 from foundry.escalation import EscalationStore, EscalationTechnicalBlockedError
 from foundry.routing_facades import (
     AGENT_IDENTITIES,
@@ -49,6 +56,68 @@ def _packet(body="Inspect the requested scope."):
         "Constraints:\nAccepted ADRs; preserve unrelated work.\n"
         "Done when:\nReturn evidence and validation."
     )
+
+
+def _concurrent_cross_host_correction(args):
+    host, root, state_dir, issue = args
+    os.environ["FOUNDRY_DATA"] = state_dir
+    try:
+        if host == "claude":
+            plan = claude_route_plan(
+                "implementer",
+                f'FOUNDRY_ROUTE_REQUEST={{"issue":"{issue}"}}\n' + _packet(),
+                root=root,
+                environ={},
+            )
+            return host, plan.get("credited_correction_plan_claimed") is True
+        plan = codex_spawn_plan(
+            "implementer", _packet(), root=root, issue_id=issue,
+            escalation_state_dir=state_dir,
+        )
+        return host, plan["escalation"].get("credited_correction_plan_claimed") is True
+    except EscalationTechnicalBlockedError:
+        return host, False
+
+
+def _credited_cross_host_state(root, state_dir, issue):
+    store = EscalationStore.for_root(root, state_dir=state_dir)
+    store.record_risk(issue, "implementer", "adr_creation", "apex")
+    store.record_failure(issue, "implementer", "test_red", "economy")
+    store.record_human_verdict(
+        issue, "implementer", "economy", category="strategy_decision",
+    )
+    first_generation = store.status(issue)["halt_generation"]
+    store.resume(issue, "remediation_reviewed", first_generation, 1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, "cross-host-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", first_generation, 1,
+        current_halt_generation=generation,
+    )
+    diff_hash = "b" * 64
+    store.claim_fresh_reviewer_authorization(
+        issue, diff_hash,
+        validated_claim=lambda: ReviewClaim(
+            diff_hash, True, "in_progress", 1, "f" * 64,
+        ),
+    )
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        validated_blocking_proof=lambda: {
+            "proof_id": "c" * 64,
+            "completed_at": "2030-01-01T00:00:00Z",
+            "quality": "blocked", "all_pass": False,
+            "diff_hash": diff_hash, "generation": 1,
+            "claim_digest": "d" * 64,
+            "coordinates": {"root": str(Path(root).resolve()), "base": "e" * 40},
+        },
+    )
+    return store
 
 
 @pytest.mark.parametrize(
@@ -640,6 +709,34 @@ def test_technical_remediation_requires_an_explicit_route_on_both_facades(
             "scout", _packet(), root=tmp_path, issue_id=issue,
             escalation_state_dir=state_dir, technical_remediation=True,
             technical_remediation_id=route_id,
+        )
+
+
+def test_concurrent_claude_and_codex_contenders_share_one_correction_claim(
+    monkeypatch, tmp_path,
+):
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    issue = "PAT-34"
+    store = _credited_cross_host_state(tmp_path, state_dir, issue)
+
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        results = pool.map(_concurrent_cross_host_correction, [
+            ("claude", str(tmp_path), str(state_dir), issue),
+            ("codex", str(tmp_path), str(state_dir), issue),
+        ])
+
+    assert sorted(claimed for _host, claimed in results) == [False, True]
+    assert {host for host, _claimed in results} == {"claude", "codex"}
+    status = store.status(issue)
+    assert len(status["credited_correction_claim_audit"]) == 1
+    assert status["credited_correction_claim_audit"][0]["role"] == "implementer"
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique plan"):
+        claude_route_plan(
+            "implementer",
+            f'FOUNDRY_ROUTE_REQUEST={{"issue":"{issue}"}}\n' + _packet(),
+            root=tmp_path,
+            environ={},
         )
 
 

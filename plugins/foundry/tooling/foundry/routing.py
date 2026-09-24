@@ -2228,6 +2228,23 @@ def main(
         help="namespace du dépôt de review ; par défaut, identité du root Git",
     )
     escalation_failure.add_argument("--root")
+    escalation_legacy_attest = escalation_actions.add_parser(
+        "attest-legacy-blocking-proof",
+        help="lie une consommation legacy à sa preuve canonique bloquante exacte",
+    )
+    escalation_legacy_attest.add_argument("issue")
+    escalation_legacy_attest.add_argument("role", choices=tuple(ROLE_DEFAULTS))
+    escalation_legacy_attest.add_argument(
+        "--halt-generation", required=True, type=_positive_int,
+    )
+    escalation_legacy_attest.add_argument(
+        "--base", required=True, help="SHA Git figé de la review historique",
+    )
+    escalation_legacy_attest.add_argument(
+        "--repository",
+        help="namespace canonique de la preuve ; par défaut, identité du root Git",
+    )
+    escalation_legacy_attest.add_argument("--root", required=True)
     escalation_risk = escalation_actions.add_parser("risk")
     escalation_risk.add_argument("issue")
     escalation_risk.add_argument("role", choices=tuple(ROLE_DEFAULTS))
@@ -2407,11 +2424,16 @@ def main(
                         )
                     review_root, review_base = review_diff_coordinates(args.root, args.base)
                     coordinates = {"root": str(review_root), "base": review_base}
-                    expected_hash = review_diff_hash(git_diff(review_root, review_base))
                     repository = args.repository or repository_identity(review_root)
                     deduplicator = ReviewDeduplicator(repository)
 
                     def validated_blocking_proof():
+                        # This callback runs while the escalation issue lock is held.
+                        # Re-read the trusted Git bytes here so a pre-lock race cannot
+                        # consume credit against an obsolete proof.
+                        expected_hash = review_diff_hash(
+                            git_diff(review_root, review_base),
+                        )
                         binding = deduplicator.validated_terminal_proof_binding(
                             args.issue, expected_hash, coordinates=coordinates,
                         )
@@ -2432,6 +2454,33 @@ def main(
                 )
                 payload = decision.to_dict()
                 human_required = decision.human_required
+            elif args.escalation_action == "attest-legacy-blocking-proof":
+                review_root, review_base = review_diff_coordinates(args.root, args.base)
+                coordinates = {"root": str(review_root), "base": review_base}
+                repository = args.repository or repository_identity(review_root)
+                deduplicator = ReviewDeduplicator(repository)
+
+                def validated_legacy_blocking_proof():
+                    expected_hash = review_diff_hash(
+                        git_diff(review_root, review_base),
+                    )
+                    binding = deduplicator.validated_terminal_proof_binding(
+                        args.issue, expected_hash, coordinates=coordinates,
+                    )
+                    if (
+                        binding is None or binding["quality"] != "blocked"
+                        or binding["all_pass"] is not False
+                    ):
+                        raise RoutingConfigError(
+                            "preuve terminale bloquante authentifiée requise."
+                        )
+                    return {**binding, "diff_hash": expected_hash}
+
+                payload = store.attest_legacy_blocking_proof(
+                    args.issue, args.role, args.halt_generation,
+                    validated_blocking_proof=validated_legacy_blocking_proof,
+                )
+                human_required = False
             elif args.escalation_action == "risk":
                 decision = store.record_risk(
                     args.issue, args.role, args.kind, args.current_tier,
