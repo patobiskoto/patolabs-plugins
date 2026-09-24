@@ -2779,6 +2779,36 @@ class LinearTracker(Tracker):
             project, [(previous, metadata, body)]
         )[metadata["id"]]
 
+    def _is_exact_adr_body_replay(
+        self,
+        versions: list[tuple[dict, dict]],
+        expected_body: str,
+        updated_body: str,
+    ) -> bool:
+        if (
+            len(versions) < 2
+            or updated_body == expected_body
+            or versions[-2][1]["content"] != expected_body
+        ):
+            return False
+        old_header, separator, _ = expected_body.partition("\n-->\n\n")
+        new_header, new_separator, body = updated_body.partition("\n-->\n\n")
+        if not separator or not new_separator or old_header != new_header:
+            return False
+        metadata, body = self._next_adr_metadata(versions[-2], body=body)
+        candidate = {
+            "id": _adr_document_id(
+                metadata["project_id"], metadata["id"], metadata["sequence"]
+            ),
+            "title": _adr_document_title(metadata),
+            "content": _adr_document_content(metadata, body),
+            "project": {"id": metadata["project_id"]},
+            "archivedAt": None,
+        }
+        return versions[-1][0] == metadata and all(
+            versions[-1][1].get(key) == value for key, value in candidate.items()
+        )
+
     def _append_adr_versions(self, project, changes):
         binding, chains = self._adr_snapshot(project)
         for previous, metadata, _body in changes:
@@ -3629,11 +3659,13 @@ class LinearTracker(Tracker):
             )
             return True
         versions = chains.get(adr.id)
-        if (
-            versions is None
-            or versions[-1][1]["id"] != adr.ref
-            or versions[-1][1]["content"] != expected_body
-        ):
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+            raise TrackerConflictError("Linear ADR body changed before edit")
+        if versions[-1][1]["content"] != expected_body:
+            if self._is_exact_adr_body_replay(
+                versions, expected_body, updated_body
+            ):
+                return False
             raise TrackerConflictError("Linear ADR body changed before edit")
         if updated_body == expected_body:
             return False

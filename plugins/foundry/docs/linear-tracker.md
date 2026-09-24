@@ -116,8 +116,13 @@ The public `adr accept`, `adr edit`, `adr supersede`, and `adr link-issue` comma
 resolve a witnessed predecessor through the mutation-only port, so an incomplete
 pair cannot make the recovery command unreachable. This port never repairs on read:
 the typed operation must prove the exact candidate before appending or completing
-its witness. A non-object entry in Linear's document list is an invalid provider
-response, not an empty ADR index.
+its witness. After an `adr edit` version and witness are both durable, replaying the
+same expected and updated files reconstructs that exact successor from its witnessed
+predecessor and returns unchanged without another provider write. That no-op proof
+requires an intact chain: changed files, a damaged witness, or a missing predecessor
+witness remain conflicts before any effect. A missing witness on the exact derived
+successor still follows the bounded interrupted-pair recovery above. A non-object entry
+in Linear's document list is an invalid provider response, not an empty ADR index.
 
 Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
 Each additive version must have exactly one typed delta: body, status, source

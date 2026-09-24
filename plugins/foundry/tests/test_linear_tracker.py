@@ -2044,6 +2044,149 @@ def test_linear_adr_versions_append_replay_and_refuse_stale_concurrent_writer(tr
         instance.set_adr_status(accepted, "deprecated", project=PROJECT)
 
 
+def test_linear_adr_edit_complete_replay_is_idempotent(
+    tracker, monkeypatch, tmp_path, capsys
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    created = instance.create_adr(PROJECT, "Replay complete edit", "original body")
+    expected = tmp_path / "expected.md"
+    updated = tmp_path / "updated.md"
+    expected.write_text(created.body)
+    updated.write_text(created.body.replace("original body", "revised body"))
+
+    adr_module.edit(created.id, str(expected), str(updated))
+    capsys.readouterr()
+    persisted = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    create_count = sum(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls
+    )
+
+    adr_module.edit(created.id, str(expected), str(updated))
+
+    assert "corps inchangé" in capsys.readouterr().out
+    assert (wire.documents, wire.comments) == persisted
+    assert sum(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls
+    ) == create_count
+
+
+def test_linear_adr_edit_complete_replay_refuses_stale_resource_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Replay stale edit", "original body")
+    updated_body = created.body.replace("original body", "revised body")
+    assert instance.update_body(
+        created, created.body, updated_body, project=PROJECT
+    )
+    persisted = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    call_index = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="body changed before edit"):
+        instance.update_body(created, created.body, updated_body, project=PROJECT)
+
+    assert (wire.documents, wire.comments) == persisted
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_index:]
+    )
+
+
+@pytest.mark.parametrize("changed_file", ["expected", "updated"])
+def test_linear_adr_edit_complete_replay_refuses_changed_input_before_effect(
+    tracker, monkeypatch, tmp_path, changed_file
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    created = instance.create_adr(PROJECT, "Replay changed edit", "original body")
+    expected = tmp_path / "expected.md"
+    updated = tmp_path / "updated.md"
+    expected.write_text(created.body)
+    updated.write_text(created.body.replace("original body", "revised body"))
+    adr_module.edit(created.id, str(expected), str(updated))
+
+    if changed_file == "expected":
+        expected.write_text(created.body.replace("original body", "other old body"))
+    else:
+        updated.write_text(created.body.replace("original body", "other new body"))
+    persisted = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    call_index = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="body changed before edit"):
+        adr_module.edit(created.id, str(expected), str(updated))
+
+    assert (wire.documents, wire.comments) == persisted
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_index:]
+    )
+
+
+@pytest.mark.parametrize("witness_state", ["missing_predecessor", "tampered_latest"])
+def test_linear_adr_edit_complete_replay_requires_intact_witnesses_before_effect(
+    tracker, monkeypatch, tmp_path, witness_state
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    created = instance.create_adr(PROJECT, "Replay witnessed edit", "original body")
+    expected = tmp_path / "expected.md"
+    updated = tmp_path / "updated.md"
+    expected.write_text(created.body)
+    updated.write_text(created.body.replace("original body", "revised body"))
+    adr_module.edit(created.id, str(expected), str(updated))
+
+    sequence = 0 if witness_state == "missing_predecessor" else 1
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, sequence)
+    if witness_state == "missing_predecessor":
+        wire.documents.pop(witness_id)
+    else:
+        witness = wire.documents[witness_id]
+        encoded = witness["content"][
+            len(linear_module._ADR_WITNESS_HEADER) : -len("\n-->")
+        ]
+        payload = json.loads(encoded)
+        payload["document_sha256"] = "0" * 64
+        witness["content"] = (
+            linear_module._ADR_WITNESS_HEADER
+            + json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n-->"
+        )
+    persisted = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    call_index = len(wire.calls)
+
+    with pytest.raises(
+        TrackerConflictError,
+        match=(
+            "version witness is missing"
+            if witness_state == "missing_predecessor"
+            else "version witness diverged"
+        ),
+    ):
+        adr_module.edit(created.id, str(expected), str(updated))
+
+    assert (wire.documents, wire.comments) == persisted
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_index:]
+    )
+
+
 def test_linear_adr_supersession_and_historical_import_preserve_relations_origin(
     tracker,
 ):
