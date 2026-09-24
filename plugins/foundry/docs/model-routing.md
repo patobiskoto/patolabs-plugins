@@ -399,6 +399,14 @@ changed diff therefore fails without consuming the claim. Deterministic host val
 finishes before this CAS, so a corrected retry can still claim the sole plan. This claim
 creates no provider, campaign, PR, CI, merge, or additional-review authority.
 
+After that plan has been claimed, the reviewer may bind exactly one new diff to the
+consumed technical route. This narrow CAS rearm requires the same issue, stopped role
+and halt generation, and the exact prior terminal **blocked** proof that funded the
+credited plan; its audit records the prior and new diff plus the terminal proof. A
+blocked proof without that prior correction-plan claim, a different proof/role/generation,
+or a replay is refused. Existing mergeable-terminal and pre-binding-pollution review
+paths remain separate.
+
 Released ledgers may contain the same consumed generation without the newer embedded
 `blocking_proof` member. They are never rewritten or credited again. The explicit
 `routing escalation attest-legacy-blocking-proof <ISSUE> <ROLE>
