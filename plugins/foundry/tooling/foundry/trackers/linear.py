@@ -603,6 +603,18 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
         latest_name = names[-1]
         current_is_durable = native_state_id == ordered_ids[-1]
+        # Linear's GitHub integration can asynchronously apply its native ``start``
+        # automation after Foundry has already durably projected a PR review.  This
+        # is observation-only: it neither changes the lifecycle projection nor
+        # supplies a new receipt.  Keep the exception deliberately narrower than
+        # the normal pending-write forward window.
+        reviewed_start_drift = (
+            pending_operation is None
+            and done is None
+            and rows.get("state-review")
+            and latest_name in {"backlog", "ready"}
+            and current_name == "in-progress"
+        )
         pending_forward = (
             pending_operation in {"state-review", "acceptance"}
             and current_name != "done"
@@ -615,7 +627,7 @@ class LinearTracker(Tracker):
             and acceptance_complete
             and self._native_state_can_advance(latest_name, current_name)
         )
-        if not (current_is_durable or pending_forward or pending_done):
+        if not (current_is_durable or reviewed_start_drift or pending_forward or pending_done):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
         if current_name == "done" and not pending_done and (
             done is None or done.get("native_state_id") != native_state_id
