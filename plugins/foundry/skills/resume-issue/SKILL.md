@@ -82,9 +82,10 @@ digest, then resume only that local diagnostic turn with the exact generation:
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing escalation resume-technical <ISSUE-ID> --halt-generation <HALT-GENERATION-FROM-SHOW> --diagnostic-digest <64-HEX-DIGEST>
 ```
 
-This is limited to three recorded diagnostics, creates no provider or campaign grant,
-and its replay is idempotent. It does not reopen ordinary delegation. Build a correction
-route only after atomically claiming the exact stopped role and generation once:
+This is one recorded diagnostic for the exact stop generation, creates no provider or
+campaign grant, and its replay is idempotent. It does not reopen ordinary delegation.
+Build a correction route only after atomically claiming the exact stopped role and
+generation once:
 `routing escalation claim-technical-route <ISSUE-ID> <RECORDED-ROLE>
 --halt-generation <HALT-GENERATION-FROM-SHOW> --route-id <STABLE-LOCAL-ROUTE-ID>`.
 The replay reuses that exact ID; another role or ID is refused. Then Codex uses
@@ -104,6 +105,27 @@ failure receipt, or a receipt-free v1 ledger frozen into a causal snapshot diges
 or incomplete evidence returns `authority_ambiguous` and remains fail-closed. Request a
 human verdict only if the facts actually establish durable ambiguity or a strategy/product
 decision.
+
+If a human independently makes an explicit `strategy_decision` after inspecting the
+technical evidence, record that verdict against the same stopped issue and generation;
+only then may the human authorize one bounded retry window. For PAT-22 at generation 4,
+with its three preserved technical-diagnostic audit records, the recovery is:
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing escalation verdict PAT-22 implementer --current-tier apex --category strategy_decision
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing escalation resume PAT-22 --reason manual_retry_approved --halt-generation 4 --remediation-credits 1
+```
+
+This is a human strategy authorization, not a fourth technical route: it preserves the
+technical audit and apex floor, remains bound to PAT-22/generation 4, and creates no
+provider, campaign, PR, CI, or merge effect. A stale generation, different issue, replay,
+or exhausted one-credit window remains fail-closed.
+
+If that one credit is consumed and a later review creates a fresh technical stop,
+use the exact new generation with `resume-technical` only for its one local diagnostic.
+The exhausted human window remains exhausted; the validator requires a contiguous
+technical audit suffix and never turns the local receipt into a provider, campaign,
+PR, CI, or merge permission. A separate ordinary gate is still required for shipping.
 
 Cancellation re-halts the issue technically. Exhaustion, another role, another signal,
 stale state, or an incompatible generation stay fail-closed and do not by themselves

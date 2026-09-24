@@ -289,6 +289,26 @@ Each following `technical_blocked` generation can still open its one exact,
 contiguous `resume-technical` diagnostic; this preserves history without reviving that
 window or granting a campaign, provider, reservation, PR, CI, or merge effect.
 
+### PAT-22 generation-4 strategy recovery
+
+PAT-22 at generation 4 retains its three consumed technical-diagnostic audit events and
+its apex floor. Those local receipts do not authorize a provider or campaign effect.
+If, after inspecting the evidence, a human independently records a typed
+`strategy_decision`, Foundry changes that exact stopped generation to `human_required`.
+The human may then run `resume --reason manual_retry_approved --halt-generation 4 --remediation-credits 1`.
+This opens exactly one bounded remediation credit; it does not
+rearm or alter the technical audit, lower the floor, or manufacture provider, campaign,
+PR, CI, or merge authority. Stale/wrong issue or generation coordinates, replay, and an
+exhausted credit remain fail-closed.
+
+After that credit is consumed and a later blocking review creates a new
+`technical_blocked` generation, `resume-technical` may clear exactly that generation
+for one local diagnostic. The exhausted human window remains exhausted. The ledger
+validator requires a contiguous technical-audit suffix after the authorization
+generation; a gap, duplicate, stale generation, provider effect, or campaign restart
+is refused. This fixes the mismatch that previously emitted a valid generation-5 stop
+but rejected its own local diagnostic transition; it grants no further review or merge.
+
 ```bash
 python3 tooling/foundry_cli.py routing escalation resume-technical FOUNDRY-42 \
   --halt-generation <HALT-GENERATION-FROM-SHOW> \

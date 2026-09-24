@@ -3367,6 +3367,93 @@ def test_technical_resumes_are_bounded_per_fresh_deterministic_stop(tmp_path):
         store.status(issue)
 
 
+def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(tmp_path):
+    """A technical receipt stays local; only an explicit human strategy path reopens it."""
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "PAT-22"
+    path = store._path(issue)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(issue)), encoding="utf-8")
+    store.reclassify_legacy_terminal(issue, 1)
+
+    for generation, digest in enumerate(("a" * 64, "b" * 64, "c" * 64), start=1):
+        store.resume_technical_remediation(issue, generation, digest)
+        store.claim_technical_remediation_route(
+            issue, "implementer", generation, f"pat22-local-route-{generation:04d}",
+        )
+        assert store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        ).action == "technical_blocked"
+
+    blocked = store.status(issue)
+    assert blocked["halt_generation"] == 4
+    assert blocked["technical_blocked"] is True
+    assert [event["halt_generation"] for event in blocked["technical_remediation_audit"]] == [1, 2, 3]
+    assert blocked["roles"]["implementer"]["minimum_tier"] == "apex"
+    with pytest.raises(EscalationTechnicalBlockedError):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+
+    before_verdict = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="sans verdict humain valide"):
+        store.resume(issue, "manual_retry_approved", 3, remediation_credits=1)
+    assert path.read_bytes() == before_verdict
+
+    verdict = store.record_human_verdict(
+        issue, "implementer", "apex", category="strategy_decision",
+    )
+    assert verdict.action == "human_required"
+    with pytest.raises(RoutingConfigError, match="génération d'arrêt obsolète"):
+        store.resume(issue, "manual_retry_approved", 3, remediation_credits=1)
+    with pytest.raises(RoutingConfigError, match="n'est pas arrêtée"):
+        store.resume("PAT-23", "manual_retry_approved", 4, remediation_credits=1)
+    authorized = store.resume(
+        issue, "manual_retry_approved", 4, remediation_credits=1,
+    )
+    assert authorized["remediation_authorization"]["remaining_credits"] == 1
+    after_resume = store.status(issue)
+    assert after_resume["halted"] is False
+    assert after_resume["roles"]["implementer"]["minimum_tier"] == "apex"
+    assert [event["halt_generation"] for event in after_resume["technical_remediation_audit"]] == [1, 2, 3]
+
+    replay = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="n'est pas arrêtée"):
+        store.resume(issue, "manual_retry_approved", 4, remediation_credits=1)
+    assert path.read_bytes() == replay
+
+    assert store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    ).action == "remediation_continued"
+    exhausted = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert exhausted.action == "technical_blocked"
+    assert exhausted.human_required is False
+    with pytest.raises(EscalationTechnicalBlockedError):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+    before_local = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="génération d'arrêt obsolète"):
+        store.resume_technical_remediation(issue, 4, "d" * 64)
+    assert path.read_bytes() == before_local
+    local = store.resume_technical_remediation(issue, 5, "d" * 64)
+    assert local["provider_effect_allowed"] is False
+    assert store.status(issue)["technical_remediation_open"] is True
+    assert store.status(issue)["remediation_authorization"]["state"] == "exhausted"
+    assert store.resume_technical_remediation(issue, 5, "d" * 64)["replayed"] is True
+    store.claim_technical_remediation_route(
+        issue, "implementer", 5, "pat22-local-route-0005",
+    )
+    assert store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    ).action == "technical_blocked"
+    assert store.status(issue)["halt_generation"] == 6
+
+
 def test_legacy_stop_without_complete_causal_facts_stays_ambiguous(tmp_path):
     store = EscalationStore("owner/legacy-ambiguous", state_dir=tmp_path)
     issue = "FOUNDRY-108"
