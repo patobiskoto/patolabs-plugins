@@ -113,6 +113,9 @@ title/body, more than one incomplete pair, an orphan witness, or a later-version
 write remains fail-closed and requires a separately authorized repair capability.
 
 Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
+Each additive version must have exactly one typed delta: body, status, source
+supersession, or one reciprocal `supersedes` addition; combined deltas fail closed even
+when a matching witness exists.
 `supersedes` and `superseded_by` must be reciprocal in the latest project snapshot;
 self-links, duplicates, missing ADRs, and more than 100 relations of either kind are
 refused. Every issue relation is re-read and must belong to the configured team and

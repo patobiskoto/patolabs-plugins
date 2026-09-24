@@ -567,6 +567,37 @@ def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
     return metadata, body
 
 
+def _valid_adr_version_delta(previous: dict, current: dict) -> bool:
+    old_relations = previous["relations"]
+    new_relations = current["relations"]
+    body_changed = current["body_sha256"] != previous["body_sha256"]
+    status_changed = current["status"] != previous["status"]
+
+    if new_relations == old_relations:
+        if status_changed:
+            return not body_changed and current["status"] != "superseded"
+        return body_changed
+
+    if body_changed or new_relations["issues"] != old_relations["issues"]:
+        return False
+    if previous["status"] == "accepted" and current["status"] == "superseded":
+        return (
+            old_relations["superseded_by"] is None
+            and new_relations["superseded_by"] is not None
+            and new_relations["supersedes"] == old_relations["supersedes"]
+        )
+    if status_changed or current["status"] != "accepted":
+        return False
+    old_supersedes = old_relations["supersedes"]
+    new_supersedes = new_relations["supersedes"]
+    return (
+        new_relations["superseded_by"] == old_relations["superseded_by"]
+        and len(new_supersedes) == len(old_supersedes) + 1
+        and set(old_supersedes).issubset(new_supersedes)
+        and new_supersedes == sorted(new_supersedes)
+    )
+
+
 def _adr_chain(documents: list[dict], binding: dict) -> dict:
     chains = {}
     witnesses = {}
@@ -635,6 +666,7 @@ def _adr_chain(documents: list[dict], binding: dict) -> dict:
                         and metadata["body_sha256"] == previous["body_sha256"]
                         and metadata["relations"] == previous["relations"]
                     )
+                    or not _valid_adr_version_delta(previous, metadata)
                 ):
                     raise TrackerConflictError("Linear ADR version chain diverged")
     if set(witnesses) != observed:

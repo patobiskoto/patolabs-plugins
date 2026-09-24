@@ -2047,6 +2047,44 @@ def test_linear_adr_chain_refuses_archived_tampered_or_deleted_history(tracker, 
         instance.list_adrs(PROJECT)
 
 
+@pytest.mark.parametrize("composite", ["status_body", "supersedes_body"])
+def test_linear_adr_chain_refuses_witnessed_composite_version_delta(
+    tracker, composite
+):
+    instance, wire = tracker
+    if composite == "status_body":
+        original = instance.create_adr(PROJECT, "Status delta", "original body")
+        instance.set_adr_status(original, "accepted", project=PROJECT)
+        target_id = original.id
+    else:
+        source = instance.create_adr(PROJECT, "Source delta", "source body")
+        replacement = instance.create_adr(PROJECT, "Replacement delta", "old body")
+        instance.set_adr_status(source, "accepted", project=PROJECT)
+        instance.set_adr_status(replacement, "accepted", project=PROJECT)
+        accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+        instance.supersede_adr(accepted[source.id], replacement.id, project=PROJECT)
+        target_id = replacement.id
+
+    latest = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[target_id]
+    binding = instance._binding(PROJECT)
+    raw = wire.documents[latest.ref]
+    metadata, _ = linear_module._parse_adr_document(raw, binding)
+    changed_body = "externally combined body edit"
+    metadata["body_sha256"] = hashlib.sha256(changed_body.encode()).hexdigest()
+    raw["content"] = linear_module._adr_document_content(metadata, changed_body)
+    witness_id = linear_module._adr_witness_id(
+        PROJECT.id, target_id, metadata["sequence"]
+    )
+    wire.documents[witness_id] = linear_module._adr_witness_document(
+        binding, metadata, raw
+    )
+    assert linear_module._parse_adr_document(raw, binding)[0] == metadata
+    assert linear_module._parse_adr_witness(wire.documents[witness_id], binding)
+
+    with pytest.raises(TrackerConflictError, match="version chain diverged"):
+        instance.list_adrs(PROJECT)
+
+
 @pytest.mark.parametrize("history", ["unique", "head"])
 def test_linear_adr_witness_refuses_isolated_unique_or_head_deletion(tracker, history):
     instance, wire = tracker
