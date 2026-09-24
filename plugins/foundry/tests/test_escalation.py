@@ -2282,6 +2282,43 @@ def test_rearm_after_later_technical_generation_binds_both_generations(tmp_path)
     assert store.status(issue)["remediation_authorization"]["remaining_credits"] == 1
 
 
+def test_bridged_rearm_rejects_forged_consumption_before_bridge(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-forged-order", state_dir=tmp_path)
+    issue = "FOUNDRY-96"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-forged-order-96",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    forged = {
+        "code": "review_blocking_after_fix_consumed",
+        "at": payload["technical_remediation_audit"][-1]["route_consumed_at"],
+        "role": "implementer",
+        "halt_generation": technical_generation,
+    }
+    assert forged["at"] < payload["remediation_rearm_audit"][-1]["at"]
+    payload["consumption_audit"].append(forged)
+    payload["roles"]["implementer"]["deterministic_failures"] += 1
+    payload["roles"]["implementer"]["failures_since_escalation"] += 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    assert path.read_bytes() == malformed
+
+
 def test_rearm_again_after_bridged_technical_generation(tmp_path):
     store = EscalationStore("owner/remediation-rearm-technical-repeat", state_dir=tmp_path)
     issue = "FOUNDRY-99"

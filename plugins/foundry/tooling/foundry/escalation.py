@@ -1500,6 +1500,8 @@ class EscalationStore:
         rearm_audit = []
         rearm_by_generation = {}
         rearm_by_exhausted_generation = {}
+        bridge_rearm_times = {}
+        rearm_times = []
         previous_rearm_time = None
         previous_rearm_generation = 0
         for value in rearm_raw:
@@ -1571,7 +1573,12 @@ class EscalationStore:
             rearm_by_generation.setdefault(event_generation, []).append(
                 (event, event_time),
             )
+            if exhausted_generation != event_generation:
+                bridge_rearm_times.setdefault(
+                    (event_generation, event_role), event_time,
+                )
             rearm_audit.append(event)
+            rearm_times.append(event_time)
             previous_rearm_time = event_time
             previous_rearm_generation = event_generation
 
@@ -1766,20 +1773,21 @@ class EscalationStore:
             )
             or any(
                 event["halt_generation"] in technical_counts_by_generation
-                for event in durable_audit
-                if event["halt_generation"] not in {
-                    rearm["halt_generation"]
-                    for rearm in rearm_audit
-                    if rearm.get("exhausted_halt_generation")
-                    != rearm["halt_generation"]
-                }
+                and (
+                    (event["halt_generation"], event["role"])
+                    not in bridge_rearm_times
+                    or event_time <= bridge_rearm_times[
+                        (event["halt_generation"], event["role"])
+                    ]
+                )
+                for event, event_time in zip(
+                    durable_audit, durable_times, strict=True,
+                )
             )
         ):
             raise _invalid_ledger(issue_id)
         prior_bridges = set()
-        for event, event_time in zip(rearm_audit, (
-            _utc_timestamp(item["at"]) for item in rearm_audit
-        ), strict=True):
+        for event, event_time in zip(rearm_audit, rearm_times, strict=True):
             exhausted_generation = event.get(
                 "exhausted_halt_generation", event["halt_generation"],
             )
