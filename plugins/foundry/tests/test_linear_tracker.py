@@ -417,6 +417,7 @@ def seed_linear_adr(
             "source_created": None,
             "source_updated": None,
             "source_body_sha256": digest,
+            "missing_relations": [],
         },
         "relations": {
             "supersedes": list(supersedes),
@@ -1992,6 +1993,42 @@ def test_linear_adr_supersession_and_historical_import_preserve_relations_origin
     ]
 
 
+def test_linear_adr_import_preserves_unknown_vs_known_empty_relations(tracker):
+    instance, wire = tracker
+    common = dict(
+        adr_id="LIN-ADR-0088", title="Historical unknown", body="old",
+        historical_status="deprecated", source_ref="YT-ADR-88",
+        source_created=None, source_updated=None,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+    )
+    imported = instance.import_adr(PROJECT, **common)
+    metadata, _ = linear_module._parse_adr_document(
+        wire.documents[imported.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert metadata["origin"]["missing_relations"] == [
+        "issues", "superseded_by", "supersedes",
+    ]
+    with pytest.raises(TrackerConflictError, match="conflicts with existing origin"):
+        instance.import_adr(
+            PROJECT, **common, supersedes=(), superseded_by=None,
+            issue_refs=(),
+        )
+
+    explicit = {**common, "adr_id": "LIN-ADR-0089", "title": "Known empty"}
+    known = instance.import_adr(
+        PROJECT, **explicit, supersedes=(), superseded_by=None,
+        issue_refs=(),
+    )
+    known_metadata, _ = linear_module._parse_adr_document(
+        wire.documents[known.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert known_metadata["origin"]["missing_relations"] == []
+    with pytest.raises(TrackerConflictError, match="conflicts with existing origin"):
+        instance.import_adr(PROJECT, **explicit)
+
+
 def test_linear_native_adr_issue_link_is_canonical_reciprocal_and_replay_safe(tracker):
     instance, wire = tracker
     created = instance.create_adr(PROJECT, "Native link", "decision")
@@ -2010,6 +2047,39 @@ def test_linear_native_adr_issue_link_is_canonical_reciprocal_and_replay_safe(tr
     replay = instance.link_adr_issue(linked, ISSUE_2_ID, project=PROJECT)
     assert replay.ref == linked.ref
     assert (len(wire.documents), len(wire.comments)) == before
+    assert instance.list_adrs(PROJECT)[0].ref == linked.ref
+
+
+def test_linear_adr_issue_link_replays_exact_version_without_witness(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Interrupted issue link", "decision")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR witness]")
+        ):
+            raise OSError("witness write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    instance._transport = original
+    assert len(wire.documents) == 3
+    assert len(wire.comments) == 1
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+
+    before = (len(wire.documents), len(wire.comments))
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.link_adr_issue(created, "LIN-1", project=PROJECT)
+    assert (len(wire.documents), len(wire.comments)) == before
+
+    linked = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
     assert instance.list_adrs(PROJECT)[0].ref == linked.ref
 
 
@@ -2085,6 +2155,35 @@ def test_linear_supersession_replay_is_idempotent_and_completes_exact_partial_pa
     before = len(wire.documents)
     instance.supersede_adr(complete[source.id], replacement.id, project=PROJECT)
     assert len(wire.documents) == before
+
+
+def test_linear_supersession_recovers_replacement_version_without_witness(tracker):
+    instance, wire = tracker
+    source = instance.create_adr(PROJECT, "Source witness gap", "old")
+    replacement = instance.create_adr(PROJECT, "Replacement witness gap", "new")
+    instance.set_adr_status(source, "accepted", project=PROJECT)
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}
+    binding, chains = instance._adr_snapshot(PROJECT)
+    metadata, body = instance._next_adr_metadata(
+        chains[replacement.id][-1], supersedes_id=source.id
+    )
+    raw = {
+        "id": linear_module._adr_document_id(PROJECT.id, replacement.id, metadata["sequence"]),
+        "title": linear_module._adr_document_title(metadata),
+        "content": linear_module._adr_document_content(metadata, body),
+        "project": {"id": PROJECT.id},
+        "archivedAt": None,
+    }
+    wire.documents[raw["id"]] = raw
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+
+    instance.supersede_adr(accepted[source.id], replacement.id, project=PROJECT)
+    complete = {item.id: item for item in instance.list_adrs(PROJECT)}
+    assert complete[source.id].status == "superseded"
+    assert complete[replacement.id].status == "accepted"
+    assert len(wire.documents) == 12
 
 
 def test_linear_supersession_partial_pair_refuses_wrong_replacement_before_effect(
@@ -2185,6 +2284,189 @@ def test_linear_adr_import_canonicalizes_single_issue_alias_and_replays_by_uuid(
         or "FoundryLinearCommentCreate" in document
         for document, _variables in wire.calls[call_offset:]
     )
+
+
+def test_linear_adr_import_replays_v0_before_reciprocal_relation_version(tracker):
+    instance, wire = tracker
+    target = instance.create_adr(PROJECT, "Historical target", "old")
+    instance.set_adr_status(target, "accepted", project=PROJECT)
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Historical replacement",
+        "body": "new",
+        "historical_status": "accepted",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"new").hexdigest(),
+        "supersedes": (target.id,),
+    }
+    original = wire.__call__
+
+    def interrupt_reciprocal(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(f"[Foundry ADR] {target.id}")
+            and "/ v0002" in variables["input"]["title"]
+        ):
+            raise OSError("reciprocal relation write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_reciprocal
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.list_adrs(PROJECT)
+
+    before = (len(wire.documents), len(wire.comments))
+    with pytest.raises(TrackerConflictError, match="existing origin"):
+        instance.import_adr(PROJECT, **{**kwargs, "source_ref": "YT-ADR-other"})
+    assert (len(wire.documents), len(wire.comments)) == before
+
+    imported = instance.import_adr(PROJECT, **kwargs)
+    assert imported.id == "LIN-ADR-0098"
+    assert {adr.id for adr in instance.list_adrs(PROJECT)} == {
+        target.id, imported.id,
+    }
+    assert {adr.id: adr for adr in instance.list_adrs(PROJECT)}[target.id].status == "superseded"
+
+
+def test_linear_adr_import_replays_v0_missing_witness_before_reciprocal_version(tracker):
+    instance, wire = tracker
+    target = instance.create_adr(PROJECT, "Witness target", "old")
+    instance.set_adr_status(target, "accepted", project=PROJECT)
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Witness replacement",
+        "body": "new",
+        "historical_status": "accepted",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"new").hexdigest(),
+        "supersedes": (target.id,),
+    }
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(
+                "[Foundry ADR witness] LIN-ADR-0098"
+            )
+        ):
+            raise OSError("import witness write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+
+    imported = instance.import_adr(PROJECT, **kwargs)
+    assert imported.id == "LIN-ADR-0098"
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert current[target.id].status == "superseded"
+
+
+def test_linear_adr_import_replays_after_first_of_two_reciprocal_versions(tracker):
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "First historical target", "one")
+    second = instance.create_adr(PROJECT, "Second historical target", "two")
+    for adr in (first, second):
+        instance.set_adr_status(adr, "accepted", project=PROJECT)
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Two historical targets",
+        "body": "replacement",
+        "historical_status": "accepted",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"replacement").hexdigest(),
+        "supersedes": (first.id, second.id),
+    }
+    original = wire.__call__
+
+    def interrupt_second(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(f"[Foundry ADR] {second.id}")
+            and "/ v0002" in variables["input"]["title"]
+        ):
+            raise OSError("second reciprocal write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_second
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.list_adrs(PROJECT)
+
+    imported = instance.import_adr(PROJECT, **kwargs)
+    assert imported.id == "LIN-ADR-0098"
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert current[first.id].status == "superseded"
+    assert current[second.id].status == "superseded"
+
+
+def test_linear_adr_import_replays_reciprocal_version_without_witness(tracker):
+    instance, wire = tracker
+    target = instance.create_adr(PROJECT, "Reciprocal witness target", "old")
+    instance.set_adr_status(target, "accepted", project=PROJECT)
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Interrupted reciprocal witness",
+        "body": "replacement",
+        "historical_status": "accepted",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"replacement").hexdigest(),
+        "supersedes": (target.id,),
+    }
+    original = wire.__call__
+
+    def interrupt_target_witness(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(
+                f"[Foundry ADR witness] {target.id}"
+            )
+            and "/ v0002" in variables["input"]["title"]
+        ):
+            raise OSError("reciprocal witness write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_target_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+
+    before = (len(wire.documents), len(wire.comments))
+    with pytest.raises(TrackerConflictError, match="existing origin"):
+        instance.import_adr(
+            PROJECT, **{**kwargs, "source_ref": "YT-ADR-other"}
+        )
+    assert (len(wire.documents), len(wire.comments)) == before
+
+    call_offset = len(wire.calls)
+    imported = instance.import_adr(PROJECT, **kwargs)
+    creates = [
+        variables["input"]["title"]
+        for document, variables in wire.calls[call_offset:]
+        if "FoundryLinearAdrDocumentCreate" in document
+    ]
+    assert creates == [f"[Foundry ADR witness] {target.id} / v0002"]
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert imported.id == "LIN-ADR-0098"
+    assert current[target.id].status == "superseded"
 
 
 def test_linear_adr_import_refuses_malformed_provider_issue_identifier_before_effect(

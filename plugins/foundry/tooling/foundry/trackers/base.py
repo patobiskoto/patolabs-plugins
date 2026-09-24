@@ -19,6 +19,9 @@ from foundry.models import (
 )
 
 
+_UNSPECIFIED_ADR_RELATION = object()
+
+
 class IssueUnavailableError(RuntimeError):
     """A requested issue is absent or inaccessible to the current tracker user.
 
@@ -313,9 +316,9 @@ class Tracker(ABC):
         source_created: int | None,
         source_updated: int | None,
         expected_source_sha256: str,
-        supersedes: tuple[str, ...] = (),
-        superseded_by: str | None = None,
-        issue_refs: tuple[str, ...] = (),
+        supersedes: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
+        superseded_by: str | None | object = _UNSPECIFIED_ADR_RELATION,
+        issue_refs: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
     ) -> Adr:
         """Import one bounded historical ADR snapshot without accepting it.
 

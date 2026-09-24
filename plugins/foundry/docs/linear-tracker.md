@@ -109,8 +109,9 @@ response is recovered only by exact deterministic-ID readback; a process stop or
 failure between them leaves a detectable incomplete pair and all normal ADR reads fail
 closed. Replaying the byte-identical native creation can complete exactly one surviving
 `proposed` version-0 slot after validating every other pair and relation; a different
-title/body, more than one incomplete pair, an orphan witness, or a later-version partial
-write remains fail-closed and requires a separately authorized repair capability.
+title/body, more than one incomplete pair, or an orphan witness remains fail-closed.
+Normal reads also fail closed on a later-version partial write; only the matching typed
+operation may complete its exact missing witness after hypothetical whole-graph validation.
 
 Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
 Each additive version must have exactly one typed delta: body, status, source
@@ -140,8 +141,10 @@ present; if the replacement side completed and the source side did not, the same
 may append only the missing source after checking both complete chains and the hypothetical
 reciprocal graph. If that exact source Document exists but its witness is missing,
 the replay verifies the byte-exact source candidate before completing only its witness.
-A different pair or a missing replacement-side witness remains fail-closed and requires
-a separately authorized repair. No incomplete graph is accepted as a read.
+If the replacement-side version exists without its witness, the same command first
+preflights both hypothetical sides, completes that exact witness, then appends the source.
+A different pair or a second incomplete slot remains fail-closed. No incomplete graph is
+accepted as a read.
 
 Writes append a version rather than updating a document. Native creation starts
 `proposed`; status transitions and supersession are typed and constrained. The provider-
@@ -149,13 +152,27 @@ neutral `link_adr_issue` port is exposed as `adr link-issue <ADR-ID> <ISSUE-ID>`
 `frame` links newly created issues to their constraining ADRs when the provider supports
 that port. The one-relation append stores the canonical readable Linear identifier and
 requires the deterministic reciprocal comment; replay of the exact link is idempotent.
+If its version was written but its witness was interrupted, replay first validates the
+exact version, reciprocal comment and hypothetical full graph, then completes only the
+missing witness. A changed target or another incomplete slot cannot authorize repair.
 The provider-
 neutral historical-import port is distinct from native creation and defaults to a typed
 unsupported capability on trackers that do not implement it. Linear records the source
 reference, timestamps, source digest, historical status, relations, and exact target issue
-scope without invoking acceptance. A related ADR must already be present and accepted
+scope without invoking acceptance. Omitted relation arguments remain explicit in
+`origin.missing_relations`; an omitted value is never presented as a known-empty
+source relation, and an exact replay cannot replace it with a newly asserted empty
+value. The production import must pass all three relation arguments explicitly after
+source qualification. A related ADR must already be present and accepted
 where it serves as a replacement; arbitrary mutually referencing batches are not seeded
 by the single-record port. Bulk ordering belongs to PAT-23 and cutover to PAT-10.
+When import stops after version 0 (with or without its witness) but before reciprocal
+relation versions, an exact replay preflights the completed hypothetical graph before
+adding the missing witness and versions. It also completes a multi-relation import that
+stopped after the first reciprocal version, including when that exact version exists but
+its witness does not. The replay requires that this is the only incomplete version pair
+and that it is one of the reciprocal versions derived from the byte-identical import;
+other graph conflicts and a changed source snapshot remain fail-closed.
 
 ### Controlled production recipe
 
