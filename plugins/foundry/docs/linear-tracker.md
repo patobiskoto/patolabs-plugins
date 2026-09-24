@@ -63,8 +63,8 @@ tree and registry: workspace/project/team readback, all seven state UUIDs with o
 labels, the four Type label UUIDs with their exclusive group, selected estimate scale,
 empty or observed milestones, allowed operations, and the qualification-artifact check.
 The record may contain provider identifiers and observations, but never a token, account
-data, or private URL. FOUNDRY-159 alone may activate a verified binding or perform a
-cutover; FOUNDRY-162 creates neither a migration nor a dual-write path.
+data, or private URL. PAT-23 owns the bounded historical ADR import; PAT-10 owns
+the final verified repository cutover. PAT-22 activates neither binding nor dual-write.
 
 ## Exact support boundary
 
@@ -100,13 +100,69 @@ Unsupported capabilities fail explicitly with typed errors: existing-issue repla
 atomic audited non-code Epic closure, project provisioning, and free-form provider-native
 search queries. ADRs are stored as project-scoped Linear Documents, never substituted by
 a Git catalogue or YouTrack read. A document has a deterministic client ID for its
-`(project, ADR, version)` slot, a closed metadata header and body/content digests.
-Reads reject holes, forks, archive/deletion, metadata edits and project mismatch; writes
-append a version rather than updating a document. Native creation starts `proposed`;
-status transitions and supersession are typed and constrained. The distinct historical
-import port records an explicit source snapshot and status without invoking acceptance.
-This repository ships only fake-transport proofs and a production recipe: it performs no
-real ADR write, historical import, or binding cutover.
+`(project, ADR, version)` slot, a closed metadata header and body/content digests. Every
+version also has a second deterministic project Document: its witness binds the version
+ID and exact content hash. Reads require the pair in both directions. An isolated deletion
+of the only version, the head version, or its witness is therefore a conflict rather than
+an empty/older history. The two creates are not a Linear transaction: an interrupted
+response is recovered only by exact deterministic-ID readback; a process stop or provider
+failure between them leaves a detectable incomplete pair and all normal ADR reads fail
+closed. Replaying the byte-identical native creation can complete exactly one surviving
+`proposed` version-0 slot after validating every other pair and relation; a different
+title/body, more than one incomplete pair, an orphan witness, or a later-version partial
+write remains fail-closed and requires a separately authorized repair capability.
+
+Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
+`supersedes` and `superseded_by` must be reciprocal in the latest project snapshot;
+self-links, duplicates, missing ADRs, and more than 100 relations of either kind are
+refused. Every issue relation is re-read and must belong to the configured team and
+project, and the issue must retain its deterministic reciprocal Foundry comment bound to
+the project, ADR, and issue IDs. The comment is created additively before the imported ADR
+version, uses exact-ID readback, and is replay-safe; an interrupted import can leave a
+harmless orphan comment but cannot expose a one-sided ADR relation. A missing issue/ADR
+has its own typed unavailable error; a transport or GraphQL failure remains a provider
+error and is never reclassified as a missing relation.
+Supersession appends both sides. These multiple Document creates are provider-additive but
+not provider-atomic: a partial effect makes the graph unreadable until an authorized exact
+repair completes it; PAT-22 exposes no automatic repair path, and the ordinary command
+replay remains fail-closed rather than accepting a one-sided relation.
+
+Writes append a version rather than updating a document. Native creation starts
+`proposed`; status transitions and supersession are typed and constrained. The provider-
+neutral historical-import port is distinct from native creation and defaults to a typed
+unsupported capability on trackers that do not implement it. Linear records the source
+reference, timestamps, source digest, historical status, relations, and exact target issue
+scope without invoking acceptance. A related ADR must already be present and accepted
+where it serves as a replacement; arbitrary mutually referencing batches are not seeded
+by the single-record port. Bulk ordering belongs to PAT-23 and cutover to PAT-10.
+
+### Controlled production recipe
+
+The fake transport is the executable proof shipped by this repository. A production
+operator must separately, under the cutover authority:
+
+1. qualify the exact Linear workspace/team/project and record the stable IDs described
+   above; keep the existing repository binding unchanged;
+2. export only the authorized live YouTrack ADR closure, retain each source reference and
+   timestamps, compute the SHA-256 of the byte-exact body, and map every issue relation to
+   an already qualified target-project issue;
+3. validate the import order offline with the same closed metadata and relation rules;
+   records with unresolved or mutually unseedable ADR relations stop the run for an
+   explicit batch/cutover decision;
+4. in a maintenance window, call the tracker import port one record at a time, replacement
+   prerequisites first, then read the complete Linear ADR index back and compare IDs,
+   status, provenance, body digests, reciprocal relations, version/witness pairs, team and
+   project IDs;
+5. only after that independent readback may PAT-10 atomically change the repository
+   binding. Do not dual-write, accept imported ADRs implicitly, or delete the YouTrack
+   archive.
+
+No step above was run by PAT-22. This repository performs no real ADR write, historical
+import, or binding cutover. The witness is independent as a second provider object, not an
+immutable external transparency log. A workspace actor able to delete both a version and
+its witness can erase that pair without a surviving anchor; deleting every ADR and every
+witness is information-theoretically indistinguishable from a project that never had an
+ADR. Detecting coordinated erasure requires a separately decided external durable anchor.
 
 ## Append-only lifecycle guarantee
 
@@ -250,4 +306,4 @@ unavailable because it requires a provider-atomic parent/child audit.
 
 This implementation and its controlled transport round-trip do not activate a real
 workspace. No Linear binding or live write is performed here. Import, target-workspace
-validation, and the atomic cutover remain FOUNDRY-159 work.
+validation, and the atomic cutover remain PAT-23/PAT-10 work.

@@ -35,6 +35,12 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr supersede <ADR-ID> <REPLACEMENT-ID>
 ```
 
+On Linear, each command above uses project-scoped version Documents plus a separate
+deterministic witness Document. Supersession writes and verifies both reciprocal ADR
+links. A missing pair, one-sided link, out-of-project issue relation, or provider outage
+fails closed; the skill never falls back to YouTrack or Git. Historical import is a
+separate operator/cutover capability and is not performed by this skill.
+
 ## Rule
 Don't contradict an `accepted` ADR — supersede it with a new one that references it.
 Before any architecture choice, scan the index (`query adrs`) then load the full text

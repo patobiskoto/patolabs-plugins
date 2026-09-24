@@ -33,6 +33,14 @@ class IssueUnavailableError(RuntimeError):
         self.issue_id = issue_id
 
 
+class AdrUnavailableError(RuntimeError):
+    """A referenced ADR is absent from the active tracker project."""
+
+    def __init__(self, adr_id: str):
+        super().__init__(f"ADR unavailable: {adr_id}")
+        self.adr_id = adr_id
+
+
 class AcceptanceSyncUnavailableError(RuntimeError):
     """The active tracker cannot safely synchronize acceptance checkboxes."""
 
@@ -292,6 +300,45 @@ class Tracker(ABC):
         self, project: Project, title: str, body: str, status: str = "proposed"
     ) -> Adr:
         """Record a new ADR in the project's knowledge base."""
+
+    def import_adr(
+        self,
+        project: Project,
+        *,
+        adr_id: str,
+        title: str,
+        body: str,
+        historical_status: str,
+        source_ref: str,
+        source_created: int | None,
+        source_updated: int | None,
+        expected_source_sha256: str,
+        supersedes: tuple[str, ...] = (),
+        superseded_by: str | None = None,
+        issue_refs: tuple[str, ...] = (),
+    ) -> Adr:
+        """Import one bounded historical ADR snapshot without accepting it.
+
+        Import is intentionally a distinct optional port from native creation so a
+        provider cannot silently reinterpret a historical status as a lifecycle
+        transition. Providers without a provenance-preserving implementation must
+        refuse explicitly.
+        """
+        del (
+            project,
+            adr_id,
+            title,
+            body,
+            historical_status,
+            source_ref,
+            source_created,
+            source_updated,
+            expected_source_sha256,
+            supersedes,
+            superseded_by,
+            issue_refs,
+        )
+        raise TrackerCapabilityUnavailableError(self.name, "adr_historical_import")
 
     @abstractmethod
     def set_adr_status(

@@ -26,7 +26,10 @@ from foundry.models import (
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
+    AdrUnavailableError,
     BodyUpdateUnavailableError,
+    IssueUnavailableError,
+    Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
@@ -1813,7 +1816,7 @@ def test_linear_adr_versions_append_replay_and_refuse_stale_concurrent_writer(tr
     assert instance.update_body(accepted, accepted.body, replacement, project=PROJECT)
     latest = instance.list_adrs(PROJECT)[0]
     assert latest.status == "accepted"
-    assert len(wire.documents) == 3
+    assert len(wire.documents) == 6
 
     with pytest.raises(TrackerConflictError, match="snapshot is stale"):
         instance.set_adr_status(accepted, "deprecated", project=PROJECT)
@@ -1835,17 +1838,17 @@ def test_linear_adr_supersession_and_historical_import_preserve_relations_origin
         adr_id="LIN-ADR-0099",
         title="Historical",
         body="old",
-        historical_status="deprecated",
+        historical_status="superseded",
         source_ref="YT-ADR-9",
         source_created=1,
         source_updated=2,
         expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
-        supersedes=(first.id,),
+        superseded_by=second.id,
         issue_refs=("LIN-2",),
     )
     models = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
     assert models[first.id].status == "superseded"
-    assert imported.status == "deprecated"
+    assert imported.status == "superseded"
     raw = wire.documents[imported.ref]
     metadata, _ = linear_module._parse_adr_document(
         raw,
@@ -1856,10 +1859,22 @@ def test_linear_adr_supersession_and_historical_import_preserve_relations_origin
     )
     assert metadata["origin"]["kind"] == "migration"
     assert metadata["relations"] == {
-        "supersedes": [first.id],
-        "superseded_by": None,
+        "supersedes": [],
+        "superseded_by": second.id,
         "issues": ["LIN-2"],
     }
+    replacement_raw = wire.documents[models[second.id].ref]
+    replacement_metadata, _ = linear_module._parse_adr_document(
+        replacement_raw,
+        {
+            "project_id": PROJECT.id,
+            "team_id": PROJECT.extra["team_id"],
+        },
+    )
+    assert replacement_metadata["relations"]["supersedes"] == [
+        first.id,
+        imported.id,
+    ]
 
 
 @pytest.mark.parametrize("damage", ["archive", "tamper", "delete_previous"])
@@ -1877,6 +1892,273 @@ def test_linear_adr_chain_refuses_archived_tampered_or_deleted_history(tracker, 
 
     with pytest.raises((LinearTrackerError, TrackerConflictError)):
         instance.list_adrs(PROJECT)
+
+
+@pytest.mark.parametrize("history", ["unique", "head"])
+def test_linear_adr_witness_refuses_isolated_unique_or_head_deletion(tracker, history):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Witnessed", "body")
+    if history == "head":
+        instance.set_adr_status(created, "accepted", project=PROJECT)
+        created = instance.list_adrs(PROJECT)[0]
+
+    del wire.documents[created.ref]
+
+    with pytest.raises(
+        TrackerConflictError, match="witness has no matching version"
+    ):
+        instance.list_adrs(PROJECT)
+
+
+def test_linear_adr_missing_witness_fails_closed_and_exact_pair_replays(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Replay pair", "body")
+    before = len(wire.documents)
+
+    replay = instance.create_adr(PROJECT, "Replay pair", "body")
+    assert replay.ref == created.ref
+    assert len(wire.documents) == before
+
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    del wire.documents[witness_id]
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+    recovered = instance.create_adr(PROJECT, "Replay pair", "body")
+    assert recovered.ref == created.ref
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+
+
+@pytest.mark.parametrize("interrupted_slot", ["version", "witness"])
+def test_linear_adr_pair_recovers_accepted_effect_after_each_interruption(
+    tracker, interrupted_slot
+):
+    instance, wire = tracker
+    original = wire.__call__
+    interrupted = False
+
+    def transport(document, variables):
+        nonlocal interrupted
+        response = original(document, variables)
+        title = variables.get("input", {}).get("title", "")
+        matching_slot = (
+            title.startswith("[Foundry ADR] ")
+            if interrupted_slot == "version"
+            else title.startswith("[Foundry ADR witness] ")
+        )
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and matching_slot
+            and not interrupted
+        ):
+            interrupted = True
+            raise OSError("connection dropped after provider accepted document")
+        return response
+
+    instance._transport = transport
+    created = instance.create_adr(PROJECT, "Recovered witness", "body")
+
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+    assert len(wire.documents) == 2
+
+
+def test_linear_adr_witness_create_unavailable_leaves_detectable_partial_pair(tracker):
+    instance, wire = tracker
+    original = wire.__call__
+
+    def transport(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR witness]")
+        ):
+            raise OSError("provider unavailable before witness create")
+        return original(document, variables)
+
+    instance._transport = transport
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.create_adr(PROJECT, "Partial pair", "body")
+    instance._transport = original
+
+    assert len(wire.documents) == 1
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+    recovered = instance.create_adr(PROJECT, "Partial pair", "body")
+    assert recovered.status == "proposed"
+    assert len(wire.documents) == 2
+
+
+def test_linear_adr_relations_are_reciprocal_and_project_bounded(tracker):
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "First reciprocal", "first")
+    second = instance.create_adr(PROJECT, "Second reciprocal", "second")
+    instance.set_adr_status(first, "accepted", project=PROJECT)
+    instance.set_adr_status(second, "accepted", project=PROJECT)
+    accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    instance.supersede_adr(accepted[first.id], second.id, project=PROJECT)
+
+    models = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    first_metadata, _ = linear_module._parse_adr_document(
+        wire.documents[models[first.id].ref], instance._binding(PROJECT)
+    )
+    second_metadata, _ = linear_module._parse_adr_document(
+        wire.documents[models[second.id].ref], instance._binding(PROJECT)
+    )
+    assert first_metadata["relations"]["superseded_by"] == second.id
+    assert first.id in second_metadata["relations"]["supersedes"]
+
+    wire.issues["LIN-2"]["project"] = {"id": "other-project"}
+    with pytest.raises(LinearBindingError, match="issue_outside_binding"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Cross project",
+            body="old",
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            issue_refs=("LIN-2",),
+        )
+
+
+def test_linear_adr_read_refuses_internally_witnessed_unilateral_relation(tracker):
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "Unilateral first", "first")
+    second = instance.create_adr(PROJECT, "Unilateral second", "second")
+    binding = instance._binding(PROJECT)
+    raw = wire.documents[second.ref]
+    metadata, body = linear_module._parse_adr_document(raw, binding)
+    metadata["relations"]["supersedes"] = [first.id]
+    raw["title"] = linear_module._adr_document_title(metadata)
+    raw["content"] = linear_module._adr_document_content(metadata, body)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, second.id, 0)
+    wire.documents[witness_id] = linear_module._adr_witness_document(
+        binding, metadata, raw
+    )
+
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.list_adrs(PROJECT)
+
+
+def test_linear_adr_issue_relation_requires_reciprocal_project_comment(tracker):
+    instance, wire = tracker
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0097",
+        title="Issue relation",
+        body="old",
+        historical_status="deprecated",
+        source_ref="YT-ADR-97",
+        source_created=1,
+        source_updated=2,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        issue_refs=("LIN-2",),
+    )
+    binding = instance._binding(PROJECT)
+    comment_id, expected_body = linear_module._adr_issue_link(
+        binding, imported.id, "LIN-2"
+    )
+    assert wire.comments[comment_id]["body"] == expected_body
+
+    del wire.comments[comment_id]
+    with pytest.raises(TrackerConflictError, match="issue relation is not reciprocal"):
+        instance.list_adrs(PROJECT)
+
+
+def test_linear_adr_missing_relations_are_distinct_from_provider_outage(tracker):
+    instance, wire = tracker
+    digest = hashlib.sha256(b"old").hexdigest()
+    kwargs = {
+        "adr_id": "LIN-ADR-0099",
+        "title": "Missing relations",
+        "body": "old",
+        "historical_status": "deprecated",
+        "source_ref": "YT-ADR-99",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": digest,
+    }
+    with pytest.raises(AdrUnavailableError, match="LIN-ADR-0007"):
+        instance.import_adr(
+            PROJECT,
+            **{**kwargs, "historical_status": "accepted"},
+            supersedes=("LIN-ADR-0007",),
+        )
+    with pytest.raises(IssueUnavailableError, match="LIN-404"):
+        instance.import_adr(PROJECT, **kwargs, issue_refs=("LIN-404",))
+
+    original = wire.__call__
+
+    def unavailable(document, variables):
+        if "FoundryLinearIssue(" in document:
+            raise OSError("provider unavailable")
+        return original(document, variables)
+
+    instance._transport = unavailable
+    with pytest.raises(LinearTrackerError) as error:
+        instance.import_adr(PROJECT, **kwargs, issue_refs=("LIN-2",))
+    assert error.value.code == "transport_error"
+
+
+def test_linear_historical_proposed_adr_cannot_supersede_accepted_adr(tracker):
+    instance, wire = tracker
+    old = instance.create_adr(PROJECT, "Old accepted", "old")
+    instance.set_adr_status(old, "accepted", project=PROJECT)
+    before = len(wire.documents)
+
+    with pytest.raises(ValueError, match="historical import invalid"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0096",
+            title="Proposed replacement",
+            body="proposal",
+            historical_status="proposed",
+            source_ref="YT-ADR-96",
+            source_created=None,
+            source_updated=None,
+            expected_source_sha256=hashlib.sha256(b"proposal").hexdigest(),
+            supersedes=(old.id,),
+        )
+    assert len(wire.documents) == before
+
+
+def test_tracker_import_port_refuses_when_provider_does_not_implement_it():
+    unsupported = SimpleNamespace(name="unsupported")
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match="unsupported.adr_historical_import"
+    ):
+        Tracker.import_adr(
+            unsupported,
+            PROJECT,
+            adr_id="LIN-ADR-0099",
+            title="Historical",
+            body="body",
+            historical_status="deprecated",
+            source_ref="source",
+            source_created=None,
+            source_updated=None,
+            expected_source_sha256=hashlib.sha256(b"body").hexdigest(),
+        )
+
+
+def test_linear_adr_storage_survives_actual_youtrack_adapter_outage(
+    tracker, monkeypatch
+):
+    instance, _wire = tracker
+    youtrack = YouTrackTracker(
+        url="https://unavailable.example.invalid", token="offline-test-token"
+    )
+
+    def unavailable(*_args, **_kwargs):
+        raise OSError("YouTrack unavailable")
+
+    monkeypatch.setattr(youtrack, "_req", unavailable)
+    with pytest.raises(OSError, match="YouTrack unavailable"):
+        youtrack.list_adrs(PROJECT)
+
+    created = instance.create_adr(PROJECT, "No fallback", "body")
+
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
 
 
 def test_linear_adr_read_refuses_collection_collision_and_bad_page_info(tracker):
