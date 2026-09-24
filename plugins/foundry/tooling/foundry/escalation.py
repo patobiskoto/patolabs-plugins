@@ -17,6 +17,7 @@ from foundry import registry
 from foundry.routing import (
     LEVELS,
     ROLE_DEFAULTS,
+    ReviewDeduplicator,
     RoutingConfigError,
     RoutingUnavailableError,
     repository_identity,
@@ -62,6 +63,11 @@ _ROLE_STATE_KEYS = {
     "failures_since_escalation",
 }
 _CONSUMPTION_EVENT_KEYS = {"code", "at", "role", "halt_generation"}
+_CONSUMPTION_EVENT_OPTIONAL_KEYS = {"blocking_proof", "correction_plan_claimed_at"}
+_BLOCKING_PROOF_KEYS = {
+    "proof_id", "completed_at", "quality", "all_pass", "diff_hash",
+    "generation", "claim_digest", "coordinates",
+}
 _REARM_EVENT_KEYS = {
     "code", "at", "reason", "role", "halt_generation", "granted_credits",
     "exhausted_window_armed_at", "exhausted_window_maximum_credits",
@@ -845,7 +851,11 @@ def _normalize_consumption_event(
     value: object,
     issue_id: str,
 ) -> tuple[dict, datetime]:
-    if not isinstance(value, dict) or set(value) != _CONSUMPTION_EVENT_KEYS:
+    if (
+        not isinstance(value, dict)
+        or not _CONSUMPTION_EVENT_KEYS <= set(value)
+        or not set(value) <= (_CONSUMPTION_EVENT_KEYS | _CONSUMPTION_EVENT_OPTIONAL_KEYS)
+    ):
         raise _invalid_ledger(issue_id)
     code = value.get("code")
     at_text = value.get("at")
@@ -861,12 +871,36 @@ def _normalize_consumption_event(
         or generation <= 0
     ):
         raise _invalid_ledger(issue_id)
-    return {
+    normalized = {
         "code": code,
         "at": at_text,
         "role": role,
         "halt_generation": generation,
-    }, at
+    }
+    proof = value.get("blocking_proof")
+    if proof is not None:
+        if (
+            not isinstance(proof, dict) or set(proof) != _BLOCKING_PROOF_KEYS
+            or _DIGEST.fullmatch(proof.get("proof_id", "")) is None
+            or _DIGEST.fullmatch(proof.get("diff_hash", "")) is None
+            or _DIGEST.fullmatch(proof.get("claim_digest", "")) is None
+            or type(proof.get("generation")) is not int or proof["generation"] < 1
+            or _utc_timestamp(proof.get("completed_at")) is None
+            or proof.get("quality") != "blocked" or proof.get("all_pass") is not False
+            or not isinstance(proof.get("coordinates"), dict)
+        ):
+            raise _invalid_ledger(issue_id)
+        try:
+            coordinates = ReviewDeduplicator._validate_coordinates(proof["coordinates"])
+        except RoutingConfigError as exc:
+            raise _invalid_ledger(issue_id) from exc
+        normalized["blocking_proof"] = {**proof, "coordinates": coordinates}
+    claimed_at = value.get("correction_plan_claimed_at")
+    if claimed_at is not None:
+        if proof is None or _utc_timestamp(claimed_at) is None:
+            raise _invalid_ledger(issue_id)
+        normalized["correction_plan_claimed_at"] = claimed_at
+    return normalized, at
 
 
 def _normalize_rearm_event(
@@ -1164,8 +1198,63 @@ class EscalationStore:
             and event["role"] == role
             and event["halt_generation"] == technical["halt_generation"]
             and _utc_timestamp(event["at"]) > review_claimed_at
+            and event.get("blocking_proof", {}).get("diff_hash")
+            == technical["review_diff_hash"]
             for event in authorization["consumption_audit"]
         )
+
+    def claim_credited_correction_plan(self, issue_id: str, role: str) -> bool:
+        """CAS-claim the sole ordinary plan backed by a credited correction.
+
+        This is deliberately separate from reading ``active_floor``: observing a
+        credit must not let concurrent callers emit unlimited correction plans.
+        """
+        issue_id = _validate_issue_id(issue_id)
+        role = _validate_role(role)
+        try:
+            os.lstat(self._path(issue_id))
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise RoutingConfigError(f"état d'escalade illisible pour {issue_id}.") from exc
+
+        def mutate(state):
+            technical = self._technical_remediation_event(state)
+            if technical is None:
+                return False, False
+            if not self._continued_remediation_correction(state, role):
+                return "technical_remediation_pending", False
+            authorization = state["remediation_authorization"]
+            for event in authorization["consumption_audit"]:
+                if (
+                    event["code"] == _REMEDIATION_CONSUMPTION_CODE
+                    and event["role"] == role
+                    and event["halt_generation"] == technical["halt_generation"]
+                    and event.get("blocking_proof", {}).get("diff_hash")
+                    == technical["review_diff_hash"]
+                ):
+                    if event.get("correction_plan_claimed_at") is not None:
+                        return "credited_correction_plan_consumed", False
+                    claimed_at = self._next_audit_timestamp(state)
+                    event["correction_plan_claimed_at"] = claimed_at
+                    for durable in state["consumption_audit"]:
+                        if durable["at"] == event["at"]:
+                            durable["correction_plan_claimed_at"] = claimed_at
+                            break
+                    return True, True
+            return "technical_remediation_pending", False
+
+        _, result = self._locked(issue_id, mutate)
+        if result == "credited_correction_plan_consumed":
+            raise EscalationTechnicalBlockedError(
+                f"{issue_id} a déjà consommé son unique plan de correction crédité."
+            )
+        if result == "technical_remediation_pending":
+            raise EscalationTechnicalBlockedError(
+                f"{issue_id} attend une preuve terminale bloquante liée à son crédit ; "
+                "plan de correction refusé."
+            )
+        return result
 
     @staticmethod
     def _next_audit_timestamp(state: dict) -> str:
@@ -3522,6 +3611,7 @@ class EscalationStore:
         *,
         idempotency_key: str | None = None,
         authorization_aware: bool = False,
+        validated_blocking_proof: Callable[[], object] | None = None,
     ) -> EscalationDecision:
         issue_id = _validate_issue_id(issue_id)
         role = _validate_role(role)
@@ -3537,6 +3627,8 @@ class EscalationStore:
             raise RoutingConfigError("identité idempotente d'échec invalide.")
         if type(authorization_aware) is not bool:
             raise RoutingConfigError("portée idempotente d'échec invalide.")
+        if validated_blocking_proof is not None and not callable(validated_blocking_proof):
+            raise RoutingConfigError("preuve bloquante : validation terminale atomique requise.")
 
         def mutate(state):
             receipt_key = idempotency_key
@@ -3614,6 +3706,36 @@ class EscalationStore:
                         initial_tier=current,
                         final_tier=current, signal=kind, reason=state["halted_reason"],
                     ), True)
+                if authorization_aware and validated_blocking_proof is None:
+                    raise RoutingConfigError(
+                        "preuve terminale bloquante authentifiée requise avant consommation."
+                    )
+                binding = None
+                if validated_blocking_proof is not None:
+                    binding = validated_blocking_proof()
+                    if (
+                        not isinstance(binding, dict)
+                        or set(binding) != _BLOCKING_PROOF_KEYS
+                        or _DIGEST.fullmatch(binding.get("proof_id", "")) is None
+                        or _DIGEST.fullmatch(binding.get("diff_hash", "")) is None
+                        or _DIGEST.fullmatch(binding.get("claim_digest", "")) is None
+                        or type(binding.get("generation")) is not int
+                        or binding["generation"] < 1
+                        or _utc_timestamp(binding.get("completed_at")) is None
+                        or binding.get("quality") != "blocked"
+                        or binding.get("all_pass") is not False
+                    ):
+                        raise RoutingConfigError(
+                            "preuve terminale bloquante authentifiée invalide."
+                        )
+                    try:
+                        binding = {**binding, "coordinates": ReviewDeduplicator._validate_coordinates(
+                            binding.get("coordinates")
+                        )}
+                    except RoutingConfigError as exc:
+                        raise RoutingConfigError(
+                            "preuve terminale bloquante authentifiée invalide."
+                        ) from exc
                 raw["remaining_credits"] -= 1
                 raw["consumed_credits"] += 1
                 event = {
@@ -3622,6 +3744,8 @@ class EscalationStore:
                     "role": role,
                     "halt_generation": raw["halt_generation"],
                 }
+                if binding is not None:
+                    event["blocking_proof"] = binding
                 raw["consumption_audit"].append(dict(event))
                 state["consumption_audit"].append(dict(event))
                 if raw["remaining_credits"] == 0:

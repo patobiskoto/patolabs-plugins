@@ -99,8 +99,14 @@ route can only unlock its separately claimed fresh review; a provider invocation
 including review, must independently acquire fresh capacity and revalidate its campaign
 authority, budget, snapshot, and gates. Do not rebuild an ordinary route from this
 response, except for the narrow credited correction recognized from the same role,
-generation, bound review, and durable `review_blocking_after_fix` consumption audit.
-That exception never reopens the technical route or grants provider/campaign authority.
+generation, bound **terminal blocked** review, and durable `review_blocking_after_fix`
+consumption audit. Record that failure only through `routing escalation failure` with
+the immutable `--root` and `--base`: Foundry recomputes the diff and authenticates the
+issue/diff/root/base/claim/generation/proof binding from its review store. Do not pass a
+proof ID or digest as authority. The resulting ordinary Codex correction plan is
+single-use: the first plan CAS-claims it, while replay or a concurrent second plan is
+refused. That exception never reopens the technical route or grants provider/campaign
+authority.
 For a released v1 stop
 without a terminal classification, first run
 `reclassify-legacy-terminal` with the exact generation. It accepts either an exact

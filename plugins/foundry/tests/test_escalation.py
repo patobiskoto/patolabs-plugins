@@ -66,6 +66,17 @@ def _concurrent_failure(args):
     ).to_dict()
 
 
+def _concurrent_credited_correction_plan(args):
+    root, issue, role = args
+    try:
+        EscalationStore.for_root(root, state_dir=root).claim_credited_correction_plan(
+            issue, role,
+        )
+        return "claimed"
+    except EscalationTechnicalBlockedError:
+        return "blocked"
+
+
 def _concurrent_technical_resume(args):
     root, state_dir, issue_id, halt_generation, evidence_digest = args
     return EscalationStore.for_root(root, state_dir=state_dir).resume_technical_remediation(
@@ -1358,20 +1369,14 @@ def test_failure_cli_serializes_atomic_redacted_remediation_authorization(tmp_pa
     generation = store.status("FOUNDRY-65")["halt_generation"]
     store.resume("FOUNDRY-65", "remediation_reviewed", generation, 2)
 
-    main([
-        "escalation", "failure", "FOUNDRY-65", "implementer", "--kind",
-        "review_blocking_after_fix", "--current-tier", "frontier",
-        "--idempotency-key", "f107-remediation-65", "--root", str(tmp_path),
-    ])
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["action"] == "remediation_continued"
-    assert payload["human_required"] is False
-    assert payload["remediation_authorization"] == {
-        "state": "active", "role": "implementer", "halt_generation": generation,
-        "maximum_credits": 2, "remaining_credits": 1,
-    }
-    assert payload["remediation_authorization"] == store.status("FOUNDRY-65")["remediation_authorization"]
+    before = store._path("FOUNDRY-65").read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main([
+            "escalation", "failure", "FOUNDRY-65", "implementer", "--kind",
+            "review_blocking_after_fix", "--current-tier", "frontier",
+            "--idempotency-key", "f107-remediation-65", "--root", str(tmp_path),
+        ])
+    assert store._path("FOUNDRY-65").read_bytes() == before
 
 
 def test_failure_cli_returns_the_exact_just_exhausted_credit_snapshot(
@@ -1383,19 +1388,14 @@ def test_failure_cli_returns_the_exact_just_exhausted_credit_snapshot(
     generation = store.status("FOUNDRY-68")["halt_generation"]
     store.resume("FOUNDRY-68", "remediation_reviewed", generation, 1)
 
-    main([
-        "escalation", "failure", "FOUNDRY-68", "implementer", "--kind",
-        "review_blocking_after_fix", "--current-tier", "frontier",
-        "--idempotency-key", "f107-remediation-68", "--root", str(tmp_path),
-    ])
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["action"] == "remediation_continued"
-    assert payload["human_required"] is False
-    assert payload["remediation_authorization"] == {
-        "state": "exhausted", "role": "implementer", "halt_generation": generation,
-        "maximum_credits": 1, "remaining_credits": 0,
-    }
+    before = store._path("FOUNDRY-68").read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main([
+            "escalation", "failure", "FOUNDRY-68", "implementer", "--kind",
+            "review_blocking_after_fix", "--current-tier", "frontier",
+            "--idempotency-key", "f107-remediation-68", "--root", str(tmp_path),
+        ])
+    assert store._path("FOUNDRY-68").read_bytes() == before
 
 
 def test_serialized_released_v1_ledger_without_remediation_fields_remains_readable(tmp_path):
@@ -2115,7 +2115,7 @@ def test_generation_two_consumption_succeeds_through_the_cli(
     monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
     store = EscalationStore.for_root(tmp_path, state_dir=state_dir)
     issue = "FOUNDRY-163"
-    generation = _generation_two_remediation_window(store, issue)
+    _generation_two_remediation_window(store, issue)
     argv = [
         "escalation", "failure", issue, "implementer",
         "--kind", "review_blocking_after_fix", "--current-tier", "apex",
@@ -2123,21 +2123,10 @@ def test_generation_two_consumption_succeeds_through_the_cli(
         "--root", str(tmp_path),
     ]
 
-    main(argv)
-    first = json.loads(capsys.readouterr().out)
-    persisted = store._path(issue).read_bytes()
-    main(argv)
-    replay = json.loads(capsys.readouterr().out)
-
-    assert replay == first
-    assert first["action"] == "remediation_continued"
-    assert first["human_required"] is False
-    assert first["remediation_authorization"] == {
-        "state": "exhausted", "role": "implementer",
-        "halt_generation": generation,
-        "maximum_credits": 1, "remaining_credits": 0,
-    }
-    assert store._path(issue).read_bytes() == persisted
+    before = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main(argv)
+    assert store._path(issue).read_bytes() == before
 
 
 @pytest.mark.parametrize("after_halt", [False, True])
@@ -2378,8 +2367,19 @@ def test_consumed_technical_route_allows_only_its_credited_review_correction(
         issue, review_proof,
         validated_claim=lambda: _executable_review_claim(review_proof),
     )
+    blocking_proof = {
+        "proof_id": "c" * 64,
+        "completed_at": "2030-01-01T00:00:00Z",
+        "quality": "blocked",
+        "all_pass": False,
+        "diff_hash": review_proof,
+        "generation": 1,
+        "claim_digest": "d" * 64,
+        "coordinates": {"root": str(tmp_path), "base": "e" * 40},
+    }
     continued = store.record_failure(
         issue, "implementer", "review_blocking_after_fix", "apex",
+        validated_blocking_proof=lambda: blocking_proof,
     )
     assert continued.action == "remediation_continued"
 
@@ -2391,13 +2391,56 @@ def test_consumed_technical_route_allows_only_its_credited_review_correction(
     assert plan["role"] == "implementer"
     assert plan["route"]["selected_tier"] == "apex"
     assert store.active_floor(issue, "implementer") == "apex"
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
     assert store.active_floor(issue, "implementer") == "apex"
-    assert store._path(issue).read_bytes() == before
+    assert store._path(issue).read_bytes() != before
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique plan"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
     # Reviewer retains its pre-existing separately-claimed-review preflight;
     # no other foreign role inherits the credited implementer correction.
     for foreign_role in ("scout", "coordinator", "architect"):
         with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
             store.active_floor(issue, foreign_role)
+
+
+def test_credited_correction_plan_is_single_use_under_concurrency(tmp_path):
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "PAT-32"
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, "pat32-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+    diff_hash = "b" * 64
+    store.claim_fresh_reviewer_authorization(
+        issue, diff_hash, validated_claim=lambda: _executable_review_claim(diff_hash),
+    )
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        validated_blocking_proof=lambda: {
+            "proof_id": "c" * 64,
+            "completed_at": "2030-01-01T00:00:00Z",
+            "quality": "blocked", "all_pass": False, "diff_hash": diff_hash,
+            "generation": 1, "claim_digest": "d" * 64,
+            "coordinates": {"root": str(tmp_path), "base": "e" * 40},
+        },
+    )
+
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        results = pool.map(_concurrent_credited_correction_plan, [
+            (str(tmp_path), issue, "implementer"),
+            (str(tmp_path), issue, "implementer"),
+        ])
+    assert sorted(results) == ["blocked", "claimed"]
 
 
 def test_credited_correction_refuses_missing_review_binding_and_stale_generation(

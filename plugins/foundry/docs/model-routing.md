@@ -373,14 +373,23 @@ diagnostic: this requires no Git diff or review claim and returns no spawn, prov
 campaign, push, PR, CI, or merge authority. The route never finances a review.
 
 The sole exception to the ordinary-route refusal is a credited correction after an
-exact review bound to a consumed technical route. It exists only when a human has
+exact terminal **blocked** review bound to a consumed technical route. The trusted
+`routing escalation failure ... --kind review_blocking_after_fix` boundary requires
+the immutable `--root` and `--base`, recomputes the current diff, and re-reads the
+canonical review/proof store while holding the escalation transition. A missing,
+in-progress, passing, stale, wrong issue/diff/root/base/claim/generation, or malformed
+proof is refused; callers never supply a proof ID or digest as authority. It exists
+only when a human has
 rearmed an exhausted remediation window onto the same role and generation, that bound
 review has blocked, and its `review_blocking_after_fix` consumption audit follows the
 review claim. The ordinary plan remains limited to that stopped role and recorded
 generation; a foreign role, missing or malformed review binding, replay without this
 durable consumption record, or a later generation remains technically blocked. This
 recognition does not reopen the local route or create provider, campaign, PR, CI, or
-merge authority beyond the human remediation window already recorded.
+merge authority beyond the human remediation window already recorded. The ordinary
+Codex correction plan is then CAS-claimed in the durable credit audit: exactly one
+caller can receive it; replay and concurrent second plans are refused. This claim
+creates no provider, campaign, PR, CI, merge, or additional-review authority.
 
 After either an exact reviewer or implementer route is consumed, it may unlock one fresh
 review only.

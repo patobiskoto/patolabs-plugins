@@ -596,6 +596,14 @@ def codex_spawn_plan(
                 "Une review utilisera un claim et une capacité fraîche séparés."
             ),
         }
+    correction_plan_claimed = False
+    if issue_id is not None and role != "reviewer":
+        # A credited correction is a one-shot capability, not a read-only floor.
+        # Claim it only after policy resolution succeeded, immediately before the
+        # plan can become a launchable response.
+        correction_plan_claimed = escalation_store.claim_credited_correction_plan(
+            issue_id, role,
+        )
     task_name, execution_id = _codex_execution_name(role, task_name)
     message = _codex_message(role, packet, diff_hash, claim_id, verifier)
     spawn = {
@@ -622,6 +630,8 @@ def codex_spawn_plan(
             "remediation_rearm_audit": plan_rearm_audit,
             "technical_remediation_open": technical_remediation_open,
             "technical_remediation_requested": technical_remediation,
+            **({"credited_correction_plan_claimed": True}
+               if correction_plan_claimed else {}),
             **(
                 {"technical_remediation_claimed": True}
                 if technical_remediation else {}

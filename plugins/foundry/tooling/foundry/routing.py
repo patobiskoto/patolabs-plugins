@@ -2218,6 +2218,15 @@ def main(
             "exactement cette valeur"
         ),
     )
+    escalation_failure.add_argument(
+        "--base",
+        help=("SHA Git figé requis pour consommer un crédit après "
+              "review_blocking_after_fix"),
+    )
+    escalation_failure.add_argument(
+        "--repository",
+        help="namespace du dépôt de review ; par défaut, identité du root Git",
+    )
     escalation_failure.add_argument("--root")
     escalation_risk = escalation_actions.add_parser("risk")
     escalation_risk.add_argument("issue")
@@ -2390,9 +2399,36 @@ def main(
                 payload = store.cancel_remediation(args.issue, args.halt_generation)
                 human_required = False
             elif args.escalation_action == "failure":
+                validated_blocking_proof = None
+                if args.kind == "review_blocking_after_fix":
+                    if args.root is None or args.base is None:
+                        raise RoutingConfigError(
+                            "review bloquante : --root et --base Git figés requis."
+                        )
+                    review_root, review_base = review_diff_coordinates(args.root, args.base)
+                    coordinates = {"root": str(review_root), "base": review_base}
+                    expected_hash = review_diff_hash(git_diff(review_root, review_base))
+                    repository = args.repository or repository_identity(review_root)
+                    deduplicator = ReviewDeduplicator(repository)
+
+                    def validated_blocking_proof():
+                        binding = deduplicator.validated_terminal_proof_binding(
+                            args.issue, expected_hash, coordinates=coordinates,
+                        )
+                        if (
+                            binding is None or binding["quality"] != "blocked"
+                            or binding["all_pass"] is not False
+                        ):
+                            raise RoutingConfigError(
+                                "preuve terminale bloquante authentifiée requise."
+                            )
+                        return {**binding, "diff_hash": expected_hash}
+
                 decision = store.record_failure(
                     args.issue, args.role, args.kind, args.current_tier,
                     idempotency_key=args.idempotency_key,
+                    authorization_aware=True,
+                    validated_blocking_proof=validated_blocking_proof,
                 )
                 payload = decision.to_dict()
                 human_required = decision.human_required
