@@ -2188,6 +2188,11 @@ def main(
         "--halt-generation", required=True, type=_positive_int,
     )
     escalation_rearm.add_argument(
+        "--current-halt-generation", type=_positive_int,
+        help=("génération technique observée après le diagnostic local ; requise "
+              "si elle diffère de l'autorisation épuisée"),
+    )
+    escalation_rearm.add_argument(
         "--remediation-credits", required=True, type=_positive_int, metavar="1..3",
         help="accorde une nouvelle fenêtre bornée de 1 à 3 corrections",
     )
@@ -2378,7 +2383,7 @@ def main(
             elif args.escalation_action == "rearm-remediation":
                 payload = store.rearm_remediation(
                     args.issue, args.role, args.reason, args.halt_generation,
-                    args.remediation_credits,
+                    args.remediation_credits, args.current_halt_generation,
                 )
                 human_required = False
             elif args.escalation_action == "cancel-remediation":

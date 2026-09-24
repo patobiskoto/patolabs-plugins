@@ -66,6 +66,9 @@ _REARM_EVENT_KEYS = {
     "code", "at", "reason", "role", "halt_generation", "granted_credits",
     "exhausted_window_armed_at", "exhausted_window_maximum_credits",
 }
+_TECHNICAL_GENERATION_REARM_EVENT_KEYS = _REARM_EVENT_KEYS | {
+    "exhausted_halt_generation",
+}
 _REMEDIATION_KEYS = {
     "state", "role", "halt_generation", "maximum_credits", "remaining_credits",
     "armed_at", "consumption_audit", "consumed_credits", "forfeited_credits",
@@ -871,7 +874,12 @@ def _normalize_rearm_event(
     issue_id: str,
 ) -> tuple[dict, datetime, datetime]:
     """Validate one bounded public rearm event without echoing hostile input."""
-    if not isinstance(value, dict) or set(value) != _REARM_EVENT_KEYS:
+    if (
+        not isinstance(value, dict)
+        or set(value) not in (
+            _REARM_EVENT_KEYS, _TECHNICAL_GENERATION_REARM_EVENT_KEYS,
+        )
+    ):
         raise _invalid_ledger(issue_id)
     at_text = value.get("at")
     exhausted_at_text = value.get("exhausted_window_armed_at")
@@ -880,6 +888,7 @@ def _normalize_rearm_event(
     reason = value.get("reason")
     role = value.get("role")
     generation = value.get("halt_generation")
+    exhausted_generation = value.get("exhausted_halt_generation", generation)
     granted = value.get("granted_credits")
     exhausted_maximum = value.get("exhausted_window_maximum_credits")
     if (
@@ -892,13 +901,20 @@ def _normalize_rearm_event(
         or role not in ROLE_DEFAULTS
         or type(generation) is not int
         or generation <= 0
+        or type(exhausted_generation) is not int
+        or exhausted_generation <= 0
+        or exhausted_generation > generation
+        or (
+            "exhausted_halt_generation" in value
+            and exhausted_generation == generation
+        )
         or type(granted) is not int
         or not 1 <= granted <= MAX_REMEDIATION_CREDITS
         or type(exhausted_maximum) is not int
         or not 1 <= exhausted_maximum <= MAX_REMEDIATION_CREDITS
     ):
         raise _invalid_ledger(issue_id)
-    return {
+    event = {
         "code": _REMEDIATION_REARM_CODE,
         "at": at_text,
         "reason": reason,
@@ -907,7 +923,10 @@ def _normalize_rearm_event(
         "granted_credits": granted,
         "exhausted_window_armed_at": exhausted_at_text,
         "exhausted_window_maximum_credits": exhausted_maximum,
-    }, at, exhausted_at
+    }
+    if "exhausted_halt_generation" in value:
+        event["exhausted_halt_generation"] = exhausted_generation
+    return event, at, exhausted_at
 
 
 def _higher(left: str, right: str) -> str:
@@ -1445,7 +1464,7 @@ class EscalationStore:
             # technical resumes advance halt_generation without incrementing it.
             if (
                 last_resumed_generation is None
-                or event_generation > last_resumed_generation
+                or event_generation > generation
                 or event_generation < previous_generation
                 or (previous_time is not None and event_time < previous_time)
                 or generation_roles.setdefault(event_generation, event_role) != event_role
@@ -1481,18 +1500,23 @@ class EscalationStore:
             raise _invalid_ledger(issue_id)
         rearm_audit = []
         rearm_by_generation = {}
+        bridge_rearm_times = {}
+        bridged_sources = set()
+        rearm_times = []
         previous_rearm_time = None
         previous_rearm_generation = 0
         for value in rearm_raw:
             event, event_time, exhausted_at = _normalize_rearm_event(value, issue_id)
             event_generation = event["halt_generation"]
+            exhausted_generation = event.get(
+                "exhausted_halt_generation", event_generation,
+            )
             event_role = event["role"]
             if (
                 last_resumed_generation is None
-                or event_generation > last_resumed_generation
                 or event_generation < previous_rearm_generation
                 or (previous_rearm_time is not None and event_time <= previous_rearm_time)
-                or generation_roles.get(event_generation) != event_role
+                or generation_roles.get(exhausted_generation) != event_role
                 or any(
                     durable_generation == event_generation and durable_time == event_time
                     for durable_generation, durable_time in zip(
@@ -1511,9 +1535,11 @@ class EscalationStore:
             ):
                 raise _invalid_ledger(issue_id)
 
-            generation_rearms = rearm_by_generation.setdefault(event_generation, [])
-            if generation_rearms:
-                previous_event, previous_event_time = generation_rearms[-1]
+            source_generation_rearms = rearm_by_generation.get(
+                exhausted_generation, [],
+            )
+            if source_generation_rearms:
+                previous_event, previous_event_time = source_generation_rearms[-1]
                 if (
                     event["exhausted_window_armed_at"] != previous_event["at"]
                     or event["exhausted_window_maximum_credits"]
@@ -1529,23 +1555,36 @@ class EscalationStore:
                     durable_audit, durable_times, strict=True,
                 )
                 if (
-                    durable_event["halt_generation"] == event_generation
+                    durable_event["halt_generation"] == exhausted_generation
                     and window_start <= durable_time < event_time
                 )
             ]
             if (
                 len(window_events) != event["exhausted_window_maximum_credits"]
                 or any(
-                    durable_event["halt_generation"] == event_generation
+                    durable_event["halt_generation"] == exhausted_generation
                     and durable_time < window_start
                     for durable_event, durable_time in zip(
                         durable_audit, durable_times, strict=True,
                     )
-                ) and not generation_rearms
+                ) and not source_generation_rearms
             ):
                 raise _invalid_ledger(issue_id)
-            generation_rearms.append((event, event_time))
+            rearm_by_generation.setdefault(event_generation, []).append(
+                (event, event_time),
+            )
+            if exhausted_generation != event_generation:
+                bridge_target = (event_generation, event_role)
+                bridge_source = (exhausted_generation, event_role)
+                if (
+                    bridge_target in bridge_rearm_times
+                    or bridge_source in bridged_sources
+                ):
+                    raise _invalid_ledger(issue_id)
+                bridge_rearm_times[bridge_target] = event_time
+                bridged_sources.add(bridge_source)
             rearm_audit.append(event)
+            rearm_times.append(event_time)
             previous_rearm_time = event_time
             previous_rearm_generation = event_generation
 
@@ -1570,7 +1609,7 @@ class EscalationStore:
         if not isinstance(technical_raw, list):
             raise _invalid_ledger(issue_id)
         technical_audit = []
-        technical_times = []
+        technical_route_times = {}
         technical_counts_by_generation = {}
         prior_generation = 0
         prior_time = None
@@ -1714,7 +1753,10 @@ class EscalationStore:
             normalized_event.setdefault("review_claimed_at", None)
             normalized_event.setdefault("review_rearm_audit", [])
             technical_audit.append(normalized_event)
-            technical_times.append(event_time)
+            if route_consumed_time is not None:
+                technical_route_times[
+                    (event_generation, event["role"])
+                ] = route_consumed_time
             prior_generation = event["halt_generation"]
             prior_time = event_time
         expected_clear_count = generation - (1 if halted else 0)
@@ -1739,15 +1781,45 @@ class EscalationStore:
                 )
             )
             or any(
-                event["halt_generation"] in technical_counts_by_generation
-                for event in durable_audit
-            )
-            or any(
-                event["halt_generation"] in technical_counts_by_generation
-                for event in rearm_audit
+                (
+                    event["halt_generation"] > last_resumed_generation
+                    or event["halt_generation"] in technical_counts_by_generation
+                )
+                and (
+                    (event["halt_generation"], event["role"])
+                    not in bridge_rearm_times
+                    or event_time <= bridge_rearm_times[
+                        (event["halt_generation"], event["role"])
+                    ]
+                )
+                for event, event_time in zip(
+                    durable_audit, durable_times, strict=True,
+                )
             )
         ):
             raise _invalid_ledger(issue_id)
+        prior_bridges = set()
+        for event, event_time in zip(rearm_audit, rearm_times, strict=True):
+            exhausted_generation = event.get(
+                "exhausted_halt_generation", event["halt_generation"],
+            )
+            event_generation = event["halt_generation"]
+            route_consumed_time = technical_route_times.get(
+                (event_generation, event["role"]),
+            )
+            if exhausted_generation != event_generation:
+                if (
+                    event_generation not in technical_counts_by_generation
+                    or route_consumed_time is None
+                    or event_time <= route_consumed_time
+                ):
+                    raise _invalid_ledger(issue_id)
+                prior_bridges.add((event_generation, event["role"]))
+            elif (
+                event_generation > last_resumed_generation
+                and (event_generation, event["role"]) not in prior_bridges
+            ):
+                raise _invalid_ledger(issue_id)
 
         state = {
             "version": 1,
@@ -1979,7 +2051,15 @@ class EscalationStore:
             or armed_at is None
             or not isinstance(window_raw, list)
             or len(window_raw) > MAX_REMEDIATION_CREDITS
-            or authorization_generation != last_resumed_generation
+            or (
+                authorization_generation != last_resumed_generation
+                and not (
+                    latest_rearm is not None
+                    and latest_rearm.get("exhausted_halt_generation")
+                    != authorization_generation
+                    and authorization_generation in technical_counts_by_generation
+                )
+            )
             or last_resumed_time is None
             or (
                 rearmed
@@ -2635,13 +2715,18 @@ class EscalationStore:
         reason: str,
         halt_generation: int,
         remediation_credits: int,
+        current_halt_generation: int | None = None,
     ) -> dict:
-        """CAS-rearm only the exact just-exhausted remediation authorization."""
+        """CAS-rearm an exhausted authorization, optionally after one diagnostic."""
         issue_id = _validate_issue_id(issue_id)
         role = _validate_role(role)
         reason = _validate_resume_reason(reason)
         halt_generation = _validate_halt_generation(halt_generation)
         remediation_credits = _validate_remediation_credits(remediation_credits)
+        if current_halt_generation is not None:
+            current_halt_generation = _validate_halt_generation(
+                current_halt_generation,
+            )
 
         def mutate(state):
             authorization = self._remediation(state)
@@ -2649,11 +2734,11 @@ class EscalationStore:
                 raise RoutingConfigError(
                     "fenêtre de remédiation épuisée attendue ; réarmement refusé."
                 )
-            if (
-                state["halted"]
-                or authorization["halt_generation"] != halt_generation
-                or state["halt_generation"] != halt_generation
-            ):
+            observed_generation = (
+                halt_generation
+                if current_halt_generation is None else current_halt_generation
+            )
+            if authorization["halt_generation"] != halt_generation:
                 raise RoutingConfigError(
                     "génération d'arrêt obsolète ; réarmement refusé."
                 )
@@ -2661,6 +2746,26 @@ class EscalationStore:
                 raise RoutingConfigError(
                     "rôle de remédiation différent ; réarmement refusé."
                 )
+            if state["halted"] or state["halt_generation"] != observed_generation:
+                raise RoutingConfigError(
+                    "génération d'arrêt obsolète ; génération technique observée "
+                    "obsolète ; réarmement refusé."
+                )
+            bridging_technical_generation = observed_generation != halt_generation
+            if bridging_technical_generation:
+                technical_audit = state["technical_remediation_audit"]
+                if (
+                    observed_generation < halt_generation
+                    or not technical_audit
+                    or technical_audit[-1]["halt_generation"] != observed_generation
+                    or technical_audit[-1]["role"] != role
+                    or technical_audit[-1]["route_id"] is None
+                    or technical_audit[-1]["route_consumed_at"] is None
+                ):
+                    raise RoutingConfigError(
+                        "diagnostic technique observé absent ou incompatible ; "
+                        "réarmement refusé."
+                    )
 
             exhausted = state["remediation_authorization"]
             rearmed_at = self._next_audit_timestamp(state)
@@ -2669,16 +2774,18 @@ class EscalationStore:
                 "at": rearmed_at,
                 "reason": reason,
                 "role": role,
-                "halt_generation": halt_generation,
+                "halt_generation": observed_generation,
                 "granted_credits": remediation_credits,
                 "exhausted_window_armed_at": exhausted["armed_at"],
                 "exhausted_window_maximum_credits": exhausted["maximum_credits"],
             }
+            if bridging_technical_generation:
+                audit["exhausted_halt_generation"] = halt_generation
             state["remediation_rearm_audit"].append(audit)
             state["remediation_authorization"] = {
                 "state": "active",
                 "role": role,
-                "halt_generation": halt_generation,
+                "halt_generation": observed_generation,
                 "maximum_credits": remediation_credits,
                 "remaining_credits": remediation_credits,
                 "armed_at": rearmed_at,
@@ -2690,7 +2797,8 @@ class EscalationStore:
                 "action": "remediation_rearmed",
                 "issue_id": issue_id,
                 "role": role,
-                "halt_generation": halt_generation,
+                "halt_generation": observed_generation,
+                "exhausted_halt_generation": halt_generation,
                 "reason": reason,
                 "granted_credits": remediation_credits,
                 "rearmed_at": rearmed_at,

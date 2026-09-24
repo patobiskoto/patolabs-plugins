@@ -148,6 +148,20 @@ UTC date, role, generation, granted credits, and the prior exhausted window link
 issue-level consumption audit remains append-only. Rearming does not reset counters,
 renew escalation limits, lower a floor, or expand any capability or authority.
 
+If that exhausted authorization at generation `G` was followed by a technical halt and a
+recorded `resume-technical` diagnostic at the current generation `H`, preserve that
+independent diagnostic rather than trying ordinary `resume`. A human may grant a fresh
+bounded window only with both CAS anchors:
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing escalation rearm-remediation <ISSUE-ID> <RECORDED-ROLE> --reason manual_retry_approved --halt-generation <EXHAUSTED-G> --current-halt-generation <DIAGNOSTIC-H> --remediation-credits <1..3>
+```
+
+The most recent local diagnostic and its claimed route must be for `H` and the same role. A missing, stale,
+concurrent, mismatched, or re-halted anchor is refused atomically. The successful audit
+keeps `H` as the active generation and records `exhausted_halt_generation=G`; it grants
+no provider, campaign, review, CI, PR, merge, or strategy verdict.
+
 ## 4. Reconstruct, announce, continue
 State in 2-3 sentences: what's done (AC checked, commits), what's in flight (uncommitted
 diff, unchecked AC), and the single next action. Then CONTINUE the work — that's the
