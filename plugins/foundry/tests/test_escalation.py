@@ -7,10 +7,12 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import foundry.escalation as escalation_module
+from foundry import issue as issue_module, write
 from foundry.escalation import (
     BoundedDiagnostic,
     MAX_ESCALATIONS_PER_ISSUE,
@@ -21,12 +23,14 @@ from foundry.escalation import (
     EscalationStore,
 )
 from foundry.routing import (
+    ReviewDeduplicator,
     ReviewClaim,
     RoutingConfigError,
     RoutingPolicy,
     RoutingUnavailableError,
     UserRouteRequest,
     main,
+    review_diff_hash,
 )
 from foundry.routing_facades import codex_spawn_plan
 from offline_provider_handoff import (
@@ -3367,7 +3371,9 @@ def test_technical_resumes_are_bounded_per_fresh_deterministic_stop(tmp_path):
         store.status(issue)
 
 
-def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(tmp_path):
+def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(
+    tmp_path, monkeypatch,
+):
     """A technical receipt stays local; only an explicit human strategy path reopens it."""
     store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
     issue = "PAT-22"
@@ -3418,6 +3424,86 @@ def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(t
     assert after_resume["roles"]["implementer"]["minimum_tier"] == "apex"
     assert [event["halt_generation"] for event in after_resume["technical_remediation_audit"]] == [1, 2, 3]
 
+    # Offline delivery pilot: a fresh PAT-22 diff after this bounded resume
+    # still has to pass the ordinary exact review, CI and Foundry merge gates.
+    # This is a double, not a live PR/Linear delivery receipt.
+    diff_bytes = b"pat22-fresh-correction-diff"
+    head_sha = "d" * 40
+    base_sha = "e" * 40
+    pr = SimpleNamespace(
+        number=17, url="https://github.com/patobiskoto/patolabs-plugins/pull/17",
+        sha=head_sha, base_sha=base_sha, head="feat/pat-22", base="main",
+        merged=False,
+    )
+    merged = SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
+    effects = []
+    review = {"valid": False}
+    ci = {"green": False}
+    tracker_issue = SimpleNamespace(
+        id=issue, state="review", body="- [ ] Verify correction", ac_done=0,
+        ac_total=1, pr_url=pr.url,
+    )
+    tracker = SimpleNamespace(
+        bounded_transition_proofs=True, append_only_lifecycle_supported=False,
+        get_issue=lambda _id: tracker_issue,
+    )
+    codehost = SimpleNamespace(
+        name="github", resolve_repo=lambda: "patobiskoto/patolabs-plugins",
+        get_pr=lambda *_args: pr,
+        merge_pr=lambda *_args, **kwargs: (
+            effects.append(("merge", kwargs["sha"])) or merged
+        ),
+        delete_branch=lambda *_args: effects.append(("delete",)),
+    )
+    monkeypatch.setattr(issue_module, "foundry", SimpleNamespace(
+        tracker=lambda: tracker, codehost=lambda: codehost,
+    ))
+    monkeypatch.setattr(issue_module, "git_head", lambda: head_sha)
+    monkeypatch.setattr(issue_module, "git_diff", lambda **_kwargs: diff_bytes)
+    monkeypatch.setattr(issue_module, "_observe_receipt", lambda *_args: "offline")
+    monkeypatch.setattr(issue_module, "_cleanup_branch", lambda _branch: "linked-worktree")
+    monkeypatch.setattr(issue_module, "repository_identity", lambda: "patobiskoto/patolabs-plugins")
+    monkeypatch.setattr(issue_module.AcceptanceProofStore, "valid_for_merge",
+        lambda _self, **_kwargs: {"proof_id": "offline-review-proof"}
+        if review["valid"] else (_ for _ in ()).throw(RoutingConfigError("stale diff")),
+    )
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(write, "transition", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(write, "sync_acceptance", lambda *_args: (
+        {"status": "checked", "checked": 1}
+    ))
+    monkeypatch.setattr(write, "add_comment", lambda *_args: None)
+    monkeypatch.setattr(write, "preflight_merge_effect", lambda *_args: None)
+    monkeypatch.setattr(write, "ci_gate", lambda _ch, _repo, sha, **_kwargs: (
+        {"passed": ci["green"], "waived": False, "total": 1,
+         "pending": [], "failing": [] if ci["green"] else ["foundry"],
+         "reason": "offline red" if not ci["green"] else "green"}
+        if sha == head_sha else (_ for _ in ()).throw(AssertionError("wrong CI SHA"))
+    ))
+    with pytest.raises(SystemExit, match="preuve structurée invalide"):
+        issue_module.merge(issue, "17")
+    assert effects == []
+    review["valid"] = True
+    with pytest.raises(SystemExit, match="CI non verte"):
+        issue_module.merge(issue, "17")
+    assert effects == []
+    ci["green"] = True
+    issue_module.merge(issue, "17")
+    assert effects[0] == ("merge", head_sha)
+    assert effects[1] == ("delete",)
+
+    # The local-diagnostic route cannot launder a stale diff into a review
+    # claim: the ordinary Git claim checks the bytes again before any proof.
+    coordinates = {"root": str(tmp_path), "base": base_sha}
+    dedup = ReviewDeduplicator("patobiskoto/patolabs-plugins", state_dir=tmp_path)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args: b"changed")
+    with pytest.raises(RoutingConfigError, match="le diff a changé"):
+        dedup.claim_git(
+            review_diff_hash(diff_bytes), coordinates=coordinates,
+            claim_attempt_token="1" * 64,
+        )
+    assert not (dedup.directory / review_diff_hash(diff_bytes)).exists()
+
     replay = path.read_bytes()
     with pytest.raises(RoutingConfigError, match="n'est pas arrêtée"):
         store.resume(issue, "manual_retry_approved", 4, remediation_credits=1)
@@ -3448,6 +3534,20 @@ def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(t
     store.claim_technical_remediation_route(
         issue, "implementer", 5, "pat22-local-route-0005",
     )
+    diagnostic = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=issue,
+        escalation_state_dir=tmp_path, technical_remediation=True,
+        technical_remediation_id="pat22-local-route-0005",
+    )
+    assert diagnostic["mode"] == "local_diagnostic"
+    assert diagnostic["spawn"] is None
+    assert diagnostic["escalation"]["provider_effect_allowed"] is False
+    assert diagnostic["escalation"]["campaign_restart_allowed"] is False
+    with pytest.raises(EscalationTechnicalBlockedError):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
     assert store.record_failure(
         issue, "implementer", "review_blocking_after_fix", "apex",
     ).action == "technical_blocked"
