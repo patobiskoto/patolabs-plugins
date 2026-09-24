@@ -182,7 +182,9 @@ After the read-only reviewer returns, the caller records a blocking verdict (nev
 reviewer itself) through `routing escalation failure <ISSUE-ID> <CORRECTION-ROLE>
 --kind review_blocking --current-tier <SELECTED-TIER> --idempotency-key <STABLE-REVIEW-EFFECT-ID>`.
 The exact same review replay must reuse that stable identifier. If this was the review of an
-attempted correction, use `review_blocking_after_fix`. A non-blocking verdict does not
+attempted correction, use `review_blocking_after_fix` with the same immutable
+`--root <ROOT> --base <BASE-SHA>` coordinates used by the review proof; Foundry rechecks
+that the proof is terminal and blocked before consuming a credit. A non-blocking verdict does not
 touch escalation state. Stop immediately if the deterministic decision reports
 `human_required=true`. A `technical_blocked` result stays fail-closed for campaign
 effects and follows the bounded local diagnostic path; it is not a human-only verdict.

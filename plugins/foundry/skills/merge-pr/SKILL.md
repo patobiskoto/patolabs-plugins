@@ -190,7 +190,9 @@ Record the blocking verdict for the role that must correct it (normally implemen
 with `routing escalation failure ... --kind review_blocking --idempotency-key <STABLE-REVIEW-EFFECT-ID>`.
 Reuse the identifier only for a replay of that exact observed review. If the correction is
 reviewed and blocked again, use the deterministic
-`review_blocking_after_fix` signal, which escalates immediately. Use the selected tier
+`review_blocking_after_fix` signal with `--root <ROOT> --base <BASE-SHA>` from the
+terminal blocked review proof; the CLI revalidates those immutable coordinates before
+consuming a remediation credit. Use the selected tier
 reported by that role's last route as `--current-tier`. If the decision reports
 `human_required=true`, STOP rather than starting a third correction loop. A
 `technical_blocked` result instead requires its bounded local diagnostic and never grants
