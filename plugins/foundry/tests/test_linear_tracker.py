@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import foundry
+from foundry import adr as adr_module
 from foundry import evidence_plane, frame, issue, query, registry, routing, write
 from foundry.trackers import linear as linear_module
 from foundry.models import (
@@ -2289,6 +2290,59 @@ def test_linear_supersession_recovers_replacement_version_without_witness(tracke
     assert complete[source.id].status == "superseded"
     assert complete[replacement.id].status == "accepted"
     assert len(wire.documents) == 12
+
+
+def test_linear_adr_commands_recover_exact_missing_witness(tracker, monkeypatch, tmp_path):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    source = instance.create_adr(PROJECT, "Command source", "old")
+    replacement = instance.create_adr(PROJECT, "Command replacement", "new")
+
+    adr_module.accept(source.id)
+    wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 1))
+    with pytest.raises(TrackerConflictError, match="witness is missing"):
+        instance.list_adrs(PROJECT)
+    adr_module.accept(source.id)
+    assert len(instance.list_adrs(PROJECT)) == 2
+
+    adr_module.accept(replacement.id)
+    adr_module.link_issue(source.id, "LIN-2")
+    wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 2))
+    before_wrong_replay = (len(wire.documents), len(wire.comments))
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        adr_module.link_issue(source.id, "LIN-1")
+    assert (len(wire.documents), len(wire.comments)) == before_wrong_replay
+    adr_module.link_issue(source.id, "LIN-2")
+    linked = {item.id: item for item in instance.list_adrs(PROJECT)}[source.id]
+
+    expected = tmp_path / "expected.md"
+    updated = tmp_path / "updated.md"
+    expected.write_text(linked.body)
+    updated.write_text(linked.body.replace("old", "revised"))
+    adr_module.edit(source.id, str(expected), str(updated))
+    wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 3))
+    adr_module.edit(source.id, str(expected), str(updated))
+    assert "revised" in {item.id: item for item in instance.list_adrs(PROJECT)}[source.id].body
+
+    adr_module.supersede(source.id, replacement.id)
+    wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 4))
+    adr_module.supersede(source.id, replacement.id)
+    assert {item.id: item for item in instance.list_adrs(PROJECT)}[source.id].status == "superseded"
+
+
+def test_linear_adr_list_rejects_non_object_nodes(tracker):
+    instance, wire = tracker
+    original = wire.__call__
+
+    def malformed(document, variables):
+        if "FoundryLinearAdrDocuments" in document:
+            return {"data": {"documents": connection([None])}}
+        return original(document, variables)
+
+    instance._transport = malformed
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance.list_adrs(PROJECT)
 
 
 def test_linear_supersession_partial_pair_refuses_wrong_replacement_before_effect(

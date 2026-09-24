@@ -1540,9 +1540,8 @@ class LinearTracker(Tracker):
             self._assert_issue_project(raw, binding)
 
     def validate_adr_binding(self, project: Project, *adr_ids: str) -> None:
-        known = {adr.id for adr in self.list_adrs(project)}
         for adr_id in adr_ids:
-            if adr_id not in known:
+            if self.adr_for_mutation(project, adr_id) is None:
                 raise AdrUnavailableError(adr_id)
 
     @staticmethod
@@ -2324,6 +2323,8 @@ class LinearTracker(Tracker):
                 connection.get("nodes"), list
             ):
                 raise LinearTrackerError("adr.list", None, "invalid_response")
+            if any(not isinstance(node, dict) for node in connection["nodes"]):
+                raise LinearTrackerError("adr.list", None, "invalid_response")
             page = connection.get("pageInfo")
             if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
                 raise LinearTrackerError("adr.list", None, "invalid_response")
@@ -2779,6 +2780,38 @@ class LinearTracker(Tracker):
         _, chains = self._adr_snapshot(project)
         return [self._adr_model(chains[key]) for key in sorted(chains)]
 
+    def adr_for_mutation(self, project: Project, adr_id: str) -> Adr | None:
+        """Return a witnessed predecessor for an exact mutation replay.
+
+        This is deliberately not a read/list fallback: only the typed mutation
+        may decide whether an interrupted slot matches its requested action.
+        """
+        try:
+            return next((a for a in self.list_adrs(project) if a.id == adr_id), None)
+        except TrackerConflictError as error:
+            if str(error) not in {
+                "Linear ADR version witness is missing",
+                "Linear ADR supersession relation is not reciprocal",
+            }:
+                raise
+        binding, documents = self._adr_documents(project)
+        witnessed = {raw.get("id") for raw in documents if isinstance(raw, dict)}
+        dangling = []
+        for raw in documents:
+            if not str(raw.get("content", "")).startswith(_ADR_HEADER):
+                continue
+            metadata, _ = _parse_adr_document(raw, binding)
+            if _adr_witness_id(
+                binding["project_id"], metadata["id"], metadata["sequence"]
+            ) not in witnessed:
+                dangling.append(raw)
+        if len(dangling) > 1:
+            raise TrackerConflictError("Linear ADR mutation has ambiguous witness")
+        remaining = [raw for raw in documents if not dangling or raw is not dangling[0]]
+        chains = _adr_chain(remaining, binding)
+        versions = chains.get(adr_id)
+        return self._adr_model(versions) if versions else None
+
     def create_adr(
         self,
         project: Project,
@@ -3185,7 +3218,29 @@ class LinearTracker(Tracker):
         project: Project | None = None,
     ) -> None:
         project = project or self._project()
-        _, chains = self._adr_snapshot(project)
+        try:
+            _, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) != "Linear ADR version witness is missing":
+                raise
+            binding, documents = self._adr_documents(project)
+            predecessors = [raw for raw in documents if raw.get("id") == adr.ref]
+            if len(predecessors) != 1:
+                raise TrackerConflictError("Linear ADR interrupted status predecessor diverged")
+            old, _ = _parse_adr_document(predecessors[0], binding)
+            if (
+                old["id"] != adr.id
+                or status == "superseded"
+                or status not in _ADR_TRANSITIONS[old["status"]]
+            ):
+                raise TrackerConflictError("Linear ADR interrupted status binding invalid")
+            metadata, body = self._next_adr_metadata(
+                (old, predecessors[0]), status=status
+            )
+            self._recover_exact_missing_witness(
+                project, binding, documents, metadata, body
+            )
+            return
         versions = chains.get(adr.id)
         if versions is None or versions[-1][1]["id"] != adr.ref:
             raise TrackerConflictError("Linear ADR snapshot is stale")
@@ -3361,7 +3416,32 @@ class LinearTracker(Tracker):
         self, adr: Adr, expected_body: str, updated_body: str, project: Project | None
     ) -> bool:
         project = project or self._project()
-        _, chains = self._adr_snapshot(project)
+        try:
+            _, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) != "Linear ADR version witness is missing":
+                raise
+            binding, documents = self._adr_documents(project)
+            predecessors = [raw for raw in documents if raw.get("id") == adr.ref]
+            if len(predecessors) != 1 or predecessors[0]["content"] != expected_body:
+                raise TrackerConflictError("Linear ADR interrupted body predecessor diverged")
+            old, _ = _parse_adr_document(predecessors[0], binding)
+            old_header, sep, _ = expected_body.partition("\n-->\n\n")
+            new_header, new_sep, body = updated_body.partition("\n-->\n\n")
+            if (
+                old["id"] != adr.id
+                or old["status"] in {"deprecated", "superseded"}
+                or not sep or not new_sep or old_header != new_header
+                or updated_body == expected_body
+            ):
+                raise TrackerConflictError("Linear ADR interrupted body binding invalid")
+            metadata, body = self._next_adr_metadata(
+                (old, predecessors[0]), body=body
+            )
+            self._recover_exact_missing_witness(
+                project, binding, documents, metadata, body
+            )
+            return True
         versions = chains.get(adr.id)
         if (
             versions is None

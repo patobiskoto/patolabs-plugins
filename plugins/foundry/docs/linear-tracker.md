@@ -112,6 +112,12 @@ closed. Replaying the byte-identical native creation can complete exactly one su
 title/body, more than one incomplete pair, or an orphan witness remains fail-closed.
 Normal reads also fail closed on a later-version partial write; only the matching typed
 operation may complete its exact missing witness after hypothetical whole-graph validation.
+The public `adr accept`, `adr edit`, `adr supersede`, and `adr link-issue` commands
+resolve a witnessed predecessor through the mutation-only port, so an incomplete
+pair cannot make the recovery command unreachable. This port never repairs on read:
+the typed operation must prove the exact candidate before appending or completing
+its witness. A non-object entry in Linear's document list is an invalid provider
+response, not an empty ADR index.
 
 Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
 Each additive version must have exactly one typed delta: body, status, source

@@ -162,9 +162,7 @@ def update_adr_body(
         if binding is not None
         else tracker.resolve_project(registry.repo_basename())
     )
-    current = next(
-        (adr for adr in tracker.list_adrs(project) if adr.id == adr_id), None
-    )
+    current = adr_for_mutation(tracker, project, adr_id)
     if current is None:
         raise RuntimeError(f"ADR introuvable : {adr_id}")
     kwargs = {"project": binding} if binding is not None else {}
@@ -456,6 +454,14 @@ def set_adr_status(tracker, adr, status: str) -> None:
     binding = adr_binding(tracker, adr.id)
     kwargs = {"project": binding} if binding is not None else {}
     tracker.set_adr_status(adr, status, **kwargs)
+
+
+def adr_for_mutation(tracker, project, adr_id: str):
+    """Resolve the ADR predecessor without making ordinary reads recover writes."""
+    resolver = getattr(tracker, "adr_for_mutation", None)
+    if callable(resolver):
+        return resolver(project, adr_id)
+    return next((adr for adr in tracker.list_adrs(project) if adr.id == adr_id), None)
 
 
 def supersede_adr(tracker, adr, replacement_id: str) -> None:

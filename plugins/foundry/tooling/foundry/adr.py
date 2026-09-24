@@ -48,7 +48,7 @@ def create(title, status="proposed"):
 def accept(adr_id):
     tr = foundry.tracker()
     p = _project(tr)
-    match = next((a for a in tr.list_adrs(p) if a.id == adr_id), None)
+    match = write.adr_for_mutation(tr, p, adr_id)
     if not match:
         raise SystemExit(f"ADR introuvable : {adr_id}")
     write.set_adr_status(tr, match, "accepted")
@@ -73,7 +73,7 @@ def edit(adr_id, expected_path, updated_path):
 def supersede(adr_id, replacement_id):
     tr = foundry.tracker()
     p = _project(tr)
-    current = next((a for a in tr.list_adrs(p) if a.id == adr_id), None)
+    current = write.adr_for_mutation(tr, p, adr_id)
     if current is None:
         raise SystemExit(f"ADR introuvable : {adr_id}")
     write.supersede_adr(tr, current, replacement_id)
@@ -83,7 +83,7 @@ def supersede(adr_id, replacement_id):
 def link_issue(adr_id, issue_id):
     tr = foundry.tracker()
     p = _project(tr)
-    current = next((a for a in tr.list_adrs(p) if a.id == adr_id), None)
+    current = write.adr_for_mutation(tr, p, adr_id)
     if current is None:
         raise SystemExit(f"ADR introuvable : {adr_id}")
     linked = write.link_adr_issue(tr, current, issue_id)
