@@ -427,6 +427,12 @@ def _parse_adr_witness(raw: dict, binding: dict) -> dict:
         or raw.get("title")
         != f"{_ADR_WITNESS_PREFIX}{adr_id} / v{sequence:04d}"
         or raw.get("project", {}).get("id") != binding["project_id"]
+        or content
+        != (
+            f"{_ADR_WITNESS_HEADER}"
+            f"{json.dumps(witness, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
+            "\n-->"
+        )
     ):
         raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
     return witness

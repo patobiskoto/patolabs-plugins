@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -2047,6 +2048,39 @@ def test_linear_adr_witness_refuses_isolated_unique_or_head_deletion(tracker, hi
         TrackerConflictError, match="witness has no matching version"
     ):
         instance.list_adrs(PROJECT)
+
+
+@pytest.mark.parametrize("reencoding", ["pretty", "duplicate_key"])
+def test_linear_adr_witness_refuses_semantically_equal_reencoding(
+    tracker, reencoding
+):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Canonical witness", "body")
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    witness = wire.documents[witness_id]
+    content = witness["content"]
+    encoded = content[len(linear_module._ADR_WITNESS_HEADER) : -len("\n-->")]
+    payload = json.loads(encoded)
+    if reencoding == "pretty":
+        changed = json.dumps(payload, indent=2, ensure_ascii=False)
+    else:
+        changed = (
+            f'{{"schema":{json.dumps(payload["schema"])},' + encoded[1:]
+        )
+    assert changed != encoded
+    assert json.loads(changed) == payload
+    witness["content"] = f"{linear_module._ADR_WITNESS_HEADER}{changed}\n-->"
+    call_offset = len(wire.calls)
+
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance.list_adrs(PROJECT)
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
 
 
 def test_linear_adr_missing_witness_fails_closed_and_exact_pair_replays(tracker):
