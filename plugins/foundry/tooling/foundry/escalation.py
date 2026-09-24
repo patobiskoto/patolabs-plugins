@@ -1781,7 +1781,10 @@ class EscalationStore:
                 )
             )
             or any(
-                event["halt_generation"] in technical_counts_by_generation
+                (
+                    event["halt_generation"] > last_resumed_generation
+                    or event["halt_generation"] in technical_counts_by_generation
+                )
                 and (
                     (event["halt_generation"], event["role"])
                     not in bridge_rearm_times

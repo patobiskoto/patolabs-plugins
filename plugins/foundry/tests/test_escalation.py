@@ -2047,6 +2047,38 @@ def test_consumption_rejects_future_generation_without_current_authorization(
     assert path.read_bytes() == malformed
 
 
+def test_consumption_rejects_current_halted_generation_without_bridge(tmp_path):
+    store = EscalationStore("owner/f160-halted-consumption", state_dir=tmp_path)
+    issue = "FOUNDRY-164"
+    _human_stop(store, issue, "implementer")
+    generation = store.status(issue)["halt_generation"]
+    store.resume(issue, "remediation_reviewed", generation)
+    stopped = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert stopped.action == "technical_blocked"
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["halted"] is True
+    assert payload["halt_generation"] == generation + 1
+    assert "remediation_authorization" not in payload
+    payload["consumption_audit"].append({
+        "code": "review_blocking_after_fix_consumed",
+        "at": payload["last_resumed_at"],
+        "role": "implementer",
+        "halt_generation": generation + 1,
+    })
+    payload["roles"]["implementer"]["deterministic_failures"] += 1
+    payload["roles"]["implementer"]["failures_since_escalation"] += 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    assert path.read_bytes() == malformed
+
+
 def test_hostile_huge_generation_is_rejected_without_enumeration(
     tmp_path, monkeypatch,
 ):
@@ -2417,7 +2449,7 @@ def test_bridged_rearm_rejects_duplicate_bridge_reusing_source_window(tmp_path):
     duplicate = dict(bridge)
     duplicate["at"] = (
         datetime.fromisoformat(bridge["at"]) + timedelta(seconds=1)
-    ).isoformat()
+    ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     payload["remediation_rearm_audit"].append(duplicate)
     payload["remediation_authorization"]["armed_at"] = duplicate["at"]
     path.write_text(json.dumps(payload), encoding="utf-8")
