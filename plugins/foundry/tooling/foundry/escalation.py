@@ -1807,18 +1807,19 @@ class EscalationStore:
             route_consumed_time = technical_route_times.get(
                 (event_generation, event["role"]),
             )
-            if event_generation > last_resumed_generation and (
-                (
-                    exhausted_generation == event_generation
-                    and (event_generation, event["role"]) not in prior_bridges
-                )
-                or event_generation not in technical_counts_by_generation
-                or route_consumed_time is None
-                or event_time <= route_consumed_time
+            if exhausted_generation != event_generation:
+                if (
+                    event_generation not in technical_counts_by_generation
+                    or route_consumed_time is None
+                    or event_time <= route_consumed_time
+                ):
+                    raise _invalid_ledger(issue_id)
+                prior_bridges.add((event_generation, event["role"]))
+            elif (
+                event_generation > last_resumed_generation
+                and (event_generation, event["role"]) not in prior_bridges
             ):
                 raise _invalid_ledger(issue_id)
-            if exhausted_generation != event_generation:
-                prior_bridges.add((event_generation, event["role"]))
 
         state = {
             "version": 1,

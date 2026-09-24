@@ -2491,6 +2491,46 @@ def test_rearm_again_after_bridged_technical_generation(tmp_path):
     assert state["technical_remediation_audit"] == exhausted["technical_remediation_audit"]
 
 
+def test_historical_bridge_still_requires_claimed_route_after_human_resume(tmp_path):
+    store = EscalationStore("owner/remediation-historical-bridge", state_dir=tmp_path)
+    issue = "FOUNDRY-100"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "e" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "historical-bridge-100",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+    store.cancel_remediation(issue, technical_generation)
+    later_generation = store.status(issue)["halt_generation"]
+    assert later_generation > technical_generation
+    verdict = store.record_human_verdict(
+        issue, "implementer", "apex", category="strategy_decision",
+    )
+    assert verdict.action == "human_required"
+    store.resume(issue, "remediation_reviewed", later_generation)
+    assert store.status(issue)["last_resumed_halt_generation"] == later_generation
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    technical = payload["technical_remediation_audit"][-1]
+    assert technical["halt_generation"] == technical_generation
+    assert technical["route_id"] is not None
+    assert technical["route_consumed_at"] is not None
+    technical["route_id"] = None
+    technical["route_consumed_at"] = None
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    assert path.read_bytes() == malformed
+
+
 def test_ordinary_rearm_after_bridge_rejects_forged_window_anchor(tmp_path):
     store = EscalationStore("owner/remediation-rearm-forged-anchor", state_dir=tmp_path)
     issue = "FOUNDRY-99"
