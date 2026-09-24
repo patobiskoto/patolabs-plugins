@@ -6,6 +6,7 @@ import queue
 import stat
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2392,6 +2393,38 @@ def test_bridged_rearm_rejects_bridge_before_technical_route_consumption(
         store.record_failure(
             issue, "implementer", "review_blocking_after_fix", "apex",
         )
+    assert path.read_bytes() == malformed
+
+
+def test_bridged_rearm_rejects_duplicate_bridge_reusing_source_window(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-duplicate-bridge", state_dir=tmp_path)
+    issue = "FOUNDRY-98"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "c" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-duplicate-bridge-98",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    bridge = payload["remediation_rearm_audit"][-1]
+    duplicate = dict(bridge)
+    duplicate["at"] = (
+        datetime.fromisoformat(bridge["at"]) + timedelta(seconds=1)
+    ).isoformat()
+    payload["remediation_rearm_audit"].append(duplicate)
+    payload["remediation_authorization"]["armed_at"] = duplicate["at"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
     assert path.read_bytes() == malformed
 
 

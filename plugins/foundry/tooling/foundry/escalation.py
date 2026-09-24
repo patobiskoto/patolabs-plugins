@@ -1501,6 +1501,7 @@ class EscalationStore:
         rearm_audit = []
         rearm_by_generation = {}
         bridge_rearm_times = {}
+        bridged_sources = set()
         rearm_times = []
         previous_rearm_time = None
         previous_rearm_generation = 0
@@ -1573,9 +1574,15 @@ class EscalationStore:
                 (event, event_time),
             )
             if exhausted_generation != event_generation:
-                bridge_rearm_times.setdefault(
-                    (event_generation, event_role), event_time,
-                )
+                bridge_target = (event_generation, event_role)
+                bridge_source = (exhausted_generation, event_role)
+                if (
+                    bridge_target in bridge_rearm_times
+                    or bridge_source in bridged_sources
+                ):
+                    raise _invalid_ledger(issue_id)
+                bridge_rearm_times[bridge_target] = event_time
+                bridged_sources.add(bridge_source)
             rearm_audit.append(event)
             rearm_times.append(event_time)
             previous_rearm_time = event_time
