@@ -4,6 +4,7 @@ Every method speaks normalized models (Issue, Adr, Project). Concrete adapters
 (YouTrack today; Jira / GitHub Projects tomorrow) implement this. Add a provider
 by writing one subclass — the query/write tiers and the skills never change.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -81,7 +82,12 @@ class Tracker(ABC):
 
     # --- optional read-only graph projection -----------------------------
     def get_epic_subgraph(
-        self, project: Project, epic_id: str, *, depth: int = 8, nodes: int = 100,
+        self,
+        project: Project,
+        epic_id: str,
+        *,
+        depth: int = 8,
+        nodes: int = 100,
     ) -> dict:
         """Return one provider-versioned, explicitly bounded Epic subgraph.
 
@@ -94,7 +100,10 @@ class Tracker(ABC):
 
     # --- optional project provisioning -----------------------------------
     def provision_project(
-        self, name: str, key: str, canonical_repository: str | None = None,
+        self,
+        name: str,
+        key: str,
+        canonical_repository: str | None = None,
     ) -> Project:
         """Create or recover one provider project without registering a checkout.
 
@@ -112,7 +121,10 @@ class Tracker(ABC):
         """Map a repo basename to its tracker project (raises if unknown)."""
 
     def resolve_checkout_project(
-        self, cwd: str | None = None, *, checkout_identity: str | None = None,
+        self,
+        cwd: str | None = None,
+        *,
+        checkout_identity: str | None = None,
     ) -> Project:
         """Resolve the tracker project for one checkout.
 
@@ -159,7 +171,11 @@ class Tracker(ABC):
         return () if current_state == "in-progress" else ("in-progress",)
 
     def sync_acceptance_body(
-        self, issue_id: str, expected_body: str, updated_body: str, proof: dict,
+        self,
+        issue_id: str,
+        expected_body: str,
+        updated_body: str,
+        proof: dict,
         project: Project | None = None,
     ) -> bool:
         """Replace only proof-authorized acceptance checkbox markers.
@@ -174,7 +190,10 @@ class Tracker(ABC):
         )
 
     def update_body(
-        self, resource: Issue | Adr, expected_body: str, updated_body: str,
+        self,
+        resource: Issue | Adr,
+        expected_body: str,
+        updated_body: str,
         project: Project | None = None,
     ) -> bool:
         """Replace one issue or ADR body through the provider's bounded write path.
@@ -189,7 +208,9 @@ class Tracker(ABC):
         )
 
     def close_epic(
-        self, project: Project, receipt: EpicClosureReceipt,
+        self,
+        project: Project,
+        receipt: EpicClosureReceipt,
     ) -> EpicClosureOutcome:
         """Atomically verify ``receipt``, close its parent and audit the result.
 
@@ -203,7 +224,9 @@ class Tracker(ABC):
         )
 
     def get_epic_closure(
-        self, project: Project, parent_id: str,
+        self,
+        project: Project,
+        parent_id: str,
     ) -> EpicClosureOutcome | None:
         """Return a prior audited closure for interruption recovery, if any."""
         raise EpicClosureUnavailableError(
@@ -221,29 +244,42 @@ class Tracker(ABC):
 
     # --- issues (write) ---------------------------------------------------
     @abstractmethod
-    def create_issue(self, project: Project, title: str, body: str,
-                     fields: dict | None = None, parent: str | None = None) -> Issue:
+    def create_issue(
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        fields: dict | None = None,
+        parent: str | None = None,
+    ) -> Issue:
         """Create an issue; optionally link it as a subtask of `parent`."""
 
     @abstractmethod
-    def update_fields(self, issue_id: str, fields: dict,
-                      project: Project | None = None) -> Issue:
+    def update_fields(
+        self, issue_id: str, fields: dict, project: Project | None = None
+    ) -> Issue:
         """Set custom fields by normalized name (Priority, Estimate, Milestone, State…)."""
 
     @abstractmethod
-    def set_state(self, issue_id: str, state: str,
+    def set_state(
+        self,
+        issue_id: str,
+        state: str,
                   context: TransitionContext | None = None,
-                  project: Project | None = None) -> None:
+        project: Project | None = None,
+    ) -> None:
         """Transition State (validated against allowed states by the write tier)."""
 
     @abstractmethod
-    def link(self, src_id: str, link_type: str, dst_id: str,
-             project: Project | None = None) -> None:
+    def link(
+        self, src_id: str, link_type: str, dst_id: str, project: Project | None = None
+    ) -> None:
         """Create a typed link (subtask-of, relates, depends-on…) src → dst."""
 
     @abstractmethod
-    def add_comment(self, issue_id: str, text: str,
-                    project: Project | None = None) -> None:
+    def add_comment(
+        self, issue_id: str, text: str, project: Project | None = None
+    ) -> None:
         """Append a comment (progress note) to an issue — the mid-flight memory."""
 
     # --- ADR / knowledge base --------------------------------------------
@@ -252,11 +288,19 @@ class Tracker(ABC):
         """All ADRs for the project (for retrieval-before-reasoning)."""
 
     @abstractmethod
-    def create_adr(self, project: Project, title: str, body: str,
-                   status: str = "proposed") -> Adr:
+    def create_adr(
+        self, project: Project, title: str, body: str, status: str = "proposed"
+    ) -> Adr:
         """Record a new ADR in the project's knowledge base."""
 
     @abstractmethod
-    def set_adr_status(self, adr: Adr, status: str,
-                       project: Project | None = None) -> None:
+    def set_adr_status(
+        self, adr: Adr, status: str, project: Project | None = None
+    ) -> None:
         """Move an ADR along proposed → accepted → …"""
+
+    def supersede_adr(
+        self, adr: Adr, replacement_id: str, project: Project | None = None
+    ) -> None:
+        """Supersede one accepted ADR with another, when supported."""
+        raise TrackerCapabilityUnavailableError(self.name, "adr_supersession")

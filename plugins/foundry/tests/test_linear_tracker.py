@@ -1,4 +1,5 @@
 """Controlled Linear transport proof; no test contacts a Linear workspace."""
+
 from __future__ import annotations
 
 import copy
@@ -12,7 +13,16 @@ import pytest
 
 import foundry
 from foundry import evidence_plane, issue, query, registry, routing, write
-from foundry.models import Adr, Check, Issue, Link, Project, PullRequest, TransitionContext
+from foundry.trackers import linear as linear_module
+from foundry.models import (
+    Adr,
+    Check,
+    Issue,
+    Link,
+    Project,
+    PullRequest,
+    TransitionContext,
+)
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
@@ -30,12 +40,17 @@ from foundry.trackers.youtrack import YouTrackTracker
 
 
 STATE_IDS = {
-    "backlog": "state-backlog", "ready": "state-ready",
-    "in-progress": "state-in-progress", "review": "state-review",
-    "blocked": "state-blocked", "done": "state-done", "dropped": "state-dropped",
+    "backlog": "state-backlog",
+    "ready": "state-ready",
+    "in-progress": "state-in-progress",
+    "review": "state-review",
+    "blocked": "state-blocked",
+    "done": "state-done",
+    "dropped": "state-dropped",
 }
 PROJECT = Project(
-    key="LIN", id="project-uuid",
+    key="LIN",
+    id="project-uuid",
     extra={
         "canonical_repo": "github.com/acme/widgets",
         "team_id": "team-uuid",
@@ -53,18 +68,27 @@ def connection(nodes):
 
 def raw_issue(identifier, native_id, *, title="Issue", body="- [ ] acceptance"):
     return {
-        "id": native_id, "identifier": identifier, "title": title,
-        "description": body, "priority": 2, "estimate": 3,
-        "createdAt": "2026-09-20T10:00:00Z", "updatedAt": "2026-09-20T10:01:00Z",
+        "id": native_id,
+        "identifier": identifier,
+        "title": title,
+        "description": body,
+        "priority": 2,
+        "estimate": 3,
+        "createdAt": "2026-09-20T10:00:00Z",
+        "updatedAt": "2026-09-20T10:01:00Z",
         "state": {"id": STATE_IDS["ready"], "name": "Ready"},
         "team": {"id": "team-uuid", "key": "LIN"},
         "project": {"id": "project-uuid"},
         "projectMilestone": {"id": "milestone-m1", "name": "ignored"},
-        "labels": connection([
+        "labels": connection(
+            [
             {"id": "label-feature", "name": "Feature display"},
             {"id": "label-pilot", "name": "Pilot display"},
-        ]),
-        "parent": None, "children": connection([]), "relations": connection([]),
+            ]
+        ),
+        "parent": None,
+        "children": connection([]),
+        "relations": connection([]),
         "inverseRelations": connection([]),
         "comments": connection([]),
     }
@@ -79,6 +103,7 @@ class LinearWire:
             "LIN-2": raw_issue("LIN-2", "issue-uuid-2", title="Existing"),
         }
         self.comments = {}
+        self.documents = {}
         self.calls = []
         self.git_automation_states = connection([])
 
@@ -87,47 +112,127 @@ class LinearWire:
 
     def __call__(self, document, variables):
         self.calls.append((document, copy.deepcopy(variables)))
+        if "FoundryLinearAdrDocuments" in document:
+            nodes = [
+                copy.deepcopy(value)
+                for value in self.documents.values()
+                if value["project"]["id"] == variables["projectId"]
+            ]
+            return {"data": {"documents": connection(nodes)}}
+        # Linear's singular document(id:) rejects an unknown UUID with GraphQL
+        # "Entity not found", rather than returning null.  ADR slot reads must
+        # consequently use the collection query below.
+        if "document(id:" in document:
+            return {"errors": [{"message": "Entity not found: Document"}], "data": {}}
+        if "FoundryLinearAdrDocumentById" in document:
+            document_id = variables["id"]
+            nodes = [
+                copy.deepcopy(value)
+                for value in self.documents.values()
+                if value["id"] == document_id
+            ]
+            return {"data": {"documents": connection(nodes)}}
+        if "FoundryLinearAdrDocumentCreate" in document:
+            value = variables["input"]
+            if value["id"] in self.documents:
+                return {"errors": [{"message": "duplicate id"}], "data": {}}
+            created = {
+                "id": value["id"],
+                "title": value["title"],
+                "content": value["content"],
+                "archivedAt": None,
+                "project": {"id": value["projectId"]},
+            }
+            self.documents[value["id"]] = copy.deepcopy(created)
+            return {
+                "data": {
+                    "documentCreate": {
+                        "success": True,
+                        "document": copy.deepcopy(created),
+                    }
+                }
+            }
         if "FoundryLinearTeamGitAutomationStates" in document:
-            return {"data": {"team": {
+            return {
+                "data": {
+                    "team": {
                 "id": "team-uuid",
-                "gitAutomationStates": copy.deepcopy(self.git_automation_states),
-            }}}
+                        "gitAutomationStates": copy.deepcopy(
+                            self.git_automation_states
+                        ),
+                    }
+                }
+            }
         if "FoundryLinearIssues" in document:
-            return {"data": {"issues": connection([copy.deepcopy(v) for v in self.issues.values()])}}
+            return {
+                "data": {
+                    "issues": connection(
+                        [copy.deepcopy(v) for v in self.issues.values()]
+                    )
+                }
+            }
         if "FoundryLinearIssue(" in document:
             return {"data": {"issue": copy.deepcopy(self.issues.get(variables["id"]))}}
         if "FoundryLinearIssueCreate" in document:
             value = variables["input"]
             identifier = f"LIN-{len(self.issues) + 1}"
-            created = raw_issue(identifier, value["id"], title=value["title"], body=value["description"])
+            created = raw_issue(
+                identifier, value["id"], title=value["title"], body=value["description"]
+            )
             self._apply(created, value)
             if parent_id := value.get("parentId"):
                 parent = self._by_native(parent_id)
-                created["parent"] = {"id": parent["id"], "identifier": parent["identifier"]}
+                created["parent"] = {
+                    "id": parent["id"],
+                    "identifier": parent["identifier"],
+                }
                 parent["children"]["nodes"].append(
                     {"id": created["id"], "identifier": created["identifier"]}
                 )
             self.issues[identifier] = created
-            return {"data": {"issueCreate": {
-                "success": True, "issue": {"id": created["id"], "identifier": identifier},
-            }}}
+            return {
+                "data": {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {"id": created["id"], "identifier": identifier},
+                    }
+                }
+            }
         if "FoundryLinearIssueRelationCreate" in document:
             value = variables["input"]
-            source, target = self._by_native(value["issueId"]), self._by_native(value["relatedIssueId"])
-            source["relations"]["nodes"].append({
+            source, target = (
+                self._by_native(value["issueId"]),
+                self._by_native(value["relatedIssueId"]),
+            )
+            source["relations"]["nodes"].append(
+                {
                 "type": value["type"],
-                "relatedIssue": {"id": target["id"], "identifier": target["identifier"]},
-            })
-            target["inverseRelations"]["nodes"].append({
+                    "relatedIssue": {
+                        "id": target["id"],
+                        "identifier": target["identifier"],
+                    },
+                }
+            )
+            target["inverseRelations"]["nodes"].append(
+                {
                 "type": value["type"],
                 "issue": {"id": source["id"], "identifier": source["identifier"]},
-            })
+                }
+            )
             relation = {
-                "id": "relation-1", "type": value["type"],
+                "id": "relation-1",
+                "type": value["type"],
                 "issue": {"id": source["id"], "identifier": source["identifier"]},
-                "relatedIssue": {"id": target["id"], "identifier": target["identifier"]},
+                "relatedIssue": {
+                    "id": target["id"],
+                    "identifier": target["identifier"],
+                },
             }
-            return {"data": {"issueRelationCreate": {"success": True, "issueRelation": relation}}}
+            return {
+                "data": {
+                    "issueRelationCreate": {"success": True, "issueRelation": relation}
+                }
+            }
         if "FoundryLinearCommentCreate" in document:
             value = variables["input"]
             issue = self._by_native(value["issueId"])
@@ -139,16 +244,30 @@ class LinearWire:
             if comment["id"] in self.comments:
                 return {"errors": [{"message": "duplicate"}], "data": {}}
             self.comments[comment["id"]] = comment
-            issue["comments"]["nodes"].append({
-                "id": comment["id"], "body": comment["body"],
+            issue["comments"]["nodes"].append(
+                {
+                    "id": comment["id"],
+                    "body": comment["body"],
                 "createdAt": "2026-09-20T10:02:00Z",
-            })
-            return {"data": {"commentCreate": {"success": True, "comment": copy.deepcopy(comment)}}}
+                }
+            )
+            return {
+                "data": {
+                    "commentCreate": {
+                        "success": True,
+                        "comment": copy.deepcopy(comment),
+                    }
+                }
+            }
         if "FoundryLinearCommentsById(" in document:
             comment = self.comments.get(variables["id"])
-            return {"data": {"comments": connection(
+            return {
+                "data": {
+                    "comments": connection(
                 [] if comment is None else [copy.deepcopy(comment)]
-            )}}
+                    )
+                }
+            }
         raise AssertionError("unexpected GraphQL document")
 
     @staticmethod
@@ -156,7 +275,10 @@ class LinearWire:
         if "description" in values:
             issue["description"] = values["description"]
         if "stateId" in values:
-            issue["state"] = {"id": values["stateId"], "name": "provider display ignored"}
+            issue["state"] = {
+                "id": values["stateId"],
+                "name": "provider display ignored",
+            }
         if "priority" in values:
             issue["priority"] = values["priority"]
         if "estimate" in values:
@@ -164,19 +286,29 @@ class LinearWire:
         if "projectMilestoneId" in values:
             issue["projectMilestone"] = (
                 {"id": values["projectMilestoneId"], "name": "provider display ignored"}
-                if values["projectMilestoneId"] else None
+                if values["projectMilestoneId"]
+                else None
             )
         if "labelIds" in values:
             names = {
-                "label-feature": "Feature display", "label-bug": "Bug display",
-                "label-pilot": "Pilot display", "label-api": "API display",
+                "label-feature": "Feature display",
+                "label-bug": "Bug display",
+                "label-pilot": "Pilot display",
+                "label-api": "API display",
             }
-            issue["labels"] = connection([{"id": item, "name": names[item]} for item in values["labelIds"]])
+            issue["labels"] = connection(
+                [{"id": item, "name": names[item]} for item in values["labelIds"]]
+            )
         if "parentId" in values:
             parent = values["parentId"]
-            issue["parent"] = None if parent is None else {
-                "id": parent, "identifier": "LIN-1",
+            issue["parent"] = (
+                None
+                if parent is None
+                else {
+                    "id": parent,
+                    "identifier": "LIN-1",
             }
+            )
 
 
 @pytest.fixture
@@ -191,20 +323,28 @@ def proof(issue_id, body, *, head="a" * 40, base="b" * 40, diff_hash="c" * 64):
     value = {
         "schema_version": 1,
         "issue": {
-            "id": issue_id, "ac_digest": acceptance_digest(criteria),
+            "id": issue_id,
+            "ac_digest": acceptance_digest(criteria),
             "criteria": [{**criterion, "verdict": "pass"} for criterion in criteria],
         },
         "review": {
-            "role": "reviewer", "generation": 1, "claim_digest": "d" * 64,
+            "role": "reviewer",
+            "generation": 1,
+            "claim_digest": "d" * 64,
         },
         "coordinates": {"head": head, "diff_hash": diff_hash, "base": base},
         "quality": "mergeable",
     }
     import hashlib
     import json
-    value["proof_id"] = hashlib.sha256(json.dumps(
-        value, sort_keys=True, separators=(",", ":"),
-    ).encode()).hexdigest()
+
+    value["proof_id"] = hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     return value
 
 
@@ -212,7 +352,9 @@ def project_entry(project=PROJECT):
     return {"key": project.key, "id": project.id, **copy.deepcopy(project.extra)}
 
 
-def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(monkeypatch):
+def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(
+    monkeypatch,
+):
     secrets = {
         "YOUTRACK_URL": "https://example.youtrack.cloud",
         "YOUTRACK_TOKEN": "youtrack-secret",
@@ -222,7 +364,9 @@ def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(monk
     }
     monkeypatch.setattr(foundry.config, "require", secrets.__getitem__)
     monkeypatch.setattr(
-        foundry.config, "require_public", lambda key: "https://devhub.example.test",
+        foundry.config,
+        "require_public",
+        lambda key: "https://devhub.example.test",
     )
     assert isinstance(foundry.tracker("linear"), LinearTracker)
     assert isinstance(foundry.tracker("youtrack"), YouTrackTracker)
@@ -248,7 +392,8 @@ def test_binding_requires_explicit_repository_team_project_and_all_state_ids(tra
 
 
 def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_reader(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     instance, wire = tracker
     listed = instance.search(PROJECT)
@@ -259,10 +404,16 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
     assert listed[0].labels == ["pilot"]
 
     created = instance.create_issue(
-        PROJECT, "Round trip", "- [ ] exact acceptance",
+        PROJECT,
+        "Round trip",
+        "- [ ] exact acceptance",
         fields={
-            "State": "ready", "Priority": "P1", "Estimate": 5,
-            "Milestone": "M1", "Type": "Feature", "Labels": ["pilot"],
+            "State": "ready",
+            "Priority": "P1",
+            "Estimate": 5,
+            "Milestone": "M1",
+            "Type": "Feature",
+            "Labels": ["pilot"],
         },
         parent="LIN-1",
     )
@@ -277,20 +428,33 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
         fresh.get_issue(created.id)
     monkeypatch.setenv("PROJECT_REPO", "decoy")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "actual-checkout": project_entry(),
-    }})
+            }
+        },
+    )
     fresh.resolve_project("decoy")
     final = fresh.get_issue(created.id)
     assert final.state == "ready"
     assert final.pr_url is None
     assert (final.priority, final.estimate, final.type, final.labels) == (
-        "P1", 5, "Feature", ["pilot"],
+        "P1",
+        5,
+        "Feature",
+        ["pilot"],
     )
-    assert final.body == "- [ ] exact acceptance" and (final.ac_done, final.ac_total) == (0, 1)
+    assert final.body == "- [ ] exact acceptance" and (
+        final.ac_done,
+        final.ac_total,
+    ) == (0, 1)
     assert Link("depends-on", "outward", "LIN-2") in final.links
     assert wire.comments["comment-1"]["body"] == "bounded progress"
 
@@ -298,18 +462,28 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
 def test_relation_reads_normalize_hierarchy_and_both_blocking_sides(tracker):
     instance, wire = tracker
     parent, child = wire.issues["LIN-1"], wire.issues["LIN-2"]
-    parent["children"] = connection([
+    parent["children"] = connection(
+        [
         {"id": child["id"], "identifier": child["identifier"]},
-    ])
+        ]
+    )
     child["parent"] = {"id": parent["id"], "identifier": parent["identifier"]}
-    parent["relations"] = connection([{
+    parent["relations"] = connection(
+        [
+            {
         "type": "blocks",
         "relatedIssue": {"id": child["id"], "identifier": child["identifier"]},
-    }])
-    child["inverseRelations"] = connection([{
+            }
+        ]
+    )
+    child["inverseRelations"] = connection(
+        [
+            {
         "type": "blocks",
         "issue": {"id": parent["id"], "identifier": parent["identifier"]},
-    }])
+            }
+        ]
+    )
 
     issues = {item.id: item for item in instance.search(PROJECT)}
 
@@ -332,13 +506,21 @@ def test_relation_reads_normalize_hierarchy_and_both_blocking_sides(tracker):
     ],
 )
 def test_relation_reads_refuse_unsupported_native_types_without_partial_issue(
-    tracker, relation_type, collection_name, target_name, operation,
+    tracker,
+    relation_type,
+    collection_name,
+    target_name,
+    operation,
 ):
     instance, wire = tracker
-    wire.issues["LIN-1"][collection_name] = connection([{
+    wire.issues["LIN-1"][collection_name] = connection(
+        [
+            {
         "type": relation_type,
         target_name: {"id": "issue-uuid-2", "identifier": "LIN-2"},
-    }])
+            }
+        ]
+    )
 
     with pytest.raises(LinearTrackerError) as raised:
         instance.search(PROJECT)
@@ -353,24 +535,33 @@ def test_existing_issue_replacements_are_unavailable_before_provider_write(track
     before = len(wire.calls)
     assert instance.acceptance_sync_supported is False
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="existing-issue-field-replacement",
+        TrackerCapabilityUnavailableError,
+        match="existing-issue-field-replacement",
     ):
         instance.update_fields("LIN-2", {"Priority": "P0"}, project=PROJECT)
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="lifecycle-proof",
+        TrackerCapabilityUnavailableError,
+        match="lifecycle-proof",
     ):
         instance.set_state("LIN-2", "review", project=PROJECT)
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="existing-issue-parent-replacement",
+        TrackerCapabilityUnavailableError,
+        match="existing-issue-parent-replacement",
     ):
         instance.link("LIN-2", "subtask-of", "LIN-1", project=PROJECT)
     with pytest.raises(BodyUpdateUnavailableError, match="anti-écrasement"):
         instance.update_body(
-            Issue(id="LIN-2", title="Existing"), "old", "new", project=PROJECT,
+            Issue(id="LIN-2", title="Existing"),
+            "old",
+            "new",
+            project=PROJECT,
         )
     with pytest.raises(AcceptanceSyncUnavailableError, match="anti-écrasement"):
         instance.sync_acceptance_body(
-            "LIN-2", "- [ ] AC", "- [x] AC", proof("LIN-2", "- [ ] AC"),
+            "LIN-2",
+            "- [ ] AC",
+            "- [x] AC",
+            proof("LIN-2", "- [ ] AC"),
             project=PROJECT,
         )
     assert len(wire.calls) == before
@@ -393,38 +584,51 @@ def test_normalization_rejects_missing_or_unknown_label_identifiers(tracker):
 def test_normalization_rejects_unmapped_milestone_identifier(tracker):
     instance, wire = tracker
     wire.issues["LIN-1"]["projectMilestone"] = {
-        "id": "milestone-unknown", "name": "M1",
+        "id": "milestone-unknown",
+        "name": "M1",
     }
     with pytest.raises(LinearBindingError) as error:
         instance.search(PROJECT)
     assert error.value.code == "milestone_id_unmapped"
 
 
-def test_query_issue_resolves_fresh_binding_and_projects_typed_adr_unavailability(
-    tracker, monkeypatch,
+def test_query_issue_resolves_fresh_binding_and_projects_linear_adrs(
+    tracker,
+    monkeypatch,
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     checkout_reads = []
     decoy = copy.deepcopy(project_entry())
-    decoy.update({
-        "key": "WRONG", "id": "wrong-project",
+    decoy.update(
+        {
+            "key": "WRONG",
+            "id": "wrong-project",
         "canonical_repo": "github.com/acme/not-widgets",
-    })
+        }
+    )
 
     monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
     monkeypatch.setenv("PROJECT_REPO", "widgets")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: checkout_reads.append(cwd) or "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "widgets": decoy,
         "actual-checkout": project_entry(),
         "actual-alias": project_entry(),
-    }})
+            }
+        },
+    )
     monkeypatch.setattr(
-        registry, "resolve",
+        registry,
+        "resolve",
         lambda *_args: pytest.fail("Linear query must not resolve from a basename"),
     )
 
@@ -433,15 +637,14 @@ def test_query_issue_resolves_fresh_binding_and_projects_typed_adr_unavailabilit
     assert checkout_reads == [None]
     assert fresh._active_project == PROJECT
     assert result["issue"]["id"] == "LIN-2"
-    assert result["adrs"] == {
-        "status": "unavailable",
-        "tracker": "linear",
-        "capability": "adr-knowledge-base",
-    }
+    assert result["adrs"] == []
 
 
 def test_record_review_proof_resolves_fresh_binding_before_issue_read(
-    tracker, monkeypatch, tmp_path, capsys,
+    tracker,
+    monkeypatch,
+    tmp_path,
+    capsys,
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
@@ -458,37 +661,58 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
 
     outcomes = tmp_path / "outcomes.json"
     outcomes.write_text(
-        '{"outcomes": [], "quality": {"verdict": "pass"}}', encoding="utf-8",
+        '{"outcomes": [], "quality": {"verdict": "pass"}}',
+        encoding="utf-8",
     )
     monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
     monkeypatch.setenv("PROJECT_REPO", "decoy")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: checkout_reads.append(cwd) or "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "decoy": {
-            **project_entry(), "key": "WRONG", "id": "wrong-project",
+                    **project_entry(),
+                    "key": "WRONG",
+                    "id": "wrong-project",
             "canonical_repo": "github.com/acme/other",
         },
         "canonical": project_entry(),
-    }})
+            }
+        },
+    )
     monkeypatch.setattr(
-        registry, "resolve",
+        registry,
+        "resolve",
         lambda *_args: pytest.fail("Linear proof must not resolve from a basename"),
     )
-    monkeypatch.setattr(routing, "repository_identity", lambda root=None: "acme/widgets")
+    monkeypatch.setattr(
+        routing, "repository_identity", lambda root=None: "acme/widgets"
+    )
     monkeypatch.setattr(routing, "AcceptanceProofStore", ProofStore)
 
-    routing.main([
+    routing.main(
+        [
         "record-review-proof",
-        "--issue", "LIN-2",
-        "--diff-hash", "d" * 64,
-        "--claim-id", "c" * 64,
-        "--outcomes-file", str(outcomes),
-        "--base", "b" * 40,
-        "--root", str(tmp_path),
-    ])
+            "--issue",
+            "LIN-2",
+            "--diff-hash",
+            "d" * 64,
+            "--claim-id",
+            "c" * 64,
+            "--outcomes-file",
+            str(outcomes),
+            "--base",
+            "b" * 40,
+            "--root",
+            str(tmp_path),
+        ]
+    )
 
     assert checkout_reads == [str(tmp_path)]
     assert captured["repository"] == "acme/widgets"
@@ -498,39 +722,57 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
 
 
 def test_checkout_resolution_refuses_without_canonical_binding_before_linear_read(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
     monkeypatch.setenv("PROJECT_REPO", "widgets")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "widgets": {
-            **project_entry(), "canonical_repo": "github.com/acme/other",
+                    **project_entry(),
+                    "canonical_repo": "github.com/acme/other",
         },
-    }})
+            }
+        },
+    )
 
     with pytest.raises(SystemExit, match="canonical_repo du checkout"):
         query.issue("LIN-2")
 
-    assert wire.calls == []
+    assert all(
+        "FoundryLinearAdrDocumentCreate" not in document for document, _ in wire.calls
+    )
 
 
 def test_checkout_resolution_refuses_contradictory_canonical_bindings(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     contradictory = project_entry()
     contradictory.update({"key": "OTHER", "id": "other-project"})
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "first": project_entry(),
         "second": contradictory,
-    }})
+            }
+        },
+    )
 
     with pytest.raises(SystemExit, match="ambigus"):
         fresh.resolve_checkout_project(
@@ -549,7 +791,9 @@ def test_existing_provider_operation_preflights_remain_noop(provider_class):
 
 @pytest.mark.parametrize("operation", ["openpr", "merge"])
 def test_linear_lifecycle_preflight_stops_before_every_codehost_effect_when_disabled(
-    tracker, monkeypatch, operation,
+    tracker,
+    monkeypatch,
+    operation,
 ):
     instance, wire = tracker
     instance.append_only_lifecycle_supported = False
@@ -568,16 +812,25 @@ def test_linear_lifecycle_preflight_stops_before_every_codehost_effect_when_disa
     monkeypatch.setattr(foundry, "codehost", lambda name=None, cwd=None: codehost)
     monkeypatch.setenv("PROJECT_REPO", "decoy")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "decoy": {
-            **project_entry(), "key": "WRONG", "id": "wrong-project",
+                    **project_entry(),
+                    "key": "WRONG",
+                    "id": "wrong-project",
             "canonical_repo": "github.com/acme/other",
         },
         "canonical": project_entry(),
-    }})
+            }
+        },
+    )
 
     def command(*args, **_kwargs):
         if args[-2:] == ("--abbrev-ref", "HEAD"):
@@ -588,7 +841,8 @@ def test_linear_lifecycle_preflight_stops_before_every_codehost_effect_when_disa
     monkeypatch.setattr(issue, "_sh", command)
 
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="linear.append-only-lifecycle-proof",
+        TrackerCapabilityUnavailableError,
+        match="linear.append-only-lifecycle-proof",
     ):
         if operation == "openpr":
             issue.openpr("LIN-2")
@@ -596,7 +850,9 @@ def test_linear_lifecycle_preflight_stops_before_every_codehost_effect_when_disa
             issue.merge("LIN-2", "17")
 
     assert effects == []
-    assert wire.calls and all("mutation" not in document.lower() for document, _ in wire.calls)
+    assert wire.calls and all(
+        "mutation" not in document.lower() for document, _ in wire.calls
+    )
 
 
 def test_linear_lifecycle_preflight_advertises_only_bounded_operations(tracker):
@@ -606,7 +862,8 @@ def test_linear_lifecycle_preflight_advertises_only_bounded_operations(tracker):
     assert instance.preflight_issue_operation("openpr") is None
     assert instance.preflight_issue_operation("merge") is None
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="linear.lifecycle:close-epic",
+        TrackerCapabilityUnavailableError,
+        match="linear.lifecycle:close-epic",
     ):
         instance.preflight_issue_operation("close-epic")
 
@@ -615,16 +872,20 @@ def test_linear_lifecycle_preflight_advertises_only_bounded_operations(tracker):
 
 def test_linear_merge_effect_preflight_allows_safe_team_automation(tracker):
     instance, wire = tracker
-    wire.git_automation_states = connection([
+    wire.git_automation_states = connection(
+        [
         {
-            "id": "automation-started", "event": "start",
+                "id": "automation-started",
+                "event": "start",
             "state": {"id": STATE_IDS["in-progress"], "type": "started"},
         },
         {
-            "id": "automation-review", "event": "review",
+                "id": "automation-review",
+                "event": "review",
             "state": {"id": STATE_IDS["review"], "type": "started"},
         },
-    ])
+        ]
+    )
     instance._activate(PROJECT)
 
     assert instance.preflight_merge_effect() is None
@@ -633,9 +894,11 @@ def test_linear_merge_effect_preflight_allows_safe_team_automation(tracker):
 
 def test_linear_merge_effect_preflight_allows_merge_no_action(tracker):
     instance, wire = tracker
-    wire.git_automation_states = connection([
+    wire.git_automation_states = connection(
+        [
         {"id": "automation-merge-no-action", "event": "merge", "state": None},
-    ])
+        ]
+    )
     instance._activate(PROJECT)
     merge_calls = []
 
@@ -647,12 +910,15 @@ def test_linear_merge_effect_preflight_allows_merge_no_action(tracker):
 
 def test_linear_merge_effect_preflight_allows_duplicate_workflow_state(tracker):
     instance, wire = tracker
-    wire.git_automation_states = connection([
+    wire.git_automation_states = connection(
+        [
         {
-            "id": "automation-merge-duplicate", "event": "merge",
+                "id": "automation-merge-duplicate",
+                "event": "merge",
             "state": {"id": "duplicate-state", "type": "duplicate"},
         },
-    ])
+        ]
+    )
     instance._activate(PROJECT)
 
     assert instance.preflight_merge_effect() is None
@@ -660,12 +926,15 @@ def test_linear_merge_effect_preflight_allows_duplicate_workflow_state(tracker):
 
 def test_linear_merge_effect_preflight_refuses_completed_merge_automation(tracker):
     instance, wire = tracker
-    wire.git_automation_states = connection([
+    wire.git_automation_states = connection(
+        [
         {
-            "id": "automation-merge", "event": "merge",
+                "id": "automation-merge",
+                "event": "merge",
             "state": {"id": STATE_IDS["done"], "type": "completed"},
         },
-    ])
+        ]
+    )
     instance._activate(PROJECT)
     linked_pr = SimpleNamespace(linked_issue_ids=("LIN-2", "LIN-1"))
     merge_calls = []
@@ -689,7 +958,8 @@ def test_linear_merge_effect_preflight_refuses_completed_merge_automation(tracke
 def test_linear_merge_effect_preflight_fails_closed_on_unreadable_team_config(tracker):
     instance, wire = tracker
     wire.git_automation_states = {
-        "nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": "next"},
+        "nodes": [],
+        "pageInfo": {"hasNextPage": True, "endCursor": "next"},
     }
     instance._activate(PROJECT)
 
@@ -698,23 +968,31 @@ def test_linear_merge_effect_preflight_fails_closed_on_unreadable_team_config(tr
 
 
 def test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     done = TransitionContext(
-        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
-        review_digest=review.review_digest, merge_sha="e" * 40,
+        pr_url=review.pr_url,
+        head_sha=review.head_sha,
+        base_sha=review.base_sha,
+        review_digest=review.review_digest,
+        merge_sha="e" * 40,
     )
 
     instance.set_state("LIN-2", "in-progress", project=PROJECT)
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     result = write.sync_acceptance(
-        instance, "LIN-2", "- [ ] acceptance",
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
         proof("LIN-2", "- [ ] acceptance"),
     )
     instance.set_state("LIN-2", "done", context=done, project=PROJECT)
@@ -724,7 +1002,8 @@ def test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement(
     assert projected.pr_url == review.pr_url
     assert (projected.ac_done, projected.ac_total) == (1, 1)
     assert result == {
-        "status": "proof-projected", "checked": 1,
+        "status": "proof-projected",
+        "checked": 1,
         "audit": "append-only-proof",
     }
     native = wire.issues["LIN-2"]
@@ -732,15 +1011,20 @@ def test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement(
     assert native["description"] == "- [ ] acceptance"
     assert native["priority"] == 2
     assert len(native["comments"]["nodes"]) == 4
-    assert all("Foundry lifecycle proof" in row["body"]
-               for row in native["comments"]["nodes"])
+    assert all(
+        "Foundry lifecycle proof" in row["body"] for row in native["comments"]["nodes"]
+    )
 
 
-def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id(tracker):
+def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id(
+    tracker,
+):
     instance, wire = tracker
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
 
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
@@ -783,16 +1067,21 @@ def test_linear_zero_receipt_nonterminal_native_state_remains_readable(tracker):
 
     assert instance.get_issue("LIN-2").state == "ready"
     assert {item.id: item.state for item in instance.search(PROJECT)} == {
-        "LIN-1": "ready", "LIN-2": "ready",
+        "LIN-1": "ready",
+        "LIN-2": "ready",
     }
 
 
 def test_linear_exact_comment_lookup_returns_none_only_for_empty_filter_result(tracker):
     instance, wire = tracker
 
-    assert instance._read_comment(
-        "00000000-0000-4000-8000-000000000099", "lifecycle.comment.read",
-    ) is None
+    assert (
+        instance._read_comment(
+            "00000000-0000-4000-8000-000000000099",
+            "lifecycle.comment.read",
+        )
+        is None
+    )
     document, variables = wire.calls[-1]
     assert "comments(filter: { id: { eq: $id } }, first: 1)" in document
     assert "comment(id:" not in document
@@ -805,25 +1094,33 @@ def test_linear_exact_comment_lookup_rejects_wrong_filtered_id(tracker):
     def transport(document, variables):
         result = wire(document, variables)
         if "FoundryLinearCommentsById(" in document:
-            result["data"]["comments"]["nodes"] = [{
-                "id": "wrong-id", "body": "wrong",
+            result["data"]["comments"]["nodes"] = [
+                {
+                    "id": "wrong-id",
+                    "body": "wrong",
                 "issue": {"id": "issue-uuid-2", "identifier": "LIN-2"},
-            }]
+                }
+            ]
         return result
 
     instance._transport = transport
     with pytest.raises(LinearTrackerError, match="invalid_response"):
         instance._read_comment(
-            "00000000-0000-4000-8000-000000000099", "lifecycle.comment.read",
+            "00000000-0000-4000-8000-000000000099",
+            "lifecycle.comment.read",
         )
 
 
-@pytest.mark.parametrize("page_info", [
+@pytest.mark.parametrize(
+    "page_info",
+    [
     {"hasNextPage": True, "endCursor": "next"},
     {"endCursor": None},
-])
+    ],
+)
 def test_linear_lifecycle_refuses_unbounded_or_malformed_exact_comment_page(
-    tracker, page_info,
+    tracker,
+    page_info,
 ):
     instance, wire = tracker
 
@@ -842,12 +1139,16 @@ def test_linear_lifecycle_refuses_unbounded_or_malformed_exact_comment_page(
 def test_linear_lifecycle_refuses_exact_comment_id_collision_before_create(tracker):
     instance, wire = tracker
     _marker, body, comment_id = instance._lifecycle_marker(
-        "state-in-progress", "LIN-2", {
-            "state": "in-progress", "native_state_id": STATE_IDS["ready"],
+        "state-in-progress",
+        "LIN-2",
+        {
+            "state": "in-progress",
+            "native_state_id": STATE_IDS["ready"],
         },
     )
     wire.comments[comment_id] = {
-        "id": comment_id, "body": body + "\ndivergent",
+        "id": comment_id,
+        "body": body + "\ndivergent",
         "issue": {"id": "issue-uuid-2", "identifier": "LIN-2"},
     }
 
@@ -856,7 +1157,9 @@ def test_linear_lifecycle_refuses_exact_comment_id_collision_before_create(track
     assert wire.issues["LIN-2"]["comments"]["nodes"] == []
 
 
-def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, monkeypatch):
+def test_linear_native_checked_ac_requires_append_only_review_proof(
+    tracker, monkeypatch
+):
     instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     body = "- [x] acceptance"
@@ -864,7 +1167,9 @@ def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, mon
     instance._activate(PROJECT)
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
 
     assert instance.get_issue("LIN-2").ac_done == 0
@@ -882,11 +1187,15 @@ def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypa
     body = "- [ ] acceptance"
     first = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     second = TransitionContext(
         pr_url=first.pr_url,
-        head_sha="d" * 40, base_sha=first.base_sha, review_digest="e" * 64,
+        head_sha="d" * 40,
+        base_sha=first.base_sha,
+        review_digest="e" * 64,
     )
 
     instance.set_state("LIN-2", "review", context=first, project=PROJECT)
@@ -897,15 +1206,21 @@ def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypa
     assert corrected.state == "review"
     assert corrected.ac_done == 0
     second_proof = proof(
-        "LIN-2", body, head=second.head_sha, base=second.base_sha,
+        "LIN-2",
+        body,
+        head=second.head_sha,
+        base=second.base_sha,
         diff_hash=second.review_digest,
     )
     write.sync_acceptance(instance, "LIN-2", body, second_proof)
     instance.set_state(
-        "LIN-2", "done",
+        "LIN-2",
+        "done",
         context=TransitionContext(
-            pr_url=second.pr_url, head_sha=second.head_sha,
-            base_sha=second.base_sha, review_digest=second.review_digest,
+            pr_url=second.pr_url,
+            head_sha=second.head_sha,
+            base_sha=second.base_sha,
+            review_digest=second.review_digest,
             merge_sha="f" * 40,
         ),
         project=PROJECT,
@@ -941,11 +1256,15 @@ def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
     contexts = (
         TransitionContext(
             pr_url="https://github.com/acme/widgets/pull/17",
-            head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+            head_sha="a" * 40,
+            base_sha="b" * 40,
+            review_digest="c" * 64,
         ),
         TransitionContext(
             pr_url="https://github.com/acme/widgets/pull/17",
-            head_sha="d" * 40, base_sha="b" * 40, review_digest="e" * 64,
+            head_sha="d" * 40,
+            base_sha="b" * 40,
+            review_digest="e" * 64,
         ),
     )
 
@@ -967,7 +1286,8 @@ def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
 
 
 def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_completing_prerequisite(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
@@ -975,19 +1295,27 @@ def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_comp
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
     old = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     instance.set_state("LIN-2", "review", context=old, project=PROJECT)
     write.sync_acceptance(
-        instance, "LIN-2", "- [ ] acceptance",
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
         proof("LIN-2", "- [ ] acceptance"),
     )
 
     new_diff = b"corrected-diff"
     new_digest = hashlib.sha256(new_diff).hexdigest()
     pr = PullRequest(
-        number=17, url=old.pr_url, head="feat/lin-2", base="main",
-        base_sha="b" * 40, sha="d" * 40,
+        number=17,
+        url=old.pr_url,
+        head="feat/lin-2",
+        base="main",
+        base_sha="b" * 40,
+        sha="d" * 40,
     )
     # This is GitHub/Linear linkage metadata owned by the external integration, not
     # a Foundry authority: one delivery PR is linked to its own issue and a separate
@@ -1001,7 +1329,8 @@ def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_comp
         return landed
 
     codehost = SimpleNamespace(
-        name="github", resolve_repo=lambda: "acme/widgets",
+        name="github",
+        resolve_repo=lambda: "acme/widgets",
         get_pr=lambda *_args: pr,
         merge_pr=merge_pr,
         delete_branch=lambda *_args: None,
@@ -1011,10 +1340,17 @@ def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_comp
     monkeypatch.setattr(issue, "git_head", lambda: pr.sha)
     monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: new_diff)
     monkeypatch.setattr(issue, "repository_identity", lambda: "github.com/acme/widgets")
-    monkeypatch.setattr(write, "ci_gate", lambda *_args, **_kwargs: {
-        "passed": True, "waived": False, "total": 1,
-        "pending": [], "failing": [],
-    })
+    monkeypatch.setattr(
+        write,
+        "ci_gate",
+        lambda *_args, **_kwargs: {
+            "passed": True,
+            "waived": False,
+            "total": 1,
+            "pending": [],
+            "failing": [],
+        },
+    )
     requested = []
 
     class Store:
@@ -1024,8 +1360,11 @@ def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_comp
         def valid_for_merge(self, **coordinates):
             requested.append(coordinates)
             return proof(
-                "LIN-2", "- [ ] acceptance", head=pr.sha,
-                base=pr.base_sha, diff_hash=new_digest,
+                "LIN-2",
+                "- [ ] acceptance",
+                head=pr.sha,
+                base=pr.base_sha,
+                diff_hash=new_digest,
             )
 
     monkeypatch.setattr(issue, "AcceptanceProofStore", Store)
@@ -1041,7 +1380,9 @@ def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_comp
     # Under the safe automation configuration, no external GitHub event changes the
     # prerequisite and Foundry writes lifecycle receipts only for its target issue.
     assert instance.get_issue("LIN-1").state == "ready"
-    assert {comment["issue"]["identifier"] for comment in wire.comments.values()} == {"LIN-2"}
+    assert {comment["issue"]["identifier"] for comment in wire.comments.values()} == {
+        "LIN-2"
+    }
 
 
 def test_linear_lifecycle_readback_revalidates_native_state(tracker):
@@ -1064,17 +1405,23 @@ def test_linear_lifecycle_readback_revalidates_native_state(tracker):
 
 
 def test_linear_lifecycle_accepts_only_receipted_forward_native_evolution(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     done = TransitionContext(
-        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
-        review_digest=review.review_digest, merge_sha="e" * 40,
+        pr_url=review.pr_url,
+        head_sha=review.head_sha,
+        base_sha=review.base_sha,
+        review_digest=review.review_digest,
+        merge_sha="e" * 40,
     )
 
     instance.set_state("LIN-2", "in-progress", project=PROJECT)
@@ -1084,7 +1431,9 @@ def test_linear_lifecycle_accepts_only_receipted_forward_native_evolution(
 
     wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
     write.sync_acceptance(
-        instance, "LIN-2", "- [ ] acceptance",
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
         proof("LIN-2", "- [ ] acceptance"),
     )
     assert instance.get_issue("LIN-2").ac_done == 1
@@ -1103,11 +1452,15 @@ def test_linear_lifecycle_refuses_unrelated_native_drift_even_for_next_review(tr
     instance, wire = tracker
     first = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     second = TransitionContext(
         pr_url=first.pr_url,
-        head_sha="d" * 40, base_sha=first.base_sha, review_digest="e" * 64,
+        head_sha="d" * 40,
+        base_sha=first.base_sha,
+        review_digest="e" * 64,
     )
     instance.set_state("LIN-2", "review", context=first, project=PROJECT)
     wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["blocked"]
@@ -1120,28 +1473,37 @@ def test_linear_lifecycle_refuses_unrelated_native_drift_even_for_next_review(tr
 
 
 def test_linear_native_done_requires_well_formed_foundry_done_receipt(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     done = TransitionContext(
-        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
-        review_digest=review.review_digest, merge_sha="e" * 40,
+        pr_url=review.pr_url,
+        head_sha=review.head_sha,
+        base_sha=review.base_sha,
+        review_digest=review.review_digest,
+        merge_sha="e" * 40,
     )
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     write.sync_acceptance(
-        instance, "LIN-2", "- [ ] acceptance",
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
         proof("LIN-2", "- [ ] acceptance"),
     )
     wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
     instance.set_state("LIN-2", "done", context=done, project=PROJECT)
 
     row = next(
-        item for item in wire.issues["LIN-2"]["comments"]["nodes"]
+        item
+        for item in wire.issues["LIN-2"]["comments"]["nodes"]
         if ":state-done:" in item["body"]
     )
     decoded = instance._decode_lifecycle_comment("LIN-2", row["body"])
@@ -1149,7 +1511,9 @@ def test_linear_native_done_requires_well_formed_foundry_done_receipt(
     malformed = dict(decoded[1])
     malformed.pop("merge_sha")
     _marker, row["body"], row["id"] = instance._lifecycle_marker(
-        "state-done", "LIN-2", malformed,
+        "state-done",
+        "LIN-2",
+        malformed,
     )
 
     with pytest.raises(TrackerConflictError, match="state proof malformed"):
@@ -1160,7 +1524,9 @@ def test_linear_lifecycle_refuses_unmapped_historical_native_state_receipt(track
     instance, wire = tracker
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     row = wire.issues["LIN-2"]["comments"]["nodes"][0]
@@ -1168,7 +1534,9 @@ def test_linear_lifecycle_refuses_unmapped_historical_native_state_receipt(track
     assert decoded is not None
     malformed = {**decoded[1], "native_state_id": "state-unrelated"}
     _marker, row["body"], row["id"] = instance._lifecycle_marker(
-        "state-review", "LIN-2", malformed,
+        "state-review",
+        "LIN-2",
+        malformed,
     )
 
     with pytest.raises(TrackerConflictError, match="native state proof malformed"):
@@ -1195,7 +1563,9 @@ def test_linear_lifecycle_recovers_interruption_after_provider_comment_effect(tr
     assert len(wire.comments) == 1
 
 
-def test_linear_lifecycle_refuses_divergent_issue_readback_after_comment_effect(tracker):
+def test_linear_lifecycle_refuses_divergent_issue_readback_after_comment_effect(
+    tracker,
+):
     instance, wire = tracker
     altered = False
 
@@ -1232,11 +1602,15 @@ def test_linear_lifecycle_concurrent_or_divergent_projection_fails_closed(tracke
         instance.get_issue("LIN-2")
 
 
-def test_linear_acceptance_projection_refuses_incomplete_or_stale_proof_before_write(tracker):
+def test_linear_acceptance_projection_refuses_incomplete_or_stale_proof_before_write(
+    tracker,
+):
     instance, wire = tracker
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     before = len(wire.comments)
@@ -1245,65 +1619,108 @@ def test_linear_acceptance_projection_refuses_incomplete_or_stale_proof_before_w
 
     with pytest.raises(TrackerConflictError, match="malformed or stale"):
         instance.project_acceptance_proof(
-            "LIN-2", "- [ ] acceptance", invalid, checked=1, project=PROJECT,
+            "LIN-2",
+            "- [ ] acceptance",
+            invalid,
+            checked=1,
+            project=PROJECT,
         )
 
     assert len(wire.comments) == before
 
 
-def test_linear_cockpit_projection_requires_complete_go_and_never_changes_lifecycle(tracker):
+def test_linear_cockpit_projection_requires_complete_go_and_never_changes_lifecycle(
+    tracker,
+):
     instance, wire = tracker
     repository = "github.com/acme/widgets"
     issue_id = "LIN-2"
     body = "- [ ] acceptance"
     head, base, diff_hash = "a" * 40, "b" * 40, "c" * 64
     pr = PullRequest(
-        number=17, url="https://github.com/acme/widgets/pull/17",
-        head="feat/lin-2", base="main", base_sha=base, sha=head,
+        number=17,
+        url="https://github.com/acme/widgets/pull/17",
+        head="feat/lin-2",
+        base="main",
+        base_sha=base,
+        sha=head,
     )
     criteria = acceptance_criteria(body)
     test_receipt = evidence_plane.create_test_receipt(
-        repository=repository, issue_id=issue_id, head_sha=head,
-        diff_hash=diff_hash, status="passed", result_digest="f" * 64,
+        repository=repository,
+        issue_id=issue_id,
+        head_sha=head,
+        diff_hash=diff_hash,
+        status="passed",
+        result_digest="f" * 64,
     )
     observed_at = evidence_plane._now_ms()
     checks = evidence_plane._create_ci_receipt(
-        source="check_runs", repository=repository, head_sha=head,
+        source="check_runs",
+        repository=repository,
+        head_sha=head,
         observed_at=observed_at,
         checks=[Check(name="tests", status="completed", conclusion="success")],
     )
     statuses = evidence_plane._create_ci_receipt(
-        source="commit_statuses", repository=repository, head_sha=head,
-        observed_at=observed_at, checks=[],
+        source="commit_statuses",
+        repository=repository,
+        head_sha=head,
+        observed_at=observed_at,
+        checks=[],
     )
     envelope = evidence_plane.evidence_envelope(
-        repository=repository, issue_id=issue_id,
-        ac_digest=acceptance_digest(criteria), pr=pr, diff_hash=diff_hash,
-        review_proof=proof(issue_id, body), test_receipt=test_receipt,
-        check_runs_receipt=checks, commit_statuses_receipt=statuses,
+        repository=repository,
+        issue_id=issue_id,
+        ac_digest=acceptance_digest(criteria),
+        pr=pr,
+        diff_hash=diff_hash,
+        review_proof=proof(issue_id, body),
+        test_receipt=test_receipt,
+        check_runs_receipt=checks,
+        commit_statuses_receipt=statuses,
     )
 
     before = len(wire.comments)
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="cockpit-evidence-complete-go",
+        TrackerCapabilityUnavailableError,
+        match="cockpit-evidence-complete-go",
     ):
         instance.project_cockpit_evidence(
-            issue_id, {}, repository=repository,
-            ac_digest=acceptance_digest(criteria), pr=pr,
-            diff_hash=diff_hash, project=PROJECT,
+            issue_id,
+            {},
+            repository=repository,
+            ac_digest=acceptance_digest(criteria),
+            pr=pr,
+            diff_hash=diff_hash,
+            project=PROJECT,
         )
     assert len(wire.comments) == before
 
-    assert instance.project_cockpit_evidence(
-        issue_id, envelope, repository=repository,
-        ac_digest=acceptance_digest(criteria), pr=pr,
-        diff_hash=diff_hash, project=PROJECT,
-    ) is True
-    assert instance.project_cockpit_evidence(
-        issue_id, envelope, repository=repository,
-        ac_digest=acceptance_digest(criteria), pr=pr,
-        diff_hash=diff_hash, project=PROJECT,
-    ) is False
+    assert (
+        instance.project_cockpit_evidence(
+            issue_id,
+            envelope,
+            repository=repository,
+            ac_digest=acceptance_digest(criteria),
+            pr=pr,
+            diff_hash=diff_hash,
+            project=PROJECT,
+        )
+        is True
+    )
+    assert (
+        instance.project_cockpit_evidence(
+            issue_id,
+            envelope,
+            repository=repository,
+            ac_digest=acceptance_digest(criteria),
+            pr=pr,
+            diff_hash=diff_hash,
+            project=PROJECT,
+        )
+        is False
+    )
 
     projected = instance.get_issue(issue_id)
     assert projected.state == "ready"
@@ -1316,7 +1733,8 @@ def test_malformed_and_provider_error_payloads_are_redacted(tmp_path, monkeypatc
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
     sentinel = "LINEAR_SECRET_MUST_NOT_LEAK"
     malformed = LinearTracker(
-        token=sentinel, transport=lambda *_: {"data": {"issue": "bad"}},
+        token=sentinel,
+        transport=lambda *_: {"data": {"issue": "bad"}},
     )
     malformed._active_project = PROJECT
     with pytest.raises(LinearTrackerError) as error:
@@ -1332,27 +1750,168 @@ def test_malformed_and_provider_error_payloads_are_redacted(tmp_path, monkeypatc
     assert sentinel not in str(error.value)
 
 
-def test_unsupported_capabilities_are_typed_and_never_fall_back(tracker):
+def test_unsupported_issue_replacement_capabilities_remain_typed(tracker):
     instance, wire = tracker
-    with pytest.raises(TrackerCapabilityUnavailableError, match="adr-knowledge-base"):
-        instance.list_adrs(PROJECT)
-    with pytest.raises(TrackerCapabilityUnavailableError, match="provider-native-search-query"):
+    assert instance.list_adrs(PROJECT) == []
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match="provider-native-search-query"
+    ):
         instance.search(PROJECT, "display name lookup")
-    with pytest.raises(BodyUpdateUnavailableError, match="anti-écrasement"):
+    with pytest.raises(TrackerConflictError, match="body changed"):
         instance.update_body(
-            Adr(id="LIN-ADR-0001", title="ADR"), "old", "new", project=PROJECT,
+            Adr(id="LIN-ADR-0001", title="ADR"),
+            "old",
+            "new",
+            project=PROJECT,
         )
-    assert wire.calls == []
+    assert all(
+        "FoundryLinearAdrDocumentCreate" not in document for document, _ in wire.calls
+        )
 
 
 def test_pr_projection_is_typed_unavailable_before_any_provider_write(tracker):
     instance, wire = tracker
     before = len(wire.calls)
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="linear.github-pr-projection",
+        TrackerCapabilityUnavailableError,
+        match="linear.github-pr-projection",
     ):
         instance.update_fields(
-            "LIN-2", {"GitHub PR": "https://github.com/acme/widgets/pull/1"},
+            "LIN-2",
+            {"GitHub PR": "https://github.com/acme/widgets/pull/1"},
             project=PROJECT,
         )
     assert wire.calls[before:] == []
+
+
+def test_linear_adr_create_uses_filtered_absence_read_and_indexes_native_document(
+    tracker,
+):
+    instance, wire = tracker
+
+    created = instance.create_adr(PROJECT, "Use native documents", "decision body")
+
+    assert (created.id, created.status) == ("LIN-ADR-0001", "proposed")
+    assert created.ref in wire.documents
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+    assert any("FoundryLinearAdrDocumentById" in query for query, _ in wire.calls)
+    assert not any("document(id:" in query for query, _ in wire.calls)
+    assert not any(
+        "youtrack" in query.lower() or "git" in query.lower() for query, _ in wire.calls
+    )
+
+
+def test_linear_adr_versions_append_replay_and_refuse_stale_concurrent_writer(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Append only", "first")
+    replay = instance.create_adr(PROJECT, "Append only", "first")
+    assert replay.ref == created.ref
+
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+    accepted = instance.list_adrs(PROJECT)[0]
+    replacement = accepted.body.replace("first", "second")
+    assert instance.update_body(accepted, accepted.body, replacement, project=PROJECT)
+    latest = instance.list_adrs(PROJECT)[0]
+    assert latest.status == "accepted"
+    assert len(wire.documents) == 3
+
+    with pytest.raises(TrackerConflictError, match="snapshot is stale"):
+        instance.set_adr_status(accepted, "deprecated", project=PROJECT)
+
+
+def test_linear_adr_supersession_and_historical_import_preserve_relations_origin(
+    tracker,
+):
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "First", "first")
+    second = instance.create_adr(PROJECT, "Second", "second")
+    instance.set_adr_status(first, "accepted", project=PROJECT)
+    instance.set_adr_status(second, "accepted", project=PROJECT)
+    accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    instance.supersede_adr(accepted[first.id], second.id, project=PROJECT)
+
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0099",
+        title="Historical",
+        body="old",
+        historical_status="deprecated",
+        source_ref="YT-ADR-9",
+        source_created=1,
+        source_updated=2,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        supersedes=(first.id,),
+        issue_refs=("LIN-2",),
+    )
+    models = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert models[first.id].status == "superseded"
+    assert imported.status == "deprecated"
+    raw = wire.documents[imported.ref]
+    metadata, _ = linear_module._parse_adr_document(
+        raw,
+        {
+            "project_id": PROJECT.id,
+            "team_id": PROJECT.extra["team_id"],
+        },
+    )
+    assert metadata["origin"]["kind"] == "migration"
+    assert metadata["relations"] == {
+        "supersedes": [first.id],
+        "superseded_by": None,
+        "issues": ["LIN-2"],
+    }
+
+
+@pytest.mark.parametrize("damage", ["archive", "tamper", "delete_previous"])
+def test_linear_adr_chain_refuses_archived_tampered_or_deleted_history(tracker, damage):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Guard chain", "body")
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+    documents = list(wire.documents.values())
+    if damage == "archive":
+        documents[-1]["archivedAt"] = "2026-09-24T00:00:00Z"
+    elif damage == "tamper":
+        documents[-1]["content"] += "tampered"
+    else:
+        del wire.documents[documents[0]["id"]]
+
+    with pytest.raises((LinearTrackerError, TrackerConflictError)):
+        instance.list_adrs(PROJECT)
+
+
+def test_linear_adr_read_refuses_collection_collision_and_bad_page_info(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Collision", "body")
+    original = wire.__call__
+
+    def collision(document, variables):
+        response = original(document, variables)
+        if "FoundryLinearAdrDocumentById" in document:
+            raw = wire.documents[created.ref]
+            response["data"]["documents"] = connection(
+                [copy.deepcopy(raw), copy.deepcopy(raw)]
+            )
+        return response
+
+    instance._transport = collision
+    with pytest.raises(TrackerConflictError, match="slot collision"):
+        instance._read_adr_document(created.ref)
+
+    def terminal_cursor(document, variables):
+        response = original(document, variables)
+        if "FoundryLinearAdrDocumentById" in document:
+            response["data"]["documents"]["pageInfo"]["endCursor"] = "last-node"
+        return response
+
+    instance._transport = terminal_cursor
+    assert instance._read_adr_document(created.ref)["id"] == created.ref
+
+    def malformed_cursor(document, variables):
+        response = terminal_cursor(document, variables)
+        if "FoundryLinearAdrDocumentById" in document:
+            response["data"]["documents"]["pageInfo"]["endCursor"] = 42
+        return response
+
+    instance._transport = malformed_cursor
+    with pytest.raises(LinearTrackerError):
+        instance._read_adr_document(created.ref)

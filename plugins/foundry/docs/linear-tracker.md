@@ -97,10 +97,16 @@ pre-write read, or post-write readback cannot prevent an external writer from be
 overwritten, so none is presented as an anti-overwrite guarantee.
 
 Unsupported capabilities fail explicitly with typed errors: existing-issue replacement,
-a true ADR knowledge base, atomic
-audited non-code Epic closure, project provisioning, and free-form provider-native search
-queries. `query issue` still returns the issue and projects the absent ADR knowledge base
-as a structured capability status.
+atomic audited non-code Epic closure, project provisioning, and free-form provider-native
+search queries. ADRs are stored as project-scoped Linear Documents, never substituted by
+a Git catalogue or YouTrack read. A document has a deterministic client ID for its
+`(project, ADR, version)` slot, a closed metadata header and body/content digests.
+Reads reject holes, forks, archive/deletion, metadata edits and project mismatch; writes
+append a version rather than updating a document. Native creation starts `proposed`;
+status transitions and supersession are typed and constrained. The distinct historical
+import port records an explicit source snapshot and status without invoking acceptance.
+This repository ships only fake-transport proofs and a production recipe: it performs no
+real ADR write, historical import, or binding cutover.
 
 ## Append-only lifecycle guarantee
 

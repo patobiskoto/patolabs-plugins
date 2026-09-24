@@ -10,6 +10,7 @@ Those writes are therefore unavailable: a local lock or a readback cannot preven
 external writer from being overwritten.  The supported writes are atomic creation and
 additive provider mutations which do not replace existing issue values.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -48,10 +49,26 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _LIFECYCLE_SCHEMA = "foundry-linear-lifecycle.v1"
 _LIFECYCLE_HEADER = "Foundry lifecycle proof (append-only)."
-_LIFECYCLE_OPERATIONS = frozenset({
-    "state-in-progress", "state-review", "state-done", "acceptance",
+_LIFECYCLE_OPERATIONS = frozenset(
+    {
+        "state-in-progress",
+        "state-review",
+        "state-done",
+        "acceptance",
     "cockpit-evidence",
-})
+    }
+)
+_ADR_SCHEMA = "foundry-linear-adr.v1"
+_ADR_HEADER = "<!-- foundry-linear-adr.v1\n"
+_ADR_DOCUMENT_PREFIX = "[Foundry ADR] "
+_ADR_ID = re.compile(r"[A-Z][A-Z0-9_-]*-ADR-[0-9]{4}\Z")
+_ADR_STATUSES = frozenset({"proposed", "accepted", "deprecated", "superseded"})
+_ADR_TRANSITIONS = {
+    "proposed": frozenset({"accepted", "deprecated"}),
+    "accepted": frozenset({"deprecated", "superseded"}),
+    "deprecated": frozenset(),
+    "superseded": frozenset(),
+}
 
 
 _ISSUE_FIELDS = """
@@ -124,6 +141,28 @@ query FoundryLinearCommentsById($id: ID!) {
 }
 """
 
+_ADR_DOCUMENTS_QUERY = """
+query FoundryLinearAdrDocuments($projectId: ID!, $after: String) {
+  documents(filter: { project: { id: { eq: $projectId } } } first: 100 after: $after includeArchived: true) {
+    nodes { id title content archivedAt project { id } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+_ADR_DOCUMENT_BY_ID_QUERY = """
+query FoundryLinearAdrDocumentById($id: ID!) {
+  documents(filter: { id: { eq: $id } }, first: 2, includeArchived: true) {
+    nodes { id title content archivedAt project { id } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+_ADR_DOCUMENT_CREATE = """
+mutation FoundryLinearAdrDocumentCreate($input: DocumentCreateInput!) {
+ documentCreate(input: $input) { success document { id title content project { id } } }
+}
+"""
+
 _TEAM_GIT_AUTOMATION_STATES_QUERY = """
 query FoundryLinearTeamGitAutomationStates($id: String!) {
   team(id: $id) {
@@ -140,6 +179,7 @@ _GIT_AUTOMATION_EVENTS = frozenset({"draft", "merge", "mergeable", "review", "st
 _WORKFLOW_STATE_TYPES = frozenset(
     {"backlog", "triage", "unstarted", "started", "completed", "canceled", "duplicate"}
 )
+
 
 class LinearTrackerError(RuntimeError):
     """Sanitized transport/provider failure with no response or credential echo."""
@@ -166,13 +206,20 @@ class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
             target = urllib.parse.urljoin(req.full_url, newurl)
             source = urllib.parse.urlsplit(req.full_url)
             destination = urllib.parse.urlsplit(target)
-            source_origin = (source.scheme.lower(), (source.hostname or "").lower(), source.port or 443)
+            source_origin = (
+                source.scheme.lower(),
+                (source.hostname or "").lower(),
+                source.port or 443,
+            )
             target_origin = (
-                destination.scheme.lower(), (destination.hostname or "").lower(),
+                destination.scheme.lower(),
+                (destination.hostname or "").lower(),
                 destination.port or 443,
             )
         except (TypeError, ValueError, UnicodeError):
-            raise LinearTrackerError("redirect", code, "cross_origin_redirect") from None
+            raise LinearTrackerError(
+                "redirect", code, "cross_origin_redirect"
+            ) from None
         if source_origin != target_origin:
             raise LinearTrackerError("redirect", code, "cross_origin_redirect")
         return super().redirect_request(req, fp, code, msg, headers, target)
@@ -194,8 +241,10 @@ def _mapping(extra: dict, key: str, *, required: bool = False) -> dict[str, str]
     if raw is None and not required:
         return {}
     if not isinstance(raw, dict) or any(
-        not isinstance(name, str) or not name
-        or not isinstance(identifier, str) or _SAFE_ID.fullmatch(identifier) is None
+        not isinstance(name, str)
+        or not name
+        or not isinstance(identifier, str)
+        or _SAFE_ID.fullmatch(identifier) is None
         for name, identifier in raw.items()
     ):
         raise LinearBindingError(f"{key}_invalid")
@@ -210,7 +259,9 @@ def _epoch_ms(value) -> int | None:
     if not isinstance(value, str):
         raise LinearTrackerError("normalize", None, "invalid_response")
     try:
-        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+        return int(
+            datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000
+        )
     except ValueError:
         raise LinearTrackerError("normalize", None, "invalid_response") from None
 
@@ -246,6 +297,210 @@ def _relation_link(relation: dict, *, inverse: bool) -> Link:
     return Link("blocks", "inward", target["identifier"])
 
 
+def _adr_document_id(project_id: str, adr_id: str, sequence: int) -> str:
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL, f"{_ADR_SCHEMA}:{project_id}:{adr_id}:{sequence}"
+        )
+    )
+
+
+def _adr_document_title(metadata: dict) -> str:
+    return f"{_ADR_DOCUMENT_PREFIX}{metadata['id']} / v{metadata['sequence']:04d} / {metadata['title']}"
+
+
+def _adr_document_content(metadata: dict, body: str) -> str:
+    header = json.dumps(
+        metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return f"{_ADR_HEADER}{header}\n-->\n\n{body}"
+
+
+def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
+    if not isinstance(raw, dict) or raw.get("archivedAt") is not None:
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    content = raw.get("content")
+    if not isinstance(content, str) or not content.startswith(_ADR_HEADER):
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    encoded, separator, body = content[len(_ADR_HEADER) :].partition("\n-->\n\n")
+    if not separator:
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    try:
+        metadata = json.loads(encoded)
+    except (TypeError, ValueError):
+        raise LinearTrackerError("adr.normalize", None, "invalid_response") from None
+    required = {
+        "schema",
+        "project_id",
+        "team_id",
+        "id",
+        "title",
+        "status",
+        "sequence",
+        "previous_id",
+        "previous_sha256",
+        "body_sha256",
+        "origin",
+        "relations",
+    }
+    if not isinstance(metadata, dict) or set(metadata) != required:
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    adr_id, sequence, origin, relations = (
+        metadata["id"],
+        metadata["sequence"],
+        metadata["origin"],
+        metadata["relations"],
+    )
+    if (
+        metadata["schema"] != _ADR_SCHEMA
+        or metadata["project_id"] != binding["project_id"]
+        or metadata["team_id"] != binding["team_id"]
+        or not isinstance(adr_id, str)
+        or _ADR_ID.fullmatch(adr_id) is None
+        or not isinstance(metadata["title"], str)
+        or not metadata["title"].strip()
+        or metadata["status"] not in _ADR_STATUSES
+        or type(sequence) is not int
+        or sequence < 0
+        or (
+            sequence == 0
+            and (
+                metadata["previous_id"] is not None
+                or metadata["previous_sha256"] is not None
+            )
+        )
+        or (
+            sequence > 0
+            and (
+                not isinstance(metadata["previous_id"], str)
+                or not isinstance(metadata["previous_sha256"], str)
+                or _DIGEST.fullmatch(metadata["previous_sha256"]) is None
+            )
+        )
+        or not isinstance(metadata["body_sha256"], str)
+        or _DIGEST.fullmatch(metadata["body_sha256"]) is None
+        or metadata["body_sha256"] != hashlib.sha256(body.encode()).hexdigest()
+        or not isinstance(relations, dict)
+        or set(relations) != {"supersedes", "superseded_by", "issues"}
+        or not isinstance(relations["supersedes"], list)
+        or not isinstance(relations["issues"], list)
+        or any(
+            not isinstance(v, str) or _ADR_ID.fullmatch(v) is None
+            for v in relations["supersedes"]
+        )
+        or any(
+            not isinstance(v, str) or _SAFE_ID.fullmatch(v) is None
+            for v in relations["issues"]
+        )
+        or (
+            relations["superseded_by"] is not None
+            and (
+                not isinstance(relations["superseded_by"], str)
+                or _ADR_ID.fullmatch(relations["superseded_by"]) is None
+            )
+        )
+        or (metadata["status"] == "superseded")
+        != (relations["superseded_by"] is not None)
+        or not isinstance(origin, dict)
+        or origin.get("kind") not in {"native", "migration"}
+    ):
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    if origin["kind"] == "native":
+        valid_origin = set(origin) == {"kind"} and (
+            sequence != 0 or metadata["status"] == "proposed"
+        )
+    else:
+        valid_origin = (
+            set(origin)
+            == {
+                "kind",
+                "source_tracker",
+                "source_ref",
+                "source_created",
+                "source_updated",
+                "source_body_sha256",
+            }
+            and origin["source_tracker"] == "youtrack"
+            and isinstance(origin["source_ref"], str)
+            and bool(origin["source_ref"])
+            and all(
+                v is None or (type(v) is int and v >= 0)
+                for v in (origin["source_created"], origin["source_updated"])
+            )
+            and isinstance(origin["source_body_sha256"], str)
+            and _DIGEST.fullmatch(origin["source_body_sha256"]) is not None
+            and (
+                sequence != 0 or origin["source_body_sha256"] == metadata["body_sha256"]
+            )
+        )
+    if (
+        not valid_origin
+        or raw.get("id") != _adr_document_id(binding["project_id"], adr_id, sequence)
+        or raw.get("title") != _adr_document_title(metadata)
+        or raw.get("project", {}).get("id") != binding["project_id"]
+        or content != _adr_document_content(metadata, body)
+    ):
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    return metadata, body
+
+
+def _adr_chain(documents: list[dict], binding: dict) -> dict:
+    chains = {}
+    for raw in documents:
+        if not (
+            isinstance(raw, dict)
+            and (
+                str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_HEADER)
+            )
+        ):
+            continue
+        metadata, _ = _parse_adr_document(raw, binding)
+        chains.setdefault(metadata["id"], []).append((metadata, raw))
+    for versions in chains.values():
+        versions.sort(key=lambda item: item[0]["sequence"])
+        for sequence, (metadata, raw) in enumerate(versions):
+            if metadata["sequence"] != sequence:
+                raise TrackerConflictError("Linear ADR version chain has a gap or fork")
+            if sequence:
+                previous, previous_raw = versions[sequence - 1]
+                if (
+                    metadata["previous_id"] != previous_raw["id"]
+                    or metadata["previous_sha256"]
+                    != hashlib.sha256(previous_raw["content"].encode()).hexdigest()
+                    or metadata["title"] != previous["title"]
+                    or metadata["origin"] != previous["origin"]
+                    or metadata["relations"]["supersedes"]
+                    != previous["relations"]["supersedes"]
+                    or metadata["relations"]["issues"]
+                    != previous["relations"]["issues"]
+                    or previous["status"] in {"deprecated", "superseded"}
+                    or (
+                        metadata["status"] != previous["status"]
+                        and metadata["status"]
+                        not in _ADR_TRANSITIONS[previous["status"]]
+                    )
+                    or (
+                        metadata["status"] == "superseded"
+                        and (
+                            previous["status"] != "accepted"
+                            or previous["relations"]["superseded_by"] is not None
+                        )
+                    )
+                    or (
+                        metadata["status"] != "superseded"
+                        and metadata["relations"]["superseded_by"]
+                        != previous["relations"]["superseded_by"]
+                    )
+                    or (
+                        metadata["status"] == previous["status"]
+                        and metadata["body_sha256"] == previous["body_sha256"]
+                    )
+                ):
+                    raise TrackerConflictError("Linear ADR version chain diverged")
+    return chains
+
+
 class LinearTracker(Tracker):
     name = "linear"
     requires_mutation_binding = True
@@ -256,7 +511,10 @@ class LinearTracker(Tracker):
     cockpit_evidence_projection_supported = True
 
     def __init__(
-        self, *, token: str | None = None, transport=None,
+        self,
+        *,
+        token: str | None = None,
+        transport=None,
         endpoint: str = LINEAR_GRAPHQL_ENDPOINT,
     ):
         if endpoint != LINEAR_GRAPHQL_ENDPOINT:
@@ -280,7 +538,8 @@ class LinearTracker(Tracker):
         else:
             data = json.dumps(
                 {"query": document, "variables": variables},
-                ensure_ascii=False, separators=(",", ":"),
+                ensure_ascii=False,
+                separators=(",", ":"),
             ).encode("utf-8")
             request = urllib.request.Request(self.endpoint, data=data, method="POST")
             request.add_header("Authorization", self.token)
@@ -291,7 +550,9 @@ class LinearTracker(Tracker):
                 with opener.open(request, timeout=15) as response:
                     raw = response.read(_MAX_RESPONSE_BYTES + 1)
                     if len(raw) > _MAX_RESPONSE_BYTES:
-                        raise LinearTrackerError(operation, response.status, "response_too_large")
+                        raise LinearTrackerError(
+                            operation, response.status, "response_too_large"
+                        )
                     status = response.status
             except LinearTrackerError:
                 raise
@@ -302,7 +563,9 @@ class LinearTracker(Tracker):
             try:
                 envelope = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
-                raise LinearTrackerError(operation, status, "invalid_response") from None
+                raise LinearTrackerError(
+                    operation, status, "invalid_response"
+                ) from None
         if not isinstance(envelope, dict):
             raise LinearTrackerError(operation, None, "invalid_response")
         if envelope.get("errors"):
@@ -315,7 +578,7 @@ class LinearTracker(Tracker):
     @staticmethod
     def _mutation_payload(data: dict, field: str, operation: str) -> dict:
         payload = data.get(field)
-        if (not isinstance(payload, dict) or payload.get("success") is not True):
+        if not isinstance(payload, dict) or payload.get("success") is not True:
             raise LinearTrackerError(operation, None, "mutation_failed")
         return payload
 
@@ -378,13 +641,16 @@ class LinearTracker(Tracker):
         return self.resolve_checkout_project()
 
     def resolve_checkout_project(
-        self, cwd: str | None = None, *, checkout_identity: str | None = None,
+        self,
+        cwd: str | None = None,
+        *,
+        checkout_identity: str | None = None,
     ) -> Project:
         try:
             observed = (
                 registry.checkout_repository_identity(cwd)
-                if checkout_identity is None else
-                registry.canonical_repository_identity(checkout_identity)
+                if checkout_identity is None
+                else registry.canonical_repository_identity(checkout_identity)
             )
         except ValueError:
             raise SystemExit(
@@ -401,13 +667,17 @@ class LinearTracker(Tracker):
     def preflight_issue_operation(self, operation: str) -> None:
         if operation == "openpr" and self.append_only_lifecycle_supported:
             return
-        if (operation == "merge" and self.append_only_lifecycle_supported
-                and self.acceptance_proof_projection_supported):
+        if (
+            operation == "merge"
+            and self.append_only_lifecycle_supported
+            and self.acceptance_proof_projection_supported
+        ):
             return
         if operation not in {"openpr", "merge"}:
             raise TrackerCapabilityUnavailableError(self.name, f"lifecycle:{operation}")
         raise TrackerCapabilityUnavailableError(
-            self.name, "append-only-lifecycle-proof",
+            self.name,
+            "append-only-lifecycle-proof",
         )
 
     def preflight_merge_effect(self) -> None:
@@ -428,23 +698,33 @@ class LinearTracker(Tracker):
         team = data.get("team")
         if not isinstance(team, dict) or team.get("id") != binding["team_id"]:
             raise LinearTrackerError(
-                "team.git-automation-states", None, "invalid_response",
+                "team.git-automation-states",
+                None,
+                "invalid_response",
             )
         states = _connection(
-            team.get("gitAutomationStates"), "team.git-automation-states",
+            team.get("gitAutomationStates"),
+            "team.git-automation-states",
         )
         for automation in states:
             event = automation.get("event")
             state = automation.get("state")
-            if (not isinstance(automation.get("id"), str)
+            if (
+                not isinstance(automation.get("id"), str)
                     or event not in _GIT_AUTOMATION_EVENTS
-                    or (state is not None and (
+                or (
+                    state is not None
+                    and (
                         not isinstance(state, dict)
                         or not isinstance(state.get("id"), str)
                         or state.get("type") not in _WORKFLOW_STATE_TYPES
-                    ))):
+                    )
+                )
+            ):
                 raise LinearTrackerError(
-                    "team.git-automation-states", None, "invalid_response",
+                    "team.git-automation-states",
+                    None,
+                    "invalid_response",
                 )
             if event == "merge" and state is not None and state["type"] == "completed":
                 raise TrackerConflictError(
@@ -453,16 +733,23 @@ class LinearTracker(Tracker):
 
     @staticmethod
     def _lifecycle_marker(
-        operation: str, issue_id: str, payload: dict,
+        operation: str,
+        issue_id: str,
+        payload: dict,
     ) -> tuple[str, str, str]:
         if operation not in _LIFECYCLE_OPERATIONS:
             raise TrackerCapabilityUnavailableError("linear", f"lifecycle:{operation}")
-        canonical = json.dumps({
+        canonical = json.dumps(
+            {
             "schema": _LIFECYCLE_SCHEMA,
             "operation": operation,
             "issue": issue_id,
             "payload": payload,
-        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
         digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
         marker = f"{_LIFECYCLE_SCHEMA}:{operation}:{digest}"
         slot = {
@@ -475,7 +762,10 @@ class LinearTracker(Tracker):
         elif operation == "acceptance":
             slot["generation"] = payload.get("review_generation")
         slot_canonical = json.dumps(
-            slot, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            slot,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
         )
         slot_digest = hashlib.sha256(slot_canonical.encode("ascii")).hexdigest()
         comment_id = str(uuid.UUID(slot_digest[:32], version=4))
@@ -484,28 +774,37 @@ class LinearTracker(Tracker):
 
     @classmethod
     def _decode_lifecycle_comment(
-        cls, issue_id: str, body: object,
+        cls,
+        issue_id: str,
+        body: object,
     ) -> tuple[str, dict, str, str] | None:
         if not isinstance(body, str) or not body.startswith(_LIFECYCLE_HEADER):
             return None
         lines = body.splitlines()
-        if len(lines) != 3 or not lines[1].startswith("marker: ") \
-                or not lines[2].startswith("coordinates: "):
+        if (
+            len(lines) != 3
+            or not lines[1].startswith("marker: ")
+            or not lines[2].startswith("coordinates: ")
+        ):
             raise TrackerConflictError("Linear lifecycle comment malformed")
         marker = lines[1].removeprefix("marker: ")
         try:
             value = json.loads(lines[2].removeprefix("coordinates: "))
         except (ValueError, TypeError, RecursionError):
             raise TrackerConflictError("Linear lifecycle comment malformed") from None
-        if (not isinstance(value, dict)
+        if (
+            not isinstance(value, dict)
                 or set(value) != {"schema", "operation", "issue", "payload"}
                 or value.get("schema") != _LIFECYCLE_SCHEMA
                 or value.get("issue") != issue_id
                 or value.get("operation") not in _LIFECYCLE_OPERATIONS
-                or not isinstance(value.get("payload"), dict)):
+            or not isinstance(value.get("payload"), dict)
+        ):
             raise TrackerConflictError("Linear lifecycle comment malformed")
         expected_marker, expected_body, expected_id = cls._lifecycle_marker(
-            value["operation"], issue_id, value["payload"],
+            value["operation"],
+            issue_id,
+            value["payload"],
         )
         if marker != expected_marker or body != expected_body:
             raise TrackerConflictError("Linear lifecycle comment integrity invalid")
@@ -513,30 +812,48 @@ class LinearTracker(Tracker):
 
     @staticmethod
     def _validate_acceptance_projection(
-        issue_id: str, body: str, payload: dict, review: dict | None,
+        issue_id: str,
+        body: str,
+        payload: dict,
+        review: dict | None,
     ) -> None:
         if set(payload) != {
-            "native_state_id", "body_digest", "checked", "proof", "review_generation",
+            "native_state_id",
+            "body_digest",
+            "checked",
+            "proof",
+            "review_generation",
         }:
             raise TrackerConflictError("Linear acceptance proof malformed")
         proof = payload.get("proof")
-        if (not isinstance(proof, dict)
-                or set(proof) != {
-                    "schema_version", "proof_id", "issue", "review",
-                    "coordinates", "quality",
-                }):
+        if not isinstance(proof, dict) or set(proof) != {
+            "schema_version",
+            "proof_id",
+            "issue",
+            "review",
+            "coordinates",
+            "quality",
+        }:
             raise TrackerConflictError("Linear acceptance proof malformed")
         canonical_proof = dict(proof)
         proof_id = canonical_proof.pop("proof_id", None)
-        calculated = hashlib.sha256(json.dumps(
-            canonical_proof, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-        ).encode("ascii")).hexdigest()
+        calculated = hashlib.sha256(
+            json.dumps(
+                canonical_proof,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("ascii")
+        ).hexdigest()
         issue = proof.get("issue")
         coordinates = proof.get("coordinates")
         criteria = issue.get("criteria") if isinstance(issue, dict) else None
         from foundry.routing import acceptance_criteria, acceptance_digest
+
         expected = acceptance_criteria(body)
-        if (proof.get("schema_version") != 1 or proof_id != calculated
+        if (
+            proof.get("schema_version") != 1
+            or proof_id != calculated
                 or proof.get("quality") != "mergeable"
                 or payload.get("body_digest") != hashlib.sha256(body.encode()).hexdigest()
                 or not isinstance(issue, dict)
@@ -553,7 +870,8 @@ class LinearTracker(Tracker):
                 or coordinates.get("head") != review.get("head_sha")
                 or coordinates.get("base") != review.get("base_sha")
                 or coordinates.get("diff_hash") != review.get("review_digest")
-                or payload.get("review_generation") != review.get("generation")):
+            or payload.get("review_generation") != review.get("generation")
+        ):
             raise TrackerConflictError("Linear acceptance proof malformed or stale")
 
     @staticmethod
@@ -561,24 +879,35 @@ class LinearTracker(Tracker):
         if previous == current:
             return True
         rank = {
-            "backlog": 0, "ready": 0, "in-progress": 1,
-            "review": 2, "done": 3,
+            "backlog": 0,
+            "ready": 0,
+            "in-progress": 1,
+            "review": 2,
+            "done": 3,
         }
         return previous in rank and current in rank and rank[current] >= rank[previous]
 
     def _validate_native_state_history(
-        self, rows: dict[str, list[tuple[dict, str]]], ordered: list[dict],
-        native_state_id: str, *, pending_operation: str | None,
-        acceptance_complete: bool, done: dict | None,
+        self,
+        rows: dict[str, list[tuple[dict, str]]],
+        ordered: list[dict],
+        native_state_id: str,
+        *,
+        pending_operation: str | None,
+        acceptance_complete: bool,
+        done: dict | None,
     ) -> None:
         state_ids = self._binding(self._project())["state_ids"]
         state_by_id = {identifier: name for name, identifier in state_ids.items()}
         receipt_ids = [
             payload.get("native_state_id")
-            for operation_rows in rows.values() for payload, _body in operation_rows
+            for operation_rows in rows.values()
+            for payload, _body in operation_rows
         ]
-        if any(not isinstance(identifier, str) or identifier not in state_by_id
-               for identifier in receipt_ids):
+        if any(
+            not isinstance(identifier, str) or identifier not in state_by_id
+            for identifier in receipt_ids
+        ):
             raise TrackerConflictError("Linear lifecycle native state proof malformed")
 
         ordered_ids = [payload["native_state_id"] for payload in ordered]
@@ -594,8 +923,10 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear lifecycle native state proof malformed")
 
         names = [state_by_id[identifier] for identifier in ordered_ids]
-        if any(not self._native_state_can_advance(previous, current)
-               for previous, current in zip(names, names[1:])):
+        if any(
+            not self._native_state_can_advance(previous, current)
+            for previous, current in zip(names, names[1:])
+        ):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
 
         current_name = state_by_id.get(native_state_id)
@@ -617,13 +948,19 @@ class LinearTracker(Tracker):
         )
         if not (current_is_durable or pending_forward or pending_done):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
-        if current_name == "done" and not pending_done and (
-            done is None or done.get("native_state_id") != native_state_id
+        if (
+            current_name == "done"
+            and not pending_done
+            and (done is None or done.get("native_state_id") != native_state_id)
         ):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
 
     def _lifecycle_projection(
-        self, issue_id: str, raw: dict, *, pending_operation: str | None = None,
+        self,
+        issue_id: str,
+        raw: dict,
+        *,
+        pending_operation: str | None = None,
     ) -> dict:
         comments = _connection(raw.get("comments"), "lifecycle.comments")
         rows: dict[str, list[tuple[dict, str]]] = {}
@@ -636,17 +973,25 @@ class LinearTracker(Tracker):
                 raise TrackerConflictError("Linear lifecycle comment id invalid")
             rows.setdefault(operation, []).append((payload, body))
         native_state = raw.get("state")
-        native_state_id = native_state.get("id") if isinstance(native_state, dict) else None
+        native_state_id = (
+            native_state.get("id") if isinstance(native_state, dict) else None
+        )
         if not isinstance(native_state_id, str):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
         if not rows:
             done_state_id = self._binding(self._project())["state_ids"]["done"]
             if native_state_id == done_state_id:
-                raise TrackerConflictError("Linear native state changed outside lifecycle")
+                raise TrackerConflictError(
+                    "Linear native state changed outside lifecycle"
+                )
             return {
-                "state": None, "pr_url": None, "acceptance_complete": False,
-                "in_progress": None, "acceptance_by_generation": {},
-                "review_generation": 0, "latest_review": None,
+                "state": None,
+                "pr_url": None,
+                "acceptance_complete": False,
+                "in_progress": None,
+                "acceptance_by_generation": {},
+                "review_generation": 0,
+                "latest_review": None,
                 "latest_review_body_digest": None,
             }
 
@@ -670,11 +1015,13 @@ class LinearTracker(Tracker):
             if set(payload) != keys or payload.get("state") != name:
                 raise TrackerConflictError("Linear lifecycle state proof malformed")
             if name == "done":
-                if (not isinstance(payload.get("pr_url"), str)
+                if (
+                    not isinstance(payload.get("pr_url"), str)
                         or not payload["pr_url"].startswith("https://github.com/")
                         or _SHA.fullmatch(str(payload.get("head_sha"))) is None
                         or _SHA.fullmatch(str(payload.get("base_sha"))) is None
-                        or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None):
+                    or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None
+                ):
                     raise TrackerConflictError("Linear lifecycle state proof malformed")
             if merged and _SHA.fullmatch(str(payload.get("merge_sha"))) is None:
                 raise TrackerConflictError("Linear lifecycle state proof malformed")
@@ -684,17 +1031,26 @@ class LinearTracker(Tracker):
         reviews = []
         for payload, body in rows.get("state-review", []):
             expected_keys = {
-                "state", "native_state_id", "pr_url", "head_sha", "base_sha",
-                "review_digest", "generation", "previous_projection_digest",
+                "state",
+                "native_state_id",
+                "pr_url",
+                "head_sha",
+                "base_sha",
+                "review_digest",
+                "generation",
+                "previous_projection_digest",
             }
-            if (set(payload) != expected_keys or payload.get("state") != "review"
+            if (
+                set(payload) != expected_keys
+                or payload.get("state") != "review"
                     or type(payload.get("generation")) is not int
                     or payload["generation"] < 1
                     or not isinstance(payload.get("pr_url"), str)
                     or not payload["pr_url"].startswith("https://github.com/")
                     or _SHA.fullmatch(str(payload.get("head_sha"))) is None
                     or _SHA.fullmatch(str(payload.get("base_sha"))) is None
-                    or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None):
+                or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None
+            ):
                 raise TrackerConflictError("Linear lifecycle state proof malformed")
             reviews.append((payload, body))
         reviews.sort(key=lambda item: item[0]["generation"])
@@ -702,21 +1058,36 @@ class LinearTracker(Tracker):
         for expected_generation, (payload, body) in enumerate(reviews, start=1):
             previous_digest = (
                 hashlib.sha256(previous_body.encode()).hexdigest()
-                if previous_body is not None else None
+                if previous_body is not None
+                else None
             )
-            if (payload["generation"] != expected_generation
-                    or payload.get("previous_projection_digest") != previous_digest):
+            if (
+                payload["generation"] != expected_generation
+                or payload.get("previous_projection_digest") != previous_digest
+            ):
                 raise TrackerConflictError("Linear lifecycle review chain invalid")
             previous_body = body
         review = reviews[-1][0] if reviews else None
         done = state_payload("done", merged=True)
         if done is not None:
-            if review is None or any(
+            if (
+                review is None
+                or any(
                 done[key] != review[key]
                 for key in ("pr_url", "head_sha", "base_sha", "review_digest")
-            ) or done.get("review_generation") != review.get("generation"):
+                )
+                or done.get("review_generation") != review.get("generation")
+            ):
                 raise TrackerConflictError("Linear done proof lacks matching review")
-        projected_state = "done" if done else "review" if review else "in-progress" if in_progress else None
+        projected_state = (
+            "done"
+            if done
+            else "review"
+            if review
+            else "in-progress"
+            if in_progress
+            else None
+        )
 
         acceptance_complete = False
         acceptance_by_generation = {}
@@ -745,9 +1116,12 @@ class LinearTracker(Tracker):
         if done is not None:
             ordered.append(done)
         self._validate_native_state_history(
-            rows, ordered, native_state_id,
+            rows,
+            ordered,
+            native_state_id,
             pending_operation=pending_operation,
-            acceptance_complete=acceptance_complete, done=done,
+            acceptance_complete=acceptance_complete,
+            done=done,
         )
         return {
             "state": projected_state,
@@ -763,13 +1137,19 @@ class LinearTracker(Tracker):
         }
 
     def _project_lifecycle(
-        self, issue_id: str, operation: str, payload: dict, project: Project,
+        self,
+        issue_id: str,
+        operation: str,
+        payload: dict,
+        project: Project,
     ) -> bool:
         raw = self._read_raw(issue_id)
         binding = self._activate(project)
         self._assert_issue_project(raw, binding)
         projection = self._lifecycle_projection(
-            issue_id, raw, pending_operation=operation,
+            issue_id,
+            raw,
+            pending_operation=operation,
         )
         state = raw.get("state")
         native_state_id = state.get("id") if isinstance(state, dict) else None
@@ -777,22 +1157,33 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
         bounded_payload = {**payload, "native_state_id": native_state_id}
         if operation == "state-in-progress" and projection["in_progress"] is not None:
-            bounded_payload["native_state_id"] = projection["in_progress"]["native_state_id"]
+            bounded_payload["native_state_id"] = projection["in_progress"][
+                "native_state_id"
+            ]
         if operation == "state-review":
             latest = projection["latest_review"]
             coordinate_keys = {"pr_url", "head_sha", "base_sha", "review_digest"}
-            if latest is not None and all(latest[key] == payload.get(key)
-                                          for key in coordinate_keys):
-                bounded_payload.update({
+            if latest is not None and all(
+                latest[key] == payload.get(key) for key in coordinate_keys
+            ):
+                bounded_payload.update(
+                    {
                     "native_state_id": latest["native_state_id"],
                     "generation": latest["generation"],
-                    "previous_projection_digest": latest["previous_projection_digest"],
-                })
+                        "previous_projection_digest": latest[
+                            "previous_projection_digest"
+                        ],
+                    }
+                )
             else:
-                bounded_payload.update({
+                bounded_payload.update(
+                    {
                     "generation": projection["review_generation"] + 1,
-                    "previous_projection_digest": projection["latest_review_body_digest"],
-                })
+                        "previous_projection_digest": projection[
+                            "latest_review_body_digest"
+                        ],
+                    }
+                )
         elif operation == "state-done":
             if projection["review_generation"] < 1:
                 raise TrackerConflictError("Linear done proof lacks matching review")
@@ -804,7 +1195,9 @@ class LinearTracker(Tracker):
             if previous is not None:
                 bounded_payload["native_state_id"] = previous["native_state_id"]
         _marker, body, comment_id = self._lifecycle_marker(
-            operation, issue_id, bounded_payload,
+            operation,
+            issue_id,
+            bounded_payload,
         )
         existing = []
         for item in _connection(raw.get("comments"), "lifecycle.comments"):
@@ -816,8 +1209,11 @@ class LinearTracker(Tracker):
         exact = [item for item in existing if item == (comment_id, body)]
         if exact == [(comment_id, body)]:
             prior = self._read_comment(comment_id, "lifecycle.comment.read")
-            if (not isinstance(prior, dict) or prior.get("body") != body
-                    or (prior.get("issue") or {}).get("id") != raw["id"]):
+            if (
+                not isinstance(prior, dict)
+                or prior.get("body") != body
+                or (prior.get("issue") or {}).get("id") != raw["id"]
+            ):
                 raise TrackerConflictError("Linear lifecycle replay readback divergent")
             fresh = self._read_raw(issue_id)
             self._lifecycle_projection(issue_id, fresh)
@@ -832,15 +1228,22 @@ class LinearTracker(Tracker):
                 decoded = self._decode_lifecycle_comment(issue_id, item_body)
                 prior_payload = decoded[1] if decoded is not None else {}
                 prior_generation = prior_payload.get(
-                    "generation" if operation == "state-review" else "review_generation",
+                    "generation"
+                    if operation == "state-review"
+                    else "review_generation",
                 )
                 if prior_generation == generation:
-                    raise TrackerConflictError("Linear lifecycle divergent before comment")
+                    raise TrackerConflictError(
+                        "Linear lifecycle divergent before comment"
+                    )
 
         prior = self._read_comment(comment_id, "lifecycle.comment.read")
         if prior is not None:
-            if (not isinstance(prior, dict) or prior.get("body") != body
-                    or (prior.get("issue") or {}).get("id") != raw["id"]):
+            if (
+                not isinstance(prior, dict)
+                or prior.get("body") != body
+                or (prior.get("issue") or {}).get("id") != raw["id"]
+            ):
                 raise TrackerConflictError("Linear lifecycle comment id collision")
             created_now = False
         else:
@@ -852,22 +1255,33 @@ class LinearTracker(Tracker):
                     "lifecycle.comment.create",
                 )
                 created = self._mutation_payload(
-                    data, "commentCreate", "lifecycle.comment.create",
+                    data,
+                    "commentCreate",
+                    "lifecycle.comment.create",
                 ).get("comment")
-                if (not isinstance(created, dict) or created.get("id") != comment_id
+                if (
+                    not isinstance(created, dict)
+                    or created.get("id") != comment_id
                         or created.get("body") != body
-                        or (created.get("issue") or {}).get("id") != raw["id"]):
+                    or (created.get("issue") or {}).get("id") != raw["id"]
+                ):
                     raise LinearTrackerError(
-                        "lifecycle.comment.create", None, "invalid_response",
+                        "lifecycle.comment.create",
+                        None,
+                        "invalid_response",
                     )
             except LinearTrackerError:
                 # The provider may have committed the deterministic create before the
                 # response was interrupted. Recovery is allowed only through its exact ID.
                 recovered = self._read_comment(
-                    comment_id, "lifecycle.comment.recover",
+                    comment_id,
+                    "lifecycle.comment.recover",
                 )
-                if (not isinstance(recovered, dict) or recovered.get("body") != body
-                        or (recovered.get("issue") or {}).get("id") != raw["id"]):
+                if (
+                    not isinstance(recovered, dict)
+                    or recovered.get("body") != body
+                    or (recovered.get("issue") or {}).get("id") != raw["id"]
+                ):
                     raise
         fresh = self._read_raw(issue_id)
         observed = []
@@ -889,16 +1303,20 @@ class LinearTracker(Tracker):
             self._assert_issue_project(raw, binding)
 
     def validate_adr_binding(self, project: Project, *adr_ids: str) -> None:
-        self._activate(project)
-        raise TrackerCapabilityUnavailableError(self.name, "adr-knowledge-base")
+        known = {adr.id for adr in self.list_adrs(project)}
+        if any(adr_id not in known for adr_id in adr_ids):
+            raise LinearBindingError("adr_outside_binding")
 
     @staticmethod
     def _assert_issue_project(raw: dict, binding: dict) -> None:
         team = raw.get("team") if isinstance(raw, dict) else None
         project = raw.get("project") if isinstance(raw, dict) else None
-        if (not isinstance(team, dict) or team.get("id") != binding["team_id"]
+        if (
+            not isinstance(team, dict)
+            or team.get("id") != binding["team_id"]
                 or not isinstance(project, dict)
-                or project.get("id") != binding["project_id"]):
+            or project.get("id") != binding["project_id"]
+        ):
             raise LinearBindingError("issue_outside_binding")
 
     # ---- reads / normalization ------------------------------------
@@ -916,7 +1334,8 @@ class LinearTracker(Tracker):
     @staticmethod
     def _ac_counts(body: str) -> tuple[int, int]:
         marks = [
-            match.group("mark") for line in body.splitlines()
+            match.group("mark")
+            for line in body.splitlines()
             if (match := _AC_CHECKBOX.match(line)) is not None
         ]
         done = sum(mark in {"x", "X"} for mark in marks)
@@ -932,13 +1351,19 @@ class LinearTracker(Tracker):
         state = raw.get("state")
         if not isinstance(state, dict) or not isinstance(state.get("id"), str):
             raise LinearTrackerError("normalize", None, "invalid_response")
-        state_by_id = {identifier: name for name, identifier in binding["state_ids"].items()}
+        state_by_id = {
+            identifier: name for name, identifier in binding["state_ids"].items()
+        }
         if state["id"] not in state_by_id:
             raise LinearBindingError("state_id_unmapped")
 
         labels_raw = _connection(raw.get("labels"), "normalize.labels")
-        type_by_id = {identifier: name for name, identifier in binding["type_label_ids"].items()}
-        label_by_id = {identifier: name for name, identifier in binding["label_ids"].items()}
+        type_by_id = {
+            identifier: name for name, identifier in binding["type_label_ids"].items()
+        }
+        label_by_id = {
+            identifier: name for name, identifier in binding["label_ids"].items()
+        }
         label_ids = []
         for node in labels_raw:
             identifier = node.get("id")
@@ -949,15 +1374,25 @@ class LinearTracker(Tracker):
             label_ids.append(identifier)
         if len(label_ids) != len(set(label_ids)):
             raise LinearTrackerError("normalize.labels", None, "invalid_response")
-        types = [type_by_id[identifier] for identifier in label_ids if identifier in type_by_id]
+        types = [
+            type_by_id[identifier]
+            for identifier in label_ids
+            if identifier in type_by_id
+        ]
         if len(types) > 1:
             raise LinearBindingError("type_labels_ambiguous")
-        labels = [label_by_id[identifier] for identifier in label_ids if identifier in label_by_id]
+        labels = [
+            label_by_id[identifier]
+            for identifier in label_ids
+            if identifier in label_by_id
+        ]
 
         links: list[Link] = []
         parent = raw.get("parent")
         if parent is not None:
-            if not isinstance(parent, dict) or not isinstance(parent.get("identifier"), str):
+            if not isinstance(parent, dict) or not isinstance(
+                parent.get("identifier"), str
+            ):
                 raise LinearTrackerError("normalize", None, "invalid_response")
             links.append(Link("subtask-of", "inward", parent["identifier"]))
         for child in _connection(raw.get("children"), "normalize.children"):
@@ -966,16 +1401,21 @@ class LinearTracker(Tracker):
             links.append(Link("parent-of", "outward", child["identifier"]))
         for relation in _connection(raw.get("relations"), "normalize.relations"):
             links.append(_relation_link(relation, inverse=False))
-        for relation in _connection(raw.get("inverseRelations"), "normalize.inverse-relations"):
+        for relation in _connection(
+            raw.get("inverseRelations"), "normalize.inverse-relations"
+        ):
             links.append(_relation_link(relation, inverse=True))
 
         milestone = None
         milestone_raw = raw.get("projectMilestone")
         if milestone_raw is not None:
-            if not isinstance(milestone_raw, dict) or not isinstance(milestone_raw.get("id"), str):
+            if not isinstance(milestone_raw, dict) or not isinstance(
+                milestone_raw.get("id"), str
+            ):
                 raise LinearTrackerError("normalize", None, "invalid_response")
             milestone_by_id = {
-                identifier: name for name, identifier in binding["milestone_ids"].items()
+                identifier: name
+                for name, identifier in binding["milestone_ids"].items()
             }
             if milestone_raw["id"] not in milestone_by_id:
                 raise LinearBindingError("milestone_id_unmapped")
@@ -999,20 +1439,36 @@ class LinearTracker(Tracker):
             for comment in _connection(raw["comments"], "normalize.comments")[-10:]:
                 if not isinstance(comment.get("body"), str):
                     raise LinearTrackerError("normalize", None, "invalid_response")
-                comments.append({"text": comment["body"], "created": _epoch_ms(comment.get("createdAt"))})
+                comments.append(
+                    {
+                        "text": comment["body"],
+                        "created": _epoch_ms(comment.get("createdAt")),
+                    }
+                )
         return Issue(
-            id=raw["identifier"], title=raw["title"],
+            id=raw["identifier"],
+            title=raw["title"],
             state=lifecycle["state"] or state_by_id[state["id"]],
-            priority=_LINEAR_TO_PRIORITY[priority], estimate=raw.get("estimate"),
-            milestone=milestone, type=types[0] if types else None, labels=labels,
-            ac_done=done, ac_total=total, links=links, pr_url=lifecycle["pr_url"],
-            body=body, comments=comments, created=_epoch_ms(raw.get("createdAt")),
+            priority=_LINEAR_TO_PRIORITY[priority],
+            estimate=raw.get("estimate"),
+            milestone=milestone,
+            type=types[0] if types else None,
+            labels=labels,
+            ac_done=done,
+            ac_total=total,
+            links=links,
+            pr_url=lifecycle["pr_url"],
+            body=body,
+            comments=comments,
+            created=_epoch_ms(raw.get("createdAt")),
             updated=_epoch_ms(raw.get("updatedAt")),
         )
 
     def search(self, project: Project, query: str = "") -> list[Issue]:
         if query:
-            raise TrackerCapabilityUnavailableError(self.name, "provider-native-search-query")
+            raise TrackerCapabilityUnavailableError(
+                self.name, "provider-native-search-query"
+            )
         binding = self._activate(project)
         out: list[Issue] = []
         cursor = None
@@ -1020,11 +1476,17 @@ class LinearTracker(Tracker):
         for _ in range(_MAX_PAGES):
             data = self._graphql(
                 _ISSUES_QUERY,
-                {"teamId": binding["team_id"], "projectId": binding["project_id"], "after": cursor},
+                {
+                    "teamId": binding["team_id"],
+                    "projectId": binding["project_id"],
+                    "after": cursor,
+                },
                 "issue.search",
             )
             connection = data.get("issues")
-            if not isinstance(connection, dict) or not isinstance(connection.get("nodes"), list):
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list
+            ):
                 raise LinearTrackerError("issue.search", None, "invalid_response")
             page = connection.get("pageInfo")
             if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
@@ -1056,7 +1518,9 @@ class LinearTracker(Tracker):
         if unknown:
             raise TrackerCapabilityUnavailableError("linear", f"field:{unknown[0]}")
 
-    def _desired_update(self, raw: dict, project: Project, fields: dict) -> tuple[dict, dict]:
+    def _desired_update(
+        self, raw: dict, project: Project, fields: dict
+    ) -> tuple[dict, dict]:
         self._field_names(fields)
         binding = self._binding(project)
         values: dict = {}
@@ -1076,7 +1540,9 @@ class LinearTracker(Tracker):
         if "Estimate" in fields:
             estimate = fields["Estimate"]
             if estimate is not None and (type(estimate) is not int or estimate < 0):
-                raise ValueError("Linear estimate must be a non-negative integer or null")
+                raise ValueError(
+                    "Linear estimate must be a non-negative integer or null"
+                )
             values["estimate"] = estimate
             expected["estimate"] = estimate
         if "Milestone" in fields:
@@ -1091,17 +1557,23 @@ class LinearTracker(Tracker):
             expected["milestone_id"] = milestone_id
 
         labels = _connection(raw.get("labels"), "issue.update.labels")
-        current_ids = {node.get("id") for node in labels if isinstance(node.get("id"), str)}
+        current_ids = {
+            node.get("id") for node in labels if isinstance(node.get("id"), str)
+        }
         type_ids = set(binding["type_label_ids"].values())
         desired_ids = set(current_ids)
         if "Labels" in fields:
             requested = fields["Labels"]
-            if not isinstance(requested, list) or any(not isinstance(item, str) for item in requested):
+            if not isinstance(requested, list) or any(
+                not isinstance(item, str) for item in requested
+            ):
                 raise ValueError("Linear Labels must be a list of configured names")
             missing = [name for name in requested if name not in binding["label_ids"]]
             if missing:
                 raise LinearBindingError("label_unmapped")
-            desired_ids = {binding["label_ids"][name] for name in requested} | (current_ids & type_ids)
+            desired_ids = {binding["label_ids"][name] for name in requested} | (
+                current_ids & type_ids
+            )
         if "Type" in fields:
             issue_type = fields["Type"]
             if issue_type is None:
@@ -1120,7 +1592,10 @@ class LinearTracker(Tracker):
 
     @staticmethod
     def _raw_matches(raw: dict, expected: dict) -> bool:
-        if "state_id" in expected and (raw.get("state") or {}).get("id") != expected["state_id"]:
+        if (
+            "state_id" in expected
+            and (raw.get("state") or {}).get("id") != expected["state_id"]
+        ):
             return False
         if "priority" in expected and raw.get("priority") != expected["priority"]:
             return False
@@ -1132,15 +1607,20 @@ class LinearTracker(Tracker):
                 return False
         if "label_ids" in expected:
             actual_ids = {
-                node.get("id") for node in _connection(raw.get("labels"), "issue.readback.labels")
+                node.get("id")
+                for node in _connection(raw.get("labels"), "issue.readback.labels")
             }
             if actual_ids != expected["label_ids"]:
                 return False
         return True
 
     def create_issue(
-        self, project: Project, title: str, body: str,
-        fields: dict | None = None, parent: str | None = None,
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        fields: dict | None = None,
+        parent: str | None = None,
     ) -> Issue:
         binding = self._activate(project)
         if not isinstance(title, str) or not title or not isinstance(body, str):
@@ -1149,12 +1629,20 @@ class LinearTracker(Tracker):
         if "GitHub PR" in fields:
             raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
         skeleton = {
-            "labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+            "labels": {
+                "nodes": [],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
         }
-        values, expected = self._desired_update(skeleton, project, fields) if fields else ({}, {})
+        }
+        values, expected = (
+            self._desired_update(skeleton, project, fields) if fields else ({}, {})
+        )
         input_value = {
-            "id": str(uuid.uuid4()), "teamId": binding["team_id"],
-            "projectId": binding["project_id"], "title": title, "description": body,
+            "id": str(uuid.uuid4()),
+            "teamId": binding["team_id"],
+            "projectId": binding["project_id"],
+            "title": title,
+            "description": body,
             **values,
         }
         if parent:
@@ -1164,18 +1652,27 @@ class LinearTracker(Tracker):
         data = self._graphql(_ISSUE_CREATE, {"input": input_value}, "issue.create")
         payload = self._mutation_payload(data, "issueCreate", "issue.create")
         created = payload.get("issue")
-        if not isinstance(created, dict) or not isinstance(created.get("identifier"), str):
+        if not isinstance(created, dict) or not isinstance(
+            created.get("identifier"), str
+        ):
             raise LinearTrackerError("issue.create", None, "invalid_response")
         raw = self._read_raw(created["identifier"])
         self._assert_issue_project(raw, binding)
-        if raw.get("title") != title or (raw.get("description") or "") != body or not self._raw_matches(raw, expected):
+        if (
+            raw.get("title") != title
+            or (raw.get("description") or "") != body
+            or not self._raw_matches(raw, expected)
+        ):
             raise TrackerConflictError("Linear issue divergent after create; no retry")
         if parent and (raw.get("parent") or {}).get("id") != input_value["parentId"]:
             raise TrackerConflictError("Linear parent divergent after create; no retry")
         return self._to_issue(raw, project)
 
     def update_fields(
-        self, issue_id: str, fields: dict, project: Project | None = None,
+        self,
+        issue_id: str,
+        fields: dict,
+        project: Project | None = None,
     ) -> Issue:
         if project is None:
             raise LinearBindingError("mutation_project_required")
@@ -1184,25 +1681,42 @@ class LinearTracker(Tracker):
             raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
         self._field_names(fields)
         raise TrackerCapabilityUnavailableError(
-            self.name, "existing-issue-field-replacement",
+            self.name,
+            "existing-issue-field-replacement",
         )
 
     def set_state(
-        self, issue_id: str, state: str, context=None,
+        self,
+        issue_id: str,
+        state: str,
+        context=None,
         project: Project | None = None,
     ) -> None:
         if project is None:
             raise LinearBindingError("mutation_project_required")
         if state not in {"in-progress", "review", "done"}:
-            raise TrackerCapabilityUnavailableError(self.name, "existing-issue-field-replacement")
+            raise TrackerCapabilityUnavailableError(
+                self.name, "existing-issue-field-replacement"
+            )
         payload = {"state": state}
         if state in {"review", "done"}:
-            if not isinstance(context, TransitionContext) or not all([
-                context.pr_url, context.head_sha, context.base_sha, context.review_digest,
-            ]):
+            if not isinstance(context, TransitionContext) or not all(
+                [
+                    context.pr_url,
+                    context.head_sha,
+                    context.base_sha,
+                    context.review_digest,
+                ]
+            ):
                 raise TrackerCapabilityUnavailableError(self.name, "lifecycle-proof")
-            payload.update({"pr_url": context.pr_url, "head_sha": context.head_sha,
-                            "base_sha": context.base_sha, "review_digest": context.review_digest})
+            payload.update(
+                {
+                    "pr_url": context.pr_url,
+                    "head_sha": context.head_sha,
+                    "base_sha": context.base_sha,
+                    "review_digest": context.review_digest,
+                }
+            )
             if state == "done":
                 if not context.merge_sha:
                     raise TrackerCapabilityUnavailableError(self.name, "merge-proof")
@@ -1210,24 +1724,38 @@ class LinearTracker(Tracker):
         self._project_lifecycle(issue_id, "state-" + state, payload, project)
 
     def project_acceptance_proof(
-        self, issue_id: str, expected_body: str, proof: dict, *, checked: int,
+        self,
+        issue_id: str,
+        expected_body: str,
+        proof: dict,
+        *,
+        checked: int,
         project: Project | None = None,
     ) -> bool:
-        if (project is None or not isinstance(proof, dict)
-                or not isinstance(proof.get("proof_id"), str)):
+        if (
+            project is None
+            or not isinstance(proof, dict)
+            or not isinstance(proof.get("proof_id"), str)
+        ):
             raise AcceptanceSyncUnavailableError("preuve AC Linear invalide")
         self._activate(project)
         raw = self._read_raw(issue_id)
         self._assert_issue_project(raw, self._binding(project))
         lifecycle = self._lifecycle_projection(
-            issue_id, raw, pending_operation="acceptance",
+            issue_id,
+            raw,
+            pending_operation="acceptance",
         )
         body = raw.get("description") or ""
         if body != expected_body:
-            raise TrackerConflictError("Linear acceptance body changed before projection")
+            raise TrackerConflictError(
+                "Linear acceptance body changed before projection"
+            )
         review = lifecycle["latest_review"]
         if review is None:
-            raise TrackerConflictError("Linear acceptance proof lacks one review projection")
+            raise TrackerConflictError(
+                "Linear acceptance proof lacks one review projection"
+            )
         state = raw.get("state")
         native_state_id = state.get("id") if isinstance(state, dict) else None
         projected = {
@@ -1237,16 +1765,28 @@ class LinearTracker(Tracker):
             "review_generation": lifecycle["review_generation"],
         }
         self._validate_acceptance_projection(
-            issue_id, expected_body,
-            {**projected, "native_state_id": native_state_id}, review,
+            issue_id,
+            expected_body,
+            {**projected, "native_state_id": native_state_id},
+            review,
         )
         return self._project_lifecycle(
-            issue_id, "acceptance", projected, project,
+            issue_id,
+            "acceptance",
+            projected,
+            project,
         )
 
     def project_cockpit_evidence(
-        self, issue_id: str, envelope: dict, *, repository: str, ac_digest: str,
-        pr, diff_hash: str, project: Project | None = None,
+        self,
+        issue_id: str,
+        envelope: dict,
+        *,
+        repository: str,
+        ac_digest: str,
+        pr,
+        diff_hash: str,
+        project: Project | None = None,
     ) -> bool:
         """Append one complete advisory cockpit envelope without lifecycle authority."""
         if project is None:
@@ -1254,27 +1794,40 @@ class LinearTracker(Tracker):
         from foundry.evidence_plane import verify_evidence_envelope
 
         verdict = verify_evidence_envelope(
-            envelope, repository=repository, issue_id=issue_id,
-            ac_digest=ac_digest, pr=pr, diff_hash=diff_hash,
+            envelope,
+            repository=repository,
+            issue_id=issue_id,
+            ac_digest=ac_digest,
+            pr=pr,
+            diff_hash=diff_hash,
         )
         if verdict.get("decision") != "GO":
             raise TrackerCapabilityUnavailableError(
-                self.name, "cockpit-evidence-complete-go",
+                self.name,
+                "cockpit-evidence-complete-go",
             )
         if not isinstance(envelope, dict):
             raise TrackerCapabilityUnavailableError(
-                self.name, "cockpit-evidence-complete-go",
+                self.name,
+                "cockpit-evidence-complete-go",
             )
         coordinates = envelope.get("coordinates")
         evidence = envelope.get("evidence")
         ci = evidence.get("ci") if isinstance(evidence, dict) else None
         review = evidence.get("review") if isinstance(evidence, dict) else None
         tests = evidence.get("tests") if isinstance(evidence, dict) else None
-        if not all(isinstance(value, dict) for value in (
-            coordinates, ci, review, tests,
-        )):
+        if not all(
+            isinstance(value, dict)
+            for value in (
+                coordinates,
+                ci,
+                review,
+                tests,
+            )
+        ):
             raise TrackerCapabilityUnavailableError(
-                self.name, "cockpit-evidence-complete-go",
+                self.name,
+                "cockpit-evidence-complete-go",
             )
         payload = {
             "envelope_id": envelope.get("envelope_id"),
@@ -1287,34 +1840,47 @@ class LinearTracker(Tracker):
             "diff_hash": coordinates.get("diff_hash"),
             "review_proof_id": review.get("proof_id"),
             "test_receipt_id": tests.get("receipt_id"),
-            "check_runs_receipt_id": (
-                ci.get("check_runs") or {}
-            ).get("receipt_id"),
-            "commit_statuses_receipt_id": (
-                ci.get("commit_statuses") or {}
-            ).get("receipt_id"),
+            "check_runs_receipt_id": (ci.get("check_runs") or {}).get("receipt_id"),
+            "commit_statuses_receipt_id": (ci.get("commit_statuses") or {}).get(
+                "receipt_id"
+            ),
         }
-        if (_DIGEST.fullmatch(str(payload["envelope_id"])) is None
-                or any(value is None for value in payload.values())):
+        if _DIGEST.fullmatch(str(payload["envelope_id"])) is None or any(
+            value is None for value in payload.values()
+        ):
             raise TrackerCapabilityUnavailableError(
-                self.name, "cockpit-evidence-complete-go",
+                self.name,
+                "cockpit-evidence-complete-go",
             )
         return self._project_lifecycle(
-            issue_id, "cockpit-evidence", payload, project,
+            issue_id,
+            "cockpit-evidence",
+            payload,
+            project,
         )
 
     def link(
-        self, src_id: str, link_type: str, dst_id: str,
+        self,
+        src_id: str,
+        link_type: str,
+        dst_id: str,
         project: Project | None = None,
     ) -> None:
         if project is None:
             raise LinearBindingError("mutation_project_required")
         binding = self._activate(project)
-        if link_type not in {"subtask-of", "parent-of", "depends-on", "blocks", "relates"}:
+        if link_type not in {
+            "subtask-of",
+            "parent-of",
+            "depends-on",
+            "blocks",
+            "relates",
+        }:
             raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
         if link_type in {"subtask-of", "parent-of"}:
             raise TrackerCapabilityUnavailableError(
-                self.name, "existing-issue-parent-replacement",
+                self.name,
+                "existing-issue-parent-replacement",
             )
         src_raw, dst_raw = self._read_raw(src_id), self._read_raw(dst_id)
         self._assert_issue_project(src_raw, binding)
@@ -1331,29 +1897,42 @@ class LinearTracker(Tracker):
             source, target, relation = dst_raw, src_raw, "blocks"
         data = self._graphql(
             _RELATION_CREATE,
-            {"input": {
-                "issueId": source["id"], "relatedIssueId": target["id"],
+            {
+                "input": {
+                    "issueId": source["id"],
+                    "relatedIssueId": target["id"],
                 "type": relation,
-            }},
+                }
+            },
             "issue.relation.create",
         )
         payload = self._mutation_payload(
-            data, "issueRelationCreate", "issue.relation.create",
+            data,
+            "issueRelationCreate",
+            "issue.relation.create",
         )
         created = payload.get("issueRelation")
-        if (not isinstance(created, dict) or created.get("type") != relation
+        if (
+            not isinstance(created, dict)
+            or created.get("type") != relation
                 or (created.get("issue") or {}).get("id") != source["id"]
-                or (created.get("relatedIssue") or {}).get("id") != target["id"]):
+            or (created.get("relatedIssue") or {}).get("id") != target["id"]
+        ):
             raise LinearTrackerError("issue.relation.create", None, "invalid_response")
         readback = self._read_raw(src_id)
         if not any(
             link.type == link_type and link.target == dst_id
             for link in self._to_issue(readback, project).links
         ):
-            raise TrackerConflictError("Linear relation divergent after write; no retry")
+            raise TrackerConflictError(
+                "Linear relation divergent after write; no retry"
+            )
 
     def add_comment(
-        self, issue_id: str, text: str, project: Project | None = None,
+        self,
+        issue_id: str,
+        text: str,
+        project: Project | None = None,
     ) -> None:
         if project is None:
             raise LinearBindingError("mutation_project_required")
@@ -1369,27 +1948,41 @@ class LinearTracker(Tracker):
         )
         payload = self._mutation_payload(data, "commentCreate", "comment.create")
         comment = payload.get("comment")
-        if (not isinstance(comment, dict) or not isinstance(comment.get("id"), str)
+        if (
+            not isinstance(comment, dict)
+            or not isinstance(comment.get("id"), str)
                 or comment.get("body") != text
-                or (comment.get("issue") or {}).get("id") != raw["id"]):
+            or (comment.get("issue") or {}).get("id") != raw["id"]
+        ):
             raise LinearTrackerError("comment.create", None, "invalid_response")
         readback = self._read_comment(comment["id"], "comment.readback")
-        if (not isinstance(readback, dict) or readback.get("body") != text
-                or (readback.get("issue") or {}).get("id") != raw["id"]):
+        if (
+            not isinstance(readback, dict)
+            or readback.get("body") != text
+            or (readback.get("issue") or {}).get("id") != raw["id"]
+        ):
             raise TrackerConflictError("Linear comment divergent after write; no retry")
 
     def update_body(
-        self, resource: Issue | Adr, expected_body: str, updated_body: str,
+        self,
+        resource: Issue | Adr,
+        expected_body: str,
+        updated_body: str,
         project: Project | None = None,
     ) -> bool:
-        del resource, expected_body, updated_body, project
+        if isinstance(resource, Adr):
+            return self._update_adr_body(resource, expected_body, updated_body, project)
         raise BodyUpdateUnavailableError(
             "mise à jour de corps indisponible pour le tracker linear : "
             "aucune précondition atomique anti-écrasement"
         )
 
     def sync_acceptance_body(
-        self, issue_id: str, expected_body: str, updated_body: str, proof: dict,
+        self,
+        issue_id: str,
+        expected_body: str,
+        updated_body: str,
+        proof: dict,
         project: Project | None = None,
     ) -> bool:
         del issue_id, expected_body, updated_body, proof, project
@@ -1398,18 +1991,389 @@ class LinearTracker(Tracker):
             "aucune précondition atomique anti-écrasement"
         )
 
-    # ---- unsupported provider capabilities -------------------------
+    # ---- project-scoped ADR documents --------------------------------
+    def _adr_documents(self, project: Project) -> tuple[dict, list[dict]]:
+        binding = self._activate(project)
+        documents = []
+        after = None
+        seen = set()
+        for _ in range(_MAX_PAGES):
+            data = self._graphql(
+                _ADR_DOCUMENTS_QUERY,
+                {"projectId": binding["project_id"], "after": after},
+                "adr.list",
+            )
+            connection = data.get("documents")
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list
+            ):
+                raise LinearTrackerError("adr.list", None, "invalid_response")
+            page = connection.get("pageInfo")
+            if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                raise LinearTrackerError("adr.list", None, "invalid_response")
+            documents.extend(connection["nodes"])
+            if not page["hasNextPage"]:
+                return binding, documents
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor or cursor in seen:
+                raise LinearTrackerError("adr.list", None, "invalid_response")
+            seen.add(cursor)
+            after = cursor
+        raise LinearTrackerError("adr.list", None, "pagination_limit")
+
+    def _adr_snapshot(self, project: Project) -> tuple[dict, dict]:
+        binding, documents = self._adr_documents(project)
+        return binding, _adr_chain(documents, binding)
+
+    @staticmethod
+    def _adr_model(versions: list[tuple[dict, dict]]) -> Adr:
+        metadata, raw = versions[-1]
+        return Adr(
+            id=metadata["id"],
+            title=metadata["title"],
+            status=metadata["status"],
+            body=raw["content"],
+            ref=raw["id"],
+        )
+
+    def _read_adr_document(self, document_id: str) -> dict | None:
+        """Read one deterministic document slot without Linear's erroring singular lookup."""
+        data = self._graphql(
+            _ADR_DOCUMENT_BY_ID_QUERY,
+            {"id": document_id},
+            "adr.read",
+        )
+        connection = data.get("documents")
+        if not isinstance(connection, dict) or not isinstance(
+            connection.get("nodes"), list
+        ):
+            raise LinearTrackerError("adr.read", None, "invalid_response")
+        page = connection.get("pageInfo")
+        if (
+            not isinstance(page, dict)
+            or type(page.get("hasNextPage")) is not bool
+            or page["hasNextPage"]
+            or (
+                page.get("endCursor") is not None
+                and (
+                    not isinstance(page["endCursor"], str)
+                    or not page["endCursor"]
+                )
+            )
+        ):
+            raise LinearTrackerError("adr.read", None, "invalid_response")
+        nodes = connection["nodes"]
+        if len(nodes) > 1:
+            raise TrackerConflictError("Linear ADR document slot collision")
+        if not nodes:
+            return None
+        raw = nodes[0]
+        if not isinstance(raw, dict) or raw.get("id") != document_id:
+            raise LinearTrackerError("adr.read", None, "invalid_response")
+        return raw
+
+    def _create_adr_document(self, binding: dict, metadata: dict, body: str) -> dict:
+        doc_id = _adr_document_id(
+            binding["project_id"], metadata["id"], metadata["sequence"]
+        )
+        title = _adr_document_title(metadata)
+        content = _adr_document_content(metadata, body)
+        expected = {
+            "id": doc_id,
+            "title": title,
+            "content": content,
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+
+        def verify(raw):
+            if raw is None:
+                return None
+            _parse_adr_document(raw, binding)
+            if any(raw.get(k) != v for k, v in expected.items()):
+                raise TrackerConflictError(
+                    "Linear ADR version slot already has different content"
+                )
+            return raw
+
+        existing = verify(self._read_adr_document(doc_id))
+        if existing is not None:
+            return existing
+        error = None
+        try:
+            payload = self._mutation_payload(
+                self._graphql(
+                    _ADR_DOCUMENT_CREATE,
+                    {
+                        "input": {
+                            "id": doc_id,
+                            "title": title,
+                            "content": content,
+                            "projectId": binding["project_id"],
+                        }
+                    },
+                    "adr.create",
+                ),
+                "documentCreate",
+                "adr.create",
+            )
+            if (
+                not isinstance(payload.get("document"), dict)
+                or payload["document"].get("id") != doc_id
+            ):
+                raise LinearTrackerError("adr.create", None, "invalid_response")
+        except LinearTrackerError as exc:
+            error = exc
+        readback = verify(self._read_adr_document(doc_id))
+        if readback is None:
+            if error:
+                raise error
+            raise TrackerConflictError("Linear ADR create has no document readback")
+        return readback
+
+    @staticmethod
+    def _next_adr_metadata(previous, *, status=None, body=None, replacement_id=None):
+        old, raw = previous
+        _, old_body = _parse_adr_document(
+            raw, {"project_id": old["project_id"], "team_id": old["team_id"]}
+        )
+        new_body = old_body if body is None else body
+        metadata = dict(old)
+        metadata.update(
+            sequence=old["sequence"] + 1,
+            previous_id=raw["id"],
+            previous_sha256=hashlib.sha256(raw["content"].encode()).hexdigest(),
+            status=old["status"] if status is None else status,
+            body_sha256=hashlib.sha256(new_body.encode()).hexdigest(),
+            relations=dict(old["relations"]),
+        )
+        if replacement_id is not None:
+            metadata["relations"]["superseded_by"] = replacement_id
+        return metadata, new_body
+
+    def _append_adr_version(self, project, previous, metadata, body):
+        binding, chains = self._adr_snapshot(project)
+        if (
+            metadata["id"] not in chains
+            or chains[metadata["id"]][-1][1]["id"] != previous[1]["id"]
+        ):
+            raise TrackerConflictError("Linear ADR changed before version append")
+        self._create_adr_document(binding, metadata, body)
+        _, fresh = self._adr_snapshot(project)
+        versions = fresh.get(metadata["id"])
+        if versions is None or versions[-1][0] != metadata:
+            raise TrackerConflictError("Linear ADR version diverged after write")
+        return self._adr_model(versions)
+
     def list_adrs(self, project: Project) -> list[Adr]:
-        self._activate(project)
-        raise TrackerCapabilityUnavailableError(self.name, "adr-knowledge-base")
+        _, chains = self._adr_snapshot(project)
+        return [self._adr_model(chains[key]) for key in sorted(chains)]
 
     def create_adr(
-        self, project: Project, title: str, body: str, status: str = "proposed",
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        status: str = "proposed",
     ) -> Adr:
-        self._activate(project)
-        raise TrackerCapabilityUnavailableError(self.name, "adr-knowledge-base")
+        if status != "proposed":
+            raise TrackerConflictError("Linear ADR creation must begin proposed")
+        if not isinstance(title, str) or not title.strip() or not isinstance(body, str):
+            raise ValueError("Linear ADR title and body required")
+        binding, chains = self._adr_snapshot(project)
+        title = title.strip()
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        matching = [
+            v
+            for v in chains.values()
+            if v[0][0]["origin"]["kind"] == "native"
+            and v[0][0]["title"] == title
+            and v[0][0]["body_sha256"] == digest
+        ]
+        if matching:
+            if (
+                len(matching) != 1
+                or matching[0][-1][0]["status"] != "proposed"
+                or matching[0][-1][0]["body_sha256"] != digest
+            ):
+                raise TrackerConflictError("Linear ADR content already exists")
+            return self._adr_model(matching[0])
+        prefix = f"{project.key}-ADR-"
+        number = (
+            max(
+                (
+                    int(key.rsplit("-", 1)[1])
+                    for key in chains
+                    if key.startswith(prefix)
+                ),
+                default=0,
+            )
+            + 1
+        )
+        if number > 9999:
+            raise TrackerConflictError("Linear ADR identifier range exhausted")
+        metadata = {
+            "schema": _ADR_SCHEMA,
+            "project_id": binding["project_id"],
+            "team_id": binding["team_id"],
+            "id": f"{prefix}{number:04d}",
+            "title": title,
+            "status": "proposed",
+            "sequence": 0,
+            "previous_id": None,
+            "previous_sha256": None,
+            "body_sha256": digest,
+            "origin": {"kind": "native"},
+            "relations": {"supersedes": [], "superseded_by": None, "issues": []},
+        }
+        self._create_adr_document(binding, metadata, body)
+        _, fresh = self._adr_snapshot(project)
+        if metadata["id"] not in fresh or fresh[metadata["id"]][-1][0] != metadata:
+            raise TrackerConflictError("Linear ADR creation diverged")
+        return self._adr_model(fresh[metadata["id"]])
+
+    def import_adr(
+        self,
+        project: Project,
+        *,
+        adr_id: str,
+        title: str,
+        body: str,
+        historical_status: str,
+        source_ref: str,
+        source_created: int | None,
+        source_updated: int | None,
+        expected_source_sha256: str,
+        supersedes: tuple[str, ...] = (),
+        superseded_by: str | None = None,
+        issue_refs: tuple[str, ...] = (),
+    ) -> Adr:
+        """Store a bounded historical snapshot; this never invokes acceptance."""
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        if (
+            not isinstance(adr_id, str)
+            or _ADR_ID.fullmatch(adr_id) is None
+            or not isinstance(title, str)
+            or not title.strip()
+            or historical_status not in _ADR_STATUSES
+            or not isinstance(source_ref, str)
+            or not source_ref
+            or expected_source_sha256 != digest
+            or any(
+                v is not None and (type(v) is not int or v < 0)
+                for v in (source_created, source_updated)
+            )
+        ):
+            raise ValueError("Linear ADR historical import invalid")
+        binding, chains = self._adr_snapshot(project)
+        metadata = {
+            "schema": _ADR_SCHEMA,
+            "project_id": binding["project_id"],
+            "team_id": binding["team_id"],
+            "id": adr_id,
+            "title": title.strip(),
+            "status": historical_status,
+            "sequence": 0,
+            "previous_id": None,
+            "previous_sha256": None,
+            "body_sha256": digest,
+            "origin": {
+                "kind": "migration",
+                "source_tracker": "youtrack",
+                "source_ref": source_ref,
+                "source_created": source_created,
+                "source_updated": source_updated,
+                "source_body_sha256": digest,
+            },
+            "relations": {
+                "supersedes": list(supersedes),
+                "superseded_by": superseded_by,
+                "issues": list(issue_refs),
+            },
+        }
+        candidate = {
+            "id": _adr_document_id(binding["project_id"], adr_id, 0),
+            "title": _adr_document_title(metadata),
+            "content": _adr_document_content(metadata, body),
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+        _parse_adr_document(candidate, binding)
+        if adr_id in chains:
+            if any(chains[adr_id][0][1].get(k) != v for k, v in candidate.items()):
+                raise TrackerConflictError(
+                    "Linear ADR migration conflicts with existing origin"
+                )
+            return self._adr_model(chains[adr_id])
+        self._create_adr_document(binding, metadata, body)
+        _, fresh = self._adr_snapshot(project)
+        return self._adr_model(fresh[adr_id])
 
     def set_adr_status(
-        self, adr: Adr, status: str, project: Project | None = None,
+        self,
+        adr: Adr,
+        status: str,
+        project: Project | None = None,
     ) -> None:
-        raise TrackerCapabilityUnavailableError(self.name, "adr-knowledge-base")
+        project = project or self._project()
+        _, chains = self._adr_snapshot(project)
+        versions = chains.get(adr.id)
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+            raise TrackerConflictError("Linear ADR snapshot is stale")
+        old = versions[-1][0]
+        if status == old["status"]:
+            return
+        if status == "superseded":
+            raise TrackerConflictError(
+                "Linear ADR supersession requires replacement id"
+            )
+        if status not in _ADR_TRANSITIONS[old["status"]]:
+            raise TrackerConflictError("Linear ADR status transition refused")
+        metadata, body = self._next_adr_metadata(versions[-1], status=status)
+        self._append_adr_version(project, versions[-1], metadata, body)
+
+    def supersede_adr(
+        self, adr: Adr, replacement_id: str, project: Project | None = None
+    ) -> None:
+        project = project or self._project()
+        _, chains = self._adr_snapshot(project)
+        versions, replacement = chains.get(adr.id), chains.get(replacement_id)
+        if (
+            versions is None
+            or replacement is None
+            or adr.id == replacement_id
+            or versions[-1][1]["id"] != adr.ref
+            or versions[-1][0]["status"] != "accepted"
+            or replacement[-1][0]["status"] != "accepted"
+        ):
+            raise TrackerConflictError("Linear ADR supersession binding invalid")
+        metadata, body = self._next_adr_metadata(
+            versions[-1], status="superseded", replacement_id=replacement_id
+        )
+        self._append_adr_version(project, versions[-1], metadata, body)
+
+    def _update_adr_body(
+        self, adr: Adr, expected_body: str, updated_body: str, project: Project | None
+    ) -> bool:
+        project = project or self._project()
+        _, chains = self._adr_snapshot(project)
+        versions = chains.get(adr.id)
+        if (
+            versions is None
+            or versions[-1][1]["id"] != adr.ref
+            or versions[-1][1]["content"] != expected_body
+        ):
+            raise TrackerConflictError("Linear ADR body changed before edit")
+        if updated_body == expected_body:
+            return False
+        if versions[-1][0]["status"] in {"deprecated", "superseded"}:
+            raise TrackerConflictError("Linear ADR terminal body is immutable")
+        old_header, sep, _ = expected_body.partition("\n-->\n\n")
+        new_header, new_sep, body = updated_body.partition("\n-->\n\n")
+        if not sep or not new_sep or old_header != new_header:
+            raise TrackerConflictError(
+                "Linear ADR metadata edit requires a typed operation"
+            )
+        metadata, body = self._next_adr_metadata(versions[-1], body=body)
+        self._append_adr_version(project, versions[-1], metadata, body)
+        return True
