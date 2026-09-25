@@ -68,6 +68,20 @@ _ADR_DOCUMENT_PREFIX = "[Foundry ADR] "
 _ADR_WITNESS_SCHEMA = "foundry-linear-adr-witness.v1"
 _ADR_WITNESS_HEADER = "<!-- foundry-linear-adr-witness.v1\n"
 _ADR_WITNESS_PREFIX = "[Foundry ADR witness] "
+_ADR_QUALIFICATION_PROBE_PREFIX = "[Foundry qualification probe] "
+# A historical batch record carries evidence of the complete provider bytes of
+# both Documents it creates, observed on non-authoritative probes before import.
+_ADR_BATCH_RECOVERY_PROFILE_FIELDS = frozenset({
+    "qualification_project_id",
+    "expected_linear_witness_content",
+    "expected_linear_witness_sha256",
+    "witness_probe_id",
+})
+_ADR_BATCH_PROFILE_FIELDS = _ADR_BATCH_RECOVERY_PROFILE_FIELDS | {
+    "expected_linear_document_content",
+    "expected_linear_document_sha256",
+    "document_probe_id",
+}
 _ADR_SOURCE_ENCODING = "base64-utf8"
 _ADR_BOUND_SOURCE_BODY = "_foundry_bound_source_body"
 _ADR_ISSUE_LINK_SCHEMA = "foundry-linear-adr-issue-link.v1"
@@ -395,6 +409,47 @@ _FOUNDRY_ADR_0012_SOURCE_SHA256 = (
 _FOUNDRY_ADR_0012_READBACK_SHA256 = (
     "3bbab7c31d737bb97320ea74644f8acd6201cf7ec0a8cb7e1a09cd554c49246c"
 )
+# This historical slot predates witnesses.  Its source is deliberately not
+# represented here: the two digests qualify only the exact bytes already held by
+# Linear.  Unlike ADR-0012's profile, this is recovery-only -- it must never
+# authorize creating a fresh provider Document from a guessed renderer.
+_FOUNDRY_ADR_0001_SOURCE_SHA256 = (
+    "eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db"
+)
+_FOUNDRY_ADR_0001_READBACK_SHA256 = (
+    "9d723a7a64225d930531d968f78dba108f940eb7091d7110f8b12c037d29b193"
+)
+
+
+def _is_recovery_only_historical_source(body: str) -> bool:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest() == (
+        _FOUNDRY_ADR_0001_SOURCE_SHA256
+    )
+
+
+def _is_qualified_historical_readback(observed: object, canonical: str) -> bool:
+    """Accept one digest-pinned historical readback, never a renderer family."""
+    if not isinstance(observed, str):
+        return False
+    canonical_header, separator, body = canonical.partition("\n-->\n\n")
+    if not separator or not canonical_header.startswith(_ADR_HEADER):
+        return False
+    expected_metadata = canonical_header[len(_ADR_HEADER) :]
+    observed_payload = observed[len(_ADR_HEADER) :] if observed.startswith(
+        _ADR_HEADER
+    ) else ""
+    encoded = None
+    for delimiter, serialized in (("\n-->\n\n", False), ("\n\\-->\n\n", True)):
+        candidate, found, _observed_body = observed_payload.partition(delimiter)
+        if found:
+            encoded = candidate.replace("\\[", "[").replace("\\]", "]") if serialized else candidate
+            break
+    return (
+        encoded == expected_metadata
+        and _is_recovery_only_historical_source(body)
+        and hashlib.sha256(observed.encode("utf-8")).hexdigest()
+        == _FOUNDRY_ADR_0001_READBACK_SHA256
+    )
 
 
 def _linear_foundry_adr_0012_v1_readback(body: str) -> str | None:
@@ -460,6 +515,8 @@ def _linear_markdown_readback_body(body: str) -> str:
 
 def _preflight_adr_body_readback(body: str) -> None:
     """Refuse a body with an unmodelled Linear rendering before any write."""
+    if _is_recovery_only_historical_source(body):
+        return
     try:
         _linear_markdown_readback_body(body)
     except ValueError as exc:
@@ -490,13 +547,39 @@ def _linear_adr_readback_content(content: str) -> str:
     raise ValueError("canonical ADR content is invalid")
 
 
+def _adr_qualification_probe_title(adr_id: str, kind: str, content: str) -> str:
+    """Bind a qualification probe to the exact canonical bytes it was created from."""
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return f"{_ADR_QUALIFICATION_PROBE_PREFIX}{adr_id} v0000 {kind} {digest}"
+
+
+def _adr_version_readback_header_matches(observed: object, canonical: str) -> bool:
+    """Keep the one qualified header encoding; the probe pins the complete bytes."""
+    canonical_header, separator, _body = canonical.partition("\n-->\n\n")
+    if (
+        not isinstance(observed, str)
+        or not separator
+        or not canonical_header.startswith(_ADR_HEADER)
+    ):
+        return False
+    serialized = (
+        canonical_header[len(_ADR_HEADER) :].replace("[", "\\[").replace("]", "\\]")
+    )
+    return observed.startswith(f"{canonical_header}\n-->\n\n") or observed.startswith(
+        f"{_ADR_HEADER}{serialized}\n\\-->\n\n"
+    )
+
+
 def _adr_readback_content_matches(observed: object, canonical: str) -> bool:
     if observed == canonical:
         return True
     try:
-        return observed == _linear_adr_readback_content(canonical)
+        return (
+            observed == _linear_adr_readback_content(canonical)
+            or _is_qualified_historical_readback(observed, canonical)
+        )
     except ValueError:
-        return False
+        return _is_qualified_historical_readback(observed, canonical)
 
 
 def _exact_adr_document_matches(raw: object, expected: dict) -> bool:
@@ -645,6 +728,7 @@ def _parse_adr_document(
     *,
     source_body: str | None = None,
     allow_unbound_body: bool = False,
+    allow_witness_bound_readback: bool = False,
 ) -> tuple[dict, str]:
     if not isinstance(raw, dict) or raw.get("archivedAt") is not None:
         raise LinearTrackerError("adr.normalize", None, "invalid_response")
@@ -839,6 +923,10 @@ def _parse_adr_document(
         or raw.get("project", {}).get("id") != binding["project_id"]
         or (
             not allow_unbound_body
+            and not (
+                allow_witness_bound_readback
+                and _is_probe_qualified_historical_version(metadata)
+            )
             and not _adr_readback_content_matches(
                 content, _adr_document_content(metadata, canonical_body)
             )
@@ -846,6 +934,22 @@ def _parse_adr_document(
     ):
         raise LinearTrackerError("adr.normalize", None, "invalid_response")
     return metadata, canonical_body
+
+
+def _is_probe_qualified_historical_version(metadata: dict) -> bool:
+    """Only a batch-imported historical version 0 may carry opaque probe bytes.
+
+    Its readable Document was qualified before creation by a probe of its complete
+    provider readback, and its witness binds those bytes plus the exact source.
+    Native ADRs and every later version keep the closed serialization check.
+    """
+    origin = metadata.get("origin")
+    return (
+        metadata.get("sequence") == 0
+        and isinstance(origin, dict)
+        and origin.get("kind") == "migration"
+        and isinstance(origin.get("batch_sha256"), str)
+    )
 
 
 def _valid_adr_version_delta(previous: dict, current: dict) -> bool:
@@ -935,6 +1039,7 @@ def _adr_chain(documents: list[dict], binding: dict) -> dict:
             binding,
             source_body=source_body,
             allow_unbound_body=witness is None,
+            allow_witness_bound_readback=witness is not None,
         )
         if witness is not None and (
             witness["adr_id"] != metadata["id"]
@@ -2817,7 +2922,11 @@ class LinearTracker(Tracker):
             raise LinearTrackerError("adr.read", None, "invalid_response")
         return raw
 
-    def _create_adr_document(self, binding: dict, metadata: dict, body: str) -> dict:
+    def _create_adr_document(
+        self, binding: dict, metadata: dict, body: str,
+        *, readback_content: str | None = None,
+        witness_readback: str | None = None,
+    ) -> dict:
         _preflight_adr_body_readback(body)
         doc_id = _adr_document_id(
             binding["project_id"], metadata["id"], metadata["sequence"]
@@ -2832,18 +2941,59 @@ class LinearTracker(Tracker):
             "archivedAt": None,
         }
 
+        def pinned_matches(raw: object, slot: dict, pinned: str) -> bool:
+            # A qualification probe pins the complete provider bytes.  Accept
+            # those bytes only, never a neighbouring local-model serialization.
+            return isinstance(raw, dict) and all(
+                raw.get(key) == value for key, value in slot.items() if key != "content"
+            ) and raw.get("content") == pinned
+
+        def exact_version_matches(raw: object) -> bool:
+            if readback_content is not None:
+                return pinned_matches(raw, expected, readback_content)
+            return _exact_adr_document_matches(raw, expected)
+
+        # The historical ADR-0001 profile is evidence about an already-written
+        # Document, not a rule for producing new Markdown.  Read its deterministic
+        # slot before the create path so an absent slot fails before any mutation;
+        # a present exact slot may still receive its missing witness below.
+        existing = None
+        if _is_recovery_only_historical_source(body):
+            existing = self._read_adr_document(doc_id)
+            if existing is None:
+                raise TrackerConflictError(
+                    "Linear ADR historical readback requires existing exact slot"
+                )
+            if not exact_version_matches(existing):
+                raise TrackerConflictError("Linear ADR historical slot diverged")
+
         def verify_version(raw):
             if raw is None:
                 return None
-            _parse_adr_document(raw, binding, source_body=body)
-            if not _exact_adr_document_matches(raw, expected):
+            if not exact_version_matches(raw):
                 raise TrackerConflictError(
                     "Linear ADR version slot already has different content"
                 )
+            # A qualification probe authorizes only these exact provider bytes.
+            # Parse the envelope after that byte-for-byte check, rather than
+            # requiring the local renderer to recognize a provider rendering
+            # which the probe deliberately replaces.
+            _parse_adr_document(
+                raw,
+                binding,
+                source_body=body,
+                allow_witness_bound_readback=readback_content is not None,
+            )
             return raw
 
-        version = self._create_exact_adr_document(
-            expected, "adr.create", verify_version
+        # The recovery-only slot is never re-entered through the create path: a
+        # deletion after this read must not turn into a fresh historical Document.
+        version = (
+            verify_version(existing)
+            if existing is not None
+            else self._create_exact_adr_document(
+                expected, "adr.create", verify_version
+            )
         )
         witness = _adr_witness_document(binding, metadata, version, body)
 
@@ -2851,7 +3001,11 @@ class LinearTracker(Tracker):
             if raw is None:
                 return None
             _parse_adr_witness(raw, binding)
-            if not _exact_adr_document_matches(raw, witness):
+            if (
+                not pinned_matches(raw, witness, witness_readback)
+                if witness_readback is not None
+                else not _exact_adr_document_matches(raw, witness)
+            ):
                 raise TrackerConflictError(
                     "Linear ADR witness slot already has different content"
                 )
@@ -3334,14 +3488,14 @@ class LinearTracker(Tracker):
         self._create_adr_issue_link(binding, adr.id, issue_id, native_id)
         return self._append_adr_version(project, versions[-1], metadata, body)
 
-    def import_adr_batch(
-        self, project: Project, records: tuple[dict, ...]
-    ) -> list[Adr]:
-        """Import one finite historical manifest with a reciprocal asserted graph.
+    def _prepare_adr_batch(
+        self, project: Project, records: tuple[dict, ...], *, profiled: bool
+    ) -> tuple[dict, list[dict], dict, list[dict], list[tuple]]:
+        """Validate one historical manifest and derive its exact version-0 slots.
 
-        Linear has no multi-Document transaction. The complete hypothetical graph is
-        checked before the first effect; a partial write is unreadable and replay of
-        the identical manifest fills only deterministic, byte-identical slots.
+        This is pure over the current project snapshot: no provider write.  The
+        qualification plan and the import share it so that a probe is created
+        from exactly the bytes the import later sends.
         """
         keys = {
             "adr_id", "title", "body", "historical_status", "source_ref",
@@ -3352,24 +3506,42 @@ class LinearTracker(Tracker):
             raise ValueError("Linear ADR batch requires 1..100 records")
         if any(not isinstance(record, dict) for record in records):
             raise ValueError("Linear ADR batch record fields invalid")
-        record_fields = {frozenset(record) for record in records}
-        complete_fields = frozenset(keys)
-        partial_fields = complete_fields | {"missing_relations"}
-        if len(record_fields) != 1 or next(iter(record_fields)) not in {
-            complete_fields,
-            partial_fields,
-        }:
+        # ``missing_relations`` is part of the base historical record, never a
+        # qualification profile field: the planner and the import accept it
+        # identically.  One manifest is either entirely complete or entirely
+        # declares its unavailable relation families; the shapes never mix.
+        declared = {"missing_relations" in record for record in records}
+        if len(declared) != 1:
             raise ValueError("Linear ADR batch record fields invalid")
-        declares_missing_relations = next(iter(record_fields)) == partial_fields
+        declares_missing_relations = next(iter(declared))
+        if declares_missing_relations:
+            keys = keys | {"missing_relations"}
         binding, documents = self._adr_documents(project)
+        by_id = {}
+        for raw in documents:
+            if raw.get("id") in by_id:
+                raise TrackerConflictError("Linear ADR batch document slot has a fork")
+            by_id[raw.get("id")] = raw
         prepared = []
-        candidates = []
         comments = []
         seen_ids = set()
         for record in records:
+            body = record.get("body")
+            recovery_only = (
+                isinstance(body, str)
+                and _is_recovery_only_historical_source(body)
+            )
+            expected_keys = keys
+            if profiled:
+                expected_keys = keys | (
+                    _ADR_BATCH_RECOVERY_PROFILE_FIELDS
+                    if recovery_only
+                    else _ADR_BATCH_PROFILE_FIELDS
+                )
+            if set(record) != expected_keys:
+                raise ValueError("Linear ADR batch record fields invalid")
             adr_id = record["adr_id"]
             title = record["title"]
-            body = record["body"]
             status = record["historical_status"]
             source_ref = record["source_ref"]
             supersedes = record["supersedes"]
@@ -3436,6 +3608,9 @@ class LinearTracker(Tracker):
                 or (bool(supersedes) and status not in {"accepted", "superseded"})
             ):
                 raise ValueError("Linear ADR batch record invalid")
+            # Unsupported source Markdown is refused before any probe read or
+            # write, exactly as for a native ADR.
+            _preflight_adr_body_readback(body)
             seen_ids.add(adr_id)
             canonical_refs, native_ids = self._canonicalize_adr_issue_refs(
                 issue_refs, binding
@@ -3466,7 +3641,7 @@ class LinearTracker(Tracker):
                     "issues": list(canonical_refs),
                 },
             }
-            prepared.append((metadata, body))
+            prepared.append((metadata, body, record, recovery_only))
             comments.extend(
                 (adr_id, issue_id, native_ids[issue_id])
                 for issue_id in canonical_refs
@@ -3475,14 +3650,13 @@ class LinearTracker(Tracker):
         # Bind every version-0 slot to the entire normalized manifest, not only
         # its own record. A reordered exact replay is equivalent, but a subset or
         # a changed member has different slot bytes and must fail before effects.
-        manifest = [metadata for metadata, _body in sorted(
-            prepared, key=lambda item: item[0]["id"]
-        )]
+        # Qualification profiles are evidence about these bytes, not part of them.
+        manifest = [item[0] for item in sorted(prepared, key=lambda item: item[0]["id"])]
         batch_sha256 = hashlib.sha256(json.dumps(
             manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode()).hexdigest()
-        for metadata, body in prepared:
-            _preflight_adr_body_readback(body)
+        entries = []
+        for metadata, body, record, recovery_only in prepared:
             metadata["origin"]["batch_sha256"] = batch_sha256
             candidate = {
                 "id": _adr_document_id(binding["project_id"], metadata["id"], 0),
@@ -3492,22 +3666,236 @@ class LinearTracker(Tracker):
                 "archivedAt": None,
             }
             _parse_adr_document(candidate, binding)
-            readback_candidate = {
-                **candidate,
-                "content": _linear_adr_readback_content(candidate["content"]),
-            }
-            witness = _adr_witness_document(
-                binding, metadata, readback_candidate, body
-            )
-            candidates.append((metadata, body, candidate, witness))
+            existing = None
+            if recovery_only:
+                # Do not manufacture a rendering from one historical observation.
+                # The exact digest-pinned slot must already exist; its provider
+                # bytes are the version readback the witness will bind.
+                existing = by_id.get(candidate["id"])
+                if existing is None:
+                    raise TrackerConflictError(
+                        "Linear ADR historical readback requires existing exact slot"
+                    )
+                if not _exact_adr_document_matches(existing, candidate):
+                    raise TrackerConflictError("Linear ADR batch slot diverged")
+            entries.append({
+                "metadata": metadata,
+                "body": body,
+                "record": record,
+                "recovery_only": recovery_only,
+                "candidate": candidate,
+                "existing_content": None if existing is None else existing["content"],
+            })
+        return binding, documents, by_id, entries, comments
 
-        by_id = {}
-        for raw in documents:
-            if raw.get("id") in by_id:
-                raise TrackerConflictError("Linear ADR batch document slot has a fork")
-            by_id[raw.get("id")] = raw
+    def plan_adr_batch_qualification(
+        self,
+        project: Project,
+        records: tuple[dict, ...],
+        observed_documents: dict[str, str] | None = None,
+    ) -> list[dict]:
+        """Return the exact bytes a historical batch import would create.
+
+        Read-only: it performs no provider write.  Records carry no qualification
+        profile.  Each item gives the canonical version Document and the title
+        its qualification probe must bear.  When ``observed_documents`` maps an
+        ADR ID to the complete version readback observed for that exact content,
+        the item also gives the canonical witness derived from it.  A recovery-only
+        slot uses the provider bytes already stored in the project instead.
+        """
+        if observed_documents is not None and not isinstance(observed_documents, dict):
+            raise ValueError("Linear ADR batch observed documents invalid")
+        binding, _documents, _by_id, entries, _comments = self._prepare_adr_batch(
+            project, records, profiled=False
+        )
+        adr_ids = {entry["metadata"]["id"] for entry in entries}
+        if observed_documents and not set(observed_documents) <= adr_ids:
+            raise ValueError("Linear ADR batch observed documents invalid")
+        plan = []
+        for entry in entries:
+            metadata, candidate = entry["metadata"], entry["candidate"]
+            adr_id = metadata["id"]
+            item = {
+                "adr_id": adr_id,
+                "recovery_only": entry["recovery_only"],
+                "document_id": candidate["id"],
+                "document_title": candidate["title"],
+                "document_content": candidate["content"],
+                "document_sha256": hashlib.sha256(
+                    candidate["content"].encode()
+                ).hexdigest(),
+                "document_probe_title": _adr_qualification_probe_title(
+                    adr_id, "document", candidate["content"]
+                ),
+                "existing_document_content": entry["existing_content"],
+            }
+            observed = (observed_documents or {}).get(adr_id)
+            if entry["recovery_only"]:
+                observed = entry["existing_content"]
+            if observed is not None:
+                if not isinstance(observed, str) or not _adr_version_readback_header_matches(
+                    observed, candidate["content"]
+                ):
+                    raise TrackerConflictError(
+                        "Linear ADR batch document readback is not qualified"
+                    )
+                witness = _adr_witness_document(
+                    binding, metadata, {**candidate, "content": observed}, entry["body"]
+                )
+                item.update(
+                    witness_id=witness["id"],
+                    witness_title=witness["title"],
+                    witness_content=witness["content"],
+                    witness_sha256=hashlib.sha256(
+                        witness["content"].encode()
+                    ).hexdigest(),
+                    witness_probe_title=_adr_qualification_probe_title(
+                        adr_id, "witness", witness["content"]
+                    ),
+                )
+            plan.append(item)
+        return plan
+
+    def _verify_adr_batch_qualification(
+        self, binding: dict, by_id: dict, entries: list[dict]
+    ) -> list[tuple[dict, dict, str, str]]:
+        """Read every qualification probe before any effect; return exact profiles."""
+        if any(
+            not isinstance(entry["record"]["qualification_project_id"], str)
+            for entry in entries
+        ):
+            raise ValueError("Linear ADR batch record invalid")
+        projects = {entry["record"]["qualification_project_id"] for entry in entries}
+        qualification_project = next(iter(projects))
+        if (
+            len(projects) != 1
+            or qualification_project == binding["project_id"]
+        ):
+            raise TrackerConflictError(
+                "Linear ADR batch qualification project is not isolated"
+            )
+        try:
+            project_uuid = uuid.UUID(qualification_project)
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError("Linear ADR batch record invalid") from None
+        if str(project_uuid) != qualification_project:
+            raise ValueError("Linear ADR batch record invalid")
+        slot_ids = set(by_id)
+        for entry in entries:
+            slot_ids.add(entry["candidate"]["id"])
+            slot_ids.add(
+                _adr_witness_id(binding["project_id"], entry["metadata"]["id"], 0)
+            )
+        seen_probes = set()
+
+        def read_probe(probe_id: object, title: str, content: str) -> None:
+            try:
+                probe_uuid = uuid.UUID(probe_id)
+            except (TypeError, ValueError, AttributeError):
+                raise ValueError("Linear ADR batch record invalid") from None
+            if probe_uuid.version != 4 or str(probe_uuid) != probe_id:
+                raise ValueError("Linear ADR batch record invalid")
+            if probe_id in seen_probes or probe_id in slot_ids:
+                raise TrackerConflictError(
+                    "Linear ADR batch qualification probe collides"
+                )
+            seen_probes.add(probe_id)
+            probe = self._read_adr_document(probe_id)
+            if (
+                probe is None
+                or probe.get("id") != probe_id
+                or probe.get("title") != title
+                or probe.get("archivedAt") is not None
+                or probe.get("project", {}).get("id") != qualification_project
+                or probe.get("content") != content
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR batch qualification probe is not exact"
+                )
+
+        profiles = []
+        for entry in entries:
+            record, metadata, candidate = (
+                entry["record"], entry["metadata"], entry["candidate"]
+            )
+            adr_id = metadata["id"]
+            if entry["recovery_only"]:
+                version_content = entry["existing_content"]
+            else:
+                version_content = record["expected_linear_document_content"]
+                if (
+                    not isinstance(version_content, str)
+                    or record["expected_linear_document_sha256"]
+                    != hashlib.sha256(version_content.encode()).hexdigest()
+                ):
+                    raise ValueError("Linear ADR batch record invalid")
+                if not _adr_version_readback_header_matches(
+                    version_content, candidate["content"]
+                ):
+                    raise TrackerConflictError(
+                        "Linear ADR batch document readback is not qualified"
+                    )
+                parsed, _body = _parse_adr_document(
+                    {**candidate, "content": version_content},
+                    binding,
+                    source_body=entry["body"],
+                    allow_witness_bound_readback=True,
+                )
+                if parsed != metadata:
+                    raise TrackerConflictError(
+                        "Linear ADR batch document readback is not qualified"
+                    )
+                read_probe(
+                    record["document_probe_id"],
+                    _adr_qualification_probe_title(
+                        adr_id, "document", candidate["content"]
+                    ),
+                    version_content,
+                )
+            witness = _adr_witness_document(
+                binding, metadata, {**candidate, "content": version_content},
+                entry["body"],
+            )
+            witness_content = record["expected_linear_witness_content"]
+            if (
+                not isinstance(witness_content, str)
+                or record["expected_linear_witness_sha256"]
+                != hashlib.sha256(witness_content.encode()).hexdigest()
+            ):
+                raise ValueError("Linear ADR batch record invalid")
+            # The witness keeps the closed modelled serialization that every
+            # ordinary read already requires; the probe proves Linear returns it.
+            if not _exact_adr_document_matches(
+                {**witness, "content": witness_content}, witness
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR batch witness readback is not qualified"
+                )
+            read_probe(
+                record["witness_probe_id"],
+                _adr_qualification_probe_title(adr_id, "witness", witness["content"]),
+                witness_content,
+            )
+            profiles.append((candidate, witness, version_content, witness_content))
+        return profiles
+
+    def import_adr_batch(
+        self, project: Project, records: tuple[dict, ...]
+    ) -> list[Adr]:
+        """Import one finite historical manifest with a reciprocal asserted graph.
+
+        Linear has no multi-Document transaction. The complete hypothetical graph is
+        checked before the first effect; a partial write is unreadable and replay of
+        the identical manifest fills only deterministic, byte-identical slots.
+        Every version and witness is qualified before the first effect by a
+        non-authoritative probe holding its complete provider readback.
+        """
+        binding, documents, by_id, entries, comments = self._prepare_adr_batch(
+            project, records, profiled=True
+        )
+        profiles = self._verify_adr_batch_qualification(binding, by_id, entries)
         hypothetical = list(documents)
-        for _metadata, _body, candidate, witness in candidates:
+        for candidate, witness, version_content, witness_content in profiles:
             # Imports write a version before its witness.  A missing witness can
             # therefore be the exact interrupted-create state and is recoverable,
             # but a surviving witness without its version cannot result from that
@@ -3520,19 +3908,22 @@ class LinearTracker(Tracker):
                 raise TrackerConflictError(
                     "Linear ADR batch witness has no matching version"
                 )
-            for expected in (candidate, witness):
+            for expected, provider_content in (
+                (candidate, version_content),
+                (witness, witness_content),
+            ):
                 current = by_id.get(expected["id"])
                 if current is None:
-                    hypothetical.append({
-                        **expected,
-                        "content": _linear_adr_readback_content(
-                            expected["content"]
-                        ),
-                    })
-                elif not _exact_adr_document_matches(current, expected):
+                    hypothetical.append({**expected, "content": provider_content})
+                elif current.get("content") != provider_content or not all(
+                    current.get(key) == value
+                    for key, value in expected.items()
+                    if key != "content"
+                ):
                     raise TrackerConflictError("Linear ADR batch slot diverged")
         chains = _adr_chain(hypothetical, binding)
-        for metadata, _body, _candidate, _witness in candidates:
+        for entry in entries:
+            metadata = entry["metadata"]
             versions = chains.get(metadata["id"])
             if versions is None or len(versions) != 1 or versions[0][0] != metadata:
                 raise TrackerConflictError("Linear ADR batch history diverged")
@@ -3543,7 +3934,7 @@ class LinearTracker(Tracker):
         # external deletion from an otherwise completed (or advancing) batch.
         durable_document = any(
             by_id.get(slot["id"]) is not None
-            for _metadata, _body, candidate, witness in candidates
+            for candidate, witness, _version, _witness in profiles
             for slot in (candidate, witness)
         )
         pending_comments = (
@@ -3564,12 +3955,20 @@ class LinearTracker(Tracker):
         if not durable_document:
             for adr_id, issue_id, native_id in comments:
                 self._create_adr_issue_link(binding, adr_id, issue_id, native_id)
-        for metadata, body, _candidate, _witness in candidates:
-            self._create_adr_document(binding, metadata, body)
+        for entry, (_candidate, _witness, version_content, witness_content) in zip(
+            entries, profiles
+        ):
+            self._create_adr_document(
+                binding,
+                entry["metadata"],
+                entry["body"],
+                readback_content=None if entry["recovery_only"] else version_content,
+                witness_readback=witness_content,
+            )
         _, fresh = self._adr_snapshot(project)
         return [
-            self._adr_model(fresh[metadata["id"]])
-            for metadata, _body, _candidate, _witness in candidates
+            self._adr_model(fresh[entry["metadata"]["id"]])
+            for entry in entries
         ]
 
     def import_adr(
