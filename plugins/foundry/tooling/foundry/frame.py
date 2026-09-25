@@ -32,6 +32,14 @@ def _project(tr):
     return binding if binding is not None else tr.resolve_project(registry.repo_basename())
 
 
+def _register_adr_alias(aliases: dict[str, tuple[str, int | str]], key: str,
+                        target: tuple[str, int | str]) -> None:
+    """Register one unique preflight ADR reference key."""
+    if key in aliases:
+        raise ValueError(f"Référence ADR ambiguë pour relation Linear : {key}")
+    aliases[key] = target
+
+
 def materialize(spec: dict) -> dict:
     tr = foundry.tracker()
     p = _project(tr)
@@ -39,6 +47,7 @@ def materialize(spec: dict) -> dict:
     incoming_adrs = spec.get("adrs", [])
     incoming_issues = spec.get("issues", [])
     existing_adrs = {}
+    incoming_aliases = {}
     if getattr(tr, "adr_issue_link_supported", False):
         # Native Linear ADRs are born proposed.  Validate the complete incoming
         # frame before creating its first ADR: an accepted ADR may be a valid
@@ -46,28 +55,29 @@ def materialize(spec: dict) -> dict:
         for incoming in incoming_adrs:
             if incoming.get("status", "proposed") != "proposed":
                 raise ValueError("Linear ADR creation must begin proposed")
-    if getattr(tr, "adr_issue_link_supported", False) and any(
-        it.get("constrained_by") for it in incoming_issues
-    ):
+    if getattr(tr, "adr_issue_link_supported", False):
         # Resolve every reference before the first write. Otherwise a late bad
-        # reference can leave a durable issue and only a subset of ADR links.
+        # reference, or an alias that names two ADRs, can leave a durable issue
+        # and only a subset of ADR links.
         existing_adrs = {adr.id: adr for adr in tr.list_adrs(p)}
-        upcoming = {
-            str(index): a.get("status", "proposed")
-            for index, a in enumerate(incoming_adrs)
-        }
-        upcoming.update(
-            {a["title"]: a.get("status", "proposed") for a in incoming_adrs}
-        )
+        aliases = {}
+        for index, incoming in enumerate(incoming_adrs):
+            target = ("incoming", index)
+            _register_adr_alias(aliases, str(index), target)
+            _register_adr_alias(aliases, str(incoming["title"]), target)
+        for adr_id in existing_adrs:
+            _register_adr_alias(aliases, str(adr_id), ("existing", adr_id))
+        incoming_aliases = aliases
         for it in incoming_issues:
             for ref in it.get("constrained_by", []):
                 key = str(ref)
-                if key in upcoming:
-                    status = upcoming[key]
-                elif key in existing_adrs:
-                    status = existing_adrs[key].status
-                else:
+                target = incoming_aliases.get(key)
+                if target is None:
                     raise ValueError(f"ADR inconnue pour relation Linear : {key}")
+                if target[0] == "incoming":
+                    status = incoming_adrs[target[1]].get("status", "proposed")
+                else:
+                    status = existing_adrs[target[1]].status
                 if not isinstance(status, str) or status not in {
                     "proposed", "accepted"
                 }:
@@ -81,7 +91,7 @@ def materialize(spec: dict) -> dict:
     for idx, a in enumerate(incoming_adrs):
         adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
         adr_by_key[str(idx)] = adr.id
-        adr_by_key[a["title"]] = adr.id
+        adr_by_key[str(a["title"])] = adr.id
         adr_by_id[adr.id] = adr
         created["adrs"].append(adr.id)
         print(f"📐 {adr.id} — {a['title']}")

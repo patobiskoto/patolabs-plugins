@@ -2373,7 +2373,7 @@ def test_linear_frame_materializes_native_reciprocal_adr_issue_link(
                 {
                     "title": "Implement decision",
                     "body": "- [ ] Done",
-                    "constrained_by": ["Frame decision", "Second decision"],
+                    "constrained_by": [0, "Second decision"],
                 }
             ],
         }
@@ -2409,6 +2409,74 @@ def test_linear_frame_rejects_any_unknown_adr_before_first_write(
     assert wire.issues == before_issues
     assert wire.documents == {}
     assert wire.comments == {}
+
+
+@pytest.mark.parametrize(
+    "adrs",
+    [
+        [{"title": "0", "body": "decision"}],
+        [
+            {"title": "First decision", "body": "decision"},
+            {"title": "0", "body": "decision"},
+        ],
+        [
+            {"title": "Repeated decision", "body": "first"},
+            {"title": "Repeated decision", "body": "second"},
+        ],
+    ],
+    ids=[
+        "incoming-title-collides-with-own-index",
+        "incoming-title-collides-with-other-index",
+        "duplicate-incoming-title",
+    ],
+)
+def test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write(
+    tracker, monkeypatch, adrs
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+
+    with pytest.raises(ValueError, match="ADR ambiguë"):
+        frame.materialize({
+            "adrs": adrs,
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": [0],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    existing = instance.create_adr(PROJECT, "Existing decision", "decision")
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+    before_documents = copy.deepcopy(wire.documents)
+    before_comments = copy.deepcopy(wire.comments)
+
+    with pytest.raises(ValueError, match="ADR ambiguë"):
+        frame.materialize({
+            "adrs": [{"title": existing.id, "body": "decision"}],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": [existing.id],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == before_documents
+    assert wire.comments == before_comments
 
 
 @pytest.mark.parametrize("with_reference", [False, True])
