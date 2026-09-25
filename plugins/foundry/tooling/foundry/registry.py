@@ -189,7 +189,7 @@ def _save(data: dict) -> None:
 
 @contextmanager
 def _cutover_lock():
-    """Serialize registry + repository-marker cutovers across local processes."""
+    """Serialize registry writes and repository-marker cutovers across processes."""
     directory = Path(data_dir())
     directory.mkdir(parents=True, exist_ok=True)
     lock_path = directory / ".registry-cutover.lock"
@@ -838,6 +838,10 @@ def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
 
 def register(tracker: str, repo: str, key: str, project_id: str, **extra) -> None:
     extra = dict(extra)
+    if "archive" in extra:
+        raise ValueError(
+            "binding archive refusé : utiliser le cutover tracker explicite"
+        )
     if tracker == "linear":
         project_id, extra = _validate_linear_binding(repo, project_id, extra)
     elif "canonical_repo" in extra:
@@ -847,9 +851,15 @@ def register(tracker: str, repo: str, key: str, project_id: str, **extra) -> Non
             )
         except ValueError:
             raise ValueError("canonical_repo invalide") from None
-    data = load()
-    data.setdefault(tracker, {})[repo] = {"key": key, "id": project_id, **extra}
-    _save(data)
+    with _cutover_lock():
+        data = load()
+        current = data.get(tracker, {}).get(repo)
+        if isinstance(current, dict) and current.get("archive") is True:
+            raise ValueError(
+                f"binding archive '{tracker}/{repo}' immuable sans rollback explicite"
+            )
+        data.setdefault(tracker, {})[repo] = {"key": key, "id": project_id, **extra}
+        _save(data)
 
 
 def register_alias(tracker: str, source_repo: str, alias_repo: str) -> bool:
@@ -858,46 +868,58 @@ def register_alias(tracker: str, source_repo: str, alias_repo: str) -> bool:
     Keep the source binding: old checkouts and hooks may still use it. Return False
     when the exact alias already exists, and refuse to overwrite another project.
     """
-    data = load()
-    bindings = data.get(tracker, {})
-    if source_repo not in bindings:
-        raise ValueError(
-            f"repo source '{source_repo}' non enregistré pour le tracker '{tracker}'"
-        )
-    source = bindings[source_repo]
-
-    def copy_source() -> dict[str, object]:
-        """Return the source binding, revalidating a Linear alias before save."""
-        if tracker != "linear":
-            return dict(source)
-        project_id, extra = _validate_linear_binding(
-            alias_repo,
-            source.get("id"),
-            {name: value for name, value in source.items() if name not in {"key", "id"}},
-        )
-        key = source.get("key")
-        if not isinstance(key, str) or not key:
-            raise ValueError("binding Linear invalide : key absent")
-        return {"key": key, "id": project_id, **extra}
-
-    current = bindings.get(alias_repo)
-    if current:
-        source_identity = (source.get("key"), source.get("id"))
-        current_identity = (current.get("key"), current.get("id"))
-        if current_identity != source_identity:
+    with _cutover_lock():
+        data = load()
+        bindings = data.get(tracker, {})
+        if source_repo not in bindings:
             raise ValueError(
-                f"repo alias '{alias_repo}' déjà lié à {current.get('key', '?')} "
-                f"({current.get('id', '?')})"
+                f"repo source '{source_repo}' non enregistré pour le tracker '{tracker}'"
             )
-        if current == source:
-            return False
-        # Same project, stale metadata: the explicitly named source is canonical.
-        data[tracker][alias_repo] = copy_source()
+        source = bindings[source_repo]
+        if not isinstance(source, dict) or source.get("archive") is True:
+            raise ValueError(
+                f"repo source '{source_repo}' archivé pour le tracker '{tracker}'"
+            )
+
+        def copy_source() -> dict[str, object]:
+            """Return the source binding, revalidating a Linear alias before save."""
+            if tracker != "linear":
+                return dict(source)
+            project_id, extra = _validate_linear_binding(
+                alias_repo,
+                source.get("id"),
+                {
+                    name: value for name, value in source.items()
+                    if name not in {"key", "id"}
+                },
+            )
+            key = source.get("key")
+            if not isinstance(key, str) or not key:
+                raise ValueError("binding Linear invalide : key absent")
+            return {"key": key, "id": project_id, **extra}
+
+        current = bindings.get(alias_repo)
+        if isinstance(current, dict) and current.get("archive") is True:
+            raise ValueError(
+                f"binding archive '{tracker}/{alias_repo}' immuable sans rollback explicite"
+            )
+        if current:
+            source_identity = (source.get("key"), source.get("id"))
+            current_identity = (current.get("key"), current.get("id"))
+            if current_identity != source_identity:
+                raise ValueError(
+                    f"repo alias '{alias_repo}' déjà lié à {current.get('key', '?')} "
+                    f"({current.get('id', '?')})"
+                )
+            if current == source:
+                return False
+            # Same project, stale metadata: the explicitly named source is canonical.
+            data[tracker][alias_repo] = copy_source()
+            _save(data)
+            return True
+        data.setdefault(tracker, {})[alias_repo] = copy_source()
         _save(data)
         return True
-    data.setdefault(tracker, {})[alias_repo] = copy_source()
-    _save(data)
-    return True
 
 
 def _parse_extra_arguments(

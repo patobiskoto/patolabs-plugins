@@ -344,6 +344,60 @@ def test_alias_refuses_to_overwrite_a_different_project(monkeypatch, tmp_path):
         registry.register_alias("youtrack", "foundry", "claude-plugins")
 
 
+def test_generic_registration_cannot_remove_an_archive_tombstone(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    registry._save({
+        "youtrack": {
+            "public": {"key": "FOUNDRY", "id": "0-3", "archive": True},
+        },
+    })
+    before = (state / "registry.json").read_bytes()
+
+    with pytest.raises(ValueError, match="archive.*immuable"):
+        registry.register("youtrack", "public", "FOUNDRY", "0-3")
+
+    assert (state / "registry.json").read_bytes() == before
+    project = registry.Project(key="FOUNDRY", id="0-3")
+    with pytest.raises(SystemExit, match="archive lisible"):
+        registry.require_writable_project("youtrack", project)
+
+
+def test_alias_registration_cannot_replace_an_archive_tombstone(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    registry.register("youtrack", "source", "FOUNDRY", "0-3")
+    data = registry.load()
+    data["youtrack"]["public"] = {
+        "key": "FOUNDRY", "id": "0-3", "archive": True,
+    }
+    registry._save(data)
+    before = (state / "registry.json").read_bytes()
+
+    with pytest.raises(ValueError, match="archive.*immuable"):
+        registry.register_alias("youtrack", "source", "public")
+
+    assert (state / "registry.json").read_bytes() == before
+
+
+def test_archived_binding_cannot_be_copied_as_an_alias(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    registry._save({
+        "youtrack": {
+            "public": {"key": "FOUNDRY", "id": "0-3", "archive": True},
+        },
+    })
+
+    with pytest.raises(ValueError, match="source.*archivé"):
+        registry.register_alias("youtrack", "public", "resurrected")
+
+    assert "resurrected" not in registry.load()["youtrack"]
+
+
 def _make_repo(tmp_path, name="demo"):
     repo = tmp_path / name
     repo.mkdir()
