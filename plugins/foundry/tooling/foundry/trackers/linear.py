@@ -3155,8 +3155,13 @@ class LinearTracker(Tracker):
         self._validate_adr_graph(
             chains, binding, pending_comments=pending_comments
         )
-        for adr_id, issue_id, native_id in comments:
-            self._create_adr_issue_link(binding, adr_id, issue_id, native_id)
+        # A durable manifest has already crossed the comment-before-Document
+        # boundary.  Do not call the write-capable helper on replay: a comment
+        # can disappear after the graph read, and the final snapshot must refuse
+        # that external deletion rather than recreate it.
+        if not durable_document:
+            for adr_id, issue_id, native_id in comments:
+                self._create_adr_issue_link(binding, adr_id, issue_id, native_id)
         for metadata, body, _candidate, _witness in candidates:
             self._create_adr_document(binding, metadata, body)
         _, fresh = self._adr_snapshot(project)
