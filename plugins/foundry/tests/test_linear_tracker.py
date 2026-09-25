@@ -2411,6 +2411,37 @@ def test_linear_frame_rejects_any_unknown_adr_before_first_write(
     assert wire.comments == {}
 
 
+@pytest.mark.parametrize("with_reference", [False, True])
+def test_linear_frame_rejects_accepted_incoming_adr_before_first_write(
+    tracker, monkeypatch, with_reference
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+
+    with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+        frame.materialize({
+            "adrs": [
+                {"title": "Earlier proposed", "body": "decision"},
+                {
+                    "title": "Later accepted", "body": "decision",
+                    "status": "accepted",
+                },
+            ],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist",
+                "body": "- [ ] Done",
+                "constrained_by": ["Later accepted"] if with_reference else [],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
 @pytest.mark.parametrize("status", ["deprecated", "superseded"])
 def test_linear_frame_rejects_terminal_existing_adr_before_first_write(
     tracker, monkeypatch, status
@@ -2449,7 +2480,7 @@ def test_linear_frame_rejects_terminal_existing_adr_before_first_write(
 
 
 @pytest.mark.parametrize("status", ["deprecated", "superseded", "unreadable", None])
-def test_linear_frame_rejects_inactive_upcoming_adr_before_first_write(
+def test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write(
     tracker, monkeypatch, status
 ):
     instance, wire = tracker
@@ -2457,7 +2488,7 @@ def test_linear_frame_rejects_inactive_upcoming_adr_before_first_write(
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
     before_issues = copy.deepcopy(wire.issues)
 
-    with pytest.raises(ValueError, match="ADR inactive"):
+    with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
         frame.materialize({
             "adrs": [{
                 "title": "Inactive decision", "body": "decision", "status": status,

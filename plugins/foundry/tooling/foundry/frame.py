@@ -39,6 +39,13 @@ def materialize(spec: dict) -> dict:
     incoming_adrs = spec.get("adrs", [])
     incoming_issues = spec.get("issues", [])
     existing_adrs = {}
+    if getattr(tr, "adr_issue_link_supported", False):
+        # Native Linear ADRs are born proposed.  Validate the complete incoming
+        # frame before creating its first ADR: an accepted ADR may be a valid
+        # *existing* constraint, but it is not a valid native creation request.
+        for incoming in incoming_adrs:
+            if incoming.get("status", "proposed") != "proposed":
+                raise ValueError("Linear ADR creation must begin proposed")
     if getattr(tr, "adr_issue_link_supported", False) and any(
         it.get("constrained_by") for it in incoming_issues
     ):
