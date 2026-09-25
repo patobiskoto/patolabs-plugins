@@ -1750,7 +1750,11 @@ class ReviewDeduplicator:
         )
         if coordinates is not None:
             current_coordinates = self._validate_coordinates(coordinates)
-            if current_coordinates != expected_coordinates:
+            # PAT-32 permits only the PR base to advance between the historical
+            # blocked proof and its sole replacement reviewer claim.  The
+            # worktree root remains an immutable part of the historical proof's
+            # authority, so a sibling worktree cannot consume this exception.
+            if current_coordinates["root"] != expected_coordinates["root"]:
                 raise RoutingConfigError(
                     "preuve AC issue de coordonnées de review différentes ; refus fermé."
                 )
@@ -2625,6 +2629,9 @@ def main(
                 previous_diff_hash: str,
                 expected_binding: Mapping[str, object],
             ):
+                # Preserve the historical proof's immutable root while allowing
+                # only its PR base to advance.  ``validate_claim`` independently
+                # binds the replacement claim to the current root/base/HEAD/diff.
                 binding = deduplicator.validated_claimed_correction_proof_binding(
                     args.issue,
                     previous_diff_hash,

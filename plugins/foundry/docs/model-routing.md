@@ -423,11 +423,13 @@ One released state is narrower still: PAT-22 generation 9 already carries its ex
 blocked-proof attestation and claimed correction, but its historical terminal review
 record predates immutable `head`. Only the credited-rearm callback may read that proof,
 under the issue lock and against every binding already recorded in the attestation. It
-accepts only the historical PAT-22 terminal-record shape and a blocked, non-all-pass
-proof in the recorded repository namespace. This read creates no attestation, credit,
-plan, generic reviewer authorization, acceptance sync, or merge authority. The new
-review claim produced by the bounded rearm is itself bound to the current immutable
-HEAD.
+authenticates that historical proof at its own immutable repository, root, base, head,
+diff, claim, and generation. The current worktree root must still equal the archived
+root, but its base may differ when the PR base has advanced. It accepts only the
+historical PAT-22 terminal-record shape and a blocked, non-all-pass proof in the
+recorded repository namespace. This read creates no attestation, credit, plan, generic
+reviewer authorization, acceptance sync, or merge authority. The distinct new reviewer
+claim is then independently bound to the current root, base, immutable HEAD, and diff.
 
 Both this transition and `routing escalation failure ...
 --kind review_blocking_after_fix` expose `--repository` for the uncommon case where the
