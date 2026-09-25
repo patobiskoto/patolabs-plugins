@@ -3111,6 +3111,18 @@ class LinearTracker(Tracker):
             by_id[raw.get("id")] = raw
         hypothetical = list(documents)
         for _metadata, _body, candidate, witness in candidates:
+            # Imports write a version before its witness.  A missing witness can
+            # therefore be the exact interrupted-create state and is recoverable,
+            # but a surviving witness without its version cannot result from that
+            # order.  Refuse that orphan before adding any hypothetical slot: doing
+            # otherwise would authorize recreating a deleted version on replay.
+            if (
+                by_id.get(candidate["id"]) is None
+                and by_id.get(witness["id"]) is not None
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR batch witness has no matching version"
+                )
             for expected in (candidate, witness):
                 current = by_id.get(expected["id"])
                 if current is None:

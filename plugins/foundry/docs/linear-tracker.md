@@ -196,7 +196,11 @@ adding the missing witness and versions. It also completes a multi-relation impo
 stopped after the first reciprocal version, including when that exact version exists but
 its witness does not. The replay requires that this is the only incomplete version pair
 and that it is one of the reciprocal versions derived from the byte-identical import;
-other graph conflicts and a changed source snapshot remain fail-closed.
+other graph conflicts and a changed source snapshot remain fail-closed. This recovery is
+asymmetric because each version is written before its witness: a present version with its
+exact witness missing may be completed, while a present witness whose matching version
+Document is missing is an orphan and is refused before any `DocumentCreate` or
+`CommentCreate` effect.
 For Linear `frame`, every `constrained_by` reference is resolved before creating any
 ADR, epic or issue; an unknown, ambiguous, unreadable, deprecated, or superseded
 reference cannot leave an issue with only its first reciprocal link. Indexes, incoming
