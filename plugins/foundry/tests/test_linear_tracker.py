@@ -3383,6 +3383,33 @@ def test_linear_native_adrs_stay_readable_beside_qualified_historical_import(tra
     assert {"LIN-ADR-0041", "LIN-ADR-0042"} <= set(listed)
 
 
+def test_linear_native_adr_readable_body_edit_with_recomputed_witness_fails_closed(
+    tracker,
+):
+    # Only a probe-qualified historical version 0 may carry opaque provider bytes.
+    # A native ADR whose readable body and witness digest are edited together must
+    # still be refused: humans and agents would otherwise read different decisions.
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Native decision", "- original decision")
+    version = wire.documents[created.ref]
+    version["content"] = version["content"].replace(
+        "original decision", "tampered decision"
+    )
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    witness = wire.documents[witness_id]
+    payload = json.loads(
+        witness["content"][len(linear_module._ADR_WITNESS_HEADER) : -len("\n\\-->")]
+    )
+    payload["document_sha256"] = hashlib.sha256(version["content"].encode()).hexdigest()
+    witness["content"] = (
+        linear_module._ADR_WITNESS_HEADER
+        + json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n\\-->"
+    )
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance.list_adrs(PROJECT)
+
+
 def test_linear_historical_batch_stops_after_write_when_provider_diverges_from_probe(
     tracker,
 ):

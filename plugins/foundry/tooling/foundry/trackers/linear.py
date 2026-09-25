@@ -922,7 +922,10 @@ def _parse_adr_document(
         or raw.get("project", {}).get("id") != binding["project_id"]
         or (
             not allow_unbound_body
-            and not allow_witness_bound_readback
+            and not (
+                allow_witness_bound_readback
+                and _is_probe_qualified_historical_version(metadata)
+            )
             and not _adr_readback_content_matches(
                 content, _adr_document_content(metadata, canonical_body)
             )
@@ -930,6 +933,22 @@ def _parse_adr_document(
     ):
         raise LinearTrackerError("adr.normalize", None, "invalid_response")
     return metadata, canonical_body
+
+
+def _is_probe_qualified_historical_version(metadata: dict) -> bool:
+    """Only a batch-imported historical version 0 may carry opaque probe bytes.
+
+    Its readable Document was qualified before creation by a probe of its complete
+    provider readback, and its witness binds those bytes plus the exact source.
+    Native ADRs and every later version keep the closed serialization check.
+    """
+    origin = metadata.get("origin")
+    return (
+        metadata.get("sequence") == 0
+        and isinstance(origin, dict)
+        and origin.get("kind") == "migration"
+        and isinstance(origin.get("batch_sha256"), str)
+    )
 
 
 def _valid_adr_version_delta(previous: dict, current: dict) -> bool:
@@ -2937,6 +2956,7 @@ class LinearTracker(Tracker):
         # Document, not a rule for producing new Markdown.  Read its deterministic
         # slot before the create path so an absent slot fails before any mutation;
         # a present exact slot may still receive its missing witness below.
+        existing = None
         if _is_recovery_only_historical_source(body):
             existing = self._read_adr_document(doc_id)
             if existing is None:
@@ -2965,8 +2985,14 @@ class LinearTracker(Tracker):
             )
             return raw
 
-        version = self._create_exact_adr_document(
-            expected, "adr.create", verify_version
+        # The recovery-only slot is never re-entered through the create path: a
+        # deletion after this read must not turn into a fresh historical Document.
+        version = (
+            verify_version(existing)
+            if existing is not None
+            else self._create_exact_adr_document(
+                expected, "adr.create", verify_version
+            )
         )
         witness = _adr_witness_document(binding, metadata, version, body)
 
@@ -3694,11 +3720,15 @@ class LinearTracker(Tracker):
         self, binding: dict, by_id: dict, entries: list[dict]
     ) -> list[tuple[dict, dict, str, str]]:
         """Read every qualification probe before any effect; return exact profiles."""
+        if any(
+            not isinstance(entry["record"]["qualification_project_id"], str)
+            for entry in entries
+        ):
+            raise ValueError("Linear ADR batch record invalid")
         projects = {entry["record"]["qualification_project_id"] for entry in entries}
         qualification_project = next(iter(projects))
         if (
             len(projects) != 1
-            or not isinstance(qualification_project, str)
             or qualification_project == binding["project_id"]
         ):
             raise TrackerConflictError(
