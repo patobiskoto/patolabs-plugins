@@ -39,19 +39,41 @@ def materialize(spec: dict) -> dict:
     incoming_adrs = spec.get("adrs", [])
     incoming_issues = spec.get("issues", [])
     existing_adrs = {}
+    if getattr(tr, "adr_issue_link_supported", False):
+        # Native Linear ADRs are born proposed.  Validate the complete incoming
+        # frame before creating its first ADR: an accepted ADR may be a valid
+        # *existing* constraint, but it is not a valid native creation request.
+        for incoming in incoming_adrs:
+            if incoming.get("status", "proposed") != "proposed":
+                raise ValueError("Linear ADR creation must begin proposed")
     if getattr(tr, "adr_issue_link_supported", False) and any(
         it.get("constrained_by") for it in incoming_issues
     ):
         # Resolve every reference before the first write. Otherwise a late bad
         # reference can leave a durable issue and only a subset of ADR links.
         existing_adrs = {adr.id: adr for adr in tr.list_adrs(p)}
-        upcoming = {str(index) for index in range(len(incoming_adrs))}
-        upcoming.update(a["title"] for a in incoming_adrs)
+        upcoming = {
+            str(index): a.get("status", "proposed")
+            for index, a in enumerate(incoming_adrs)
+        }
+        upcoming.update(
+            {a["title"]: a.get("status", "proposed") for a in incoming_adrs}
+        )
         for it in incoming_issues:
             for ref in it.get("constrained_by", []):
                 key = str(ref)
-                if key not in upcoming and key not in existing_adrs:
+                if key in upcoming:
+                    status = upcoming[key]
+                elif key in existing_adrs:
+                    status = existing_adrs[key].status
+                else:
                     raise ValueError(f"ADR inconnue pour relation Linear : {key}")
+                if not isinstance(status, str) or status not in {
+                    "proposed", "accepted"
+                }:
+                    raise ValueError(
+                        f"ADR inactive pour relation Linear : {key} ({status!r})"
+                    )
 
     # 1) ADRs first — they are the frame the issues reference.
     adr_by_key = {}

@@ -198,8 +198,9 @@ its witness does not. The replay requires that this is the only incomplete versi
 and that it is one of the reciprocal versions derived from the byte-identical import;
 other graph conflicts and a changed source snapshot remain fail-closed.
 For Linear `frame`, every `constrained_by` reference is resolved before creating any
-ADR, epic or issue; an unknown second reference cannot leave an issue with only its
-first reciprocal link. Provider multi-object failure after this preflight remains
+ADR, epic or issue; an unknown, unreadable, deprecated, or superseded reference cannot
+leave an issue with only its first reciprocal link. Only `proposed` and `accepted` ADRs
+are active constraints. Provider multi-object failure after this preflight remains
 non-atomic and must not be mistaken for a completed frame.
 
 ### Controlled production recipe
