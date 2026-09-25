@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from foundry import registry
 from foundry.routing import (
@@ -1243,6 +1243,33 @@ class EscalationStore:
     def _continued_remediation_correction(cls, state: dict, role: str) -> bool:
         return cls._credited_correction_source(state, role) is not None
 
+    @classmethod
+    def _claimed_credited_correction_source(
+        cls, state: dict, technical: dict,
+    ) -> tuple[dict, dict, dict] | None:
+        """Return the one credit already CAS-claimed for this technical review.
+
+        A blocked review cannot by itself reopen a consumed reviewer slot. The
+        exceptional rearm is available only after the ordinary correction plan
+        was claimed from the same credited consumption. This keeps the binding
+        to the issue, stopped role, and halt generation without granting a route
+        or an additional remediation credit.
+        """
+        source = cls._credited_correction_source(state, technical["role"])
+        if source is None:
+            return None
+        consumption, proof = source
+        claim = next((
+            item for item in state["credited_correction_claim_audit"]
+            if item["consumption_at"] == consumption["at"]
+            and item["role"] == technical["role"]
+            and item["halt_generation"] == technical["halt_generation"]
+            and item["proof_id"] == proof["proof_id"]
+        ), None)
+        if claim is None:
+            return None
+        return consumption, proof, claim
+
     def attest_legacy_blocking_proof(
         self,
         issue_id: str,
@@ -1961,6 +1988,7 @@ class EscalationStore:
                             or rearm.get("repair_kind") not in {
                                 "mergeable_terminal_rearm",
                                 "terminal_before_binding_reconciliation",
+                                "credited_correction_blocked_rearm",
                             }
                             or (
                                 rearm.get("code")
@@ -1974,6 +2002,14 @@ class EscalationStore:
                                 == "terminal_before_binding_reconciliation"
                                 and terminal_completed_at
                                 >= _utc_timestamp(rearm["previous_claimed_at"])
+                            )
+                            or (
+                                rearm.get("repair_kind")
+                                == "credited_correction_blocked_rearm"
+                                and (
+                                    rearm.get("code") != "technical_review_rearmed"
+                                    or rearm.get("terminal_quality") != "blocked"
+                                )
                             )
                         )
                     )
@@ -2087,11 +2123,30 @@ class EscalationStore:
                 if item["role"] == event["role"]
                 and item["halt_generation"] == event["halt_generation"]
             ), None)
+            proof_rearm = next((
+                rearm for rearm in technical["review_rearm_audit"]
+                if rearm.get("previous_diff_hash") == proof["diff_hash"]
+                and rearm.get("terminal_proof_id") == proof["proof_id"]
+            ), None) if technical is not None else None
+            proof_claimed_at = (
+                proof_rearm["previous_claimed_at"]
+                if proof_rearm is not None else technical["review_claimed_at"]
+                if technical is not None else None
+            )
             if (
                 technical is None
-                or technical["review_diff_hash"] != proof["diff_hash"]
-                or technical["review_claimed_at"] is None
-                or _utc_timestamp(technical["review_claimed_at"])
+                or (
+                    technical["review_diff_hash"] != proof["diff_hash"]
+                    and not any(
+                        rearm.get("previous_diff_hash") == proof["diff_hash"]
+                        and rearm.get("terminal_proof_id") == proof["proof_id"]
+                        and rearm.get("repair_kind")
+                        == "credited_correction_blocked_rearm"
+                        for rearm in technical["review_rearm_audit"]
+                    )
+                )
+                or proof_claimed_at is None
+                or _utc_timestamp(proof_claimed_at)
                 >= _utc_timestamp(proof["completed_at"])
                 or _utc_timestamp(proof["completed_at"])
                 > _utc_timestamp(event["at"])
@@ -2130,15 +2185,34 @@ class EscalationStore:
                 if event["role"] == value["role"]
                 and event["halt_generation"] == value["halt_generation"]
             ), None)
+            proof_rearm = next((
+                rearm for rearm in technical["review_rearm_audit"]
+                if rearm.get("previous_diff_hash") == proof["diff_hash"]
+                and rearm.get("terminal_proof_id") == proof["proof_id"]
+            ), None) if technical is not None else None
+            proof_claimed_at = (
+                proof_rearm["previous_claimed_at"]
+                if proof_rearm is not None else technical["review_claimed_at"]
+                if technical is not None else None
+            )
             attested_at = _utc_timestamp(value["at"])
             source_at = _utc_timestamp(value["consumption_at"])
             if (
                 source is None
                 or source.get("blocking_proof") is not None
                 or technical is None
-                or technical["review_diff_hash"] != proof["diff_hash"]
-                or technical["review_claimed_at"] is None
-                or _utc_timestamp(technical["review_claimed_at"])
+                or (
+                    technical["review_diff_hash"] != proof["diff_hash"]
+                    and not any(
+                        rearm.get("previous_diff_hash") == proof["diff_hash"]
+                        and rearm.get("terminal_proof_id") == proof["proof_id"]
+                        and rearm.get("repair_kind")
+                        == "credited_correction_blocked_rearm"
+                        for rearm in technical["review_rearm_audit"]
+                    )
+                )
+                or proof_claimed_at is None
+                or _utc_timestamp(proof_claimed_at)
                 >= _utc_timestamp(proof["completed_at"])
                 or _utc_timestamp(proof["completed_at"]) > source_at
                 or attested_at <= source_at
@@ -2208,6 +2282,56 @@ class EscalationStore:
             correction_claims.append(dict(value))
             claimed_sources.add(value["consumption_at"])
             previous_claim_time = claimed_at
+
+        # A blocked terminal proof may rearm only the reviewer slot following
+        # the already claimed, exact credited correction. Validate it after both
+        # legacy proof attestations and correction claims are normalized.
+        for technical in technical_audit:
+            for rearm in technical["review_rearm_audit"]:
+                if rearm.get("repair_kind") != "credited_correction_blocked_rearm":
+                    continue
+                source = next((
+                    event for event in durable_audit
+                    if event["role"] == technical["role"]
+                    and event["halt_generation"] == technical["halt_generation"]
+                    and event.get("blocking_proof") is not None
+                    and event["blocking_proof"]["proof_id"]
+                    == rearm["terminal_proof_id"]
+                ), None)
+                if source is None:
+                    source = next((
+                        event for event in durable_audit
+                        for attestation in legacy_attestations
+                        if event["at"] == attestation["consumption_at"]
+                        and event["role"] == technical["role"]
+                        and event["halt_generation"] == technical["halt_generation"]
+                        and attestation["blocking_proof"]["proof_id"]
+                        == rearm["terminal_proof_id"]
+                    ), None)
+                proof = source.get("blocking_proof") if source is not None else None
+                if proof is None and source is not None:
+                    proof = next(
+                        attestation["blocking_proof"]
+                        for attestation in legacy_attestations
+                        if attestation["consumption_at"] == source["at"]
+                    )
+                credit = next((
+                    claim for claim in correction_claims
+                    if source is not None
+                    and claim["consumption_at"] == source["at"]
+                    and claim["role"] == technical["role"]
+                    and claim["halt_generation"] == technical["halt_generation"]
+                    and claim["proof_id"] == rearm["terminal_proof_id"]
+                ), None)
+                if (
+                    source is None or proof is None or credit is None
+                    or proof["diff_hash"] != rearm["previous_diff_hash"]
+                    or proof["completed_at"] != rearm["terminal_completed_at"]
+                    or proof["quality"] != "blocked" or proof["all_pass"] is not False
+                    or _utc_timestamp(credit["at"])
+                    >= _utc_timestamp(rearm["rearmed_at"])
+                ):
+                    raise _invalid_ledger(issue_id)
 
         state = {
             "version": 1,
@@ -3403,6 +3527,9 @@ class EscalationStore:
         *,
         validated_claim: Callable[[], object],
         validated_rearm: Callable[[str], object | None] | None = None,
+        validated_credited_rearm: (
+            Callable[[str, Mapping[str, object]], object | None] | None
+        ) = None,
     ) -> object:
         """Validate a Git claim, then bind one bounded reviewer authorization.
 
@@ -3411,9 +3538,12 @@ class EscalationStore:
         state has proved that this hash may use the reviewer authorization and before
         that authorization is persisted.  A rejected callback therefore cannot bind
         ``review_diff_hash``; a competing hash cannot create a review claim.  A
-        distinct second diff is possible exactly once, only through
-        ``validated_rearm`` after it has verified the terminal structured proof of
-        the first claim.  A completed claim whose public verdict has
+        distinct second diff is possible exactly once, only after a callback has
+        verified the terminal structured proof of the first claim.  The separate
+        ``validated_credited_rearm`` callback receives the exact already-claimed
+        PAT-22 generation-9 blocked-proof binding; it is never used for generic
+        mergeable rearm.  A
+        completed claim whose public verdict has
         ``should_run=false`` is returned idempotently and never binds or replaces
         the technical review slot.  An in-progress duplicate still reserves the
         slot: it represents an already-active reviewer even though this caller does
@@ -3429,6 +3559,13 @@ class EscalationStore:
         if validated_rearm is not None and not callable(validated_rearm):
             raise RoutingConfigError(
                 "réarm de review : validation terminale atomique requise."
+            )
+        if (
+            validated_credited_rearm is not None
+            and not callable(validated_credited_rearm)
+        ):
+            raise RoutingConfigError(
+                "réarm de correction créditée : validation atomique requise."
             )
         try:
             os.lstat(self._path(issue_id))
@@ -3488,10 +3625,19 @@ class EscalationStore:
             rearm_audit = technical_event["review_rearm_audit"]
             if rearm_audit:
                 return "technical_reviewer_rearm_consumed", False
-            if validated_rearm is None:
-                return "technical_reviewer_terminal_proof_required", False
             previous_claimed_at = technical_event["review_claimed_at"]
-            binding = validated_rearm(claimed_diff)
+            credited = self._claimed_credited_correction_source(state, technical_event)
+            historical_pat22 = (
+                issue_id == "PAT-22"
+                and technical_event["halt_generation"] == 9
+                and credited is not None
+            )
+            if historical_pat22 and validated_credited_rearm is not None:
+                binding = validated_credited_rearm(claimed_diff, credited[1])
+            elif validated_rearm is not None:
+                binding = validated_rearm(claimed_diff)
+            else:
+                return "technical_reviewer_terminal_proof_required", False
             if binding is None:
                 return "technical_reviewer_terminal_proof_required", False
             if (
@@ -3510,7 +3656,16 @@ class EscalationStore:
             claimed_at = _utc_timestamp(previous_claimed_at)
             polluted = completed_at < claimed_at
             mergeable = binding["quality"] == "mergeable" and binding["all_pass"]
-            if not polluted and not mergeable:
+            credited_blocked = (
+                not polluted
+                and binding["quality"] == "blocked"
+                and binding["all_pass"] is False
+                and credited is not None
+                and credited[1]["proof_id"] == binding["proof_id"]
+                and credited[1]["diff_hash"] == claimed_diff
+                and credited[1]["completed_at"] == binding["completed_at"]
+            )
+            if not polluted and not mergeable and not credited_blocked:
                 return "technical_reviewer_terminal_proof_required", False
             claim = validated_claim()
             if not claim_reserves_slot(claim):
@@ -3531,6 +3686,7 @@ class EscalationStore:
                 "repair_kind": (
                     "terminal_before_binding_reconciliation"
                     if polluted else "mergeable_terminal_rearm"
+                    if mergeable else "credited_correction_blocked_rearm"
                 ),
                 "new_diff_hash": diff_hash,
                 "rearmed_at": rearmed_at,

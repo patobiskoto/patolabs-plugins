@@ -399,6 +399,14 @@ changed diff therefore fails without consuming the claim. Deterministic host val
 finishes before this CAS, so a corrected retry can still claim the sole plan. This claim
 creates no provider, campaign, PR, CI, merge, or additional-review authority.
 
+After that plan has been claimed, the reviewer may bind exactly one new diff to the
+consumed technical route. This narrow CAS rearm requires the same issue, stopped role
+and halt generation, and the exact prior terminal **blocked** proof that funded the
+credited plan; its audit records the prior and new diff plus the terminal proof. A
+blocked proof without that prior correction-plan claim, a different proof/role/generation,
+or a replay is refused. Existing mergeable-terminal and pre-binding-pollution review
+paths remain separate.
+
 Released ledgers may contain the same consumed generation without the newer embedded
 `blocking_proof` member. They are never rewritten or credited again. The explicit
 `routing escalation attest-legacy-blocking-proof <ISSUE> <ROLE>
@@ -408,6 +416,18 @@ proof, and appends a separate attestation bound to the one legacy consumption. M
 wrong, stale, ambiguous, already-bound, or non-blocking proof state fails closed. The
 subsequent correction plan is claimed through the same append-only CAS journal used by
 new ledgers, so concurrent Claude and Codex callers still yield exactly one plan.
+This transition uses the ordinary HEAD-bound terminal-proof validator; a headless Git
+review cannot create a new attestation or correction claim.
+
+One released state is narrower still: PAT-22 generation 9 already carries its exact
+blocked-proof attestation and claimed correction, but its historical terminal review
+record predates immutable `head`. Only the credited-rearm callback may read that proof,
+under the issue lock and against every binding already recorded in the attestation. It
+accepts only the historical PAT-22 terminal-record shape and a blocked, non-all-pass
+proof in the recorded repository namespace. This read creates no attestation, credit,
+plan, generic reviewer authorization, acceptance sync, or merge authority. The new
+review claim produced by the bounded rearm is itself bound to the current immutable
+HEAD.
 
 Both this transition and `routing escalation failure ...
 --kind review_blocking_after_fix` expose `--repository` for the uncommon case where the
@@ -751,8 +771,16 @@ redacted deduplication path.
 The reviewer reads through `routing read-review --diff-hash <hash> --claim-id <id>
 --root <root> --base <base-sha>`.
 That command retains the ledger lock from the current active-generation and immutable
-coordinate checks through the current diff hash and byte emission, so a recovery cannot
-deliver bytes to its replaced owner. It rejects a stale or invented claim. After a
+coordinate and immutable-HEAD checks through the current diff hash and byte emission,
+so a recovery cannot deliver bytes to its replaced owner. An empty commit is HEAD drift
+even when it leaves the diff hash unchanged. A Git-coordinated ledger record (one with
+immutable coordinates or a durable claim publication) that has no `head` fails closed
+before diff bytes, proof creation, active validation, recovery, generic terminal rearm,
+acceptance sync, or merge. Only a bare non-Git `claim()` fixture retains headless
+compatibility. The sole read-only exception is the already-attested and already-claimed
+PAT-22 generation-9 blocked proof described above; normal terminal-proof lookup rejects
+it, and it cannot authorize an active reviewer operation by itself. The command rejects
+a stale or invented claim. After a
 complete verdict, the caller runs `routing record-review-proof` with the exact structured
 AC and quality outcomes while the claim is still active. That operation atomically binds
 the proof and terminalizes the generation; `complete-review` is a deprecated compatibility
