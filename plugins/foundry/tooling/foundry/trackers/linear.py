@@ -76,6 +76,7 @@ _ISSUE_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,255}\Z")
 _ISSUE_NUMBER = re.compile(r"[1-9][0-9]*\Z")
 _ADR_STATUSES = frozenset({"proposed", "accepted", "deprecated", "superseded"})
 _ADR_RELATION_LIMIT = 100
+_ADR_MISSING_RELATION_FAMILIES = ("issues", "superseded_by", "supersedes")
 _ADR_TRANSITIONS = {
     "proposed": frozenset({"accepted", "deprecated"}),
     "accepted": frozenset({"deprecated", "superseded"}),
@@ -808,7 +809,7 @@ def _parse_adr_document(
             and all(isinstance(value, str) for value in origin["missing_relations"])
             and origin["missing_relations"] == sorted(set(origin["missing_relations"]))
             and set(origin["missing_relations"]).issubset(
-                {"supersedes", "superseded_by", "issues"}
+                _ADR_MISSING_RELATION_FAMILIES
             )
             and (
                 sequence != 0
@@ -3336,7 +3337,7 @@ class LinearTracker(Tracker):
     def import_adr_batch(
         self, project: Project, records: tuple[dict, ...]
     ) -> list[Adr]:
-        """Import a finite, fully reciprocal historical closure as one manifest.
+        """Import one finite historical manifest with a reciprocal asserted graph.
 
         Linear has no multi-Document transaction. The complete hypothetical graph is
         checked before the first effect; a partial write is unreadable and replay of
@@ -3349,14 +3350,23 @@ class LinearTracker(Tracker):
         }
         if not isinstance(records, tuple) or not 1 <= len(records) <= 100:
             raise ValueError("Linear ADR batch requires 1..100 records")
+        if any(not isinstance(record, dict) for record in records):
+            raise ValueError("Linear ADR batch record fields invalid")
+        record_fields = {frozenset(record) for record in records}
+        complete_fields = frozenset(keys)
+        partial_fields = complete_fields | {"missing_relations"}
+        if len(record_fields) != 1 or next(iter(record_fields)) not in {
+            complete_fields,
+            partial_fields,
+        }:
+            raise ValueError("Linear ADR batch record fields invalid")
+        declares_missing_relations = next(iter(record_fields)) == partial_fields
         binding, documents = self._adr_documents(project)
         prepared = []
         candidates = []
         comments = []
         seen_ids = set()
         for record in records:
-            if not isinstance(record, dict) or set(record) != keys:
-                raise ValueError("Linear ADR batch record fields invalid")
             adr_id = record["adr_id"]
             title = record["title"]
             body = record["body"]
@@ -3365,6 +3375,28 @@ class LinearTracker(Tracker):
             supersedes = record["supersedes"]
             superseded_by = record["superseded_by"]
             issue_refs = record["issue_refs"]
+            missing_relations = (
+                record["missing_relations"] if declares_missing_relations else ()
+            )
+            if (
+                not isinstance(missing_relations, tuple)
+                or any(not isinstance(value, str) for value in missing_relations)
+                or missing_relations
+                != tuple(sorted(set(missing_relations)))
+                or not set(missing_relations).issubset(
+                    _ADR_MISSING_RELATION_FAMILIES
+                )
+            ):
+                raise ValueError("Linear ADR batch missing relations invalid")
+            if (
+                ("supersedes" in missing_relations and supersedes != ())
+                or (
+                    "superseded_by" in missing_relations
+                    and superseded_by is not None
+                )
+                or ("issues" in missing_relations and issue_refs != ())
+            ):
+                raise ValueError("Linear ADR batch unknown relation is not empty")
             if (
                 not isinstance(adr_id, str)
                 or _ADR_ID.fullmatch(adr_id) is None
@@ -3393,7 +3425,14 @@ class LinearTracker(Tracker):
                 or adr_id in supersedes
                 or superseded_by == adr_id
                 or superseded_by in supersedes
-                or (status == "superseded") != (superseded_by is not None)
+                or (
+                    (status == "superseded") != (superseded_by is not None)
+                    and not (
+                        status == "superseded"
+                        and superseded_by is None
+                        and "superseded_by" in missing_relations
+                    )
+                )
                 or (bool(supersedes) and status not in {"accepted", "superseded"})
             ):
                 raise ValueError("Linear ADR batch record invalid")
@@ -3419,7 +3458,7 @@ class LinearTracker(Tracker):
                     "source_created": record["source_created"],
                     "source_updated": record["source_updated"],
                     "source_body_sha256": record["expected_source_sha256"],
-                    "missing_relations": [],
+                    "missing_relations": list(missing_relations),
                 },
                 "relations": {
                     "supersedes": sorted(supersedes),
