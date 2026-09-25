@@ -40,6 +40,30 @@ def _review_coordinates(root: Path) -> dict[str, str]:
     return {"root": str(root.resolve()), "base": BASE_SHA}
 
 
+@pytest.fixture(autouse=True)
+def _synthetic_git_head(monkeypatch):
+    """Keep Git-native ledger unit fixtures independent of a real worktree."""
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "a" * 40)
+
+
+def _git_claim_fixture(
+    monkeypatch,
+    ledger: ReviewDeduplicator,
+    diff: bytes,
+    coordinates: dict[str, str],
+    *,
+    head: str = "a" * 40,
+):
+    """Create a current Git claim without weakening production claim semantics."""
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: head)
+    return ledger.claim_git(
+        review_diff_hash(diff),
+        coordinates=coordinates,
+        claim_attempt_token=CLAIM_ATTEMPT_TOKEN,
+    )
+
+
 def _write_config(root: Path, payload: dict) -> Path:
     path = root / ".foundry" / "model-routing.json"
     path.parent.mkdir()
@@ -68,6 +92,7 @@ def _claim_git_once(args):
     state_dir, repository, diff, coordinates = args
     import foundry.routing as routing
     routing.git_diff = lambda *_args, **_kwargs: diff
+    routing.git_head = lambda *_args, **_kwargs: "a" * 40
     try:
         return ReviewDeduplicator(repository, state_dir).claim_git(
             review_diff_hash(diff), coordinates=coordinates,
@@ -81,6 +106,7 @@ def _replay_interrupted_claim_once(args):
     state_dir, repository, diff, coordinates, claim_attempt_token = args
     import foundry.routing as routing
     routing.git_diff = lambda *_args, **_kwargs: diff
+    routing.git_head = lambda *_args, **_kwargs: "9" * 40
     try:
         return ReviewDeduplicator(repository, state_dir).claim_git(
             review_diff_hash(diff),
@@ -113,6 +139,7 @@ def _recover_once(args):
     try:
         import foundry.routing as routing
         routing.git_diff = lambda *_args, **_kwargs: diff
+        routing.git_head = lambda *_args, **_kwargs: "a" * 40
         result = ReviewDeduplicator(repository, state_dir).recover(
             diff_hash, generation, claim_id, reason,
             coordinates=_review_coordinates(Path(state_dir)),
@@ -448,6 +475,126 @@ def test_git_claim_read_recover_and_proof_share_exact_coordinates(monkeypatch, t
     assert ledger.completed_proof_id(diff_hash) == proof["proof_id"]
 
 
+@pytest.mark.parametrize(
+    "record_shape",
+    ("pre_head_coordinates", "current_deleted_head"),
+)
+@pytest.mark.parametrize(
+    "operation",
+    ("read", "proof", "active", "recovery_preflight", "recovery"),
+)
+def test_git_coordinated_claim_without_immutable_head_fails_before_bytes_or_effects(
+    monkeypatch, tmp_path, record_shape, operation,
+):
+    repository, state = f"owner/missing-head-{record_shape}-{operation}", tmp_path / "state"
+    coordinates = _review_coordinates(tmp_path)
+    diff = b"Git-coordinated review bytes require an immutable HEAD"
+    diff_hash = review_diff_hash(diff)
+    ledger = ReviewDeduplicator(repository, state)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
+
+    if record_shape == "pre_head_coordinates":
+        claim = ledger.claim(diff, coordinates=coordinates)
+    else:
+        claim = ledger.claim_git(
+            diff_hash,
+            coordinates=coordinates,
+            claim_attempt_token=CLAIM_ATTEMPT_TOKEN,
+        )
+        marker = ledger.directory / diff_hash
+        record = json.loads(marker.read_text(encoding="utf-8"))
+        del record["head"]
+        marker.write_text(json.dumps(record), encoding="utf-8")
+
+    marker = ledger.directory / diff_hash
+    before = marker.read_bytes()
+    bytes_read = False
+    bytes_emitted = False
+
+    def reject_byte_read(*_args, **_kwargs):
+        nonlocal bytes_read
+        bytes_read = True
+        raise AssertionError("Git bytes were read before the missing HEAD was rejected")
+
+    def consume(_diff):
+        nonlocal bytes_emitted
+        bytes_emitted = True
+
+    monkeypatch.setattr("foundry.routing.git_diff", reject_byte_read)
+    body = "- [ ] Missing immutable HEAD fails closed\n"
+    outcomes = [
+        {**criterion, "verdict": "pass"}
+        for criterion in acceptance_criteria(body)
+    ]
+
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        if operation == "read":
+            claimed_review_diff(
+                diff_hash, repository, claim_id=claim.claim_id,
+                root=tmp_path, base=BASE_SHA, state_dir=state, consume=consume,
+            )
+        elif operation == "proof":
+            AcceptanceProofStore(repository, state).create(
+                issue_id="PAT-31", issue_body=body, reviewer_role="reviewer",
+                outcomes=outcomes, quality="mergeable", diff_hash=diff_hash,
+                claim_id=claim.claim_id, root=tmp_path, base=BASE_SHA,
+                state_dir=state,
+            )
+        elif operation == "active":
+            ledger.active_git_claim(
+                diff_hash, claim.claim_id, coordinates=coordinates,
+            )
+        elif operation == "recovery_preflight":
+            ledger.assert_recoverable(
+                diff_hash, claim.generation, claim.claim_id,
+                coordinates=coordinates,
+            )
+        else:
+            ledger.recover(
+                diff_hash, claim.generation, claim.claim_id,
+                "reviewer process stopped", coordinates=coordinates,
+            )
+
+    assert bytes_read is False
+    assert bytes_emitted is False
+    assert marker.read_bytes() == before
+    assert not AcceptanceProofStore(repository, state).directory.exists()
+
+
+def test_bare_non_git_claim_remains_a_narrow_compatible_fixture(tmp_path):
+    ledger = ReviewDeduplicator("owner/non-git-fixture", tmp_path)
+    claim = ledger.claim(b"non-Git fixture bytes")
+
+    assert ledger.active_claim(claim.diff_hash, claim.claim_id).to_dict() == {
+        **claim.to_dict(),
+        "should_run": True,
+    }
+    assert ledger.claim(b"non-Git fixture bytes").to_dict() == {
+        "diff_hash": claim.diff_hash,
+        "should_run": False,
+        "state": "in_progress",
+        "generation": 1,
+    }
+
+
+def test_claim_publication_alone_makes_a_headless_record_git_coordinated(tmp_path):
+    ledger = ReviewDeduplicator("owner/publication-only", tmp_path)
+    claim = ledger.claim(b"published Git claim")
+    marker = ledger.directory / claim.diff_hash
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    record["claim_publication"] = {
+        "attempt_digest": "a" * 64,
+        "generation": 1,
+    }
+    marker.write_text(json.dumps(record), encoding="utf-8")
+    before = marker.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        ledger.git_claim_requires_preflight(claim.diff_hash)
+
+    assert marker.read_bytes() == before
+
+
 def test_terminal_proof_rearms_one_technical_review_for_a_new_diff(monkeypatch, tmp_path):
     state = tmp_path / "state"
     monkeypatch.setenv("FOUNDRY_DATA", str(state))
@@ -503,6 +650,113 @@ def test_terminal_proof_rearms_one_technical_review_for_a_new_diff(monkeypatch, 
     audit = store.status(issue)["technical_remediation_audit"][0]["review_rearm_audit"]
     assert audit[0]["previous_diff_hash"] == first_hash
     assert audit[0]["terminal_proof_id"] == proof["proof_id"]
+
+
+def test_headless_terminal_git_proof_cannot_rearm_a_new_reviewer(
+    monkeypatch, tmp_path,
+):
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    store, issue, generation = _technical_route_state(tmp_path, "reviewer", consume=False)
+    store.claim_technical_remediation_route(
+        issue, "reviewer", generation, "f130-headless-route-0001",
+    )
+    repository = "owner/f130-headless-terminal-rearm"
+    ledger = ReviewDeduplicator(repository, state)
+    coordinates = _review_coordinates(tmp_path)
+    first = b"mergeable proof whose Git ledger loses HEAD"
+    second = b"new bytes must not inherit authority from a headless proof"
+    first_hash, second_hash = review_diff_hash(first), review_diff_hash(second)
+    current = first
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "a" * 40)
+
+    first_claim = store.claim_fresh_reviewer_authorization(
+        issue,
+        first_hash,
+        validated_claim=lambda: ledger.claim_git(
+            first_hash,
+            coordinates=coordinates,
+            claim_attempt_token=CLAIM_ATTEMPT_TOKEN,
+        ),
+    )
+    body = "- [ ] a generic rearm requires the immutable reviewed HEAD\n"
+    outcomes = [
+        {**criterion, "verdict": "pass"}
+        for criterion in acceptance_criteria(body)
+    ]
+    AcceptanceProofStore(repository, state).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=outcomes, quality="mergeable", diff_hash=first_hash,
+        claim_id=first_claim.claim_id, root=tmp_path, base=BASE_SHA,
+        state_dir=state,
+    )
+    marker = ledger.directory / first_hash
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    del record["head"]
+    marker.write_text(json.dumps(record), encoding="utf-8")
+    before_issue = store._path(issue).read_bytes()
+    current = second
+
+    def validate_rearm(previous_diff_hash):
+        binding = ledger.validated_terminal_proof_binding(
+            issue, previous_diff_hash, coordinates=coordinates,
+        )
+        assert binding is not None
+        return {
+            key: binding[key]
+            for key in ("proof_id", "completed_at", "quality", "all_pass")
+        }
+
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        store.claim_fresh_reviewer_authorization(
+            issue,
+            second_hash,
+            validated_claim=lambda: ledger.claim_git(
+                second_hash,
+                coordinates=coordinates,
+                claim_attempt_token=OTHER_CLAIM_ATTEMPT_TOKEN,
+            ),
+            validated_rearm=validate_rearm,
+        )
+
+    assert store._path(issue).read_bytes() == before_issue
+    assert not (ledger.directory / second_hash).exists()
+
+
+@pytest.mark.parametrize("operation", ("current_for_sync", "valid_for_merge"))
+def test_headless_terminal_git_proof_cannot_sync_acceptance_or_merge(
+    monkeypatch, tmp_path, operation,
+):
+    repository, state = "owner/headless-proof-gate", tmp_path / "state"
+    coordinates = _review_coordinates(tmp_path)
+    diff = b"mergeable proof must retain its immutable ledger HEAD"
+    ledger = ReviewDeduplicator(repository, state)
+    claim = _git_claim_fixture(monkeypatch, ledger, diff, coordinates)
+    body = "- [ ] sync and merge require a HEAD-bound terminal review\n"
+    outcomes = [
+        {**criterion, "verdict": "pass"}
+        for criterion in acceptance_criteria(body)
+    ]
+    proof_store = AcceptanceProofStore(repository, state)
+    proof_store.create(
+        issue_id="PAT-31", issue_body=body, reviewer_role="reviewer",
+        outcomes=outcomes, quality="mergeable", diff_hash=claim.diff_hash,
+        claim_id=claim.claim_id, root=tmp_path, base=BASE_SHA, state_dir=state,
+    )
+    marker = ledger.directory / claim.diff_hash
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    del record["head"]
+    marker.write_text(json.dumps(record), encoding="utf-8")
+    before = marker.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        getattr(proof_store, operation)(
+            issue_id="PAT-31", issue_body=body, head="a" * 40,
+            diff=diff, base=BASE_SHA,
+        )
+
+    assert marker.read_bytes() == before
 
 
 def test_terminal_review_rearm_refuses_a_proof_for_a_different_issue(monkeypatch, tmp_path):
@@ -573,12 +827,15 @@ def test_review_claim_records_in_progress_and_crash_requires_explicit_recovery(
 ):
     ledger = ReviewDeduplicator("owner/repo", tmp_path)
     coordinates = _review_coordinates(tmp_path)
-    first = ledger.claim(b"crash after claim", coordinates=coordinates)
+    diff = b"crash after claim"
+    first = _git_claim_fixture(monkeypatch, ledger, diff, coordinates)
 
     assert first.should_run is True
     assert first.state == "in_progress"
     assert first.claim_id
-    assert ledger.claim(b"crash after claim", coordinates=coordinates).should_run is False
+    assert ledger.claim_git(
+        first.diff_hash, coordinates=coordinates,
+    ).should_run is False
 
     record = json.loads((ledger.directory / first.diff_hash).read_text(encoding="utf-8"))
     assert record["schema_version"] == 1
@@ -590,7 +847,6 @@ def test_review_claim_records_in_progress_and_crash_requires_explicit_recovery(
     assert record["coordinates"] == coordinates
     assert record["recoveries"] == []
 
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: b"crash after claim")
     recovered = ledger.recover(
         first.diff_hash, first.generation, first.claim_id, "reviewer interrupted",
         coordinates=coordinates,
@@ -614,7 +870,7 @@ def test_only_coordinate_bound_structured_proof_can_terminalize_a_review(monkeyp
     ledger = ReviewDeduplicator("owner/repo", tmp_path)
     coordinates = _review_coordinates(tmp_path)
     diff = b"terminal review"
-    claim = ledger.claim(diff, coordinates=coordinates)
+    claim = _git_claim_fixture(monkeypatch, ledger, diff, coordinates)
 
     with pytest.raises(RoutingConfigError, match="sans preuve AC structurée"):
         ledger.complete(claim.diff_hash, claim.claim_id)
@@ -644,10 +900,12 @@ def test_only_coordinate_bound_structured_proof_can_terminalize_a_review(monkeyp
 
 
 @pytest.mark.parametrize("reason", ["", "   ", None])
-def test_recovery_requires_a_non_empty_human_reason(tmp_path, reason):
+def test_recovery_requires_a_non_empty_human_reason(monkeypatch, tmp_path, reason):
     ledger = ReviewDeduplicator("owner/repo", tmp_path)
     coordinates = _review_coordinates(tmp_path)
-    claim = ledger.claim(b"reason required", coordinates=coordinates)
+    claim = _git_claim_fixture(
+        monkeypatch, ledger, b"reason required", coordinates,
+    )
 
     with pytest.raises(RoutingConfigError, match="raison humaine.*non vide"):
         ledger.recover(
@@ -656,10 +914,12 @@ def test_recovery_requires_a_non_empty_human_reason(tmp_path, reason):
         )
 
 
-def test_recovery_requires_exact_hash_and_current_claim_generation(tmp_path):
+def test_recovery_requires_exact_hash_and_current_claim_generation(monkeypatch, tmp_path):
     ledger = ReviewDeduplicator("owner/repo", tmp_path)
     coordinates = _review_coordinates(tmp_path)
-    claim = ledger.claim(b"exact generation", coordinates=coordinates)
+    claim = _git_claim_fixture(
+        monkeypatch, ledger, b"exact generation", coordinates,
+    )
 
     with pytest.raises(RoutingConfigError, match="SHA-256"):
         ledger.recover(
@@ -673,10 +933,14 @@ def test_recovery_requires_exact_hash_and_current_claim_generation(tmp_path):
         )
 
 
-def test_recovery_requires_the_exact_active_claim_and_immutable_coordinates(tmp_path):
+def test_recovery_requires_the_exact_active_claim_and_immutable_coordinates(
+    monkeypatch, tmp_path,
+):
     ledger = ReviewDeduplicator("owner/repo", tmp_path)
     coordinates = _review_coordinates(tmp_path)
-    claim = ledger.claim(b"coordinate-bound recovery", coordinates=coordinates)
+    claim = _git_claim_fixture(
+        monkeypatch, ledger, b"coordinate-bound recovery", coordinates,
+    )
 
     with pytest.raises(RoutingConfigError, match="plus active"):
         ledger.recover(
@@ -712,8 +976,7 @@ def test_old_owner_cannot_read_or_complete_after_recovery(monkeypatch, tmp_path)
     diff = b"same exact bytes"
     ledger = ReviewDeduplicator(repository, tmp_path / "state")
     coordinates = _review_coordinates(tmp_path)
-    old = ledger.claim(diff, coordinates=coordinates)
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
+    old = _git_claim_fixture(monkeypatch, ledger, diff, coordinates)
     current = ledger.recover(
         old.diff_hash, old.generation, old.claim_id, "old reviewer disappeared",
         coordinates=coordinates,
@@ -741,7 +1004,7 @@ def test_claimed_read_holds_the_ledger_lock_against_a_concurrent_recovery(
     repository, state, diff = "owner/repo", tmp_path / "state", b"locked read"
     ledger = ReviewDeduplicator(repository, state)
     coordinates = _review_coordinates(tmp_path)
-    original = ledger.claim(diff, coordinates=coordinates)
+    original = _git_claim_fixture(monkeypatch, ledger, diff, coordinates)
     bytes_consumed, release_consumer = Event(), Event()
     recovery_started, recovery_finished = Event(), Event()
     result: dict[str, object] = {}
@@ -791,7 +1054,7 @@ def test_recovery_holds_validation_and_generation_replacement_in_one_section(
     repository, state, diff = "owner/repo", tmp_path / "state", b"exact recovery"
     ledger = ReviewDeduplicator(repository, state)
     coordinates = _review_coordinates(tmp_path)
-    original = ledger.claim(diff, coordinates=coordinates)
+    original = _git_claim_fixture(monkeypatch, ledger, diff, coordinates)
     first_diff_read, release_diff = Event(), Event()
     second_started, second_finished = Event(), Event()
     failures: list[str] = []
@@ -838,12 +1101,13 @@ def test_recovery_holds_validation_and_generation_replacement_in_one_section(
     assert verdict.generation == original.generation
 
 
-def test_two_concurrent_recoveries_create_only_one_new_owner(tmp_path):
+def test_two_concurrent_recoveries_create_only_one_new_owner(monkeypatch, tmp_path):
     repository = "owner/repo"
     state_dir = tmp_path / "shared"
     coordinates = _review_coordinates(state_dir)
-    original = ReviewDeduplicator(repository, state_dir).claim(
-        b"contended recovery", coordinates=coordinates,
+    original = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator(repository, state_dir),
+        b"contended recovery", coordinates,
     )
     args = (
         state_dir, repository, original.diff_hash, original.generation,
@@ -1030,7 +1294,9 @@ def test_legacy_quarantine_refuses_an_orphaned_acceptance_proof(tmp_path):
     assert not (ledger.directory / "legacy-quarantine").exists()
 
 
-def test_coordinated_claim_never_enters_legacy_quarantine(monkeypatch, tmp_path):
+def test_headless_coordinated_claim_refuses_instead_of_entering_legacy_quarantine(
+    monkeypatch, tmp_path,
+):
     diff = b"already coordinate bound"
     first_coordinates = _review_coordinates(tmp_path)
     other_coordinates = {
@@ -1043,9 +1309,8 @@ def test_coordinated_claim_never_enters_legacy_quarantine(monkeypatch, tmp_path)
     before = marker.read_bytes()
     monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
 
-    duplicate = ledger.claim_git(existing.diff_hash, coordinates=first_coordinates)
-    assert duplicate.should_run is False
-    assert duplicate.claim_id is None
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        ledger.claim_git(existing.diff_hash, coordinates=first_coordinates)
     with pytest.raises(RoutingConfigError, match="coordonnées immuables"):
         ledger.claim_git(existing.diff_hash, coordinates=other_coordinates)
 
@@ -1325,8 +1590,9 @@ def test_claimed_review_diff_requires_ledger_claim_and_exact_current_hash(
 ):
     repository = "owner/repo"
     diff = b"claimed bytes"
-    claim = ReviewDeduplicator(repository, tmp_path).claim(
-        diff, coordinates=_review_coordinates(tmp_path),
+    claim = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator(repository, tmp_path), diff,
+        _review_coordinates(tmp_path),
     )
     monkeypatch.setattr("foundry.routing.git_diff", lambda _root, _base: diff)
 
@@ -1646,11 +1912,10 @@ def test_structured_ac_proof_is_exact_redacted_and_fails_closed_when_stale(monke
     body = "## Critères\n- [ ] first contract\n- [ ] second contract\n"
     diff = b"exact reviewed diff"
     base_sha = "c" * 40
-    claim = ReviewDeduplicator(repository, state).claim(
-        diff, coordinates={"root": str(tmp_path.resolve()), "base": base_sha},
+    claim = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator(repository, state), diff,
+        {"root": str(tmp_path.resolve()), "base": base_sha},
     )
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
-    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "a" * 40)
     store = AcceptanceProofStore(repository, state)
     criteria = acceptance_criteria(body)
     outcome = [{**item, "verdict": "pass"} for item in criteria]
@@ -1773,11 +2038,10 @@ def test_multiline_ac_mutation_invalidates_an_otherwise_current_proof(
 ):
     repository, state, diff = "owner/repo", tmp_path / "state", b"reviewed bytes"
     body = f"- [ ] first line\n{indent}material continuation\n"
-    claim = ReviewDeduplicator(repository, state).claim(
-        diff, coordinates=_review_coordinates(tmp_path),
+    claim = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator(repository, state), diff,
+        _review_coordinates(tmp_path), head="d" * 40,
     )
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
-    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "d" * 40)
     store = AcceptanceProofStore(repository, state)
     outcomes = [{**item, "verdict": "pass"} for item in acceptance_criteria(body)]
     store.create(issue_id="DEMO-2", issue_body=body, reviewer_role="reviewer",
@@ -1822,11 +2086,10 @@ def test_lazy_ac_continuation_stops_at_checkbox_heading_and_independent_content(
 
 def test_proof_write_is_rolled_back_when_ledger_terminalization_fails(monkeypatch, tmp_path):
     repository, state, diff = "owner/repo", tmp_path / "state", b"sensitive review"
-    claim = ReviewDeduplicator(repository, state).claim(
-        diff, coordinates=_review_coordinates(tmp_path),
+    claim = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator(repository, state), diff,
+        _review_coordinates(tmp_path), head="e" * 40,
     )
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
-    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "e" * 40)
     store = AcceptanceProofStore(repository, state)
     body = "- [ ] contract\n"
     outcomes = [{**item, "verdict": "pass"} for item in acceptance_criteria(body)]
@@ -1855,11 +2118,10 @@ def test_proof_write_is_rolled_back_when_ledger_terminalization_fails(monkeypatc
 
 def test_precrash_canonical_proof_is_reused_but_hostile_artifact_is_refused(monkeypatch, tmp_path):
     repository, state, diff = "owner/repo", tmp_path / "state", b"crash-sensitive diff"
-    claim = ReviewDeduplicator(repository, state).claim(
-        diff, coordinates=_review_coordinates(tmp_path),
+    claim = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator(repository, state), diff,
+        _review_coordinates(tmp_path), head="f" * 40,
     )
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
-    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "f" * 40)
     store = AcceptanceProofStore(repository, state)
     body = "- [ ] durable contract\n"
     outcomes = [{**item, "verdict": "pass"} for item in acceptance_criteria(body)]
@@ -1888,8 +2150,9 @@ def test_precrash_canonical_proof_is_reused_but_hostile_artifact_is_refused(monk
     assert ReviewDeduplicator(repository, state).verdict(claim.diff_hash).state == "completed"
 
     hostile_state = tmp_path / "hostile-state"
-    hostile_claim = ReviewDeduplicator(repository, hostile_state).claim(
-        diff, coordinates=_review_coordinates(tmp_path),
+    hostile_claim = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator(repository, hostile_state), diff,
+        _review_coordinates(tmp_path), head="f" * 40,
     )
     hostile_store = AcceptanceProofStore(repository, hostile_state)
     monkeypatch.setattr(ReviewDeduplicator, "_atomic_write", interrupted_terminal)
@@ -1916,9 +2179,9 @@ def test_recovery_refuses_integral_or_malformed_orphaned_proof(
     repository, state, diff = "owner/repo", tmp_path / "state", b"recovered proof diff"
     ledger = ReviewDeduplicator(repository, state)
     coordinates = _review_coordinates(tmp_path)
-    original_claim = ledger.claim(diff, coordinates=coordinates)
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
-    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "9" * 40)
+    original_claim = _git_claim_fixture(
+        monkeypatch, ledger, diff, coordinates, head="9" * 40,
+    )
     store = AcceptanceProofStore(repository, state)
     body = "- [ ] recovered contract\n"
     outcomes = [{**item, "verdict": "pass"} for item in acceptance_criteria(body)]
@@ -1962,11 +2225,10 @@ def test_recovery_refuses_integral_or_malformed_orphaned_proof(
 
 def test_ac_proof_refuses_hostile_json_and_mixed_verdict(monkeypatch, tmp_path):
     repository, state, diff = "owner/repo", tmp_path / "state", b"proof"
-    claim = ReviewDeduplicator(repository, state).claim(
-        diff, coordinates=_review_coordinates(tmp_path),
+    claim = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator(repository, state), diff,
+        _review_coordinates(tmp_path), head="c" * 40,
     )
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
-    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "c" * 40)
     body = "- [ ] one\n- [ ] two\n"
     outcomes = [{**item, "verdict": "pass"} for item in acceptance_criteria(body)]
     store = AcceptanceProofStore(repository, state)
@@ -1990,8 +2252,9 @@ def test_ac_proof_refuses_hostile_json_and_mixed_verdict(monkeypatch, tmp_path):
     mixed = [{**item, "verdict": "pass"} for item in acceptance_criteria(body)]
     mixed[1]["verdict"] = "fail"
     mixed_store = AcceptanceProofStore("owner/other", state)
-    mixed_claim = ReviewDeduplicator("owner/other", state).claim(
-        mixed_diff, coordinates=_review_coordinates(tmp_path),
+    mixed_claim = _git_claim_fixture(
+        monkeypatch, ReviewDeduplicator("owner/other", state), mixed_diff,
+        _review_coordinates(tmp_path), head="c" * 40,
     )
     mixed_store.create(issue_id="DEMO-1", issue_body=body, reviewer_role="reviewer",
                        outcomes=mixed, quality="blocked", diff_hash=mixed_claim.diff_hash,
@@ -2028,8 +2291,7 @@ def test_read_review_cli_holds_claim_until_stdout_write_and_flush(monkeypatch, t
     monkeypatch.setenv("FOUNDRY_DATA", str(state))
     ledger = ReviewDeduplicator(repository, state)
     coordinates = _review_coordinates(tmp_path)
-    claim = ledger.claim(diff, coordinates=coordinates)
-    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: diff)
+    claim = _git_claim_fixture(monkeypatch, ledger, diff, coordinates)
     write_started, release_write, flushed = Event(), Event(), Event()
     recovery_started, recovery_finished = Event(), Event()
     result: dict[str, object] = {}

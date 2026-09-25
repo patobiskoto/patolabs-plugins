@@ -2570,6 +2570,12 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
         ).directory / proof_result["proof_id"]
     )["quality"] == "blocked"
 
+    # Build the durable attestation and correction-plan claim first.  The
+    # released PAT-22 generation-9 state already contained both records when
+    # immutable review HEADs shipped; a headless proof cannot create them now.
+    legacy_ledger = ReviewDeduplicator(proof_repository, state_dir)
+    legacy_marker = legacy_ledger.directory / diff_hash
+
     # Released code consumed the credit without embedding the later PAT-30 field.
     continued = store.record_failure(
         issue, "implementer", "review_blocking_after_fix", "apex",
@@ -2631,6 +2637,98 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
         )
     assert store.status(issue)["roles"]["implementer"] == counters
     assert store.status(issue)["remediation_authorization"] == authorization
+
+    # PAT-31: the released PAT-22 legacy shape can rearm its consumed reviewer
+    # slot once the attested credit has claimed the correction plan.  This goes
+    # through the public CLI so both the new HEAD/diff claim and the old proof
+    # binding are revalidated against this exact root/base pair.
+    before_foreign_role = store._path(issue).read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError):
+        store.claim_credited_correction_plan(
+            issue, "architect", root=repository_root,
+        )
+    assert store._path(issue).read_bytes() == before_foreign_role
+    before_wrong_generation = store._path(issue).read_bytes()
+    with pytest.raises(RoutingConfigError, match="route et review techniques"):
+        store.attest_legacy_blocking_proof(
+            issue, "implementer", generation - 1,
+            validated_blocking_proof=lambda: {**binding, "diff_hash": diff_hash},
+        )
+    assert store._path(issue).read_bytes() == before_wrong_generation
+
+    # Recreate the exact authority shape carried by the historical state: the
+    # blocked proof is headless, but its attestation and one-shot correction
+    # claim are already durable.  Only that claimed correction may read it to
+    # bind one new HEAD-bearing reviewer claim.
+    legacy_review = json.loads(legacy_marker.read_text(encoding="utf-8"))
+    del legacy_review["head"]
+    legacy_marker.write_text(json.dumps(legacy_review), encoding="utf-8")
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        legacy_ledger.validated_terminal_proof_binding(
+            issue,
+            diff_hash,
+            coordinates={"root": str(repository_root.resolve()), "base": base},
+        )
+
+    (repository_root / "reviewed.txt").write_text(
+        "base\nreviewed correction\ncredited correction\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=repository_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "credited correction"],
+                   cwd=repository_root, check=True)
+    corrected_diff = review_diff_hash(git_diff(repository_root, base))
+    main([
+        "claim-review", "--git-diff", "--issue", issue,
+        "--root", str(repository_root), "--base", base,
+        "--claim-attempt-token", "8" * 64, *repository_arg,
+    ])
+    corrected_claim = json.loads(capsys.readouterr().out)
+    assert corrected_claim["diff_hash"] == corrected_diff
+    corrected_review = json.loads(
+        (legacy_ledger.directory / corrected_diff).read_text(encoding="utf-8"),
+    )
+    assert corrected_review["head"] == subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository_root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    rearm = store.status(issue)["technical_remediation_audit"][-1][
+        "review_rearm_audit"
+    ]
+    assert rearm[0]["repair_kind"] == "credited_correction_blocked_rearm"
+    assert rearm[0]["previous_diff_hash"] == diff_hash
+    assert rearm[0]["new_diff_hash"] == corrected_diff
+
+    # PAT-31 AC2/AC3: an empty commit leaves base...HEAD diff bytes unchanged,
+    # but it must not let the already-issued reviewer capability read bytes for
+    # a different immutable HEAD.
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-qm", "head-only drift"],
+        cwd=repository_root, check=True,
+    )
+    with pytest.raises(SystemExit, match="HEAD a changé"):
+        main([
+            "read-review", "--diff-hash", corrected_diff,
+            "--claim-id", corrected_claim["claim_id"],
+            "--root", str(repository_root), "--base", base,
+            *repository_arg,
+        ])
+    assert capsys.readouterr().out == ""
+
+    (repository_root / "reviewed.txt").write_text(
+        "base\nreviewed correction\ncredited correction\nreplay\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=repository_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "replay"],
+                   cwd=repository_root, check=True)
+    before_replay = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="unique réarm"):
+        main([
+            "claim-review", "--git-diff", "--issue", issue,
+            "--root", str(repository_root), "--base", base,
+            "--claim-attempt-token", "7" * 64, *repository_arg,
+        ])
+    assert store._path(issue).read_bytes() == before_replay
 
     # A later HEAD makes the old proof stale; even replay revalidates before CAS.
     (repository_root / "reviewed.txt").write_text(
@@ -2718,6 +2816,89 @@ def test_credited_correction_plan_is_single_use_under_concurrency(tmp_path):
             (str(tmp_path), issue, "implementer"),
         ])
     assert sorted(results) == ["blocked", "claimed"]
+
+
+def test_credited_blocked_review_rearms_consumed_slot_once(tmp_path):
+    """PAT-31: the claimed correction can obtain one review of its new diff."""
+    issue = "PAT-31"
+    store = _credited_correction_state(tmp_path, tmp_path, issue)
+    technical = store.status(issue)["technical_remediation_audit"][-1]
+    old_diff = technical["review_diff_hash"]
+    source = store.status(issue)["consumption_audit"][-1]["blocking_proof"]
+    binding = {
+        "proof_id": source["proof_id"],
+        "completed_at": source["completed_at"],
+        "quality": source["quality"],
+        "all_pass": source["all_pass"],
+    }
+    new_diff = "f" * 64
+
+    # A blocked proof is not enough until the exact correction plan was CAS-claimed.
+    before_claim = store._path(issue).read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError, match="preuve AC terminale"):
+        store.claim_fresh_reviewer_authorization(
+            issue, new_diff,
+            validated_claim=lambda: _executable_review_claim(new_diff),
+            validated_rearm=lambda previous: binding if previous == old_diff else None,
+        )
+    assert store._path(issue).read_bytes() == before_claim
+
+    assert store.claim_credited_correction_plan(issue, "implementer", root=tmp_path)
+    before_wrong_proof = store._path(issue).read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError, match="preuve AC terminale"):
+        store.claim_fresh_reviewer_authorization(
+            issue, new_diff,
+            validated_claim=lambda: _executable_review_claim(new_diff),
+            validated_rearm=lambda previous: {
+                **binding, "proof_id": "0" * 64,
+            } if previous == old_diff else None,
+        )
+    assert store._path(issue).read_bytes() == before_wrong_proof
+
+    assert store.claim_fresh_reviewer_authorization(
+        issue, new_diff,
+        validated_claim=lambda: _executable_review_claim(new_diff),
+        validated_rearm=lambda previous: binding if previous == old_diff else None,
+    ).diff_hash == new_diff
+    event = store.status(issue)["technical_remediation_audit"][-1]
+    assert event["review_diff_hash"] == new_diff
+    assert event["review_rearm_audit"][0]["repair_kind"] == (
+        "credited_correction_blocked_rearm"
+    )
+    assert event["review_rearm_audit"][0]["terminal_proof_id"] == source["proof_id"]
+
+    before_replay = store._path(issue).read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique réarm"):
+        store.claim_fresh_reviewer_authorization(
+            issue, "e" * 64,
+            validated_claim=lambda: _executable_review_claim("e" * 64),
+            validated_rearm=lambda _previous: binding,
+        )
+    assert store._path(issue).read_bytes() == before_replay
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("role", "architect"),
+        ("halt_generation", 3),
+        ("proof_id", "0" * 64),
+    ],
+)
+def test_credited_blocked_review_rearm_rejects_tampered_credit_claim(
+    tmp_path, field, value,
+):
+    """The durable rearm cannot be reconstructed from a forged credit claim."""
+    issue = "PAT-31"
+    store = _credited_correction_state(tmp_path, tmp_path, issue)
+    assert store.claim_credited_correction_plan(issue, "implementer", root=tmp_path)
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["credited_correction_claim_audit"][-1][field] = value
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
 
 
 def test_credited_correction_uses_authenticated_alternate_proof_namespace(tmp_path):
@@ -4417,6 +4598,7 @@ def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(
     coordinates = {"root": str(tmp_path), "base": base_sha}
     dedup = ReviewDeduplicator("patobiskoto/patolabs-plugins", state_dir=tmp_path)
     monkeypatch.setattr("foundry.routing.git_diff", lambda *_args: b"changed")
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args: head_sha)
     with pytest.raises(RoutingConfigError, match="le diff a changé"):
         dedup.claim_git(
             review_diff_hash(diff_bytes), coordinates=coordinates,

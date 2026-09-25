@@ -117,7 +117,6 @@ def test_ci_validates_resolved_codex_invocation(role, agent_type, model, effort,
         claim = {
             **ReviewDeduplicator("owner/repo", tmp_path / "state").claim(
                 b"routing contract",
-                coordinates={"root": str(tmp_path), "base": "1" * 40},
             ).to_dict(),
             "root": str(tmp_path),
             "base": "1" * 40,
