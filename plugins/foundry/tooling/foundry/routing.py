@@ -851,24 +851,13 @@ class ReviewDeduplicator:
         return {"root": coordinates["root"], "base": coordinates["base"]}
 
     @classmethod
-    def _claimed_head(
-        cls,
-        record: Mapping[str, object],
-        *,
-        allow_legacy_terminal: bool = False,
-    ) -> str | None:
+    def _claimed_head(cls, record: Mapping[str, object]) -> str | None:
         """Return the immutable HEAD, rejecting headless Git authorization.
 
         Bare ``claim()`` records predate every Git coordinate and remain a
         deliberately narrow non-Git fixture.  Once either coordinates or a
         durable claim publication is present, the record is Git-coordinated
         and may not authorize active work without its immutable HEAD.
-
-        A terminal proof created before HEAD binding shipped is different: it
-        cannot authorize new bytes, proof creation, or recovery, but its
-        canonical append-only evidence must remain readable for the PAT-22
-        legacy attestation/rearm path.  That caller validates the proof's own
-        immutable HEAD and all remaining ledger coordinates.
         """
         head = record.get("head")
         if head is None:
@@ -876,12 +865,6 @@ class ReviewDeduplicator:
                 "coordinates" in record or "claim_publication" in record
             )
             if not git_coordinated:
-                return None
-            if (
-                allow_legacy_terminal
-                and record.get("state") == "completed"
-                and isinstance(record.get("acceptance_proof_id"), str)
-            ):
                 return None
             raise RoutingConfigError(
                 "claim Git sans HEAD immuable ; refus fermé."
@@ -1611,41 +1594,89 @@ class ReviewDeduplicator:
         binding = self.completed_proof_binding(diff_hash)
         return binding["proof_id"] if binding is not None else None
 
+    def _completed_proof_binding_from_record(
+        self,
+        diff_hash: str,
+        record: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Validate terminal claim fields without assigning their authority."""
+        proof_id = record.get("acceptance_proof_id")
+        if record.get("state") != "completed" or proof_id is None:
+            return None
+        if (not isinstance(proof_id, str) or len(proof_id) != 64 or
+                any(character not in "0123456789abcdef" for character in proof_id)):
+            raise RoutingConfigError(
+                f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
+            )
+        generation = record.get("generation")
+        claim = record.get("claim")
+        claim_id = claim.get("id") if isinstance(claim, Mapping) else None
+        completed_at = record.get("completed_at")
+        coordinates = record.get("coordinates")
+        if type(generation) is not int or generation < 1:
+            raise RoutingConfigError(
+                f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
+            )
+        self._validate_claim_id(claim_id)
+        if not self._valid_utc_timestamp(completed_at):
+            raise RoutingConfigError(
+                f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
+            )
+        coordinates = self._validate_coordinates(coordinates)
+        return {
+            "proof_id": proof_id,
+            "generation": generation,
+            "claim_digest": hashlib.sha256(claim_id.encode("ascii")).hexdigest(),
+            "completed_at": completed_at,
+            "coordinates": coordinates,
+        }
+
     def completed_proof_binding(self, diff_hash: str) -> dict[str, object] | None:
-        """Return the redacted claim coordinates bound to a completed proof."""
+        """Return a completed proof binding only from a HEAD-bound Git claim."""
         diff_hash = self._validate_hash(diff_hash)
         with self._locked():
             _, record = self._record_for(diff_hash)
-            proof_id = record.get("acceptance_proof_id")
-            if record.get("state") != "completed" or proof_id is None:
+            binding = self._completed_proof_binding_from_record(diff_hash, record)
+            if binding is None:
                 return None
-            if (not isinstance(proof_id, str) or len(proof_id) != 64 or
-                    any(character not in "0123456789abcdef" for character in proof_id)):
-                raise RoutingConfigError(
-                    f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
-                )
-            generation = record.get("generation")
-            claim = record.get("claim")
-            claim_id = claim.get("id") if isinstance(claim, Mapping) else None
-            completed_at = record.get("completed_at")
-            coordinates = record.get("coordinates")
-            if type(generation) is not int or generation < 1:
-                raise RoutingConfigError(
-                    f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
-                )
-            self._validate_claim_id(claim_id)
-            if not self._valid_utc_timestamp(completed_at):
-                raise RoutingConfigError(
-                    f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
-                )
-            coordinates = self._validate_coordinates(coordinates)
-            return {
-                "proof_id": proof_id,
-                "generation": generation,
-                "claim_digest": hashlib.sha256(claim_id.encode("ascii")).hexdigest(),
-                "completed_at": completed_at,
-                "coordinates": coordinates,
-            }
+            self._claimed_head(record)
+            return binding
+
+    def _validated_proof_for_terminal_binding(
+        self,
+        issue_id: str,
+        diff_hash: str,
+        binding: Mapping[str, object],
+        *,
+        claimed_head: str | None,
+    ) -> dict[str, object]:
+        """Cross-check canonical proof content against one parsed ledger binding."""
+        proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
+        proof = proof_store._validated_proof(
+            proof_store.directory / str(binding["proof_id"]),
+        )
+        if (
+            proof["issue"]["id"] != issue_id
+            or proof["coordinates"]["diff_hash"] != diff_hash
+            or proof["coordinates"]["base"] != binding["coordinates"]["base"]
+            or (
+                claimed_head is not None
+                and proof["coordinates"]["head"] != claimed_head
+            )
+            or proof["review"]["generation"] != binding["generation"]
+            or proof["review"]["claim_digest"] != binding["claim_digest"]
+        ):
+            raise RoutingConfigError(
+                "preuve AC incohérente avec l'issue ou la review terminée ; refus fermé."
+            )
+        return {
+            **binding,
+            "quality": proof["quality"],
+            "all_pass": all(
+                criterion["verdict"] == "pass"
+                for criterion in proof["issue"]["criteria"]
+            ),
+        }
 
     def validated_terminal_proof_binding(
         self,
@@ -1666,33 +1697,105 @@ class ReviewDeduplicator:
                 raise RoutingConfigError(
                     "preuve AC issue de coordonnées de review différentes ; refus fermé."
                 )
-        proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
-        proof = proof_store._validated_proof(proof_store.directory / binding["proof_id"])
         with self._locked():
             _, record = self._record_for(diff_hash)
-            claimed_head = self._claimed_head(
-                record, allow_legacy_terminal=True,
-            )
+            claimed_head = self._claimed_head(record)
+        return self._validated_proof_for_terminal_binding(
+            issue_id.strip(), diff_hash, binding, claimed_head=claimed_head,
+        )
+
+    def validated_claimed_correction_proof_binding(
+        self,
+        issue_id: str,
+        diff_hash: str,
+        expected_binding: Mapping[str, object],
+        *,
+        coordinates: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Read the exact proof behind an already-claimed credited correction.
+
+        Normal terminal-proof, reviewer, acceptance-sync, and merge paths always
+        require the review ledger's immutable HEAD.  This read-only compatibility
+        path exists only so the already-attested PAT-22 generation-9 correction can
+        validate its historical blocked proof while the escalation issue lock still
+        proves the matching credit claim.  The expected binding is therefore not an
+        authority source: it must match every durable ledger/proof coordinate, and
+        this method is never used by generic mergeable rearm or delivery gates.
+        """
+        if not isinstance(issue_id, str) or not issue_id.strip():
+            raise RoutingConfigError("preuve AC : identifiant d'issue requis.")
+        issue_id = issue_id.strip()
+        diff_hash = self._validate_hash(diff_hash)
+        required = {
+            "proof_id", "completed_at", "quality", "all_pass", "diff_hash",
+            "generation", "claim_digest", "coordinates",
+        }
         if (
-            proof["issue"]["id"] != issue_id.strip()
-            or proof["coordinates"]["diff_hash"] != diff_hash
-            or proof["coordinates"]["base"] != binding["coordinates"]["base"]
-            or (claimed_head is not None and
-                proof["coordinates"]["head"] != claimed_head)
-            or proof["review"]["generation"] != binding["generation"]
-            or proof["review"]["claim_digest"] != binding["claim_digest"]
+            not isinstance(expected_binding, Mapping)
+            or not required.issubset(expected_binding)
+            or not set(expected_binding).issubset(required | {"repository"})
+            or expected_binding.get("diff_hash") != diff_hash
+            or expected_binding.get("quality") != "blocked"
+            or expected_binding.get("all_pass") is not False
+            or (
+                "repository" in expected_binding
+                and expected_binding.get("repository") != self.__repository
+            )
         ):
             raise RoutingConfigError(
-                "preuve AC incohérente avec l'issue ou la review terminée ; refus fermé."
+                "preuve bloquante créditée incohérente ; refus fermé."
             )
-        return {
-            **binding,
-            "quality": proof["quality"],
-            "all_pass": all(
-                criterion["verdict"] == "pass"
-                for criterion in proof["issue"]["criteria"]
-            ),
-        }
+        expected_coordinates = self._validate_coordinates(
+            expected_binding.get("coordinates"),
+        )
+        if coordinates is not None:
+            current_coordinates = self._validate_coordinates(coordinates)
+            if current_coordinates != expected_coordinates:
+                raise RoutingConfigError(
+                    "preuve AC issue de coordonnées de review différentes ; refus fermé."
+                )
+
+        with self._locked():
+            _, record = self._record_for(diff_hash)
+            binding = self._completed_proof_binding_from_record(diff_hash, record)
+            if binding is None:
+                raise RoutingConfigError(
+                    "preuve bloquante créditée absente ; refus fermé."
+                )
+            if record.get("head") is None:
+                historical_keys = {
+                    "schema_version", "diff_hash", "state", "generation", "claim",
+                    "recoveries", "coordinates", "claim_publication", "completed_at",
+                    "acceptance_proof_id",
+                }
+                if (
+                    issue_id != "PAT-22"
+                    or "repository" not in expected_binding
+                    or set(record) != historical_keys
+                ):
+                    self._claimed_head(record)
+                claimed_head = None
+            else:
+                claimed_head = self._claimed_head(record)
+
+        if binding["coordinates"] != expected_coordinates or any(
+            expected_binding.get(key) != binding.get(key)
+            for key in (
+                "proof_id", "generation", "claim_digest", "completed_at",
+                "coordinates",
+            )
+        ):
+            raise RoutingConfigError(
+                "preuve bloquante créditée incohérente ; refus fermé."
+            )
+        durable = self._validated_proof_for_terminal_binding(
+            issue_id, diff_hash, binding, claimed_head=claimed_head,
+        )
+        if durable["quality"] != "blocked" or durable["all_pass"] is not False:
+            raise RoutingConfigError(
+                "preuve bloquante créditée incohérente ; refus fermé."
+            )
+        return durable
 
     def revalidate_terminal_proof_for_current_git(
         self,
@@ -2518,6 +2621,23 @@ def main(
                     "all_pass": binding["all_pass"],
                 }
 
+            def validate_credited_rearm(
+                previous_diff_hash: str,
+                expected_binding: Mapping[str, object],
+            ):
+                binding = deduplicator.validated_claimed_correction_proof_binding(
+                    args.issue,
+                    previous_diff_hash,
+                    expected_binding,
+                    coordinates=coordinates,
+                )
+                return {
+                    "proof_id": binding["proof_id"],
+                    "completed_at": binding["completed_at"],
+                    "quality": binding["quality"],
+                    "all_pass": binding["all_pass"],
+                }
+
             result = EscalationStore.for_root(
                 review_root,
             ).claim_fresh_reviewer_authorization(
@@ -2525,6 +2645,7 @@ def main(
                 expected_hash,
                 validated_claim=validate_claim,
                 validated_rearm=validate_rearm,
+                validated_credited_rearm=validate_credited_rearm,
             )
             print(json.dumps(result.to_dict(), indent=2))
             return

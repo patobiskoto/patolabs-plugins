@@ -801,6 +801,20 @@ def codex_review_plan(
             "all_pass": binding["all_pass"],
         }
 
+    def validate_credited_rearm(previous_diff_hash: str, expected_binding):
+        binding = deduplicator.validated_claimed_correction_proof_binding(
+            issue_id,
+            previous_diff_hash,
+            expected_binding,
+            coordinates=verifier,
+        )
+        return {
+            "proof_id": binding["proof_id"],
+            "completed_at": binding["completed_at"],
+            "quality": binding["quality"],
+            "all_pass": binding["all_pass"],
+        }
+
     result = EscalationStore.for_root(
         review_root, state_dir=state_dir,
     ).claim_fresh_reviewer_authorization(
@@ -808,6 +822,7 @@ def codex_review_plan(
         expected_hash,
         validated_claim=validate_claim,
         validated_rearm=validate_rearm,
+        validated_credited_rearm=validate_credited_rearm,
     )
     claim = {**result.to_dict(), **verifier}
     return codex_spawn_plan(

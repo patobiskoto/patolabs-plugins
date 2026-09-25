@@ -416,6 +416,18 @@ proof, and appends a separate attestation bound to the one legacy consumption. M
 wrong, stale, ambiguous, already-bound, or non-blocking proof state fails closed. The
 subsequent correction plan is claimed through the same append-only CAS journal used by
 new ledgers, so concurrent Claude and Codex callers still yield exactly one plan.
+This transition uses the ordinary HEAD-bound terminal-proof validator; a headless Git
+review cannot create a new attestation or correction claim.
+
+One released state is narrower still: PAT-22 generation 9 already carries its exact
+blocked-proof attestation and claimed correction, but its historical terminal review
+record predates immutable `head`. Only the credited-rearm callback may read that proof,
+under the issue lock and against every binding already recorded in the attestation. It
+accepts only the historical PAT-22 terminal-record shape and a blocked, non-all-pass
+proof in the recorded repository namespace. This read creates no attestation, credit,
+plan, generic reviewer authorization, acceptance sync, or merge authority. The new
+review claim produced by the bounded rearm is itself bound to the current immutable
+HEAD.
 
 Both this transition and `routing escalation failure ...
 --kind review_blocking_after_fix` expose `--repository` for the uncommon case where the
@@ -763,12 +775,12 @@ coordinate and immutable-HEAD checks through the current diff hash and byte emis
 so a recovery cannot deliver bytes to its replaced owner. An empty commit is HEAD drift
 even when it leaves the diff hash unchanged. A Git-coordinated ledger record (one with
 immutable coordinates or a durable claim publication) that has no `head` fails closed
-before diff bytes, proof creation, active validation, or recovery. Only a bare non-Git
-`claim()` fixture retains headless compatibility. A canonical terminal proof recorded
-before HEAD binding remains readable solely for the bounded PAT-22 legacy
-attestation/rearm path; it cannot authorize any active reviewer operation, and the proof's
-own HEAD and remaining ledger coordinates are still revalidated. The command rejects a
-stale or invented claim. After a
+before diff bytes, proof creation, active validation, recovery, generic terminal rearm,
+acceptance sync, or merge. Only a bare non-Git `claim()` fixture retains headless
+compatibility. The sole read-only exception is the already-attested and already-claimed
+PAT-22 generation-9 blocked proof described above; normal terminal-proof lookup rejects
+it, and it cannot authorize an active reviewer operation by itself. The command rejects
+a stale or invented claim. After a
 complete verdict, the caller runs `routing record-review-proof` with the exact structured
 AC and quality outcomes while the claim is still active. That operation atomically binds
 the proof and terminalizes the generation; `complete-review` is a deprecated compatibility

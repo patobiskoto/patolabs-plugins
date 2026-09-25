@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from foundry import registry
 from foundry.routing import (
@@ -3527,6 +3527,9 @@ class EscalationStore:
         *,
         validated_claim: Callable[[], object],
         validated_rearm: Callable[[str], object | None] | None = None,
+        validated_credited_rearm: (
+            Callable[[str, Mapping[str, object]], object | None] | None
+        ) = None,
     ) -> object:
         """Validate a Git claim, then bind one bounded reviewer authorization.
 
@@ -3535,9 +3538,12 @@ class EscalationStore:
         state has proved that this hash may use the reviewer authorization and before
         that authorization is persisted.  A rejected callback therefore cannot bind
         ``review_diff_hash``; a competing hash cannot create a review claim.  A
-        distinct second diff is possible exactly once, only through
-        ``validated_rearm`` after it has verified the terminal structured proof of
-        the first claim.  A completed claim whose public verdict has
+        distinct second diff is possible exactly once, only after a callback has
+        verified the terminal structured proof of the first claim.  The separate
+        ``validated_credited_rearm`` callback receives the exact already-claimed
+        PAT-22 generation-9 blocked-proof binding; it is never used for generic
+        mergeable rearm.  A
+        completed claim whose public verdict has
         ``should_run=false`` is returned idempotently and never binds or replaces
         the technical review slot.  An in-progress duplicate still reserves the
         slot: it represents an already-active reviewer even though this caller does
@@ -3553,6 +3559,13 @@ class EscalationStore:
         if validated_rearm is not None and not callable(validated_rearm):
             raise RoutingConfigError(
                 "réarm de review : validation terminale atomique requise."
+            )
+        if (
+            validated_credited_rearm is not None
+            and not callable(validated_credited_rearm)
+        ):
+            raise RoutingConfigError(
+                "réarm de correction créditée : validation atomique requise."
             )
         try:
             os.lstat(self._path(issue_id))
@@ -3612,10 +3625,19 @@ class EscalationStore:
             rearm_audit = technical_event["review_rearm_audit"]
             if rearm_audit:
                 return "technical_reviewer_rearm_consumed", False
-            if validated_rearm is None:
-                return "technical_reviewer_terminal_proof_required", False
             previous_claimed_at = technical_event["review_claimed_at"]
-            binding = validated_rearm(claimed_diff)
+            credited = self._claimed_credited_correction_source(state, technical_event)
+            historical_pat22 = (
+                issue_id == "PAT-22"
+                and technical_event["halt_generation"] == 9
+                and credited is not None
+            )
+            if historical_pat22 and validated_credited_rearm is not None:
+                binding = validated_credited_rearm(claimed_diff, credited[1])
+            elif validated_rearm is not None:
+                binding = validated_rearm(claimed_diff)
+            else:
+                return "technical_reviewer_terminal_proof_required", False
             if binding is None:
                 return "technical_reviewer_terminal_proof_required", False
             if (
@@ -3634,7 +3656,6 @@ class EscalationStore:
             claimed_at = _utc_timestamp(previous_claimed_at)
             polluted = completed_at < claimed_at
             mergeable = binding["quality"] == "mergeable" and binding["all_pass"]
-            credited = self._claimed_credited_correction_source(state, technical_event)
             credited_blocked = (
                 not polluted
                 and binding["quality"] == "blocked"

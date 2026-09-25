@@ -2570,15 +2570,11 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
         ).directory / proof_result["proof_id"]
     )["quality"] == "blocked"
 
-    # The released generation-9 ledger predates immutable-HEAD claims.  Its
-    # terminal canonical proof remains eligible for the bounded PAT-22
-    # attestation/rearm compatibility path, while no active operation may use
-    # the headless record.
+    # Build the durable attestation and correction-plan claim first.  The
+    # released PAT-22 generation-9 state already contained both records when
+    # immutable review HEADs shipped; a headless proof cannot create them now.
     legacy_ledger = ReviewDeduplicator(proof_repository, state_dir)
     legacy_marker = legacy_ledger.directory / diff_hash
-    legacy_review = json.loads(legacy_marker.read_text(encoding="utf-8"))
-    del legacy_review["head"]
-    legacy_marker.write_text(json.dumps(legacy_review), encoding="utf-8")
 
     # Released code consumed the credit without embedding the later PAT-30 field.
     continued = store.record_failure(
@@ -2660,6 +2656,20 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
         )
     assert store._path(issue).read_bytes() == before_wrong_generation
 
+    # Recreate the exact authority shape carried by the historical state: the
+    # blocked proof is headless, but its attestation and one-shot correction
+    # claim are already durable.  Only that claimed correction may read it to
+    # bind one new HEAD-bearing reviewer claim.
+    legacy_review = json.loads(legacy_marker.read_text(encoding="utf-8"))
+    del legacy_review["head"]
+    legacy_marker.write_text(json.dumps(legacy_review), encoding="utf-8")
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        legacy_ledger.validated_terminal_proof_binding(
+            issue,
+            diff_hash,
+            coordinates={"root": str(repository_root.resolve()), "base": base},
+        )
+
     (repository_root / "reviewed.txt").write_text(
         "base\nreviewed correction\ncredited correction\n", encoding="utf-8",
     )
@@ -2674,6 +2684,13 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     ])
     corrected_claim = json.loads(capsys.readouterr().out)
     assert corrected_claim["diff_hash"] == corrected_diff
+    corrected_review = json.loads(
+        (legacy_ledger.directory / corrected_diff).read_text(encoding="utf-8"),
+    )
+    assert corrected_review["head"] == subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository_root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
     rearm = store.status(issue)["technical_remediation_audit"][-1][
         "review_rearm_audit"
     ]

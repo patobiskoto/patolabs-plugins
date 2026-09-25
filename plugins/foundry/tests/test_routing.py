@@ -652,6 +652,113 @@ def test_terminal_proof_rearms_one_technical_review_for_a_new_diff(monkeypatch, 
     assert audit[0]["terminal_proof_id"] == proof["proof_id"]
 
 
+def test_headless_terminal_git_proof_cannot_rearm_a_new_reviewer(
+    monkeypatch, tmp_path,
+):
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    store, issue, generation = _technical_route_state(tmp_path, "reviewer", consume=False)
+    store.claim_technical_remediation_route(
+        issue, "reviewer", generation, "f130-headless-route-0001",
+    )
+    repository = "owner/f130-headless-terminal-rearm"
+    ledger = ReviewDeduplicator(repository, state)
+    coordinates = _review_coordinates(tmp_path)
+    first = b"mergeable proof whose Git ledger loses HEAD"
+    second = b"new bytes must not inherit authority from a headless proof"
+    first_hash, second_hash = review_diff_hash(first), review_diff_hash(second)
+    current = first
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args, **_kwargs: "a" * 40)
+
+    first_claim = store.claim_fresh_reviewer_authorization(
+        issue,
+        first_hash,
+        validated_claim=lambda: ledger.claim_git(
+            first_hash,
+            coordinates=coordinates,
+            claim_attempt_token=CLAIM_ATTEMPT_TOKEN,
+        ),
+    )
+    body = "- [ ] a generic rearm requires the immutable reviewed HEAD\n"
+    outcomes = [
+        {**criterion, "verdict": "pass"}
+        for criterion in acceptance_criteria(body)
+    ]
+    AcceptanceProofStore(repository, state).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=outcomes, quality="mergeable", diff_hash=first_hash,
+        claim_id=first_claim.claim_id, root=tmp_path, base=BASE_SHA,
+        state_dir=state,
+    )
+    marker = ledger.directory / first_hash
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    del record["head"]
+    marker.write_text(json.dumps(record), encoding="utf-8")
+    before_issue = store._path(issue).read_bytes()
+    current = second
+
+    def validate_rearm(previous_diff_hash):
+        binding = ledger.validated_terminal_proof_binding(
+            issue, previous_diff_hash, coordinates=coordinates,
+        )
+        assert binding is not None
+        return {
+            key: binding[key]
+            for key in ("proof_id", "completed_at", "quality", "all_pass")
+        }
+
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        store.claim_fresh_reviewer_authorization(
+            issue,
+            second_hash,
+            validated_claim=lambda: ledger.claim_git(
+                second_hash,
+                coordinates=coordinates,
+                claim_attempt_token=OTHER_CLAIM_ATTEMPT_TOKEN,
+            ),
+            validated_rearm=validate_rearm,
+        )
+
+    assert store._path(issue).read_bytes() == before_issue
+    assert not (ledger.directory / second_hash).exists()
+
+
+@pytest.mark.parametrize("operation", ("current_for_sync", "valid_for_merge"))
+def test_headless_terminal_git_proof_cannot_sync_acceptance_or_merge(
+    monkeypatch, tmp_path, operation,
+):
+    repository, state = "owner/headless-proof-gate", tmp_path / "state"
+    coordinates = _review_coordinates(tmp_path)
+    diff = b"mergeable proof must retain its immutable ledger HEAD"
+    ledger = ReviewDeduplicator(repository, state)
+    claim = _git_claim_fixture(monkeypatch, ledger, diff, coordinates)
+    body = "- [ ] sync and merge require a HEAD-bound terminal review\n"
+    outcomes = [
+        {**criterion, "verdict": "pass"}
+        for criterion in acceptance_criteria(body)
+    ]
+    proof_store = AcceptanceProofStore(repository, state)
+    proof_store.create(
+        issue_id="PAT-31", issue_body=body, reviewer_role="reviewer",
+        outcomes=outcomes, quality="mergeable", diff_hash=claim.diff_hash,
+        claim_id=claim.claim_id, root=tmp_path, base=BASE_SHA, state_dir=state,
+    )
+    marker = ledger.directory / claim.diff_hash
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    del record["head"]
+    marker.write_text(json.dumps(record), encoding="utf-8")
+    before = marker.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        getattr(proof_store, operation)(
+            issue_id="PAT-31", issue_body=body, head="a" * 40,
+            diff=diff, base=BASE_SHA,
+        )
+
+    assert marker.read_bytes() == before
+
+
 def test_terminal_review_rearm_refuses_a_proof_for_a_different_issue(monkeypatch, tmp_path):
     state = tmp_path / "state"
     repository = "owner/f130-cross-issue-proof"
