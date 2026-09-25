@@ -438,8 +438,9 @@ def issue(issue_id: str):
                     "base; otherwise it is a typed capability status, or — if the "
                     "embedded ADR index itself is in conflict — a typed conflict "
                     "status ({\"status\": \"conflict\", ...}). A conflict here does "
-                    "not clear on read: `query adr`, `query adrs` and ADR writes stay "
-                    "fail-closed on it. Load the full text of constraining ADRs with "
+                    "not clear on read: `query adr`, `query adrs`, `frame` and ADR "
+                    "writes stay fail-closed on it. Load the full text of "
+                    "constraining ADRs with "
                     "`query adr <ADR-ID>` when available.",
             "adrs": _adr_index_or_capability(tr, p)}
 
