@@ -2692,8 +2692,8 @@ def test_linear_adr_commands_recover_exact_missing_witness(tracker, monkeypatch,
     instance, wire = tracker
     monkeypatch.setattr(foundry, "tracker", lambda: instance)
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
-    source = instance.create_adr(PROJECT, "Command source", "old")
-    replacement = instance.create_adr(PROJECT, "Command replacement", "new")
+    source = instance.create_adr(PROJECT, "Command source", "- old")
+    replacement = instance.create_adr(PROJECT, "Command replacement", "- new")
 
     adr_module.accept(source.id)
     wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 1))
@@ -3779,6 +3779,170 @@ def test_linear_adr_lossy_source_survives_lifecycle_and_import_paths(tracker):
     assert models[current.id].body.endswith("- edited")
     assert models[replacement.id].body.endswith("- replacement")
     assert models[imported.id].body.endswith("- imported")
+
+
+def test_linear_adr_lossy_status_retry_recovers_exact_missing_witness(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Interrupted status", "- original")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {created.id} / v0001"
+        ):
+            raise OSError("status witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.set_adr_status(created, "accepted", project=PROJECT)
+    instance._transport = original
+
+    version_ids = set(wire.documents)
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+
+    [recovered] = instance.list_adrs(PROJECT)
+    assert recovered.status == "accepted"
+    assert recovered.body.endswith("- original")
+    assert set(wire.documents) == version_ids | {
+        linear_module._adr_witness_id(PROJECT.id, created.id, 1)
+    }
+    assert len(wire.documents) == 4
+
+
+def test_linear_adr_lossy_link_retry_recovers_only_exact_target(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Interrupted link", "- original")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {created.id} / v0001"
+        ):
+            raise OSError("link witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    instance._transport = original
+
+    before_wrong_retry = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.link_adr_issue(created, "LIN-1", project=PROJECT)
+    assert (wire.documents, wire.comments) == before_wrong_retry
+
+    recovered = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert recovered.body.endswith("- original")
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+
+
+def test_linear_adr_lossy_edit_retry_recovers_only_exact_source(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Interrupted edit", "- original")
+    updated = created.body.removesuffix("- original") + "- edited"
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {created.id} / v0001"
+        ):
+            raise OSError("edit witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.update_body(created, created.body, updated, project=PROJECT)
+    instance._transport = original
+
+    before_wrong_retry = copy.deepcopy(wire.documents)
+    wrong_source = created.body.removesuffix("- original") + "* edited"
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.update_body(
+            created, created.body, wrong_source, project=PROJECT
+        )
+    assert wire.documents == before_wrong_retry
+
+    assert instance.update_body(
+        created, created.body, updated, project=PROJECT
+    )
+    [recovered] = instance.list_adrs(PROJECT)
+    assert recovered.body.endswith("- edited")
+    assert len(wire.documents) == 4
+
+
+@pytest.mark.parametrize("interrupted_side", ["replacement", "source"])
+def test_linear_adr_lossy_supersession_retry_recovers_each_exact_missing_witness(
+    tracker, interrupted_side
+):
+    instance, wire = tracker
+    source = instance.create_adr(PROJECT, "Interrupted source", "- original")
+    replacement = instance.create_adr(
+        PROJECT, "Interrupted replacement", "- replacement"
+    )
+    instance.set_adr_status(source, "accepted", project=PROJECT)
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}
+    interrupted_id = replacement.id if interrupted_side == "replacement" else source.id
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {interrupted_id} / v0002"
+        ):
+            raise OSError("supersession witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.supersede_adr(
+            accepted[source.id], replacement.id, project=PROJECT
+        )
+    instance._transport = original
+
+    instance.supersede_adr(
+        accepted[source.id], replacement.id, project=PROJECT
+    )
+
+    recovered = {item.id: item for item in instance.list_adrs(PROJECT)}
+    assert recovered[source.id].status == "superseded"
+    assert recovered[source.id].body.endswith("- original")
+    assert recovered[replacement.id].body.endswith("- replacement")
+    assert len(wire.documents) == 12
+
+
+def test_linear_adr_lossy_interrupted_status_refuses_edited_readback(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Edited interruption", "- original")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {created.id} / v0001"
+        ):
+            raise OSError("status witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.set_adr_status(created, "accepted", project=PROJECT)
+    instance._transport = original
+    interrupted_version_id = linear_module._adr_document_id(PROJECT.id, created.id, 1)
+    wire.documents[interrupted_version_id]["content"] = wire.documents[
+        interrupted_version_id
+    ]["content"].replace("* original", "* edited")
+    before_retry = copy.deepcopy(wire.documents)
+
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.set_adr_status(created, "accepted", project=PROJECT)
+
+    assert wire.documents == before_retry
 
 
 def test_linear_adr_missing_witness_fails_closed_and_exact_pair_replays(tracker):

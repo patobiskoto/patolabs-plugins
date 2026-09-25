@@ -146,7 +146,16 @@ The public `adr accept`, `adr edit`, `adr supersede`, and `adr link-issue` comma
 resolve a witnessed predecessor through the mutation-only port, so an incomplete
 pair cannot make the recovery command unreachable. This port never repairs on read:
 the typed operation must prove the exact candidate before appending or completing
-its witness. After an `adr edit` version and witness are both durable, replaying the
+its witness. Recovery may inspect the closed metadata of the single unwitnessed version,
+but that lossy readback is never used as its source body. Status and link retries derive
+the source byte-for-byte from the intact predecessor witness; edit retries use the exact
+requested updated body after matching the expected predecessor; supersession derives each
+side from its own intact predecessor witness. The derived deterministic slot must match the
+surviving ID, title, metadata, and the one accepted provider serialization before a source-
+bearing witness can be created. An orphan witness, a foreign or additional incomplete
+version, an edited readback, an unknown serialization, or a different typed request remains
+a conflict with no repair effect. After an `adr edit` version and witness are both durable,
+replaying the
 same expected and updated files reconstructs that exact successor from its witnessed
 predecessor and returns unchanged without another provider write. That no-op proof
 requires an intact chain: changed files, a damaged witness, or a missing predecessor
@@ -183,7 +192,11 @@ may append only the missing source after checking both complete chains and the h
 reciprocal graph. If that exact source Document exists but its witness is missing,
 the replay verifies the byte-exact source candidate before completing only its witness.
 If the replacement-side version exists without its witness, the same command first
-preflights both hypothetical sides, completes that exact witness, then appends the source.
+derives its source from the replacement's intact predecessor witness, verifies both
+hypothetical sides and the complete reciprocal graph, completes that exact witness, then
+appends the source. The source-side missing-witness case is proven by the same complete
+hypothetical graph before its witness is written; no legacy witness without canonical source
+is synthesized during recovery.
 A different pair or a second incomplete slot remains fail-closed. No incomplete graph is
 accepted as a read.
 
