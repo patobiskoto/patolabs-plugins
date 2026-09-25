@@ -2846,6 +2846,116 @@ def test_linear_historical_batch_refuses_orphan_witness_before_effect(tracker):
     )
 
 
+def test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    records = _historical_batch_pair()
+    instance.import_adr_batch(PROJECT, records)
+    comment_id, _body = linear_module._adr_issue_link(
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+        records[0]["adr_id"],
+        records[0]["issue_refs"][0],
+    )
+
+    # Model an external deletion after the complete import.
+    del wire.comments[comment_id]
+    wire.issues["LIN-2"]["comments"]["nodes"] = [
+        comment
+        for comment in wire.issues["LIN-2"]["comments"]["nodes"]
+        if comment["id"] != comment_id
+    ]
+    before = (
+        copy.deepcopy(wire.documents),
+        copy.deepcopy(wire.comments),
+        copy.deepcopy(wire.issues),
+    )
+    calls_before = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.import_adr_batch(PROJECT, records)
+
+    assert (wire.documents, wire.comments, wire.issues) == before
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
+def test_linear_historical_batch_refuses_comment_deleted_after_validation(
+    tracker,
+):
+    instance, wire = tracker
+    records = _historical_batch_pair()
+    instance.import_adr_batch(PROJECT, records)
+    comment_id, _body = linear_module._adr_issue_link(
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+        records[0]["adr_id"],
+        records[0]["issue_refs"][0],
+    )
+    original = wire.__call__
+    deleted = False
+
+    def delete_after_graph_read(document, variables):
+        nonlocal deleted
+        response = original(document, variables)
+        if (
+            not deleted
+            and "FoundryLinearCommentsById" in document
+            and variables["id"] == comment_id
+        ):
+            # The graph validator has received the reciprocal witness; model an
+            # external deletion before import_adr_batch reaches its next step.
+            del wire.comments[comment_id]
+            wire.issues["LIN-2"]["comments"]["nodes"] = [
+                comment
+                for comment in wire.issues["LIN-2"]["comments"]["nodes"]
+                if comment["id"] != comment_id
+            ]
+            deleted = True
+        return response
+
+    instance._transport = delete_after_graph_read
+    before_documents = copy.deepcopy(wire.documents)
+    calls_before = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.import_adr_batch(PROJECT, records)
+
+    assert deleted
+    assert wire.documents == before_documents
+    assert comment_id not in wire.comments
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
+def test_linear_historical_batch_recovers_missing_comment_before_documents(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair()
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        if "FoundryLinearCommentCreate" in document:
+            raise OSError("interrupted reciprocal comment")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr_batch(PROJECT, records)
+    instance._transport = original
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    instance.import_adr_batch(PROJECT, records)
+    assert len(instance.list_adrs(PROJECT)) == 2
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+
+
 def test_linear_historical_batch_recovers_completed_first_half(tracker):
     instance, wire = tracker
     records = _historical_batch_pair()

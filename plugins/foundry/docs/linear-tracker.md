@@ -200,7 +200,14 @@ other graph conflicts and a changed source snapshot remain fail-closed. This rec
 asymmetric because each version is written before its witness: a present version with its
 exact witness missing may be completed, while a present witness whose matching version
 Document is missing is an orphan and is refused before any `DocumentCreate` or
-`CommentCreate` effect.
+`CommentCreate` effect. Batch reciprocal comments have a separate, earlier write order:
+they are all created before the first batch Document. Therefore an exact replay may fill
+a missing reciprocal comment only while no Document slot from that manifest exists. Once
+a version or witness is durable, an absent deterministic comment is treated as an
+external deletion and the replay refuses before any `DocumentCreate` or `CommentCreate`
+effect; it never invokes the comment-creation path or recreates the relation. A deletion
+interleaved after graph validation is caught by the final snapshot read and likewise
+fails closed without either creation effect.
 For Linear `frame`, every `constrained_by` reference is resolved before creating any
 ADR, epic or issue; an unknown, ambiguous, unreadable, deprecated, or superseded
 reference cannot leave an issue with only its first reciprocal link. Indexes, incoming

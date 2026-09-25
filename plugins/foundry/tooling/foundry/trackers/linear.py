@@ -3134,15 +3134,34 @@ class LinearTracker(Tracker):
             versions = chains.get(metadata["id"])
             if versions is None or len(versions) != 1 or versions[0][0] != metadata:
                 raise TrackerConflictError("Linear ADR batch history diverged")
-        pending_comments = {
-            _adr_issue_link(binding, adr_id, issue_id)[0]
-            for adr_id, issue_id, _native_id in comments
-        }
+        # Batch writes create every reciprocal comment before the first Document.
+        # Thus a missing comment is only a recoverable pre-Document interruption when
+        # no slot from this manifest has become durable yet.  Once a version or its
+        # witness exists, recreating a missing reciprocal comment would mask an
+        # external deletion from an otherwise completed (or advancing) batch.
+        durable_document = any(
+            by_id.get(slot["id"]) is not None
+            for _metadata, _body, candidate, witness in candidates
+            for slot in (candidate, witness)
+        )
+        pending_comments = (
+            set()
+            if durable_document
+            else {
+                _adr_issue_link(binding, adr_id, issue_id)[0]
+                for adr_id, issue_id, _native_id in comments
+            }
+        )
         self._validate_adr_graph(
             chains, binding, pending_comments=pending_comments
         )
-        for adr_id, issue_id, native_id in comments:
-            self._create_adr_issue_link(binding, adr_id, issue_id, native_id)
+        # A durable manifest has already crossed the comment-before-Document
+        # boundary.  Do not call the write-capable helper on replay: a comment
+        # can disappear after the graph read, and the final snapshot must refuse
+        # that external deletion rather than recreate it.
+        if not durable_document:
+            for adr_id, issue_id, native_id in comments:
+                self._create_adr_issue_link(binding, adr_id, issue_id, native_id)
         for metadata, body, _candidate, _witness in candidates:
             self._create_adr_document(binding, metadata, body)
         _, fresh = self._adr_snapshot(project)
