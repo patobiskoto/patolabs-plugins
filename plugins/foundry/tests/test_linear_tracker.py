@@ -186,6 +186,10 @@ class LinearWire:
         }
         self.comments = {}
         self.documents = {}
+        # Readback probes are historical provider observations, not ADR slots.
+        # Keep them outside ``documents`` so assertions about batch effects remain
+        # precise while the adapter still performs its exact-ID read.
+        self.readback_probes = {}
         self.calls = []
         self.git_automation_states = connection([])
 
@@ -221,11 +225,10 @@ class LinearWire:
             return {"errors": [{"message": "Entity not found: Document"}], "data": {}}
         if "FoundryLinearAdrDocumentById" in document:
             document_id = variables["id"]
-            nodes = [
-                copy.deepcopy(value)
-                for value in self.documents.values()
-                if value["id"] == document_id
-            ]
+            value = self.documents.get(document_id) or self.readback_probes.get(
+                document_id
+            )
+            nodes = [] if value is None else [copy.deepcopy(value)]
             return {"data": {"documents": connection(nodes)}}
         if "FoundryLinearAdrDocumentCreate" in document:
             value = variables["input"]
@@ -2800,12 +2803,31 @@ def test_linear_adr_list_rejects_non_object_nodes(tracker):
         instance.list_adrs(PROJECT)
 
 
-def _historical_batch_pair():
+def _seed_readback_probes(wire, *records):
+    """Seed exact, non-ADR provider observations required by batch preflight."""
+    for record in records:
+        probe_id = record["readback_probe_document_id"]
+        wire.readback_probes[probe_id] = {
+            "id": probe_id,
+            "title": (
+                f"[Foundry readback probe] {record['adr_id']} "
+                f"{record['expected_source_sha256'][:12]}"
+            ),
+            "content": record["expected_linear_readback_body"],
+            "project": {"id": PROJECT.id},
+            "archivedAt": None,
+        }
+
+
+def _historical_batch_pair(wire=None):
     source = {
         "adr_id": "LIN-ADR-0041", "title": "Historical source", "body": "old",
         "historical_status": "superseded", "source_ref": "YT-A-41",
         "source_created": 1, "source_updated": 2,
         "expected_source_sha256": hashlib.sha256(b"old").hexdigest(),
+        "expected_linear_readback_body": "old",
+        "expected_linear_readback_sha256": hashlib.sha256(b"old").hexdigest(),
+        "readback_probe_document_id": "00000000-0000-4000-8000-000000000041",
         "supersedes": (), "superseded_by": "LIN-ADR-0042",
         "issue_refs": ("LIN-2",),
     }
@@ -2814,15 +2836,138 @@ def _historical_batch_pair():
         "historical_status": "accepted", "source_ref": "YT-A-42",
         "source_created": None, "source_updated": None,
         "expected_source_sha256": hashlib.sha256(b"new").hexdigest(),
+        "expected_linear_readback_body": "new",
+        "expected_linear_readback_sha256": hashlib.sha256(b"new").hexdigest(),
+        "readback_probe_document_id": "00000000-0000-4000-8000-000000000042",
         "supersedes": ("LIN-ADR-0041",), "superseded_by": None,
         "issue_refs": (),
     }
+    if wire is not None:
+        _seed_readback_probes(wire, source, replacement)
     return source, replacement
+
+
+def _recovery_only_profile_record():
+    body = "<private historical source kept out of the public fixture>"
+    record = {
+        "adr_id": "LIN-ADR-0001", "title": "Qualified interrupted import",
+        "body": body, "historical_status": "deprecated",
+        "source_ref": "YT-ADR-1", "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "expected_linear_readback_body": body,
+        "expected_linear_readback_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    return record
+
+
+def _seed_recovery_only_profile_slot(wire, record):
+    """Install an existing, deliberately non-renderer-derived v0 Document."""
+    binding = {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]}
+    metadata = {
+        "schema": linear_module._ADR_SCHEMA,
+        "project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"],
+        "id": record["adr_id"], "title": record["title"],
+        "status": record["historical_status"], "sequence": 0,
+        "previous_id": None, "previous_sha256": None,
+        "body_sha256": record["expected_source_sha256"],
+        "origin": {
+            "kind": "migration", "source_tracker": "youtrack",
+            "source_ref": record["source_ref"],
+            "source_created": record["source_created"],
+            "source_updated": record["source_updated"],
+            "source_body_sha256": record["expected_source_sha256"],
+            "missing_relations": [],
+        },
+        "relations": {"supersedes": [], "superseded_by": None, "issues": []},
+    }
+    batch_sha256 = hashlib.sha256(json.dumps(
+        [metadata], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    metadata["origin"]["batch_sha256"] = batch_sha256
+    candidate = {
+        "id": linear_module._adr_document_id(PROJECT.id, record["adr_id"], 0),
+        "title": linear_module._adr_document_title(metadata),
+        "content": linear_module._adr_document_content(metadata, record["body"]),
+        "project": {"id": PROJECT.id}, "archivedAt": None,
+    }
+    # This models opaque provider bytes that are qualified by digest, rather
+    # than teaching the test (or adapter) a generalized HTML renderer.
+    observed = {**candidate, "content": f"{candidate['content']}\n"}
+    wire.documents[observed["id"]] = observed
+    return binding, metadata, candidate, observed
+
+
+def test_linear_historical_profile_recovers_only_exact_existing_slot(tracker, monkeypatch):
+    instance, wire = tracker
+    record = _recovery_only_profile_record()
+    assert "readback_probe_document_id" not in record
+    source_digest = hashlib.sha256(record["body"].encode()).hexdigest()
+    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_SOURCE_SHA256", source_digest)
+
+    # The opaque readback digest is the entire provider content, not a body-only
+    # normalization. A single byte change must not authorize witness recovery.
+    _binding, _metadata, candidate, observed = _seed_recovery_only_profile_slot(
+        wire, record
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_READBACK_SHA256",
+        hashlib.sha256(observed["content"].encode()).hexdigest(),
+    )
+    assert linear_module._adr_readback_content_matches(
+        observed["content"], candidate["content"]
+    )
+    assert not linear_module._adr_readback_content_matches(
+        f"{observed['content']} ", candidate["content"]
+    )
+
+    imported = instance.import_adr_batch(PROJECT, (record,))
+    assert [item.id for item in imported] == [record["adr_id"]]
+    witness_id = linear_module._adr_witness_id(PROJECT.id, record["adr_id"], 0)
+    assert wire.documents[witness_id]["content"]
+    before = copy.deepcopy(wire.documents)
+    instance.import_adr_batch(PROJECT, (record,))
+    assert wire.documents == before
+    assert instance.list_adrs(PROJECT)[0].body.endswith(record["body"])
+
+
+def test_linear_historical_profile_refuses_absent_or_colliding_slot_before_write(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    record = _recovery_only_profile_record()
+    source_digest = hashlib.sha256(record["body"].encode()).hexdigest()
+    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_SOURCE_SHA256", source_digest)
+    before_calls = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="requires existing exact slot"):
+        instance.import_adr_batch(PROJECT, (record,))
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[before_calls:]
+    )
+
+    _binding, _metadata, _candidate, observed = _seed_recovery_only_profile_slot(
+        wire, record
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_READBACK_SHA256",
+        hashlib.sha256(observed["content"].encode()).hexdigest(),
+    )
+    wire.documents[observed["id"]]["content"] += "hostile"
+    before = copy.deepcopy(wire.documents)
+    with pytest.raises(TrackerConflictError, match="batch slot diverged"):
+        instance.import_adr_batch(PROJECT, (record,))
+    assert wire.documents == before
 
 
 def test_linear_historical_batch_imports_reciprocal_closure_into_empty_project(tracker):
     instance, wire = tracker
-    records = _historical_batch_pair()
+    records = _historical_batch_pair(wire)
     imported = instance.import_adr_batch(PROJECT, records)
     assert [(item.id, item.status) for item in imported] == [
         ("LIN-ADR-0041", "superseded"),
@@ -2851,10 +2996,16 @@ def test_linear_historical_batch_imports_reciprocal_closure_into_empty_project(t
 
 def test_linear_historical_batch_refuses_bad_or_changed_manifest_before_effect(tracker):
     instance, wire = tracker
-    source, replacement = _historical_batch_pair()
+    source, replacement = _historical_batch_pair(wire)
     wrong = {**replacement, "supersedes": ()}
     with pytest.raises(TrackerConflictError, match="not reciprocal"):
         instance.import_adr_batch(PROJECT, (source, wrong))
+    assert wire.documents == {}
+    assert wire.comments == {}
+    unqualified = dict(source)
+    unqualified.pop("expected_linear_readback_body")
+    with pytest.raises(ValueError, match="record fields"):
+        instance.import_adr_batch(PROJECT, (unqualified, replacement))
     assert wire.documents == {}
     assert wire.comments == {}
     missing = {**source, "superseded_by": "LIN-ADR-0099"}
@@ -2874,9 +3025,120 @@ def test_linear_historical_batch_refuses_bad_or_changed_manifest_before_effect(t
     assert (wire.documents, wire.comments) == before
 
 
+def test_linear_historical_batch_accepts_only_exact_opaque_probe_readback(tracker):
+    instance, wire = tracker
+    body = "canonical historical source"
+    opaque_readback = "provider-specific historical rendering"
+    record = {
+        "adr_id": "LIN-ADR-0043", "title": "Opaque profile", "body": body,
+        "historical_status": "accepted", "source_ref": "YT-A-43",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "expected_linear_readback_body": opaque_readback,
+        "expected_linear_readback_sha256": hashlib.sha256(
+            opaque_readback.encode()
+        ).hexdigest(),
+        "readback_probe_document_id": "00000000-0000-4000-8000-000000000043",
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    _seed_readback_probes(wire, record)
+    original = wire.__call__
+
+    def opaque_provider_readback(document, variables):
+        response = original(document, variables)
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["id"]
+            == linear_module._adr_document_id(PROJECT.id, record["adr_id"], 0)
+        ):
+            observed = linear_module._qualified_adr_readback_content(
+                variables["input"]["content"], opaque_readback
+            )
+            wire.documents[variables["input"]["id"]]["content"] = observed
+            response["data"]["documentCreate"]["document"]["content"] = observed
+        return response
+
+    instance._transport = opaque_provider_readback
+    imported = instance.import_adr_batch(PROJECT, (record,))
+
+    assert imported[0].body.endswith(body)
+    raw = wire.documents[imported[0].ref]
+    assert raw["content"].endswith(opaque_readback)
+    assert opaque_readback != linear_markdown_body_readback(body)
+
+
+@pytest.mark.parametrize(
+    "mutate_probe",
+    (
+        lambda wire, record: wire.readback_probes.pop(
+            record["readback_probe_document_id"]
+        ),
+        lambda wire, record: wire.readback_probes[
+            record["readback_probe_document_id"]
+        ].update(content="changed"),
+        lambda wire, record: wire.readback_probes[
+            record["readback_probe_document_id"]
+        ].update(project={"id": "other-project"}),
+        lambda wire, record: wire.readback_probes[
+            record["readback_probe_document_id"]
+        ].update(archivedAt="2026-09-25T00:00:00Z"),
+        lambda wire, record: wire.readback_probes[
+            record["readback_probe_document_id"]
+        ].update(title="[Foundry ADR] disguised probe"),
+    ),
+)
+def test_linear_historical_batch_refuses_invalid_probe_before_effect(
+    tracker, mutate_probe
+):
+    instance, wire = tracker
+    source, replacement = _historical_batch_pair(wire)
+    mutate_probe(wire, source)
+    calls_before = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="readback probe is not exact"):
+        instance.import_adr_batch(PROJECT, (source, replacement))
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
+def test_linear_historical_batch_refuses_colliding_probe_before_effect(tracker):
+    instance, wire = tracker
+    source, replacement = _historical_batch_pair(wire)
+    probe_id = source["readback_probe_document_id"]
+    original = wire.__call__
+
+    def collision(document, variables):
+        if (
+            "FoundryLinearAdrDocumentById" in document
+            and variables["id"] == probe_id
+        ):
+            probe = copy.deepcopy(wire.readback_probes[probe_id])
+            return {"data": {"documents": connection([probe, probe])}}
+        return original(document, variables)
+
+    instance._transport = collision
+    calls_before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="document slot collision"):
+        instance.import_adr_batch(PROJECT, (source, replacement))
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
 def test_linear_historical_batch_recovers_exact_partial_version_witness(tracker):
     instance, wire = tracker
-    records = _historical_batch_pair()
+    records = _historical_batch_pair(wire)
     original = wire.__call__
 
     def interrupt(document, variables):
@@ -2901,7 +3163,7 @@ def test_linear_historical_batch_recovers_exact_partial_version_witness(tracker)
 
 def test_linear_historical_batch_refuses_orphan_witness_before_effect(tracker):
     instance, wire = tracker
-    records = _historical_batch_pair()
+    records = _historical_batch_pair(wire)
     instance.import_adr_batch(PROJECT, records)
     version_id = linear_module._adr_document_id(
         PROJECT.id, records[0]["adr_id"], 0
@@ -2927,7 +3189,7 @@ def test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effec
     tracker,
 ):
     instance, wire = tracker
-    records = _historical_batch_pair()
+    records = _historical_batch_pair(wire)
     instance.import_adr_batch(PROJECT, records)
     comment_id, _body = linear_module._adr_issue_link(
         {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
@@ -2964,7 +3226,7 @@ def test_linear_historical_batch_refuses_comment_deleted_after_validation(
     tracker,
 ):
     instance, wire = tracker
-    records = _historical_batch_pair()
+    records = _historical_batch_pair(wire)
     instance.import_adr_batch(PROJECT, records)
     comment_id, _body = linear_module._adr_issue_link(
         {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
@@ -3012,7 +3274,7 @@ def test_linear_historical_batch_refuses_comment_deleted_after_validation(
 
 def test_linear_historical_batch_recovers_missing_comment_before_documents(tracker):
     instance, wire = tracker
-    records = _historical_batch_pair()
+    records = _historical_batch_pair(wire)
     original = wire.__call__
 
     def interrupt(document, variables):
@@ -3035,7 +3297,7 @@ def test_linear_historical_batch_recovers_missing_comment_before_documents(track
 
 def test_linear_historical_batch_recovers_completed_first_half(tracker):
     instance, wire = tracker
-    records = _historical_batch_pair()
+    records = _historical_batch_pair(wire)
     original = wire.__call__
 
     def interrupt(document, variables):
@@ -3803,7 +4065,7 @@ def test_linear_adr_raw_html_is_refused_before_any_provider_write(tracker):
         assert (wire.documents, wire.comments) == before
         assert instance.list_adrs(PROJECT) == []
 
-    source, replacement = _historical_batch_pair()
+    source, replacement = _historical_batch_pair(wire)
     replacement = {
         **replacement,
         "body": body,

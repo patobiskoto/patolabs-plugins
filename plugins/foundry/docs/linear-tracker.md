@@ -143,6 +143,31 @@ complete supported serialization for a known source candidate. It never treats `
 equivalent source bytes: the witness-retained source and its digest distinguish them even when
 their readable Markdown is identical. It does not apply a reverse rewrite to provider content
 or normalize any other Markdown variant.
+`FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
+SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
+and its existing Linear Document content SHA-256
+`9d723a7a64225d930531d968f78dba108f940eb7091d7110f8b12c037d29b193` form one
+closed pair. This does not describe a renderer and cannot create a new Document from
+the historical source. It permits only exact-ID readback of that surviving slot and
+creation of its missing witness; a missing slot or any byte difference fails before a
+provider write. The witness retains the original UTF-8 source bytes, so ordinary ADR
+readers receive the historical Markdown byte-for-byte rather than the provider's
+lossy rendering.
+Every other historical batch record must carry a private, exact readback profile:
+the source digest, the complete body bytes returned by a non-ADR Linear probe, and
+the SHA-256 of those returned bytes. The adapter verifies every profile and composes
+the already-qualified ADR header serialization with that exact body before any batch
+write. A missing profile, a digest mismatch, or a different returned version byte
+refuses the batch; it never falls back to a local Markdown renderer. The probe
+Documents are non-authoritative evidence only, are not ADRs, and are retained rather
+than silently deleted. Their IDs and private source/readback bytes belong in the
+private migration receipt, never this repository. Once an ADR's witness exists,
+ordinary reads use the witness-held source body and the bound provider content digest,
+not the private manifest or probe Documents.
+The probes contain standalone bodies. They do not prove Linear will render the body
+identically beneath an ADR metadata header; if that context changes the readback,
+the attempted version remains unwitnessed and the batch stops. Recovery then needs
+a separately qualified exact-slot profile before any further import.
 Exact-slot verification still checks
 the deterministic ID, title, project, archive state, canonical metadata encoding, and
 body digest. Witnesses bind the exact version bytes returned by Linear, including the
@@ -152,7 +177,7 @@ body changes therefore remain conflicts or invalid provider responses. A source-
 base64 re-encoding, digest edit, readable-body edit, or transformation outside the closed
 serialization rule fails closed.
 
-The pre-existing interrupted `PAT-ADR-0001` version-0 slot is recoverable only by replaying
+The pre-existing interrupted `FOUNDRY-ADR-0001` version-0 slot is recoverable only by replaying
 the exact original source body. Recovery checks its deterministic Document ID and title,
 metadata and source digest, project, archive state, and the exact provider serialization before
 creating only the missing witness. It never updates or deletes the surviving version and never
