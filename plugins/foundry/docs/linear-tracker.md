@@ -181,6 +181,16 @@ witness remain conflicts before any effect. A missing witness on the exact deriv
 successor still follows the bounded interrupted-pair recovery above. A non-object entry
 in Linear's document list is an invalid provider response, not an empty ADR index.
 
+`query adr <ADR-ID>`, `query adrs`, `frame`, and every ADR write stay fail-closed on any
+of the conflicts above — none of them repair or normalize on read. `query issue <ID>` is
+the one exception: its `adrs` field only keeps the issue payload itself readable when the
+embedded index read raises a typed `TrackerConflictError` (e.g. a version without a
+matching witness). It projects that as an explicit, distinct status —
+`{"status": "conflict", "tracker": <tracker name>, "reason": <sanitized message>}` —
+never an empty list and never the `{"status": "unavailable", ...}` capability shape used
+when a tracker has no ADR knowledge base at all. Transport, binding, and other provider
+errors from the embedded index still propagate out of `query issue` unchanged.
+
 Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
 Each additive version must have exactly one typed delta: body, status, source
 supersession, one reciprocal `supersedes` addition, or one canonical ADR↔issue link;

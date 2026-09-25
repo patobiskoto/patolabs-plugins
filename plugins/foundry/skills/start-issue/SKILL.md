@@ -39,7 +39,10 @@ Read the issue's description + acceptance criteria to scope the work:
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" query issue <ISSUE-ID>
 ```
 The `adrs` in that payload are an index of constraints — load the full text of the
-ones the issue cites (`query adr <ADR-ID>`), honor them, don't reopen them.
+ones the issue cites (`query adr <ADR-ID>`), honor them, don't reopen them. If `adrs`
+is instead a `{"status": "conflict", ...}` object, the embedded ADR index itself is in
+conflict: treat ADR constraints as unknown, not as none, and do not proceed as if the
+index were empty.
 
 Before invoking either host, inspect the issue's explicit risk/ADR metadata. If it
 contains a listed signal (`security`, `data_migration`, `concurrency`, `public_api`,

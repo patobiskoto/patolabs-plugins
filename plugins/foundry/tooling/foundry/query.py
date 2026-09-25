@@ -24,6 +24,7 @@ from foundry import registry
 from foundry.trackers.base import (
     IssueUnavailableError,
     TrackerCapabilityUnavailableError,
+    TrackerConflictError,
 )
 
 _PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
@@ -390,10 +391,15 @@ def _adr_index(tr, p):
 
 
 def _adr_index_or_capability(tr, p):
-    """Keep an issue readable when its tracker has no ADR knowledge base.
+    """Keep an issue readable when its tracker has no ADR knowledge base, or when the
+    embedded ADR index itself is in conflict.
 
-    Only the provider's typed capability error is projected. Transport, binding and
-    payload failures still propagate rather than being mistaken for an empty index.
+    Only the provider's typed capability and conflict errors are projected — each as
+    its own explicit, distinct status, never as an empty list and never conflated with
+    each other. Transport, binding and payload failures still propagate rather than
+    being mistaken for either. `query adr`, `query adrs`, `frame` and ADR writes stay
+    fail-closed on the same conflict — this projection only keeps the issue payload
+    readable; it does not repair or normalize the conflict.
     """
     try:
         return _adr_index(tr, p)
@@ -402,6 +408,12 @@ def _adr_index_or_capability(tr, p):
             "status": "unavailable",
             "tracker": exc.tracker,
             "capability": exc.capability,
+        }
+    except TrackerConflictError as exc:
+        return {
+            "status": "conflict",
+            "tracker": tr.name,
+            "reason": str(exc),
         }
 
 
@@ -423,8 +435,12 @@ def issue(issue_id: str):
             related[lk.target] = {"id": lk.target, "error": "issue unavailable"}
     return {"project": p.key, "issue": it.to_dict(), "related": related,
             "note": "adrs is an INDEX when the provider supports an ADR knowledge "
-                    "base; otherwise it is a typed capability status. Load the full "
-                    "text of constraining ADRs with `query adr <ADR-ID>` when available.",
+                    "base; otherwise it is a typed capability status, or — if the "
+                    "embedded ADR index itself is in conflict — a typed conflict "
+                    "status ({\"status\": \"conflict\", ...}). A conflict here does "
+                    "not clear on read: `query adr`, `query adrs` and ADR writes stay "
+                    "fail-closed on it. Load the full text of constraining ADRs with "
+                    "`query adr <ADR-ID>` when available.",
             "adrs": _adr_index_or_capability(tr, p)}
 
 
