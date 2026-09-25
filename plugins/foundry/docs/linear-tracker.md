@@ -128,8 +128,15 @@ at least as long as its opener. A `- ` literal inside such a fence and a source 
 byte-exact; a dash thematic break such as `- - -` is preserved too. A provider response that
 rewrites any of those is rejected. The bounded model does not parse raw HTML: a line outside a
 fence that begins with `<` after up to three spaces is rejected before any provider write,
-including reciprocal issue-link comments, batch comments and version creation. Such a
-historical source requires a separately validated rendering contract before import;
+including reciprocal issue-link comments, batch comments and version creation. The sole
+exception is the versioned `foundry-adr-0012-v1` profile: its exact source-body SHA-256
+is `69bd2cb2be04313de06dee865187b5e0e68eaed00298a7ce2be124f6ca1e96e5`, and its
+only accepted readback SHA-256 is
+`3bbab7c31d737bb97320ea74644f8acd6201cf7ec0a8cb7e1a09cd554c49246c`. It records
+the separately qualified FOUNDRY-ADR-0012 rendering only: blank lines inserted between
+its four headings and angle-bracket placeholders, one top-level dash marker changed to
+a star marker, and its final newline removed. The adapter does not use this as a generic
+HTML rule. Any source-byte variation or other raw HTML remains rejected before effects;
 the source bytes must not be changed to make it fit.
 The adapter accepts canonical content or exactly the
 complete supported serialization for a known source candidate. It never treats `- ` and `* ` as
