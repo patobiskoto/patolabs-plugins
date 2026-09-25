@@ -102,27 +102,54 @@ search queries. ADRs are stored as project-scoped Linear Documents, never substi
 a Git catalogue or YouTrack read. A document has a deterministic UUIDv4 client ID for its
 `(project, ADR, version)` slot, a closed metadata header and body/content digests. Every
 version also has a second deterministic UUIDv4 project Document: its witness binds the version
-ID and exact content hash. Reads require the pair in both directions. An isolated deletion
+ID, the exact content hash returned by Linear, and (for newly written witnesses) the exact
+UTF-8 source body as canonical base64 plus its SHA-256. The version remains readable Markdown;
+the witness is the durable, reversible source representation. Reads require the pair in both
+directions. An isolated deletion
 of the only version, the head version, or its witness is therefore a conflict rather than
 an empty/older history. The two creates are not a Linear transaction: an interrupted
 response is recovered only by exact deterministic-ID readback; a process stop or provider
 failure between them leaves a detectable incomplete pair and all normal ADR reads fail
 closed. Replaying the byte-identical native creation can complete exactly one surviving
 `proposed` version-0 slot after validating every other pair and relation; a different
-title/body, more than one incomplete pair, or an orphan witness remains fail-closed.
+title/body, more than one incomplete pair, or an orphan witness remains fail-closed. Legacy
+witnesses without the source field remain compatible only when the readable body itself still
+matches its declared source digest byte-for-byte.
 
 Linear's Markdown readback escapes the closing delimiter of these ADR HTML comments:
 the canonical version separator sent as `\n-->\n\n` is returned as
 `\n\\-->\n\n`, and the witness suffix sent as `\n-->` is returned as
 `\n\\-->`. In the version comment header it also escapes JSON array brackets as
-`\\[` and `\\]`. The adapter accepts canonical content or exactly this one observed
-serialization in that deterministic header. It does not strip backslashes, rewrite the
-body, or normalize any other Markdown variant. Exact-slot verification still checks
+`\\[` and `\\]`. The observed PAT-ADR-0001 readback also serializes its three column-0
+`- ` list markers as `* `. The adapter models that rewrite only for column-0 markers outside
+fenced code. It recognizes backtick and tilde fence openers of at least three characters, with
+up to three leading spaces and an optional info string, and only a same-character closing fence
+at least as long as its opener. A `- ` literal inside such a fence and a source `* ` marker stay
+byte-exact; a dash thematic break such as `- - -` is preserved too. A provider response that
+rewrites any of those is rejected. The bounded model does not parse raw HTML: a line outside a
+fence that begins with `<` after up to three spaces is rejected before any provider write,
+including reciprocal issue-link comments, batch comments and version creation. Such a
+historical source requires a separately validated rendering contract before import;
+the source bytes must not be changed to make it fit.
+The adapter accepts canonical content or exactly the
+complete supported serialization for a known source candidate. It never treats `- ` and `* ` as
+equivalent source bytes: the witness-retained source and its digest distinguish them even when
+their readable Markdown is identical. It does not apply a reverse rewrite to provider content
+or normalize any other Markdown variant.
+Exact-slot verification still checks
 the deterministic ID, title, project, archive state, canonical metadata encoding, and
 body digest. Witnesses bind the exact version bytes returned by Linear, including the
 inserted backslash, and later versions bind the same exact readback bytes through
 `previous_sha256`. Extra backslashes, whitespace, altered delimiters, re-encoded JSON, or
-body changes therefore remain conflicts or invalid provider responses.
+body changes therefore remain conflicts or invalid provider responses. A source-body edit,
+base64 re-encoding, digest edit, readable-body edit, or transformation outside the closed
+serialization rule fails closed.
+
+The pre-existing interrupted `PAT-ADR-0001` version-0 slot is recoverable only by replaying
+the exact original source body. Recovery checks its deterministic Document ID and title,
+metadata and source digest, project, archive state, and the exact provider serialization before
+creating only the missing witness. It never updates or deletes the surviving version and never
+allocates a second version ID; a native `* ` source that merely renders the same is rejected.
 
 Normal reads also fail closed on a later-version partial write; only the matching typed
 operation may complete its exact missing witness after hypothetical whole-graph validation.
@@ -130,7 +157,16 @@ The public `adr accept`, `adr edit`, `adr supersede`, and `adr link-issue` comma
 resolve a witnessed predecessor through the mutation-only port, so an incomplete
 pair cannot make the recovery command unreachable. This port never repairs on read:
 the typed operation must prove the exact candidate before appending or completing
-its witness. After an `adr edit` version and witness are both durable, replaying the
+its witness. Recovery may inspect the closed metadata of the single unwitnessed version,
+but that lossy readback is never used as its source body. Status and link retries derive
+the source byte-for-byte from the intact predecessor witness; edit retries use the exact
+requested updated body after matching the expected predecessor; supersession derives each
+side from its own intact predecessor witness. The derived deterministic slot must match the
+surviving ID, title, metadata, and the one accepted provider serialization before a source-
+bearing witness can be created. An orphan witness, a foreign or additional incomplete
+version, an edited readback, an unknown serialization, or a different typed request remains
+a conflict with no repair effect. After an `adr edit` version and witness are both durable,
+replaying the
 same expected and updated files reconstructs that exact successor from its witnessed
 predecessor and returns unchanged without another provider write. That no-op proof
 requires an intact chain: changed files, a damaged witness, or a missing predecessor
@@ -167,7 +203,11 @@ may append only the missing source after checking both complete chains and the h
 reciprocal graph. If that exact source Document exists but its witness is missing,
 the replay verifies the byte-exact source candidate before completing only its witness.
 If the replacement-side version exists without its witness, the same command first
-preflights both hypothetical sides, completes that exact witness, then appends the source.
+derives its source from the replacement's intact predecessor witness, verifies both
+hypothetical sides and the complete reciprocal graph, completes that exact witness, then
+appends the source. The source-side missing-witness case is proven by the same complete
+hypothetical graph before its witness is written; no legacy witness without canonical source
+is synthesized during recovery.
 A different pair or a second incomplete slot remains fail-closed. No incomplete graph is
 accepted as a read.
 

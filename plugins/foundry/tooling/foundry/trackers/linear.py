@@ -13,6 +13,8 @@ additive provider mutations which do not replace existing issue values.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import datetime
 import hashlib
 import json
@@ -66,6 +68,8 @@ _ADR_DOCUMENT_PREFIX = "[Foundry ADR] "
 _ADR_WITNESS_SCHEMA = "foundry-linear-adr-witness.v1"
 _ADR_WITNESS_HEADER = "<!-- foundry-linear-adr-witness.v1\n"
 _ADR_WITNESS_PREFIX = "[Foundry ADR witness] "
+_ADR_SOURCE_ENCODING = "base64-utf8"
+_ADR_BOUND_SOURCE_BODY = "_foundry_bound_source_body"
 _ADR_ISSUE_LINK_SCHEMA = "foundry-linear-adr-issue-link.v1"
 _ADR_ID = re.compile(r"[A-Z][A-Z0-9_-]*-ADR-[0-9]{4}\Z")
 _ISSUE_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,255}\Z")
@@ -351,12 +355,82 @@ def _adr_document_content(metadata: dict, body: str) -> str:
     return f"{_ADR_HEADER}{header}\n-->\n\n{body}"
 
 
+def _markdown_fence_opening(line: str) -> tuple[str, int] | None:
+    """Return a descriptor for one supported Markdown fence opener."""
+    candidate = line.lstrip(" ")
+    if len(line) - len(candidate) > 3 or not candidate:
+        return None
+    marker = candidate[0]
+    if marker not in {"`", "~"}:
+        return None
+    length = len(candidate) - len(candidate.lstrip(marker))
+    if length < 3:
+        return None
+    info = candidate[length:]
+    if marker == "`" and "`" in info:
+        return None
+    return marker, length
+
+
+def _markdown_fence_closing(
+    line: str,
+    marker: str,
+    opening_length: int,
+) -> bool:
+    candidate = line.lstrip(" ")
+    if len(line) - len(candidate) > 3:
+        return False
+    length = len(candidate) - len(candidate.lstrip(marker))
+    return (
+        length >= opening_length
+        and not candidate[length:].strip(" \t")
+    )
+
+
+def _linear_markdown_readback_body(body: str) -> str:
+    """Model only Linear's observed top-level dash-list serialization."""
+    rendered = []
+    fence = None
+    for source_line in body.splitlines(keepends=True):
+        line = source_line.removesuffix("\n").removesuffix("\r")
+        if fence is not None:
+            rendered.append(source_line)
+            if _markdown_fence_closing(line, *fence):
+                fence = None
+            continue
+        opening = _markdown_fence_opening(line)
+        if opening is not None:
+            fence = opening
+            rendered.append(source_line)
+            continue
+        candidate = line.lstrip(" ")
+        if len(line) - len(candidate) <= 3 and candidate.startswith("<"):
+            raise ValueError("ambiguous raw HTML block in ADR body")
+        if source_line.startswith("- "):
+            thematic = line.replace(" ", "").replace("\t", "")
+            if len(thematic) < 3 or set(thematic) != {"-"}:
+                source_line = f"* {source_line[2:]}"
+        rendered.append(source_line)
+    return "".join(rendered)
+
+
+def _preflight_adr_body_readback(body: str) -> None:
+    """Refuse a body with an unmodelled Linear rendering before any write."""
+    try:
+        _linear_markdown_readback_body(body)
+    except ValueError as exc:
+        raise TrackerConflictError(
+            "Linear ADR body has unsupported Markdown serialization"
+        ) from exc
+
+
 def _linear_adr_readback_content(content: str) -> str:
     """Return the sole provider serialization accepted beside canonical bytes.
 
     Linear escapes the closing delimiter of an HTML comment in Markdown readback.
     Keep compatibility pinned to the observed deterministic header transformation:
-    JSON brackets and the marker delimiter only. Body bytes remain untouched.
+    JSON brackets, the marker delimiter, and top-level dash list markers outside
+    fenced code only.
     """
     if content.startswith(_ADR_HEADER):
         payload = content[len(_ADR_HEADER) :]
@@ -364,6 +438,7 @@ def _linear_adr_readback_content(content: str) -> str:
         if not separator:
             raise ValueError("canonical ADR document delimiter is missing")
         encoded = encoded.replace("[", "\\[").replace("]", "\\]")
+        body = _linear_markdown_readback_body(body)
         return f"{_ADR_HEADER}{encoded}\n\\-->\n\n{body}"
     if content.startswith(_ADR_WITNESS_HEADER) and content.endswith("\n-->"):
         suffix = "\n-->"
@@ -372,10 +447,12 @@ def _linear_adr_readback_content(content: str) -> str:
 
 
 def _adr_readback_content_matches(observed: object, canonical: str) -> bool:
-    return (
-        observed == canonical
-        or observed == _linear_adr_readback_content(canonical)
-    )
+    if observed == canonical:
+        return True
+    try:
+        return observed == _linear_adr_readback_content(canonical)
+    except ValueError:
+        return False
 
 
 def _exact_adr_document_matches(raw: object, expected: dict) -> bool:
@@ -389,7 +466,9 @@ def _exact_adr_document_matches(raw: object, expected: dict) -> bool:
     )
 
 
-def _adr_witness_document(binding: dict, metadata: dict, raw: dict) -> dict:
+def _adr_witness_document(
+    binding: dict, metadata: dict, raw: dict, source_body: str | None = None
+) -> dict:
     witness = {
         "schema": _ADR_WITNESS_SCHEMA,
         "project_id": binding["project_id"],
@@ -399,6 +478,13 @@ def _adr_witness_document(binding: dict, metadata: dict, raw: dict) -> dict:
         "document_id": raw["id"],
         "document_sha256": hashlib.sha256(raw["content"].encode()).hexdigest(),
     }
+    if source_body is not None:
+        source_bytes = source_body.encode("utf-8")
+        witness.update(
+            source_encoding=_ADR_SOURCE_ENCODING,
+            source_body=base64.b64encode(source_bytes).decode("ascii"),
+            source_body_sha256=hashlib.sha256(source_bytes).hexdigest(),
+        )
     encoded = json.dumps(
         witness, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
@@ -437,7 +523,7 @@ def _parse_adr_witness(raw: dict, binding: dict) -> dict:
         raise LinearTrackerError(
             "adr.witness.normalize", None, "invalid_response"
         ) from None
-    required = {
+    legacy_required = {
         "schema",
         "project_id",
         "team_id",
@@ -446,11 +532,17 @@ def _parse_adr_witness(raw: dict, binding: dict) -> dict:
         "document_id",
         "document_sha256",
     }
+    source_required = legacy_required | {
+        "source_encoding",
+        "source_body",
+        "source_body_sha256",
+    }
     adr_id = witness.get("adr_id") if isinstance(witness, dict) else None
     sequence = witness.get("sequence") if isinstance(witness, dict) else None
     if (
         not isinstance(witness, dict)
-        or set(witness) != required
+        or frozenset(witness)
+        not in {frozenset(legacy_required), frozenset(source_required)}
         or witness["schema"] != _ADR_WITNESS_SCHEMA
         or witness["project_id"] != binding["project_id"]
         or witness["team_id"] != binding["team_id"]
@@ -477,10 +569,39 @@ def _parse_adr_witness(raw: dict, binding: dict) -> dict:
         )
     ):
         raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
+    if set(witness) == source_required:
+        try:
+            source_bytes = base64.b64decode(
+                witness["source_body"], validate=True
+            )
+            source_body = source_bytes.decode("utf-8")
+        except (TypeError, ValueError, UnicodeDecodeError, binascii.Error):
+            raise LinearTrackerError(
+                "adr.witness.normalize", None, "invalid_response"
+            ) from None
+        if (
+            witness["source_encoding"] != _ADR_SOURCE_ENCODING
+            or base64.b64encode(source_bytes).decode("ascii")
+            != witness["source_body"]
+            or not isinstance(witness["source_body_sha256"], str)
+            or _DIGEST.fullmatch(witness["source_body_sha256"]) is None
+            or witness["source_body_sha256"]
+            != hashlib.sha256(source_bytes).hexdigest()
+        ):
+            raise LinearTrackerError(
+                "adr.witness.normalize", None, "invalid_response"
+            )
+        witness[_ADR_BOUND_SOURCE_BODY] = source_body
     return witness
 
 
-def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
+def _parse_adr_document(
+    raw: dict,
+    binding: dict,
+    *,
+    source_body: str | None = None,
+    allow_unbound_body: bool = False,
+) -> tuple[dict, str]:
     if not isinstance(raw, dict) or raw.get("archivedAt") is not None:
         raise LinearTrackerError("adr.normalize", None, "invalid_response")
     content = raw.get("content")
@@ -532,6 +653,7 @@ def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
         metadata["origin"],
         metadata["relations"],
     )
+    canonical_body = body if source_body is None else source_body
     if (
         metadata["schema"] != _ADR_SCHEMA
         or metadata["project_id"] != binding["project_id"]
@@ -560,7 +682,11 @@ def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
         )
         or not isinstance(metadata["body_sha256"], str)
         or _DIGEST.fullmatch(metadata["body_sha256"]) is None
-        or metadata["body_sha256"] != hashlib.sha256(body.encode()).hexdigest()
+        or (
+            not allow_unbound_body
+            and metadata["body_sha256"]
+            != hashlib.sha256(canonical_body.encode()).hexdigest()
+        )
         or not isinstance(relations, dict)
         or set(relations) != {"supersedes", "superseded_by", "issues"}
         or not isinstance(relations["supersedes"], list)
@@ -667,12 +793,15 @@ def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
         or raw.get("id") != _adr_document_id(binding["project_id"], adr_id, sequence)
         or raw.get("title") != _adr_document_title(metadata)
         or raw.get("project", {}).get("id") != binding["project_id"]
-        or not _adr_readback_content_matches(
-            content, _adr_document_content(metadata, body)
+        or (
+            not allow_unbound_body
+            and not _adr_readback_content_matches(
+                content, _adr_document_content(metadata, canonical_body)
+            )
         )
     ):
         raise LinearTrackerError("adr.normalize", None, "invalid_response")
-    return metadata, body
+    return metadata, canonical_body
 
 
 def _valid_adr_version_delta(previous: dict, current: dict) -> bool:
@@ -721,6 +850,7 @@ def _valid_adr_version_delta(previous: dict, current: dict) -> bool:
 def _adr_chain(documents: list[dict], binding: dict) -> dict:
     chains = {}
     witnesses = {}
+    version_documents = []
     for raw in documents:
         if isinstance(raw, dict) and (
             str(raw.get("title", "")).startswith(_ADR_WITNESS_PREFIX)
@@ -740,8 +870,40 @@ def _adr_chain(documents: list[dict], binding: dict) -> dict:
             )
         ):
             continue
-        metadata, _ = _parse_adr_document(raw, binding)
-        chains.setdefault(metadata["id"], []).append((metadata, raw))
+        version_documents.append(raw)
+
+    for raw in version_documents:
+        matching_witnesses = [
+            witness
+            for witness, _witness_raw in witnesses.values()
+            if witness["document_id"] == raw.get("id")
+        ]
+        if len(matching_witnesses) > 1:
+            raise TrackerConflictError("Linear ADR witness slot has a fork")
+        witness = matching_witnesses[0] if matching_witnesses else None
+        source_body = (
+            witness.get(_ADR_BOUND_SOURCE_BODY)
+            if witness is not None
+            else None
+        )
+        metadata, parsed_body = _parse_adr_document(
+            raw,
+            binding,
+            source_body=source_body,
+            allow_unbound_body=witness is None,
+        )
+        if witness is not None and (
+            witness["adr_id"] != metadata["id"]
+            or witness["sequence"] != metadata["sequence"]
+            or (
+                source_body is not None
+                and witness["source_body_sha256"] != metadata["body_sha256"]
+            )
+        ):
+            raise TrackerConflictError("Linear ADR version witness diverged")
+        bound_raw = dict(raw)
+        bound_raw[_ADR_BOUND_SOURCE_BODY] = parsed_body
+        chains.setdefault(metadata["id"], []).append((metadata, bound_raw))
     observed = set()
     for adr_id, versions in chains.items():
         versions.sort(key=lambda item: item[0]["sequence"])
@@ -2450,11 +2612,13 @@ class LinearTracker(Tracker):
                 str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
                 or str(raw.get("content", "")).startswith(_ADR_HEADER)
             ):
-                metadata, parsed_body = _parse_adr_document(raw, binding)
+                metadata, _parsed_body = _parse_adr_document(
+                    raw, binding, allow_unbound_body=True
+                )
                 key = (metadata["id"], metadata["sequence"])
                 if key in versions:
                     raise TrackerConflictError("Linear ADR version slot has a fork")
-                versions[key] = (metadata, parsed_body, raw)
+                versions[key] = (metadata, _parsed_body, raw)
         missing = set(versions) - witnesses
         if set(witnesses) - set(versions) or len(missing) != 1:
             return False
@@ -2465,7 +2629,18 @@ class LinearTracker(Tracker):
             or metadata["origin"] != {"kind": "native"}
             or metadata["status"] != "proposed"
             or metadata["title"] != title
-            or parsed_body != body
+            or metadata["body_sha256"]
+            != hashlib.sha256(body.encode()).hexdigest()
+            or not _exact_adr_document_matches(
+                raw,
+                {
+                    "id": raw["id"],
+                    "title": _adr_document_title(metadata),
+                    "content": _adr_document_content(metadata, body),
+                    "project": {"id": binding["project_id"]},
+                    "archivedAt": None,
+                },
+            )
         ):
             return False
 
@@ -2477,7 +2652,7 @@ class LinearTracker(Tracker):
         ]
         other_chains = _adr_chain(remaining, binding)
         self._validate_adr_graph(other_chains, binding)
-        self._create_adr_document(binding, metadata, parsed_body)
+        self._create_adr_document(binding, metadata, body)
         return True
 
     def _validate_adr_graph(
@@ -2545,13 +2720,15 @@ class LinearTracker(Tracker):
     @staticmethod
     def _adr_model(versions: list[tuple[dict, dict]]) -> Adr:
         metadata, raw = versions[-1]
-        _, body = _parse_adr_document(
-            raw,
-            {
-                "project_id": metadata["project_id"],
-                "team_id": metadata["team_id"],
-            },
-        )
+        body = raw.get(_ADR_BOUND_SOURCE_BODY)
+        if not isinstance(body, str):
+            _, body = _parse_adr_document(
+                raw,
+                {
+                    "project_id": metadata["project_id"],
+                    "team_id": metadata["team_id"],
+                },
+            )
         return Adr(
             id=metadata["id"],
             title=metadata["title"],
@@ -2597,6 +2774,7 @@ class LinearTracker(Tracker):
         return raw
 
     def _create_adr_document(self, binding: dict, metadata: dict, body: str) -> dict:
+        _preflight_adr_body_readback(body)
         doc_id = _adr_document_id(
             binding["project_id"], metadata["id"], metadata["sequence"]
         )
@@ -2613,7 +2791,7 @@ class LinearTracker(Tracker):
         def verify_version(raw):
             if raw is None:
                 return None
-            _parse_adr_document(raw, binding)
+            _parse_adr_document(raw, binding, source_body=body)
             if not _exact_adr_document_matches(raw, expected):
                 raise TrackerConflictError(
                     "Linear ADR version slot already has different content"
@@ -2623,7 +2801,7 @@ class LinearTracker(Tracker):
         version = self._create_exact_adr_document(
             expected, "adr.create", verify_version
         )
-        witness = _adr_witness_document(binding, metadata, version)
+        witness = _adr_witness_document(binding, metadata, version, body)
 
         def verify_witness(raw):
             if raw is None:
@@ -2662,7 +2840,7 @@ class LinearTracker(Tracker):
             matches[0], candidate
         ):
             raise TrackerConflictError("Linear ADR interrupted version slot diverged")
-        witness = _adr_witness_document(binding, metadata, matches[0])
+        witness = _adr_witness_document(binding, metadata, matches[0], body)
         if any(
             isinstance(raw, dict) and raw.get("id") == witness["id"]
             for raw in documents
@@ -2675,6 +2853,66 @@ class LinearTracker(Tracker):
         if fresh[metadata["id"]][-1][0] != metadata:
             raise TrackerConflictError("Linear ADR witness recovery diverged")
         return self._adr_model(fresh[metadata["id"]])
+
+    @staticmethod
+    def _unwitnessed_adr_versions(
+        binding: dict, documents: list[dict]
+    ) -> list[tuple[dict, dict]]:
+        """Locate version slots with no witness without guessing their source body."""
+        witnesses = set()
+        versions = []
+        for raw in documents:
+            if isinstance(raw, dict) and (
+                str(raw.get("title", "")).startswith(_ADR_WITNESS_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_WITNESS_HEADER)
+            ):
+                witness = _parse_adr_witness(raw, binding)
+                key = (witness["adr_id"], witness["sequence"])
+                if key in witnesses:
+                    raise TrackerConflictError("Linear ADR witness slot has a fork")
+                witnesses.add(key)
+                continue
+            if not (
+                isinstance(raw, dict)
+                and (
+                    str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
+                    or str(raw.get("content", "")).startswith(_ADR_HEADER)
+                )
+            ):
+                continue
+            metadata, _ = _parse_adr_document(
+                raw, binding, allow_unbound_body=True
+            )
+            versions.append((metadata, raw))
+        return [
+            (metadata, raw)
+            for metadata, raw in versions
+            if (metadata["id"], metadata["sequence"]) not in witnesses
+        ]
+
+    def _interrupted_mutation_predecessor(
+        self,
+        binding: dict,
+        documents: list[dict],
+        adr: Adr,
+        operation: str,
+    ) -> tuple[tuple[dict, dict], tuple[dict, dict]]:
+        """Bind one dangling version to its intact witnessed predecessor."""
+        dangling = self._unwitnessed_adr_versions(binding, documents)
+        if len(dangling) != 1:
+            raise TrackerConflictError(
+                f"Linear ADR interrupted {operation} has ambiguous witness"
+            )
+        dangling_metadata, dangling_raw = dangling[0]
+        remaining = [raw for raw in documents if raw is not dangling_raw]
+        chains = _adr_chain(remaining, binding)
+        self._validate_adr_graph(chains, binding)
+        versions = chains.get(adr.id)
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+            raise TrackerConflictError(
+                f"Linear ADR interrupted {operation} predecessor diverged"
+            )
+        return versions[-1], (dangling_metadata, dangling_raw)
 
     def _create_exact_adr_document(self, expected, operation, verify):
         document_id = expected["id"]
@@ -2799,7 +3037,9 @@ class LinearTracker(Tracker):
     ):
         old, raw = previous
         _, old_body = _parse_adr_document(
-            raw, {"project_id": old["project_id"], "team_id": old["team_id"]}
+            raw,
+            {"project_id": old["project_id"], "team_id": old["team_id"]},
+            source_body=raw.get(_ADR_BOUND_SOURCE_BODY),
         )
         new_body = old_body if body is None else body
         metadata = dict(old)
@@ -2883,6 +3123,8 @@ class LinearTracker(Tracker):
         )
 
     def _append_adr_versions(self, project, changes):
+        for _previous, _metadata, body in changes:
+            _preflight_adr_body_readback(body)
         binding, chains = self._adr_snapshot(project)
         for previous, metadata, _body in changes:
             if (
@@ -2920,19 +3162,14 @@ class LinearTracker(Tracker):
             }:
                 raise
         binding, documents = self._adr_documents(project)
-        witnessed = {raw.get("id") for raw in documents if isinstance(raw, dict)}
-        dangling = []
-        for raw in documents:
-            if not str(raw.get("content", "")).startswith(_ADR_HEADER):
-                continue
-            metadata, _ = _parse_adr_document(raw, binding)
-            if _adr_witness_id(
-                binding["project_id"], metadata["id"], metadata["sequence"]
-            ) not in witnessed:
-                dangling.append(raw)
+        dangling = self._unwitnessed_adr_versions(binding, documents)
         if len(dangling) > 1:
             raise TrackerConflictError("Linear ADR mutation has ambiguous witness")
-        remaining = [raw for raw in documents if not dangling or raw is not dangling[0]]
+        dangling_raw = dangling[0][1] if dangling else None
+        remaining = [
+            raw for raw in documents
+            if dangling_raw is None or raw is not dangling_raw
+        ]
         chains = _adr_chain(remaining, binding)
         versions = chains.get(adr_id)
         return self._adr_model(versions) if versions else None
@@ -3019,20 +3256,17 @@ class LinearTracker(Tracker):
             if str(error) != "Linear ADR version witness is missing":
                 raise
             binding, documents = self._adr_documents(project)
-            predecessors = [
-                raw for raw in documents
-                if isinstance(raw, dict) and raw.get("id") == adr.ref
-            ]
-            if len(predecessors) != 1:
-                raise TrackerConflictError("Linear ADR interrupted link predecessor diverged")
-            previous_metadata, _ = _parse_adr_document(predecessors[0], binding)
+            previous, _dangling = self._interrupted_mutation_predecessor(
+                binding, documents, adr, "link"
+            )
+            previous_metadata = previous[0]
             if previous_metadata["id"] != adr.id or previous_metadata["status"] not in {
                 "proposed", "accepted"
             }:
                 raise TrackerConflictError("Linear ADR interrupted link binding invalid")
             issue_id, _native_id = self._resolve_adr_issue_reference(issue_ref, binding)
             metadata, body = self._next_adr_metadata(
-                (previous_metadata, predecessors[0]), issue_id=issue_id
+                previous, issue_id=issue_id
             )
             return self._recover_exact_missing_witness(
                 project, binding, documents, metadata, body
@@ -3050,6 +3284,7 @@ class LinearTracker(Tracker):
         metadata, body = self._next_adr_metadata(
             versions[-1], issue_id=issue_id
         )
+        _preflight_adr_body_readback(body)
         # The comment is a deterministic reciprocal slot. If a process stops after
         # this write but before the version append, the exact call can reuse it.
         self._create_adr_issue_link(binding, adr.id, issue_id, native_id)
@@ -3165,6 +3400,7 @@ class LinearTracker(Tracker):
             manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode()).hexdigest()
         for metadata, body in prepared:
+            _preflight_adr_body_readback(body)
             metadata["origin"]["batch_sha256"] = batch_sha256
             candidate = {
                 "id": _adr_document_id(binding["project_id"], metadata["id"], 0),
@@ -3179,7 +3415,7 @@ class LinearTracker(Tracker):
                 "content": _linear_adr_readback_content(candidate["content"]),
             }
             witness = _adr_witness_document(
-                binding, metadata, readback_candidate
+                binding, metadata, readback_candidate, body
             )
             candidates.append((metadata, body, candidate, witness))
 
@@ -3348,7 +3584,7 @@ class LinearTracker(Tracker):
                     ).startswith(_ADR_HEADER):
                         continue
                     interrupted_metadata, interrupted_body = _parse_adr_document(
-                        raw, binding
+                        raw, binding, allow_unbound_body=True
                     )
                     if _adr_witness_id(
                         binding["project_id"],
@@ -3363,8 +3599,37 @@ class LinearTracker(Tracker):
                         "Linear ADR interrupted import has ambiguous witness"
                     ) from None
                 interrupted_metadata, interrupted_body, interrupted_raw = matches[0]
+                remaining = [
+                    raw for raw in documents if raw is not interrupted_raw
+                ]
+                complete_chains = _adr_chain(remaining, binding)
+                if (
+                    interrupted_metadata["id"] == adr_id
+                    and interrupted_metadata["sequence"] == 0
+                    and interrupted_metadata["body_sha256"] == digest
+                ):
+                    interrupted_body = body
+                else:
+                    predecessors = complete_chains.get(interrupted_metadata["id"])
+                    if (
+                        not predecessors
+                        or interrupted_metadata["sequence"]
+                        != predecessors[-1][0]["sequence"] + 1
+                        or interrupted_metadata["body_sha256"]
+                        != predecessors[-1][0]["body_sha256"]
+                    ):
+                        raise TrackerConflictError(
+                            "Linear ADR interrupted import source is not derivable"
+                        ) from None
+                    interrupted_body = predecessors[-1][1].get(
+                        _ADR_BOUND_SOURCE_BODY
+                    )
+                    if not isinstance(interrupted_body, str):
+                        raise TrackerConflictError(
+                            "Linear ADR interrupted import source is not bound"
+                        ) from None
                 witness = _adr_witness_document(
-                    binding, interrupted_metadata, interrupted_raw
+                    binding, interrupted_metadata, interrupted_raw, interrupted_body
                 )
                 chains = _adr_chain([*documents, witness], binding)
                 interrupted_pair = (
@@ -3524,6 +3789,11 @@ class LinearTracker(Tracker):
                     (related_metadata, related_candidate)
                 )
             self._validate_adr_graph(hypothetical, binding)
+        _preflight_adr_body_readback(body)
+        if interrupted_pair is not None:
+            _preflight_adr_body_readback(interrupted_pair[1])
+        for _previous, _metadata, related_body in changes:
+            _preflight_adr_body_readback(related_body)
         for issue_id in canonical_issue_refs:
             self._create_adr_issue_link(
                 binding, adr_id, issue_id, issue_native_ids[issue_id]
@@ -3554,10 +3824,10 @@ class LinearTracker(Tracker):
             if str(error) != "Linear ADR version witness is missing":
                 raise
             binding, documents = self._adr_documents(project)
-            predecessors = [raw for raw in documents if raw.get("id") == adr.ref]
-            if len(predecessors) != 1:
-                raise TrackerConflictError("Linear ADR interrupted status predecessor diverged")
-            old, _ = _parse_adr_document(predecessors[0], binding)
+            previous, _dangling = self._interrupted_mutation_predecessor(
+                binding, documents, adr, "status"
+            )
+            old = previous[0]
             if (
                 old["id"] != adr.id
                 or status == "superseded"
@@ -3565,7 +3835,7 @@ class LinearTracker(Tracker):
             ):
                 raise TrackerConflictError("Linear ADR interrupted status binding invalid")
             metadata, body = self._next_adr_metadata(
-                (old, predecessors[0]), status=status
+                previous, status=status
             )
             self._recover_exact_missing_witness(
                 project, binding, documents, metadata, body
@@ -3637,109 +3907,144 @@ class LinearTracker(Tracker):
     ) -> None:
         """Complete only the exact second half of a proven interrupted pair."""
         binding, documents = self._adr_documents(project)
-        dangling_source = None
-        dangling_replacement = None
-        try:
-            chains = _adr_chain(documents, binding)
-        except TrackerConflictError as error:
-            if str(error) != "Linear ADR version witness is missing":
-                raise
-            candidates = []
-            document_ids = {
-                raw.get("id") for raw in documents if isinstance(raw, dict)
-            }
-            for raw in documents:
-                if not isinstance(raw, dict) or not str(raw.get("content", "")).startswith(
-                    _ADR_HEADER
-                ):
-                    continue
-                metadata, _ = _parse_adr_document(raw, binding)
-                if (
-                    metadata["id"] == adr.id
-                    and metadata["status"] == "superseded"
-                    and metadata["relations"]["superseded_by"] == replacement_id
-                    and _adr_witness_id(
-                        binding["project_id"], adr.id, metadata["sequence"]
-                    ) not in document_ids
-                ):
-                    candidates.append(raw)
-            if len(candidates) != 1:
-                replacement_candidates = []
-                for raw in documents:
-                    if not isinstance(raw, dict) or not str(raw.get("content", "")).startswith(
-                        _ADR_HEADER
-                    ):
-                        continue
-                    metadata, _ = _parse_adr_document(raw, binding)
-                    if (
-                        metadata["id"] == replacement_id
-                        and adr.id in metadata["relations"]["supersedes"]
-                        and _adr_witness_id(
-                            binding["project_id"], replacement_id,
-                            metadata["sequence"],
-                        ) not in document_ids
-                    ):
-                        replacement_candidates.append((metadata, raw))
-                if len(replacement_candidates) != 1:
-                    raise TrackerConflictError(
-                        "Linear ADR interrupted supersession has ambiguous witness"
-                    ) from None
-                replacement_metadata, dangling_replacement = replacement_candidates[0]
-                witness = _adr_witness_document(
-                    binding, replacement_metadata, dangling_replacement
-                )
-                chains = _adr_chain([*documents, witness], binding)
-            else:
-                dangling_source = candidates[0]
-                chains = _adr_chain(
-                    [raw for raw in documents if raw is not dangling_source], binding
-                )
+        dangling = self._unwitnessed_adr_versions(binding, documents)
+        if len(dangling) > 1:
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession has ambiguous witness"
+            )
+        dangling_pair = dangling[0] if dangling else None
+        remaining = [
+            raw for raw in documents
+            if dangling_pair is None or raw is not dangling_pair[1]
+        ]
+        chains = _adr_chain(remaining, binding)
         source, replacement = chains.get(adr.id), chains.get(replacement_id)
         if (
             source is None
             or replacement is None
-            or len(replacement) < 2
             or source[-1][1]["id"] != adr.ref
             or source[-1][0]["status"] != "accepted"
             or source[-1][0]["relations"]["superseded_by"] is not None
             or replacement[-1][0]["status"] != "accepted"
-            or adr.id not in replacement[-1][0]["relations"]["supersedes"]
-            or adr.id in replacement[-2][0]["relations"]["supersedes"]
-            or replacement[-1][0]["relations"]["supersedes"]
-            != sorted({*replacement[-2][0]["relations"]["supersedes"], adr.id})
         ):
             raise TrackerConflictError(
                 "Linear ADR interrupted supersession does not match exact pair"
             )
-        metadata, body = self._next_adr_metadata(
-            source[-1], status="superseded", replacement_id=replacement_id
+
+        replacement_complete = adr.id in replacement[-1][0]["relations"]["supersedes"]
+        if replacement_complete and len(replacement) < 2:
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
+            )
+        replacement_previous = replacement[-2] if replacement_complete else replacement[-1]
+        if replacement_complete and adr.id in replacement_previous[0]["relations"][
+            "supersedes"
+        ]:
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
+            )
+        replacement_metadata, replacement_body = self._next_adr_metadata(
+            replacement_previous, supersedes_id=adr.id
         )
-        candidate = {
-            "id": _adr_document_id(binding["project_id"], adr.id, metadata["sequence"]),
-            "title": _adr_document_title(metadata),
-            "content": _adr_document_content(metadata, body),
+        replacement_candidate = {
+            "id": _adr_document_id(
+                binding["project_id"], replacement_id,
+                replacement_metadata["sequence"],
+            ),
+            "title": _adr_document_title(replacement_metadata),
+            "content": _adr_document_content(
+                replacement_metadata, replacement_body
+            ),
             "project": {"id": binding["project_id"]},
             "archivedAt": None,
         }
-        hypothetical = {key: list(value) for key, value in chains.items()}
-        hypothetical[adr.id].append((metadata, candidate))
-        self._validate_adr_graph(hypothetical, binding)
-        if dangling_source is not None and not _exact_adr_document_matches(
-            dangling_source, candidate
+        if replacement_complete and (
+            replacement[-1][0] != replacement_metadata
+            or not _exact_adr_document_matches(
+                replacement[-1][1], replacement_candidate
+            )
         ):
             raise TrackerConflictError(
-                "Linear ADR interrupted supersession source slot diverged"
+                "Linear ADR interrupted supersession does not match exact pair"
             )
-        if dangling_replacement is not None:
-            replacement_metadata, replacement_body = _parse_adr_document(
-                dangling_replacement, binding
+
+        source_metadata, source_body = self._next_adr_metadata(
+            source[-1], status="superseded", replacement_id=replacement_id
+        )
+        source_candidate = {
+            "id": _adr_document_id(
+                binding["project_id"], adr.id, source_metadata["sequence"]
+            ),
+            "title": _adr_document_title(source_metadata),
+            "content": _adr_document_content(source_metadata, source_body),
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+
+        dangling_side = None
+        dangling_witness = None
+        if dangling_pair is not None:
+            dangling_metadata, dangling_raw = dangling_pair
+            if (
+                dangling_metadata == replacement_metadata
+                and _exact_adr_document_matches(
+                    dangling_raw, replacement_candidate
+                )
+            ):
+                dangling_side = "replacement"
+                dangling_witness = _adr_witness_document(
+                    binding,
+                    replacement_metadata,
+                    dangling_raw,
+                    replacement_body,
+                )
+            elif (
+                dangling_metadata == source_metadata
+                and _exact_adr_document_matches(dangling_raw, source_candidate)
+            ):
+                dangling_side = "source"
+                dangling_witness = _adr_witness_document(
+                    binding, source_metadata, dangling_raw, source_body
+                )
+            else:
+                raise TrackerConflictError(
+                    "Linear ADR interrupted supersession does not match exact pair"
+                )
+        if replacement_complete != (dangling_side != "replacement"):
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
             )
+
+        hypothetical_documents = list(documents)
+        if dangling_witness is not None:
+            hypothetical_documents.append(dangling_witness)
+        if dangling_side != "source":
+            hypothetical_documents.extend(
+                [
+                    source_candidate,
+                    _adr_witness_document(
+                        binding,
+                        source_metadata,
+                        source_candidate,
+                        source_body,
+                    ),
+                ]
+            )
+        hypothetical = _adr_chain(hypothetical_documents, binding)
+        self._validate_adr_graph(hypothetical, binding)
+
+        _preflight_adr_body_readback(source_body)
+        if dangling_side == "replacement":
+            _preflight_adr_body_readback(replacement_body)
             self._create_adr_document(
                 binding, replacement_metadata, replacement_body
             )
-        self._create_adr_document(binding, metadata, body)
+        self._create_adr_document(binding, source_metadata, source_body)
         _, fresh = self._adr_snapshot(project)
-        if fresh[adr.id][-1][0] != metadata:
+        if (
+            fresh[adr.id][-1][0] != source_metadata
+            or fresh[replacement_id][-1][0] != replacement_metadata
+        ):
             raise TrackerConflictError("Linear ADR supersession recovery diverged")
 
     def _update_adr_body(
@@ -3752,12 +4057,14 @@ class LinearTracker(Tracker):
             if str(error) != "Linear ADR version witness is missing":
                 raise
             binding, documents = self._adr_documents(project)
-            predecessors = [raw for raw in documents if raw.get("id") == adr.ref]
-            if len(predecessors) != 1 or not _adr_readback_content_matches(
-                predecessors[0].get("content"), expected_body
+            previous, _dangling = self._interrupted_mutation_predecessor(
+                binding, documents, adr, "body"
+            )
+            if not _adr_readback_content_matches(
+                previous[1].get("content"), expected_body
             ):
                 raise TrackerConflictError("Linear ADR interrupted body predecessor diverged")
-            old, _ = _parse_adr_document(predecessors[0], binding)
+            old = previous[0]
             old_header, sep, _ = expected_body.partition("\n-->\n\n")
             new_header, new_sep, body = updated_body.partition("\n-->\n\n")
             if (
@@ -3768,7 +4075,7 @@ class LinearTracker(Tracker):
             ):
                 raise TrackerConflictError("Linear ADR interrupted body binding invalid")
             metadata, body = self._next_adr_metadata(
-                (old, predecessors[0]), body=body
+                previous, body=body
             )
             self._recover_exact_missing_witness(
                 project, binding, documents, metadata, body
