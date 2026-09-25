@@ -68,6 +68,12 @@ PROJECT = Project(
         "label_ids": {"pilot": "label-pilot", "api": "label-api"},
     },
 )
+SYNTHETIC_PROFILE_SOURCE_SHA256 = (
+    "17e881437bb12ee7de881673ede3d1b87153a6656bb4e972cc3b85a886739d81"
+)
+SYNTHETIC_PROFILE_READBACK_SHA256 = (
+    "ba804beb182ed1abac6c22fa1feac5e1f388a6967ea5748a3c85b6bb1f1816f7"
+)
 
 
 def connection(nodes):
@@ -119,7 +125,22 @@ def linear_markdown_readback(content):
 
 
 def linear_markdown_body_readback(body):
-    """Independently model the observed top-level list-marker rewrite."""
+    """Independently model the observed closed Linear body serializations."""
+    if hashlib.sha256(body.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256:
+        rendered = body
+        for heading in (
+            "## Contexte",
+            "## Décision",
+            "## Conséquences",
+            "## Alternatives écartées",
+        ):
+            rendered = rendered.replace(f"{heading}\n", f"{heading}\n\n", 1)
+        rendered = rendered.replace("\n- **<Alt>**", "\n* **<Alt>**", 1)
+        rendered = rendered.removesuffix("\n")
+        assert hashlib.sha256(rendered.encode()).hexdigest() == (
+            SYNTHETIC_PROFILE_READBACK_SHA256
+        )
+        return rendered
     rendered = []
     fence = None
     for source_line in body.splitlines(keepends=True):
@@ -3811,6 +3832,130 @@ def test_linear_adr_raw_html_link_refuses_before_reciprocal_comment(tracker):
     [readback] = instance.list_adrs(PROJECT)
     assert readback.id == existing.id
     assert readback.body.endswith("<pre>\n- literal\n</pre>")
+
+
+def _synthetic_profile_body():
+    return (
+        "## Contexte\n<fixture context>\n\n"
+        "## Décision\n<fixture decision>\n\n"
+        "## Conséquences\n<fixture consequence>\n\n"
+        "## Alternatives écartées\n- **<Alt>** — <fixture reason>\n"
+    )
+
+
+def _synthetic_profile_readback(body):
+    for heading in (
+        "## Contexte",
+        "## Décision",
+        "## Conséquences",
+        "## Alternatives écartées",
+    ):
+        body = body.replace(f"{heading}\n", f"{heading}\n\n", 1)
+    return body.replace("\n- **<Alt>**", "\n* **<Alt>**", 1).removesuffix("\n")
+
+
+def _synthetic_profile_kwargs(body):
+    return {
+        "adr_id": "TEST-ADR-0012",
+        "title": "Synthetic rendering profile",
+        "body": body,
+        "historical_status": "deprecated",
+        "source_ref": "synthetic-fixture",
+        "source_created": None,
+        "source_updated": None,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+    }
+
+
+def test_linear_profile_preserves_exact_source_witness(tracker, monkeypatch):
+    instance, wire = tracker
+    source = _synthetic_profile_body()
+    rendered = _synthetic_profile_readback(source)
+
+    assert hashlib.sha256(source.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256
+    assert hashlib.sha256(rendered.encode()).hexdigest() == (
+        SYNTHETIC_PROFILE_READBACK_SHA256
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0012_SOURCE_SHA256",
+        SYNTHETIC_PROFILE_SOURCE_SHA256,
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0012_READBACK_SHA256",
+        SYNTHETIC_PROFILE_READBACK_SHA256,
+    )
+    assert linear_markdown_body_readback(source) == rendered
+    assert linear_module._linear_markdown_readback_body(source) == rendered
+
+    created = instance.import_adr(PROJECT, **_synthetic_profile_kwargs(source))
+    raw = wire.documents[created.ref]
+    witness = wire.documents[
+        linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    ]
+    assert raw["content"].endswith(rendered)
+    assert not raw["content"].endswith("\n")
+    witness_payload = linear_module._parse_adr_witness(
+        witness, instance._binding(PROJECT)
+    )
+    assert base64.b64decode(witness_payload["source_body"]).decode() == source
+    assert instance.list_adrs(PROJECT)[0].body.endswith(source)
+
+    hostile = copy.deepcopy(raw)
+    hostile["content"] += "\n"
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        linear_module._parse_adr_document(
+            hostile, instance._binding(PROJECT), source_body=source
+        )
+
+
+def test_linear_profile_recovery_rejects_source_collision_before_effects(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    source = _synthetic_profile_body()
+    rendered = _synthetic_profile_readback(source)
+    assert hashlib.sha256(source.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256
+    assert hashlib.sha256(rendered.encode()).hexdigest() == (
+        SYNTHETIC_PROFILE_READBACK_SHA256
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0012_SOURCE_SHA256",
+        SYNTHETIC_PROFILE_SOURCE_SHA256,
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0012_READBACK_SHA256",
+        SYNTHETIC_PROFILE_READBACK_SHA256,
+    )
+    kwargs = _synthetic_profile_kwargs(source)
+    original = instance._transport
+
+    def interrupt(document, variables):
+        if variables.get("input", {}).get("title", "").startswith(
+            "[Foundry ADR witness] TEST-ADR-0012"
+        ):
+            raise OSError("witness unavailable")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+
+    collision = source.removesuffix("\n")
+    with pytest.raises(TrackerConflictError, match="source is not derivable"):
+        instance.import_adr(
+            PROJECT, **_synthetic_profile_kwargs(collision)
+        )
+    assert (wire.documents, wire.comments) == before
+
+    recovered = instance.import_adr(PROJECT, **kwargs)
+    assert recovered.body.endswith(source)
+    assert len(wire.documents) == 2
 
 
 def test_linear_adr_witness_preserves_lossy_dash_source_distinct_from_native_star(

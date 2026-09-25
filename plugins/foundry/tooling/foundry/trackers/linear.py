@@ -387,8 +387,51 @@ def _markdown_fence_closing(
     )
 
 
+_FOUNDRY_ADR_0012_READBACK_PROFILE = "foundry-adr-0012-v1"
+_FOUNDRY_ADR_0012_SOURCE_SHA256 = (
+    "69bd2cb2be04313de06dee865187b5e0e68eaed00298a7ce2be124f6ca1e96e5"
+)
+_FOUNDRY_ADR_0012_READBACK_SHA256 = (
+    "3bbab7c31d737bb97320ea74644f8acd6201cf7ec0a8cb7e1a09cd554c49246c"
+)
+
+
+def _linear_foundry_adr_0012_v1_readback(body: str) -> str | None:
+    """Return the one qualified raw-HTML serialization observed for ADR-0012.
+
+    This is deliberately a source-digest-pinned profile, rather than a raw HTML
+    parser. It records Linear's observed insertion of a blank line between the
+    four headings and their angle-bracket placeholders, dash-list rewrite, and
+    final-newline removal. Any source-body variation remains unsupported.
+    """
+    if hashlib.sha256(body.encode("utf-8")).hexdigest() != (
+        _FOUNDRY_ADR_0012_SOURCE_SHA256
+    ):
+        return None
+    rendered = body
+    for heading in (
+        "## Contexte",
+        "## Décision",
+        "## Conséquences",
+        "## Alternatives écartées",
+    ):
+        rendered = rendered.replace(f"{heading}\n", f"{heading}\n\n", 1)
+    rendered = rendered.replace("\n- **<Alt>**", "\n* **<Alt>**", 1)
+    rendered = rendered.removesuffix("\n")
+    if hashlib.sha256(rendered.encode("utf-8")).hexdigest() != (
+        _FOUNDRY_ADR_0012_READBACK_SHA256
+    ):
+        raise ValueError(
+            f"{_FOUNDRY_ADR_0012_READBACK_PROFILE} rendering is invalid"
+        )
+    return rendered
+
+
 def _linear_markdown_readback_body(body: str) -> str:
-    """Model only Linear's observed top-level dash-list serialization."""
+    """Model only closed, observed Linear Markdown serializations."""
+    qualified = _linear_foundry_adr_0012_v1_readback(body)
+    if qualified is not None:
+        return qualified
     rendered = []
     fence = None
     for source_line in body.splitlines(keepends=True):
