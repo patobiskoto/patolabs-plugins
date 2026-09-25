@@ -32,17 +32,67 @@ def _project(tr):
     return binding if binding is not None else tr.resolve_project(registry.repo_basename())
 
 
+def _register_adr_alias(aliases: dict[str, tuple[str, int | str]], key: str,
+                        target: tuple[str, int | str]) -> None:
+    """Register one unique preflight ADR reference key."""
+    if key in aliases:
+        raise ValueError(f"Référence ADR ambiguë pour relation Linear : {key}")
+    aliases[key] = target
+
+
 def materialize(spec: dict) -> dict:
     tr = foundry.tracker()
     p = _project(tr)
     created = {"adrs": [], "epic": None, "issues": []}
+    incoming_adrs = spec.get("adrs", [])
+    incoming_issues = spec.get("issues", [])
+    existing_adrs = {}
+    incoming_aliases = {}
+    if getattr(tr, "adr_issue_link_supported", False):
+        # Native Linear ADRs are born proposed.  Validate the complete incoming
+        # frame before creating its first ADR: an accepted ADR may be a valid
+        # *existing* constraint, but it is not a valid native creation request.
+        for incoming in incoming_adrs:
+            if incoming.get("status", "proposed") != "proposed":
+                raise ValueError("Linear ADR creation must begin proposed")
+    if getattr(tr, "adr_issue_link_supported", False):
+        # Resolve every reference before the first write. Otherwise a late bad
+        # reference, or an alias that names two ADRs, can leave a durable issue
+        # and only a subset of ADR links.
+        existing_adrs = {adr.id: adr for adr in tr.list_adrs(p)}
+        aliases = {}
+        for index, incoming in enumerate(incoming_adrs):
+            target = ("incoming", index)
+            _register_adr_alias(aliases, str(index), target)
+            _register_adr_alias(aliases, str(incoming["title"]), target)
+        for adr_id in existing_adrs:
+            _register_adr_alias(aliases, str(adr_id), ("existing", adr_id))
+        incoming_aliases = aliases
+        for it in incoming_issues:
+            for ref in it.get("constrained_by", []):
+                key = str(ref)
+                target = incoming_aliases.get(key)
+                if target is None:
+                    raise ValueError(f"ADR inconnue pour relation Linear : {key}")
+                if target[0] == "incoming":
+                    status = incoming_adrs[target[1]].get("status", "proposed")
+                else:
+                    status = existing_adrs[target[1]].status
+                if not isinstance(status, str) or status not in {
+                    "proposed", "accepted"
+                }:
+                    raise ValueError(
+                        f"ADR inactive pour relation Linear : {key} ({status!r})"
+                    )
 
     # 1) ADRs first — they are the frame the issues reference.
     adr_by_key = {}
-    for idx, a in enumerate(spec.get("adrs", [])):
+    adr_by_id = {}
+    for idx, a in enumerate(incoming_adrs):
         adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
         adr_by_key[str(idx)] = adr.id
-        adr_by_key[a["title"]] = adr.id
+        adr_by_key[str(a["title"])] = adr.id
+        adr_by_id[adr.id] = adr
         created["adrs"].append(adr.id)
         print(f"📐 {adr.id} — {a['title']}")
 
@@ -57,7 +107,7 @@ def materialize(spec: dict) -> dict:
         print(f"🏛️  epic {epic_id} — {e['title']}")
 
     # 3) Issues, linked under the epic, citing their ADRs.
-    for it in spec.get("issues", []):
+    for it in incoming_issues:
         body = it.get("body", "")
         refs = [adr_by_key.get(str(k), str(k)) for k in it.get("constrained_by", [])]
         if refs:
@@ -66,6 +116,12 @@ def materialize(spec: dict) -> dict:
         if fields.get("Estimate") is not None:
             fields["Estimate"] = int(fields["Estimate"])
         issue = tr.create_issue(p, it["title"], body, fields=fields, parent=epic_id)
+        if getattr(tr, "adr_issue_link_supported", False):
+            for ref in dict.fromkeys(refs):
+                current = adr_by_id.get(ref) or existing_adrs.get(ref)
+                if current is None:
+                    raise ValueError(f"ADR inconnue pour relation Linear : {ref}")
+                adr_by_id[ref] = write.link_adr_issue(tr, current, issue.id)
         created["issues"].append(issue.id)
         print(f"   ✓ {issue.id} — {it['title']}  [{fields.get('Priority','?')} · "
               f"est {fields.get('Estimate','?')}]")

@@ -247,8 +247,10 @@ independent completion or a reason to silently fall back to the coordinator cont
 
 Escalation is deterministic and issue-scoped. Only red tests, blocking reviews, or an
 explicit risk/ADR/user signal can raise a persistent role floor; free-form agent
-judgment never increments it. Two tier increases are allowed per issue, after which
-both façades halt for human intervention. A human may explicitly resume the exact halted
+judgment never increments it. Two tier increases are allowed per issue; a later
+deterministic failure at Apex halts into a bounded local technical diagnostic, not an
+automatic human verdict or provider retry. A human may explicitly resume a genuine
+human-required stop at the exact halted
 generation returned by `routing escalation show` with `routing escalation resume
 <ISSUE-ID> --reason remediation_reviewed --halt-generation <N>`. Only the controlled
 public codes `remediation_reviewed`, `risk_accepted`, and `manual_retry_approved` are
@@ -257,7 +259,11 @@ or lower a floor, so the next exhausted-budget signal halts again with a new gen
 A just-exhausted credit window that still has `halted=false` is never a successful normal
 resume. A human may instead run the dedicated CAS command `routing escalation
 rearm-remediation <ISSUE> <RECORDED-ROLE> --reason <PUBLIC-CODE> --halt-generation
-<ORIGINAL-G> --remediation-credits <1..3>`. It returns `remediation_rearmed`, preserves
+<ORIGINAL-G> --remediation-credits <1..3>`. If a later local diagnostic has advanced
+the current generation to `H`, the same command must also pass
+`--current-halt-generation <H>`; `H` must be non-halted and backed by a claimed local
+route for the same role. The original exhausted authorization still binds `G`; the
+route alone never grants a credit. The command returns `remediation_rearmed`, preserves
 all counters, floors and consumption events, and appends a bounded public
 `remediation_rearm_audit` link to the exhausted window. Both host plans expose the same
 authorization and audit; stale, active, cancelled, invalidated, differently attributed,

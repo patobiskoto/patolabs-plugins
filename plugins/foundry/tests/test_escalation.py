@@ -6,11 +6,16 @@ import queue
 import stat
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import foundry
 import foundry.escalation as escalation_module
+import foundry.routing as routing_module
+from foundry import issue as issue_module, write
 from foundry.escalation import (
     BoundedDiagnostic,
     MAX_ESCALATIONS_PER_ISSUE,
@@ -21,14 +26,27 @@ from foundry.escalation import (
     EscalationStore,
 )
 from foundry.routing import (
+    AcceptanceProofStore,
+    ReviewDeduplicator,
     ReviewClaim,
     RoutingConfigError,
     RoutingPolicy,
     RoutingUnavailableError,
     UserRouteRequest,
+    acceptance_criteria,
     main,
+    git_diff,
+    repository_identity,
+    review_diff_hash,
 )
 from foundry.routing_facades import codex_spawn_plan
+from offline_provider_handoff import (
+    CrashPoint,
+    HandoffCoordinates,
+    HandoffRejected,
+    InjectedHandoffCrash,
+    OfflineProviderHandoff,
+)
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -47,11 +65,115 @@ def _packet():
     )
 
 
+def _git_review_fixture(root: Path) -> tuple[str, bytes]:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Foundry Test"], cwd=root, check=True)
+    tracked = root / "reviewed.txt"
+    tracked.write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    tracked.write_text("base\nreviewed correction\n", encoding="utf-8")
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "correction"], cwd=root, check=True)
+    return base, git_diff(root, base)
+
+
+def _credited_correction_state(
+    root: Path, state_dir: Path, issue: str,
+    review_repository: str | None = None,
+) -> EscalationStore:
+    base, diff = _git_review_fixture(root)
+    store = EscalationStore.for_root(root, state_dir=state_dir)
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, f"{issue.lower()}-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+    coordinates = {"root": str(root.resolve()), "base": base}
+    repository = review_repository or coordinates["root"]
+    diff_hash = review_diff_hash(diff)
+    ledger = ReviewDeduplicator(repository, state_dir)
+    claim = ledger.claim_git(
+        diff_hash, coordinates=coordinates, claim_attempt_token="b" * 64,
+    )
+    store.claim_fresh_reviewer_authorization(
+        issue, diff_hash, validated_claim=lambda: claim,
+    )
+    body = "- [ ] exactly one current correction plan can be claimed\n"
+    proof = AcceptanceProofStore(repository, state_dir).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=[
+            {**criterion, "verdict": "fail"}
+            for criterion in acceptance_criteria(body)
+        ],
+        quality="blocked", diff_hash=diff_hash, claim_id=claim.claim_id,
+        root=root, base=base, state_dir=state_dir,
+    )
+    binding = ledger.validated_terminal_proof_binding(
+        issue, diff_hash, coordinates=coordinates,
+    )
+    assert binding["proof_id"] == proof["proof_id"]
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        validated_blocking_proof=lambda: {
+            **binding, "diff_hash": diff_hash,
+            **({"repository": repository} if review_repository else {}),
+        },
+    )
+    return store
+
+
+def _open_generation_nine_legacy_window(store: EscalationStore, issue: str) -> int:
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    for generation in range(2, 10):
+        stopped = store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        )
+        assert stopped.action == "technical_blocked"
+        assert store.status(issue)["halt_generation"] == generation
+        store.resume_technical_remediation(issue, generation, f"{generation:x}" * 64)
+        store.claim_technical_remediation_route(
+            issue, "implementer", generation, f"pat22-gen{generation}-legacy-route",
+        )
+        store.rearm_remediation(
+            issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+            current_halt_generation=generation,
+        )
+        if generation < 9:
+            store.record_failure(
+                issue, "implementer", "review_blocking_after_fix", "apex",
+            )
+            exhausted_generation = generation
+    return 9
+
+
 def _concurrent_failure(args):
     repository, state_dir = args
     return EscalationStore(repository, state_dir=state_dir).record_failure(
         "FOUNDRY-42", "implementer", "test_red", "balanced",
     ).to_dict()
+
+
+def _concurrent_credited_correction_plan(args):
+    root, issue, role = args
+    try:
+        EscalationStore.for_root(root, state_dir=root).claim_credited_correction_plan(
+            issue, role, root=root,
+        )
+        return "claimed"
+    except EscalationTechnicalBlockedError:
+        return "blocked"
 
 
 def _concurrent_technical_resume(args):
@@ -227,6 +349,17 @@ def _concurrent_remediation_rearm(args):
     try:
         return EscalationStore(repository, state_dir=state_dir).rearm_remediation(
             "FOUNDRY-90", "implementer", "manual_retry_approved", 1, 2,
+        )
+    except RoutingConfigError:
+        return {"action": "rejected"}
+
+
+def _concurrent_technical_rearm(args):
+    repository, state_dir, issue, exhausted_generation, current_generation = args
+    try:
+        return EscalationStore(repository, state_dir=state_dir).rearm_remediation(
+            issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+            current_halt_generation=current_generation,
         )
     except RoutingConfigError:
         return {"action": "rejected"}
@@ -1335,20 +1468,14 @@ def test_failure_cli_serializes_atomic_redacted_remediation_authorization(tmp_pa
     generation = store.status("FOUNDRY-65")["halt_generation"]
     store.resume("FOUNDRY-65", "remediation_reviewed", generation, 2)
 
-    main([
-        "escalation", "failure", "FOUNDRY-65", "implementer", "--kind",
-        "review_blocking_after_fix", "--current-tier", "frontier",
-        "--idempotency-key", "f107-remediation-65", "--root", str(tmp_path),
-    ])
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["action"] == "remediation_continued"
-    assert payload["human_required"] is False
-    assert payload["remediation_authorization"] == {
-        "state": "active", "role": "implementer", "halt_generation": generation,
-        "maximum_credits": 2, "remaining_credits": 1,
-    }
-    assert payload["remediation_authorization"] == store.status("FOUNDRY-65")["remediation_authorization"]
+    before = store._path("FOUNDRY-65").read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main([
+            "escalation", "failure", "FOUNDRY-65", "implementer", "--kind",
+            "review_blocking_after_fix", "--current-tier", "frontier",
+            "--idempotency-key", "f107-remediation-65", "--root", str(tmp_path),
+        ])
+    assert store._path("FOUNDRY-65").read_bytes() == before
 
 
 def test_failure_cli_returns_the_exact_just_exhausted_credit_snapshot(
@@ -1360,19 +1487,14 @@ def test_failure_cli_returns_the_exact_just_exhausted_credit_snapshot(
     generation = store.status("FOUNDRY-68")["halt_generation"]
     store.resume("FOUNDRY-68", "remediation_reviewed", generation, 1)
 
-    main([
-        "escalation", "failure", "FOUNDRY-68", "implementer", "--kind",
-        "review_blocking_after_fix", "--current-tier", "frontier",
-        "--idempotency-key", "f107-remediation-68", "--root", str(tmp_path),
-    ])
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["action"] == "remediation_continued"
-    assert payload["human_required"] is False
-    assert payload["remediation_authorization"] == {
-        "state": "exhausted", "role": "implementer", "halt_generation": generation,
-        "maximum_credits": 1, "remaining_credits": 0,
-    }
+    before = store._path("FOUNDRY-68").read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main([
+            "escalation", "failure", "FOUNDRY-68", "implementer", "--kind",
+            "review_blocking_after_fix", "--current-tier", "frontier",
+            "--idempotency-key", "f107-remediation-68", "--root", str(tmp_path),
+        ])
+    assert store._path("FOUNDRY-68").read_bytes() == before
 
 
 def test_serialized_released_v1_ledger_without_remediation_fields_remains_readable(tmp_path):
@@ -1990,6 +2112,72 @@ def test_generation_two_consumption_rejects_a_technical_only_generation(tmp_path
     assert path.read_bytes() == malformed
 
 
+def test_consumption_rejects_future_generation_without_current_authorization(
+    tmp_path,
+):
+    store = EscalationStore("owner/f160-future-consumption", state_dir=tmp_path)
+    issue = "FOUNDRY-163"
+    store.record_risk(issue, "implementer", "adr_creation", "apex")
+    _human_stop(store, issue, "implementer")
+    generation = store.status(issue)["halt_generation"]
+    store.resume(issue, "remediation_reviewed", generation)
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert generation == payload["last_resumed_halt_generation"] == 1
+    assert "remediation_authorization" not in payload
+    payload["consumption_audit"].append({
+        "code": "review_blocking_after_fix_consumed",
+        "at": payload["last_resumed_at"],
+        "role": "implementer",
+        "halt_generation": generation + 1,
+    })
+    payload["roles"]["implementer"]["deterministic_failures"] += 1
+    payload["roles"]["implementer"]["failures_since_escalation"] += 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        )
+    assert path.read_bytes() == malformed
+
+
+def test_consumption_rejects_current_halted_generation_without_bridge(tmp_path):
+    store = EscalationStore("owner/f160-halted-consumption", state_dir=tmp_path)
+    issue = "FOUNDRY-164"
+    _human_stop(store, issue, "implementer")
+    generation = store.status(issue)["halt_generation"]
+    store.resume(issue, "remediation_reviewed", generation)
+    stopped = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert stopped.action == "technical_blocked"
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["halted"] is True
+    assert payload["halt_generation"] == generation + 1
+    assert "remediation_authorization" not in payload
+    payload["consumption_audit"].append({
+        "code": "review_blocking_after_fix_consumed",
+        "at": payload["last_resumed_at"],
+        "role": "implementer",
+        "halt_generation": generation + 1,
+    })
+    payload["roles"]["implementer"]["deterministic_failures"] += 1
+    payload["roles"]["implementer"]["failures_since_escalation"] += 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    assert path.read_bytes() == malformed
+
+
 def test_hostile_huge_generation_is_rejected_without_enumeration(
     tmp_path, monkeypatch,
 ):
@@ -2026,7 +2214,7 @@ def test_generation_two_consumption_succeeds_through_the_cli(
     monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
     store = EscalationStore.for_root(tmp_path, state_dir=state_dir)
     issue = "FOUNDRY-163"
-    generation = _generation_two_remediation_window(store, issue)
+    _generation_two_remediation_window(store, issue)
     argv = [
         "escalation", "failure", issue, "implementer",
         "--kind", "review_blocking_after_fix", "--current-tier", "apex",
@@ -2034,21 +2222,10 @@ def test_generation_two_consumption_succeeds_through_the_cli(
         "--root", str(tmp_path),
     ]
 
-    main(argv)
-    first = json.loads(capsys.readouterr().out)
-    persisted = store._path(issue).read_bytes()
-    main(argv)
-    replay = json.loads(capsys.readouterr().out)
-
-    assert replay == first
-    assert first["action"] == "remediation_continued"
-    assert first["human_required"] is False
-    assert first["remediation_authorization"] == {
-        "state": "exhausted", "role": "implementer",
-        "halt_generation": generation,
-        "maximum_credits": 1, "remaining_credits": 0,
-    }
-    assert store._path(issue).read_bytes() == persisted
+    before = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="--root et --base"):
+        main(argv)
+    assert store._path(issue).read_bytes() == before
 
 
 @pytest.mark.parametrize("after_halt", [False, True])
@@ -2215,6 +2392,1004 @@ def test_rearm_atomically_rejects_stale_generation_different_role_and_halted_exh
             issue, "implementer", "manual_retry_approved", generation, 1,
         )
     assert path.read_bytes() == halted
+
+
+def test_rearm_after_later_technical_generation_binds_both_generations(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-technical", state_dir=tmp_path)
+    issue = "FOUNDRY-96"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    technical_generation = store.status(issue)["halt_generation"]
+    digest = "a" * 64
+    store.resume_technical_remediation(issue, technical_generation, digest)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-technical-96",
+    )
+    before = store.status(issue)
+
+    rearmed = store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 2,
+        current_halt_generation=technical_generation,
+    )
+
+    assert rearmed["halt_generation"] == technical_generation
+    assert rearmed["exhausted_halt_generation"] == exhausted_generation
+    state = store.status(issue)
+    assert state["total_escalations"] == before["total_escalations"]
+    assert state["roles"] == before["roles"]
+    assert state["consumption_audit"] == before["consumption_audit"]
+    assert state["technical_remediation_audit"] == before["technical_remediation_audit"]
+    assert state["remediation_authorization"] == {
+        "state": "active", "role": "implementer",
+        "halt_generation": technical_generation,
+        "maximum_credits": 2, "remaining_credits": 2,
+    }
+    audit = state["remediation_rearm_audit"][-1]
+    assert audit["halt_generation"] == technical_generation
+    assert audit["exhausted_halt_generation"] == exhausted_generation
+    assert state["technical_remediation_audit"][-1]["evidence_digest"] == digest
+    continued = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert continued.action == "remediation_continued"
+    assert store.status(issue)["remediation_authorization"]["remaining_credits"] == 1
+
+
+def test_consumed_technical_route_allows_only_its_credited_review_correction(
+    tmp_path,
+):
+    """PAT-30: a credited, bound blocking review can continue its correction."""
+    base, diff = _git_review_fixture(tmp_path)
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "PAT-30"
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, "pat30-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+
+    repository = str(tmp_path.resolve())
+    coordinates = {"root": repository, "base": base}
+    review_proof = review_diff_hash(diff)
+    ledger = ReviewDeduplicator(repository, tmp_path)
+    claim = ledger.claim_git(
+        review_proof, coordinates=coordinates, claim_attempt_token="b" * 64,
+    )
+    store.claim_fresh_reviewer_authorization(
+        issue, review_proof, validated_claim=lambda: claim,
+    )
+    body = "- [ ] the bound review remains blocked\n"
+    AcceptanceProofStore(repository, tmp_path).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=[
+            {**criterion, "verdict": "fail"}
+            for criterion in acceptance_criteria(body)
+        ],
+        quality="blocked", diff_hash=review_proof, claim_id=claim.claim_id,
+        root=tmp_path, base=base, state_dir=tmp_path,
+    )
+    blocking_proof = {
+        **ledger.validated_terminal_proof_binding(
+            issue, review_proof, coordinates=coordinates,
+        ),
+        "diff_hash": review_proof,
+    }
+    continued = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        validated_blocking_proof=lambda: blocking_proof,
+    )
+    assert continued.action == "remediation_continued"
+
+    before = store._path(issue).read_bytes()
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=issue,
+        escalation_state_dir=tmp_path,
+    )
+    assert plan["role"] == "implementer"
+    assert plan["route"]["selected_tier"] == "apex"
+    assert store.active_floor(issue, "implementer") == "apex"
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
+    assert store.active_floor(issue, "implementer") == "apex"
+    assert store._path(issue).read_bytes() != before
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique plan"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+    # Reviewer retains its pre-existing separately-claimed-review preflight;
+    # no other foreign role inherits the credited implementer correction.
+    for foreign_role in ("scout", "coordinator", "architect"):
+        with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+            store.active_floor(issue, foreign_role)
+
+
+@pytest.mark.parametrize("review_namespace", [None, "alternate/proof-store"])
+def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
+    monkeypatch, tmp_path, capsys, review_namespace,
+):
+    """PAT-30: exercise the released PAT-22 gen9 shape, not a new bound event."""
+    state_dir = tmp_path / "state"
+    repository_root = tmp_path / "repo"
+    repository_root.mkdir()
+    base, diff = _git_review_fixture(repository_root)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://example.invalid/pat-22.git"],
+        cwd=repository_root, check=True,
+    )
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    store = EscalationStore.for_root(repository_root, state_dir=state_dir)
+    issue = "PAT-22"
+    generation = _open_generation_nine_legacy_window(store, issue)
+    body = "- [ ] the exact correction remains blocked by review\n"
+    tracker = SimpleNamespace(
+        resolve_checkout_project=lambda _root: None,
+        get_issue=lambda _issue: SimpleNamespace(id=issue, body=body),
+    )
+    monkeypatch.setattr(foundry, "tracker", lambda **_kwargs: tracker)
+
+    repository_arg = ["--repository", review_namespace] if review_namespace else []
+    proof_repository = review_namespace or repository_identity(repository_root)
+    main([
+        "claim-review", "--git-diff", "--issue", issue,
+        "--root", str(repository_root), "--base", base,
+        "--claim-attempt-token", "9" * 64,
+        *repository_arg,
+    ])
+    claim = json.loads(capsys.readouterr().out)
+    diff_hash = review_diff_hash(diff)
+    assert claim["diff_hash"] == diff_hash
+
+    outcomes = [
+        {**criterion, "verdict": "fail"}
+        for criterion in acceptance_criteria(body)
+    ]
+    outcomes_file = tmp_path / "outcomes.json"
+    outcomes_file.write_text(json.dumps({
+        "outcomes": outcomes, "quality": "blocked",
+    }), encoding="utf-8")
+    main([
+        "record-review-proof", "--issue", issue, "--diff-hash", diff_hash,
+        "--claim-id", claim["claim_id"], "--outcomes-file", str(outcomes_file),
+        "--root", str(repository_root), "--base", base, *repository_arg,
+    ])
+    proof_result = json.loads(capsys.readouterr().out)
+    assert AcceptanceProofStore(
+        proof_repository, state_dir,
+    )._validated_proof(
+        AcceptanceProofStore(
+            proof_repository, state_dir,
+        ).directory / proof_result["proof_id"]
+    )["quality"] == "blocked"
+
+    # Build the durable attestation and correction-plan claim first.  The
+    # released PAT-22 generation-9 state already contained both records when
+    # immutable review HEADs shipped; a headless proof cannot create them now.
+    legacy_ledger = ReviewDeduplicator(proof_repository, state_dir)
+    legacy_marker = legacy_ledger.directory / diff_hash
+
+    # Released code consumed the credit without embedding the later PAT-30 field.
+    continued = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert continued.action == "remediation_continued"
+    legacy = store.status(issue)["consumption_audit"][-1]
+    assert legacy["halt_generation"] == 9
+    assert set(legacy) == {"code", "at", "role", "halt_generation"}
+    counters = store.status(issue)["roles"]["implementer"].copy()
+    authorization = store.status(issue)["remediation_authorization"].copy()
+
+    # A repository namespace with no canonical proof cannot authorize backfill.
+    before_missing = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="pas réservé"):
+        main([
+            "escalation", "attest-legacy-blocking-proof", issue, "implementer",
+            "--halt-generation", str(generation), "--root", str(repository_root),
+            "--base", base, "--repository", "missing/proof-store",
+        ])
+    assert store._path(issue).read_bytes() == before_missing
+
+    binding = ReviewDeduplicator(
+        proof_repository, state_dir,
+    ).validated_terminal_proof_binding(
+        issue, diff_hash,
+        coordinates={"root": str(repository_root.resolve()), "base": base},
+    )
+    before_wrong = store._path(issue).read_bytes()
+    with pytest.raises(RoutingConfigError, match="autre review"):
+        store.attest_legacy_blocking_proof(
+            issue, "implementer", generation,
+            validated_blocking_proof=lambda: {
+                **binding, "diff_hash": "f" * 64,
+            },
+        )
+    assert store._path(issue).read_bytes() == before_wrong
+
+    main([
+        "escalation", "attest-legacy-blocking-proof", issue, "implementer",
+        "--halt-generation", str(generation), "--root", str(repository_root),
+        "--base", base, *repository_arg,
+    ])
+    attestation = json.loads(capsys.readouterr().out)
+    assert attestation["consumption_at"] == legacy["at"]
+    assert attestation["blocking_proof"]["proof_id"] == proof_result["proof_id"]
+    assert attestation["blocking_proof"]["repository"] == proof_repository
+    assert store.status(issue)["roles"]["implementer"] == counters
+    assert store.status(issue)["remediation_authorization"] == authorization
+
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=repository_root, issue_id=issue,
+        escalation_state_dir=state_dir,
+    )
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique plan"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=repository_root, issue_id=issue,
+            escalation_state_dir=state_dir,
+        )
+    assert store.status(issue)["roles"]["implementer"] == counters
+    assert store.status(issue)["remediation_authorization"] == authorization
+
+    # PAT-31: the released PAT-22 legacy shape can rearm its consumed reviewer
+    # slot once the attested credit has claimed the correction plan.  This goes
+    # through the public CLI so both the new HEAD/diff claim and the old proof
+    # binding are revalidated against this exact root/base pair.
+    before_foreign_role = store._path(issue).read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError):
+        store.claim_credited_correction_plan(
+            issue, "architect", root=repository_root,
+        )
+    assert store._path(issue).read_bytes() == before_foreign_role
+    before_wrong_generation = store._path(issue).read_bytes()
+    with pytest.raises(RoutingConfigError, match="route et review techniques"):
+        store.attest_legacy_blocking_proof(
+            issue, "implementer", generation - 1,
+            validated_blocking_proof=lambda: {**binding, "diff_hash": diff_hash},
+        )
+    assert store._path(issue).read_bytes() == before_wrong_generation
+
+    # Recreate the exact authority shape carried by the historical state: the
+    # blocked proof is headless, but its attestation and one-shot correction
+    # claim are already durable.  Only that claimed correction may read it to
+    # bind one new HEAD-bearing reviewer claim.
+    legacy_review = json.loads(legacy_marker.read_text(encoding="utf-8"))
+    del legacy_review["head"]
+    legacy_marker.write_text(json.dumps(legacy_review), encoding="utf-8")
+    with pytest.raises(RoutingConfigError, match="sans HEAD immuable"):
+        legacy_ledger.validated_terminal_proof_binding(
+            issue,
+            diff_hash,
+            coordinates={"root": str(repository_root.resolve()), "base": base},
+        )
+
+    # PAT-32: a PR base can advance after the historical blocked review.  The
+    # old proof remains bound to A while the replacement reviewer claim must
+    # bind independently to B and the current HEAD.
+    historical_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository_root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "checkout", "-qb", "advanced-base", base],
+        cwd=repository_root, check=True,
+    )
+    (repository_root / "base-advance.txt").write_text(
+        "base advanced\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "base-advance.txt"], cwd=repository_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base advanced"],
+                   cwd=repository_root, check=True)
+    current_base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository_root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "--detach", historical_head],
+                   cwd=repository_root, check=True)
+    historical_binding = store.status(issue)[
+        "legacy_blocking_proof_attestations"
+    ][-1]["blocking_proof"]
+    # Base B is deliberately different but the root is unchanged, so the
+    # historical binding remains readable before the new claim is attempted.
+    assert legacy_ledger.validated_claimed_correction_proof_binding(
+        issue, diff_hash, historical_binding,
+        coordinates={"root": str(repository_root.resolve()), "base": current_base},
+    )["proof_id"] == historical_binding["proof_id"]
+
+    sibling_root = tmp_path / "sibling"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(sibling_root), historical_head],
+        cwd=repository_root, check=True,
+    )
+    (sibling_root / "reviewed.txt").write_text(
+        "base\nreviewed correction\nsibling correction\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=sibling_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "sibling correction"],
+                   cwd=sibling_root, check=True)
+    sibling_diff_hash = review_diff_hash(git_diff(sibling_root, current_base))
+    before_sibling = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="coordonnées de review différentes"):
+        main([
+            "claim-review", "--git-diff", "--issue", issue,
+            "--root", str(sibling_root), "--base", current_base,
+            "--claim-attempt-token", "6" * 64, *repository_arg,
+        ])
+    assert store._path(issue).read_bytes() == before_sibling
+    assert legacy_ledger.is_claimed(sibling_diff_hash) is False
+
+    (repository_root / "reviewed.txt").write_text(
+        "base\nreviewed correction\ncredited correction\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=repository_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "credited correction"],
+                   cwd=repository_root, check=True)
+    corrected_diff = review_diff_hash(git_diff(repository_root, current_base))
+    main([
+        "claim-review", "--git-diff", "--issue", issue,
+        "--root", str(repository_root), "--base", current_base,
+        "--claim-attempt-token", "8" * 64, *repository_arg,
+    ])
+    corrected_claim = json.loads(capsys.readouterr().out)
+    assert corrected_claim["diff_hash"] == corrected_diff
+    corrected_review = json.loads(
+        (legacy_ledger.directory / corrected_diff).read_text(encoding="utf-8"),
+    )
+    assert corrected_review["coordinates"] == {
+        "root": str(repository_root.resolve()), "base": current_base,
+    }
+    assert corrected_review["head"] == subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository_root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    rearm = store.status(issue)["technical_remediation_audit"][-1][
+        "review_rearm_audit"
+    ]
+    assert rearm[0]["repair_kind"] == "credited_correction_blocked_rearm"
+    assert rearm[0]["previous_diff_hash"] == diff_hash
+    assert rearm[0]["new_diff_hash"] == corrected_diff
+
+    # PAT-31 AC2/AC3: an empty commit leaves base...HEAD diff bytes unchanged,
+    # but it must not let the already-issued reviewer capability read bytes for
+    # a different immutable HEAD.
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-qm", "head-only drift"],
+        cwd=repository_root, check=True,
+    )
+    with pytest.raises(SystemExit, match="HEAD a changé"):
+        main([
+            "read-review", "--diff-hash", corrected_diff,
+            "--claim-id", corrected_claim["claim_id"],
+            "--root", str(repository_root), "--base", current_base,
+            *repository_arg,
+        ])
+    assert capsys.readouterr().out == ""
+
+    (repository_root / "reviewed.txt").write_text(
+        "base\nreviewed correction\ncredited correction\nreplay\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=repository_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "replay"],
+                   cwd=repository_root, check=True)
+    before_replay = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="unique réarm"):
+        main([
+            "claim-review", "--git-diff", "--issue", issue,
+            "--root", str(repository_root), "--base", current_base,
+            "--claim-attempt-token", "7" * 64, *repository_arg,
+        ])
+    assert store._path(issue).read_bytes() == before_replay
+
+    # A later HEAD makes the old proof stale; even replay revalidates before CAS.
+    (repository_root / "reviewed.txt").write_text(
+        "base\nreviewed correction\nhostile change\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=repository_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "hostile"], cwd=repository_root, check=True)
+    persisted = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="pas réservé"):
+        main([
+            "escalation", "attest-legacy-blocking-proof", issue, "implementer",
+            "--halt-generation", str(generation), "--root", str(repository_root),
+            "--base", base, *repository_arg,
+        ])
+    assert store._path(issue).read_bytes() == persisted
+
+
+def test_failure_cli_rehashes_inside_escalation_lock_before_credit_consumption(
+    monkeypatch, tmp_path,
+):
+    state_dir = tmp_path / "state"
+    repository_root = tmp_path / "repo"
+    repository_root.mkdir()
+    base, old_diff = _git_review_fixture(repository_root)
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    store = EscalationStore.for_root(repository_root, state_dir=state_dir)
+    issue = "PAT-33"
+    store.record_risk(issue, "implementer", "adr_creation", "apex")
+    _human_stop(store, issue, "implementer")
+    store.resume(
+        issue, "manual_retry_approved", store.status(issue)["halt_generation"], 1,
+    )
+
+    repository = str(repository_root.resolve())
+    coordinates = {"root": repository, "base": base}
+    diff_hash = review_diff_hash(old_diff)
+    ledger = ReviewDeduplicator(repository, state_dir)
+    claim = ledger.claim_git(
+        diff_hash, coordinates=coordinates, claim_attempt_token="a" * 64,
+    )
+    body = "- [ ] hostile races cannot consume a stale review proof\n"
+    AcceptanceProofStore(repository, state_dir).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=[
+            {**criterion, "verdict": "fail"}
+            for criterion in acceptance_criteria(body)
+        ],
+        quality="blocked", diff_hash=diff_hash, claim_id=claim.claim_id,
+        root=repository_root, base=base, state_dir=state_dir,
+    )
+    before = store._path(issue).read_bytes()
+
+    def hostile_diff(*_args, **_kwargs):
+        descriptor = os.open(store._lock_path(issue), os.O_RDWR)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return b"hostile diff installed while waiting for issue lock"
+            else:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                return old_diff
+        finally:
+            os.close(descriptor)
+
+    monkeypatch.setattr("foundry.routing.git_diff", hostile_diff)
+    with pytest.raises(SystemExit, match="pas réservé"):
+        main([
+            "escalation", "failure", issue, "implementer",
+            "--kind", "review_blocking_after_fix", "--current-tier", "apex",
+            "--idempotency-key", "pat33-hostile-race-0001",
+            "--root", str(repository_root), "--base", base,
+        ])
+    assert store._path(issue).read_bytes() == before
+    assert store.status(issue)["remediation_authorization"]["remaining_credits"] == 1
+
+
+def test_credited_correction_plan_is_single_use_under_concurrency(tmp_path):
+    issue = "PAT-32"
+    _credited_correction_state(tmp_path, tmp_path, issue)
+
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        results = pool.map(_concurrent_credited_correction_plan, [
+            (str(tmp_path), issue, "implementer"),
+            (str(tmp_path), issue, "implementer"),
+        ])
+    assert sorted(results) == ["blocked", "claimed"]
+
+
+def test_credited_blocked_review_rearms_consumed_slot_once(tmp_path):
+    """PAT-31: the claimed correction can obtain one review of its new diff."""
+    issue = "PAT-31"
+    store = _credited_correction_state(tmp_path, tmp_path, issue)
+    technical = store.status(issue)["technical_remediation_audit"][-1]
+    old_diff = technical["review_diff_hash"]
+    source = store.status(issue)["consumption_audit"][-1]["blocking_proof"]
+    binding = {
+        "proof_id": source["proof_id"],
+        "completed_at": source["completed_at"],
+        "quality": source["quality"],
+        "all_pass": source["all_pass"],
+    }
+    new_diff = "f" * 64
+
+    # A blocked proof is not enough until the exact correction plan was CAS-claimed.
+    before_claim = store._path(issue).read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError, match="preuve AC terminale"):
+        store.claim_fresh_reviewer_authorization(
+            issue, new_diff,
+            validated_claim=lambda: _executable_review_claim(new_diff),
+            validated_rearm=lambda previous: binding if previous == old_diff else None,
+        )
+    assert store._path(issue).read_bytes() == before_claim
+
+    assert store.claim_credited_correction_plan(issue, "implementer", root=tmp_path)
+    before_wrong_proof = store._path(issue).read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError, match="preuve AC terminale"):
+        store.claim_fresh_reviewer_authorization(
+            issue, new_diff,
+            validated_claim=lambda: _executable_review_claim(new_diff),
+            validated_rearm=lambda previous: {
+                **binding, "proof_id": "0" * 64,
+            } if previous == old_diff else None,
+        )
+    assert store._path(issue).read_bytes() == before_wrong_proof
+
+    assert store.claim_fresh_reviewer_authorization(
+        issue, new_diff,
+        validated_claim=lambda: _executable_review_claim(new_diff),
+        validated_rearm=lambda previous: binding if previous == old_diff else None,
+    ).diff_hash == new_diff
+    event = store.status(issue)["technical_remediation_audit"][-1]
+    assert event["review_diff_hash"] == new_diff
+    assert event["review_rearm_audit"][0]["repair_kind"] == (
+        "credited_correction_blocked_rearm"
+    )
+    assert event["review_rearm_audit"][0]["terminal_proof_id"] == source["proof_id"]
+
+    before_replay = store._path(issue).read_bytes()
+    with pytest.raises(EscalationTechnicalBlockedError, match="unique réarm"):
+        store.claim_fresh_reviewer_authorization(
+            issue, "e" * 64,
+            validated_claim=lambda: _executable_review_claim("e" * 64),
+            validated_rearm=lambda _previous: binding,
+        )
+    assert store._path(issue).read_bytes() == before_replay
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("role", "architect"),
+        ("halt_generation", 3),
+        ("proof_id", "0" * 64),
+    ],
+)
+def test_credited_blocked_review_rearm_rejects_tampered_credit_claim(
+    tmp_path, field, value,
+):
+    """The durable rearm cannot be reconstructed from a forged credit claim."""
+    issue = "PAT-31"
+    store = _credited_correction_state(tmp_path, tmp_path, issue)
+    assert store.claim_credited_correction_plan(issue, "implementer", root=tmp_path)
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["credited_correction_claim_audit"][-1][field] = value
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+
+
+def test_credited_correction_uses_authenticated_alternate_proof_namespace(tmp_path):
+    issue = "PAT-38"
+    store = _credited_correction_state(
+        tmp_path, tmp_path, issue, review_repository="alternate/proof-store",
+    )
+    consumed = store.status(issue)["consumption_audit"][-1]
+    assert consumed["blocking_proof"]["repository"] == "alternate/proof-store"
+    plan = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=issue,
+        escalation_state_dir=tmp_path,
+    )
+    assert plan["escalation"]["credited_correction_plan_claimed"] is True
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
+
+
+def test_tampered_proof_namespace_cannot_consume_credited_plan(tmp_path):
+    issue = "PAT-39"
+    store = _credited_correction_state(
+        tmp_path, tmp_path, issue, review_repository="alternate/proof-store",
+    )
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["consumption_audit"][-1]["blocking_proof"]["repository"] = (
+        "missing/proof-store"
+    )
+    payload["remediation_authorization"]["consumption_audit"][-1][
+        "blocking_proof"
+    ]["repository"] = "missing/proof-store"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="pas réservé"):
+        store.claim_credited_correction_plan(issue, "implementer", root=tmp_path)
+    assert path.read_bytes() == before
+
+
+def test_credited_correction_rechecks_head_inside_issue_lock(monkeypatch, tmp_path):
+    issue = "PAT-35"
+    store = _credited_correction_state(tmp_path, tmp_path, issue)
+    original_git_head = routing_module.git_head
+    before = store._path(issue).read_bytes()
+
+    def hostile_head(root):
+        descriptor = os.open(store._lock_path(issue), os.O_RDWR)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return "f" * 40
+            else:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                return original_git_head(root)
+        finally:
+            os.close(descriptor)
+
+    monkeypatch.setattr(routing_module, "git_head", hostile_head)
+    with pytest.raises(RoutingConfigError, match="HEAD ou diff"):
+        store.claim_credited_correction_plan(
+            issue, "implementer", root=tmp_path,
+        )
+    assert store._path(issue).read_bytes() == before
+    assert store.status(issue)["credited_correction_claim_audit"] == []
+
+    monkeypatch.setattr(routing_module, "git_head", original_git_head)
+    assert store.claim_credited_correction_plan(
+        issue, "implementer", root=tmp_path,
+    ) is True
+    assert len(store.status(issue)["credited_correction_claim_audit"]) == 1
+
+
+def test_credited_correction_refuses_missing_review_binding_and_stale_generation(
+    tmp_path,
+):
+    store = EscalationStore("owner/pat-30-refusals", state_dir=tmp_path)
+    issue = "PAT-31"
+    exhausted_generation = _exhaust_remediation_window(store, issue)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, generation, "c" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", generation, "pat31-local-route-0001",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=generation,
+    )
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        store.active_floor(issue, "implementer")
+
+    # A later generation cannot inherit the prior review/credit relationship.
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    assert store.status(issue)["halted"] is True
+    later_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, later_generation, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", later_generation, "pat31-local-route-0002",
+    )
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        store.active_floor(issue, "implementer")
+
+    # A forged review timestamp cannot manufacture the missing exact binding.
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["technical_remediation_audit"][-1]["review_claimed_at"] = (
+        payload["technical_remediation_audit"][-1]["route_consumed_at"]
+    )
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+
+
+def test_bridged_rearm_rejects_forged_consumption_before_bridge(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-forged-order", state_dir=tmp_path)
+    issue = "FOUNDRY-96"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "a" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-forged-order-96",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    forged = {
+        "code": "review_blocking_after_fix_consumed",
+        "at": payload["technical_remediation_audit"][-1]["route_consumed_at"],
+        "role": "implementer",
+        "halt_generation": technical_generation,
+    }
+    assert forged["at"] < payload["remediation_rearm_audit"][-1]["at"]
+    payload["consumption_audit"].append(forged)
+    payload["roles"]["implementer"]["deterministic_failures"] += 1
+    payload["roles"]["implementer"]["failures_since_escalation"] += 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    assert path.read_bytes() == malformed
+
+
+def test_bridged_rearm_rejects_bridge_before_technical_route_consumption(
+    tmp_path,
+):
+    store = EscalationStore("owner/remediation-rearm-forged-bridge", state_dir=tmp_path)
+    issue = "FOUNDRY-97"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "b" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-forged-bridge-97",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    technical = payload["technical_remediation_audit"][-1]
+    bridge = payload["remediation_rearm_audit"][-1]
+    original_route_consumed_at = technical["route_consumed_at"]
+    original_bridge_at = bridge["at"]
+    assert technical["at"] < original_route_consumed_at < original_bridge_at
+    technical["route_consumed_at"] = original_bridge_at
+    bridge["at"] = original_route_consumed_at
+    payload["remediation_authorization"]["armed_at"] = original_route_consumed_at
+    assert bridge["at"] < technical["route_consumed_at"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        )
+    assert path.read_bytes() == malformed
+
+
+def test_bridged_rearm_rejects_duplicate_bridge_reusing_source_window(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-duplicate-bridge", state_dir=tmp_path)
+    issue = "FOUNDRY-98"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "c" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-duplicate-bridge-98",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    bridge = payload["remediation_rearm_audit"][-1]
+    duplicate = dict(bridge)
+    duplicate["at"] = (
+        datetime.fromisoformat(bridge["at"]) + timedelta(seconds=1)
+    ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    payload["remediation_rearm_audit"].append(duplicate)
+    payload["remediation_authorization"]["armed_at"] = duplicate["at"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    assert path.read_bytes() == malformed
+
+
+def test_rearm_again_after_bridged_technical_generation(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-technical-repeat", state_dir=tmp_path)
+    issue = "FOUNDRY-99"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-technical-99",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    exhausted = store.status(issue)
+    assert exhausted["remediation_authorization"]["state"] == "exhausted"
+
+    rearmed = store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", technical_generation, 1,
+    )
+
+    assert rearmed["halt_generation"] == technical_generation
+    assert rearmed["exhausted_halt_generation"] == technical_generation
+    state = store.status(issue)
+    assert state["remediation_authorization"]["remaining_credits"] == 1
+    assert state["remediation_rearm_audit"][-2]["exhausted_halt_generation"] == exhausted_generation
+    assert "exhausted_halt_generation" not in state["remediation_rearm_audit"][-1]
+    assert state["technical_remediation_audit"] == exhausted["technical_remediation_audit"]
+
+
+def test_historical_bridge_still_requires_claimed_route_after_human_resume(tmp_path):
+    store = EscalationStore("owner/remediation-historical-bridge", state_dir=tmp_path)
+    issue = "FOUNDRY-100"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "e" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "historical-bridge-100",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+    store.cancel_remediation(issue, technical_generation)
+    later_generation = store.status(issue)["halt_generation"]
+    assert later_generation > technical_generation
+    verdict = store.record_human_verdict(
+        issue, "implementer", "apex", category="strategy_decision",
+    )
+    assert verdict.action == "human_required"
+    store.resume(issue, "remediation_reviewed", later_generation)
+    assert store.status(issue)["last_resumed_halt_generation"] == later_generation
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    technical = payload["technical_remediation_audit"][-1]
+    assert technical["halt_generation"] == technical_generation
+    assert technical["route_id"] is not None
+    assert technical["route_consumed_at"] is not None
+    technical["route_id"] = None
+    technical["route_consumed_at"] = None
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    assert path.read_bytes() == malformed
+
+
+def test_ordinary_rearm_after_bridge_rejects_forged_window_anchor(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-forged-anchor", state_dir=tmp_path)
+    issue = "FOUNDRY-99"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-forged-anchor-99",
+    )
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        current_halt_generation=technical_generation,
+    )
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    store.rearm_remediation(
+        issue, "implementer", "manual_retry_approved", technical_generation, 1,
+    )
+
+    path = store._path(issue)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    bridge, ordinary = payload["remediation_rearm_audit"][-2:]
+    route_consumed_at = payload["technical_remediation_audit"][-1][
+        "route_consumed_at"
+    ]
+    assert route_consumed_at < bridge["at"]
+    assert ordinary["exhausted_window_armed_at"] == bridge["at"]
+    ordinary["exhausted_window_armed_at"] = route_consumed_at
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    malformed = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.status(issue)
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        )
+    assert path.read_bytes() == malformed
+
+
+def test_rearm_after_later_technical_generation_rejects_missing_or_stale_anchor(tmp_path):
+    store = EscalationStore("owner/remediation-rearm-technical-cas", state_dir=tmp_path)
+    issue = "FOUNDRY-97"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "b" * 64)
+    unclaimed = store._path(issue).read_bytes()
+    with pytest.raises(RoutingConfigError, match="diagnostic technique observé absent"):
+        store.rearm_remediation(
+            issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+            current_halt_generation=technical_generation,
+        )
+    assert store._path(issue).read_bytes() == unclaimed
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-technical-97",
+    )
+    path = store._path(issue)
+    before = path.read_bytes()
+
+    with pytest.raises(RoutingConfigError, match="observée obsolète"):
+        store.rearm_remediation(
+            issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+        )
+    with pytest.raises(RoutingConfigError, match="observée obsolète"):
+        store.rearm_remediation(
+            issue, "implementer", "manual_retry_approved", exhausted_generation, 1,
+            current_halt_generation=technical_generation + 1,
+        )
+    with pytest.raises(RoutingConfigError, match="génération d'arrêt obsolète"):
+        store.rearm_remediation(
+            issue, "implementer", "manual_retry_approved", technical_generation, 1,
+            current_halt_generation=technical_generation,
+        )
+    assert path.read_bytes() == before
+
+
+def test_rearm_cli_binds_later_technical_generation(tmp_path, monkeypatch, capsys):
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
+    store = EscalationStore.for_root(tmp_path)
+    issue = "FOUNDRY-98"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    technical_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, technical_generation, "c" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", technical_generation, "rearm-technical-98",
+    )
+
+    main([
+        "escalation", "rearm-remediation", issue, "implementer",
+        "--reason", "manual_retry_approved",
+        "--halt-generation", str(exhausted_generation),
+        "--current-halt-generation", str(technical_generation),
+        "--remediation-credits", "2", "--root", str(tmp_path),
+    ])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["action"] == "remediation_rearmed"
+    assert payload["halt_generation"] == technical_generation
+    assert payload["exhausted_halt_generation"] == exhausted_generation
+
+
+def test_concurrent_rearm_after_technical_generation_grants_once(tmp_path):
+    repository = "owner/remediation-rearm-technical-race"
+    store = EscalationStore(repository, state_dir=tmp_path)
+    issue = "FOUNDRY-99"
+    exhausted_generation = _exhaust_remediation_window(store, issue, credits=1)
+    store.record_failure(issue, "implementer", "review_blocking_after_fix", "apex")
+    current_generation = store.status(issue)["halt_generation"]
+    store.resume_technical_remediation(issue, current_generation, "d" * 64)
+    store.claim_technical_remediation_route(
+        issue, "implementer", current_generation, "rearm-technical-99",
+    )
+    args = [
+        (repository, str(tmp_path), issue, exhausted_generation, current_generation)
+    ] * 2
+
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        results = pool.map(_concurrent_technical_rearm, args)
+
+    assert sorted(result["action"] for result in results) == [
+        "rejected", "remediation_rearmed",
+    ]
+    state = store.status(issue)
+    assert len(state["remediation_rearm_audit"]) == 1
+    assert state["remediation_authorization"]["remaining_credits"] == 1
 
 
 @pytest.mark.parametrize("credits", [0, 4, True])
@@ -2474,6 +3649,355 @@ def test_f106_technical_remediation_leaves_f89_human_gate_byte_identical(tmp_pat
     assert f89["halted"] is True
     assert f89["human_required"] is True
     assert f89["technical_blocked"] is False
+
+
+class _OfflineLocalCorrectionDouble:
+    """Produces a ready local diff only from the no-provider route envelope."""
+
+    def __init__(self, coordinates):
+        self.coordinates = coordinates
+        self.calls = []
+
+    def correct(self, plan):
+        assert plan["mode"] == "local_diagnostic"
+        assert plan["spawn"] is None
+        assert plan["escalation"]["provider_effect_allowed"] is False
+        assert plan["escalation"]["technical_remediation_claimed"] is True
+        self.calls.append(("local_correction", self.coordinates))
+        return _OfflineLocalCorrectionReceipt(self.coordinates)
+
+
+class _OfflineLocalCorrectionReceipt:
+    """Non-authorizing output of the PAT-10 local correction fixture."""
+
+    def __init__(self, coordinates):
+        self.issue_id = coordinates["issue_id"]
+        self.ready_diff_hash = coordinates["ready_diff_hash"]
+
+
+class _OfflinePat22DeliveryProof:
+    """Object minted only by the PAT-22 adapter/delivery mock stage."""
+
+    def __init__(self, *, coordinates, source_issue_id, source_diff_hash):
+        self.coordinates = dict(coordinates)
+        self.source_issue_id = source_issue_id
+        self.source_diff_hash = source_diff_hash
+        self.proof_id = "offline-pat22-delivery-proof-v1"
+
+
+class _OfflinePat22AdapterDouble:
+    """Adapts the local correction under PAT-22, then mock-delivers it."""
+
+    def __init__(self, coordinates):
+        self.coordinates = dict(coordinates)
+        self.calls = []
+        self._candidate = None
+
+    def adapt(self, *, plan, local_correction):
+        if not isinstance(local_correction, _OfflineLocalCorrectionReceipt):
+            raise PermissionError("PAT-10 local correction receipt required")
+        if (
+            plan["mode"] != "subagent"
+            or plan["spawn"] is None
+            or plan["escalation"]["issue_id"] != self.coordinates["issue_id"]
+        ):
+            raise PermissionError("independent PAT-22 implementation plan required")
+        self._candidate = {
+            "coordinates": dict(self.coordinates),
+            "source_issue_id": local_correction.issue_id,
+            "source_diff_hash": local_correction.ready_diff_hash,
+        }
+        self.calls.append(("adapt", dict(self._candidate)))
+        return self._candidate
+
+    def mock_deliver(self, *, candidate):
+        if candidate is not self._candidate:
+            raise PermissionError("PAT-22 adapter candidate required")
+        proof = _OfflinePat22DeliveryProof(
+            coordinates=candidate["coordinates"],
+            source_issue_id=candidate["source_issue_id"],
+            source_diff_hash=candidate["source_diff_hash"],
+        )
+        self.calls.append(("mock_delivery", dict(proof.coordinates)))
+        return proof
+
+
+
+
+def test_pat10_recovery_isolated_from_separately_authorized_follow_up(tmp_path):
+    """Prove PAT-10 local recovery cannot authorize PAT-22/PAT-23 effects."""
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    pat10 = "PAT-10"
+    local_coordinates = {
+        "issue_id": pat10,
+        "halt_generation": 1,
+        "route_id": "pat10-local-route-0001",
+        "authority_id": "pat10-local-route-0001",
+        "ready_diff_hash": "a" * 64,
+        "ac_digest": "b" * 64,
+    }
+    adapter_coordinates = {
+        "issue_id": "PAT-22",
+        "generation": 1,
+        "ready_diff_hash": "c" * 64,
+        "authority_id": "pat22-independent-delivery-authority-v1",
+        "ac_digest": "d" * 64,
+    }
+    migration_coordinates = {
+        "issue_id": "PAT-23",
+        "generation": 1,
+        "authority_id": "pat23-independent-migration-authority-v1",
+        "ac_digest": "e" * 64,
+        "operation_id": "pat23-import-operation-0001",
+    }
+    path = store._path(pat10)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(pat10)), encoding="utf-8")
+    store.reclassify_legacy_terminal(pat10, local_coordinates["halt_generation"])
+    store.resume_technical_remediation(
+        pat10, local_coordinates["halt_generation"], local_coordinates["ac_digest"],
+    )
+    route_id = local_coordinates["route_id"]
+    claimed = store.claim_technical_remediation_route(
+        pat10, "implementer", local_coordinates["halt_generation"], route_id,
+    )
+    assert claimed["provider_effect_allowed"] is False
+    assert claimed["campaign_restart_allowed"] is False
+    assert store.status(pat10)["human_required"] is False
+
+    local = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=pat10,
+        escalation_state_dir=tmp_path, technical_remediation=True,
+        technical_remediation_id=route_id,
+    )
+    assert local["mode"] == "local_diagnostic"
+    assert local["spawn"] is None
+    assert local["escalation"]["provider_effect_allowed"] is False
+    assert local["escalation"]["fresh_review_required"] is True
+
+    # The bounded local correction can make this exact local diff ready, but it
+    # cannot make PAT-10's final review executable while the independently
+    # authorized adapter and ADR-import proofs are still absent.
+    local_correction = _OfflineLocalCorrectionDouble(local_coordinates)
+    local_receipt = local_correction.correct(local)
+    ready_local_diff = local_receipt.ready_diff_hash
+    assert len(ready_local_diff) == 64
+    assert local_correction.calls == [("local_correction", local_coordinates)]
+    review_before = path.read_bytes()
+
+    def final_pat10_review_claim():
+        raise EscalationTechnicalBlockedError(
+            "PAT-10 final review requires PAT-22 delivery and PAT-23 read-back."
+        )
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="PAT-22 delivery"):
+        store.claim_fresh_reviewer_authorization(
+            pat10, ready_local_diff, validated_claim=final_pat10_review_claim,
+        )
+    assert path.read_bytes() == review_before
+
+    with pytest.raises(EscalationTechnicalBlockedError, match="explicitement demandée"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=pat10,
+            escalation_state_dir=tmp_path,
+        )
+
+    pat10_before_follow_up = path.read_bytes()
+    follow_up = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id="PAT-22",
+        escalation_state_dir=tmp_path,
+    )
+    assert follow_up["mode"] == "subagent"
+    assert follow_up["spawn"] is not None
+    assert follow_up["route"]["selected_tier"] == "balanced"
+    assert path.read_bytes() == pat10_before_follow_up
+
+    with pytest.raises(RoutingConfigError, match="aucune remédiation"):
+        store.claim_technical_remediation_route(
+            "PAT-22", "implementer", 1, route_id,
+        )
+    with pytest.raises(EscalationTechnicalBlockedError, match="identifiant différent"):
+        store.technical_remediation_floor(pat10, "implementer", "pat10-local-route-0002")
+    assert path.read_bytes() == pat10_before_follow_up
+
+    # The PAT-22 mock stages receive the ready local correction only as source
+    # material.  Their separate issue plan supplies the issue-scoped execution
+    # boundary, and only their delivery stage can mint the proof PAT-23 accepts.
+    adapter = _OfflinePat22AdapterDouble(adapter_coordinates)
+    with pytest.raises(PermissionError, match="independent PAT-22"):
+        adapter.adapt(plan=local, local_correction=local_receipt)
+    candidate = adapter.adapt(
+        plan=follow_up,
+        local_correction=local_receipt,
+    )
+    adapter_delivery = adapter.mock_deliver(candidate=candidate)
+    assert adapter.calls == [
+        ("adapt", {
+            "coordinates": adapter_coordinates,
+            "source_issue_id": "PAT-10",
+            "source_diff_hash": "a" * 64,
+        }),
+        ("mock_delivery", adapter_coordinates),
+    ]
+    assert adapter_delivery.source_issue_id == "PAT-10"
+    assert adapter_delivery.source_diff_hash == ready_local_diff
+    assert adapter_delivery.coordinates["authority_id"] != local_coordinates["authority_id"]
+
+    # A provider-shaped migration is a distinct, pending PAT-23 operation.  The
+    # local route is deliberately not one of its coordinates.  No workspace or
+    # provider is touched: this double models the authorization/read-back proof
+    # that PAT-23 must reproduce before any real Linear migration.
+    handoff_paths = {
+        "provider_state_path": tmp_path / "pat23-provider.json",
+        "local_ledger_path": tmp_path / "pat23-ledger.json",
+    }
+    migration = OfflineProviderHandoff(**handoff_paths)
+    coordinates = HandoffCoordinates(
+        issue_id="PAT-23",
+        operation_id=migration_coordinates["operation_id"],
+        diff_sha256=adapter_coordinates["ready_diff_hash"],
+        ac_sha256=migration_coordinates["ac_digest"],
+        generation=migration_coordinates["generation"],
+        authority_id=migration_coordinates["authority_id"],
+    )
+    adrs = tuple(f"FOUNDRY-ADR-{number:04d}" for number in range(1, 28))
+
+    def fixture_capacity_from_delivery(
+        proof, *, now, ttl, target=coordinates, handoff=migration,
+    ):
+        if not isinstance(proof, _OfflinePat22DeliveryProof):
+            raise PermissionError("mock PAT-22 delivery proof required")
+        if proof.coordinates != adapter_coordinates:
+            raise PermissionError("exact PAT-22 delivery proof required")
+        return handoff.issue_fixture_capability(target, now=now, ttl=ttl)
+
+    # PAT-22's separate delivery proof is required before even the offline
+    # fixture can issue capacity. This never represents a real Linear grant.
+    with pytest.raises(PermissionError, match="mock PAT-22 delivery proof"):
+        fixture_capacity_from_delivery(adapter_coordinates, now=100, ttl=10)
+    for field, drifted_value in (
+        ("issue_id", "PAT-220"),
+        ("generation", 2),
+        ("ready_diff_hash", "9" * 64),
+        ("authority_id", "pat22-wrong-delivery-authority"),
+        ("ac_digest", "8" * 64),
+    ):
+        drifted_adapter = _OfflinePat22AdapterDouble({
+            **adapter_coordinates,
+            field: drifted_value,
+        })
+        drifted_plan = follow_up
+        if field == "issue_id":
+            drifted_plan = codex_spawn_plan(
+                "implementer", _packet(), root=tmp_path,
+                issue_id=drifted_value, escalation_state_dir=tmp_path,
+            )
+        drifted_candidate = drifted_adapter.adapt(
+            plan=drifted_plan, local_correction=local_receipt,
+        )
+        drifted_delivery = drifted_adapter.mock_deliver(candidate=drifted_candidate)
+        with pytest.raises(PermissionError, match="exact PAT-22 delivery proof"):
+            fixture_capacity_from_delivery(drifted_delivery, now=100, ttl=10)
+
+    missing_coordinates = HandoffCoordinates(
+        **{**coordinates.frozen(), "operation_id": "pat23-import-missing-capability"},
+    )
+    with pytest.raises(HandoffRejected, match="capability required"):
+        migration.execute(missing_coordinates, capability=None, now=100)
+    expired_coordinates = HandoffCoordinates(
+        **{**coordinates.frozen(), "operation_id": "pat23-import-expired-capability"},
+    )
+    expired = fixture_capacity_from_delivery(
+        adapter_delivery, now=100, ttl=1, target=expired_coordinates,
+    )
+    with pytest.raises(HandoffRejected, match="expired"):
+        migration.execute(expired_coordinates, capability=expired, now=101)
+    fresh = fixture_capacity_from_delivery(adapter_delivery, now=101, ttl=10)
+    for changes in (
+        {"generation": 2},
+        {"authority_id": "pat23-wrong-migration-authority"},
+        {"ac_sha256": "7" * 64},
+        {"operation_id": "pat23-import-operation-0002"},
+    ):
+        drifted = HandoffCoordinates(**{**coordinates.frozen(), **changes})
+        with pytest.raises(HandoffRejected, match="context drift"):
+            migration.provider.apply(
+                drifted, capability=fresh, now=102, crash_before_effect=False,
+            )
+    assert migration.provider.snapshot()["effect_count"] == 0
+    assert migration.ledger.snapshot()["receipt_count"] == 0
+
+    # The reusable PAT-24 double keeps provider and local state in different
+    # files. First prove a crash before effect cannot turn an expired intent
+    # into a first effect.
+    with pytest.raises(InjectedHandoffCrash, match="before provider effect"):
+        migration.execute(
+            coordinates, capability=fresh, now=102,
+            crash_at=CrashPoint.BEFORE_EFFECT,
+        )
+    recovered = OfflineProviderHandoff(**handoff_paths)
+    with pytest.raises(HandoffRejected, match="expired"):
+        recovered.execute(coordinates, capability=fresh, now=111)
+    assert recovered.provider.snapshot()["effect_count"] == 0
+    assert recovered.ledger.snapshot()["receipt_count"] == 0
+
+    # A fresh distinct fixture capacity is needed for the first effect after
+    # that expiry. The old intent cannot transfer to it; use another operation
+    # identity for the positive post-effect crash proof.
+    post_effect_coordinates = HandoffCoordinates(
+        **{**coordinates.frozen(), "operation_id": "pat23-import-operation-0003"},
+    )
+    post_effect = OfflineProviderHandoff(
+        provider_state_path=tmp_path / "pat23-post-effect-provider.json",
+        local_ledger_path=tmp_path / "pat23-post-effect-ledger.json",
+    )
+    post_effect_paths = {
+        "provider_state_path": post_effect.provider.state_path,
+        "local_ledger_path": post_effect.ledger.state_path,
+    }
+    post_effect_capacity = fixture_capacity_from_delivery(
+        adapter_delivery, now=112, ttl=10,
+        target=post_effect_coordinates, handoff=post_effect,
+    )
+    with pytest.raises(InjectedHandoffCrash, match="after provider effect"):
+        post_effect.execute(
+            post_effect_coordinates, capability=post_effect_capacity, now=113,
+            crash_at=CrashPoint.AFTER_EFFECT_BEFORE_RECEIPT,
+        )
+    assert post_effect.provider.snapshot()["effect_count"] == 1
+    assert post_effect.ledger.snapshot()["receipt_count"] == 0
+    replay = OfflineProviderHandoff(**post_effect_paths)
+    receipt = replay.execute(
+        post_effect_coordinates, capability=post_effect_capacity, now=1_000,
+    )
+    assert receipt["coordinates"] == post_effect_coordinates.frozen()
+    assert receipt["provider_effect_replayed"] is True
+    assert replay.provider.snapshot()["effect_count"] == 1
+    assert replay.ledger.snapshot()["receipt_count"] == 1
+    assert replay.execute(
+        post_effect_coordinates, capability=post_effect_capacity, now=1_001,
+    ) == receipt
+    with pytest.raises(HandoffRejected, match="effect scope already committed"):
+        replay.execute(coordinates, capability=post_effect_capacity, now=1_002)
+    assert replay.provider.snapshot()["effect_count"] == 1
+
+    # Read-back is deliberately only a fixture projection. Real PAT-23 must
+    # obtain and verify these 27 ADRs from Linear before PAT-10 can be reviewed.
+    read_back = {
+        "issue_id": receipt["coordinates"]["issue_id"],
+        "generation": receipt["coordinates"]["generation"],
+        "ac_digest": receipt["coordinates"]["ac_sha256"],
+        "operation_id": receipt["coordinates"]["operation_id"],
+        "adrs": adrs,
+    }
+    assert read_back == {
+        "issue_id": "PAT-23",
+        "generation": 1,
+        "ac_digest": "e" * 64,
+        "operation_id": "pat23-import-operation-0003",
+        "adrs": adrs,
+    }
+    assert len(read_back["adrs"]) == 27
 
 
 def test_technical_resume_is_atomic_and_idempotent_under_concurrency(tmp_path):
@@ -3009,6 +4533,190 @@ def test_technical_resumes_are_bounded_per_fresh_deterministic_stop(tmp_path):
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
         store.status(issue)
+
+
+def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(
+    tmp_path, monkeypatch,
+):
+    """A technical receipt stays local; only an explicit human strategy path reopens it."""
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    issue = "PAT-22"
+    path = store._path(issue)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(issue)), encoding="utf-8")
+    store.reclassify_legacy_terminal(issue, 1)
+
+    for generation, digest in enumerate(("a" * 64, "b" * 64, "c" * 64), start=1):
+        store.resume_technical_remediation(issue, generation, digest)
+        store.claim_technical_remediation_route(
+            issue, "implementer", generation, f"pat22-local-route-{generation:04d}",
+        )
+        assert store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        ).action == "technical_blocked"
+
+    blocked = store.status(issue)
+    assert blocked["halt_generation"] == 4
+    assert blocked["technical_blocked"] is True
+    assert [event["halt_generation"] for event in blocked["technical_remediation_audit"]] == [1, 2, 3]
+    assert blocked["roles"]["implementer"]["minimum_tier"] == "apex"
+    with pytest.raises(EscalationTechnicalBlockedError):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+
+    before_verdict = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="sans verdict humain valide"):
+        store.resume(issue, "manual_retry_approved", 3, remediation_credits=1)
+    assert path.read_bytes() == before_verdict
+
+    verdict = store.record_human_verdict(
+        issue, "implementer", "apex", category="strategy_decision",
+    )
+    assert verdict.action == "human_required"
+    with pytest.raises(RoutingConfigError, match="génération d'arrêt obsolète"):
+        store.resume(issue, "manual_retry_approved", 3, remediation_credits=1)
+    with pytest.raises(RoutingConfigError, match="n'est pas arrêtée"):
+        store.resume("PAT-23", "manual_retry_approved", 4, remediation_credits=1)
+    authorized = store.resume(
+        issue, "manual_retry_approved", 4, remediation_credits=1,
+    )
+    assert authorized["remediation_authorization"]["remaining_credits"] == 1
+    after_resume = store.status(issue)
+    assert after_resume["halted"] is False
+    assert after_resume["roles"]["implementer"]["minimum_tier"] == "apex"
+    assert [event["halt_generation"] for event in after_resume["technical_remediation_audit"]] == [1, 2, 3]
+
+    # Offline delivery pilot: a fresh PAT-22 diff after this bounded resume
+    # still has to pass the ordinary exact review, CI and Foundry merge gates.
+    # This is a double, not a live PR/Linear delivery receipt.
+    diff_bytes = b"pat22-fresh-correction-diff"
+    head_sha = "d" * 40
+    base_sha = "e" * 40
+    pr = SimpleNamespace(
+        number=17, url="https://github.com/patobiskoto/patolabs-plugins/pull/17",
+        sha=head_sha, base_sha=base_sha, head="feat/pat-22", base="main",
+        merged=False,
+    )
+    merged = SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
+    effects = []
+    review = {"valid": False}
+    ci = {"green": False}
+    tracker_issue = SimpleNamespace(
+        id=issue, state="review", body="- [ ] Verify correction", ac_done=0,
+        ac_total=1, pr_url=pr.url,
+    )
+    tracker = SimpleNamespace(
+        bounded_transition_proofs=True, append_only_lifecycle_supported=False,
+        get_issue=lambda _id: tracker_issue,
+    )
+    codehost = SimpleNamespace(
+        name="github", resolve_repo=lambda: "patobiskoto/patolabs-plugins",
+        get_pr=lambda *_args: pr,
+        merge_pr=lambda *_args, **kwargs: (
+            effects.append(("merge", kwargs["sha"])) or merged
+        ),
+        delete_branch=lambda *_args: effects.append(("delete",)),
+    )
+    monkeypatch.setattr(issue_module, "foundry", SimpleNamespace(
+        tracker=lambda: tracker, codehost=lambda: codehost,
+    ))
+    monkeypatch.setattr(issue_module, "git_head", lambda: head_sha)
+    monkeypatch.setattr(issue_module, "git_diff", lambda **_kwargs: diff_bytes)
+    monkeypatch.setattr(issue_module, "_observe_receipt", lambda *_args: "offline")
+    monkeypatch.setattr(issue_module, "_cleanup_branch", lambda _branch: "linked-worktree")
+    monkeypatch.setattr(issue_module, "repository_identity", lambda: "patobiskoto/patolabs-plugins")
+    monkeypatch.setattr(issue_module.AcceptanceProofStore, "valid_for_merge",
+        lambda _self, **_kwargs: {"proof_id": "offline-review-proof"}
+        if review["valid"] else (_ for _ in ()).throw(RoutingConfigError("stale diff")),
+    )
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(write, "transition", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(write, "sync_acceptance", lambda *_args: (
+        {"status": "checked", "checked": 1}
+    ))
+    monkeypatch.setattr(write, "add_comment", lambda *_args: None)
+    monkeypatch.setattr(write, "preflight_merge_effect", lambda *_args: None)
+    monkeypatch.setattr(write, "ci_gate", lambda _ch, _repo, sha, **_kwargs: (
+        {"passed": ci["green"], "waived": False, "total": 1,
+         "pending": [], "failing": [] if ci["green"] else ["foundry"],
+         "reason": "offline red" if not ci["green"] else "green"}
+        if sha == head_sha else (_ for _ in ()).throw(AssertionError("wrong CI SHA"))
+    ))
+    with pytest.raises(SystemExit, match="preuve structurée invalide"):
+        issue_module.merge(issue, "17")
+    assert effects == []
+    review["valid"] = True
+    with pytest.raises(SystemExit, match="CI non verte"):
+        issue_module.merge(issue, "17")
+    assert effects == []
+    ci["green"] = True
+    issue_module.merge(issue, "17")
+    assert effects[0] == ("merge", head_sha)
+    assert effects[1] == ("delete",)
+
+    # The local-diagnostic route cannot launder a stale diff into a review
+    # claim: the ordinary Git claim checks the bytes again before any proof.
+    coordinates = {"root": str(tmp_path), "base": base_sha}
+    dedup = ReviewDeduplicator("patobiskoto/patolabs-plugins", state_dir=tmp_path)
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_args: b"changed")
+    monkeypatch.setattr("foundry.routing.git_head", lambda *_args: head_sha)
+    with pytest.raises(RoutingConfigError, match="le diff a changé"):
+        dedup.claim_git(
+            review_diff_hash(diff_bytes), coordinates=coordinates,
+            claim_attempt_token="1" * 64,
+        )
+    assert not (dedup.directory / review_diff_hash(diff_bytes)).exists()
+
+    replay = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="n'est pas arrêtée"):
+        store.resume(issue, "manual_retry_approved", 4, remediation_credits=1)
+    assert path.read_bytes() == replay
+
+    assert store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    ).action == "remediation_continued"
+    exhausted = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    )
+    assert exhausted.action == "technical_blocked"
+    assert exhausted.human_required is False
+    with pytest.raises(EscalationTechnicalBlockedError):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+    before_local = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="génération d'arrêt obsolète"):
+        store.resume_technical_remediation(issue, 4, "d" * 64)
+    assert path.read_bytes() == before_local
+    local = store.resume_technical_remediation(issue, 5, "d" * 64)
+    assert local["provider_effect_allowed"] is False
+    assert store.status(issue)["technical_remediation_open"] is True
+    assert store.status(issue)["remediation_authorization"]["state"] == "exhausted"
+    assert store.resume_technical_remediation(issue, 5, "d" * 64)["replayed"] is True
+    store.claim_technical_remediation_route(
+        issue, "implementer", 5, "pat22-local-route-0005",
+    )
+    diagnostic = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, issue_id=issue,
+        escalation_state_dir=tmp_path, technical_remediation=True,
+        technical_remediation_id="pat22-local-route-0005",
+    )
+    assert diagnostic["mode"] == "local_diagnostic"
+    assert diagnostic["spawn"] is None
+    assert diagnostic["escalation"]["provider_effect_allowed"] is False
+    assert diagnostic["escalation"]["campaign_restart_allowed"] is False
+    with pytest.raises(EscalationTechnicalBlockedError):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path, issue_id=issue,
+            escalation_state_dir=tmp_path,
+        )
+    assert store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+    ).action == "technical_blocked"
+    assert store.status(issue)["halt_generation"] == 6
 
 
 def test_legacy_stop_without_complete_causal_facts_stays_ambiguous(tmp_path):

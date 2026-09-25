@@ -10,8 +10,11 @@ Those writes are therefore unavailable: a local lock or a readback cannot preven
 external writer from being overwritten.  The supported writes are atomic creation and
 additive provider mutations which do not replace existing issue values.
 """
+
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import datetime
 import hashlib
 import json
@@ -24,7 +27,9 @@ import uuid
 from foundry import config, registry
 from foundry.models import Adr, Issue, Link, Project, TransitionContext
 from foundry.trackers.base import (
+    _UNSPECIFIED_ADR_RELATION,
     AcceptanceSyncUnavailableError,
+    AdrUnavailableError,
     BodyUpdateUnavailableError,
     IssueUnavailableError,
     Tracker,
@@ -48,10 +53,50 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _LIFECYCLE_SCHEMA = "foundry-linear-lifecycle.v1"
 _LIFECYCLE_HEADER = "Foundry lifecycle proof (append-only)."
-_LIFECYCLE_OPERATIONS = frozenset({
-    "state-in-progress", "state-review", "state-done", "acceptance",
+_LIFECYCLE_OPERATIONS = frozenset(
+    {
+        "state-in-progress",
+        "state-review",
+        "state-done",
+        "acceptance",
     "cockpit-evidence",
+    }
+)
+_ADR_SCHEMA = "foundry-linear-adr.v1"
+_ADR_HEADER = "<!-- foundry-linear-adr.v1\n"
+_ADR_DOCUMENT_PREFIX = "[Foundry ADR] "
+_ADR_WITNESS_SCHEMA = "foundry-linear-adr-witness.v1"
+_ADR_WITNESS_HEADER = "<!-- foundry-linear-adr-witness.v1\n"
+_ADR_WITNESS_PREFIX = "[Foundry ADR witness] "
+_ADR_QUALIFICATION_PROBE_PREFIX = "[Foundry qualification probe] "
+# A historical batch record carries evidence of the complete provider bytes of
+# both Documents it creates, observed on non-authoritative probes before import.
+_ADR_BATCH_RECOVERY_PROFILE_FIELDS = frozenset({
+    "qualification_project_id",
+    "expected_linear_witness_content",
+    "expected_linear_witness_sha256",
+    "witness_probe_id",
 })
+_ADR_BATCH_PROFILE_FIELDS = _ADR_BATCH_RECOVERY_PROFILE_FIELDS | {
+    "expected_linear_document_content",
+    "expected_linear_document_sha256",
+    "document_probe_id",
+}
+_ADR_SOURCE_ENCODING = "base64-utf8"
+_ADR_BOUND_SOURCE_BODY = "_foundry_bound_source_body"
+_ADR_ISSUE_LINK_SCHEMA = "foundry-linear-adr-issue-link.v1"
+_ADR_ID = re.compile(r"[A-Z][A-Z0-9_-]*-ADR-[0-9]{4}\Z")
+_ISSUE_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,255}\Z")
+_ISSUE_NUMBER = re.compile(r"[1-9][0-9]*\Z")
+_ADR_STATUSES = frozenset({"proposed", "accepted", "deprecated", "superseded"})
+_ADR_RELATION_LIMIT = 100
+_ADR_MISSING_RELATION_FAMILIES = ("issues", "superseded_by", "supersedes")
+_ADR_TRANSITIONS = {
+    "proposed": frozenset({"accepted", "deprecated"}),
+    "accepted": frozenset({"deprecated", "superseded"}),
+    "deprecated": frozenset(),
+    "superseded": frozenset(),
+}
 
 
 _ISSUE_FIELDS = """
@@ -124,6 +169,46 @@ query FoundryLinearCommentsById($id: ID!) {
 }
 """
 
+_ADR_DOCUMENTS_QUERY = """
+query FoundryLinearAdrDocuments($projectId: ID!, $after: String) {
+  documents(filter: { project: { id: { eq: $projectId } } } first: 100 after: $after includeArchived: true) {
+    nodes { id title content archivedAt project { id } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+_ADR_DOCUMENT_BY_ID_QUERY = """
+query FoundryLinearAdrDocumentById($id: ID!) {
+  documents(filter: { id: { eq: $id } }, first: 2, includeArchived: true) {
+    nodes { id title content archivedAt project { id } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+_ADR_DOCUMENT_CREATE = """
+mutation FoundryLinearAdrDocumentCreate($input: DocumentCreateInput!) {
+ documentCreate(input: $input) { success document { id title content project { id } } }
+}
+"""
+
+_TEAM_GIT_AUTOMATION_STATES_QUERY = """
+query FoundryLinearTeamGitAutomationStates($id: String!) {
+  team(id: $id) {
+    id
+    gitAutomationStates(first: 100) {
+      nodes { id event state { id type } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+_GIT_AUTOMATION_EVENTS = frozenset({"draft", "merge", "mergeable", "review", "start"})
+_WORKFLOW_STATE_TYPES = frozenset(
+    {"backlog", "triage", "unstarted", "started", "completed", "canceled", "duplicate"}
+)
+
+
 class LinearTrackerError(RuntimeError):
     """Sanitized transport/provider failure with no response or credential echo."""
 
@@ -149,13 +234,20 @@ class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
             target = urllib.parse.urljoin(req.full_url, newurl)
             source = urllib.parse.urlsplit(req.full_url)
             destination = urllib.parse.urlsplit(target)
-            source_origin = (source.scheme.lower(), (source.hostname or "").lower(), source.port or 443)
+            source_origin = (
+                source.scheme.lower(),
+                (source.hostname or "").lower(),
+                source.port or 443,
+            )
             target_origin = (
-                destination.scheme.lower(), (destination.hostname or "").lower(),
+                destination.scheme.lower(),
+                (destination.hostname or "").lower(),
                 destination.port or 443,
             )
         except (TypeError, ValueError, UnicodeError):
-            raise LinearTrackerError("redirect", code, "cross_origin_redirect") from None
+            raise LinearTrackerError(
+                "redirect", code, "cross_origin_redirect"
+            ) from None
         if source_origin != target_origin:
             raise LinearTrackerError("redirect", code, "cross_origin_redirect")
         return super().redirect_request(req, fp, code, msg, headers, target)
@@ -177,8 +269,10 @@ def _mapping(extra: dict, key: str, *, required: bool = False) -> dict[str, str]
     if raw is None and not required:
         return {}
     if not isinstance(raw, dict) or any(
-        not isinstance(name, str) or not name
-        or not isinstance(identifier, str) or _SAFE_ID.fullmatch(identifier) is None
+        not isinstance(name, str)
+        or not name
+        or not isinstance(identifier, str)
+        or _SAFE_ID.fullmatch(identifier) is None
         for name, identifier in raw.items()
     ):
         raise LinearBindingError(f"{key}_invalid")
@@ -193,7 +287,9 @@ def _epoch_ms(value) -> int | None:
     if not isinstance(value, str):
         raise LinearTrackerError("normalize", None, "invalid_response")
     try:
-        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+        return int(
+            datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000
+        )
     except ValueError:
         raise LinearTrackerError("normalize", None, "invalid_response") from None
 
@@ -229,8 +325,787 @@ def _relation_link(relation: dict, *, inverse: bool) -> Link:
     return Link("blocks", "inward", target["identifier"])
 
 
+def _adr_client_uuid(slot: str) -> str:
+    digest = hashlib.sha256(slot.encode("utf-8")).hexdigest()
+    return str(uuid.UUID(digest[:32], version=4))
+
+
+def _adr_document_id(project_id: str, adr_id: str, sequence: int) -> str:
+    return _adr_client_uuid(f"{_ADR_SCHEMA}:{project_id}:{adr_id}:{sequence}")
+
+
+def _adr_witness_id(project_id: str, adr_id: str, sequence: int) -> str:
+    return _adr_client_uuid(
+        f"{_ADR_WITNESS_SCHEMA}:{project_id}:{adr_id}:{sequence}"
+    )
+
+
+def _adr_issue_link(
+    binding: dict, adr_id: str, issue_id: str
+) -> tuple[str, str]:
+    payload = {
+        "schema": _ADR_ISSUE_LINK_SCHEMA,
+        "project_id": binding["project_id"],
+        "team_id": binding["team_id"],
+        "adr_id": adr_id,
+        "issue_id": issue_id,
+    }
+    canonical = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )
+    comment_id = _adr_client_uuid(
+        f"{_ADR_ISSUE_LINK_SCHEMA}:{binding['project_id']}:{adr_id}:{issue_id}"
+    )
+    return comment_id, f"Foundry ADR relation (reciprocal).\n\n{canonical}"
+
+
+def _adr_document_title(metadata: dict) -> str:
+    return f"{_ADR_DOCUMENT_PREFIX}{metadata['id']} / v{metadata['sequence']:04d} / {metadata['title']}"
+
+
+def _adr_document_content(metadata: dict, body: str) -> str:
+    header = json.dumps(
+        metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return f"{_ADR_HEADER}{header}\n-->\n\n{body}"
+
+
+def _markdown_fence_opening(line: str) -> tuple[str, int] | None:
+    """Return a descriptor for one supported Markdown fence opener."""
+    candidate = line.lstrip(" ")
+    if len(line) - len(candidate) > 3 or not candidate:
+        return None
+    marker = candidate[0]
+    if marker not in {"`", "~"}:
+        return None
+    length = len(candidate) - len(candidate.lstrip(marker))
+    if length < 3:
+        return None
+    info = candidate[length:]
+    if marker == "`" and "`" in info:
+        return None
+    return marker, length
+
+
+def _markdown_fence_closing(
+    line: str,
+    marker: str,
+    opening_length: int,
+) -> bool:
+    candidate = line.lstrip(" ")
+    if len(line) - len(candidate) > 3:
+        return False
+    length = len(candidate) - len(candidate.lstrip(marker))
+    return (
+        length >= opening_length
+        and not candidate[length:].strip(" \t")
+    )
+
+
+_FOUNDRY_ADR_0012_READBACK_PROFILE = "foundry-adr-0012-v1"
+_FOUNDRY_ADR_0012_SOURCE_SHA256 = (
+    "69bd2cb2be04313de06dee865187b5e0e68eaed00298a7ce2be124f6ca1e96e5"
+)
+_FOUNDRY_ADR_0012_READBACK_SHA256 = (
+    "3bbab7c31d737bb97320ea74644f8acd6201cf7ec0a8cb7e1a09cd554c49246c"
+)
+# This historical slot predates witnesses.  Its source is deliberately not
+# represented here: the two digests qualify only the exact bytes already held by
+# Linear.  Unlike ADR-0012's profile, this is recovery-only -- it must never
+# authorize creating a fresh provider Document from a guessed renderer.
+_FOUNDRY_ADR_0001_SOURCE_SHA256 = (
+    "eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db"
+)
+_FOUNDRY_ADR_0001_READBACK_SHA256 = (
+    "9d723a7a64225d930531d968f78dba108f940eb7091d7110f8b12c037d29b193"
+)
+
+
+def _is_recovery_only_historical_source(body: str) -> bool:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest() == (
+        _FOUNDRY_ADR_0001_SOURCE_SHA256
+    )
+
+
+def _is_qualified_historical_readback(observed: object, canonical: str) -> bool:
+    """Accept one digest-pinned historical readback, never a renderer family."""
+    if not isinstance(observed, str):
+        return False
+    canonical_header, separator, body = canonical.partition("\n-->\n\n")
+    if not separator or not canonical_header.startswith(_ADR_HEADER):
+        return False
+    expected_metadata = canonical_header[len(_ADR_HEADER) :]
+    observed_payload = observed[len(_ADR_HEADER) :] if observed.startswith(
+        _ADR_HEADER
+    ) else ""
+    encoded = None
+    for delimiter, serialized in (("\n-->\n\n", False), ("\n\\-->\n\n", True)):
+        candidate, found, _observed_body = observed_payload.partition(delimiter)
+        if found:
+            encoded = candidate.replace("\\[", "[").replace("\\]", "]") if serialized else candidate
+            break
+    return (
+        encoded == expected_metadata
+        and _is_recovery_only_historical_source(body)
+        and hashlib.sha256(observed.encode("utf-8")).hexdigest()
+        == _FOUNDRY_ADR_0001_READBACK_SHA256
+    )
+
+
+def _linear_foundry_adr_0012_v1_readback(body: str) -> str | None:
+    """Return the one qualified raw-HTML serialization observed for ADR-0012.
+
+    This is deliberately a source-digest-pinned profile, rather than a raw HTML
+    parser. It records Linear's observed insertion of a blank line between the
+    four headings and their angle-bracket placeholders, dash-list rewrite, and
+    final-newline removal. Any source-body variation remains unsupported.
+    """
+    if hashlib.sha256(body.encode("utf-8")).hexdigest() != (
+        _FOUNDRY_ADR_0012_SOURCE_SHA256
+    ):
+        return None
+    rendered = body
+    for heading in (
+        "## Contexte",
+        "## Décision",
+        "## Conséquences",
+        "## Alternatives écartées",
+    ):
+        rendered = rendered.replace(f"{heading}\n", f"{heading}\n\n", 1)
+    rendered = rendered.replace("\n- **<Alt>**", "\n* **<Alt>**", 1)
+    rendered = rendered.removesuffix("\n")
+    if hashlib.sha256(rendered.encode("utf-8")).hexdigest() != (
+        _FOUNDRY_ADR_0012_READBACK_SHA256
+    ):
+        raise ValueError(
+            f"{_FOUNDRY_ADR_0012_READBACK_PROFILE} rendering is invalid"
+        )
+    return rendered
+
+
+def _linear_markdown_readback_body(body: str) -> str:
+    """Model only closed, observed Linear Markdown serializations."""
+    qualified = _linear_foundry_adr_0012_v1_readback(body)
+    if qualified is not None:
+        return qualified
+    rendered = []
+    fence = None
+    for source_line in body.splitlines(keepends=True):
+        line = source_line.removesuffix("\n").removesuffix("\r")
+        if fence is not None:
+            rendered.append(source_line)
+            if _markdown_fence_closing(line, *fence):
+                fence = None
+            continue
+        opening = _markdown_fence_opening(line)
+        if opening is not None:
+            fence = opening
+            rendered.append(source_line)
+            continue
+        candidate = line.lstrip(" ")
+        if len(line) - len(candidate) <= 3 and candidate.startswith("<"):
+            raise ValueError("ambiguous raw HTML block in ADR body")
+        if source_line.startswith("- "):
+            thematic = line.replace(" ", "").replace("\t", "")
+            if len(thematic) < 3 or set(thematic) != {"-"}:
+                source_line = f"* {source_line[2:]}"
+        rendered.append(source_line)
+    return "".join(rendered)
+
+
+def _preflight_adr_body_readback(body: str) -> None:
+    """Refuse a body with an unmodelled Linear rendering before any write."""
+    if _is_recovery_only_historical_source(body):
+        return
+    try:
+        _linear_markdown_readback_body(body)
+    except ValueError as exc:
+        raise TrackerConflictError(
+            "Linear ADR body has unsupported Markdown serialization"
+        ) from exc
+
+
+def _linear_adr_readback_content(content: str) -> str:
+    """Return the sole provider serialization accepted beside canonical bytes.
+
+    Linear escapes the closing delimiter of an HTML comment in Markdown readback.
+    Keep compatibility pinned to the observed deterministic header transformation:
+    JSON brackets, the marker delimiter, and top-level dash list markers outside
+    fenced code only.
+    """
+    if content.startswith(_ADR_HEADER):
+        payload = content[len(_ADR_HEADER) :]
+        encoded, separator, body = payload.partition("\n-->\n\n")
+        if not separator:
+            raise ValueError("canonical ADR document delimiter is missing")
+        encoded = encoded.replace("[", "\\[").replace("]", "\\]")
+        body = _linear_markdown_readback_body(body)
+        return f"{_ADR_HEADER}{encoded}\n\\-->\n\n{body}"
+    if content.startswith(_ADR_WITNESS_HEADER) and content.endswith("\n-->"):
+        suffix = "\n-->"
+        return f"{content[:-len(suffix)]}\n\\-->"
+    raise ValueError("canonical ADR content is invalid")
+
+
+def _adr_qualification_probe_title(adr_id: str, kind: str, content: str) -> str:
+    """Bind a qualification probe to the exact canonical bytes it was created from."""
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return f"{_ADR_QUALIFICATION_PROBE_PREFIX}{adr_id} v0000 {kind} {digest}"
+
+
+def _adr_version_readback_header_matches(observed: object, canonical: str) -> bool:
+    """Keep the one qualified header encoding; the probe pins the complete bytes."""
+    canonical_header, separator, _body = canonical.partition("\n-->\n\n")
+    if (
+        not isinstance(observed, str)
+        or not separator
+        or not canonical_header.startswith(_ADR_HEADER)
+    ):
+        return False
+    serialized = (
+        canonical_header[len(_ADR_HEADER) :].replace("[", "\\[").replace("]", "\\]")
+    )
+    return observed.startswith(f"{canonical_header}\n-->\n\n") or observed.startswith(
+        f"{_ADR_HEADER}{serialized}\n\\-->\n\n"
+    )
+
+
+def _adr_readback_content_matches(observed: object, canonical: str) -> bool:
+    if observed == canonical:
+        return True
+    try:
+        return (
+            observed == _linear_adr_readback_content(canonical)
+            or _is_qualified_historical_readback(observed, canonical)
+        )
+    except ValueError:
+        return _is_qualified_historical_readback(observed, canonical)
+
+
+def _exact_adr_document_matches(raw: object, expected: dict) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    return all(
+        _adr_readback_content_matches(raw.get(key), value)
+        if key == "content"
+        else raw.get(key) == value
+        for key, value in expected.items()
+    )
+
+
+def _adr_witness_document(
+    binding: dict, metadata: dict, raw: dict, source_body: str | None = None
+) -> dict:
+    witness = {
+        "schema": _ADR_WITNESS_SCHEMA,
+        "project_id": binding["project_id"],
+        "team_id": binding["team_id"],
+        "adr_id": metadata["id"],
+        "sequence": metadata["sequence"],
+        "document_id": raw["id"],
+        "document_sha256": hashlib.sha256(raw["content"].encode()).hexdigest(),
+    }
+    if source_body is not None:
+        source_bytes = source_body.encode("utf-8")
+        witness.update(
+            source_encoding=_ADR_SOURCE_ENCODING,
+            source_body=base64.b64encode(source_bytes).decode("ascii"),
+            source_body_sha256=hashlib.sha256(source_bytes).hexdigest(),
+        )
+    encoded = json.dumps(
+        witness, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return {
+        "id": _adr_witness_id(
+            binding["project_id"], metadata["id"], metadata["sequence"]
+        ),
+        "title": (
+            f"{_ADR_WITNESS_PREFIX}{metadata['id']} / "
+            f"v{metadata['sequence']:04d}"
+        ),
+        "content": f"{_ADR_WITNESS_HEADER}{encoded}\n-->",
+        "project": {"id": binding["project_id"]},
+        "archivedAt": None,
+    }
+
+
+def _parse_adr_witness(raw: dict, binding: dict) -> dict:
+    if not isinstance(raw, dict) or raw.get("archivedAt") is not None:
+        raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
+    content = raw.get("content")
+    if not isinstance(content, str) or not content.startswith(_ADR_WITNESS_HEADER):
+        raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
+    payload = content[len(_ADR_WITNESS_HEADER) :]
+    encoded = None
+    for delimiter in ("\n-->", "\n\\-->"):
+        candidate, separator, remainder = payload.partition(delimiter)
+        if separator and not remainder:
+            encoded = candidate
+            break
+    if encoded is None:
+        raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
+    try:
+        witness = json.loads(encoded)
+    except (TypeError, ValueError):
+        raise LinearTrackerError(
+            "adr.witness.normalize", None, "invalid_response"
+        ) from None
+    legacy_required = {
+        "schema",
+        "project_id",
+        "team_id",
+        "adr_id",
+        "sequence",
+        "document_id",
+        "document_sha256",
+    }
+    source_required = legacy_required | {
+        "source_encoding",
+        "source_body",
+        "source_body_sha256",
+    }
+    adr_id = witness.get("adr_id") if isinstance(witness, dict) else None
+    sequence = witness.get("sequence") if isinstance(witness, dict) else None
+    if (
+        not isinstance(witness, dict)
+        or frozenset(witness)
+        not in {frozenset(legacy_required), frozenset(source_required)}
+        or witness["schema"] != _ADR_WITNESS_SCHEMA
+        or witness["project_id"] != binding["project_id"]
+        or witness["team_id"] != binding["team_id"]
+        or not isinstance(adr_id, str)
+        or _ADR_ID.fullmatch(adr_id) is None
+        or type(sequence) is not int
+        or sequence < 0
+        or witness["document_id"]
+        != _adr_document_id(binding["project_id"], adr_id, sequence)
+        or not isinstance(witness["document_sha256"], str)
+        or _DIGEST.fullmatch(witness["document_sha256"]) is None
+        or raw.get("id")
+        != _adr_witness_id(binding["project_id"], adr_id, sequence)
+        or raw.get("title")
+        != f"{_ADR_WITNESS_PREFIX}{adr_id} / v{sequence:04d}"
+        or raw.get("project", {}).get("id") != binding["project_id"]
+        or not _adr_readback_content_matches(
+            content,
+            (
+                f"{_ADR_WITNESS_HEADER}"
+                f"{json.dumps(witness, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
+                "\n-->"
+            ),
+        )
+    ):
+        raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
+    if set(witness) == source_required:
+        try:
+            source_bytes = base64.b64decode(
+                witness["source_body"], validate=True
+            )
+            source_body = source_bytes.decode("utf-8")
+        except (TypeError, ValueError, UnicodeDecodeError, binascii.Error):
+            raise LinearTrackerError(
+                "adr.witness.normalize", None, "invalid_response"
+            ) from None
+        if (
+            witness["source_encoding"] != _ADR_SOURCE_ENCODING
+            or base64.b64encode(source_bytes).decode("ascii")
+            != witness["source_body"]
+            or not isinstance(witness["source_body_sha256"], str)
+            or _DIGEST.fullmatch(witness["source_body_sha256"]) is None
+            or witness["source_body_sha256"]
+            != hashlib.sha256(source_bytes).hexdigest()
+        ):
+            raise LinearTrackerError(
+                "adr.witness.normalize", None, "invalid_response"
+            )
+        witness[_ADR_BOUND_SOURCE_BODY] = source_body
+    return witness
+
+
+def _parse_adr_document(
+    raw: dict,
+    binding: dict,
+    *,
+    source_body: str | None = None,
+    allow_unbound_body: bool = False,
+    allow_witness_bound_readback: bool = False,
+) -> tuple[dict, str]:
+    if not isinstance(raw, dict) or raw.get("archivedAt") is not None:
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    content = raw.get("content")
+    if not isinstance(content, str) or not content.startswith(_ADR_HEADER):
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    payload = content[len(_ADR_HEADER) :]
+    encoded = None
+    body = None
+    for delimiter, linear_serialized in (
+        ("\n-->\n\n", False),
+        ("\n\\-->\n\n", True),
+    ):
+        candidate, separator, candidate_body = payload.partition(delimiter)
+        if not separator:
+            continue
+        if linear_serialized:
+            candidate = candidate.replace("\\[", "[").replace("\\]", "]")
+        try:
+            json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        encoded, body = candidate, candidate_body
+        break
+    if encoded is None or body is None:
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    try:
+        metadata = json.loads(encoded)
+    except (TypeError, ValueError):
+        raise LinearTrackerError("adr.normalize", None, "invalid_response") from None
+    required = {
+        "schema",
+        "project_id",
+        "team_id",
+        "id",
+        "title",
+        "status",
+        "sequence",
+        "previous_id",
+        "previous_sha256",
+        "body_sha256",
+        "origin",
+        "relations",
+    }
+    if not isinstance(metadata, dict) or set(metadata) != required:
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    adr_id, sequence, origin, relations = (
+        metadata["id"],
+        metadata["sequence"],
+        metadata["origin"],
+        metadata["relations"],
+    )
+    canonical_body = body if source_body is None else source_body
+    if (
+        metadata["schema"] != _ADR_SCHEMA
+        or metadata["project_id"] != binding["project_id"]
+        or metadata["team_id"] != binding["team_id"]
+        or not isinstance(adr_id, str)
+        or _ADR_ID.fullmatch(adr_id) is None
+        or not isinstance(metadata["title"], str)
+        or not metadata["title"].strip()
+        or metadata["status"] not in _ADR_STATUSES
+        or type(sequence) is not int
+        or sequence < 0
+        or (
+            sequence == 0
+            and (
+                metadata["previous_id"] is not None
+                or metadata["previous_sha256"] is not None
+            )
+        )
+        or (
+            sequence > 0
+            and (
+                not isinstance(metadata["previous_id"], str)
+                or not isinstance(metadata["previous_sha256"], str)
+                or _DIGEST.fullmatch(metadata["previous_sha256"]) is None
+            )
+        )
+        or not isinstance(metadata["body_sha256"], str)
+        or _DIGEST.fullmatch(metadata["body_sha256"]) is None
+        or (
+            not allow_unbound_body
+            and metadata["body_sha256"]
+            != hashlib.sha256(canonical_body.encode()).hexdigest()
+        )
+        or not isinstance(relations, dict)
+        or set(relations) != {"supersedes", "superseded_by", "issues"}
+        or not isinstance(relations["supersedes"], list)
+        or not isinstance(relations["issues"], list)
+        or len(relations["supersedes"]) > _ADR_RELATION_LIMIT
+        or len(relations["issues"]) > _ADR_RELATION_LIMIT
+        or len(relations["supersedes"]) != len(set(relations["supersedes"]))
+        or len(relations["issues"]) != len(set(relations["issues"]))
+        or any(
+            not isinstance(v, str) or _ADR_ID.fullmatch(v) is None
+            for v in relations["supersedes"]
+        )
+        or any(
+            not isinstance(v, str) or _SAFE_ID.fullmatch(v) is None
+            for v in relations["issues"]
+        )
+        or (
+            relations["superseded_by"] is not None
+            and (
+                not isinstance(relations["superseded_by"], str)
+                or _ADR_ID.fullmatch(relations["superseded_by"]) is None
+            )
+        )
+        or (
+            (metadata["status"] == "superseded")
+            != (relations["superseded_by"] is not None)
+            and not (
+                sequence == 0
+                and metadata["status"] == "superseded"
+                and relations["superseded_by"] is None
+                and isinstance(origin, dict)
+                and origin.get("kind") == "migration"
+                and isinstance(origin.get("missing_relations"), list)
+                and "superseded_by" in origin["missing_relations"]
+            )
+        )
+        or adr_id in relations["supersedes"]
+        or relations["superseded_by"] == adr_id
+        or not isinstance(origin, dict)
+        or origin.get("kind") not in {"native", "migration"}
+    ):
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    if origin["kind"] == "native":
+        valid_origin = set(origin) == {"kind"} and (
+            sequence != 0 or metadata["status"] == "proposed"
+        )
+    else:
+        migration_keys = {
+            "kind",
+            "source_tracker",
+            "source_ref",
+            "source_created",
+            "source_updated",
+            "source_body_sha256",
+            "missing_relations",
+        }
+        valid_origin = (
+            set(origin) in (migration_keys, migration_keys | {"batch_sha256"})
+            and (
+                "batch_sha256" not in origin
+                or (
+                    isinstance(origin["batch_sha256"], str)
+                    and _DIGEST.fullmatch(origin["batch_sha256"]) is not None
+                )
+            )
+            and origin["source_tracker"] == "youtrack"
+            and isinstance(origin["source_ref"], str)
+            and bool(origin["source_ref"])
+            and all(
+                v is None or (type(v) is int and v >= 0)
+                for v in (origin["source_created"], origin["source_updated"])
+            )
+            and isinstance(origin["source_body_sha256"], str)
+            and _DIGEST.fullmatch(origin["source_body_sha256"]) is not None
+            and isinstance(origin["missing_relations"], list)
+            and all(isinstance(value, str) for value in origin["missing_relations"])
+            and origin["missing_relations"] == sorted(set(origin["missing_relations"]))
+            and set(origin["missing_relations"]).issubset(
+                _ADR_MISSING_RELATION_FAMILIES
+            )
+            and (
+                sequence != 0
+                or (
+                    (
+                        "supersedes" not in origin["missing_relations"]
+                        or not relations["supersedes"]
+                    )
+                    and (
+                        "superseded_by" not in origin["missing_relations"]
+                        or relations["superseded_by"] is None
+                    )
+                    and (
+                        "issues" not in origin["missing_relations"]
+                        or not relations["issues"]
+                    )
+                )
+            )
+            and (
+                sequence != 0 or origin["source_body_sha256"] == metadata["body_sha256"]
+            )
+        )
+    if (
+        not valid_origin
+        or raw.get("id") != _adr_document_id(binding["project_id"], adr_id, sequence)
+        or raw.get("title") != _adr_document_title(metadata)
+        or raw.get("project", {}).get("id") != binding["project_id"]
+        or (
+            not allow_unbound_body
+            and not (
+                allow_witness_bound_readback
+                and _is_probe_qualified_historical_version(metadata)
+            )
+            and not _adr_readback_content_matches(
+                content, _adr_document_content(metadata, canonical_body)
+            )
+        )
+    ):
+        raise LinearTrackerError("adr.normalize", None, "invalid_response")
+    return metadata, canonical_body
+
+
+def _is_probe_qualified_historical_version(metadata: dict) -> bool:
+    """Only a batch-imported historical version 0 may carry opaque probe bytes.
+
+    Its readable Document was qualified before creation by a probe of its complete
+    provider readback, and its witness binds those bytes plus the exact source.
+    Native ADRs and every later version keep the closed serialization check.
+    """
+    origin = metadata.get("origin")
+    return (
+        metadata.get("sequence") == 0
+        and isinstance(origin, dict)
+        and origin.get("kind") == "migration"
+        and isinstance(origin.get("batch_sha256"), str)
+    )
+
+
+def _valid_adr_version_delta(previous: dict, current: dict) -> bool:
+    old_relations = previous["relations"]
+    new_relations = current["relations"]
+    body_changed = current["body_sha256"] != previous["body_sha256"]
+    status_changed = current["status"] != previous["status"]
+
+    if new_relations == old_relations:
+        if status_changed:
+            return not body_changed and current["status"] != "superseded"
+        return body_changed
+
+    if body_changed:
+        return False
+    if new_relations["issues"] != old_relations["issues"]:
+        old_issues = old_relations["issues"]
+        new_issues = new_relations["issues"]
+        return (
+            not status_changed
+            and current["status"] in {"proposed", "accepted"}
+            and new_relations["supersedes"] == old_relations["supersedes"]
+            and new_relations["superseded_by"] == old_relations["superseded_by"]
+            and len(new_issues) == len(old_issues) + 1
+            and set(old_issues).issubset(new_issues)
+            and new_issues == sorted(new_issues)
+        )
+    if previous["status"] == "accepted" and current["status"] == "superseded":
+        return (
+            old_relations["superseded_by"] is None
+            and new_relations["superseded_by"] is not None
+            and new_relations["supersedes"] == old_relations["supersedes"]
+        )
+    if status_changed or current["status"] != "accepted":
+        return False
+    old_supersedes = old_relations["supersedes"]
+    new_supersedes = new_relations["supersedes"]
+    return (
+        new_relations["superseded_by"] == old_relations["superseded_by"]
+        and len(new_supersedes) == len(old_supersedes) + 1
+        and set(old_supersedes).issubset(new_supersedes)
+        and new_supersedes == sorted(new_supersedes)
+    )
+
+
+def _adr_chain(documents: list[dict], binding: dict) -> dict:
+    chains = {}
+    witnesses = {}
+    version_documents = []
+    for raw in documents:
+        if isinstance(raw, dict) and (
+            str(raw.get("title", "")).startswith(_ADR_WITNESS_PREFIX)
+            or str(raw.get("content", "")).startswith(_ADR_WITNESS_HEADER)
+        ):
+            witness = _parse_adr_witness(raw, binding)
+            key = (witness["adr_id"], witness["sequence"])
+            if key in witnesses:
+                raise TrackerConflictError("Linear ADR witness slot has a fork")
+            witnesses[key] = (witness, raw)
+            continue
+        if not (
+            isinstance(raw, dict)
+            and (
+                str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_HEADER)
+            )
+        ):
+            continue
+        version_documents.append(raw)
+
+    for raw in version_documents:
+        matching_witnesses = [
+            witness
+            for witness, _witness_raw in witnesses.values()
+            if witness["document_id"] == raw.get("id")
+        ]
+        if len(matching_witnesses) > 1:
+            raise TrackerConflictError("Linear ADR witness slot has a fork")
+        witness = matching_witnesses[0] if matching_witnesses else None
+        source_body = (
+            witness.get(_ADR_BOUND_SOURCE_BODY)
+            if witness is not None
+            else None
+        )
+        metadata, parsed_body = _parse_adr_document(
+            raw,
+            binding,
+            source_body=source_body,
+            allow_unbound_body=witness is None,
+            allow_witness_bound_readback=witness is not None,
+        )
+        if witness is not None and (
+            witness["adr_id"] != metadata["id"]
+            or witness["sequence"] != metadata["sequence"]
+            or (
+                source_body is not None
+                and witness["source_body_sha256"] != metadata["body_sha256"]
+            )
+        ):
+            raise TrackerConflictError("Linear ADR version witness diverged")
+        bound_raw = dict(raw)
+        bound_raw[_ADR_BOUND_SOURCE_BODY] = parsed_body
+        chains.setdefault(metadata["id"], []).append((metadata, bound_raw))
+    observed = set()
+    for adr_id, versions in chains.items():
+        versions.sort(key=lambda item: item[0]["sequence"])
+        for sequence, (metadata, raw) in enumerate(versions):
+            key = (adr_id, sequence)
+            witness_pair = witnesses.get(key)
+            if witness_pair is None:
+                raise TrackerConflictError("Linear ADR version witness is missing")
+            witness, _witness_raw = witness_pair
+            if witness["document_sha256"] != hashlib.sha256(
+                raw["content"].encode()
+            ).hexdigest():
+                raise TrackerConflictError("Linear ADR version witness diverged")
+            observed.add(key)
+            if metadata["sequence"] != sequence:
+                raise TrackerConflictError("Linear ADR version chain has a gap or fork")
+            if sequence:
+                previous, previous_raw = versions[sequence - 1]
+                if (
+                    metadata["previous_id"] != previous_raw["id"]
+                    or metadata["previous_sha256"]
+                    != hashlib.sha256(previous_raw["content"].encode()).hexdigest()
+                    or metadata["title"] != previous["title"]
+                    or metadata["origin"] != previous["origin"]
+                    or previous["status"] in {"deprecated", "superseded"}
+                    or (
+                        metadata["status"] != previous["status"]
+                        and metadata["status"]
+                        not in _ADR_TRANSITIONS[previous["status"]]
+                    )
+                    or (
+                        metadata["status"] == "superseded"
+                        and (
+                            previous["status"] != "accepted"
+                            or previous["relations"]["superseded_by"] is not None
+                        )
+                    )
+                    or (
+                        metadata["status"] == previous["status"]
+                        and metadata["body_sha256"] == previous["body_sha256"]
+                        and metadata["relations"] == previous["relations"]
+                    )
+                    or not _valid_adr_version_delta(previous, metadata)
+                ):
+                    raise TrackerConflictError("Linear ADR version chain diverged")
+    if set(witnesses) != observed:
+        raise TrackerConflictError("Linear ADR witness has no matching version")
+    return chains
+
+
 class LinearTracker(Tracker):
     name = "linear"
+    adr_issue_link_supported = True
     requires_mutation_binding = True
     acceptance_sync_supported = False
     bounded_transition_proofs = True
@@ -239,7 +1114,10 @@ class LinearTracker(Tracker):
     cockpit_evidence_projection_supported = True
 
     def __init__(
-        self, *, token: str | None = None, transport=None,
+        self,
+        *,
+        token: str | None = None,
+        transport=None,
         endpoint: str = LINEAR_GRAPHQL_ENDPOINT,
     ):
         if endpoint != LINEAR_GRAPHQL_ENDPOINT:
@@ -263,7 +1141,8 @@ class LinearTracker(Tracker):
         else:
             data = json.dumps(
                 {"query": document, "variables": variables},
-                ensure_ascii=False, separators=(",", ":"),
+                ensure_ascii=False,
+                separators=(",", ":"),
             ).encode("utf-8")
             request = urllib.request.Request(self.endpoint, data=data, method="POST")
             request.add_header("Authorization", self.token)
@@ -274,7 +1153,9 @@ class LinearTracker(Tracker):
                 with opener.open(request, timeout=15) as response:
                     raw = response.read(_MAX_RESPONSE_BYTES + 1)
                     if len(raw) > _MAX_RESPONSE_BYTES:
-                        raise LinearTrackerError(operation, response.status, "response_too_large")
+                        raise LinearTrackerError(
+                            operation, response.status, "response_too_large"
+                        )
                     status = response.status
             except LinearTrackerError:
                 raise
@@ -285,7 +1166,9 @@ class LinearTracker(Tracker):
             try:
                 envelope = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
-                raise LinearTrackerError(operation, status, "invalid_response") from None
+                raise LinearTrackerError(
+                    operation, status, "invalid_response"
+                ) from None
         if not isinstance(envelope, dict):
             raise LinearTrackerError(operation, None, "invalid_response")
         if envelope.get("errors"):
@@ -298,7 +1181,7 @@ class LinearTracker(Tracker):
     @staticmethod
     def _mutation_payload(data: dict, field: str, operation: str) -> dict:
         payload = data.get(field)
-        if (not isinstance(payload, dict) or payload.get("success") is not True):
+        if not isinstance(payload, dict) or payload.get("success") is not True:
             raise LinearTrackerError(operation, None, "mutation_failed")
         return payload
 
@@ -307,6 +1190,8 @@ class LinearTracker(Tracker):
         comments = _connection(data.get("comments"), operation)
         if len(comments) > 1:
             raise LinearTrackerError(operation, None, "invalid_response")
+        if comments and comments[0].get("id") != comment_id:
+            raise LinearTrackerError(operation, None, "invalid_response")
         return comments[0] if comments else None
 
     # ---- explicit binding -----------------------------------------
@@ -314,6 +1199,12 @@ class LinearTracker(Tracker):
     def _binding(project: Project) -> dict:
         if not isinstance(project, Project):
             raise LinearBindingError("project_missing")
+        project_key = project.key
+        if (
+            not isinstance(project_key, str)
+            or _ISSUE_KEY.fullmatch(project_key) is None
+        ):
+            raise LinearBindingError("project_key_invalid")
         project_id = _safe_id(project.id, "project_id_invalid")
         team_id = _safe_id(project.extra.get("team_id"), "team_id_invalid")
         canonical = project.extra.get("canonical_repo")
@@ -330,6 +1221,7 @@ class LinearTracker(Tracker):
         if set(type_label_ids.values()) & set(label_ids.values()):
             raise LinearBindingError("label_ids_overlap")
         return {
+            "key": project_key,
             "project_id": project_id,
             "team_id": team_id,
             "canonical_repo": canonical,
@@ -359,13 +1251,16 @@ class LinearTracker(Tracker):
         return self.resolve_checkout_project()
 
     def resolve_checkout_project(
-        self, cwd: str | None = None, *, checkout_identity: str | None = None,
+        self,
+        cwd: str | None = None,
+        *,
+        checkout_identity: str | None = None,
     ) -> Project:
         try:
             observed = (
                 registry.checkout_repository_identity(cwd)
-                if checkout_identity is None else
-                registry.canonical_repository_identity(checkout_identity)
+                if checkout_identity is None
+                else registry.canonical_repository_identity(checkout_identity)
             )
         except ValueError:
             raise SystemExit(
@@ -382,27 +1277,89 @@ class LinearTracker(Tracker):
     def preflight_issue_operation(self, operation: str) -> None:
         if operation == "openpr" and self.append_only_lifecycle_supported:
             return
-        if (operation == "merge" and self.append_only_lifecycle_supported
-                and self.acceptance_proof_projection_supported):
+        if (
+            operation == "merge"
+            and self.append_only_lifecycle_supported
+            and self.acceptance_proof_projection_supported
+        ):
             return
         if operation not in {"openpr", "merge"}:
             raise TrackerCapabilityUnavailableError(self.name, f"lifecycle:{operation}")
         raise TrackerCapabilityUnavailableError(
-            self.name, "append-only-lifecycle-proof",
+            self.name,
+            "append-only-lifecycle-proof",
         )
+
+    def preflight_merge_effect(self) -> None:
+        """Refuse a GitHub merge while Linear can auto-complete linked issues.
+
+        This is deliberately a final, read-only provider check: PR linkage is allowed,
+        but a team-level ``merge -> completed`` rule would let Linear close every
+        linked issue, including an unfinished prerequisite.  The API does not expose
+        a CAS for this configuration, so an unavailable, malformed, or paginated
+        response is also unsafe and refuses the irreversible code-host effect.
+        """
+        binding = self._binding(self._project())
+        data = self._graphql(
+            _TEAM_GIT_AUTOMATION_STATES_QUERY,
+            {"id": binding["team_id"]},
+            "team.git-automation-states",
+        )
+        team = data.get("team")
+        if not isinstance(team, dict) or team.get("id") != binding["team_id"]:
+            raise LinearTrackerError(
+                "team.git-automation-states",
+                None,
+                "invalid_response",
+            )
+        states = _connection(
+            team.get("gitAutomationStates"),
+            "team.git-automation-states",
+        )
+        for automation in states:
+            event = automation.get("event")
+            state = automation.get("state")
+            if (
+                not isinstance(automation.get("id"), str)
+                    or event not in _GIT_AUTOMATION_EVENTS
+                or (
+                    state is not None
+                    and (
+                        not isinstance(state, dict)
+                        or not isinstance(state.get("id"), str)
+                        or state.get("type") not in _WORKFLOW_STATE_TYPES
+                    )
+                )
+            ):
+                raise LinearTrackerError(
+                    "team.git-automation-states",
+                    None,
+                    "invalid_response",
+                )
+            if event == "merge" and state is not None and state["type"] == "completed":
+                raise TrackerConflictError(
+                    "Linear Git automation unsafe: merge maps to completed state",
+                )
 
     @staticmethod
     def _lifecycle_marker(
-        operation: str, issue_id: str, payload: dict,
+        operation: str,
+        issue_id: str,
+        payload: dict,
     ) -> tuple[str, str, str]:
         if operation not in _LIFECYCLE_OPERATIONS:
             raise TrackerCapabilityUnavailableError("linear", f"lifecycle:{operation}")
-        canonical = json.dumps({
+        canonical = json.dumps(
+            {
             "schema": _LIFECYCLE_SCHEMA,
             "operation": operation,
             "issue": issue_id,
             "payload": payload,
-        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
         digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
         marker = f"{_LIFECYCLE_SCHEMA}:{operation}:{digest}"
         slot = {
@@ -415,39 +1372,49 @@ class LinearTracker(Tracker):
         elif operation == "acceptance":
             slot["generation"] = payload.get("review_generation")
         slot_canonical = json.dumps(
-            slot, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            slot,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
         )
         slot_digest = hashlib.sha256(slot_canonical.encode("ascii")).hexdigest()
-        # Linear validates client-supplied IDs as RFC 4122 UUIDs. Preserve the
-        # deterministic digest while forcing valid version/variant bits.
         comment_id = str(uuid.UUID(slot_digest[:32], version=4))
         body = f"{_LIFECYCLE_HEADER}\nmarker: {marker}\ncoordinates: {canonical}"
         return marker, body, comment_id
 
     @classmethod
     def _decode_lifecycle_comment(
-        cls, issue_id: str, body: object,
+        cls,
+        issue_id: str,
+        body: object,
     ) -> tuple[str, dict, str, str] | None:
         if not isinstance(body, str) or not body.startswith(_LIFECYCLE_HEADER):
             return None
         lines = body.splitlines()
-        if len(lines) != 3 or not lines[1].startswith("marker: ") \
-                or not lines[2].startswith("coordinates: "):
+        if (
+            len(lines) != 3
+            or not lines[1].startswith("marker: ")
+            or not lines[2].startswith("coordinates: ")
+        ):
             raise TrackerConflictError("Linear lifecycle comment malformed")
         marker = lines[1].removeprefix("marker: ")
         try:
             value = json.loads(lines[2].removeprefix("coordinates: "))
         except (ValueError, TypeError, RecursionError):
             raise TrackerConflictError("Linear lifecycle comment malformed") from None
-        if (not isinstance(value, dict)
+        if (
+            not isinstance(value, dict)
                 or set(value) != {"schema", "operation", "issue", "payload"}
                 or value.get("schema") != _LIFECYCLE_SCHEMA
                 or value.get("issue") != issue_id
                 or value.get("operation") not in _LIFECYCLE_OPERATIONS
-                or not isinstance(value.get("payload"), dict)):
+            or not isinstance(value.get("payload"), dict)
+        ):
             raise TrackerConflictError("Linear lifecycle comment malformed")
         expected_marker, expected_body, expected_id = cls._lifecycle_marker(
-            value["operation"], issue_id, value["payload"],
+            value["operation"],
+            issue_id,
+            value["payload"],
         )
         if marker != expected_marker or body != expected_body:
             raise TrackerConflictError("Linear lifecycle comment integrity invalid")
@@ -455,30 +1422,48 @@ class LinearTracker(Tracker):
 
     @staticmethod
     def _validate_acceptance_projection(
-        issue_id: str, body: str, payload: dict, review: dict | None,
+        issue_id: str,
+        body: str,
+        payload: dict,
+        review: dict | None,
     ) -> None:
         if set(payload) != {
-            "native_state_id", "body_digest", "checked", "proof", "review_generation",
+            "native_state_id",
+            "body_digest",
+            "checked",
+            "proof",
+            "review_generation",
         }:
             raise TrackerConflictError("Linear acceptance proof malformed")
         proof = payload.get("proof")
-        if (not isinstance(proof, dict)
-                or set(proof) != {
-                    "schema_version", "proof_id", "issue", "review",
-                    "coordinates", "quality",
-                }):
+        if not isinstance(proof, dict) or set(proof) != {
+            "schema_version",
+            "proof_id",
+            "issue",
+            "review",
+            "coordinates",
+            "quality",
+        }:
             raise TrackerConflictError("Linear acceptance proof malformed")
         canonical_proof = dict(proof)
         proof_id = canonical_proof.pop("proof_id", None)
-        calculated = hashlib.sha256(json.dumps(
-            canonical_proof, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
-        ).encode("ascii")).hexdigest()
+        calculated = hashlib.sha256(
+            json.dumps(
+                canonical_proof,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("ascii")
+        ).hexdigest()
         issue = proof.get("issue")
         coordinates = proof.get("coordinates")
         criteria = issue.get("criteria") if isinstance(issue, dict) else None
         from foundry.routing import acceptance_criteria, acceptance_digest
+
         expected = acceptance_criteria(body)
-        if (proof.get("schema_version") != 1 or proof_id != calculated
+        if (
+            proof.get("schema_version") != 1
+            or proof_id != calculated
                 or proof.get("quality") != "mergeable"
                 or payload.get("body_digest") != hashlib.sha256(body.encode()).hexdigest()
                 or not isinstance(issue, dict)
@@ -495,36 +1480,142 @@ class LinearTracker(Tracker):
                 or coordinates.get("head") != review.get("head_sha")
                 or coordinates.get("base") != review.get("base_sha")
                 or coordinates.get("diff_hash") != review.get("review_digest")
-                or payload.get("review_generation") != review.get("generation")):
+            or payload.get("review_generation") != review.get("generation")
+        ):
             raise TrackerConflictError("Linear acceptance proof malformed or stale")
 
-    @classmethod
-    def _lifecycle_projection(cls, issue_id: str, raw: dict) -> dict:
+    @staticmethod
+    def _native_state_can_advance(previous: str, current: str) -> bool:
+        if previous == current:
+            return True
+        rank = {
+            "backlog": 0,
+            "ready": 0,
+            "in-progress": 1,
+            "review": 2,
+            "done": 3,
+        }
+        return previous in rank and current in rank and rank[current] >= rank[previous]
+
+    def _validate_native_state_history(
+        self,
+        rows: dict[str, list[tuple[dict, str]]],
+        ordered: list[dict],
+        native_state_id: str,
+        *,
+        pending_operation: str | None,
+        acceptance_complete: bool,
+        done: dict | None,
+    ) -> None:
+        state_ids = self._binding(self._project())["state_ids"]
+        state_by_id = {identifier: name for name, identifier in state_ids.items()}
+        receipt_ids = [
+            payload.get("native_state_id")
+            for operation_rows in rows.values()
+            for payload, _body in operation_rows
+        ]
+        if any(
+            not isinstance(identifier, str) or identifier not in state_by_id
+            for identifier in receipt_ids
+        ):
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+
+        ordered_ids = [payload["native_state_id"] for payload in ordered]
+        cockpit_ids = [
+            payload["native_state_id"]
+            for payload, _body in rows.get("cockpit-evidence", [])
+        ]
+        if not ordered_ids:
+            ordered_ids = cockpit_ids
+        elif any(identifier not in set(ordered_ids) for identifier in cockpit_ids):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+        if not ordered_ids:
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+
+        names = [state_by_id[identifier] for identifier in ordered_ids]
+        if any(
+            not self._native_state_can_advance(previous, current)
+            for previous, current in zip(names, names[1:])
+        ):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+
+        current_name = state_by_id.get(native_state_id)
+        if current_name is None:
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
+        latest_name = names[-1]
+        current_is_durable = native_state_id == ordered_ids[-1]
+        # Linear's GitHub integration can asynchronously apply its native ``start``
+        # automation after Foundry has already durably projected a PR review.  This
+        # is observation-only: it neither changes the lifecycle projection nor
+        # supplies a new receipt.  Keep the exception deliberately narrower than
+        # the normal pending-write forward window.
+        reviewed_start_drift = (
+            pending_operation in {None, "state-in-progress"}
+            and done is None
+            and rows.get("state-review")
+            and latest_name in {"backlog", "ready"}
+            and current_name == "in-progress"
+        )
+        pending_forward = (
+            pending_operation in {"state-review", "acceptance"}
+            and current_name != "done"
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        pending_done = (
+            pending_operation == "state-done"
+            and current_name == "done"
+            and done is None
+            and acceptance_complete
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        if not (current_is_durable or reviewed_start_drift or pending_forward or pending_done):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+        if (
+            current_name == "done"
+            and not pending_done
+            and (done is None or done.get("native_state_id") != native_state_id)
+        ):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+
+    def _lifecycle_projection(
+        self,
+        issue_id: str,
+        raw: dict,
+        *,
+        pending_operation: str | None = None,
+    ) -> dict:
         comments = _connection(raw.get("comments"), "lifecycle.comments")
         rows: dict[str, list[tuple[dict, str]]] = {}
         for comment in comments:
-            decoded = cls._decode_lifecycle_comment(issue_id, comment.get("body"))
+            decoded = self._decode_lifecycle_comment(issue_id, comment.get("body"))
             if decoded is None:
                 continue
             operation, payload, body, expected_id = decoded
             if comment.get("id") != expected_id:
                 raise TrackerConflictError("Linear lifecycle comment id invalid")
             rows.setdefault(operation, []).append((payload, body))
-        if not rows:
-            return {
-                "state": None, "pr_url": None, "acceptance_complete": False,
-                "review_generation": 0, "latest_review": None,
-                "latest_review_body_digest": None,
-            }
-
         native_state = raw.get("state")
-        native_state_id = native_state.get("id") if isinstance(native_state, dict) else None
+        native_state_id = (
+            native_state.get("id") if isinstance(native_state, dict) else None
+        )
         if not isinstance(native_state_id, str):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
-        for operation_rows in rows.values():
-            for payload, _body in operation_rows:
-                if payload.get("native_state_id") != native_state_id:
-                    raise TrackerConflictError("Linear native state changed outside lifecycle")
+        if not rows:
+            done_state_id = self._binding(self._project())["state_ids"]["done"]
+            if native_state_id == done_state_id:
+                raise TrackerConflictError(
+                    "Linear native state changed outside lifecycle"
+                )
+            return {
+                "state": None,
+                "pr_url": None,
+                "acceptance_complete": False,
+                "in_progress": None,
+                "acceptance_by_generation": {},
+                "review_generation": 0,
+                "latest_review": None,
+                "latest_review_body_digest": None,
+            }
 
         for operation in {"state-in-progress", "state-done", "cockpit-evidence"}:
             if len(rows.get(operation, [])) > 1:
@@ -546,11 +1637,13 @@ class LinearTracker(Tracker):
             if set(payload) != keys or payload.get("state") != name:
                 raise TrackerConflictError("Linear lifecycle state proof malformed")
             if name == "done":
-                if (not isinstance(payload.get("pr_url"), str)
+                if (
+                    not isinstance(payload.get("pr_url"), str)
                         or not payload["pr_url"].startswith("https://github.com/")
                         or _SHA.fullmatch(str(payload.get("head_sha"))) is None
                         or _SHA.fullmatch(str(payload.get("base_sha"))) is None
-                        or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None):
+                    or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None
+                ):
                     raise TrackerConflictError("Linear lifecycle state proof malformed")
             if merged and _SHA.fullmatch(str(payload.get("merge_sha"))) is None:
                 raise TrackerConflictError("Linear lifecycle state proof malformed")
@@ -560,17 +1653,26 @@ class LinearTracker(Tracker):
         reviews = []
         for payload, body in rows.get("state-review", []):
             expected_keys = {
-                "state", "native_state_id", "pr_url", "head_sha", "base_sha",
-                "review_digest", "generation", "previous_projection_digest",
+                "state",
+                "native_state_id",
+                "pr_url",
+                "head_sha",
+                "base_sha",
+                "review_digest",
+                "generation",
+                "previous_projection_digest",
             }
-            if (set(payload) != expected_keys or payload.get("state") != "review"
+            if (
+                set(payload) != expected_keys
+                or payload.get("state") != "review"
                     or type(payload.get("generation")) is not int
                     or payload["generation"] < 1
                     or not isinstance(payload.get("pr_url"), str)
                     or not payload["pr_url"].startswith("https://github.com/")
                     or _SHA.fullmatch(str(payload.get("head_sha"))) is None
                     or _SHA.fullmatch(str(payload.get("base_sha"))) is None
-                    or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None):
+                or _DIGEST.fullmatch(str(payload.get("review_digest"))) is None
+            ):
                 raise TrackerConflictError("Linear lifecycle state proof malformed")
             reviews.append((payload, body))
         reviews.sort(key=lambda item: item[0]["generation"])
@@ -578,21 +1680,36 @@ class LinearTracker(Tracker):
         for expected_generation, (payload, body) in enumerate(reviews, start=1):
             previous_digest = (
                 hashlib.sha256(previous_body.encode()).hexdigest()
-                if previous_body is not None else None
+                if previous_body is not None
+                else None
             )
-            if (payload["generation"] != expected_generation
-                    or payload.get("previous_projection_digest") != previous_digest):
+            if (
+                payload["generation"] != expected_generation
+                or payload.get("previous_projection_digest") != previous_digest
+            ):
                 raise TrackerConflictError("Linear lifecycle review chain invalid")
             previous_body = body
         review = reviews[-1][0] if reviews else None
         done = state_payload("done", merged=True)
         if done is not None:
-            if review is None or any(
+            if (
+                review is None
+                or any(
                 done[key] != review[key]
                 for key in ("pr_url", "head_sha", "base_sha", "review_digest")
-            ) or done.get("review_generation") != review.get("generation"):
+                )
+                or done.get("review_generation") != review.get("generation")
+            ):
                 raise TrackerConflictError("Linear done proof lacks matching review")
-        projected_state = "done" if done else "review" if review else "in-progress" if in_progress else None
+        projected_state = (
+            "done"
+            if done
+            else "review"
+            if review
+            else "in-progress"
+            if in_progress
+            else None
+        )
 
         acceptance_complete = False
         acceptance_by_generation = {}
@@ -603,13 +1720,36 @@ class LinearTracker(Tracker):
             if generation in acceptance_by_generation:
                 raise TrackerConflictError("Linear lifecycle duplicate projection")
             bound_review = reviews_by_generation.get(generation)
-            cls._validate_acceptance_projection(issue_id, body, payload, bound_review)
+            self._validate_acceptance_projection(issue_id, body, payload, bound_review)
             acceptance_by_generation[generation] = payload
         if review is not None:
             acceptance_complete = review["generation"] in acceptance_by_generation
+        if done is not None and not acceptance_complete:
+            raise TrackerConflictError("Linear done proof lacks matching acceptance")
+
+        ordered = []
+        if in_progress is not None:
+            ordered.append(in_progress)
+        for review_payload, _review_body in reviews:
+            ordered.append(review_payload)
+            acceptance = acceptance_by_generation.get(review_payload["generation"])
+            if acceptance is not None:
+                ordered.append(acceptance)
+        if done is not None:
+            ordered.append(done)
+        self._validate_native_state_history(
+            rows,
+            ordered,
+            native_state_id,
+            pending_operation=pending_operation,
+            acceptance_complete=acceptance_complete,
+            done=done,
+        )
         return {
             "state": projected_state,
             "pr_url": (done or review or {}).get("pr_url"),
+            "in_progress": in_progress,
+            "acceptance_by_generation": acceptance_by_generation,
             "acceptance_complete": acceptance_complete,
             "review_generation": review.get("generation") if review else 0,
             "latest_review": review,
@@ -619,37 +1759,74 @@ class LinearTracker(Tracker):
         }
 
     def _project_lifecycle(
-        self, issue_id: str, operation: str, payload: dict, project: Project,
+        self,
+        issue_id: str,
+        operation: str,
+        payload: dict,
+        project: Project,
     ) -> bool:
         raw = self._read_raw(issue_id)
         binding = self._activate(project)
         self._assert_issue_project(raw, binding)
-        projection = self._lifecycle_projection(issue_id, raw)
+        projection = self._lifecycle_projection(
+            issue_id,
+            raw,
+            pending_operation=operation,
+        )
         state = raw.get("state")
         native_state_id = state.get("id") if isinstance(state, dict) else None
         if not isinstance(native_state_id, str):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
+        if operation == "state-in-progress" and projection["state"] == "review":
+            # merge() replays this step before the current exact review/CI gates.
+            # A start receipt written after any durable review generation would be
+            # reordered before that review during validation and can poison the
+            # append-only chain. The review is already stronger evidence; never
+            # append or rewrite an in-progress receipt in this state.
+            return False
         bounded_payload = {**payload, "native_state_id": native_state_id}
+        if operation == "state-in-progress" and projection["in_progress"] is not None:
+            bounded_payload["native_state_id"] = projection["in_progress"][
+                "native_state_id"
+            ]
         if operation == "state-review":
             latest = projection["latest_review"]
             coordinate_keys = {"pr_url", "head_sha", "base_sha", "review_digest"}
-            if latest is not None and all(latest[key] == payload.get(key)
-                                          for key in coordinate_keys):
-                bounded_payload.update({
+            if latest is not None and all(
+                latest[key] == payload.get(key) for key in coordinate_keys
+            ):
+                bounded_payload.update(
+                    {
+                    "native_state_id": latest["native_state_id"],
                     "generation": latest["generation"],
-                    "previous_projection_digest": latest["previous_projection_digest"],
-                })
+                        "previous_projection_digest": latest[
+                            "previous_projection_digest"
+                        ],
+                    }
+                )
             else:
-                bounded_payload.update({
+                bounded_payload.update(
+                    {
                     "generation": projection["review_generation"] + 1,
-                    "previous_projection_digest": projection["latest_review_body_digest"],
-                })
+                        "previous_projection_digest": projection[
+                            "latest_review_body_digest"
+                        ],
+                    }
+                )
         elif operation == "state-done":
             if projection["review_generation"] < 1:
                 raise TrackerConflictError("Linear done proof lacks matching review")
             bounded_payload["review_generation"] = projection["review_generation"]
+        elif operation == "acceptance":
+            previous = projection["acceptance_by_generation"].get(
+                payload.get("review_generation"),
+            )
+            if previous is not None:
+                bounded_payload["native_state_id"] = previous["native_state_id"]
         _marker, body, comment_id = self._lifecycle_marker(
-            operation, issue_id, bounded_payload,
+            operation,
+            issue_id,
+            bounded_payload,
         )
         existing = []
         for item in _connection(raw.get("comments"), "lifecycle.comments"):
@@ -661,8 +1838,11 @@ class LinearTracker(Tracker):
         exact = [item for item in existing if item == (comment_id, body)]
         if exact == [(comment_id, body)]:
             prior = self._read_comment(comment_id, "lifecycle.comment.read")
-            if (not isinstance(prior, dict) or prior.get("body") != body
-                    or (prior.get("issue") or {}).get("id") != raw["id"]):
+            if (
+                not isinstance(prior, dict)
+                or prior.get("body") != body
+                or (prior.get("issue") or {}).get("id") != raw["id"]
+            ):
                 raise TrackerConflictError("Linear lifecycle replay readback divergent")
             fresh = self._read_raw(issue_id)
             self._lifecycle_projection(issue_id, fresh)
@@ -677,15 +1857,22 @@ class LinearTracker(Tracker):
                 decoded = self._decode_lifecycle_comment(issue_id, item_body)
                 prior_payload = decoded[1] if decoded is not None else {}
                 prior_generation = prior_payload.get(
-                    "generation" if operation == "state-review" else "review_generation",
+                    "generation"
+                    if operation == "state-review"
+                    else "review_generation",
                 )
                 if prior_generation == generation:
-                    raise TrackerConflictError("Linear lifecycle divergent before comment")
+                    raise TrackerConflictError(
+                        "Linear lifecycle divergent before comment"
+                    )
 
         prior = self._read_comment(comment_id, "lifecycle.comment.read")
         if prior is not None:
-            if (not isinstance(prior, dict) or prior.get("body") != body
-                    or (prior.get("issue") or {}).get("id") != raw["id"]):
+            if (
+                not isinstance(prior, dict)
+                or prior.get("body") != body
+                or (prior.get("issue") or {}).get("id") != raw["id"]
+            ):
                 raise TrackerConflictError("Linear lifecycle comment id collision")
             created_now = False
         else:
@@ -697,22 +1884,33 @@ class LinearTracker(Tracker):
                     "lifecycle.comment.create",
                 )
                 created = self._mutation_payload(
-                    data, "commentCreate", "lifecycle.comment.create",
+                    data,
+                    "commentCreate",
+                    "lifecycle.comment.create",
                 ).get("comment")
-                if (not isinstance(created, dict) or created.get("id") != comment_id
+                if (
+                    not isinstance(created, dict)
+                    or created.get("id") != comment_id
                         or created.get("body") != body
-                        or (created.get("issue") or {}).get("id") != raw["id"]):
+                    or (created.get("issue") or {}).get("id") != raw["id"]
+                ):
                     raise LinearTrackerError(
-                        "lifecycle.comment.create", None, "invalid_response",
+                        "lifecycle.comment.create",
+                        None,
+                        "invalid_response",
                     )
             except LinearTrackerError:
                 # The provider may have committed the deterministic create before the
                 # response was interrupted. Recovery is allowed only through its exact ID.
                 recovered = self._read_comment(
-                    comment_id, "lifecycle.comment.recover",
+                    comment_id,
+                    "lifecycle.comment.recover",
                 )
-                if (not isinstance(recovered, dict) or recovered.get("body") != body
-                        or (recovered.get("issue") or {}).get("id") != raw["id"]):
+                if (
+                    not isinstance(recovered, dict)
+                    or recovered.get("body") != body
+                    or (recovered.get("issue") or {}).get("id") != raw["id"]
+                ):
                     raise
         fresh = self._read_raw(issue_id)
         observed = []
@@ -734,17 +1932,99 @@ class LinearTracker(Tracker):
             self._assert_issue_project(raw, binding)
 
     def validate_adr_binding(self, project: Project, *adr_ids: str) -> None:
-        self._activate(project)
-        raise TrackerCapabilityUnavailableError(self.name, "adr-knowledge-base")
+        for adr_id in adr_ids:
+            if self.adr_for_mutation(project, adr_id) is None:
+                raise AdrUnavailableError(adr_id)
 
     @staticmethod
     def _assert_issue_project(raw: dict, binding: dict) -> None:
         team = raw.get("team") if isinstance(raw, dict) else None
         project = raw.get("project") if isinstance(raw, dict) else None
-        if (not isinstance(team, dict) or team.get("id") != binding["team_id"]
+        if (
+            not isinstance(team, dict)
+            or team.get("id") != binding["team_id"]
                 or not isinstance(project, dict)
-                or project.get("id") != binding["project_id"]):
+            or project.get("id") != binding["project_id"]
+        ):
             raise LinearBindingError("issue_outside_binding")
+
+    @staticmethod
+    def _adr_issue_identity(
+        raw: dict, binding: dict, operation: str
+    ) -> tuple[str, str]:
+        """Return the canonical readable and native IDs for one bound issue."""
+        LinearTracker._assert_issue_project(raw, binding)
+        native_id = raw.get("id") if isinstance(raw, dict) else None
+        identifier = raw.get("identifier") if isinstance(raw, dict) else None
+        team = raw.get("team") if isinstance(raw, dict) else None
+        prefix = f"{binding['key']}-"
+        number = (
+            identifier[len(prefix) :]
+            if isinstance(identifier, str) and identifier.startswith(prefix)
+            else None
+        )
+        if (
+            not isinstance(native_id, str)
+            or _SAFE_ID.fullmatch(native_id) is None
+            or not isinstance(identifier, str)
+            or _SAFE_ID.fullmatch(identifier) is None
+            or not isinstance(team, dict)
+            or team.get("key") != binding["key"]
+            or not isinstance(number, str)
+            or _ISSUE_NUMBER.fullmatch(number) is None
+        ):
+            raise LinearTrackerError(operation, None, "invalid_response")
+        return identifier, native_id
+
+    def _resolve_adr_issue_reference(
+        self, issue_ref: str, binding: dict
+    ) -> tuple[str, str]:
+        """Resolve an alias and corroborate both provider identity coordinates."""
+        operation = "adr.issue.resolve"
+        raw = self._read_raw(issue_ref)
+        identity = self._adr_issue_identity(raw, binding, operation)
+        for exact_ref in dict.fromkeys(identity):
+            if exact_ref == issue_ref:
+                continue
+            try:
+                exact = self._read_raw(exact_ref)
+            except IssueUnavailableError:
+                raise TrackerConflictError(
+                    "Linear ADR issue alias resolved ambiguously"
+                ) from None
+            if self._adr_issue_identity(exact, binding, operation) != identity:
+                raise TrackerConflictError(
+                    "Linear ADR issue alias resolved ambiguously"
+                )
+        return identity
+
+    def _canonicalize_adr_issue_refs(
+        self, issue_refs: tuple[str, ...], binding: dict
+    ) -> tuple[tuple[str, ...], dict[str, str]]:
+        canonical_to_native = {}
+        native_to_canonical = {}
+        for issue_ref in sorted(issue_refs):
+            identifier, native_id = self._resolve_adr_issue_reference(
+                issue_ref, binding
+            )
+            if identifier in canonical_to_native:
+                if canonical_to_native[identifier] != native_id:
+                    raise TrackerConflictError(
+                        "Linear ADR issue alias resolved ambiguously"
+                    )
+                raise TrackerConflictError(
+                    "Linear ADR issue references duplicate provider identity"
+                )
+            if native_id in native_to_canonical:
+                raise TrackerConflictError(
+                    "Linear ADR issue references duplicate provider identity"
+                )
+            canonical_to_native[identifier] = native_id
+            native_to_canonical[native_id] = identifier
+        if len(canonical_to_native) > _ADR_RELATION_LIMIT:
+            raise TrackerConflictError("Linear ADR issue relation limit exceeded")
+        identifiers = tuple(sorted(canonical_to_native))
+        return identifiers, canonical_to_native
 
     # ---- reads / normalization ------------------------------------
     def _read_raw(self, issue_id: str) -> dict:
@@ -761,7 +2041,8 @@ class LinearTracker(Tracker):
     @staticmethod
     def _ac_counts(body: str) -> tuple[int, int]:
         marks = [
-            match.group("mark") for line in body.splitlines()
+            match.group("mark")
+            for line in body.splitlines()
             if (match := _AC_CHECKBOX.match(line)) is not None
         ]
         done = sum(mark in {"x", "X"} for mark in marks)
@@ -777,13 +2058,19 @@ class LinearTracker(Tracker):
         state = raw.get("state")
         if not isinstance(state, dict) or not isinstance(state.get("id"), str):
             raise LinearTrackerError("normalize", None, "invalid_response")
-        state_by_id = {identifier: name for name, identifier in binding["state_ids"].items()}
+        state_by_id = {
+            identifier: name for name, identifier in binding["state_ids"].items()
+        }
         if state["id"] not in state_by_id:
             raise LinearBindingError("state_id_unmapped")
 
         labels_raw = _connection(raw.get("labels"), "normalize.labels")
-        type_by_id = {identifier: name for name, identifier in binding["type_label_ids"].items()}
-        label_by_id = {identifier: name for name, identifier in binding["label_ids"].items()}
+        type_by_id = {
+            identifier: name for name, identifier in binding["type_label_ids"].items()
+        }
+        label_by_id = {
+            identifier: name for name, identifier in binding["label_ids"].items()
+        }
         label_ids = []
         for node in labels_raw:
             identifier = node.get("id")
@@ -794,15 +2081,25 @@ class LinearTracker(Tracker):
             label_ids.append(identifier)
         if len(label_ids) != len(set(label_ids)):
             raise LinearTrackerError("normalize.labels", None, "invalid_response")
-        types = [type_by_id[identifier] for identifier in label_ids if identifier in type_by_id]
+        types = [
+            type_by_id[identifier]
+            for identifier in label_ids
+            if identifier in type_by_id
+        ]
         if len(types) > 1:
             raise LinearBindingError("type_labels_ambiguous")
-        labels = [label_by_id[identifier] for identifier in label_ids if identifier in label_by_id]
+        labels = [
+            label_by_id[identifier]
+            for identifier in label_ids
+            if identifier in label_by_id
+        ]
 
         links: list[Link] = []
         parent = raw.get("parent")
         if parent is not None:
-            if not isinstance(parent, dict) or not isinstance(parent.get("identifier"), str):
+            if not isinstance(parent, dict) or not isinstance(
+                parent.get("identifier"), str
+            ):
                 raise LinearTrackerError("normalize", None, "invalid_response")
             links.append(Link("subtask-of", "inward", parent["identifier"]))
         for child in _connection(raw.get("children"), "normalize.children"):
@@ -811,16 +2108,21 @@ class LinearTracker(Tracker):
             links.append(Link("parent-of", "outward", child["identifier"]))
         for relation in _connection(raw.get("relations"), "normalize.relations"):
             links.append(_relation_link(relation, inverse=False))
-        for relation in _connection(raw.get("inverseRelations"), "normalize.inverse-relations"):
+        for relation in _connection(
+            raw.get("inverseRelations"), "normalize.inverse-relations"
+        ):
             links.append(_relation_link(relation, inverse=True))
 
         milestone = None
         milestone_raw = raw.get("projectMilestone")
         if milestone_raw is not None:
-            if not isinstance(milestone_raw, dict) or not isinstance(milestone_raw.get("id"), str):
+            if not isinstance(milestone_raw, dict) or not isinstance(
+                milestone_raw.get("id"), str
+            ):
                 raise LinearTrackerError("normalize", None, "invalid_response")
             milestone_by_id = {
-                identifier: name for name, identifier in binding["milestone_ids"].items()
+                identifier: name
+                for name, identifier in binding["milestone_ids"].items()
             }
             if milestone_raw["id"] not in milestone_by_id:
                 raise LinearBindingError("milestone_id_unmapped")
@@ -844,20 +2146,36 @@ class LinearTracker(Tracker):
             for comment in _connection(raw["comments"], "normalize.comments")[-10:]:
                 if not isinstance(comment.get("body"), str):
                     raise LinearTrackerError("normalize", None, "invalid_response")
-                comments.append({"text": comment["body"], "created": _epoch_ms(comment.get("createdAt"))})
+                comments.append(
+                    {
+                        "text": comment["body"],
+                        "created": _epoch_ms(comment.get("createdAt")),
+                    }
+                )
         return Issue(
-            id=raw["identifier"], title=raw["title"],
+            id=raw["identifier"],
+            title=raw["title"],
             state=lifecycle["state"] or state_by_id[state["id"]],
-            priority=_LINEAR_TO_PRIORITY[priority], estimate=raw.get("estimate"),
-            milestone=milestone, type=types[0] if types else None, labels=labels,
-            ac_done=done, ac_total=total, links=links, pr_url=lifecycle["pr_url"],
-            body=body, comments=comments, created=_epoch_ms(raw.get("createdAt")),
+            priority=_LINEAR_TO_PRIORITY[priority],
+            estimate=raw.get("estimate"),
+            milestone=milestone,
+            type=types[0] if types else None,
+            labels=labels,
+            ac_done=done,
+            ac_total=total,
+            links=links,
+            pr_url=lifecycle["pr_url"],
+            body=body,
+            comments=comments,
+            created=_epoch_ms(raw.get("createdAt")),
             updated=_epoch_ms(raw.get("updatedAt")),
         )
 
     def search(self, project: Project, query: str = "") -> list[Issue]:
         if query:
-            raise TrackerCapabilityUnavailableError(self.name, "provider-native-search-query")
+            raise TrackerCapabilityUnavailableError(
+                self.name, "provider-native-search-query"
+            )
         binding = self._activate(project)
         out: list[Issue] = []
         cursor = None
@@ -865,11 +2183,17 @@ class LinearTracker(Tracker):
         for _ in range(_MAX_PAGES):
             data = self._graphql(
                 _ISSUES_QUERY,
-                {"teamId": binding["team_id"], "projectId": binding["project_id"], "after": cursor},
+                {
+                    "teamId": binding["team_id"],
+                    "projectId": binding["project_id"],
+                    "after": cursor,
+                },
                 "issue.search",
             )
             connection = data.get("issues")
-            if not isinstance(connection, dict) or not isinstance(connection.get("nodes"), list):
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list
+            ):
                 raise LinearTrackerError("issue.search", None, "invalid_response")
             page = connection.get("pageInfo")
             if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
@@ -901,7 +2225,9 @@ class LinearTracker(Tracker):
         if unknown:
             raise TrackerCapabilityUnavailableError("linear", f"field:{unknown[0]}")
 
-    def _desired_update(self, raw: dict, project: Project, fields: dict) -> tuple[dict, dict]:
+    def _desired_update(
+        self, raw: dict, project: Project, fields: dict
+    ) -> tuple[dict, dict]:
         self._field_names(fields)
         binding = self._binding(project)
         values: dict = {}
@@ -921,7 +2247,9 @@ class LinearTracker(Tracker):
         if "Estimate" in fields:
             estimate = fields["Estimate"]
             if estimate is not None and (type(estimate) is not int or estimate < 0):
-                raise ValueError("Linear estimate must be a non-negative integer or null")
+                raise ValueError(
+                    "Linear estimate must be a non-negative integer or null"
+                )
             values["estimate"] = estimate
             expected["estimate"] = estimate
         if "Milestone" in fields:
@@ -936,17 +2264,23 @@ class LinearTracker(Tracker):
             expected["milestone_id"] = milestone_id
 
         labels = _connection(raw.get("labels"), "issue.update.labels")
-        current_ids = {node.get("id") for node in labels if isinstance(node.get("id"), str)}
+        current_ids = {
+            node.get("id") for node in labels if isinstance(node.get("id"), str)
+        }
         type_ids = set(binding["type_label_ids"].values())
         desired_ids = set(current_ids)
         if "Labels" in fields:
             requested = fields["Labels"]
-            if not isinstance(requested, list) or any(not isinstance(item, str) for item in requested):
+            if not isinstance(requested, list) or any(
+                not isinstance(item, str) for item in requested
+            ):
                 raise ValueError("Linear Labels must be a list of configured names")
             missing = [name for name in requested if name not in binding["label_ids"]]
             if missing:
                 raise LinearBindingError("label_unmapped")
-            desired_ids = {binding["label_ids"][name] for name in requested} | (current_ids & type_ids)
+            desired_ids = {binding["label_ids"][name] for name in requested} | (
+                current_ids & type_ids
+            )
         if "Type" in fields:
             issue_type = fields["Type"]
             if issue_type is None:
@@ -965,7 +2299,10 @@ class LinearTracker(Tracker):
 
     @staticmethod
     def _raw_matches(raw: dict, expected: dict) -> bool:
-        if "state_id" in expected and (raw.get("state") or {}).get("id") != expected["state_id"]:
+        if (
+            "state_id" in expected
+            and (raw.get("state") or {}).get("id") != expected["state_id"]
+        ):
             return False
         if "priority" in expected and raw.get("priority") != expected["priority"]:
             return False
@@ -977,15 +2314,20 @@ class LinearTracker(Tracker):
                 return False
         if "label_ids" in expected:
             actual_ids = {
-                node.get("id") for node in _connection(raw.get("labels"), "issue.readback.labels")
+                node.get("id")
+                for node in _connection(raw.get("labels"), "issue.readback.labels")
             }
             if actual_ids != expected["label_ids"]:
                 return False
         return True
 
     def create_issue(
-        self, project: Project, title: str, body: str,
-        fields: dict | None = None, parent: str | None = None,
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        fields: dict | None = None,
+        parent: str | None = None,
     ) -> Issue:
         binding = self._activate(project)
         if not isinstance(title, str) or not title or not isinstance(body, str):
@@ -994,12 +2336,20 @@ class LinearTracker(Tracker):
         if "GitHub PR" in fields:
             raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
         skeleton = {
-            "labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+            "labels": {
+                "nodes": [],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
         }
-        values, expected = self._desired_update(skeleton, project, fields) if fields else ({}, {})
+        }
+        values, expected = (
+            self._desired_update(skeleton, project, fields) if fields else ({}, {})
+        )
         input_value = {
-            "id": str(uuid.uuid4()), "teamId": binding["team_id"],
-            "projectId": binding["project_id"], "title": title, "description": body,
+            "id": str(uuid.uuid4()),
+            "teamId": binding["team_id"],
+            "projectId": binding["project_id"],
+            "title": title,
+            "description": body,
             **values,
         }
         if parent:
@@ -1009,18 +2359,27 @@ class LinearTracker(Tracker):
         data = self._graphql(_ISSUE_CREATE, {"input": input_value}, "issue.create")
         payload = self._mutation_payload(data, "issueCreate", "issue.create")
         created = payload.get("issue")
-        if not isinstance(created, dict) or not isinstance(created.get("identifier"), str):
+        if not isinstance(created, dict) or not isinstance(
+            created.get("identifier"), str
+        ):
             raise LinearTrackerError("issue.create", None, "invalid_response")
         raw = self._read_raw(created["identifier"])
         self._assert_issue_project(raw, binding)
-        if raw.get("title") != title or (raw.get("description") or "") != body or not self._raw_matches(raw, expected):
+        if (
+            raw.get("title") != title
+            or (raw.get("description") or "") != body
+            or not self._raw_matches(raw, expected)
+        ):
             raise TrackerConflictError("Linear issue divergent after create; no retry")
         if parent and (raw.get("parent") or {}).get("id") != input_value["parentId"]:
             raise TrackerConflictError("Linear parent divergent after create; no retry")
         return self._to_issue(raw, project)
 
     def update_fields(
-        self, issue_id: str, fields: dict, project: Project | None = None,
+        self,
+        issue_id: str,
+        fields: dict,
+        project: Project | None = None,
     ) -> Issue:
         if project is None:
             raise LinearBindingError("mutation_project_required")
@@ -1029,25 +2388,42 @@ class LinearTracker(Tracker):
             raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
         self._field_names(fields)
         raise TrackerCapabilityUnavailableError(
-            self.name, "existing-issue-field-replacement",
+            self.name,
+            "existing-issue-field-replacement",
         )
 
     def set_state(
-        self, issue_id: str, state: str, context=None,
+        self,
+        issue_id: str,
+        state: str,
+        context=None,
         project: Project | None = None,
     ) -> None:
         if project is None:
             raise LinearBindingError("mutation_project_required")
         if state not in {"in-progress", "review", "done"}:
-            raise TrackerCapabilityUnavailableError(self.name, "existing-issue-field-replacement")
+            raise TrackerCapabilityUnavailableError(
+                self.name, "existing-issue-field-replacement"
+            )
         payload = {"state": state}
         if state in {"review", "done"}:
-            if not isinstance(context, TransitionContext) or not all([
-                context.pr_url, context.head_sha, context.base_sha, context.review_digest,
-            ]):
+            if not isinstance(context, TransitionContext) or not all(
+                [
+                    context.pr_url,
+                    context.head_sha,
+                    context.base_sha,
+                    context.review_digest,
+                ]
+            ):
                 raise TrackerCapabilityUnavailableError(self.name, "lifecycle-proof")
-            payload.update({"pr_url": context.pr_url, "head_sha": context.head_sha,
-                            "base_sha": context.base_sha, "review_digest": context.review_digest})
+            payload.update(
+                {
+                    "pr_url": context.pr_url,
+                    "head_sha": context.head_sha,
+                    "base_sha": context.base_sha,
+                    "review_digest": context.review_digest,
+                }
+            )
             if state == "done":
                 if not context.merge_sha:
                     raise TrackerCapabilityUnavailableError(self.name, "merge-proof")
@@ -1055,22 +2431,38 @@ class LinearTracker(Tracker):
         self._project_lifecycle(issue_id, "state-" + state, payload, project)
 
     def project_acceptance_proof(
-        self, issue_id: str, expected_body: str, proof: dict, *, checked: int,
+        self,
+        issue_id: str,
+        expected_body: str,
+        proof: dict,
+        *,
+        checked: int,
         project: Project | None = None,
     ) -> bool:
-        if (project is None or not isinstance(proof, dict)
-                or not isinstance(proof.get("proof_id"), str)):
+        if (
+            project is None
+            or not isinstance(proof, dict)
+            or not isinstance(proof.get("proof_id"), str)
+        ):
             raise AcceptanceSyncUnavailableError("preuve AC Linear invalide")
         self._activate(project)
         raw = self._read_raw(issue_id)
         self._assert_issue_project(raw, self._binding(project))
-        lifecycle = self._lifecycle_projection(issue_id, raw)
+        lifecycle = self._lifecycle_projection(
+            issue_id,
+            raw,
+            pending_operation="acceptance",
+        )
         body = raw.get("description") or ""
         if body != expected_body:
-            raise TrackerConflictError("Linear acceptance body changed before projection")
+            raise TrackerConflictError(
+                "Linear acceptance body changed before projection"
+            )
         review = lifecycle["latest_review"]
         if review is None:
-            raise TrackerConflictError("Linear acceptance proof lacks one review projection")
+            raise TrackerConflictError(
+                "Linear acceptance proof lacks one review projection"
+            )
         state = raw.get("state")
         native_state_id = state.get("id") if isinstance(state, dict) else None
         projected = {
@@ -1080,16 +2472,28 @@ class LinearTracker(Tracker):
             "review_generation": lifecycle["review_generation"],
         }
         self._validate_acceptance_projection(
-            issue_id, expected_body,
-            {**projected, "native_state_id": native_state_id}, review,
+            issue_id,
+            expected_body,
+            {**projected, "native_state_id": native_state_id},
+            review,
         )
         return self._project_lifecycle(
-            issue_id, "acceptance", projected, project,
+            issue_id,
+            "acceptance",
+            projected,
+            project,
         )
 
     def project_cockpit_evidence(
-        self, issue_id: str, envelope: dict, *, repository: str, ac_digest: str,
-        pr, diff_hash: str, project: Project | None = None,
+        self,
+        issue_id: str,
+        envelope: dict,
+        *,
+        repository: str,
+        ac_digest: str,
+        pr,
+        diff_hash: str,
+        project: Project | None = None,
     ) -> bool:
         """Append one complete advisory cockpit envelope without lifecycle authority."""
         if project is None:
@@ -1097,27 +2501,40 @@ class LinearTracker(Tracker):
         from foundry.evidence_plane import verify_evidence_envelope
 
         verdict = verify_evidence_envelope(
-            envelope, repository=repository, issue_id=issue_id,
-            ac_digest=ac_digest, pr=pr, diff_hash=diff_hash,
+            envelope,
+            repository=repository,
+            issue_id=issue_id,
+            ac_digest=ac_digest,
+            pr=pr,
+            diff_hash=diff_hash,
         )
         if verdict.get("decision") != "GO":
             raise TrackerCapabilityUnavailableError(
-                self.name, "cockpit-evidence-complete-go",
+                self.name,
+                "cockpit-evidence-complete-go",
             )
         if not isinstance(envelope, dict):
             raise TrackerCapabilityUnavailableError(
-                self.name, "cockpit-evidence-complete-go",
+                self.name,
+                "cockpit-evidence-complete-go",
             )
         coordinates = envelope.get("coordinates")
         evidence = envelope.get("evidence")
         ci = evidence.get("ci") if isinstance(evidence, dict) else None
         review = evidence.get("review") if isinstance(evidence, dict) else None
         tests = evidence.get("tests") if isinstance(evidence, dict) else None
-        if not all(isinstance(value, dict) for value in (
-            coordinates, ci, review, tests,
-        )):
+        if not all(
+            isinstance(value, dict)
+            for value in (
+                coordinates,
+                ci,
+                review,
+                tests,
+            )
+        ):
             raise TrackerCapabilityUnavailableError(
-                self.name, "cockpit-evidence-complete-go",
+                self.name,
+                "cockpit-evidence-complete-go",
             )
         payload = {
             "envelope_id": envelope.get("envelope_id"),
@@ -1130,34 +2547,47 @@ class LinearTracker(Tracker):
             "diff_hash": coordinates.get("diff_hash"),
             "review_proof_id": review.get("proof_id"),
             "test_receipt_id": tests.get("receipt_id"),
-            "check_runs_receipt_id": (
-                ci.get("check_runs") or {}
-            ).get("receipt_id"),
-            "commit_statuses_receipt_id": (
-                ci.get("commit_statuses") or {}
-            ).get("receipt_id"),
+            "check_runs_receipt_id": (ci.get("check_runs") or {}).get("receipt_id"),
+            "commit_statuses_receipt_id": (ci.get("commit_statuses") or {}).get(
+                "receipt_id"
+            ),
         }
-        if (_DIGEST.fullmatch(str(payload["envelope_id"])) is None
-                or any(value is None for value in payload.values())):
+        if _DIGEST.fullmatch(str(payload["envelope_id"])) is None or any(
+            value is None for value in payload.values()
+        ):
             raise TrackerCapabilityUnavailableError(
-                self.name, "cockpit-evidence-complete-go",
+                self.name,
+                "cockpit-evidence-complete-go",
             )
         return self._project_lifecycle(
-            issue_id, "cockpit-evidence", payload, project,
+            issue_id,
+            "cockpit-evidence",
+            payload,
+            project,
         )
 
     def link(
-        self, src_id: str, link_type: str, dst_id: str,
+        self,
+        src_id: str,
+        link_type: str,
+        dst_id: str,
         project: Project | None = None,
     ) -> None:
         if project is None:
             raise LinearBindingError("mutation_project_required")
         binding = self._activate(project)
-        if link_type not in {"subtask-of", "parent-of", "depends-on", "blocks", "relates"}:
+        if link_type not in {
+            "subtask-of",
+            "parent-of",
+            "depends-on",
+            "blocks",
+            "relates",
+        }:
             raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
         if link_type in {"subtask-of", "parent-of"}:
             raise TrackerCapabilityUnavailableError(
-                self.name, "existing-issue-parent-replacement",
+                self.name,
+                "existing-issue-parent-replacement",
             )
         src_raw, dst_raw = self._read_raw(src_id), self._read_raw(dst_id)
         self._assert_issue_project(src_raw, binding)
@@ -1174,29 +2604,42 @@ class LinearTracker(Tracker):
             source, target, relation = dst_raw, src_raw, "blocks"
         data = self._graphql(
             _RELATION_CREATE,
-            {"input": {
-                "issueId": source["id"], "relatedIssueId": target["id"],
+            {
+                "input": {
+                    "issueId": source["id"],
+                    "relatedIssueId": target["id"],
                 "type": relation,
-            }},
+                }
+            },
             "issue.relation.create",
         )
         payload = self._mutation_payload(
-            data, "issueRelationCreate", "issue.relation.create",
+            data,
+            "issueRelationCreate",
+            "issue.relation.create",
         )
         created = payload.get("issueRelation")
-        if (not isinstance(created, dict) or created.get("type") != relation
+        if (
+            not isinstance(created, dict)
+            or created.get("type") != relation
                 or (created.get("issue") or {}).get("id") != source["id"]
-                or (created.get("relatedIssue") or {}).get("id") != target["id"]):
+            or (created.get("relatedIssue") or {}).get("id") != target["id"]
+        ):
             raise LinearTrackerError("issue.relation.create", None, "invalid_response")
         readback = self._read_raw(src_id)
         if not any(
             link.type == link_type and link.target == dst_id
             for link in self._to_issue(readback, project).links
         ):
-            raise TrackerConflictError("Linear relation divergent after write; no retry")
+            raise TrackerConflictError(
+                "Linear relation divergent after write; no retry"
+            )
 
     def add_comment(
-        self, issue_id: str, text: str, project: Project | None = None,
+        self,
+        issue_id: str,
+        text: str,
+        project: Project | None = None,
     ) -> None:
         if project is None:
             raise LinearBindingError("mutation_project_required")
@@ -1212,27 +2655,41 @@ class LinearTracker(Tracker):
         )
         payload = self._mutation_payload(data, "commentCreate", "comment.create")
         comment = payload.get("comment")
-        if (not isinstance(comment, dict) or not isinstance(comment.get("id"), str)
+        if (
+            not isinstance(comment, dict)
+            or not isinstance(comment.get("id"), str)
                 or comment.get("body") != text
-                or (comment.get("issue") or {}).get("id") != raw["id"]):
+            or (comment.get("issue") or {}).get("id") != raw["id"]
+        ):
             raise LinearTrackerError("comment.create", None, "invalid_response")
         readback = self._read_comment(comment["id"], "comment.readback")
-        if (not isinstance(readback, dict) or readback.get("body") != text
-                or (readback.get("issue") or {}).get("id") != raw["id"]):
+        if (
+            not isinstance(readback, dict)
+            or readback.get("body") != text
+            or (readback.get("issue") or {}).get("id") != raw["id"]
+        ):
             raise TrackerConflictError("Linear comment divergent after write; no retry")
 
     def update_body(
-        self, resource: Issue | Adr, expected_body: str, updated_body: str,
+        self,
+        resource: Issue | Adr,
+        expected_body: str,
+        updated_body: str,
         project: Project | None = None,
     ) -> bool:
-        del resource, expected_body, updated_body, project
+        if isinstance(resource, Adr):
+            return self._update_adr_body(resource, expected_body, updated_body, project)
         raise BodyUpdateUnavailableError(
             "mise à jour de corps indisponible pour le tracker linear : "
             "aucune précondition atomique anti-écrasement"
         )
 
     def sync_acceptance_body(
-        self, issue_id: str, expected_body: str, updated_body: str, proof: dict,
+        self,
+        issue_id: str,
+        expected_body: str,
+        updated_body: str,
+        proof: dict,
         project: Project | None = None,
     ) -> bool:
         del issue_id, expected_body, updated_body, proof, project
@@ -1241,18 +2698,1891 @@ class LinearTracker(Tracker):
             "aucune précondition atomique anti-écrasement"
         )
 
-    # ---- unsupported provider capabilities -------------------------
+    # ---- project-scoped ADR documents --------------------------------
+    def _adr_documents(self, project: Project) -> tuple[dict, list[dict]]:
+        binding = self._activate(project)
+        documents = []
+        after = None
+        seen = set()
+        for _ in range(_MAX_PAGES):
+            data = self._graphql(
+                _ADR_DOCUMENTS_QUERY,
+                {"projectId": binding["project_id"], "after": after},
+                "adr.list",
+            )
+            connection = data.get("documents")
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list
+            ):
+                raise LinearTrackerError("adr.list", None, "invalid_response")
+            if any(not isinstance(node, dict) for node in connection["nodes"]):
+                raise LinearTrackerError("adr.list", None, "invalid_response")
+            page = connection.get("pageInfo")
+            if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                raise LinearTrackerError("adr.list", None, "invalid_response")
+            documents.extend(connection["nodes"])
+            if not page["hasNextPage"]:
+                return binding, documents
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor or cursor in seen:
+                raise LinearTrackerError("adr.list", None, "invalid_response")
+            seen.add(cursor)
+            after = cursor
+        raise LinearTrackerError("adr.list", None, "pagination_limit")
+
+    def _adr_snapshot(self, project: Project) -> tuple[dict, dict]:
+        binding, documents = self._adr_documents(project)
+        chains = _adr_chain(documents, binding)
+        self._validate_adr_graph(chains, binding)
+        return binding, chains
+
+    def _recover_native_create_witness(
+        self, project: Project, title: str, body: str
+    ) -> bool:
+        """Complete exactly one interrupted native v0 pair from its surviving version.
+
+        The ADR version is created before its witness, so this is the only possible
+        between-call process-stop state. Ordinary reads never call this repair path.
+        """
+        binding, documents = self._adr_documents(project)
+        versions = {}
+        witnesses = set()
+        for raw in documents:
+            if isinstance(raw, dict) and (
+                str(raw.get("title", "")).startswith(_ADR_WITNESS_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_WITNESS_HEADER)
+            ):
+                witness = _parse_adr_witness(raw, binding)
+                key = (witness["adr_id"], witness["sequence"])
+                if key in witnesses:
+                    raise TrackerConflictError("Linear ADR witness slot has a fork")
+                witnesses.add(key)
+            elif isinstance(raw, dict) and (
+                str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_HEADER)
+            ):
+                metadata, _parsed_body = _parse_adr_document(
+                    raw, binding, allow_unbound_body=True
+                )
+                key = (metadata["id"], metadata["sequence"])
+                if key in versions:
+                    raise TrackerConflictError("Linear ADR version slot has a fork")
+                versions[key] = (metadata, _parsed_body, raw)
+        missing = set(versions) - witnesses
+        if set(witnesses) - set(versions) or len(missing) != 1:
+            return False
+        key = next(iter(missing))
+        metadata, parsed_body, raw = versions[key]
+        if (
+            metadata["sequence"] != 0
+            or metadata["origin"] != {"kind": "native"}
+            or metadata["status"] != "proposed"
+            or metadata["title"] != title
+            or metadata["body_sha256"]
+            != hashlib.sha256(body.encode()).hexdigest()
+            or not _exact_adr_document_matches(
+                raw,
+                {
+                    "id": raw["id"],
+                    "title": _adr_document_title(metadata),
+                    "content": _adr_document_content(metadata, body),
+                    "project": {"id": binding["project_id"]},
+                    "archivedAt": None,
+                },
+            )
+        ):
+            return False
+
+        # Prove every other pair and relation before the one bounded repair write.
+        remaining = [
+            item
+            for item in documents
+            if not isinstance(item, dict) or item.get("id") != raw["id"]
+        ]
+        other_chains = _adr_chain(remaining, binding)
+        self._validate_adr_graph(other_chains, binding)
+        self._create_adr_document(binding, metadata, body)
+        return True
+
+    def _validate_adr_graph(
+        self, chains: dict, binding: dict, *, pending_comments: set[str] | None = None
+    ) -> None:
+        latest = {adr_id: versions[-1][0] for adr_id, versions in chains.items()}
+        issue_refs = []
+        for adr_id, metadata in latest.items():
+            relations = metadata["relations"]
+            for target_id in relations["supersedes"]:
+                target = latest.get(target_id)
+                if target is None:
+                    raise AdrUnavailableError(target_id)
+                if (
+                    metadata["status"] not in {"accepted", "superseded"}
+                    or target["status"] != "superseded"
+                    or target["relations"]["superseded_by"] != adr_id
+                ):
+                    raise TrackerConflictError(
+                        "Linear ADR supersession relation is not reciprocal"
+                    )
+            replacement_id = relations["superseded_by"]
+            if replacement_id is not None:
+                replacement = latest.get(replacement_id)
+                if replacement is None:
+                    raise AdrUnavailableError(replacement_id)
+                if adr_id not in replacement["relations"]["supersedes"]:
+                    raise TrackerConflictError(
+                        "Linear ADR supersession relation is not reciprocal"
+                    )
+            observed_native_ids = set()
+            for issue_id in relations["issues"]:
+                canonical_id, native_id = self._resolve_adr_issue_reference(
+                    issue_id, binding
+                )
+                if canonical_id != issue_id:
+                    raise TrackerConflictError(
+                        "Linear ADR issue relation identifier is not canonical"
+                    )
+                if native_id in observed_native_ids:
+                    raise TrackerConflictError(
+                        "Linear ADR issue references duplicate provider identity"
+                    )
+                observed_native_ids.add(native_id)
+                issue_refs.append((adr_id, canonical_id, native_id))
+        for adr_id, issue_id, native_id in sorted(issue_refs):
+            comment_id, body = _adr_issue_link(binding, adr_id, issue_id)
+            reciprocal = self._read_comment(comment_id, "adr.issue-link.read")
+            reciprocal_issue = (
+                reciprocal.get("issue") if isinstance(reciprocal, dict) else None
+            )
+            if reciprocal is None and comment_id in (pending_comments or set()):
+                continue
+            if (
+                not isinstance(reciprocal, dict)
+                or reciprocal.get("body") != body
+                or not isinstance(reciprocal_issue, dict)
+                or reciprocal_issue.get("id") != native_id
+                or reciprocal_issue.get("identifier") != issue_id
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR issue relation is not reciprocal"
+                )
+
+    @staticmethod
+    def _adr_model(versions: list[tuple[dict, dict]]) -> Adr:
+        metadata, raw = versions[-1]
+        body = raw.get(_ADR_BOUND_SOURCE_BODY)
+        if not isinstance(body, str):
+            _, body = _parse_adr_document(
+                raw,
+                {
+                    "project_id": metadata["project_id"],
+                    "team_id": metadata["team_id"],
+                },
+            )
+        return Adr(
+            id=metadata["id"],
+            title=metadata["title"],
+            status=metadata["status"],
+            body=_adr_document_content(metadata, body),
+            ref=raw["id"],
+        )
+
+    def _read_adr_document(self, document_id: str) -> dict | None:
+        """Read one deterministic document slot without Linear's erroring singular lookup."""
+        data = self._graphql(
+            _ADR_DOCUMENT_BY_ID_QUERY,
+            {"id": document_id},
+            "adr.read",
+        )
+        connection = data.get("documents")
+        if not isinstance(connection, dict) or not isinstance(
+            connection.get("nodes"), list
+        ):
+            raise LinearTrackerError("adr.read", None, "invalid_response")
+        page = connection.get("pageInfo")
+        if (
+            not isinstance(page, dict)
+            or type(page.get("hasNextPage")) is not bool
+            or page["hasNextPage"]
+            or (
+                page.get("endCursor") is not None
+                and (
+                    not isinstance(page["endCursor"], str)
+                    or not page["endCursor"]
+                )
+            )
+        ):
+            raise LinearTrackerError("adr.read", None, "invalid_response")
+        nodes = connection["nodes"]
+        if len(nodes) > 1:
+            raise TrackerConflictError("Linear ADR document slot collision")
+        if not nodes:
+            return None
+        raw = nodes[0]
+        if not isinstance(raw, dict) or raw.get("id") != document_id:
+            raise LinearTrackerError("adr.read", None, "invalid_response")
+        return raw
+
+    def _create_adr_document(
+        self, binding: dict, metadata: dict, body: str,
+        *, readback_content: str | None = None,
+        witness_readback: str | None = None,
+    ) -> dict:
+        _preflight_adr_body_readback(body)
+        doc_id = _adr_document_id(
+            binding["project_id"], metadata["id"], metadata["sequence"]
+        )
+        title = _adr_document_title(metadata)
+        content = _adr_document_content(metadata, body)
+        expected = {
+            "id": doc_id,
+            "title": title,
+            "content": content,
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+
+        def pinned_matches(raw: object, slot: dict, pinned: str) -> bool:
+            # A qualification probe pins the complete provider bytes.  Accept
+            # those bytes only, never a neighbouring local-model serialization.
+            return isinstance(raw, dict) and all(
+                raw.get(key) == value for key, value in slot.items() if key != "content"
+            ) and raw.get("content") == pinned
+
+        def exact_version_matches(raw: object) -> bool:
+            if readback_content is not None:
+                return pinned_matches(raw, expected, readback_content)
+            return _exact_adr_document_matches(raw, expected)
+
+        # The historical ADR-0001 profile is evidence about an already-written
+        # Document, not a rule for producing new Markdown.  Read its deterministic
+        # slot before the create path so an absent slot fails before any mutation;
+        # a present exact slot may still receive its missing witness below.
+        existing = None
+        if _is_recovery_only_historical_source(body):
+            existing = self._read_adr_document(doc_id)
+            if existing is None:
+                raise TrackerConflictError(
+                    "Linear ADR historical readback requires existing exact slot"
+                )
+            if not exact_version_matches(existing):
+                raise TrackerConflictError("Linear ADR historical slot diverged")
+
+        def verify_version(raw):
+            if raw is None:
+                return None
+            if not exact_version_matches(raw):
+                raise TrackerConflictError(
+                    "Linear ADR version slot already has different content"
+                )
+            # A qualification probe authorizes only these exact provider bytes.
+            # Parse the envelope after that byte-for-byte check, rather than
+            # requiring the local renderer to recognize a provider rendering
+            # which the probe deliberately replaces.
+            _parse_adr_document(
+                raw,
+                binding,
+                source_body=body,
+                allow_witness_bound_readback=readback_content is not None,
+            )
+            return raw
+
+        # The recovery-only slot is never re-entered through the create path: a
+        # deletion after this read must not turn into a fresh historical Document.
+        version = (
+            verify_version(existing)
+            if existing is not None
+            else self._create_exact_adr_document(
+                expected, "adr.create", verify_version
+            )
+        )
+        witness = _adr_witness_document(binding, metadata, version, body)
+
+        def verify_witness(raw):
+            if raw is None:
+                return None
+            _parse_adr_witness(raw, binding)
+            if (
+                not pinned_matches(raw, witness, witness_readback)
+                if witness_readback is not None
+                else not _exact_adr_document_matches(raw, witness)
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR witness slot already has different content"
+                )
+            return raw
+
+        self._create_exact_adr_document(
+            witness, "adr.witness.create", verify_witness
+        )
+        return version
+
+    def _recover_exact_missing_witness(
+        self, project: Project, binding: dict, documents: list[dict],
+        metadata: dict, body: str,
+    ) -> Adr:
+        """Finish one exact version/witness pair only after whole-graph preflight."""
+        candidate = {
+            "id": _adr_document_id(
+                binding["project_id"], metadata["id"], metadata["sequence"]
+            ),
+            "title": _adr_document_title(metadata),
+            "content": _adr_document_content(metadata, body),
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+        matches = [
+            raw for raw in documents
+            if isinstance(raw, dict) and raw.get("id") == candidate["id"]
+        ]
+        if len(matches) != 1 or not _exact_adr_document_matches(
+            matches[0], candidate
+        ):
+            raise TrackerConflictError("Linear ADR interrupted version slot diverged")
+        witness = _adr_witness_document(binding, metadata, matches[0], body)
+        if any(
+            isinstance(raw, dict) and raw.get("id") == witness["id"]
+            for raw in documents
+        ):
+            raise TrackerConflictError("Linear ADR witness is not the missing slot")
+        hypothetical = _adr_chain([*documents, witness], binding)
+        self._validate_adr_graph(hypothetical, binding)
+        self._create_adr_document(binding, metadata, body)
+        _, fresh = self._adr_snapshot(project)
+        if fresh[metadata["id"]][-1][0] != metadata:
+            raise TrackerConflictError("Linear ADR witness recovery diverged")
+        return self._adr_model(fresh[metadata["id"]])
+
+    @staticmethod
+    def _unwitnessed_adr_versions(
+        binding: dict, documents: list[dict]
+    ) -> list[tuple[dict, dict]]:
+        """Locate version slots with no witness without guessing their source body."""
+        witnesses = set()
+        versions = []
+        for raw in documents:
+            if isinstance(raw, dict) and (
+                str(raw.get("title", "")).startswith(_ADR_WITNESS_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_WITNESS_HEADER)
+            ):
+                witness = _parse_adr_witness(raw, binding)
+                key = (witness["adr_id"], witness["sequence"])
+                if key in witnesses:
+                    raise TrackerConflictError("Linear ADR witness slot has a fork")
+                witnesses.add(key)
+                continue
+            if not (
+                isinstance(raw, dict)
+                and (
+                    str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
+                    or str(raw.get("content", "")).startswith(_ADR_HEADER)
+                )
+            ):
+                continue
+            metadata, _ = _parse_adr_document(
+                raw, binding, allow_unbound_body=True
+            )
+            versions.append((metadata, raw))
+        return [
+            (metadata, raw)
+            for metadata, raw in versions
+            if (metadata["id"], metadata["sequence"]) not in witnesses
+        ]
+
+    def _interrupted_mutation_predecessor(
+        self,
+        binding: dict,
+        documents: list[dict],
+        adr: Adr,
+        operation: str,
+    ) -> tuple[tuple[dict, dict], tuple[dict, dict]]:
+        """Bind one dangling version to its intact witnessed predecessor."""
+        dangling = self._unwitnessed_adr_versions(binding, documents)
+        if len(dangling) != 1:
+            raise TrackerConflictError(
+                f"Linear ADR interrupted {operation} has ambiguous witness"
+            )
+        dangling_metadata, dangling_raw = dangling[0]
+        remaining = [raw for raw in documents if raw is not dangling_raw]
+        chains = _adr_chain(remaining, binding)
+        self._validate_adr_graph(chains, binding)
+        versions = chains.get(adr.id)
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+            raise TrackerConflictError(
+                f"Linear ADR interrupted {operation} predecessor diverged"
+            )
+        return versions[-1], (dangling_metadata, dangling_raw)
+
+    def _create_exact_adr_document(self, expected, operation, verify):
+        document_id = expected["id"]
+        existing = verify(self._read_adr_document(document_id))
+        if existing is not None:
+            return existing
+        error = None
+        try:
+            payload = self._mutation_payload(
+                self._graphql(
+                    _ADR_DOCUMENT_CREATE,
+                    {
+                        "input": {
+                            "id": document_id,
+                            "title": expected["title"],
+                            "content": expected["content"],
+                            "projectId": expected["project"]["id"],
+                        }
+                    },
+                    operation,
+                ),
+                "documentCreate",
+                operation,
+            )
+            if (
+                not isinstance(payload.get("document"), dict)
+                or payload["document"].get("id") != document_id
+            ):
+                raise LinearTrackerError(operation, None, "invalid_response")
+        except LinearTrackerError as exc:
+            error = exc
+        readback = verify(self._read_adr_document(document_id))
+        if readback is None:
+            if error:
+                raise error
+            raise TrackerConflictError(
+                "Linear ADR deterministic document has no readback"
+            )
+        return readback
+
+    def _create_adr_issue_link(
+        self,
+        binding: dict,
+        adr_id: str,
+        issue_id: str,
+        native_id: str,
+    ) -> None:
+        prefix = f"{binding['key']}-"
+        number = (
+            issue_id[len(prefix) :]
+            if isinstance(issue_id, str) and issue_id.startswith(prefix)
+            else None
+        )
+        if (
+            not isinstance(native_id, str)
+            or _SAFE_ID.fullmatch(native_id) is None
+            or not isinstance(number, str)
+            or _ISSUE_NUMBER.fullmatch(number) is None
+        ):
+            raise TrackerConflictError("Linear ADR issue identity is not canonical")
+        comment_id, body = _adr_issue_link(binding, adr_id, issue_id)
+
+        def verify(comment):
+            if comment is None:
+                return None
+            comment_issue = (
+                comment.get("issue") if isinstance(comment, dict) else None
+            )
+            if (
+                not isinstance(comment, dict)
+                or comment.get("body") != body
+                or not isinstance(comment_issue, dict)
+                or comment_issue.get("id") != native_id
+                or comment_issue.get("identifier") != issue_id
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR issue relation slot already has different content"
+                )
+            return comment
+
+        if verify(self._read_comment(comment_id, "adr.issue-link.read")) is not None:
+            return
+        error = None
+        try:
+            payload = self._mutation_payload(
+                self._graphql(
+                    _COMMENT_CREATE,
+                    {
+                        "input": {
+                            "id": comment_id,
+                            "issueId": native_id,
+                            "body": body,
+                        }
+                    },
+                    "adr.issue-link.create",
+                ),
+                "commentCreate",
+                "adr.issue-link.create",
+            )
+            verify(payload.get("comment"))
+        except LinearTrackerError as exc:
+            error = exc
+        readback = verify(
+            self._read_comment(comment_id, "adr.issue-link.readback")
+        )
+        if readback is None:
+            if error:
+                raise error
+            raise TrackerConflictError(
+                "Linear ADR issue relation has no comment readback"
+            )
+
+    @staticmethod
+    def _next_adr_metadata(
+        previous,
+        *,
+        status=None,
+        body=None,
+        replacement_id=None,
+        supersedes_id=None,
+        issue_id=None,
+    ):
+        old, raw = previous
+        _, old_body = _parse_adr_document(
+            raw,
+            {"project_id": old["project_id"], "team_id": old["team_id"]},
+            source_body=raw.get(_ADR_BOUND_SOURCE_BODY),
+        )
+        new_body = old_body if body is None else body
+        metadata = dict(old)
+        metadata.update(
+            sequence=old["sequence"] + 1,
+            previous_id=raw["id"],
+            previous_sha256=hashlib.sha256(raw["content"].encode()).hexdigest(),
+            status=old["status"] if status is None else status,
+            body_sha256=hashlib.sha256(new_body.encode()).hexdigest(),
+            relations=dict(old["relations"]),
+        )
+        if replacement_id is not None:
+            metadata["relations"]["superseded_by"] = replacement_id
+        if supersedes_id is not None:
+            metadata["relations"]["supersedes"] = sorted(
+                {*metadata["relations"]["supersedes"], supersedes_id}
+            )
+        if issue_id is not None:
+            metadata["relations"]["issues"] = sorted(
+                {*metadata["relations"]["issues"], issue_id}
+            )
+        candidate = {
+            "id": _adr_document_id(
+                metadata["project_id"], metadata["id"], metadata["sequence"]
+            ),
+            "title": _adr_document_title(metadata),
+            "content": _adr_document_content(metadata, new_body),
+            "project": {"id": metadata["project_id"]},
+            "archivedAt": None,
+        }
+        try:
+            _parse_adr_document(
+                candidate,
+                {
+                    "project_id": metadata["project_id"],
+                    "team_id": metadata["team_id"],
+                },
+            )
+        except LinearTrackerError:
+            raise TrackerConflictError(
+                "Linear ADR derived candidate is invalid"
+            ) from None
+        return metadata, new_body
+
+    def _append_adr_version(self, project, previous, metadata, body):
+        return self._append_adr_versions(
+            project, [(previous, metadata, body)]
+        )[metadata["id"]]
+
+    def _is_exact_adr_body_replay(
+        self,
+        versions: list[tuple[dict, dict]],
+        expected_body: str,
+        updated_body: str,
+    ) -> bool:
+        if (
+            len(versions) < 2
+            or updated_body == expected_body
+            or not _adr_readback_content_matches(
+                versions[-2][1].get("content"), expected_body
+            )
+        ):
+            return False
+        old_header, separator, _ = expected_body.partition("\n-->\n\n")
+        new_header, new_separator, body = updated_body.partition("\n-->\n\n")
+        if not separator or not new_separator or old_header != new_header:
+            return False
+        metadata, body = self._next_adr_metadata(versions[-2], body=body)
+        candidate = {
+            "id": _adr_document_id(
+                metadata["project_id"], metadata["id"], metadata["sequence"]
+            ),
+            "title": _adr_document_title(metadata),
+            "content": _adr_document_content(metadata, body),
+            "project": {"id": metadata["project_id"]},
+            "archivedAt": None,
+        }
+        return (
+            versions[-1][0] == metadata
+            and _exact_adr_document_matches(versions[-1][1], candidate)
+        )
+
+    def _append_adr_versions(self, project, changes):
+        for _previous, _metadata, body in changes:
+            _preflight_adr_body_readback(body)
+        binding, chains = self._adr_snapshot(project)
+        for previous, metadata, _body in changes:
+            if (
+                metadata["id"] not in chains
+                or chains[metadata["id"]][-1][1]["id"] != previous[1]["id"]
+            ):
+                raise TrackerConflictError("Linear ADR changed before version append")
+        for _previous, metadata, body in changes:
+            self._create_adr_document(binding, metadata, body)
+        _, fresh = self._adr_snapshot(project)
+        result = {}
+        for _previous, metadata, _body in changes:
+            versions = fresh.get(metadata["id"])
+            if versions is None or versions[-1][0] != metadata:
+                raise TrackerConflictError("Linear ADR version diverged after write")
+            result[metadata["id"]] = self._adr_model(versions)
+        return result
+
     def list_adrs(self, project: Project) -> list[Adr]:
-        self._activate(project)
-        raise TrackerCapabilityUnavailableError(self.name, "adr-knowledge-base")
+        _, chains = self._adr_snapshot(project)
+        return [self._adr_model(chains[key]) for key in sorted(chains)]
+
+    def adr_for_mutation(self, project: Project, adr_id: str) -> Adr | None:
+        """Return a witnessed predecessor for an exact mutation replay.
+
+        This is deliberately not a read/list fallback: only the typed mutation
+        may decide whether an interrupted slot matches its requested action.
+        """
+        try:
+            return next((a for a in self.list_adrs(project) if a.id == adr_id), None)
+        except TrackerConflictError as error:
+            if str(error) not in {
+                "Linear ADR version witness is missing",
+                "Linear ADR supersession relation is not reciprocal",
+            }:
+                raise
+        binding, documents = self._adr_documents(project)
+        dangling = self._unwitnessed_adr_versions(binding, documents)
+        if len(dangling) > 1:
+            raise TrackerConflictError("Linear ADR mutation has ambiguous witness")
+        dangling_raw = dangling[0][1] if dangling else None
+        remaining = [
+            raw for raw in documents
+            if dangling_raw is None or raw is not dangling_raw
+        ]
+        chains = _adr_chain(remaining, binding)
+        versions = chains.get(adr_id)
+        return self._adr_model(versions) if versions else None
 
     def create_adr(
-        self, project: Project, title: str, body: str, status: str = "proposed",
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        status: str = "proposed",
     ) -> Adr:
-        self._activate(project)
-        raise TrackerCapabilityUnavailableError(self.name, "adr-knowledge-base")
+        if status != "proposed":
+            raise TrackerConflictError("Linear ADR creation must begin proposed")
+        if not isinstance(title, str) or not title.strip() or not isinstance(body, str):
+            raise ValueError("Linear ADR title and body required")
+        title = title.strip()
+        try:
+            binding, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if (
+                str(error) != "Linear ADR version witness is missing"
+                or not self._recover_native_create_witness(project, title, body)
+            ):
+                raise
+            binding, chains = self._adr_snapshot(project)
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        matching = [
+            v
+            for v in chains.values()
+            if v[0][0]["origin"]["kind"] == "native"
+            and v[0][0]["title"] == title
+            and v[0][0]["body_sha256"] == digest
+        ]
+        if matching:
+            if (
+                len(matching) != 1
+                or matching[0][-1][0]["status"] != "proposed"
+                or matching[0][-1][0]["body_sha256"] != digest
+            ):
+                raise TrackerConflictError("Linear ADR content already exists")
+            return self._adr_model(matching[0])
+        prefix = f"{project.key}-ADR-"
+        number = (
+            max(
+                (
+                    int(key.rsplit("-", 1)[1])
+                    for key in chains
+                    if key.startswith(prefix)
+                ),
+                default=0,
+            )
+            + 1
+        )
+        if number > 9999:
+            raise TrackerConflictError("Linear ADR identifier range exhausted")
+        metadata = {
+            "schema": _ADR_SCHEMA,
+            "project_id": binding["project_id"],
+            "team_id": binding["team_id"],
+            "id": f"{prefix}{number:04d}",
+            "title": title,
+            "status": "proposed",
+            "sequence": 0,
+            "previous_id": None,
+            "previous_sha256": None,
+            "body_sha256": digest,
+            "origin": {"kind": "native"},
+            "relations": {"supersedes": [], "superseded_by": None, "issues": []},
+        }
+        self._create_adr_document(binding, metadata, body)
+        _, fresh = self._adr_snapshot(project)
+        if metadata["id"] not in fresh or fresh[metadata["id"]][-1][0] != metadata:
+            raise TrackerConflictError("Linear ADR creation diverged")
+        return self._adr_model(fresh[metadata["id"]])
+
+    def link_adr_issue(
+        self, adr: Adr, issue_ref: str, project: Project | None = None
+    ) -> Adr:
+        """Append one native ADR↔issue relation after canonical identity preflight."""
+        project = project or self._project()
+        try:
+            binding, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) != "Linear ADR version witness is missing":
+                raise
+            binding, documents = self._adr_documents(project)
+            previous, _dangling = self._interrupted_mutation_predecessor(
+                binding, documents, adr, "link"
+            )
+            previous_metadata = previous[0]
+            if previous_metadata["id"] != adr.id or previous_metadata["status"] not in {
+                "proposed", "accepted"
+            }:
+                raise TrackerConflictError("Linear ADR interrupted link binding invalid")
+            issue_id, _native_id = self._resolve_adr_issue_reference(issue_ref, binding)
+            metadata, body = self._next_adr_metadata(
+                previous, issue_id=issue_id
+            )
+            return self._recover_exact_missing_witness(
+                project, binding, documents, metadata, body
+            )
+        versions = chains.get(adr.id)
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+            raise TrackerConflictError("Linear ADR snapshot is stale")
+        if versions[-1][0]["status"] not in {"proposed", "accepted"}:
+            raise TrackerConflictError("Linear ADR issue link requires active ADR")
+        if not isinstance(issue_ref, str) or _SAFE_ID.fullmatch(issue_ref) is None:
+            raise ValueError("Linear ADR issue reference invalid")
+        issue_id, native_id = self._resolve_adr_issue_reference(issue_ref, binding)
+        if issue_id in versions[-1][0]["relations"]["issues"]:
+            return self._adr_model(versions)
+        metadata, body = self._next_adr_metadata(
+            versions[-1], issue_id=issue_id
+        )
+        _preflight_adr_body_readback(body)
+        # The comment is a deterministic reciprocal slot. If a process stops after
+        # this write but before the version append, the exact call can reuse it.
+        self._create_adr_issue_link(binding, adr.id, issue_id, native_id)
+        return self._append_adr_version(project, versions[-1], metadata, body)
+
+    def _prepare_adr_batch(
+        self, project: Project, records: tuple[dict, ...], *, profiled: bool
+    ) -> tuple[dict, list[dict], dict, list[dict], list[tuple]]:
+        """Validate one historical manifest and derive its exact version-0 slots.
+
+        This is pure over the current project snapshot: no provider write.  The
+        qualification plan and the import share it so that a probe is created
+        from exactly the bytes the import later sends.
+        """
+        keys = {
+            "adr_id", "title", "body", "historical_status", "source_ref",
+            "source_created", "source_updated", "expected_source_sha256",
+            "supersedes", "superseded_by", "issue_refs",
+        }
+        if not isinstance(records, tuple) or not 1 <= len(records) <= 100:
+            raise ValueError("Linear ADR batch requires 1..100 records")
+        if any(not isinstance(record, dict) for record in records):
+            raise ValueError("Linear ADR batch record fields invalid")
+        # ``missing_relations`` is part of the base historical record, never a
+        # qualification profile field: the planner and the import accept it
+        # identically.  One manifest is either entirely complete or entirely
+        # declares its unavailable relation families; the shapes never mix.
+        declared = {"missing_relations" in record for record in records}
+        if len(declared) != 1:
+            raise ValueError("Linear ADR batch record fields invalid")
+        declares_missing_relations = next(iter(declared))
+        if declares_missing_relations:
+            keys = keys | {"missing_relations"}
+        binding, documents = self._adr_documents(project)
+        by_id = {}
+        for raw in documents:
+            if raw.get("id") in by_id:
+                raise TrackerConflictError("Linear ADR batch document slot has a fork")
+            by_id[raw.get("id")] = raw
+        prepared = []
+        comments = []
+        seen_ids = set()
+        for record in records:
+            body = record.get("body")
+            recovery_only = (
+                isinstance(body, str)
+                and _is_recovery_only_historical_source(body)
+            )
+            expected_keys = keys
+            if profiled:
+                expected_keys = keys | (
+                    _ADR_BATCH_RECOVERY_PROFILE_FIELDS
+                    if recovery_only
+                    else _ADR_BATCH_PROFILE_FIELDS
+                )
+            if set(record) != expected_keys:
+                raise ValueError("Linear ADR batch record fields invalid")
+            adr_id = record["adr_id"]
+            title = record["title"]
+            status = record["historical_status"]
+            source_ref = record["source_ref"]
+            supersedes = record["supersedes"]
+            superseded_by = record["superseded_by"]
+            issue_refs = record["issue_refs"]
+            missing_relations = (
+                record["missing_relations"] if declares_missing_relations else ()
+            )
+            if (
+                not isinstance(missing_relations, tuple)
+                or any(not isinstance(value, str) for value in missing_relations)
+                or missing_relations
+                != tuple(sorted(set(missing_relations)))
+                or not set(missing_relations).issubset(
+                    _ADR_MISSING_RELATION_FAMILIES
+                )
+            ):
+                raise ValueError("Linear ADR batch missing relations invalid")
+            if (
+                ("supersedes" in missing_relations and supersedes != ())
+                or (
+                    "superseded_by" in missing_relations
+                    and superseded_by is not None
+                )
+                or ("issues" in missing_relations and issue_refs != ())
+            ):
+                raise ValueError("Linear ADR batch unknown relation is not empty")
+            if (
+                not isinstance(adr_id, str)
+                or _ADR_ID.fullmatch(adr_id) is None
+                or adr_id in seen_ids
+                or not isinstance(title, str) or not title.strip()
+                or not isinstance(body, str)
+                or not isinstance(status, str) or status not in _ADR_STATUSES
+                or not isinstance(source_ref, str) or not source_ref
+                or record["expected_source_sha256"] != hashlib.sha256(body.encode()).hexdigest()
+                or any(
+                    value is not None and (type(value) is not int or value < 0)
+                    for value in (record["source_created"], record["source_updated"])
+                )
+                or not isinstance(supersedes, tuple)
+                or not isinstance(issue_refs, tuple)
+                or len(supersedes) > _ADR_RELATION_LIMIT
+                or len(issue_refs) > _ADR_RELATION_LIMIT
+                or any(not isinstance(value, str) or _ADR_ID.fullmatch(value) is None for value in supersedes)
+                or len(set(supersedes)) != len(supersedes)
+                or any(not isinstance(value, str) or _SAFE_ID.fullmatch(value) is None for value in issue_refs)
+                or len(set(issue_refs)) != len(issue_refs)
+                or (superseded_by is not None and (
+                    not isinstance(superseded_by, str)
+                    or _ADR_ID.fullmatch(superseded_by) is None
+                ))
+                or adr_id in supersedes
+                or superseded_by == adr_id
+                or superseded_by in supersedes
+                or (
+                    (status == "superseded") != (superseded_by is not None)
+                    and not (
+                        status == "superseded"
+                        and superseded_by is None
+                        and "superseded_by" in missing_relations
+                    )
+                )
+                or (bool(supersedes) and status not in {"accepted", "superseded"})
+            ):
+                raise ValueError("Linear ADR batch record invalid")
+            # Unsupported source Markdown is refused before any probe read or
+            # write, exactly as for a native ADR.
+            _preflight_adr_body_readback(body)
+            seen_ids.add(adr_id)
+            canonical_refs, native_ids = self._canonicalize_adr_issue_refs(
+                issue_refs, binding
+            )
+            metadata = {
+                "schema": _ADR_SCHEMA,
+                "project_id": binding["project_id"],
+                "team_id": binding["team_id"],
+                "id": adr_id,
+                "title": title.strip(),
+                "status": status,
+                "sequence": 0,
+                "previous_id": None,
+                "previous_sha256": None,
+                "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+                "origin": {
+                    "kind": "migration",
+                    "source_tracker": "youtrack",
+                    "source_ref": source_ref,
+                    "source_created": record["source_created"],
+                    "source_updated": record["source_updated"],
+                    "source_body_sha256": record["expected_source_sha256"],
+                    "missing_relations": list(missing_relations),
+                },
+                "relations": {
+                    "supersedes": sorted(supersedes),
+                    "superseded_by": superseded_by,
+                    "issues": list(canonical_refs),
+                },
+            }
+            prepared.append((metadata, body, record, recovery_only))
+            comments.extend(
+                (adr_id, issue_id, native_ids[issue_id])
+                for issue_id in canonical_refs
+            )
+
+        # Bind every version-0 slot to the entire normalized manifest, not only
+        # its own record. A reordered exact replay is equivalent, but a subset or
+        # a changed member has different slot bytes and must fail before effects.
+        # Qualification profiles are evidence about these bytes, not part of them.
+        manifest = [item[0] for item in sorted(prepared, key=lambda item: item[0]["id"])]
+        batch_sha256 = hashlib.sha256(json.dumps(
+            manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        entries = []
+        for metadata, body, record, recovery_only in prepared:
+            metadata["origin"]["batch_sha256"] = batch_sha256
+            candidate = {
+                "id": _adr_document_id(binding["project_id"], metadata["id"], 0),
+                "title": _adr_document_title(metadata),
+                "content": _adr_document_content(metadata, body),
+                "project": {"id": binding["project_id"]},
+                "archivedAt": None,
+            }
+            _parse_adr_document(candidate, binding)
+            existing = None
+            if recovery_only:
+                # Do not manufacture a rendering from one historical observation.
+                # The exact digest-pinned slot must already exist; its provider
+                # bytes are the version readback the witness will bind.
+                existing = by_id.get(candidate["id"])
+                if existing is None:
+                    raise TrackerConflictError(
+                        "Linear ADR historical readback requires existing exact slot"
+                    )
+                if not _exact_adr_document_matches(existing, candidate):
+                    raise TrackerConflictError("Linear ADR batch slot diverged")
+            entries.append({
+                "metadata": metadata,
+                "body": body,
+                "record": record,
+                "recovery_only": recovery_only,
+                "candidate": candidate,
+                "existing_content": None if existing is None else existing["content"],
+            })
+        return binding, documents, by_id, entries, comments
+
+    def plan_adr_batch_qualification(
+        self,
+        project: Project,
+        records: tuple[dict, ...],
+        observed_documents: dict[str, str] | None = None,
+    ) -> list[dict]:
+        """Return the exact bytes a historical batch import would create.
+
+        Read-only: it performs no provider write.  Records carry no qualification
+        profile.  Each item gives the canonical version Document and the title
+        its qualification probe must bear.  When ``observed_documents`` maps an
+        ADR ID to the complete version readback observed for that exact content,
+        the item also gives the canonical witness derived from it.  A recovery-only
+        slot uses the provider bytes already stored in the project instead.
+        """
+        if observed_documents is not None and not isinstance(observed_documents, dict):
+            raise ValueError("Linear ADR batch observed documents invalid")
+        binding, _documents, _by_id, entries, _comments = self._prepare_adr_batch(
+            project, records, profiled=False
+        )
+        adr_ids = {entry["metadata"]["id"] for entry in entries}
+        if observed_documents and not set(observed_documents) <= adr_ids:
+            raise ValueError("Linear ADR batch observed documents invalid")
+        plan = []
+        for entry in entries:
+            metadata, candidate = entry["metadata"], entry["candidate"]
+            adr_id = metadata["id"]
+            item = {
+                "adr_id": adr_id,
+                "recovery_only": entry["recovery_only"],
+                "document_id": candidate["id"],
+                "document_title": candidate["title"],
+                "document_content": candidate["content"],
+                "document_sha256": hashlib.sha256(
+                    candidate["content"].encode()
+                ).hexdigest(),
+                "document_probe_title": _adr_qualification_probe_title(
+                    adr_id, "document", candidate["content"]
+                ),
+                "existing_document_content": entry["existing_content"],
+            }
+            observed = (observed_documents or {}).get(adr_id)
+            if entry["recovery_only"]:
+                observed = entry["existing_content"]
+            if observed is not None:
+                if not isinstance(observed, str) or not _adr_version_readback_header_matches(
+                    observed, candidate["content"]
+                ):
+                    raise TrackerConflictError(
+                        "Linear ADR batch document readback is not qualified"
+                    )
+                witness = _adr_witness_document(
+                    binding, metadata, {**candidate, "content": observed}, entry["body"]
+                )
+                item.update(
+                    witness_id=witness["id"],
+                    witness_title=witness["title"],
+                    witness_content=witness["content"],
+                    witness_sha256=hashlib.sha256(
+                        witness["content"].encode()
+                    ).hexdigest(),
+                    witness_probe_title=_adr_qualification_probe_title(
+                        adr_id, "witness", witness["content"]
+                    ),
+                )
+            plan.append(item)
+        return plan
+
+    def _verify_adr_batch_qualification(
+        self, binding: dict, by_id: dict, entries: list[dict]
+    ) -> list[tuple[dict, dict, str, str]]:
+        """Read every qualification probe before any effect; return exact profiles."""
+        if any(
+            not isinstance(entry["record"]["qualification_project_id"], str)
+            for entry in entries
+        ):
+            raise ValueError("Linear ADR batch record invalid")
+        projects = {entry["record"]["qualification_project_id"] for entry in entries}
+        qualification_project = next(iter(projects))
+        if (
+            len(projects) != 1
+            or qualification_project == binding["project_id"]
+        ):
+            raise TrackerConflictError(
+                "Linear ADR batch qualification project is not isolated"
+            )
+        try:
+            project_uuid = uuid.UUID(qualification_project)
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError("Linear ADR batch record invalid") from None
+        if str(project_uuid) != qualification_project:
+            raise ValueError("Linear ADR batch record invalid")
+        slot_ids = set(by_id)
+        for entry in entries:
+            slot_ids.add(entry["candidate"]["id"])
+            slot_ids.add(
+                _adr_witness_id(binding["project_id"], entry["metadata"]["id"], 0)
+            )
+        seen_probes = set()
+
+        def read_probe(probe_id: object, title: str, content: str) -> None:
+            try:
+                probe_uuid = uuid.UUID(probe_id)
+            except (TypeError, ValueError, AttributeError):
+                raise ValueError("Linear ADR batch record invalid") from None
+            if probe_uuid.version != 4 or str(probe_uuid) != probe_id:
+                raise ValueError("Linear ADR batch record invalid")
+            if probe_id in seen_probes or probe_id in slot_ids:
+                raise TrackerConflictError(
+                    "Linear ADR batch qualification probe collides"
+                )
+            seen_probes.add(probe_id)
+            probe = self._read_adr_document(probe_id)
+            if (
+                probe is None
+                or probe.get("id") != probe_id
+                or probe.get("title") != title
+                or probe.get("archivedAt") is not None
+                or probe.get("project", {}).get("id") != qualification_project
+                or probe.get("content") != content
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR batch qualification probe is not exact"
+                )
+
+        profiles = []
+        for entry in entries:
+            record, metadata, candidate = (
+                entry["record"], entry["metadata"], entry["candidate"]
+            )
+            adr_id = metadata["id"]
+            if entry["recovery_only"]:
+                version_content = entry["existing_content"]
+            else:
+                version_content = record["expected_linear_document_content"]
+                if (
+                    not isinstance(version_content, str)
+                    or record["expected_linear_document_sha256"]
+                    != hashlib.sha256(version_content.encode()).hexdigest()
+                ):
+                    raise ValueError("Linear ADR batch record invalid")
+                if not _adr_version_readback_header_matches(
+                    version_content, candidate["content"]
+                ):
+                    raise TrackerConflictError(
+                        "Linear ADR batch document readback is not qualified"
+                    )
+                parsed, _body = _parse_adr_document(
+                    {**candidate, "content": version_content},
+                    binding,
+                    source_body=entry["body"],
+                    allow_witness_bound_readback=True,
+                )
+                if parsed != metadata:
+                    raise TrackerConflictError(
+                        "Linear ADR batch document readback is not qualified"
+                    )
+                read_probe(
+                    record["document_probe_id"],
+                    _adr_qualification_probe_title(
+                        adr_id, "document", candidate["content"]
+                    ),
+                    version_content,
+                )
+            witness = _adr_witness_document(
+                binding, metadata, {**candidate, "content": version_content},
+                entry["body"],
+            )
+            witness_content = record["expected_linear_witness_content"]
+            if (
+                not isinstance(witness_content, str)
+                or record["expected_linear_witness_sha256"]
+                != hashlib.sha256(witness_content.encode()).hexdigest()
+            ):
+                raise ValueError("Linear ADR batch record invalid")
+            # The witness keeps the closed modelled serialization that every
+            # ordinary read already requires; the probe proves Linear returns it.
+            if not _exact_adr_document_matches(
+                {**witness, "content": witness_content}, witness
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR batch witness readback is not qualified"
+                )
+            read_probe(
+                record["witness_probe_id"],
+                _adr_qualification_probe_title(adr_id, "witness", witness["content"]),
+                witness_content,
+            )
+            profiles.append((candidate, witness, version_content, witness_content))
+        return profiles
+
+    def import_adr_batch(
+        self, project: Project, records: tuple[dict, ...]
+    ) -> list[Adr]:
+        """Import one finite historical manifest with a reciprocal asserted graph.
+
+        Linear has no multi-Document transaction. The complete hypothetical graph is
+        checked before the first effect; a partial write is unreadable and replay of
+        the identical manifest fills only deterministic, byte-identical slots.
+        Every version and witness is qualified before the first effect by a
+        non-authoritative probe holding its complete provider readback.
+        """
+        binding, documents, by_id, entries, comments = self._prepare_adr_batch(
+            project, records, profiled=True
+        )
+        profiles = self._verify_adr_batch_qualification(binding, by_id, entries)
+        hypothetical = list(documents)
+        for candidate, witness, version_content, witness_content in profiles:
+            # Imports write a version before its witness.  A missing witness can
+            # therefore be the exact interrupted-create state and is recoverable,
+            # but a surviving witness without its version cannot result from that
+            # order.  Refuse that orphan before adding any hypothetical slot: doing
+            # otherwise would authorize recreating a deleted version on replay.
+            if (
+                by_id.get(candidate["id"]) is None
+                and by_id.get(witness["id"]) is not None
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR batch witness has no matching version"
+                )
+            for expected, provider_content in (
+                (candidate, version_content),
+                (witness, witness_content),
+            ):
+                current = by_id.get(expected["id"])
+                if current is None:
+                    hypothetical.append({**expected, "content": provider_content})
+                elif current.get("content") != provider_content or not all(
+                    current.get(key) == value
+                    for key, value in expected.items()
+                    if key != "content"
+                ):
+                    raise TrackerConflictError("Linear ADR batch slot diverged")
+        chains = _adr_chain(hypothetical, binding)
+        for entry in entries:
+            metadata = entry["metadata"]
+            versions = chains.get(metadata["id"])
+            if versions is None or len(versions) != 1 or versions[0][0] != metadata:
+                raise TrackerConflictError("Linear ADR batch history diverged")
+        # Batch writes create every reciprocal comment before the first Document.
+        # Thus a missing comment is only a recoverable pre-Document interruption when
+        # no slot from this manifest has become durable yet.  Once a version or its
+        # witness exists, recreating a missing reciprocal comment would mask an
+        # external deletion from an otherwise completed (or advancing) batch.
+        durable_document = any(
+            by_id.get(slot["id"]) is not None
+            for candidate, witness, _version, _witness in profiles
+            for slot in (candidate, witness)
+        )
+        pending_comments = (
+            set()
+            if durable_document
+            else {
+                _adr_issue_link(binding, adr_id, issue_id)[0]
+                for adr_id, issue_id, _native_id in comments
+            }
+        )
+        self._validate_adr_graph(
+            chains, binding, pending_comments=pending_comments
+        )
+        # A durable manifest has already crossed the comment-before-Document
+        # boundary.  Do not call the write-capable helper on replay: a comment
+        # can disappear after the graph read, and the final snapshot must refuse
+        # that external deletion rather than recreate it.
+        if not durable_document:
+            for adr_id, issue_id, native_id in comments:
+                self._create_adr_issue_link(binding, adr_id, issue_id, native_id)
+        for entry, (_candidate, _witness, version_content, witness_content) in zip(
+            entries, profiles
+        ):
+            self._create_adr_document(
+                binding,
+                entry["metadata"],
+                entry["body"],
+                readback_content=None if entry["recovery_only"] else version_content,
+                witness_readback=witness_content,
+            )
+        _, fresh = self._adr_snapshot(project)
+        return [
+            self._adr_model(fresh[entry["metadata"]["id"]])
+            for entry in entries
+        ]
+
+    def import_adr(
+        self,
+        project: Project,
+        *,
+        adr_id: str,
+        title: str,
+        body: str,
+        historical_status: str,
+        source_ref: str,
+        source_created: int | None,
+        source_updated: int | None,
+        expected_source_sha256: str,
+        supersedes: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
+        superseded_by: str | None | object = _UNSPECIFIED_ADR_RELATION,
+        issue_refs: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
+    ) -> Adr:
+        """Store a bounded historical snapshot; this never invokes acceptance."""
+        missing_relations = sorted(
+            name for name, value in (
+                ("supersedes", supersedes),
+                ("superseded_by", superseded_by),
+                ("issues", issue_refs),
+            ) if value is _UNSPECIFIED_ADR_RELATION
+        )
+        if supersedes is _UNSPECIFIED_ADR_RELATION:
+            supersedes = ()
+        if superseded_by is _UNSPECIFIED_ADR_RELATION:
+            superseded_by = None
+        if issue_refs is _UNSPECIFIED_ADR_RELATION:
+            issue_refs = ()
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        if (
+            not isinstance(adr_id, str)
+            or _ADR_ID.fullmatch(adr_id) is None
+            or not isinstance(title, str)
+            or not title.strip()
+            or historical_status not in _ADR_STATUSES
+            or not isinstance(source_ref, str)
+            or not source_ref
+            or expected_source_sha256 != digest
+            or not isinstance(supersedes, tuple)
+            or not isinstance(issue_refs, tuple)
+            or len(supersedes) > _ADR_RELATION_LIMIT
+            or len(issue_refs) > _ADR_RELATION_LIMIT
+            or len(supersedes) != len(set(supersedes))
+            or any(
+                not isinstance(issue_ref, str)
+                or _SAFE_ID.fullmatch(issue_ref) is None
+                for issue_ref in issue_refs
+            )
+            or len(issue_refs) != len(set(issue_refs))
+            or adr_id in supersedes
+            or superseded_by == adr_id
+            or (superseded_by is not None and superseded_by in supersedes)
+            or (
+                (historical_status == "superseded") != (superseded_by is not None)
+                and not (
+                    historical_status == "superseded"
+                    and superseded_by is None
+                    and "superseded_by" in missing_relations
+                )
+            )
+            or (
+                bool(supersedes)
+                and historical_status not in {"accepted", "superseded"}
+            )
+            or any(
+                v is not None and (type(v) is not int or v < 0)
+                for v in (source_created, source_updated)
+            )
+        ):
+            raise ValueError("Linear ADR historical import invalid")
+        partial_import = False
+        interrupted_pair = None
+        try:
+            binding, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) not in {
+                "Linear ADR supersession relation is not reciprocal",
+                "Linear ADR version witness is missing",
+            }:
+                raise
+            binding, documents = self._adr_documents(project)
+            if str(error) == "Linear ADR version witness is missing":
+                matches = []
+                document_ids = {
+                    raw.get("id") for raw in documents if isinstance(raw, dict)
+                }
+                for raw in documents:
+                    if not isinstance(raw, dict) or not str(
+                        raw.get("content", "")
+                    ).startswith(_ADR_HEADER):
+                        continue
+                    interrupted_metadata, interrupted_body = _parse_adr_document(
+                        raw, binding, allow_unbound_body=True
+                    )
+                    if _adr_witness_id(
+                        binding["project_id"],
+                        interrupted_metadata["id"],
+                        interrupted_metadata["sequence"],
+                    ) not in document_ids:
+                        matches.append(
+                            (interrupted_metadata, interrupted_body, raw)
+                        )
+                if len(matches) != 1:
+                    raise TrackerConflictError(
+                        "Linear ADR interrupted import has ambiguous witness"
+                    ) from None
+                interrupted_metadata, interrupted_body, interrupted_raw = matches[0]
+                remaining = [
+                    raw for raw in documents if raw is not interrupted_raw
+                ]
+                complete_chains = _adr_chain(remaining, binding)
+                if (
+                    interrupted_metadata["id"] == adr_id
+                    and interrupted_metadata["sequence"] == 0
+                    and interrupted_metadata["body_sha256"] == digest
+                ):
+                    interrupted_body = body
+                else:
+                    predecessors = complete_chains.get(interrupted_metadata["id"])
+                    if (
+                        not predecessors
+                        or interrupted_metadata["sequence"]
+                        != predecessors[-1][0]["sequence"] + 1
+                        or interrupted_metadata["body_sha256"]
+                        != predecessors[-1][0]["body_sha256"]
+                    ):
+                        raise TrackerConflictError(
+                            "Linear ADR interrupted import source is not derivable"
+                        ) from None
+                    interrupted_body = predecessors[-1][1].get(
+                        _ADR_BOUND_SOURCE_BODY
+                    )
+                    if not isinstance(interrupted_body, str):
+                        raise TrackerConflictError(
+                            "Linear ADR interrupted import source is not bound"
+                        ) from None
+                witness = _adr_witness_document(
+                    binding, interrupted_metadata, interrupted_raw, interrupted_body
+                )
+                chains = _adr_chain([*documents, witness], binding)
+                interrupted_pair = (
+                    interrupted_metadata,
+                    interrupted_body,
+                    interrupted_raw,
+                )
+            else:
+                chains = _adr_chain(documents, binding)
+            partial_import = True
+        related_ids = {*supersedes}
+        if superseded_by is not None:
+            related_ids.add(superseded_by)
+        for related_id in sorted(related_ids):
+            if related_id not in chains:
+                raise AdrUnavailableError(related_id)
+        canonical_issue_refs, issue_native_ids = self._canonicalize_adr_issue_refs(
+            issue_refs, binding
+        )
+        metadata = {
+            "schema": _ADR_SCHEMA,
+            "project_id": binding["project_id"],
+            "team_id": binding["team_id"],
+            "id": adr_id,
+            "title": title.strip(),
+            "status": historical_status,
+            "sequence": 0,
+            "previous_id": None,
+            "previous_sha256": None,
+            "body_sha256": digest,
+            "origin": {
+                "kind": "migration",
+                "source_tracker": "youtrack",
+                "source_ref": source_ref,
+                "source_created": source_created,
+                "source_updated": source_updated,
+                "source_body_sha256": digest,
+                "missing_relations": missing_relations,
+            },
+            "relations": {
+                "supersedes": list(supersedes),
+                "superseded_by": superseded_by,
+                "issues": list(canonical_issue_refs),
+            },
+        }
+        candidate = {
+            "id": _adr_document_id(binding["project_id"], adr_id, 0),
+            "title": _adr_document_title(metadata),
+            "content": _adr_document_content(metadata, body),
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+        _parse_adr_document(candidate, binding)
+        if adr_id in chains:
+            if not _exact_adr_document_matches(
+                chains[adr_id][0][1], candidate
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR migration conflicts with existing origin"
+                )
+            if not partial_import:
+                return self._adr_model(chains[adr_id])
+            if len(chains[adr_id]) != 1:
+                raise TrackerConflictError(
+                    "Linear ADR interrupted import has unexpected versions"
+                )
+        elif partial_import:
+            raise TrackerConflictError(
+                "Linear ADR graph conflict is not this interrupted import"
+            )
+
+        interrupted_slot_matches = (
+            interrupted_pair is not None
+            and interrupted_pair[0]["id"] == adr_id
+            and interrupted_pair[0]["sequence"] == 0
+            and _exact_adr_document_matches(interrupted_pair[2], candidate)
+        )
+        changes = []
+        for target_id in sorted(supersedes):
+            target = chains[target_id]
+            if target[-1][0]["status"] == "superseded" and partial_import:
+                if len(target) < 2:
+                    raise TrackerConflictError(
+                        "Linear ADR interrupted import target has no predecessor"
+                    )
+                expected_metadata, _ = self._next_adr_metadata(
+                    target[-2], status="superseded", replacement_id=adr_id
+                )
+                if target[-1][0] != expected_metadata:
+                    raise TrackerConflictError(
+                        "Linear ADR interrupted import target diverged"
+                    )
+                if (
+                    interrupted_pair is not None
+                    and target[-1][1]["id"] == interrupted_pair[2]["id"]
+                ):
+                    interrupted_slot_matches = True
+            else:
+                if target[-1][0]["status"] != "accepted":
+                    raise TrackerConflictError(
+                        "Linear ADR import supersedes a non-accepted ADR"
+                    )
+                target_metadata, target_body = self._next_adr_metadata(
+                    target[-1], status="superseded", replacement_id=adr_id
+                )
+                changes.append((target[-1], target_metadata, target_body))
+        if superseded_by is not None:
+            replacement = chains[superseded_by]
+            if (
+                partial_import
+                and len(replacement) >= 2
+                and adr_id in replacement[-1][0]["relations"]["supersedes"]
+            ):
+                expected_metadata, _ = self._next_adr_metadata(
+                    replacement[-2], supersedes_id=adr_id
+                )
+                if replacement[-1][0] != expected_metadata:
+                    raise TrackerConflictError(
+                        "Linear ADR interrupted import replacement diverged"
+                    )
+                if (
+                    interrupted_pair is not None
+                    and replacement[-1][1]["id"] == interrupted_pair[2]["id"]
+                ):
+                    interrupted_slot_matches = True
+            else:
+                if replacement[-1][0]["status"] != "accepted":
+                    raise TrackerConflictError(
+                        "Linear ADR import replacement is not accepted"
+                    )
+                replacement_metadata, replacement_body = self._next_adr_metadata(
+                    replacement[-1], supersedes_id=adr_id
+                )
+                changes.append(
+                    (replacement[-1], replacement_metadata, replacement_body)
+                )
+        if interrupted_pair is not None and not interrupted_slot_matches:
+            raise TrackerConflictError(
+                "Linear ADR graph conflict is not this interrupted import"
+            )
+        if partial_import:
+            hypothetical = {key: list(value) for key, value in chains.items()}
+            for _previous, related_metadata, related_body in changes:
+                related_candidate = {
+                    "id": _adr_document_id(
+                        binding["project_id"], related_metadata["id"],
+                        related_metadata["sequence"],
+                    ),
+                    "title": _adr_document_title(related_metadata),
+                    "content": _adr_document_content(
+                        related_metadata, related_body
+                    ),
+                    "project": {"id": binding["project_id"]},
+                    "archivedAt": None,
+                }
+                hypothetical[related_metadata["id"]].append(
+                    (related_metadata, related_candidate)
+                )
+            self._validate_adr_graph(hypothetical, binding)
+        _preflight_adr_body_readback(body)
+        if interrupted_pair is not None:
+            _preflight_adr_body_readback(interrupted_pair[1])
+        for _previous, _metadata, related_body in changes:
+            _preflight_adr_body_readback(related_body)
+        for issue_id in canonical_issue_refs:
+            self._create_adr_issue_link(
+                binding, adr_id, issue_id, issue_native_ids[issue_id]
+            )
+        if interrupted_pair is not None:
+            interrupted_metadata, interrupted_body, _raw = interrupted_pair
+            self._create_adr_document(
+                binding, interrupted_metadata, interrupted_body
+            )
+        self._create_adr_document(binding, metadata, body)
+        for _previous, related_metadata, related_body in changes:
+            self._create_adr_document(binding, related_metadata, related_body)
+        _, fresh = self._adr_snapshot(project)
+        if fresh[adr_id][-1][0] != metadata:
+            raise TrackerConflictError("Linear ADR import diverged after write")
+        return self._adr_model(fresh[adr_id])
 
     def set_adr_status(
-        self, adr: Adr, status: str, project: Project | None = None,
+        self,
+        adr: Adr,
+        status: str,
+        project: Project | None = None,
     ) -> None:
-        raise TrackerCapabilityUnavailableError(self.name, "adr-knowledge-base")
+        project = project or self._project()
+        try:
+            _, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) != "Linear ADR version witness is missing":
+                raise
+            binding, documents = self._adr_documents(project)
+            previous, _dangling = self._interrupted_mutation_predecessor(
+                binding, documents, adr, "status"
+            )
+            old = previous[0]
+            if (
+                old["id"] != adr.id
+                or status == "superseded"
+                or status not in _ADR_TRANSITIONS[old["status"]]
+            ):
+                raise TrackerConflictError("Linear ADR interrupted status binding invalid")
+            metadata, body = self._next_adr_metadata(
+                previous, status=status
+            )
+            self._recover_exact_missing_witness(
+                project, binding, documents, metadata, body
+            )
+            return
+        versions = chains.get(adr.id)
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+            raise TrackerConflictError("Linear ADR snapshot is stale")
+        old = versions[-1][0]
+        if status == old["status"]:
+            return
+        if status == "superseded":
+            raise TrackerConflictError(
+                "Linear ADR supersession requires replacement id"
+            )
+        if status not in _ADR_TRANSITIONS[old["status"]]:
+            raise TrackerConflictError("Linear ADR status transition refused")
+        metadata, body = self._next_adr_metadata(versions[-1], status=status)
+        self._append_adr_version(project, versions[-1], metadata, body)
+
+    def supersede_adr(
+        self, adr: Adr, replacement_id: str, project: Project | None = None
+    ) -> None:
+        project = project or self._project()
+        try:
+            _, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) not in {
+                "Linear ADR supersession relation is not reciprocal",
+                "Linear ADR version witness is missing",
+            }:
+                raise
+            self._recover_supersession_pair(project, adr, replacement_id)
+            return
+        versions, replacement = chains.get(adr.id), chains.get(replacement_id)
+        if (
+            versions is not None
+            and replacement is not None
+            and versions[-1][0]["status"] == "superseded"
+            and versions[-1][0]["relations"]["superseded_by"] == replacement_id
+            and adr.id in replacement[-1][0]["relations"]["supersedes"]
+        ):
+            return
+        if (
+            versions is None
+            or replacement is None
+            or adr.id == replacement_id
+            or versions[-1][1]["id"] != adr.ref
+            or versions[-1][0]["status"] != "accepted"
+            or replacement[-1][0]["status"] != "accepted"
+        ):
+            raise TrackerConflictError("Linear ADR supersession binding invalid")
+        metadata, body = self._next_adr_metadata(
+            versions[-1], status="superseded", replacement_id=replacement_id
+        )
+        replacement_metadata, replacement_body = self._next_adr_metadata(
+            replacement[-1], supersedes_id=adr.id
+        )
+        self._append_adr_versions(
+            project,
+            [
+                (replacement[-1], replacement_metadata, replacement_body),
+                (versions[-1], metadata, body),
+            ],
+        )
+
+    def _recover_supersession_pair(
+        self, project: Project, adr: Adr, replacement_id: str
+    ) -> None:
+        """Complete only the exact second half of a proven interrupted pair."""
+        binding, documents = self._adr_documents(project)
+        dangling = self._unwitnessed_adr_versions(binding, documents)
+        if len(dangling) > 1:
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession has ambiguous witness"
+            )
+        dangling_pair = dangling[0] if dangling else None
+        remaining = [
+            raw for raw in documents
+            if dangling_pair is None or raw is not dangling_pair[1]
+        ]
+        chains = _adr_chain(remaining, binding)
+        source, replacement = chains.get(adr.id), chains.get(replacement_id)
+        if (
+            source is None
+            or replacement is None
+            or source[-1][1]["id"] != adr.ref
+            or source[-1][0]["status"] != "accepted"
+            or source[-1][0]["relations"]["superseded_by"] is not None
+            or replacement[-1][0]["status"] != "accepted"
+        ):
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
+            )
+
+        replacement_complete = adr.id in replacement[-1][0]["relations"]["supersedes"]
+        if replacement_complete and len(replacement) < 2:
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
+            )
+        replacement_previous = replacement[-2] if replacement_complete else replacement[-1]
+        if replacement_complete and adr.id in replacement_previous[0]["relations"][
+            "supersedes"
+        ]:
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
+            )
+        replacement_metadata, replacement_body = self._next_adr_metadata(
+            replacement_previous, supersedes_id=adr.id
+        )
+        replacement_candidate = {
+            "id": _adr_document_id(
+                binding["project_id"], replacement_id,
+                replacement_metadata["sequence"],
+            ),
+            "title": _adr_document_title(replacement_metadata),
+            "content": _adr_document_content(
+                replacement_metadata, replacement_body
+            ),
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+        if replacement_complete and (
+            replacement[-1][0] != replacement_metadata
+            or not _exact_adr_document_matches(
+                replacement[-1][1], replacement_candidate
+            )
+        ):
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
+            )
+
+        source_metadata, source_body = self._next_adr_metadata(
+            source[-1], status="superseded", replacement_id=replacement_id
+        )
+        source_candidate = {
+            "id": _adr_document_id(
+                binding["project_id"], adr.id, source_metadata["sequence"]
+            ),
+            "title": _adr_document_title(source_metadata),
+            "content": _adr_document_content(source_metadata, source_body),
+            "project": {"id": binding["project_id"]},
+            "archivedAt": None,
+        }
+
+        dangling_side = None
+        dangling_witness = None
+        if dangling_pair is not None:
+            dangling_metadata, dangling_raw = dangling_pair
+            if (
+                dangling_metadata == replacement_metadata
+                and _exact_adr_document_matches(
+                    dangling_raw, replacement_candidate
+                )
+            ):
+                dangling_side = "replacement"
+                dangling_witness = _adr_witness_document(
+                    binding,
+                    replacement_metadata,
+                    dangling_raw,
+                    replacement_body,
+                )
+            elif (
+                dangling_metadata == source_metadata
+                and _exact_adr_document_matches(dangling_raw, source_candidate)
+            ):
+                dangling_side = "source"
+                dangling_witness = _adr_witness_document(
+                    binding, source_metadata, dangling_raw, source_body
+                )
+            else:
+                raise TrackerConflictError(
+                    "Linear ADR interrupted supersession does not match exact pair"
+                )
+        if replacement_complete != (dangling_side != "replacement"):
+            raise TrackerConflictError(
+                "Linear ADR interrupted supersession does not match exact pair"
+            )
+
+        hypothetical_documents = list(documents)
+        if dangling_witness is not None:
+            hypothetical_documents.append(dangling_witness)
+        if dangling_side != "source":
+            hypothetical_documents.extend(
+                [
+                    source_candidate,
+                    _adr_witness_document(
+                        binding,
+                        source_metadata,
+                        source_candidate,
+                        source_body,
+                    ),
+                ]
+            )
+        hypothetical = _adr_chain(hypothetical_documents, binding)
+        self._validate_adr_graph(hypothetical, binding)
+
+        _preflight_adr_body_readback(source_body)
+        if dangling_side == "replacement":
+            _preflight_adr_body_readback(replacement_body)
+            self._create_adr_document(
+                binding, replacement_metadata, replacement_body
+            )
+        self._create_adr_document(binding, source_metadata, source_body)
+        _, fresh = self._adr_snapshot(project)
+        if (
+            fresh[adr.id][-1][0] != source_metadata
+            or fresh[replacement_id][-1][0] != replacement_metadata
+        ):
+            raise TrackerConflictError("Linear ADR supersession recovery diverged")
+
+    def _update_adr_body(
+        self, adr: Adr, expected_body: str, updated_body: str, project: Project | None
+    ) -> bool:
+        project = project or self._project()
+        try:
+            _, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) != "Linear ADR version witness is missing":
+                raise
+            binding, documents = self._adr_documents(project)
+            previous, _dangling = self._interrupted_mutation_predecessor(
+                binding, documents, adr, "body"
+            )
+            if not _adr_readback_content_matches(
+                previous[1].get("content"), expected_body
+            ):
+                raise TrackerConflictError("Linear ADR interrupted body predecessor diverged")
+            old = previous[0]
+            old_header, sep, _ = expected_body.partition("\n-->\n\n")
+            new_header, new_sep, body = updated_body.partition("\n-->\n\n")
+            if (
+                old["id"] != adr.id
+                or old["status"] in {"deprecated", "superseded"}
+                or not sep or not new_sep or old_header != new_header
+                or updated_body == expected_body
+            ):
+                raise TrackerConflictError("Linear ADR interrupted body binding invalid")
+            metadata, body = self._next_adr_metadata(
+                previous, body=body
+            )
+            self._recover_exact_missing_witness(
+                project, binding, documents, metadata, body
+            )
+            return True
+        versions = chains.get(adr.id)
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+            raise TrackerConflictError("Linear ADR body changed before edit")
+        if not _adr_readback_content_matches(
+            versions[-1][1].get("content"), expected_body
+        ):
+            if self._is_exact_adr_body_replay(
+                versions, expected_body, updated_body
+            ):
+                return False
+            raise TrackerConflictError("Linear ADR body changed before edit")
+        if updated_body == expected_body:
+            return False
+        if versions[-1][0]["status"] in {"deprecated", "superseded"}:
+            raise TrackerConflictError("Linear ADR terminal body is immutable")
+        old_header, sep, _ = expected_body.partition("\n-->\n\n")
+        new_header, new_sep, body = updated_body.partition("\n-->\n\n")
+        if not sep or not new_sep or old_header != new_header:
+            raise TrackerConflictError(
+                "Linear ADR metadata edit requires a typed operation"
+            )
+        metadata, body = self._next_adr_metadata(versions[-1], body=body)
+        self._append_adr_version(project, versions[-1], metadata, body)
+        return True

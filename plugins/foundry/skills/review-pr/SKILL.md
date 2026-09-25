@@ -112,7 +112,8 @@ Under Codex, pass that successful recovery's exact capability back to the spawn 
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing codex-plan reviewer --issue <ISSUE-ID> --packet-file /path/to/review-packet.txt --git-diff --root <ROOT> --base <BASE-SHA> --diff-hash <DIFF-HASH> --claim-id <NEW-CLAIM-ID>
 ```
 
-The façade refuses a stale/completed owner or a changed Git diff. A deduplicated caller
+The façade refuses a stale/completed owner, a changed Git diff, or a changed Git HEAD
+(including an empty commit). A deduplicated caller
 without that capability never receives it. The spawned reviewer must still use
 `read-review`; the plan itself does not expose diff bytes.
 
@@ -126,8 +127,10 @@ without that capability never receives it. The spawned reviewer must still use
 ```
 
 4. Read the diff only through the common verifier. It keeps the shared ledger lock from
-   the active claim and coordinate checks through the current exact diff hash and byte
-   emission, refusing a stale/mismatched claim before it emits the review input:
+the active claim, coordinate, and immutable-HEAD checks through the current exact diff hash and byte
+emission, refusing a stale/mismatched claim before it emits the review input. A
+Git-coordinated record with no immutable `head` is invalid and fails before any bytes are
+read; terminal legacy-proof compatibility never grants an active reviewer capability:
 
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing read-review --diff-hash <DIFF-HASH> --claim-id <CLAIM-ID> --root <ROOT> --base <BASE-SHA>
@@ -182,7 +185,9 @@ After the read-only reviewer returns, the caller records a blocking verdict (nev
 reviewer itself) through `routing escalation failure <ISSUE-ID> <CORRECTION-ROLE>
 --kind review_blocking --current-tier <SELECTED-TIER> --idempotency-key <STABLE-REVIEW-EFFECT-ID>`.
 The exact same review replay must reuse that stable identifier. If this was the review of an
-attempted correction, use `review_blocking_after_fix`. A non-blocking verdict does not
+attempted correction, use `review_blocking_after_fix` with the same immutable
+`--root <ROOT> --base <BASE-SHA>` coordinates used by the review proof; Foundry rechecks
+that the proof is terminal and blocked before consuming a credit. A non-blocking verdict does not
 touch escalation state. Stop immediately if the deterministic decision reports
 `human_required=true`. A `technical_blocked` result stays fail-closed for campaign
 effects and follows the bounded local diagnostic path; it is not a human-only verdict.

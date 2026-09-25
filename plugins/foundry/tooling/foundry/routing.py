@@ -820,12 +820,14 @@ class ReviewDeduplicator:
         diff_hash: str,
         coordinates: Mapping[str, str],
         claim_attempt_token: str,
+        head: str,
     ) -> str:
         material = json.dumps(
             {
                 "domain": "foundry-review-claim-v1",
                 "diff_hash": diff_hash,
                 "coordinates": dict(coordinates),
+                "head": head,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -847,6 +849,46 @@ class ReviewDeduplicator:
                 "sont requis."
             )
         return {"root": coordinates["root"], "base": coordinates["base"]}
+
+    @classmethod
+    def _claimed_head(cls, record: Mapping[str, object]) -> str | None:
+        """Return the immutable HEAD, rejecting headless Git authorization.
+
+        Bare ``claim()`` records predate every Git coordinate and remain a
+        deliberately narrow non-Git fixture.  Once either coordinates or a
+        durable claim publication is present, the record is Git-coordinated
+        and may not authorize active work without its immutable HEAD.
+        """
+        head = record.get("head")
+        if head is None:
+            git_coordinated = (
+                "coordinates" in record or "claim_publication" in record
+            )
+            if not git_coordinated:
+                return None
+            raise RoutingConfigError(
+                "claim Git sans HEAD immuable ; refus fermé."
+            )
+        if (not isinstance(head, str) or len(head) != 40 or
+                any(character not in "0123456789abcdef" for character in head)):
+            raise RoutingConfigError(
+                "claim Git sans HEAD immuable ; refus fermé."
+            )
+        return head
+
+    @classmethod
+    def _assert_current_head(cls, record: Mapping[str, object], root: str) -> str | None:
+        """Refuse a claim when its worktree no longer names its reviewed commit."""
+        claimed_head = cls._claimed_head(record)
+        if claimed_head is None:
+            return None
+        current_head = git_head(root)
+        if current_head != claimed_head:
+            raise RoutingConfigError(
+                "le HEAD a changé depuis le claim : réservez le nouveau diff avant "
+                "de relancer un reviewer."
+            )
+        return claimed_head
 
     @contextmanager
     def _locked(self):
@@ -1124,6 +1166,7 @@ class ReviewDeduplicator:
             record = self._read_record(
                 marker, diff_hash, migrate_bare_legacy=False,
             )
+            self._claimed_head(record)
             return "coordinates" not in record
 
     def verdict(self, diff_hash: str) -> ReviewClaim:
@@ -1199,6 +1242,7 @@ class ReviewDeduplicator:
                 )
                 if "coordinates" in record:
                     self._assert_coordinates(record, coordinates)
+                    self._claimed_head(record)
                 else:
                     if replay_interrupted:
                         raise RoutingConfigError(
@@ -1219,7 +1263,13 @@ class ReviewDeduplicator:
                     "claim Git neuf : token secret de tentative requis avant "
                     "publication."
                 )
+            claimed_head = git_head(coordinates["root"])
             diff = git_diff(coordinates["root"], coordinates["base"])
+            if (claimed_head is not None and
+                    git_head(coordinates["root"]) != claimed_head):
+                raise RoutingConfigError(
+                    "le HEAD a changé pendant le claim ; aucune claim créée."
+                )
             actual_hash = review_diff_hash(diff)
             if actual_hash != expected_hash:
                 raise RoutingConfigError(
@@ -1227,6 +1277,7 @@ class ReviewDeduplicator:
                     f"actuel {actual_hash} ; aucune claim créée."
                 )
             if marker.is_file() and legacy_record is None:
+                self._assert_current_head(record, coordinates["root"])
                 if replay_interrupted:
                     return self._replay_interrupted_git_claim(
                         expected_hash,
@@ -1243,7 +1294,7 @@ class ReviewDeduplicator:
                     expected_hash, legacy_record,
                 )
             claim_id = self._claim_id_for_attempt(
-                expected_hash, coordinates, claim_attempt_token,
+                expected_hash, coordinates, claim_attempt_token, claimed_head,
             )
             record = {
                 "schema_version": 1,
@@ -1253,6 +1304,7 @@ class ReviewDeduplicator:
                 "claim": {"id": claim_id, "started_at": _utc_now()},
                 "recoveries": [],
                 "coordinates": coordinates,
+                "head": claimed_head,
             }
             record["claim_publication"] = {
                 "attempt_digest": hashlib.sha256(
@@ -1300,7 +1352,7 @@ class ReviewDeduplicator:
                 "publication de claim invalide ; intervention humaine requise."
             )
         claim_id = self._claim_id_for_attempt(
-            diff_hash, coordinates, claim_attempt_token,
+            diff_hash, coordinates, claim_attempt_token, self._claimed_head(record),
         )
         if not hmac.compare_digest(str(claim.get("id")), claim_id):
             raise RoutingConfigError(
@@ -1325,9 +1377,16 @@ class ReviewDeduplicator:
             _, record = self._record_for(expected_hash)
             self._assert_active_generation(record, claim_id)
             self._assert_coordinates(record, coordinates)
+            claimed_head = self._assert_current_head(record, coordinates["root"])
             actual_hash = review_diff_hash(
                 git_diff(coordinates["root"], coordinates["base"])
             )
+            if (claimed_head is not None and
+                    git_head(coordinates["root"]) != claimed_head):
+                raise RoutingConfigError(
+                    "le HEAD a changé depuis le claim : réservez le nouveau diff avant "
+                    "de relancer un reviewer."
+                )
             if actual_hash != expected_hash:
                 raise RoutingConfigError(
                     f"le diff a changé depuis le claim : attendu {expected_hash}, "
@@ -1421,6 +1480,7 @@ class ReviewDeduplicator:
             )
         self._assert_no_orphaned_acceptance_proof(diff_hash, record)
         self._assert_coordinates(record, coordinates)
+        self._claimed_head(record)
 
     def assert_coordinates(
         self,
@@ -1434,6 +1494,7 @@ class ReviewDeduplicator:
         with self._locked():
             _, record = self._record_for(diff_hash)
             self._assert_coordinates(record, coordinates)
+            self._claimed_head(record)
 
     def assert_recoverable(
         self,
@@ -1479,7 +1540,13 @@ class ReviewDeduplicator:
         with self._locked():
             marker, record = self._record_for(diff_hash)
             self._assert_recoverable(diff_hash, record, generation, claim_id, coordinates)
+            claimed_head = self._assert_current_head(record, coordinates["root"])
             verified = git_diff(coordinates["root"], coordinates["base"])
+            if (claimed_head is not None and
+                    git_head(coordinates["root"]) != claimed_head):
+                raise RoutingConfigError(
+                    "le HEAD a changé depuis le claim ; aucune récupération n'a été créée."
+                )
             if review_diff_hash(verified) != diff_hash:
                 raise RoutingConfigError(
                     "le diff a changé depuis le claim ; aucune récupération n'a été créée."
@@ -1527,41 +1594,89 @@ class ReviewDeduplicator:
         binding = self.completed_proof_binding(diff_hash)
         return binding["proof_id"] if binding is not None else None
 
+    def _completed_proof_binding_from_record(
+        self,
+        diff_hash: str,
+        record: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Validate terminal claim fields without assigning their authority."""
+        proof_id = record.get("acceptance_proof_id")
+        if record.get("state") != "completed" or proof_id is None:
+            return None
+        if (not isinstance(proof_id, str) or len(proof_id) != 64 or
+                any(character not in "0123456789abcdef" for character in proof_id)):
+            raise RoutingConfigError(
+                f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
+            )
+        generation = record.get("generation")
+        claim = record.get("claim")
+        claim_id = claim.get("id") if isinstance(claim, Mapping) else None
+        completed_at = record.get("completed_at")
+        coordinates = record.get("coordinates")
+        if type(generation) is not int or generation < 1:
+            raise RoutingConfigError(
+                f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
+            )
+        self._validate_claim_id(claim_id)
+        if not self._valid_utc_timestamp(completed_at):
+            raise RoutingConfigError(
+                f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
+            )
+        coordinates = self._validate_coordinates(coordinates)
+        return {
+            "proof_id": proof_id,
+            "generation": generation,
+            "claim_digest": hashlib.sha256(claim_id.encode("ascii")).hexdigest(),
+            "completed_at": completed_at,
+            "coordinates": coordinates,
+        }
+
     def completed_proof_binding(self, diff_hash: str) -> dict[str, object] | None:
-        """Return the redacted claim coordinates bound to a completed proof."""
+        """Return a completed proof binding only from a HEAD-bound Git claim."""
         diff_hash = self._validate_hash(diff_hash)
         with self._locked():
             _, record = self._record_for(diff_hash)
-            proof_id = record.get("acceptance_proof_id")
-            if record.get("state") != "completed" or proof_id is None:
+            binding = self._completed_proof_binding_from_record(diff_hash, record)
+            if binding is None:
                 return None
-            if (not isinstance(proof_id, str) or len(proof_id) != 64 or
-                    any(character not in "0123456789abcdef" for character in proof_id)):
-                raise RoutingConfigError(
-                    f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
-                )
-            generation = record.get("generation")
-            claim = record.get("claim")
-            claim_id = claim.get("id") if isinstance(claim, Mapping) else None
-            completed_at = record.get("completed_at")
-            coordinates = record.get("coordinates")
-            if type(generation) is not int or generation < 1:
-                raise RoutingConfigError(
-                    f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
-                )
-            self._validate_claim_id(claim_id)
-            if not self._valid_utc_timestamp(completed_at):
-                raise RoutingConfigError(
-                    f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
-                )
-            coordinates = self._validate_coordinates(coordinates)
-            return {
-                "proof_id": proof_id,
-                "generation": generation,
-                "claim_digest": hashlib.sha256(claim_id.encode("ascii")).hexdigest(),
-                "completed_at": completed_at,
-                "coordinates": coordinates,
-            }
+            self._claimed_head(record)
+            return binding
+
+    def _validated_proof_for_terminal_binding(
+        self,
+        issue_id: str,
+        diff_hash: str,
+        binding: Mapping[str, object],
+        *,
+        claimed_head: str | None,
+    ) -> dict[str, object]:
+        """Cross-check canonical proof content against one parsed ledger binding."""
+        proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
+        proof = proof_store._validated_proof(
+            proof_store.directory / str(binding["proof_id"]),
+        )
+        if (
+            proof["issue"]["id"] != issue_id
+            or proof["coordinates"]["diff_hash"] != diff_hash
+            or proof["coordinates"]["base"] != binding["coordinates"]["base"]
+            or (
+                claimed_head is not None
+                and proof["coordinates"]["head"] != claimed_head
+            )
+            or proof["review"]["generation"] != binding["generation"]
+            or proof["review"]["claim_digest"] != binding["claim_digest"]
+        ):
+            raise RoutingConfigError(
+                "preuve AC incohérente avec l'issue ou la review terminée ; refus fermé."
+            )
+        return {
+            **binding,
+            "quality": proof["quality"],
+            "all_pass": all(
+                criterion["verdict"] == "pass"
+                for criterion in proof["issue"]["criteria"]
+            ),
+        }
 
     def validated_terminal_proof_binding(
         self,
@@ -1582,24 +1697,185 @@ class ReviewDeduplicator:
                 raise RoutingConfigError(
                     "preuve AC issue de coordonnées de review différentes ; refus fermé."
                 )
-        proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
-        proof = proof_store._validated_proof(proof_store.directory / binding["proof_id"])
+        with self._locked():
+            _, record = self._record_for(diff_hash)
+            claimed_head = self._claimed_head(record)
+        return self._validated_proof_for_terminal_binding(
+            issue_id.strip(), diff_hash, binding, claimed_head=claimed_head,
+        )
+
+    def validated_claimed_correction_proof_binding(
+        self,
+        issue_id: str,
+        diff_hash: str,
+        expected_binding: Mapping[str, object],
+        *,
+        coordinates: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Read the exact proof behind an already-claimed credited correction.
+
+        Normal terminal-proof, reviewer, acceptance-sync, and merge paths always
+        require the review ledger's immutable HEAD.  This read-only compatibility
+        path exists only so the already-attested PAT-22 generation-9 correction can
+        validate its historical blocked proof while the escalation issue lock still
+        proves the matching credit claim.  The expected binding is therefore not an
+        authority source: it must match every durable ledger/proof coordinate, and
+        this method is never used by generic mergeable rearm or delivery gates.
+        """
+        if not isinstance(issue_id, str) or not issue_id.strip():
+            raise RoutingConfigError("preuve AC : identifiant d'issue requis.")
+        issue_id = issue_id.strip()
+        diff_hash = self._validate_hash(diff_hash)
+        required = {
+            "proof_id", "completed_at", "quality", "all_pass", "diff_hash",
+            "generation", "claim_digest", "coordinates",
+        }
         if (
-            proof["issue"]["id"] != issue_id.strip()
-            or proof["coordinates"]["diff_hash"] != diff_hash
-            or proof["coordinates"]["base"] != binding["coordinates"]["base"]
-            or proof["review"]["generation"] != binding["generation"]
-            or proof["review"]["claim_digest"] != binding["claim_digest"]
+            not isinstance(expected_binding, Mapping)
+            or not required.issubset(expected_binding)
+            or not set(expected_binding).issubset(required | {"repository"})
+            or expected_binding.get("diff_hash") != diff_hash
+            or expected_binding.get("quality") != "blocked"
+            or expected_binding.get("all_pass") is not False
+            or (
+                "repository" in expected_binding
+                and expected_binding.get("repository") != self.__repository
+            )
         ):
             raise RoutingConfigError(
-                "preuve AC incohérente avec l'issue ou la review terminée ; refus fermé."
+                "preuve bloquante créditée incohérente ; refus fermé."
+            )
+        expected_coordinates = self._validate_coordinates(
+            expected_binding.get("coordinates"),
+        )
+        if coordinates is not None:
+            current_coordinates = self._validate_coordinates(coordinates)
+            # PAT-32 permits only the PR base to advance between the historical
+            # blocked proof and its sole replacement reviewer claim.  The
+            # worktree root remains an immutable part of the historical proof's
+            # authority, so a sibling worktree cannot consume this exception.
+            if current_coordinates["root"] != expected_coordinates["root"]:
+                raise RoutingConfigError(
+                    "preuve AC issue de coordonnées de review différentes ; refus fermé."
+                )
+
+        with self._locked():
+            _, record = self._record_for(diff_hash)
+            binding = self._completed_proof_binding_from_record(diff_hash, record)
+            if binding is None:
+                raise RoutingConfigError(
+                    "preuve bloquante créditée absente ; refus fermé."
+                )
+            if record.get("head") is None:
+                historical_keys = {
+                    "schema_version", "diff_hash", "state", "generation", "claim",
+                    "recoveries", "coordinates", "claim_publication", "completed_at",
+                    "acceptance_proof_id",
+                }
+                if (
+                    issue_id != "PAT-22"
+                    or "repository" not in expected_binding
+                    or set(record) != historical_keys
+                ):
+                    self._claimed_head(record)
+                claimed_head = None
+            else:
+                claimed_head = self._claimed_head(record)
+
+        if binding["coordinates"] != expected_coordinates or any(
+            expected_binding.get(key) != binding.get(key)
+            for key in (
+                "proof_id", "generation", "claim_digest", "completed_at",
+                "coordinates",
+            )
+        ):
+            raise RoutingConfigError(
+                "preuve bloquante créditée incohérente ; refus fermé."
+            )
+        durable = self._validated_proof_for_terminal_binding(
+            issue_id, diff_hash, binding, claimed_head=claimed_head,
+        )
+        if durable["quality"] != "blocked" or durable["all_pass"] is not False:
+            raise RoutingConfigError(
+                "preuve bloquante créditée incohérente ; refus fermé."
+            )
+        return durable
+
+    def revalidate_terminal_proof_for_current_git(
+        self,
+        issue_id: str,
+        expected_binding: Mapping[str, object],
+        *,
+        root: str | os.PathLike,
+    ) -> dict[str, object]:
+        """Revalidate one historical terminal proof against the calling worktree.
+
+        The escalation ledger is shared by worktrees that resolve to the same
+        repository identity.  A credited correction therefore cannot trust the
+        historical proof digest alone: the caller must still be in the exact root,
+        base, HEAD, and diff that the canonical proof reviewed.
+        """
+        if not isinstance(expected_binding, Mapping):
+            raise RoutingConfigError(
+                "preuve terminale bloquante invalide au claim de correction."
+            )
+        diff_hash = self._validate_hash(expected_binding.get("diff_hash"))
+        coordinates = self._validate_coordinates(
+            expected_binding.get("coordinates")
+        )
+        review_root, review_base = review_diff_coordinates(
+            root, coordinates["base"],
+        )
+        current_coordinates = {
+            "root": str(review_root),
+            "base": review_base,
+        }
+        if current_coordinates != coordinates:
+            raise RoutingConfigError(
+                "le worktree courant ne correspond pas aux coordonnées immuables "
+                "de la preuve bloquante ; plan de correction refusé."
+            )
+
+        durable = self.validated_terminal_proof_binding(
+            issue_id, diff_hash, coordinates=current_coordinates,
+        )
+        if durable is None or any(
+            expected_binding.get(key) != durable.get(key)
+            for key in (
+                "proof_id", "completed_at", "quality", "all_pass",
+                "generation", "claim_digest", "coordinates",
+            )
+        ):
+            raise RoutingConfigError(
+                "la preuve terminale bloquante ne correspond plus à son binding "
+                "canonique ; plan de correction refusé."
+            )
+
+        proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
+        proof = proof_store._validated_proof(
+            proof_store.directory / durable["proof_id"]
+        )
+        head_before = git_head(review_root)
+        current_diff_hash = review_diff_hash(git_diff(review_root, review_base))
+        head_after = git_head(review_root)
+        proof_coordinates = proof["coordinates"]
+        if (
+            head_before != head_after
+            or proof_coordinates["head"] != head_after
+            or proof_coordinates["base"] != review_base
+            or proof_coordinates["diff_hash"] != diff_hash
+            or current_diff_hash != diff_hash
+        ):
+            raise RoutingConfigError(
+                "preuve terminale bloquante périmée : HEAD ou diff Git courant "
+                "ne correspond pas aux octets revus ; plan de correction refusé."
             )
         return {
-            **binding,
-            "quality": proof["quality"],
-            "all_pass": all(
-                criterion["verdict"] == "pass"
-                for criterion in proof["issue"]["criteria"]
+            **durable,
+            "diff_hash": diff_hash,
+            **(
+                {"repository": self.__repository}
+                if "repository" in expected_binding else {}
             ),
         }
 
@@ -1801,7 +2077,13 @@ class AcceptanceProofStore:
             marker, record = ledger._record_for(diff_hash)
             ledger._assert_active_generation(record, claim_id)
             ledger._assert_coordinates(record, coordinates)
+            claimed_head = ledger._assert_current_head(record, coordinates["root"])
             verified = git_diff(root, base)
+            if claimed_head is not None and git_head(root) != claimed_head:
+                raise RoutingConfigError(
+                    "le HEAD a changé depuis le claim : réservez le nouveau diff avant "
+                    "de relancer un reviewer."
+                )
             if review_diff_hash(verified) != diff_hash:
                 raise RoutingConfigError(
                     "le diff a changé depuis le claim : réservez le nouveau diff avant de relancer un reviewer."
@@ -1812,7 +2094,7 @@ class AcceptanceProofStore:
                           "criteria": normalized},
                 "review": {"role": reviewer_role, "generation": record["generation"],
                            "claim_digest": hashlib.sha256(claim_id.encode("ascii")).hexdigest()},
-                "coordinates": {"head": git_head(root), "diff_hash": review_diff_hash(verified),
+                "coordinates": {"head": claimed_head or git_head(root), "diff_hash": review_diff_hash(verified),
                                 "base": coordinates["base"]},
                 "quality": quality,
             }
@@ -1948,7 +2230,13 @@ def claimed_review_diff(
         _, record = deduplicator._record_for(expected_hash)
         deduplicator._assert_active_generation(record, claim_id)
         deduplicator._assert_coordinates(record, coordinates)
+        claimed_head = deduplicator._assert_current_head(record, coordinates["root"])
         diff = git_diff(root, base)
+        if claimed_head is not None and git_head(root) != claimed_head:
+            raise RoutingConfigError(
+                "le HEAD a changé depuis le claim : réservez le nouveau diff avant "
+                "de relancer un reviewer."
+            )
         actual_hash = review_diff_hash(diff)
         if actual_hash != expected_hash:
             raise RoutingConfigError(
@@ -2188,6 +2476,11 @@ def main(
         "--halt-generation", required=True, type=_positive_int,
     )
     escalation_rearm.add_argument(
+        "--current-halt-generation", type=_positive_int,
+        help=("génération technique observée après le diagnostic local ; requise "
+              "si elle diffère de l'autorisation épuisée"),
+    )
+    escalation_rearm.add_argument(
         "--remediation-credits", required=True, type=_positive_int, metavar="1..3",
         help="accorde une nouvelle fenêtre bornée de 1 à 3 corrections",
     )
@@ -2213,7 +2506,33 @@ def main(
             "exactement cette valeur"
         ),
     )
+    escalation_failure.add_argument(
+        "--base",
+        help=("SHA Git figé requis pour consommer un crédit après "
+              "review_blocking_after_fix"),
+    )
+    escalation_failure.add_argument(
+        "--repository",
+        help="namespace du dépôt de review ; par défaut, identité du root Git",
+    )
     escalation_failure.add_argument("--root")
+    escalation_legacy_attest = escalation_actions.add_parser(
+        "attest-legacy-blocking-proof",
+        help="lie une consommation legacy à sa preuve canonique bloquante exacte",
+    )
+    escalation_legacy_attest.add_argument("issue")
+    escalation_legacy_attest.add_argument("role", choices=tuple(ROLE_DEFAULTS))
+    escalation_legacy_attest.add_argument(
+        "--halt-generation", required=True, type=_positive_int,
+    )
+    escalation_legacy_attest.add_argument(
+        "--base", required=True, help="SHA Git figé de la review historique",
+    )
+    escalation_legacy_attest.add_argument(
+        "--repository",
+        help="namespace canonique de la preuve ; par défaut, identité du root Git",
+    )
+    escalation_legacy_attest.add_argument("--root", required=True)
     escalation_risk = escalation_actions.add_parser("risk")
     escalation_risk.add_argument("issue")
     escalation_risk.add_argument("role", choices=tuple(ROLE_DEFAULTS))
@@ -2306,6 +2625,26 @@ def main(
                     "all_pass": binding["all_pass"],
                 }
 
+            def validate_credited_rearm(
+                previous_diff_hash: str,
+                expected_binding: Mapping[str, object],
+            ):
+                # Preserve the historical proof's immutable root while allowing
+                # only its PR base to advance.  ``validate_claim`` independently
+                # binds the replacement claim to the current root/base/HEAD/diff.
+                binding = deduplicator.validated_claimed_correction_proof_binding(
+                    args.issue,
+                    previous_diff_hash,
+                    expected_binding,
+                    coordinates=coordinates,
+                )
+                return {
+                    "proof_id": binding["proof_id"],
+                    "completed_at": binding["completed_at"],
+                    "quality": binding["quality"],
+                    "all_pass": binding["all_pass"],
+                }
+
             result = EscalationStore.for_root(
                 review_root,
             ).claim_fresh_reviewer_authorization(
@@ -2313,6 +2652,7 @@ def main(
                 expected_hash,
                 validated_claim=validate_claim,
                 validated_rearm=validate_rearm,
+                validated_credited_rearm=validate_credited_rearm,
             )
             print(json.dumps(result.to_dict(), indent=2))
             return
@@ -2378,19 +2718,86 @@ def main(
             elif args.escalation_action == "rearm-remediation":
                 payload = store.rearm_remediation(
                     args.issue, args.role, args.reason, args.halt_generation,
-                    args.remediation_credits,
+                    args.remediation_credits, args.current_halt_generation,
                 )
                 human_required = False
             elif args.escalation_action == "cancel-remediation":
                 payload = store.cancel_remediation(args.issue, args.halt_generation)
                 human_required = False
             elif args.escalation_action == "failure":
+                validated_blocking_proof = None
+                if args.kind == "review_blocking_after_fix":
+                    if args.root is None or args.base is None:
+                        raise RoutingConfigError(
+                            "review bloquante : --root et --base Git figés requis."
+                        )
+                    review_root, review_base = review_diff_coordinates(args.root, args.base)
+                    coordinates = {"root": str(review_root), "base": review_base}
+                    repository = args.repository or repository_identity(review_root)
+                    deduplicator = ReviewDeduplicator(repository)
+
+                    def validated_blocking_proof():
+                        # This callback runs while the escalation issue lock is held.
+                        # Re-read the trusted Git bytes here so a pre-lock race cannot
+                        # consume credit against an obsolete proof.
+                        expected_hash = review_diff_hash(
+                            git_diff(review_root, review_base),
+                        )
+                        binding = deduplicator.validated_terminal_proof_binding(
+                            args.issue, expected_hash, coordinates=coordinates,
+                        )
+                        if (
+                            binding is None or binding["quality"] != "blocked"
+                            or binding["all_pass"] is not False
+                        ):
+                            raise RoutingConfigError(
+                                "preuve terminale bloquante authentifiée requise."
+                            )
+                        return {
+                            **binding,
+                            "diff_hash": expected_hash,
+                            "repository": repository,
+                        }
+
                 decision = store.record_failure(
                     args.issue, args.role, args.kind, args.current_tier,
                     idempotency_key=args.idempotency_key,
+                    authorization_aware=True,
+                    validated_blocking_proof=validated_blocking_proof,
                 )
                 payload = decision.to_dict()
                 human_required = decision.human_required
+            elif args.escalation_action == "attest-legacy-blocking-proof":
+                review_root, review_base = review_diff_coordinates(args.root, args.base)
+                coordinates = {"root": str(review_root), "base": review_base}
+                repository = args.repository or repository_identity(review_root)
+                deduplicator = ReviewDeduplicator(repository)
+
+                def validated_legacy_blocking_proof():
+                    expected_hash = review_diff_hash(
+                        git_diff(review_root, review_base),
+                    )
+                    binding = deduplicator.validated_terminal_proof_binding(
+                        args.issue, expected_hash, coordinates=coordinates,
+                    )
+                    if (
+                        binding is None or binding["quality"] != "blocked"
+                        or binding["all_pass"] is not False
+                    ):
+                        raise RoutingConfigError(
+                            "preuve terminale bloquante authentifiée requise."
+                        )
+                    return {
+                        **binding,
+                        "diff_hash": expected_hash,
+                        "repository": repository,
+                    }
+
+                payload = store.attest_legacy_blocking_proof(
+                    args.issue, args.role, args.halt_generation,
+                    validated_blocking_proof=validated_legacy_blocking_proof,
+                )
+                human_required = False
             elif args.escalation_action == "risk":
                 decision = store.record_risk(
                     args.issue, args.role, args.kind, args.current_tier,

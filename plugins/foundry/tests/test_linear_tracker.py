@@ -1,8 +1,11 @@
 """Controlled Linear transport proof; no test contacts a Linear workspace."""
+
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
+import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -11,12 +14,25 @@ from types import SimpleNamespace
 import pytest
 
 import foundry
-from foundry import evidence_plane, issue, query, registry, routing, write
-from foundry.models import Adr, Check, Issue, Link, Project, PullRequest, TransitionContext
+from foundry import adr as adr_module
+from foundry import evidence_plane, frame, issue, query, registry, routing, write
+from foundry.trackers import linear as linear_module
+from foundry.models import (
+    Adr,
+    Check,
+    Issue,
+    Link,
+    Project,
+    PullRequest,
+    TransitionContext,
+)
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
+    AdrUnavailableError,
     BodyUpdateUnavailableError,
+    IssueUnavailableError,
+    Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
@@ -30,12 +46,19 @@ from foundry.trackers.youtrack import YouTrackTracker
 
 
 STATE_IDS = {
-    "backlog": "state-backlog", "ready": "state-ready",
-    "in-progress": "state-in-progress", "review": "state-review",
-    "blocked": "state-blocked", "done": "state-done", "dropped": "state-dropped",
+    "backlog": "state-backlog",
+    "ready": "state-ready",
+    "in-progress": "state-in-progress",
+    "review": "state-review",
+    "blocked": "state-blocked",
+    "done": "state-done",
+    "dropped": "state-dropped",
 }
+ISSUE_1_ID = "00000000-0000-4000-8000-000000000001"
+ISSUE_2_ID = "00000000-0000-4000-8000-000000000002"
 PROJECT = Project(
-    key="LIN", id="project-uuid",
+    key="LIN",
+    id="project-uuid",
     extra={
         "canonical_repo": "github.com/acme/widgets",
         "team_id": "team-uuid",
@@ -45,6 +68,12 @@ PROJECT = Project(
         "label_ids": {"pilot": "label-pilot", "api": "label-api"},
     },
 )
+SYNTHETIC_PROFILE_SOURCE_SHA256 = (
+    "17e881437bb12ee7de881673ede3d1b87153a6656bb4e972cc3b85a886739d81"
+)
+SYNTHETIC_PROFILE_READBACK_SHA256 = (
+    "ba804beb182ed1abac6c22fa1feac5e1f388a6967ea5748a3c85b6bb1f1816f7"
+)
 
 
 def connection(nodes):
@@ -53,21 +82,98 @@ def connection(nodes):
 
 def raw_issue(identifier, native_id, *, title="Issue", body="- [ ] acceptance"):
     return {
-        "id": native_id, "identifier": identifier, "title": title,
-        "description": body, "priority": 2, "estimate": 3,
-        "createdAt": "2026-09-20T10:00:00Z", "updatedAt": "2026-09-20T10:01:00Z",
+        "id": native_id,
+        "identifier": identifier,
+        "title": title,
+        "description": body,
+        "priority": 2,
+        "estimate": 3,
+        "createdAt": "2026-09-20T10:00:00Z",
+        "updatedAt": "2026-09-20T10:01:00Z",
         "state": {"id": STATE_IDS["ready"], "name": "Ready"},
         "team": {"id": "team-uuid", "key": "LIN"},
         "project": {"id": "project-uuid"},
         "projectMilestone": {"id": "milestone-m1", "name": "ignored"},
-        "labels": connection([
+        "labels": connection(
+            [
             {"id": "label-feature", "name": "Feature display"},
             {"id": "label-pilot", "name": "Pilot display"},
-        ]),
-        "parent": None, "children": connection([]), "relations": connection([]),
+            ]
+        ),
+        "parent": None,
+        "children": connection([]),
+        "relations": connection([]),
         "inverseRelations": connection([]),
         "comments": connection([]),
     }
+
+
+def linear_markdown_readback(content):
+    """Reproduce Linear's observed escaping of ADR comment closers."""
+    if content.startswith(linear_module._ADR_HEADER):
+        payload = content[len(linear_module._ADR_HEADER) :]
+        header, separator, body = payload.partition("\n-->\n\n")
+        assert separator
+        header = header.replace("[", "\\[").replace("]", "\\]")
+        body = linear_markdown_body_readback(body)
+        return f"{linear_module._ADR_HEADER}{header}\n\\-->\n\n{body}"
+    if content.startswith(linear_module._ADR_WITNESS_HEADER):
+        suffix = "\n-->"
+        assert content.endswith(suffix)
+        return f"{content[:-len(suffix)]}\n\\-->"
+    return content
+
+
+def linear_markdown_body_readback(body):
+    """Independently model the observed closed Linear body serializations."""
+    if hashlib.sha256(body.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256:
+        rendered = body
+        for heading in (
+            "## Contexte",
+            "## Décision",
+            "## Conséquences",
+            "## Alternatives écartées",
+        ):
+            rendered = rendered.replace(f"{heading}\n", f"{heading}\n\n", 1)
+        rendered = rendered.replace("\n- **<Alt>**", "\n* **<Alt>**", 1)
+        rendered = rendered.removesuffix("\n")
+        assert hashlib.sha256(rendered.encode()).hexdigest() == (
+            SYNTHETIC_PROFILE_READBACK_SHA256
+        )
+        return rendered
+    rendered = []
+    fence = None
+    for source_line in body.splitlines(keepends=True):
+        line = source_line.removesuffix("\n").removesuffix("\r")
+        candidate = line.lstrip(" ")
+        indentation = len(line) - len(candidate)
+        if fence is not None:
+            marker, opening_length = fence
+            length = len(candidate) - len(candidate.lstrip(marker))
+            rendered.append(source_line)
+            if (
+                indentation <= 3
+                and length >= opening_length
+                and not candidate[length:].strip(" \t")
+            ):
+                fence = None
+            continue
+        if indentation <= 3 and candidate[:1] in {"`", "~"}:
+            marker = candidate[0]
+            length = len(candidate) - len(candidate.lstrip(marker))
+            info = candidate[length:]
+            if length >= 3 and not (marker == "`" and "`" in info):
+                fence = (marker, length)
+                rendered.append(source_line)
+                continue
+        if indentation <= 3 and candidate.startswith("<"):
+            raise ValueError("ambiguous raw HTML block in fake readback")
+        if source_line.startswith("- "):
+            thematic = line.replace(" ", "").replace("\t", "")
+            if len(thematic) < 3 or set(thematic) != {"-"}:
+                source_line = f"* {source_line[2:]}"
+        rendered.append(source_line)
+    return "".join(rendered)
 
 
 class LinearWire:
@@ -75,55 +181,175 @@ class LinearWire:
 
     def __init__(self):
         self.issues = {
-            "LIN-1": raw_issue("LIN-1", "issue-uuid-1", title="Parent"),
-            "LIN-2": raw_issue("LIN-2", "issue-uuid-2", title="Existing"),
+            "LIN-1": raw_issue("LIN-1", ISSUE_1_ID, title="Parent"),
+            "LIN-2": raw_issue("LIN-2", ISSUE_2_ID, title="Existing"),
         }
         self.comments = {}
+        self.documents = {}
+        # Readback probes are historical provider observations, not ADR slots.
+        # Keep them outside ``documents`` so assertions about batch effects remain
+        # precise while the adapter still performs its exact-ID read.
+        self.readback_probes = {}
         self.calls = []
+        self.git_automation_states = connection([])
 
     def _by_native(self, native):
         return next(value for value in self.issues.values() if value["id"] == native)
 
+    def _by_reference(self, reference):
+        if not isinstance(reference, str):
+            return None
+        matches = [
+            value
+            for identifier, value in self.issues.items()
+            if value["id"] == reference
+            or identifier.casefold() == reference.casefold()
+        ]
+        if len(matches) > 1:
+            raise AssertionError("ambiguous fake Linear issue reference")
+        return matches[0] if matches else None
+
     def __call__(self, document, variables):
         self.calls.append((document, copy.deepcopy(variables)))
+        if "FoundryLinearAdrDocuments" in document:
+            nodes = [
+                copy.deepcopy(value)
+                for value in self.documents.values()
+                if value["project"]["id"] == variables["projectId"]
+            ]
+            return {"data": {"documents": connection(nodes)}}
+        # Linear's singular document(id:) rejects an unknown UUID with GraphQL
+        # "Entity not found", rather than returning null.  ADR slot reads must
+        # consequently use the collection query below.
+        if "document(id:" in document:
+            return {"errors": [{"message": "Entity not found: Document"}], "data": {}}
+        if "FoundryLinearAdrDocumentById" in document:
+            document_id = variables["id"]
+            value = self.documents.get(document_id) or self.readback_probes.get(
+                document_id
+            )
+            nodes = [] if value is None else [copy.deepcopy(value)]
+            return {"data": {"documents": connection(nodes)}}
+        if "FoundryLinearAdrDocumentCreate" in document:
+            value = variables["input"]
+            try:
+                valid_uuid = uuid.UUID(value["id"]).version == 4
+            except (KeyError, TypeError, ValueError):
+                valid_uuid = False
+            if not valid_uuid:
+                return {"errors": [{"message": "Document id must be UUID v4"}], "data": {}}
+            if value["id"] in self.documents:
+                return {"errors": [{"message": "duplicate id"}], "data": {}}
+            created = {
+                "id": value["id"],
+                "title": value["title"],
+                "content": linear_markdown_readback(value["content"]),
+                "archivedAt": None,
+                "project": {"id": value["projectId"]},
+            }
+            self.documents[value["id"]] = copy.deepcopy(created)
+            return {
+                "data": {
+                    "documentCreate": {
+                        "success": True,
+                        "document": copy.deepcopy(created),
+                    }
+                }
+            }
+        if "FoundryLinearTeamGitAutomationStates" in document:
+            return {
+                "data": {
+                    "team": {
+                "id": "team-uuid",
+                        "gitAutomationStates": copy.deepcopy(
+                            self.git_automation_states
+                        ),
+                    }
+                }
+            }
         if "FoundryLinearIssues" in document:
-            return {"data": {"issues": connection([copy.deepcopy(v) for v in self.issues.values()])}}
+            return {
+                "data": {
+                    "issues": connection(
+                        [copy.deepcopy(v) for v in self.issues.values()]
+                    )
+                }
+            }
         if "FoundryLinearIssue(" in document:
-            return {"data": {"issue": copy.deepcopy(self.issues.get(variables["id"]))}}
+            return {
+                "data": {
+                    "issue": copy.deepcopy(self._by_reference(variables["id"]))
+                }
+            }
         if "FoundryLinearIssueCreate" in document:
             value = variables["input"]
             identifier = f"LIN-{len(self.issues) + 1}"
-            created = raw_issue(identifier, value["id"], title=value["title"], body=value["description"])
+            created = raw_issue(
+                identifier, value["id"], title=value["title"], body=value["description"]
+            )
             self._apply(created, value)
             if parent_id := value.get("parentId"):
                 parent = self._by_native(parent_id)
-                created["parent"] = {"id": parent["id"], "identifier": parent["identifier"]}
+                created["parent"] = {
+                    "id": parent["id"],
+                    "identifier": parent["identifier"],
+                }
                 parent["children"]["nodes"].append(
                     {"id": created["id"], "identifier": created["identifier"]}
                 )
             self.issues[identifier] = created
-            return {"data": {"issueCreate": {
-                "success": True, "issue": {"id": created["id"], "identifier": identifier},
-            }}}
+            return {
+                "data": {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {"id": created["id"], "identifier": identifier},
+                    }
+                }
+            }
         if "FoundryLinearIssueRelationCreate" in document:
             value = variables["input"]
-            source, target = self._by_native(value["issueId"]), self._by_native(value["relatedIssueId"])
-            source["relations"]["nodes"].append({
+            source, target = (
+                self._by_native(value["issueId"]),
+                self._by_native(value["relatedIssueId"]),
+            )
+            source["relations"]["nodes"].append(
+                {
                 "type": value["type"],
-                "relatedIssue": {"id": target["id"], "identifier": target["identifier"]},
-            })
-            target["inverseRelations"]["nodes"].append({
+                    "relatedIssue": {
+                        "id": target["id"],
+                        "identifier": target["identifier"],
+                    },
+                }
+            )
+            target["inverseRelations"]["nodes"].append(
+                {
                 "type": value["type"],
                 "issue": {"id": source["id"], "identifier": source["identifier"]},
-            })
+                }
+            )
             relation = {
-                "id": "relation-1", "type": value["type"],
+                "id": "relation-1",
+                "type": value["type"],
                 "issue": {"id": source["id"], "identifier": source["identifier"]},
-                "relatedIssue": {"id": target["id"], "identifier": target["identifier"]},
+                "relatedIssue": {
+                    "id": target["id"],
+                    "identifier": target["identifier"],
+                },
             }
-            return {"data": {"issueRelationCreate": {"success": True, "issueRelation": relation}}}
+            return {
+                "data": {
+                    "issueRelationCreate": {"success": True, "issueRelation": relation}
+                }
+            }
         if "FoundryLinearCommentCreate" in document:
             value = variables["input"]
+            if "id" in value:
+                try:
+                    valid_uuid = uuid.UUID(value["id"]).version == 4
+                except (TypeError, ValueError):
+                    valid_uuid = False
+                if not valid_uuid:
+                    return {"errors": [{"message": "Comment id must be UUID v4"}], "data": {}}
             issue = self._by_native(value["issueId"])
             comment = {
                 "id": value.get("id", f"comment-{len(self.comments) + 1}"),
@@ -133,16 +359,30 @@ class LinearWire:
             if comment["id"] in self.comments:
                 return {"errors": [{"message": "duplicate"}], "data": {}}
             self.comments[comment["id"]] = comment
-            issue["comments"]["nodes"].append({
-                "id": comment["id"], "body": comment["body"],
+            issue["comments"]["nodes"].append(
+                {
+                    "id": comment["id"],
+                    "body": comment["body"],
                 "createdAt": "2026-09-20T10:02:00Z",
-            })
-            return {"data": {"commentCreate": {"success": True, "comment": copy.deepcopy(comment)}}}
+                }
+            )
+            return {
+                "data": {
+                    "commentCreate": {
+                        "success": True,
+                        "comment": copy.deepcopy(comment),
+                    }
+                }
+            }
         if "FoundryLinearCommentsById(" in document:
             comment = self.comments.get(variables["id"])
-            return {"data": {"comments": connection(
+            return {
+                "data": {
+                    "comments": connection(
                 [] if comment is None else [copy.deepcopy(comment)]
-            )}}
+                    )
+                }
+            }
         raise AssertionError("unexpected GraphQL document")
 
     @staticmethod
@@ -150,7 +390,10 @@ class LinearWire:
         if "description" in values:
             issue["description"] = values["description"]
         if "stateId" in values:
-            issue["state"] = {"id": values["stateId"], "name": "provider display ignored"}
+            issue["state"] = {
+                "id": values["stateId"],
+                "name": "provider display ignored",
+            }
         if "priority" in values:
             issue["priority"] = values["priority"]
         if "estimate" in values:
@@ -158,19 +401,29 @@ class LinearWire:
         if "projectMilestoneId" in values:
             issue["projectMilestone"] = (
                 {"id": values["projectMilestoneId"], "name": "provider display ignored"}
-                if values["projectMilestoneId"] else None
+                if values["projectMilestoneId"]
+                else None
             )
         if "labelIds" in values:
             names = {
-                "label-feature": "Feature display", "label-bug": "Bug display",
-                "label-pilot": "Pilot display", "label-api": "API display",
+                "label-feature": "Feature display",
+                "label-bug": "Bug display",
+                "label-pilot": "Pilot display",
+                "label-api": "API display",
             }
-            issue["labels"] = connection([{"id": item, "name": names[item]} for item in values["labelIds"]])
+            issue["labels"] = connection(
+                [{"id": item, "name": names[item]} for item in values["labelIds"]]
+            )
         if "parentId" in values:
             parent = values["parentId"]
-            issue["parent"] = None if parent is None else {
-                "id": parent, "identifier": "LIN-1",
+            issue["parent"] = (
+                None
+                if parent is None
+                else {
+                    "id": parent,
+                    "identifier": "LIN-1",
             }
+            )
 
 
 @pytest.fixture
@@ -185,20 +438,28 @@ def proof(issue_id, body, *, head="a" * 40, base="b" * 40, diff_hash="c" * 64):
     value = {
         "schema_version": 1,
         "issue": {
-            "id": issue_id, "ac_digest": acceptance_digest(criteria),
+            "id": issue_id,
+            "ac_digest": acceptance_digest(criteria),
             "criteria": [{**criterion, "verdict": "pass"} for criterion in criteria],
         },
         "review": {
-            "role": "reviewer", "generation": 1, "claim_digest": "d" * 64,
+            "role": "reviewer",
+            "generation": 1,
+            "claim_digest": "d" * 64,
         },
         "coordinates": {"head": head, "diff_hash": diff_hash, "base": base},
         "quality": "mergeable",
     }
     import hashlib
     import json
-    value["proof_id"] = hashlib.sha256(json.dumps(
-        value, sort_keys=True, separators=(",", ":"),
-    ).encode()).hexdigest()
+
+    value["proof_id"] = hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     return value
 
 
@@ -206,7 +467,126 @@ def project_entry(project=PROJECT):
     return {"key": project.key, "id": project.id, **copy.deepcopy(project.extra)}
 
 
-def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(monkeypatch):
+def _bind_query_registry(monkeypatch, tr):
+    """Bind a fresh Linear tracker to PROJECT for the checkout-identity resolution
+    that `query`/`frame` perform, without resolving from a repo basename."""
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tr)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(
+        registry,
+        "checkout_repository_identity",
+        lambda cwd=None: "github.com/acme/widgets",
+    )
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {"linear": {"actual-checkout": project_entry()}},
+    )
+    monkeypatch.setattr(
+        registry,
+        "resolve",
+        lambda *_args: pytest.fail("Linear query must not resolve from a basename"),
+    )
+
+
+def _witness_document_id(wire):
+    matches = [
+        doc_id
+        for doc_id, doc in wire.documents.items()
+        if doc["title"].startswith("[Foundry ADR witness] ")
+    ]
+    assert len(matches) == 1, "expected exactly one ADR witness document"
+    return matches[0]
+
+
+def seed_linear_adr(
+    wire,
+    *,
+    adr_id,
+    status,
+    supersedes=(),
+    superseded_by=None,
+    body=None,
+):
+    binding = {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]}
+    if body is None:
+        body = f"seed body for {adr_id}"
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    metadata = {
+        "schema": linear_module._ADR_SCHEMA,
+        "project_id": binding["project_id"],
+        "team_id": binding["team_id"],
+        "id": adr_id,
+        "title": f"Seed {adr_id}",
+        "status": status,
+        "sequence": 0,
+        "previous_id": None,
+        "previous_sha256": None,
+        "body_sha256": digest,
+        "origin": {
+            "kind": "migration",
+            "source_tracker": "youtrack",
+            "source_ref": f"YT-{adr_id}",
+            "source_created": None,
+            "source_updated": None,
+            "source_body_sha256": digest,
+            "missing_relations": [],
+        },
+        "relations": {
+            "supersedes": list(supersedes),
+            "superseded_by": superseded_by,
+            "issues": [],
+        },
+    }
+    raw = {
+        "id": linear_module._adr_document_id(PROJECT.id, adr_id, 0),
+        "title": linear_module._adr_document_title(metadata),
+        "content": linear_module._adr_document_content(metadata, body),
+        "project": {"id": PROJECT.id},
+        "archivedAt": None,
+    }
+    linear_module._parse_adr_document(raw, binding)
+    witness = linear_module._adr_witness_document(binding, metadata, raw)
+    wire.documents[raw["id"]] = raw
+    wire.documents[witness["id"]] = witness
+    return Adr(
+        id=adr_id,
+        title=metadata["title"],
+        status=status,
+        body=raw["content"],
+        ref=raw["id"],
+    )
+
+
+def seed_linear_adr_relation_boundary(wire, relation_count):
+    replacement_id = "LIN-ADR-9000"
+    target_ids = tuple(
+        f"LIN-ADR-{number:04d}" for number in range(1, relation_count + 1)
+    )
+    for target_id in target_ids:
+        seed_linear_adr(
+            wire,
+            adr_id=target_id,
+            status="superseded",
+            superseded_by=replacement_id,
+        )
+    replacement = seed_linear_adr(
+        wire,
+        adr_id=replacement_id,
+        status="accepted",
+        supersedes=target_ids,
+    )
+    source = seed_linear_adr(
+        wire,
+        adr_id="LIN-ADR-8000",
+        status="accepted",
+    )
+    return source, replacement
+
+
+def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(
+    monkeypatch,
+):
     monkeypatch.setattr(
         "foundry.registry.repository_tracker_binding", lambda _cwd=None: None,
     )
@@ -219,7 +599,9 @@ def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(monk
     }
     monkeypatch.setattr(foundry.config, "require", secrets.__getitem__)
     monkeypatch.setattr(
-        foundry.config, "require_public", lambda key: "https://devhub.example.test",
+        foundry.config,
+        "require_public",
+        lambda key: "https://devhub.example.test",
     )
     assert isinstance(foundry.tracker("linear"), LinearTracker)
     assert isinstance(foundry.tracker("youtrack"), YouTrackTracker)
@@ -245,7 +627,8 @@ def test_binding_requires_explicit_repository_team_project_and_all_state_ids(tra
 
 
 def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_reader(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     instance, wire = tracker
     listed = instance.search(PROJECT)
@@ -256,10 +639,16 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
     assert listed[0].labels == ["pilot"]
 
     created = instance.create_issue(
-        PROJECT, "Round trip", "- [ ] exact acceptance",
+        PROJECT,
+        "Round trip",
+        "- [ ] exact acceptance",
         fields={
-            "State": "ready", "Priority": "P1", "Estimate": 5,
-            "Milestone": "M1", "Type": "Feature", "Labels": ["pilot"],
+            "State": "ready",
+            "Priority": "P1",
+            "Estimate": 5,
+            "Milestone": "M1",
+            "Type": "Feature",
+            "Labels": ["pilot"],
         },
         parent="LIN-1",
     )
@@ -274,20 +663,33 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
         fresh.get_issue(created.id)
     monkeypatch.setenv("PROJECT_REPO", "decoy")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "actual-checkout": project_entry(),
-    }})
+            }
+        },
+    )
     fresh.resolve_project("decoy")
     final = fresh.get_issue(created.id)
     assert final.state == "ready"
     assert final.pr_url is None
     assert (final.priority, final.estimate, final.type, final.labels) == (
-        "P1", 5, "Feature", ["pilot"],
+        "P1",
+        5,
+        "Feature",
+        ["pilot"],
     )
-    assert final.body == "- [ ] exact acceptance" and (final.ac_done, final.ac_total) == (0, 1)
+    assert final.body == "- [ ] exact acceptance" and (
+        final.ac_done,
+        final.ac_total,
+    ) == (0, 1)
     assert Link("depends-on", "outward", "LIN-2") in final.links
     assert wire.comments["comment-1"]["body"] == "bounded progress"
 
@@ -295,18 +697,28 @@ def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_rea
 def test_relation_reads_normalize_hierarchy_and_both_blocking_sides(tracker):
     instance, wire = tracker
     parent, child = wire.issues["LIN-1"], wire.issues["LIN-2"]
-    parent["children"] = connection([
+    parent["children"] = connection(
+        [
         {"id": child["id"], "identifier": child["identifier"]},
-    ])
+        ]
+    )
     child["parent"] = {"id": parent["id"], "identifier": parent["identifier"]}
-    parent["relations"] = connection([{
+    parent["relations"] = connection(
+        [
+            {
         "type": "blocks",
         "relatedIssue": {"id": child["id"], "identifier": child["identifier"]},
-    }])
-    child["inverseRelations"] = connection([{
+            }
+        ]
+    )
+    child["inverseRelations"] = connection(
+        [
+            {
         "type": "blocks",
         "issue": {"id": parent["id"], "identifier": parent["identifier"]},
-    }])
+            }
+        ]
+    )
 
     issues = {item.id: item for item in instance.search(PROJECT)}
 
@@ -329,13 +741,21 @@ def test_relation_reads_normalize_hierarchy_and_both_blocking_sides(tracker):
     ],
 )
 def test_relation_reads_refuse_unsupported_native_types_without_partial_issue(
-    tracker, relation_type, collection_name, target_name, operation,
+    tracker,
+    relation_type,
+    collection_name,
+    target_name,
+    operation,
 ):
     instance, wire = tracker
-    wire.issues["LIN-1"][collection_name] = connection([{
+    wire.issues["LIN-1"][collection_name] = connection(
+        [
+            {
         "type": relation_type,
-        target_name: {"id": "issue-uuid-2", "identifier": "LIN-2"},
-    }])
+        target_name: {"id": ISSUE_2_ID, "identifier": "LIN-2"},
+            }
+        ]
+    )
 
     with pytest.raises(LinearTrackerError) as raised:
         instance.search(PROJECT)
@@ -350,24 +770,33 @@ def test_existing_issue_replacements_are_unavailable_before_provider_write(track
     before = len(wire.calls)
     assert instance.acceptance_sync_supported is False
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="existing-issue-field-replacement",
+        TrackerCapabilityUnavailableError,
+        match="existing-issue-field-replacement",
     ):
         instance.update_fields("LIN-2", {"Priority": "P0"}, project=PROJECT)
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="lifecycle-proof",
+        TrackerCapabilityUnavailableError,
+        match="lifecycle-proof",
     ):
         instance.set_state("LIN-2", "review", project=PROJECT)
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="existing-issue-parent-replacement",
+        TrackerCapabilityUnavailableError,
+        match="existing-issue-parent-replacement",
     ):
         instance.link("LIN-2", "subtask-of", "LIN-1", project=PROJECT)
     with pytest.raises(BodyUpdateUnavailableError, match="anti-écrasement"):
         instance.update_body(
-            Issue(id="LIN-2", title="Existing"), "old", "new", project=PROJECT,
+            Issue(id="LIN-2", title="Existing"),
+            "old",
+            "new",
+            project=PROJECT,
         )
     with pytest.raises(AcceptanceSyncUnavailableError, match="anti-écrasement"):
         instance.sync_acceptance_body(
-            "LIN-2", "- [ ] AC", "- [x] AC", proof("LIN-2", "- [ ] AC"),
+            "LIN-2",
+            "- [ ] AC",
+            "- [x] AC",
+            proof("LIN-2", "- [ ] AC"),
             project=PROJECT,
         )
     assert len(wire.calls) == before
@@ -380,7 +809,7 @@ def test_normalization_rejects_missing_or_unknown_label_identifiers(tracker):
         instance.search(PROJECT)
     assert missing.value.code == "invalid_response"
 
-    wire.issues["LIN-1"] = raw_issue("LIN-1", "issue-uuid-1", title="Parent")
+    wire.issues["LIN-1"] = raw_issue("LIN-1", ISSUE_1_ID, title="Parent")
     wire.issues["LIN-1"]["labels"]["nodes"][0]["id"] = "label-unknown"
     with pytest.raises(LinearBindingError) as unknown:
         instance.search(PROJECT)
@@ -390,38 +819,51 @@ def test_normalization_rejects_missing_or_unknown_label_identifiers(tracker):
 def test_normalization_rejects_unmapped_milestone_identifier(tracker):
     instance, wire = tracker
     wire.issues["LIN-1"]["projectMilestone"] = {
-        "id": "milestone-unknown", "name": "M1",
+        "id": "milestone-unknown",
+        "name": "M1",
     }
     with pytest.raises(LinearBindingError) as error:
         instance.search(PROJECT)
     assert error.value.code == "milestone_id_unmapped"
 
 
-def test_query_issue_resolves_fresh_binding_and_projects_typed_adr_unavailability(
-    tracker, monkeypatch,
+def test_query_issue_resolves_fresh_binding_and_projects_linear_adrs(
+    tracker,
+    monkeypatch,
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     checkout_reads = []
     decoy = copy.deepcopy(project_entry())
-    decoy.update({
-        "key": "WRONG", "id": "wrong-project",
+    decoy.update(
+        {
+            "key": "WRONG",
+            "id": "wrong-project",
         "canonical_repo": "github.com/acme/not-widgets",
-    })
+        }
+    )
 
     monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
     monkeypatch.setenv("PROJECT_REPO", "widgets")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: checkout_reads.append(cwd) or "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "widgets": decoy,
         "actual-checkout": project_entry(),
         "actual-alias": project_entry(),
-    }})
+            }
+        },
+    )
     monkeypatch.setattr(
-        registry, "resolve",
+        registry,
+        "resolve",
         lambda *_args: pytest.fail("Linear query must not resolve from a basename"),
     )
 
@@ -430,15 +872,100 @@ def test_query_issue_resolves_fresh_binding_and_projects_typed_adr_unavailabilit
     assert checkout_reads == [None]
     assert fresh._active_project == PROJECT
     assert result["issue"]["id"] == "LIN-2"
+    assert result["adrs"] == []
+
+
+def test_query_issue_projects_real_transport_missing_witness_as_conflict(
+    tracker, monkeypatch,
+):
+    # AC-4: exercise the real LinearWire transport, not a fake tracker — create an
+    # ADR through the adapter, delete its witness from the wire's documents, and
+    # confirm `query issue` keeps the issue payload readable behind a typed
+    # conflict projection instead of raising or losing data.
+    instance, wire = tracker
+    instance.create_adr(PROJECT, "Witness dropped", "decision body")
+    del wire.documents[_witness_document_id(wire)]
+
+    _bind_query_registry(monkeypatch, instance)
+
+    result = query.issue("LIN-2")
+
     assert result["adrs"] == {
-        "status": "unavailable",
+        "status": "conflict",
         "tracker": "linear",
-        "capability": "adr-knowledge-base",
+        "reason": "Linear ADR version witness is missing",
     }
+    assert result["issue"]["id"] == "LIN-2"
+    assert result["project"] == PROJECT.key
+
+
+def test_query_adrs_adr_and_frame_stay_fail_closed_on_real_missing_witness(
+    tracker, monkeypatch,
+):
+    # AC-4: the same real-transport missing-witness state must not clear on read for
+    # `query adrs`, `query adr` or the frame's ADR-loading path — and none of them
+    # may perform a provider write while failing closed.
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Witness dropped", "decision body")
+    del wire.documents[_witness_document_id(wire)]
+
+    _bind_query_registry(monkeypatch, instance)
+    calls_before = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="Linear ADR version witness is missing"):
+        query.adrs()
+    with pytest.raises(TrackerConflictError, match="Linear ADR version witness is missing"):
+        query.adr(created.id)
+    with pytest.raises(TrackerConflictError, match="Linear ADR version witness is missing"):
+        frame.materialize({"adrs": [], "issues": []})
+
+    assert not any(
+        "DocumentCreate" in document or "CommentCreate" in document
+        for document, _ in wire.calls[calls_before:]
+    )
+
+
+def test_query_issue_propagates_real_transport_failure_on_adr_listing(
+    tracker, monkeypatch,
+):
+    # AC-4: a transport-level failure while listing ADR documents is not a
+    # conflict; it must propagate out of `query issue` as the typed transport
+    # error, not be swallowed or reprojected.
+    instance, wire = tracker
+
+    def flaky_transport(document, variables):
+        if "FoundryLinearAdrDocuments" in document:
+            raise OSError("connection reset")
+        return wire(document, variables)
+
+    flaky = LinearTracker(token="linear-test-secret", transport=flaky_transport)
+
+    _bind_query_registry(monkeypatch, flaky)
+
+    with pytest.raises(LinearTrackerError) as error:
+        query.issue("LIN-2")
+    assert error.value.code == "transport_error"
+
+
+def test_query_issue_real_transport_empty_adr_index_is_an_empty_list(
+    tracker, monkeypatch,
+):
+    # AC-4: an empty wire (no ADR documents at all) is a genuine empty index, not a
+    # conflict or an unavailable capability.
+    instance, wire = tracker
+
+    _bind_query_registry(monkeypatch, instance)
+
+    result = query.issue("LIN-2")
+
+    assert result["adrs"] == []
 
 
 def test_record_review_proof_resolves_fresh_binding_before_issue_read(
-    tracker, monkeypatch, tmp_path, capsys,
+    tracker,
+    monkeypatch,
+    tmp_path,
+    capsys,
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
@@ -456,7 +983,8 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
 
     outcomes = tmp_path / "outcomes.json"
     outcomes.write_text(
-        '{"outcomes": [], "quality": {"verdict": "pass"}}', encoding="utf-8",
+        '{"outcomes": [], "quality": {"verdict": "pass"}}',
+        encoding="utf-8",
     )
     monkeypatch.setattr(
         foundry,
@@ -465,32 +993,52 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
     )
     monkeypatch.setenv("PROJECT_REPO", "decoy")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: checkout_reads.append(cwd) or "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "decoy": {
-            **project_entry(), "key": "WRONG", "id": "wrong-project",
+                    **project_entry(),
+                    "key": "WRONG",
+                    "id": "wrong-project",
             "canonical_repo": "github.com/acme/other",
         },
         "canonical": project_entry(),
-    }})
+            }
+        },
+    )
     monkeypatch.setattr(
-        registry, "resolve",
+        registry,
+        "resolve",
         lambda *_args: pytest.fail("Linear proof must not resolve from a basename"),
     )
-    monkeypatch.setattr(routing, "repository_identity", lambda root=None: "acme/widgets")
+    monkeypatch.setattr(
+        routing, "repository_identity", lambda root=None: "acme/widgets"
+    )
     monkeypatch.setattr(routing, "AcceptanceProofStore", ProofStore)
 
-    routing.main([
+    routing.main(
+        [
         "record-review-proof",
-        "--issue", "LIN-2",
-        "--diff-hash", "d" * 64,
-        "--claim-id", "c" * 64,
-        "--outcomes-file", str(outcomes),
-        "--base", "b" * 40,
-        "--root", str(tmp_path),
-    ])
+            "--issue",
+            "LIN-2",
+            "--diff-hash",
+            "d" * 64,
+            "--claim-id",
+            "c" * 64,
+            "--outcomes-file",
+            str(outcomes),
+            "--base",
+            "b" * 40,
+            "--root",
+            str(tmp_path),
+        ]
+    )
 
     assert tracker_roots == [str(tmp_path)]
     assert checkout_reads == [str(tmp_path)]
@@ -501,39 +1049,57 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
 
 
 def test_checkout_resolution_refuses_without_canonical_binding_before_linear_read(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
     monkeypatch.setenv("PROJECT_REPO", "widgets")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "widgets": {
-            **project_entry(), "canonical_repo": "github.com/acme/other",
+                    **project_entry(),
+                    "canonical_repo": "github.com/acme/other",
         },
-    }})
+            }
+        },
+    )
 
     with pytest.raises(SystemExit, match="canonical_repo du checkout"):
         query.issue("LIN-2")
 
-    assert wire.calls == []
+    assert all(
+        "FoundryLinearAdrDocumentCreate" not in document for document, _ in wire.calls
+    )
 
 
 def test_checkout_resolution_refuses_contradictory_canonical_bindings(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     contradictory = project_entry()
     contradictory.update({"key": "OTHER", "id": "other-project"})
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "first": project_entry(),
         "second": contradictory,
-    }})
+            }
+        },
+    )
 
     with pytest.raises(SystemExit, match="ambigus"):
         fresh.resolve_checkout_project(
@@ -552,7 +1118,9 @@ def test_existing_provider_operation_preflights_remain_noop(provider_class):
 
 @pytest.mark.parametrize("operation", ["openpr", "merge"])
 def test_linear_lifecycle_preflight_stops_before_every_codehost_effect_when_disabled(
-    tracker, monkeypatch, operation,
+    tracker,
+    monkeypatch,
+    operation,
 ):
     instance, wire = tracker
     instance.append_only_lifecycle_supported = False
@@ -571,16 +1139,25 @@ def test_linear_lifecycle_preflight_stops_before_every_codehost_effect_when_disa
     monkeypatch.setattr(foundry, "codehost", lambda name=None, cwd=None: codehost)
     monkeypatch.setenv("PROJECT_REPO", "decoy")
     monkeypatch.setattr(
-        registry, "checkout_repository_identity",
+        registry,
+        "checkout_repository_identity",
         lambda cwd=None: "github.com/acme/widgets",
     )
-    monkeypatch.setattr(registry, "load", lambda: {"linear": {
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {
+            "linear": {
         "decoy": {
-            **project_entry(), "key": "WRONG", "id": "wrong-project",
+                    **project_entry(),
+                    "key": "WRONG",
+                    "id": "wrong-project",
             "canonical_repo": "github.com/acme/other",
         },
         "canonical": project_entry(),
-    }})
+            }
+        },
+    )
 
     def command(*args, **_kwargs):
         if args[-2:] == ("--abbrev-ref", "HEAD"):
@@ -591,7 +1168,8 @@ def test_linear_lifecycle_preflight_stops_before_every_codehost_effect_when_disa
     monkeypatch.setattr(issue, "_sh", command)
 
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="linear.append-only-lifecycle-proof",
+        TrackerCapabilityUnavailableError,
+        match="linear.append-only-lifecycle-proof",
     ):
         if operation == "openpr":
             issue.openpr("LIN-2")
@@ -599,7 +1177,9 @@ def test_linear_lifecycle_preflight_stops_before_every_codehost_effect_when_disa
             issue.merge("LIN-2", "17")
 
     assert effects == []
-    assert wire.calls and all("mutation" not in document.lower() for document, _ in wire.calls)
+    assert wire.calls and all(
+        "mutation" not in document.lower() for document, _ in wire.calls
+    )
 
 
 def test_linear_lifecycle_preflight_advertises_only_bounded_operations(tracker):
@@ -609,31 +1189,137 @@ def test_linear_lifecycle_preflight_advertises_only_bounded_operations(tracker):
     assert instance.preflight_issue_operation("openpr") is None
     assert instance.preflight_issue_operation("merge") is None
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="linear.lifecycle:close-epic",
+        TrackerCapabilityUnavailableError,
+        match="linear.lifecycle:close-epic",
     ):
         instance.preflight_issue_operation("close-epic")
 
     assert len(wire.calls) == before
 
 
+def test_linear_merge_effect_preflight_allows_safe_team_automation(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection(
+        [
+        {
+                "id": "automation-started",
+                "event": "start",
+            "state": {"id": STATE_IDS["in-progress"], "type": "started"},
+        },
+        {
+                "id": "automation-review",
+                "event": "review",
+            "state": {"id": STATE_IDS["review"], "type": "started"},
+        },
+        ]
+    )
+    instance._activate(PROJECT)
+
+    assert instance.preflight_merge_effect() is None
+    assert wire.calls[-1][1] == {"id": "team-uuid"}
+
+
+def test_linear_merge_effect_preflight_allows_merge_no_action(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection(
+        [
+        {"id": "automation-merge-no-action", "event": "merge", "state": None},
+        ]
+    )
+    instance._activate(PROJECT)
+    merge_calls = []
+
+    write.preflight_merge_effect(instance)
+    merge_calls.append("github-merge")
+
+    assert merge_calls == ["github-merge"]
+
+
+def test_linear_merge_effect_preflight_allows_duplicate_workflow_state(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection(
+        [
+        {
+                "id": "automation-merge-duplicate",
+                "event": "merge",
+            "state": {"id": "duplicate-state", "type": "duplicate"},
+        },
+        ]
+    )
+    instance._activate(PROJECT)
+
+    assert instance.preflight_merge_effect() is None
+
+
+def test_linear_merge_effect_preflight_refuses_completed_merge_automation(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = connection(
+        [
+        {
+                "id": "automation-merge",
+                "event": "merge",
+            "state": {"id": STATE_IDS["done"], "type": "completed"},
+        },
+        ]
+    )
+    instance._activate(PROJECT)
+    linked_pr = SimpleNamespace(linked_issue_ids=("LIN-2", "LIN-1"))
+    merge_calls = []
+
+    def external_merge_effect():
+        # Mirrors the final Foundry pre-merge boundary: the code-host effect is
+        # external, and must not run when Linear would complete both linked issues.
+        write.preflight_merge_effect(instance)
+        merge_calls.append(linked_pr.linked_issue_ids)
+
+    with pytest.raises(
+        TrackerConflictError,
+        match="merge maps to completed state",
+    ):
+        external_merge_effect()
+
+    assert linked_pr.linked_issue_ids == ("LIN-2", "LIN-1")
+    assert merge_calls == []
+
+
+def test_linear_merge_effect_preflight_fails_closed_on_unreadable_team_config(tracker):
+    instance, wire = tracker
+    wire.git_automation_states = {
+        "nodes": [],
+        "pageInfo": {"hasNextPage": True, "endCursor": "next"},
+    }
+    instance._activate(PROJECT)
+
+    with pytest.raises(LinearTrackerError, match="nested_pagination_unavailable"):
+        instance.preflight_merge_effect()
+
+
 def test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement(
-    tracker, monkeypatch,
+    tracker,
+    monkeypatch,
 ):
     instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     done = TransitionContext(
-        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
-        review_digest=review.review_digest, merge_sha="e" * 40,
+        pr_url=review.pr_url,
+        head_sha=review.head_sha,
+        base_sha=review.base_sha,
+        review_digest=review.review_digest,
+        merge_sha="e" * 40,
     )
 
     instance.set_state("LIN-2", "in-progress", project=PROJECT)
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     result = write.sync_acceptance(
-        instance, "LIN-2", "- [ ] acceptance",
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
         proof("LIN-2", "- [ ] acceptance"),
     )
     instance.set_state("LIN-2", "done", context=done, project=PROJECT)
@@ -643,7 +1329,8 @@ def test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement(
     assert projected.pr_url == review.pr_url
     assert (projected.ac_done, projected.ac_total) == (1, 1)
     assert result == {
-        "status": "proof-projected", "checked": 1,
+        "status": "proof-projected",
+        "checked": 1,
         "audit": "append-only-proof",
     }
     native = wire.issues["LIN-2"]
@@ -651,15 +1338,20 @@ def test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement(
     assert native["description"] == "- [ ] acceptance"
     assert native["priority"] == 2
     assert len(native["comments"]["nodes"]) == 4
-    assert all("Foundry lifecycle proof" in row["body"]
-               for row in native["comments"]["nodes"])
+    assert all(
+        "Foundry lifecycle proof" in row["body"] for row in native["comments"]["nodes"]
+    )
 
 
-def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id(tracker):
+def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id(
+    tracker,
+):
     instance, wire = tracker
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
 
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
@@ -669,11 +1361,133 @@ def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id
     assert tuple(wire.comments) == comment_ids
     assert len(comment_ids) == 1
     parsed = uuid.UUID(comment_ids[0])
+    comment_id = comment_ids[0]
+    parsed = uuid.UUID(comment_id)
+    assert comment_id == "e16710eb-46d7-43d8-ba0d-0931e9882d7b"
     assert parsed.version == 4
     assert parsed.variant == uuid.RFC_4122
 
 
-def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, monkeypatch):
+def test_linear_lifecycle_refuses_comment_with_mismatched_deterministic_id(tracker):
+    instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    persisted = wire.issues["LIN-2"]["comments"]["nodes"][0]
+    persisted["id"] = str(uuid.UUID(int=uuid.UUID(persisted["id"]).int ^ 1))
+
+    with pytest.raises(TrackerConflictError, match="comment id invalid"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_zero_receipt_native_done_fails_closed_for_search_and_get_issue(tracker):
+    instance, wire = tracker
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    instance._activate(PROJECT)
+
+    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
+        instance.get_issue("LIN-2")
+    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
+        instance.search(PROJECT)
+
+
+def test_linear_zero_receipt_nonterminal_native_state_remains_readable(tracker):
+    instance, _wire = tracker
+    instance._activate(PROJECT)
+
+    assert instance.get_issue("LIN-2").state == "ready"
+    assert {item.id: item.state for item in instance.search(PROJECT)} == {
+        "LIN-1": "ready",
+        "LIN-2": "ready",
+    }
+
+
+def test_linear_exact_comment_lookup_returns_none_only_for_empty_filter_result(tracker):
+    instance, wire = tracker
+
+    assert (
+        instance._read_comment(
+            "00000000-0000-4000-8000-000000000099",
+            "lifecycle.comment.read",
+        )
+        is None
+    )
+    document, variables = wire.calls[-1]
+    assert "comments(filter: { id: { eq: $id } }, first: 1)" in document
+    assert "comment(id:" not in document
+    assert variables == {"id": "00000000-0000-4000-8000-000000000099"}
+
+
+def test_linear_exact_comment_lookup_rejects_wrong_filtered_id(tracker):
+    instance, wire = tracker
+
+    def transport(document, variables):
+        result = wire(document, variables)
+        if "FoundryLinearCommentsById(" in document:
+            result["data"]["comments"]["nodes"] = [
+                {
+                    "id": "wrong-id",
+                    "body": "wrong",
+                    "issue": {"id": ISSUE_2_ID, "identifier": "LIN-2"},
+                }
+            ]
+        return result
+
+    instance._transport = transport
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance._read_comment(
+            "00000000-0000-4000-8000-000000000099",
+            "lifecycle.comment.read",
+        )
+
+
+@pytest.mark.parametrize(
+    "page_info",
+    [
+    {"hasNextPage": True, "endCursor": "next"},
+    {"endCursor": None},
+    ],
+)
+def test_linear_lifecycle_refuses_unbounded_or_malformed_exact_comment_page(
+    tracker,
+    page_info,
+):
+    instance, wire = tracker
+
+    def transport(document, variables):
+        result = wire(document, variables)
+        if "FoundryLinearCommentsById(" in document:
+            result["data"]["comments"]["pageInfo"] = page_info
+        return result
+
+    instance._transport = transport
+    with pytest.raises(LinearTrackerError):
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    assert wire.comments == {}
+
+
+def test_linear_lifecycle_refuses_exact_comment_id_collision_before_create(tracker):
+    instance, wire = tracker
+    _marker, body, comment_id = instance._lifecycle_marker(
+        "state-in-progress",
+        "LIN-2",
+        {
+            "state": "in-progress",
+            "native_state_id": STATE_IDS["ready"],
+        },
+    )
+    wire.comments[comment_id] = {
+        "id": comment_id,
+        "body": body + "\ndivergent",
+        "issue": {"id": ISSUE_2_ID, "identifier": "LIN-2"},
+    }
+
+    with pytest.raises(TrackerConflictError, match="comment id collision"):
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == []
+
+
+def test_linear_native_checked_ac_requires_append_only_review_proof(
+    tracker, monkeypatch
+):
     instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     body = "- [x] acceptance"
@@ -681,7 +1495,9 @@ def test_linear_native_checked_ac_requires_append_only_review_proof(tracker, mon
     instance._activate(PROJECT)
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
 
     assert instance.get_issue("LIN-2").ac_done == 0
@@ -699,11 +1515,15 @@ def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypa
     body = "- [ ] acceptance"
     first = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     second = TransitionContext(
         pr_url=first.pr_url,
-        head_sha="d" * 40, base_sha=first.base_sha, review_digest="e" * 64,
+        head_sha="d" * 40,
+        base_sha=first.base_sha,
+        review_digest="e" * 64,
     )
 
     instance.set_state("LIN-2", "review", context=first, project=PROJECT)
@@ -714,15 +1534,21 @@ def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypa
     assert corrected.state == "review"
     assert corrected.ac_done == 0
     second_proof = proof(
-        "LIN-2", body, head=second.head_sha, base=second.base_sha,
+        "LIN-2",
+        body,
+        head=second.head_sha,
+        base=second.base_sha,
         diff_hash=second.review_digest,
     )
     write.sync_acceptance(instance, "LIN-2", body, second_proof)
     instance.set_state(
-        "LIN-2", "done",
+        "LIN-2",
+        "done",
         context=TransitionContext(
-            pr_url=second.pr_url, head_sha=second.head_sha,
-            base_sha=second.base_sha, review_digest=second.review_digest,
+            pr_url=second.pr_url,
+            head_sha=second.head_sha,
+            base_sha=second.base_sha,
+            review_digest=second.review_digest,
             merge_sha="f" * 40,
         ),
         project=PROJECT,
@@ -731,6 +1557,9 @@ def test_linear_corrected_pr_creates_chained_review_generation(tracker, monkeypa
     completed = instance.get_issue("LIN-2")
     assert completed.state == "done"
     assert completed.ac_done == 1
+    # The PR's delivery issue is the only one Foundry projects done.  A safe team
+    # config cannot let Linear complete a separately linked prerequisite.
+    assert instance.get_issue("LIN-1").state == "ready"
 
 
 def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
@@ -755,11 +1584,15 @@ def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
     contexts = (
         TransitionContext(
             pr_url="https://github.com/acme/widgets/pull/17",
-            head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+            head_sha="a" * 40,
+            base_sha="b" * 40,
+            review_digest="c" * 64,
         ),
         TransitionContext(
             pr_url="https://github.com/acme/widgets/pull/17",
-            head_sha="d" * 40, base_sha="b" * 40, review_digest="e" * 64,
+            head_sha="d" * 40,
+            base_sha="b" * 40,
+            review_digest="e" * 64,
         ),
     )
 
@@ -780,34 +1613,54 @@ def test_linear_review_generation_uses_one_atomic_provider_slot(tracker):
     assert winner.state == "review"
 
 
-def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
-    tracker, monkeypatch,
+def test_linear_merge_with_two_linked_issues_rebinds_delivery_proof_without_completing_prerequisite(
+    tracker,
+    monkeypatch,
 ):
-    instance, _wire = tracker
+    instance, wire = tracker
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
     monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
     old = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     instance.set_state("LIN-2", "review", context=old, project=PROJECT)
     write.sync_acceptance(
-        instance, "LIN-2", "- [ ] acceptance",
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
         proof("LIN-2", "- [ ] acceptance"),
     )
 
     new_diff = b"corrected-diff"
     new_digest = hashlib.sha256(new_diff).hexdigest()
     pr = PullRequest(
-        number=17, url=old.pr_url, head="feat/lin-2", base="main",
-        base_sha="b" * 40, sha="d" * 40,
+        number=17,
+        url=old.pr_url,
+        head="feat/lin-2",
+        base="main",
+        base_sha="b" * 40,
+        sha="d" * 40,
     )
+    # This is GitHub/Linear linkage metadata owned by the external integration, not
+    # a Foundry authority: one delivery PR is linked to its own issue and a separate
+    # prerequisite.  Foundry receives only LIN-2 as its requested merge target.
+    pr.linked_issue_ids = ("LIN-2", "LIN-1")
     landed = SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
+    merge_calls = []
+
+    def merge_pr(*_args, **_kwargs):
+        merge_calls.append(pr.linked_issue_ids)
+        return landed
+
     codehost = SimpleNamespace(
-        name="github", resolve_repo=lambda: "acme/widgets",
+        name="github",
+        resolve_repo=lambda: "acme/widgets",
         get_pr=lambda *_args: pr,
-        merge_pr=lambda *_args, **_kwargs: landed,
+        merge_pr=merge_pr,
         delete_branch=lambda *_args: None,
     )
     monkeypatch.setattr(issue.foundry, "tracker", lambda: instance)
@@ -815,10 +1668,17 @@ def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
     monkeypatch.setattr(issue, "git_head", lambda: pr.sha)
     monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: new_diff)
     monkeypatch.setattr(issue, "repository_identity", lambda: "github.com/acme/widgets")
-    monkeypatch.setattr(write, "ci_gate", lambda *_args, **_kwargs: {
-        "passed": True, "waived": False, "total": 1,
-        "pending": [], "failing": [],
-    })
+    monkeypatch.setattr(
+        write,
+        "ci_gate",
+        lambda *_args, **_kwargs: {
+            "passed": True,
+            "waived": False,
+            "total": 1,
+            "pending": [],
+            "failing": [],
+        },
+    )
     requested = []
 
     class Store:
@@ -828,8 +1688,11 @@ def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
         def valid_for_merge(self, **coordinates):
             requested.append(coordinates)
             return proof(
-                "LIN-2", "- [ ] acceptance", head=pr.sha,
-                base=pr.base_sha, diff_hash=new_digest,
+                "LIN-2",
+                "- [ ] acceptance",
+                head=pr.sha,
+                base=pr.base_sha,
+                diff_hash=new_digest,
             )
 
     monkeypatch.setattr(issue, "AcceptanceProofStore", Store)
@@ -838,9 +1701,16 @@ def test_linear_merge_rebinds_acceptance_to_corrected_pr_before_merge(
 
     assert len(requested) == 1
     assert requested[0]["head"] == pr.sha
+    assert merge_calls == [("LIN-2", "LIN-1")]
     completed = instance.get_issue("LIN-2")
     assert completed.state == "done"
     assert completed.ac_done == 1
+    # Under the safe automation configuration, no external GitHub event changes the
+    # prerequisite and Foundry writes lifecycle receipts only for its target issue.
+    assert instance.get_issue("LIN-1").state == "ready"
+    assert {comment["issue"]["identifier"] for comment in wire.comments.values()} == {
+        "LIN-2"
+    }
 
 
 def test_linear_lifecycle_readback_revalidates_native_state(tracker):
@@ -860,6 +1730,250 @@ def test_linear_lifecycle_readback_revalidates_native_state(tracker):
         instance.set_state("LIN-2", "in-progress", project=PROJECT)
 
     assert changed is True
+
+
+def test_linear_lifecycle_accepts_only_receipted_forward_native_evolution(
+    tracker,
+    monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    done = TransitionContext(
+        pr_url=review.pr_url,
+        head_sha=review.head_sha,
+        base_sha=review.base_sha,
+        review_digest=review.review_digest,
+        merge_sha="e" * 40,
+    )
+
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    assert instance.get_issue("LIN-2").state == "review"
+
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
+    write.sync_acceptance(
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
+        proof("LIN-2", "- [ ] acceptance"),
+    )
+    assert instance.get_issue("LIN-2").ac_done == 1
+
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+    instance.set_state("LIN-2", "done", context=done, project=PROJECT)
+    projected = instance.get_issue("LIN-2")
+    assert projected.state == "done"
+    assert projected.ac_done == 1
+
+
+@pytest.mark.parametrize("source_state", ["backlog", "ready"])
+@pytest.mark.parametrize("has_start_receipt", [False, True])
+def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
+    tracker, monkeypatch, source_state, has_start_receipt,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    body = "- [ ] acceptance"
+
+    # This is the production order: Foundry has durably recorded review while the
+    # native issue is still Backlog/Ready, then Linear's integration starts it later.
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[source_state]
+    if has_start_receipt:
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
+    comments_before_drift = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+
+    projected = instance.get_issue("LIN-2")
+
+    assert projected.state == "review"
+    assert projected.pr_url == review.pr_url
+    assert (projected.ac_done, projected.ac_total) == (1, 1)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
+    # This is the actual transition sequence issue.merge() retries before CI.
+    # Both start and review must replay without a new receipt after the drift.
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
+
+    # A corrected PR creates a new review generation on the now-native
+    # In Progress state. A later merge retry must not insert a late start
+    # receipt before either review or poison every subsequent read.
+    corrected = TransitionContext(
+        pr_url=review.pr_url, head_sha="d" * 40,
+        base_sha=review.base_sha, review_digest="e" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=corrected, project=PROJECT)
+    comments_after_correction = copy.deepcopy(
+        wire.issues["LIN-2"]["comments"]["nodes"]
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=corrected, project=PROJECT)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_after_correction
+    corrected_projection = instance.get_issue("LIN-2")
+    assert corrected_projection.state == "review"
+    assert corrected_projection.pr_url == review.pr_url
+
+
+@pytest.mark.parametrize("native_state", ["done", "blocked"])
+def test_linear_review_receipt_refuses_non_start_native_drift(tracker, native_state):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[native_state]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_review_receipt_refuses_start_drift_from_non_backlog_source(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_start_drift_does_not_relax_project_binding(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    wire.issues["LIN-2"]["project"] = {"id": "other-project"}
+
+    with pytest.raises(LinearBindingError, match="issue_outside_binding"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_start_drift_without_durable_review_receipt_fails_closed(tracker):
+    instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_lifecycle_refuses_unrelated_native_drift_even_for_next_review(tracker):
+    instance, wire = tracker
+    first = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    second = TransitionContext(
+        pr_url=first.pr_url,
+        head_sha="d" * 40,
+        base_sha=first.base_sha,
+        review_digest="e" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=first, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["blocked"]
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.set_state("LIN-2", "review", context=second, project=PROJECT)
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+    assert len(wire.comments) == 1
+
+
+def test_linear_native_done_requires_well_formed_foundry_done_receipt(
+    tracker,
+    monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    done = TransitionContext(
+        pr_url=review.pr_url,
+        head_sha=review.head_sha,
+        base_sha=review.base_sha,
+        review_digest=review.review_digest,
+        merge_sha="e" * 40,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    write.sync_acceptance(
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
+        proof("LIN-2", "- [ ] acceptance"),
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    instance.set_state("LIN-2", "done", context=done, project=PROJECT)
+
+    row = next(
+        item
+        for item in wire.issues["LIN-2"]["comments"]["nodes"]
+        if ":state-done:" in item["body"]
+    )
+    decoded = instance._decode_lifecycle_comment("LIN-2", row["body"])
+    assert decoded is not None
+    malformed = dict(decoded[1])
+    malformed.pop("merge_sha")
+    _marker, row["body"], row["id"] = instance._lifecycle_marker(
+        "state-done",
+        "LIN-2",
+        malformed,
+    )
+
+    with pytest.raises(TrackerConflictError, match="state proof malformed"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_lifecycle_refuses_unmapped_historical_native_state_receipt(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    row = wire.issues["LIN-2"]["comments"]["nodes"][0]
+    decoded = instance._decode_lifecycle_comment("LIN-2", row["body"])
+    assert decoded is not None
+    malformed = {**decoded[1], "native_state_id": "state-unrelated"}
+    _marker, row["body"], row["id"] = instance._lifecycle_marker(
+        "state-review",
+        "LIN-2",
+        malformed,
+    )
+
+    with pytest.raises(TrackerConflictError, match="native state proof malformed"):
+        instance.get_issue("LIN-2")
 
 
 def test_linear_lifecycle_recovers_interruption_after_provider_comment_effect(tracker):
@@ -882,7 +1996,9 @@ def test_linear_lifecycle_recovers_interruption_after_provider_comment_effect(tr
     assert len(wire.comments) == 1
 
 
-def test_linear_lifecycle_refuses_divergent_issue_readback_after_comment_effect(tracker):
+def test_linear_lifecycle_refuses_divergent_issue_readback_after_comment_effect(
+    tracker,
+):
     instance, wire = tracker
     altered = False
 
@@ -919,11 +2035,15 @@ def test_linear_lifecycle_concurrent_or_divergent_projection_fails_closed(tracke
         instance.get_issue("LIN-2")
 
 
-def test_linear_acceptance_projection_refuses_incomplete_or_stale_proof_before_write(tracker):
+def test_linear_acceptance_projection_refuses_incomplete_or_stale_proof_before_write(
+    tracker,
+):
     instance, wire = tracker
     review = TransitionContext(
         pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
     )
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     before = len(wire.comments)
@@ -932,65 +2052,108 @@ def test_linear_acceptance_projection_refuses_incomplete_or_stale_proof_before_w
 
     with pytest.raises(TrackerConflictError, match="malformed or stale"):
         instance.project_acceptance_proof(
-            "LIN-2", "- [ ] acceptance", invalid, checked=1, project=PROJECT,
+            "LIN-2",
+            "- [ ] acceptance",
+            invalid,
+            checked=1,
+            project=PROJECT,
         )
 
     assert len(wire.comments) == before
 
 
-def test_linear_cockpit_projection_requires_complete_go_and_never_changes_lifecycle(tracker):
+def test_linear_cockpit_projection_requires_complete_go_and_never_changes_lifecycle(
+    tracker,
+):
     instance, wire = tracker
     repository = "github.com/acme/widgets"
     issue_id = "LIN-2"
     body = "- [ ] acceptance"
     head, base, diff_hash = "a" * 40, "b" * 40, "c" * 64
     pr = PullRequest(
-        number=17, url="https://github.com/acme/widgets/pull/17",
-        head="feat/lin-2", base="main", base_sha=base, sha=head,
+        number=17,
+        url="https://github.com/acme/widgets/pull/17",
+        head="feat/lin-2",
+        base="main",
+        base_sha=base,
+        sha=head,
     )
     criteria = acceptance_criteria(body)
     test_receipt = evidence_plane.create_test_receipt(
-        repository=repository, issue_id=issue_id, head_sha=head,
-        diff_hash=diff_hash, status="passed", result_digest="f" * 64,
+        repository=repository,
+        issue_id=issue_id,
+        head_sha=head,
+        diff_hash=diff_hash,
+        status="passed",
+        result_digest="f" * 64,
     )
     observed_at = evidence_plane._now_ms()
     checks = evidence_plane._create_ci_receipt(
-        source="check_runs", repository=repository, head_sha=head,
+        source="check_runs",
+        repository=repository,
+        head_sha=head,
         observed_at=observed_at,
         checks=[Check(name="tests", status="completed", conclusion="success")],
     )
     statuses = evidence_plane._create_ci_receipt(
-        source="commit_statuses", repository=repository, head_sha=head,
-        observed_at=observed_at, checks=[],
+        source="commit_statuses",
+        repository=repository,
+        head_sha=head,
+        observed_at=observed_at,
+        checks=[],
     )
     envelope = evidence_plane.evidence_envelope(
-        repository=repository, issue_id=issue_id,
-        ac_digest=acceptance_digest(criteria), pr=pr, diff_hash=diff_hash,
-        review_proof=proof(issue_id, body), test_receipt=test_receipt,
-        check_runs_receipt=checks, commit_statuses_receipt=statuses,
+        repository=repository,
+        issue_id=issue_id,
+        ac_digest=acceptance_digest(criteria),
+        pr=pr,
+        diff_hash=diff_hash,
+        review_proof=proof(issue_id, body),
+        test_receipt=test_receipt,
+        check_runs_receipt=checks,
+        commit_statuses_receipt=statuses,
     )
 
     before = len(wire.comments)
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="cockpit-evidence-complete-go",
+        TrackerCapabilityUnavailableError,
+        match="cockpit-evidence-complete-go",
     ):
         instance.project_cockpit_evidence(
-            issue_id, {}, repository=repository,
-            ac_digest=acceptance_digest(criteria), pr=pr,
-            diff_hash=diff_hash, project=PROJECT,
+            issue_id,
+            {},
+            repository=repository,
+            ac_digest=acceptance_digest(criteria),
+            pr=pr,
+            diff_hash=diff_hash,
+            project=PROJECT,
         )
     assert len(wire.comments) == before
 
-    assert instance.project_cockpit_evidence(
-        issue_id, envelope, repository=repository,
-        ac_digest=acceptance_digest(criteria), pr=pr,
-        diff_hash=diff_hash, project=PROJECT,
-    ) is True
-    assert instance.project_cockpit_evidence(
-        issue_id, envelope, repository=repository,
-        ac_digest=acceptance_digest(criteria), pr=pr,
-        diff_hash=diff_hash, project=PROJECT,
-    ) is False
+    assert (
+        instance.project_cockpit_evidence(
+            issue_id,
+            envelope,
+            repository=repository,
+            ac_digest=acceptance_digest(criteria),
+            pr=pr,
+            diff_hash=diff_hash,
+            project=PROJECT,
+        )
+        is True
+    )
+    assert (
+        instance.project_cockpit_evidence(
+            issue_id,
+            envelope,
+            repository=repository,
+            ac_digest=acceptance_digest(criteria),
+            pr=pr,
+            diff_hash=diff_hash,
+            project=PROJECT,
+        )
+        is False
+    )
 
     projected = instance.get_issue(issue_id)
     assert projected.state == "ready"
@@ -1003,7 +2166,8 @@ def test_malformed_and_provider_error_payloads_are_redacted(tmp_path, monkeypatc
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
     sentinel = "LINEAR_SECRET_MUST_NOT_LEAK"
     malformed = LinearTracker(
-        token=sentinel, transport=lambda *_: {"data": {"issue": "bad"}},
+        token=sentinel,
+        transport=lambda *_: {"data": {"issue": "bad"}},
     )
     malformed._active_project = PROJECT
     with pytest.raises(LinearTrackerError) as error:
@@ -1019,27 +2183,3499 @@ def test_malformed_and_provider_error_payloads_are_redacted(tmp_path, monkeypatc
     assert sentinel not in str(error.value)
 
 
-def test_unsupported_capabilities_are_typed_and_never_fall_back(tracker):
+def test_unsupported_issue_replacement_capabilities_remain_typed(tracker):
     instance, wire = tracker
-    with pytest.raises(TrackerCapabilityUnavailableError, match="adr-knowledge-base"):
-        instance.list_adrs(PROJECT)
-    with pytest.raises(TrackerCapabilityUnavailableError, match="provider-native-search-query"):
+    assert instance.list_adrs(PROJECT) == []
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match="provider-native-search-query"
+    ):
         instance.search(PROJECT, "display name lookup")
-    with pytest.raises(BodyUpdateUnavailableError, match="anti-écrasement"):
+    with pytest.raises(TrackerConflictError, match="body changed"):
         instance.update_body(
-            Adr(id="LIN-ADR-0001", title="ADR"), "old", "new", project=PROJECT,
+            Adr(id="LIN-ADR-0001", title="ADR"),
+            "old",
+            "new",
+            project=PROJECT,
         )
-    assert wire.calls == []
+    assert all(
+        "FoundryLinearAdrDocumentCreate" not in document for document, _ in wire.calls
+        )
 
 
 def test_pr_projection_is_typed_unavailable_before_any_provider_write(tracker):
     instance, wire = tracker
     before = len(wire.calls)
     with pytest.raises(
-        TrackerCapabilityUnavailableError, match="linear.github-pr-projection",
+        TrackerCapabilityUnavailableError,
+        match="linear.github-pr-projection",
     ):
         instance.update_fields(
-            "LIN-2", {"GitHub PR": "https://github.com/acme/widgets/pull/1"},
+            "LIN-2",
+            {"GitHub PR": "https://github.com/acme/widgets/pull/1"},
             project=PROJECT,
         )
     assert wire.calls[before:] == []
+
+
+def test_linear_adr_create_uses_filtered_absence_read_and_indexes_native_document(
+    tracker,
+):
+    instance, wire = tracker
+
+    created = instance.create_adr(PROJECT, "Use native documents", "decision body")
+
+    assert (created.id, created.status) == ("LIN-ADR-0001", "proposed")
+    assert created.ref in wire.documents
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+    assert any("FoundryLinearAdrDocumentById" in query for query, _ in wire.calls)
+    assert not any("document(id:" in query for query, _ in wire.calls)
+    assert not any(
+        "youtrack" in query.lower() or "git" in query.lower() for query, _ in wire.calls
+    )
+
+
+def test_linear_adr_versions_append_replay_and_refuse_stale_concurrent_writer(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Append only", "first")
+    replay = instance.create_adr(PROJECT, "Append only", "first")
+    assert replay.ref == created.ref
+
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+    accepted = instance.list_adrs(PROJECT)[0]
+    replacement = accepted.body.replace("first", "second")
+    assert instance.update_body(accepted, accepted.body, replacement, project=PROJECT)
+    latest = instance.list_adrs(PROJECT)[0]
+    assert latest.status == "accepted"
+    assert len(wire.documents) == 6
+
+    with pytest.raises(TrackerConflictError, match="snapshot is stale"):
+        instance.set_adr_status(accepted, "deprecated", project=PROJECT)
+
+
+def test_linear_adr_edit_complete_replay_is_idempotent(
+    tracker, monkeypatch, tmp_path, capsys
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    created = instance.create_adr(PROJECT, "Replay complete edit", "original body")
+    expected = tmp_path / "expected.md"
+    updated = tmp_path / "updated.md"
+    expected.write_text(created.body)
+    updated.write_text(created.body.replace("original body", "revised body"))
+
+    adr_module.edit(created.id, str(expected), str(updated))
+    capsys.readouterr()
+    persisted = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    create_count = sum(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls
+    )
+
+    adr_module.edit(created.id, str(expected), str(updated))
+
+    assert "corps inchangé" in capsys.readouterr().out
+    assert (wire.documents, wire.comments) == persisted
+    assert sum(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls
+    ) == create_count
+
+
+def test_linear_adr_edit_complete_replay_refuses_stale_resource_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Replay stale edit", "original body")
+    updated_body = created.body.replace("original body", "revised body")
+    assert instance.update_body(
+        created, created.body, updated_body, project=PROJECT
+    )
+    persisted = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    call_index = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="body changed before edit"):
+        instance.update_body(created, created.body, updated_body, project=PROJECT)
+
+    assert (wire.documents, wire.comments) == persisted
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_index:]
+    )
+
+
+@pytest.mark.parametrize("changed_file", ["expected", "updated"])
+def test_linear_adr_edit_complete_replay_refuses_changed_input_before_effect(
+    tracker, monkeypatch, tmp_path, changed_file
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    created = instance.create_adr(PROJECT, "Replay changed edit", "original body")
+    expected = tmp_path / "expected.md"
+    updated = tmp_path / "updated.md"
+    expected.write_text(created.body)
+    updated.write_text(created.body.replace("original body", "revised body"))
+    adr_module.edit(created.id, str(expected), str(updated))
+
+    if changed_file == "expected":
+        expected.write_text(created.body.replace("original body", "other old body"))
+    else:
+        updated.write_text(created.body.replace("original body", "other new body"))
+    persisted = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    call_index = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="body changed before edit"):
+        adr_module.edit(created.id, str(expected), str(updated))
+
+    assert (wire.documents, wire.comments) == persisted
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_index:]
+    )
+
+
+@pytest.mark.parametrize("witness_state", ["missing_predecessor", "tampered_latest"])
+def test_linear_adr_edit_complete_replay_requires_intact_witnesses_before_effect(
+    tracker, monkeypatch, tmp_path, witness_state
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    created = instance.create_adr(PROJECT, "Replay witnessed edit", "original body")
+    expected = tmp_path / "expected.md"
+    updated = tmp_path / "updated.md"
+    expected.write_text(created.body)
+    updated.write_text(created.body.replace("original body", "revised body"))
+    adr_module.edit(created.id, str(expected), str(updated))
+
+    sequence = 0 if witness_state == "missing_predecessor" else 1
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, sequence)
+    if witness_state == "missing_predecessor":
+        wire.documents.pop(witness_id)
+    else:
+        witness = wire.documents[witness_id]
+        encoded = witness["content"][
+            len(linear_module._ADR_WITNESS_HEADER) : -len("\n-->")
+        ]
+        payload = json.loads(encoded)
+        payload["document_sha256"] = "0" * 64
+        witness["content"] = (
+            linear_module._ADR_WITNESS_HEADER
+            + json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n-->"
+        )
+    persisted = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    call_index = len(wire.calls)
+
+    with pytest.raises(
+        TrackerConflictError,
+        match=(
+            "version witness is missing"
+            if witness_state == "missing_predecessor"
+            else "version witness diverged"
+        ),
+    ):
+        adr_module.edit(created.id, str(expected), str(updated))
+
+    assert (wire.documents, wire.comments) == persisted
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_index:]
+    )
+
+
+def test_linear_adr_supersession_and_historical_import_preserve_relations_origin(
+    tracker,
+):
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "First", "first")
+    second = instance.create_adr(PROJECT, "Second", "second")
+    instance.set_adr_status(first, "accepted", project=PROJECT)
+    instance.set_adr_status(second, "accepted", project=PROJECT)
+    accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    instance.supersede_adr(accepted[first.id], second.id, project=PROJECT)
+
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0099",
+        title="Historical",
+        body="old",
+        historical_status="superseded",
+        source_ref="YT-ADR-9",
+        source_created=1,
+        source_updated=2,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        superseded_by=second.id,
+        issue_refs=("LIN-2",),
+    )
+    models = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert models[first.id].status == "superseded"
+    assert imported.status == "superseded"
+    raw = wire.documents[imported.ref]
+    metadata, _ = linear_module._parse_adr_document(
+        raw,
+        {
+            "project_id": PROJECT.id,
+            "team_id": PROJECT.extra["team_id"],
+        },
+    )
+    assert metadata["origin"]["kind"] == "migration"
+    assert metadata["relations"] == {
+        "supersedes": [],
+        "superseded_by": second.id,
+        "issues": ["LIN-2"],
+    }
+    replacement_raw = wire.documents[models[second.id].ref]
+    replacement_metadata, _ = linear_module._parse_adr_document(
+        replacement_raw,
+        {
+            "project_id": PROJECT.id,
+            "team_id": PROJECT.extra["team_id"],
+        },
+    )
+    assert replacement_metadata["relations"]["supersedes"] == [
+        first.id,
+        imported.id,
+    ]
+
+
+def test_linear_adr_import_preserves_unknown_vs_known_empty_relations(tracker):
+    instance, wire = tracker
+    common = dict(
+        adr_id="LIN-ADR-0088", title="Historical unknown", body="old",
+        historical_status="deprecated", source_ref="YT-ADR-88",
+        source_created=None, source_updated=None,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+    )
+    imported = instance.import_adr(PROJECT, **common)
+    metadata, _ = linear_module._parse_adr_document(
+        wire.documents[imported.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert metadata["origin"]["missing_relations"] == [
+        "issues", "superseded_by", "supersedes",
+    ]
+    with pytest.raises(TrackerConflictError, match="conflicts with existing origin"):
+        instance.import_adr(
+            PROJECT, **common, supersedes=(), superseded_by=None,
+            issue_refs=(),
+        )
+
+    explicit = {**common, "adr_id": "LIN-ADR-0089", "title": "Known empty"}
+    known = instance.import_adr(
+        PROJECT, **explicit, supersedes=(), superseded_by=None,
+        issue_refs=(),
+    )
+    known_metadata, _ = linear_module._parse_adr_document(
+        wire.documents[known.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert known_metadata["origin"]["missing_relations"] == []
+    with pytest.raises(TrackerConflictError, match="conflicts with existing origin"):
+        instance.import_adr(PROJECT, **explicit)
+
+
+def test_linear_import_preserves_superseded_with_unknown_successor(tracker):
+    instance, wire = tracker
+    source = dict(
+        adr_id="LIN-ADR-0091", title="Unknown successor", body="historic",
+        historical_status="superseded", source_ref="YT-A-91",
+        source_created=None, source_updated=None,
+        expected_source_sha256=hashlib.sha256(b"historic").hexdigest(),
+    )
+    imported = instance.import_adr(PROJECT, **source)
+    assert imported.status == "superseded"
+    metadata, _ = linear_module._parse_adr_document(
+        wire.documents[imported.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert "superseded_by" in metadata["origin"]["missing_relations"]
+    assert metadata["relations"]["superseded_by"] is None
+    before = copy.deepcopy(wire.documents)
+    assert instance.import_adr(PROJECT, **source).ref == imported.ref
+    assert wire.documents == before
+    assert instance.list_adrs(PROJECT)[0].status == "superseded"
+    with pytest.raises(ValueError, match="historical import invalid"):
+        instance.import_adr(PROJECT, **source, superseded_by=None)
+    assert wire.documents == before
+
+
+def test_linear_native_adr_issue_link_is_canonical_reciprocal_and_replay_safe(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Native link", "decision")
+    linked = instance.link_adr_issue(created, "lin-2", project=PROJECT)
+    assert linked.ref != created.ref
+    metadata, _ = linear_module._parse_adr_document(
+        wire.documents[linked.ref],
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+    )
+    assert metadata["relations"]["issues"] == ["LIN-2"]
+    comment_id, _ = linear_module._adr_issue_link(
+        instance._binding(PROJECT), linked.id, "LIN-2"
+    )
+    assert wire.comments[comment_id]["issue"]["id"] == ISSUE_2_ID
+    before = (len(wire.documents), len(wire.comments))
+    replay = instance.link_adr_issue(linked, ISSUE_2_ID, project=PROJECT)
+    assert replay.ref == linked.ref
+    assert (len(wire.documents), len(wire.comments)) == before
+    assert instance.list_adrs(PROJECT)[0].ref == linked.ref
+
+
+def test_linear_adr_issue_link_replays_exact_version_without_witness(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Interrupted issue link", "decision")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR witness]")
+        ):
+            raise OSError("witness write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    instance._transport = original
+    assert len(wire.documents) == 3
+    assert len(wire.comments) == 1
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+
+    before = (len(wire.documents), len(wire.comments))
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.link_adr_issue(created, "LIN-1", project=PROJECT)
+    assert (len(wire.documents), len(wire.comments)) == before
+
+    linked = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+    assert instance.list_adrs(PROJECT)[0].ref == linked.ref
+
+
+def test_linear_frame_materializes_native_reciprocal_adr_issue_link(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    created = frame.materialize(
+        {
+            "adrs": [
+                {"title": "Frame decision", "body": "Decision"},
+                {"title": "Second decision", "body": "Another decision"},
+            ],
+            "issues": [
+                {
+                    "title": "Implement decision",
+                    "body": "- [ ] Done",
+                    "constrained_by": [0, "Second decision"],
+                }
+            ],
+        }
+    )
+    adr_ids = created["adrs"]
+    issue_id = created["issues"][0]
+    adrs = instance.list_adrs(PROJECT)
+    assert {adr.id for adr in adrs} == set(adr_ids)
+    for adr in adrs:
+        metadata, _ = linear_module._parse_adr_document(
+            wire.documents[adr.ref],
+            {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+        )
+        assert metadata["relations"]["issues"] == [issue_id]
+
+
+def test_linear_frame_rejects_any_unknown_adr_before_first_write(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+    with pytest.raises(ValueError, match="ADR inconnue"):
+        frame.materialize({
+            "adrs": [{"title": "Known upcoming", "body": "decision"}],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": ["Known upcoming", "LIN-ADR-9999"],
+            }],
+        })
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+@pytest.mark.parametrize(
+    "adrs",
+    [
+        [{"title": "0", "body": "decision"}],
+        [
+            {"title": "First decision", "body": "decision"},
+            {"title": "0", "body": "decision"},
+        ],
+        [
+            {"title": "Repeated decision", "body": "first"},
+            {"title": "Repeated decision", "body": "second"},
+        ],
+    ],
+    ids=[
+        "incoming-title-collides-with-own-index",
+        "incoming-title-collides-with-other-index",
+        "duplicate-incoming-title",
+    ],
+)
+def test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write(
+    tracker, monkeypatch, adrs
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+
+    with pytest.raises(ValueError, match="ADR ambiguë"):
+        frame.materialize({
+            "adrs": adrs,
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": [0],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    existing = instance.create_adr(PROJECT, "Existing decision", "decision")
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+    before_documents = copy.deepcopy(wire.documents)
+    before_comments = copy.deepcopy(wire.comments)
+
+    with pytest.raises(ValueError, match="ADR ambiguë"):
+        frame.materialize({
+            "adrs": [{"title": existing.id, "body": "decision"}],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": [existing.id],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == before_documents
+    assert wire.comments == before_comments
+
+
+@pytest.mark.parametrize("with_reference", [False, True])
+def test_linear_frame_rejects_accepted_incoming_adr_before_first_write(
+    tracker, monkeypatch, with_reference
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+
+    with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+        frame.materialize({
+            "adrs": [
+                {"title": "Earlier proposed", "body": "decision"},
+                {
+                    "title": "Later accepted", "body": "decision",
+                    "status": "accepted",
+                },
+            ],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist",
+                "body": "- [ ] Done",
+                "constrained_by": ["Later accepted"] if with_reference else [],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+@pytest.mark.parametrize("status", ["deprecated", "superseded"])
+def test_linear_frame_rejects_terminal_existing_adr_before_first_write(
+    tracker, monkeypatch, status
+):
+    instance, wire = tracker
+    terminal = instance.create_adr(PROJECT, "Retired decision", "decision")
+    instance.set_adr_status(terminal, "accepted", project=PROJECT)
+    if status == "deprecated":
+        terminal = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[terminal.id]
+        instance.set_adr_status(terminal, status, project=PROJECT)
+    else:
+        replacement = instance.create_adr(PROJECT, "Replacement", "decision")
+        instance.set_adr_status(replacement, "accepted", project=PROJECT)
+        accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+        instance.supersede_adr(accepted[terminal.id], replacement.id, project=PROJECT)
+    terminal = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[terminal.id]
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+    before_documents = copy.deepcopy(wire.documents)
+    before_comments = copy.deepcopy(wire.comments)
+
+    with pytest.raises(ValueError, match="ADR inactive"):
+        frame.materialize({
+            "adrs": [{"title": "Would be new", "body": "decision"}],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": ["Would be new", terminal.id],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == before_documents
+    assert wire.comments == before_comments
+
+
+@pytest.mark.parametrize("status", ["deprecated", "superseded", "unreadable", None])
+def test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write(
+    tracker, monkeypatch, status
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+
+    with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+        frame.materialize({
+            "adrs": [{
+                "title": "Inactive decision", "body": "decision", "status": status,
+            }],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": ["Inactive decision"],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    unreadable = Adr("LIN-ADR-9999", "Unreadable", status=None)
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(instance, "list_adrs", lambda _project: [unreadable])
+    before_issues = copy.deepcopy(wire.issues)
+
+    with pytest.raises(ValueError, match="ADR inactive"):
+        frame.materialize({
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": [unreadable.id],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+@pytest.mark.parametrize("source_document_without_witness", [False, True])
+def test_linear_supersession_replay_is_idempotent_and_completes_exact_partial_pair(
+    tracker, source_document_without_witness,
+):
+    instance, wire = tracker
+    source = instance.create_adr(PROJECT, "Source", "old")
+    replacement = instance.create_adr(PROJECT, "Replacement", "new")
+    instance.set_adr_status(source, "accepted", project=PROJECT)
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}
+    binding, chains = instance._adr_snapshot(PROJECT)
+    replacement_metadata, replacement_body = instance._next_adr_metadata(
+        chains[replacement.id][-1], supersedes_id=source.id
+    )
+    instance._create_adr_document(binding, replacement_metadata, replacement_body)
+    if source_document_without_witness:
+        source_metadata, source_body = instance._next_adr_metadata(
+            chains[source.id][-1], status="superseded", replacement_id=replacement.id
+        )
+        raw = {
+            "id": linear_module._adr_document_id(
+                PROJECT.id, source.id, source_metadata["sequence"]
+            ),
+            "title": linear_module._adr_document_title(source_metadata),
+            "content": linear_module._adr_document_content(
+                source_metadata, source_body
+            ),
+            "project": {"id": PROJECT.id},
+            "archivedAt": None,
+        }
+        wire.documents[raw["id"]] = raw
+    with pytest.raises(
+        TrackerConflictError,
+        match="witness is missing" if source_document_without_witness else "not reciprocal",
+    ):
+        instance.list_adrs(PROJECT)
+
+    instance.supersede_adr(accepted[source.id], replacement.id, project=PROJECT)
+    complete = {item.id: item for item in instance.list_adrs(PROJECT)}
+    assert complete[source.id].status == "superseded"
+    before = len(wire.documents)
+    instance.supersede_adr(complete[source.id], replacement.id, project=PROJECT)
+    assert len(wire.documents) == before
+
+
+def test_linear_supersession_recovers_replacement_version_without_witness(tracker):
+    instance, wire = tracker
+    source = instance.create_adr(PROJECT, "Source witness gap", "old")
+    replacement = instance.create_adr(PROJECT, "Replacement witness gap", "new")
+    instance.set_adr_status(source, "accepted", project=PROJECT)
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}
+    binding, chains = instance._adr_snapshot(PROJECT)
+    metadata, body = instance._next_adr_metadata(
+        chains[replacement.id][-1], supersedes_id=source.id
+    )
+    raw = {
+        "id": linear_module._adr_document_id(PROJECT.id, replacement.id, metadata["sequence"]),
+        "title": linear_module._adr_document_title(metadata),
+        "content": linear_module._adr_document_content(metadata, body),
+        "project": {"id": PROJECT.id},
+        "archivedAt": None,
+    }
+    wire.documents[raw["id"]] = raw
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+
+    instance.supersede_adr(accepted[source.id], replacement.id, project=PROJECT)
+    complete = {item.id: item for item in instance.list_adrs(PROJECT)}
+    assert complete[source.id].status == "superseded"
+    assert complete[replacement.id].status == "accepted"
+    assert len(wire.documents) == 12
+
+
+def test_linear_adr_commands_recover_exact_missing_witness(tracker, monkeypatch, tmp_path):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    source = instance.create_adr(PROJECT, "Command source", "- old")
+    replacement = instance.create_adr(PROJECT, "Command replacement", "- new")
+
+    adr_module.accept(source.id)
+    wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 1))
+    with pytest.raises(TrackerConflictError, match="witness is missing"):
+        instance.list_adrs(PROJECT)
+    adr_module.accept(source.id)
+    assert len(instance.list_adrs(PROJECT)) == 2
+
+    adr_module.accept(replacement.id)
+    adr_module.link_issue(source.id, "LIN-2")
+    wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 2))
+    before_wrong_replay = (len(wire.documents), len(wire.comments))
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        adr_module.link_issue(source.id, "LIN-1")
+    assert (len(wire.documents), len(wire.comments)) == before_wrong_replay
+    adr_module.link_issue(source.id, "LIN-2")
+    linked = {item.id: item for item in instance.list_adrs(PROJECT)}[source.id]
+
+    expected = tmp_path / "expected.md"
+    updated = tmp_path / "updated.md"
+    expected.write_text(linked.body)
+    updated.write_text(linked.body.replace("old", "revised"))
+    adr_module.edit(source.id, str(expected), str(updated))
+    wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 3))
+    adr_module.edit(source.id, str(expected), str(updated))
+    assert "revised" in {item.id: item for item in instance.list_adrs(PROJECT)}[source.id].body
+
+    adr_module.supersede(source.id, replacement.id)
+    wire.documents.pop(linear_module._adr_witness_id(PROJECT.id, source.id, 4))
+    adr_module.supersede(source.id, replacement.id)
+    assert {item.id: item for item in instance.list_adrs(PROJECT)}[source.id].status == "superseded"
+
+
+def test_linear_adr_list_rejects_non_object_nodes(tracker):
+    instance, wire = tracker
+    original = wire.__call__
+
+    def malformed(document, variables):
+        if "FoundryLinearAdrDocuments" in document:
+            return {"data": {"documents": connection([None])}}
+        return original(document, variables)
+
+    instance._transport = malformed
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance.list_adrs(PROJECT)
+
+
+QUALIFICATION_PROJECT_ID = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a"
+
+
+def _seed_qualification_probe(wire, title, content, *, project=QUALIFICATION_PROJECT_ID):
+    """Store one non-authoritative probe outside the binding project."""
+    probe_id = f"00000000-0000-4000-8000-{len(wire.readback_probes) + 1:012d}"
+    wire.readback_probes[probe_id] = {
+        "id": probe_id,
+        "title": title,
+        "content": content,
+        "project": {"id": project},
+        "archivedAt": None,
+    }
+    return probe_id
+
+
+def _base_record(record):
+    return {
+        key: value
+        for key, value in record.items()
+        if key not in linear_module._ADR_BATCH_PROFILE_FIELDS
+    }
+
+
+def _qualify_batch(instance, wire, records, *, render=None):
+    """Run the qualification campaign against the fake provider.
+
+    The plan gives the exact bytes the import will send.  Each is "created" on a
+    probe in the qualification project and read back through the provider model,
+    exactly as the private campaign does against Linear.
+    """
+    render = render or linear_markdown_readback
+    base = tuple(_base_record(record) for record in records)
+    plan = instance.plan_adr_batch_qualification(PROJECT, base)
+    observed = {
+        item["adr_id"]: render(item["document_content"])
+        for item in plan
+        if not item["recovery_only"]
+    }
+    plan = instance.plan_adr_batch_qualification(PROJECT, base, observed)
+    qualified = []
+    for record, item in zip(base, plan):
+        profiled = {**record, "qualification_project_id": QUALIFICATION_PROJECT_ID}
+        if not item["recovery_only"]:
+            content = observed[item["adr_id"]]
+            profiled.update(
+                expected_linear_document_content=content,
+                expected_linear_document_sha256=hashlib.sha256(
+                    content.encode()
+                ).hexdigest(),
+                document_probe_id=_seed_qualification_probe(
+                    wire, item["document_probe_title"], content
+                ),
+            )
+        witness = render(item["witness_content"])
+        profiled.update(
+            expected_linear_witness_content=witness,
+            expected_linear_witness_sha256=hashlib.sha256(witness.encode()).hexdigest(),
+            witness_probe_id=_seed_qualification_probe(
+                wire, item["witness_probe_title"], witness
+            ),
+        )
+        qualified.append(profiled)
+    return tuple(qualified)
+
+
+def _historical_batch_pair(wire=None, instance=None):
+    source = {
+        "adr_id": "LIN-ADR-0041", "title": "Historical source", "body": "old",
+        "historical_status": "superseded", "source_ref": "YT-A-41",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"old").hexdigest(),
+        "supersedes": (), "superseded_by": "LIN-ADR-0042",
+        "issue_refs": ("LIN-2",),
+    }
+    replacement = {
+        "adr_id": "LIN-ADR-0042", "title": "Historical replacement", "body": "new",
+        "historical_status": "accepted", "source_ref": "YT-A-42",
+        "source_created": None, "source_updated": None,
+        "expected_source_sha256": hashlib.sha256(b"new").hexdigest(),
+        "supersedes": ("LIN-ADR-0041",), "superseded_by": None,
+        "issue_refs": (),
+    }
+    if instance is not None:
+        return _qualify_batch(instance, wire, (source, replacement))
+    return source, replacement
+
+
+def _historical_partial_batch_record():
+    body = (
+        "historical body mentions FOUNDRY-123 without an authoritative typed "
+        "relation graph"
+    )
+    return {
+        "adr_id": "LIN-ADR-0043",
+        "title": "Historical relation gap",
+        "body": body,
+        "historical_status": "accepted",
+        "source_ref": "YT-A-43",
+        "source_created": 3,
+        "source_updated": 4,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (),
+        "superseded_by": None,
+        "issue_refs": (),
+        "missing_relations": ("issues", "superseded_by", "supersedes"),
+    }
+
+
+def _recovery_only_profile_record():
+    body = "<private historical source kept out of the public fixture>"
+    record = {
+        "adr_id": "LIN-ADR-0001", "title": "Qualified interrupted import",
+        "body": body, "historical_status": "deprecated",
+        "source_ref": "YT-ADR-1", "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    return record
+
+
+def _unqualified_recovery_profile(record):
+    """Well-formed profile fields for tests that must fail before any probe read."""
+    return {
+        **record,
+        "qualification_project_id": QUALIFICATION_PROJECT_ID,
+        "expected_linear_witness_content": "unused",
+        "expected_linear_witness_sha256": hashlib.sha256(b"unused").hexdigest(),
+        "witness_probe_id": "00000000-0000-4000-8000-00000000ffff",
+    }
+
+
+def _seed_recovery_only_profile_slot(wire, record):
+    """Install an existing, deliberately non-renderer-derived v0 Document."""
+    binding = {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]}
+    metadata = {
+        "schema": linear_module._ADR_SCHEMA,
+        "project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"],
+        "id": record["adr_id"], "title": record["title"],
+        "status": record["historical_status"], "sequence": 0,
+        "previous_id": None, "previous_sha256": None,
+        "body_sha256": record["expected_source_sha256"],
+        "origin": {
+            "kind": "migration", "source_tracker": "youtrack",
+            "source_ref": record["source_ref"],
+            "source_created": record["source_created"],
+            "source_updated": record["source_updated"],
+            "source_body_sha256": record["expected_source_sha256"],
+            "missing_relations": [],
+        },
+        "relations": {"supersedes": [], "superseded_by": None, "issues": []},
+    }
+    batch_sha256 = hashlib.sha256(json.dumps(
+        [metadata], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    metadata["origin"]["batch_sha256"] = batch_sha256
+    candidate = {
+        "id": linear_module._adr_document_id(PROJECT.id, record["adr_id"], 0),
+        "title": linear_module._adr_document_title(metadata),
+        "content": linear_module._adr_document_content(metadata, record["body"]),
+        "project": {"id": PROJECT.id}, "archivedAt": None,
+    }
+    # This models opaque provider bytes that are qualified by digest, rather
+    # than teaching the test (or adapter) a generalized HTML renderer.
+    observed = {**candidate, "content": f"{candidate['content']}\n"}
+    wire.documents[observed["id"]] = observed
+    return binding, metadata, candidate, observed
+
+
+def _no_batch_effect(wire, calls_before):
+    return not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
+def test_linear_historical_profile_recovers_only_exact_existing_slot(tracker, monkeypatch):
+    instance, wire = tracker
+    record = _recovery_only_profile_record()
+    source_digest = hashlib.sha256(record["body"].encode()).hexdigest()
+    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_SOURCE_SHA256", source_digest)
+
+    # The opaque readback digest is the entire provider content, not a body-only
+    # normalization. A single byte change must not authorize witness recovery.
+    _binding, _metadata, candidate, observed = _seed_recovery_only_profile_slot(
+        wire, record
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_READBACK_SHA256",
+        hashlib.sha256(observed["content"].encode()).hexdigest(),
+    )
+    assert linear_module._adr_readback_content_matches(
+        observed["content"], candidate["content"]
+    )
+    assert not linear_module._adr_readback_content_matches(
+        f"{observed['content']} ", candidate["content"]
+    )
+
+    (record,) = _qualify_batch(instance, wire, (record,))
+    # The surviving slot is its own evidence: no document probe, only a witness one.
+    assert "document_probe_id" not in record
+    plan = instance.plan_adr_batch_qualification(PROJECT, (_base_record(record),))
+    assert plan[0]["existing_document_content"] == observed["content"]
+    imported = instance.import_adr_batch(PROJECT, (record,))
+    assert [item.id for item in imported] == [record["adr_id"]]
+    witness_id = linear_module._adr_witness_id(PROJECT.id, record["adr_id"], 0)
+    assert wire.documents[witness_id]["content"] == record["expected_linear_witness_content"]
+    assert wire.documents[observed["id"]] == observed
+    before = copy.deepcopy(wire.documents)
+    instance.import_adr_batch(PROJECT, (record,))
+    assert wire.documents == before
+    # Ordinary reads rebuild the canonical Document from the witness-held source,
+    # not from the provider's lossy rendering.
+    assert instance.list_adrs(PROJECT)[0].body == plan[0]["document_content"]
+    assert plan[0]["document_content"].endswith(f"\n\n{record['body']}")
+
+
+def test_linear_historical_profile_refuses_absent_or_colliding_slot_before_write(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    record = _unqualified_recovery_profile(_recovery_only_profile_record())
+    source_digest = hashlib.sha256(record["body"].encode()).hexdigest()
+    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_SOURCE_SHA256", source_digest)
+    before_calls = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="requires existing exact slot"):
+        instance.import_adr_batch(PROJECT, (record,))
+    with pytest.raises(TrackerConflictError, match="requires existing exact slot"):
+        instance.plan_adr_batch_qualification(PROJECT, (_base_record(record),))
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert _no_batch_effect(wire, before_calls)
+
+    _binding, _metadata, _candidate, observed = _seed_recovery_only_profile_slot(
+        wire, record
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_READBACK_SHA256",
+        hashlib.sha256(observed["content"].encode()).hexdigest(),
+    )
+    wire.documents[observed["id"]]["content"] += "hostile"
+    before = copy.deepcopy(wire.documents)
+    with pytest.raises(TrackerConflictError, match="batch slot diverged"):
+        instance.import_adr_batch(PROJECT, (record,))
+    assert wire.documents == before
+
+
+def test_linear_historical_profile_requires_qualified_witness_probe(tracker, monkeypatch):
+    instance, wire = tracker
+    base = _recovery_only_profile_record()
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_SOURCE_SHA256",
+        hashlib.sha256(base["body"].encode()).hexdigest(),
+    )
+    _binding, _metadata, _candidate, observed = _seed_recovery_only_profile_slot(
+        wire, base
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_READBACK_SHA256",
+        hashlib.sha256(observed["content"].encode()).hexdigest(),
+    )
+    (record,) = _qualify_batch(instance, wire, (base,))
+    wire.readback_probes[record["witness_probe_id"]]["content"] += " "
+    before = copy.deepcopy(wire.documents)
+    calls_before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="qualification probe is not exact"):
+        instance.import_adr_batch(PROJECT, (record,))
+    assert wire.documents == before
+    assert _no_batch_effect(wire, calls_before)
+
+
+def test_linear_historical_batch_plan_is_read_only_and_matches_import_bytes(tracker):
+    instance, wire = tracker
+    base = _historical_batch_pair()
+    calls_before = len(wire.calls)
+    plan = instance.plan_adr_batch_qualification(PROJECT, base)
+    assert _no_batch_effect(wire, calls_before)
+    assert all("witness_content" not in item for item in plan)
+    with pytest.raises(ValueError, match="observed documents"):
+        instance.plan_adr_batch_qualification(PROJECT, base, {"LIN-ADR-0099": "x"})
+    with pytest.raises(TrackerConflictError, match="readback is not qualified"):
+        instance.plan_adr_batch_qualification(
+            PROJECT, base, {"LIN-ADR-0041": "re-encoded header"}
+        )
+
+    records = _qualify_batch(instance, wire, base)
+    sent = []
+    original = wire.__call__
+
+    def record_sent(document, variables):
+        if "FoundryLinearAdrDocumentCreate" in document:
+            sent.append(copy.deepcopy(variables["input"]))
+        return original(document, variables)
+
+    instance._transport = record_sent
+    instance.import_adr_batch(PROJECT, records)
+    by_id = {value["id"]: value for value in sent}
+    for item in plan:
+        assert by_id[item["document_id"]]["content"] == item["document_content"]
+        assert by_id[item["document_id"]]["title"] == item["document_title"]
+        assert item["document_probe_title"].endswith(item["document_sha256"])
+    for record in records:
+        witness = next(
+            value for value in sent
+            if value["title"].startswith(f"[Foundry ADR witness] {record['adr_id']} ")
+        )
+        assert linear_markdown_readback(witness["content"]) == record[
+            "expected_linear_witness_content"
+        ]
+
+
+def test_linear_historical_batch_imports_reciprocal_closure_into_empty_project(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair(wire, instance)
+    imported = instance.import_adr_batch(PROJECT, records)
+    assert [(item.id, item.status) for item in imported] == [
+        ("LIN-ADR-0041", "superseded"),
+        ("LIN-ADR-0042", "accepted"),
+    ]
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+    batch_digests = {
+        linear_module._parse_adr_document(raw, {
+            "project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"],
+        })[0]["origin"]["batch_sha256"]
+        for raw in wire.documents.values()
+        if raw["title"].startswith("[Foundry ADR]")
+    }
+    assert len(batch_digests) == 1
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    replay = instance.import_adr_batch(PROJECT, records)
+    assert [item.ref for item in replay] == [item.ref for item in imported]
+    reordered = instance.import_adr_batch(PROJECT, records[::-1])
+    assert [item.ref for item in reordered] == [item.ref for item in imported[::-1]]
+    assert (wire.documents, wire.comments) == before
+    assert {item.id for item in instance.list_adrs(PROJECT)} == {
+        "LIN-ADR-0041", "LIN-ADR-0042",
+    }
+    # Probes stay non-authoritative evidence outside the ADR project.
+    assert all(
+        probe["project"]["id"] == QUALIFICATION_PROJECT_ID
+        for probe in wire.readback_probes.values()
+    )
+
+
+def _unqualified_profile(record):
+    """Well-formed full profile fields for tests that must fail before any probe read."""
+    return {
+        **record,
+        "qualification_project_id": QUALIFICATION_PROJECT_ID,
+        "expected_linear_document_content": "unused",
+        "expected_linear_document_sha256": hashlib.sha256(b"unused").hexdigest(),
+        "document_probe_id": "00000000-0000-4000-8000-00000000fffe",
+        "expected_linear_witness_content": "unused",
+        "expected_linear_witness_sha256": hashlib.sha256(b"unused").hexdigest(),
+        "witness_probe_id": "00000000-0000-4000-8000-00000000ffff",
+    }
+
+
+def test_linear_historical_partial_batch_binds_unknown_relations_and_exact_body(
+    tracker,
+):
+    instance, wire = tracker
+    record = _historical_partial_batch_record()
+    second_body = "second historical body"
+    second = {
+        **record,
+        "adr_id": "LIN-ADR-0044",
+        "title": "Second historical relation gap",
+        "body": second_body,
+        "source_ref": "YT-A-44",
+        "expected_source_sha256": hashlib.sha256(second_body.encode()).hexdigest(),
+    }
+    records = _qualify_batch(instance, wire, (record, second))
+    # The optional field is base-record data, never stripped as a profile field.
+    assert all(
+        _base_record(item)["missing_relations"] == record["missing_relations"]
+        for item in records
+    )
+
+    imported = instance.import_adr_batch(PROJECT, records)
+    binding = instance._binding(PROJECT)
+    metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported[0].ref], binding
+    )
+    witness = linear_module._parse_adr_witness(
+        wire.documents[
+            linear_module._adr_witness_id(PROJECT.id, record["adr_id"], 0)
+        ],
+        binding,
+    )
+
+    assert metadata["origin"]["missing_relations"] == [
+        "issues", "superseded_by", "supersedes",
+    ]
+    assert metadata["relations"] == {
+        "supersedes": [], "superseded_by": None, "issues": [],
+    }
+    assert witness[linear_module._ADR_BOUND_SOURCE_BODY] == record["body"]
+    assert {item.id: item.status for item in instance.list_adrs(PROJECT)} == {
+        record["adr_id"]: "accepted",
+        second["adr_id"]: "accepted",
+    }
+    assert wire.comments == {}
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    replay = instance.import_adr_batch(PROJECT, records[::-1])
+    assert [item.ref for item in replay] == [imported[1].ref, imported[0].ref]
+    assert (wire.documents, wire.comments) == before
+
+
+def test_linear_historical_batch_unknown_and_known_empty_have_distinct_manifest():
+    unknown_wire = LinearWire()
+    unknown_tracker = LinearTracker(
+        token="linear-test-secret", transport=unknown_wire
+    )
+    known_wire = LinearWire()
+    known_tracker = LinearTracker(token="linear-test-secret", transport=known_wire)
+    partial = _historical_partial_batch_record()
+    complete = dict(partial)
+    complete.pop("missing_relations")
+
+    unknown = unknown_tracker.import_adr_batch(
+        PROJECT, _qualify_batch(unknown_tracker, unknown_wire, (partial,))
+    )[0]
+    known = known_tracker.import_adr_batch(
+        PROJECT, _qualify_batch(known_tracker, known_wire, (complete,))
+    )[0]
+    binding = unknown_tracker._binding(PROJECT)
+    unknown_metadata, _body = linear_module._parse_adr_document(
+        unknown_wire.documents[unknown.ref], binding
+    )
+    known_metadata, _body = linear_module._parse_adr_document(
+        known_wire.documents[known.ref], binding
+    )
+
+    assert unknown.ref == known.ref
+    assert unknown_metadata["relations"] == known_metadata["relations"]
+    assert unknown_metadata["origin"]["missing_relations"] != (
+        known_metadata["origin"]["missing_relations"]
+    )
+    assert unknown_metadata["origin"]["batch_sha256"] != (
+        known_metadata["origin"]["batch_sha256"]
+    )
+    assert unknown_wire.documents[unknown.ref]["content"] != (
+        known_wire.documents[known.ref]["content"]
+    )
+
+
+def test_linear_historical_partial_batch_preserves_unknown_superseded_successor(
+    tracker,
+):
+    instance, wire = tracker
+    record = {
+        **_historical_partial_batch_record(),
+        "historical_status": "superseded",
+    }
+
+    (qualified,) = _qualify_batch(instance, wire, (record,))
+    imported = instance.import_adr_batch(PROJECT, (qualified,))[0]
+    metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported.ref], instance._binding(PROJECT)
+    )
+
+    assert imported.status == "superseded"
+    assert metadata["status"] == "superseded"
+    assert metadata["relations"]["superseded_by"] is None
+    assert "superseded_by" in metadata["origin"]["missing_relations"]
+    assert wire.comments == {}
+
+
+def test_linear_historical_partial_batch_refuses_changed_missing_flags_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    record = _historical_partial_batch_record()
+    instance.import_adr_batch(PROJECT, _qualify_batch(instance, wire, (record,)))
+    changed = {
+        **record,
+        "missing_relations": ("superseded_by", "supersedes"),
+    }
+    (changed,) = _qualify_batch(instance, wire, (changed,))
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    call_offset = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="slot diverged"):
+        instance.import_adr_batch(PROJECT, (changed,))
+
+    assert (wire.documents, wire.comments) == before
+    assert _no_batch_effect(wire, call_offset)
+
+
+@pytest.mark.parametrize(
+    "missing_relations",
+    [
+        ["issues"],
+        ("supersedes", "issues"),
+        ("issues", "issues"),
+        ("unknown",),
+    ],
+)
+def test_linear_historical_partial_batch_refuses_noncanonical_missing_relations(
+    tracker, missing_relations
+):
+    instance, wire = tracker
+    record = {
+        **_historical_partial_batch_record(),
+        "missing_relations": missing_relations,
+    }
+
+    with pytest.raises(ValueError, match="missing relations invalid"):
+        instance.plan_adr_batch_qualification(PROJECT, (record,))
+    with pytest.raises(ValueError, match="missing relations invalid"):
+        instance.import_adr_batch(PROJECT, (_unqualified_profile(record),))
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert wire.readback_probes == {}
+    assert _no_batch_effect(wire, 0)
+
+
+@pytest.mark.parametrize(
+    ("family", "field", "value"),
+    [
+        ("supersedes", "supersedes", ("LIN-ADR-0044",)),
+        ("superseded_by", "superseded_by", "LIN-ADR-0044"),
+        ("issues", "issue_refs", ("LIN-2",)),
+    ],
+)
+def test_linear_historical_partial_batch_refuses_nonempty_unknown_placeholder(
+    tracker, family, field, value
+):
+    instance, wire = tracker
+    record = {
+        **_historical_partial_batch_record(),
+        "missing_relations": (family,),
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match="unknown relation is not empty"):
+        instance.plan_adr_batch_qualification(PROJECT, (record,))
+    with pytest.raises(ValueError, match="unknown relation is not empty"):
+        instance.import_adr_batch(PROJECT, (_unqualified_profile(record),))
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert _no_batch_effect(wire, 0)
+
+
+def test_linear_historical_batch_refuses_mixed_relation_completeness_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    partial = _historical_partial_batch_record()
+    complete = {**partial, "adr_id": "LIN-ADR-0044"}
+    complete.pop("missing_relations")
+
+    with pytest.raises(ValueError, match="record fields invalid"):
+        instance.plan_adr_batch_qualification(PROJECT, (partial, complete))
+    with pytest.raises(ValueError, match="record fields invalid"):
+        instance.import_adr_batch(
+            PROJECT,
+            (_unqualified_profile(partial), _unqualified_profile(complete)),
+        )
+
+    assert wire.calls == []
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_historical_partial_batch_plan_and_import_share_exact_bytes(tracker):
+    instance, wire = tracker
+    gap = _historical_partial_batch_record()
+    successor_gap_body = "superseded historically; successor not exported"
+    successor_gap = {
+        **gap,
+        "adr_id": "LIN-ADR-0045",
+        "title": "Historical superseded without known successor",
+        "body": successor_gap_body,
+        "historical_status": "superseded",
+        "source_ref": "YT-A-45",
+        "expected_source_sha256": hashlib.sha256(
+            successor_gap_body.encode()
+        ).hexdigest(),
+        "issue_refs": ("LIN-2",),
+        "missing_relations": ("superseded_by",),
+    }
+    base = (gap, successor_gap)
+
+    # A family declared unknown while carrying a value is refused identically by
+    # the read-only planner and the import, before any read of a probe or write.
+    for family, field, value in (
+        ("supersedes", "supersedes", ("LIN-ADR-0043",)),
+        ("superseded_by", "superseded_by", "LIN-ADR-0043"),
+        ("issues", "issue_refs", ("LIN-2",)),
+    ):
+        hostile = {**successor_gap, "missing_relations": (family,), field: value}
+        calls_before = len(wire.calls)
+        with pytest.raises(ValueError, match="unknown relation is not empty"):
+            instance.plan_adr_batch_qualification(PROJECT, (gap, hostile))
+        with pytest.raises(ValueError, match="unknown relation is not empty"):
+            instance.import_adr_batch(
+                PROJECT,
+                (_unqualified_profile(gap), _unqualified_profile(hostile)),
+            )
+        assert _no_batch_effect(wire, calls_before)
+        # No qualification probe is read on the way to the refusal.
+        assert not any(
+            "FoundryLinearAdrDocumentById" in document
+            for document, _variables in wire.calls[calls_before:]
+        )
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+    plan = instance.plan_adr_batch_qualification(PROJECT, base)
+    records = _qualify_batch(instance, wire, base)
+    sent = []
+    original = wire.__call__
+
+    def record_sent(document, variables):
+        if "FoundryLinearAdrDocumentCreate" in document:
+            sent.append(copy.deepcopy(variables["input"]))
+        return original(document, variables)
+
+    instance._transport = record_sent
+    imported = instance.import_adr_batch(PROJECT, records)
+    by_id = {value["id"]: value for value in sent}
+    binding = instance._binding(PROJECT)
+    batch_digests = set()
+    for item in plan:
+        assert by_id[item["document_id"]]["content"] == item["document_content"]
+        assert by_id[item["document_id"]]["title"] == item["document_title"]
+        metadata, _body = linear_module._parse_adr_document(
+            wire.documents[item["document_id"]], binding
+        )
+        batch_digests.add(metadata["origin"]["batch_sha256"])
+        expected = {gap["adr_id"]: gap, successor_gap["adr_id"]: successor_gap}[
+            item["adr_id"]
+        ]
+        assert metadata["origin"]["missing_relations"] == list(
+            expected["missing_relations"]
+        )
+    assert len(batch_digests) == 1
+    assert {item.id: item.status for item in imported} == {
+        gap["adr_id"]: "accepted",
+        successor_gap["adr_id"]: "superseded",
+    }
+    # Status is preserved and no successor is inferred for the unknown family.
+    assert {item.id: item.status for item in instance.list_adrs(PROJECT)} == {
+        gap["adr_id"]: "accepted",
+        successor_gap["adr_id"]: "superseded",
+    }
+    successor_metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported[1].ref], binding
+    )
+    assert successor_metadata["relations"]["superseded_by"] is None
+    assert successor_metadata["relations"]["issues"] == ["LIN-2"]
+
+
+def test_linear_historical_batch_refuses_bad_or_changed_manifest_before_effect(tracker):
+    instance, wire = tracker
+    source, replacement = _historical_batch_pair(wire, instance)
+    wrong = {**_base_record(replacement), "supersedes": ()}
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.import_adr_batch(
+            PROJECT, _qualify_batch(instance, wire, (source, wrong))
+        )
+    assert wire.documents == {}
+    assert wire.comments == {}
+    unqualified = dict(source)
+    unqualified.pop("expected_linear_document_content")
+    with pytest.raises(ValueError, match="record fields"):
+        instance.import_adr_batch(PROJECT, (unqualified, replacement))
+    assert wire.documents == {}
+    assert wire.comments == {}
+    missing = {**_base_record(source), "superseded_by": "LIN-ADR-0099"}
+    with pytest.raises(AdrUnavailableError):
+        instance.import_adr_batch(
+            PROJECT, _qualify_batch(instance, wire, (missing, replacement))
+        )
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+    instance.import_adr_batch(PROJECT, (source, replacement))
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    changed = {**source, "title": "Changed source"}
+    # A stale profile no longer describes the changed bytes: refused pre-effect.
+    with pytest.raises(TrackerConflictError, match="document readback is not qualified"):
+        instance.import_adr_batch(PROJECT, (changed, replacement))
+    assert (wire.documents, wire.comments) == before
+    (requalified,) = _qualify_batch(instance, wire, (changed, replacement))[:1]
+    with pytest.raises(TrackerConflictError, match="slot diverged"):
+        instance.import_adr_batch(
+            PROJECT, _qualify_batch(instance, wire, (changed, replacement))
+        )
+    assert requalified["document_probe_id"] != source["document_probe_id"]
+    assert (wire.documents, wire.comments) == before
+    with pytest.raises(TrackerConflictError, match="slot diverged"):
+        instance.import_adr_batch(
+            PROJECT, _qualify_batch(instance, wire, (replacement,))
+        )
+    assert (wire.documents, wire.comments) == before
+
+
+def _contextual_readback(content):
+    """A provider rendering the same body differently beneath the ADR header."""
+    rendered = linear_markdown_readback(content)
+    if content.startswith(linear_module._ADR_HEADER):
+        return rendered.replace("context-sensitive", "context-sensitive ")
+    return rendered
+
+
+def test_linear_historical_batch_qualifies_complete_document_not_standalone_body(tracker):
+    instance, wire = tracker
+    body = "context-sensitive historical source"
+    base = {
+        "adr_id": "LIN-ADR-0043", "title": "Contextual rendering", "body": body,
+        "historical_status": "accepted", "source_ref": "YT-A-43",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    original = wire.__call__
+
+    def contextual_provider(document, variables):
+        response = original(document, variables)
+        if "FoundryLinearAdrDocumentCreate" in document:
+            observed = _contextual_readback(variables["input"]["content"])
+            wire.documents[variables["input"]["id"]]["content"] = observed
+            response["data"]["documentCreate"]["document"]["content"] = observed
+        return response
+
+    instance._transport = contextual_provider
+    # The standalone body renders unchanged, so a body-only probe would have
+    # "qualified" it.  Composing that body under the header mispredicts the bytes.
+    assert _contextual_readback(body) == body
+    plan = instance.plan_adr_batch_qualification(PROJECT, (base,))
+    standalone = linear_markdown_readback(plan[0]["document_content"])
+    assert standalone != _contextual_readback(plan[0]["document_content"])
+
+    # A probe created from anything but the exact complete canonical bytes is
+    # refused before any effect: its title does not bind that content.
+    (stale,) = _qualify_batch(instance, wire, (base,), render=linear_markdown_readback)
+    probe = wire.readback_probes[stale["document_probe_id"]]
+    probe["title"] = linear_module._adr_qualification_probe_title(
+        base["adr_id"], "document", body
+    )
+    calls_before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="qualification probe is not exact"):
+        instance.import_adr_batch(PROJECT, (stale,))
+    assert wire.documents == {}
+    assert _no_batch_effect(wire, calls_before)
+
+    (qualified,) = _qualify_batch(instance, wire, (base,), render=_contextual_readback)
+    imported = instance.import_adr_batch(PROJECT, (qualified,))
+    raw = wire.documents[imported[0].ref]
+    assert raw["content"] == qualified["expected_linear_document_content"]
+    assert imported[0].body == plan[0]["document_content"]
+    assert instance.list_adrs(PROJECT)[0].body == plan[0]["document_content"]
+    assert plan[0]["document_content"].endswith(f"\n\n{body}")
+
+
+def test_linear_native_adrs_stay_readable_beside_qualified_historical_import(tracker):
+    # Native decisions (PAT-ADR-0001/0002 accepted after edits, PAT-ADR-0003 still
+    # proposed) share the project with the historical import and its probes live
+    # elsewhere: every ordinary read returns each canonical source body exactly.
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "Import the corpus", "- item\n* **decision**")
+    second = instance.create_adr(PROJECT, "Keep exact sources", "context")
+    third = instance.create_adr(PROJECT, "Unknown relations", "- unknown")
+    instance.set_adr_status(first, "accepted", project=PROJECT)
+    instance.set_adr_status(second, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}[second.id]
+    assert instance.update_body(
+        accepted, accepted.body, accepted.body.replace("context", "context v2"),
+        project=PROJECT,
+    )
+    native = {item.id: item for item in instance.list_adrs(PROJECT)}
+
+    records = _historical_batch_pair(wire, instance)
+    instance.import_adr_batch(PROJECT, records)
+
+    listed = {item.id: item for item in instance.list_adrs(PROJECT)}
+    for adr_id in (first.id, second.id, third.id):
+        assert listed[adr_id] == native[adr_id]
+    assert listed[first.id].body.endswith("- item\n* **decision**")
+    assert (listed[first.id].status, listed[second.id].status, listed[third.id].status) == (
+        "accepted", "accepted", "proposed",
+    )
+    assert {"LIN-ADR-0041", "LIN-ADR-0042"} <= set(listed)
+
+
+def test_linear_native_adr_readable_body_edit_with_recomputed_witness_fails_closed(
+    tracker,
+):
+    # Only a probe-qualified historical version 0 may carry opaque provider bytes.
+    # A native ADR whose readable body and witness digest are edited together must
+    # still be refused: humans and agents would otherwise read different decisions.
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Native decision", "- original decision")
+    version = wire.documents[created.ref]
+    version["content"] = version["content"].replace(
+        "original decision", "tampered decision"
+    )
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    witness = wire.documents[witness_id]
+    payload = json.loads(
+        witness["content"][len(linear_module._ADR_WITNESS_HEADER) : -len("\n\\-->")]
+    )
+    payload["document_sha256"] = hashlib.sha256(version["content"].encode()).hexdigest()
+    witness["content"] = (
+        linear_module._ADR_WITNESS_HEADER
+        + json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n\\-->"
+    )
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance.list_adrs(PROJECT)
+
+
+def test_linear_historical_batch_stops_after_write_when_provider_diverges_from_probe(
+    tracker,
+):
+    # The probe proves the bytes Linear returned for identical content in the
+    # qualification project.  If Linear then renders differently at import, the
+    # post-write check is the last defense: it stops before the witness.
+    instance, wire = tracker
+    body = "context-sensitive historical source"
+    base = {
+        "adr_id": "LIN-ADR-0044", "title": "Divergent provider", "body": body,
+        "historical_status": "accepted", "source_ref": "YT-A-44",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    (record,) = _qualify_batch(instance, wire, (base,))
+    original = wire.__call__
+
+    def contextual_provider(document, variables):
+        response = original(document, variables)
+        if "FoundryLinearAdrDocumentCreate" in document:
+            observed = _contextual_readback(variables["input"]["content"])
+            wire.documents[variables["input"]["id"]]["content"] = observed
+            response["data"]["documentCreate"]["document"]["content"] = observed
+        return response
+
+    instance._transport = contextual_provider
+    with pytest.raises(TrackerConflictError, match="version slot already has different"):
+        instance.import_adr_batch(PROJECT, (record,))
+    assert [raw["title"].startswith("[Foundry ADR] ") for raw in wire.documents.values()] == [True]
+    with pytest.raises(TrackerConflictError, match="witness is missing"):
+        instance.list_adrs(PROJECT)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "error"),
+    (
+        (lambda wire, record: wire.readback_probes.pop(record["document_probe_id"]),
+         "qualification probe is not exact"),
+        (lambda wire, record: wire.readback_probes[record["document_probe_id"]].update(
+            content="changed"), "qualification probe is not exact"),
+        (lambda wire, record: wire.readback_probes[record["document_probe_id"]].update(
+            project={"id": PROJECT.id}), "qualification probe is not exact"),
+        (lambda wire, record: wire.readback_probes[record["document_probe_id"]].update(
+            project={"id": "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f"}),
+         "qualification probe is not exact"),
+        (lambda wire, record: wire.readback_probes[record["document_probe_id"]].update(
+            archivedAt="2026-09-25T00:00:00Z"), "qualification probe is not exact"),
+        (lambda wire, record: wire.readback_probes[record["document_probe_id"]].update(
+            title="[Foundry ADR] disguised probe"), "qualification probe is not exact"),
+        (lambda wire, record: wire.readback_probes.pop(record["witness_probe_id"]),
+         "qualification probe is not exact"),
+        (lambda wire, record: wire.readback_probes[record["witness_probe_id"]].update(
+            content="changed"), "qualification probe is not exact"),
+    ),
+)
+def test_linear_historical_batch_refuses_invalid_probe_before_effect(
+    tracker, mutate, error
+):
+    instance, wire = tracker
+    source, replacement = _historical_batch_pair(wire, instance)
+    mutate(wire, source)
+    calls_before = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match=error):
+        instance.import_adr_batch(PROJECT, (source, replacement))
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert _no_batch_effect(wire, calls_before)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "error", "kind"),
+    (
+        (lambda source, replacement: (
+            {**source, "qualification_project_id": PROJECT.id}, replacement),
+         "not isolated", TrackerConflictError),
+        (lambda source, replacement: (
+            {**source, "qualification_project_id": "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f"},
+            replacement), "not isolated", TrackerConflictError),
+        (lambda source, replacement: (
+            source, {**replacement, "document_probe_id": source["document_probe_id"]}),
+         "probe collides", TrackerConflictError),
+        (lambda source, replacement: (
+            {**source, "witness_probe_id": linear_module._adr_document_id(
+                PROJECT.id, "LIN-ADR-0042", 0)}, replacement),
+         "probe collides", TrackerConflictError),
+        (lambda source, replacement: (
+            {**source, "expected_linear_document_sha256": "0" * 64}, replacement),
+         "record invalid", ValueError),
+        (lambda source, replacement: (
+            {**source, "document_probe_id": "not-a-uuid"}, replacement),
+         "record invalid", ValueError),
+        (lambda source, replacement: (
+            {
+                **source,
+                "expected_linear_witness_content": source[
+                    "expected_linear_witness_content"
+                ] + "\n",
+                "expected_linear_witness_sha256": hashlib.sha256(
+                    (source["expected_linear_witness_content"] + "\n").encode()
+                ).hexdigest(),
+            },
+            replacement,
+        ), "witness readback is not qualified", TrackerConflictError),
+        (lambda source, replacement: (
+            {
+                **source,
+                "expected_linear_document_content": source[
+                    "expected_linear_document_content"
+                ].replace("\\[", "["),
+                "expected_linear_document_sha256": hashlib.sha256(
+                    source["expected_linear_document_content"]
+                    .replace("\\[", "[").encode()
+                ).hexdigest(),
+            },
+            replacement,
+        ), "document readback is not qualified", TrackerConflictError),
+    ),
+)
+def test_linear_historical_batch_refuses_inconsistent_profile_before_effect(
+    tracker, mutate, error, kind
+):
+    instance, wire = tracker
+    records = mutate(*_historical_batch_pair(wire, instance))
+    calls_before = len(wire.calls)
+    with pytest.raises(kind, match=error):
+        instance.import_adr_batch(PROJECT, records)
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert _no_batch_effect(wire, calls_before)
+
+
+def test_linear_historical_batch_refuses_colliding_probe_before_effect(tracker):
+    instance, wire = tracker
+    source, replacement = _historical_batch_pair(wire, instance)
+    probe_id = source["document_probe_id"]
+    original = wire.__call__
+
+    def collision(document, variables):
+        if (
+            "FoundryLinearAdrDocumentById" in document
+            and variables["id"] == probe_id
+        ):
+            probe = copy.deepcopy(wire.readback_probes[probe_id])
+            return {"data": {"documents": connection([probe, probe])}}
+        return original(document, variables)
+
+    instance._transport = collision
+    calls_before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="document slot collision"):
+        instance.import_adr_batch(PROJECT, (source, replacement))
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert _no_batch_effect(wire, calls_before)
+
+
+def test_linear_historical_batch_recovers_exact_partial_version_witness(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair(wire, instance)
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR witness]")
+        ):
+            raise OSError("interrupted witness")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr_batch(PROJECT, records)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="witness is missing"):
+        instance.list_adrs(PROJECT)
+    instance.import_adr_batch(PROJECT, records)
+    assert len(instance.list_adrs(PROJECT)) == 2
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+
+
+def test_linear_historical_batch_refuses_orphan_witness_before_effect(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair(wire, instance)
+    instance.import_adr_batch(PROJECT, records)
+    version_id = linear_module._adr_document_id(
+        PROJECT.id, records[0]["adr_id"], 0
+    )
+    del wire.documents[version_id]
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    calls_before = len(wire.calls)
+
+    with pytest.raises(
+        TrackerConflictError, match="batch witness has no matching version"
+    ):
+        instance.import_adr_batch(PROJECT, records)
+
+    assert (wire.documents, wire.comments) == before
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
+def test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    records = _historical_batch_pair(wire, instance)
+    instance.import_adr_batch(PROJECT, records)
+    comment_id, _body = linear_module._adr_issue_link(
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+        records[0]["adr_id"],
+        records[0]["issue_refs"][0],
+    )
+
+    # Model an external deletion after the complete import.
+    del wire.comments[comment_id]
+    wire.issues["LIN-2"]["comments"]["nodes"] = [
+        comment
+        for comment in wire.issues["LIN-2"]["comments"]["nodes"]
+        if comment["id"] != comment_id
+    ]
+    before = (
+        copy.deepcopy(wire.documents),
+        copy.deepcopy(wire.comments),
+        copy.deepcopy(wire.issues),
+    )
+    calls_before = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.import_adr_batch(PROJECT, records)
+
+    assert (wire.documents, wire.comments, wire.issues) == before
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
+def test_linear_historical_batch_refuses_comment_deleted_after_validation(
+    tracker,
+):
+    instance, wire = tracker
+    records = _historical_batch_pair(wire, instance)
+    instance.import_adr_batch(PROJECT, records)
+    comment_id, _body = linear_module._adr_issue_link(
+        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+        records[0]["adr_id"],
+        records[0]["issue_refs"][0],
+    )
+    original = wire.__call__
+    deleted = False
+
+    def delete_after_graph_read(document, variables):
+        nonlocal deleted
+        response = original(document, variables)
+        if (
+            not deleted
+            and "FoundryLinearCommentsById" in document
+            and variables["id"] == comment_id
+        ):
+            # The graph validator has received the reciprocal witness; model an
+            # external deletion before import_adr_batch reaches its next step.
+            del wire.comments[comment_id]
+            wire.issues["LIN-2"]["comments"]["nodes"] = [
+                comment
+                for comment in wire.issues["LIN-2"]["comments"]["nodes"]
+                if comment["id"] != comment_id
+            ]
+            deleted = True
+        return response
+
+    instance._transport = delete_after_graph_read
+    before_documents = copy.deepcopy(wire.documents)
+    calls_before = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.import_adr_batch(PROJECT, records)
+
+    assert deleted
+    assert wire.documents == before_documents
+    assert comment_id not in wire.comments
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
+def test_linear_historical_batch_recovers_missing_comment_before_documents(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair(wire, instance)
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        if "FoundryLinearCommentCreate" in document:
+            raise OSError("interrupted reciprocal comment")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr_batch(PROJECT, records)
+    instance._transport = original
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    instance.import_adr_batch(PROJECT, records)
+    assert len(instance.list_adrs(PROJECT)) == 2
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+
+
+def test_linear_historical_batch_recovers_completed_first_half(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair(wire, instance)
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR] LIN-ADR-0042")
+        ):
+            raise OSError("interrupted second ADR")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr_batch(PROJECT, records)
+    instance._transport = original
+    with pytest.raises(AdrUnavailableError, match="LIN-ADR-0042"):
+        instance.list_adrs(PROJECT)
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    with pytest.raises(TrackerConflictError, match="slot diverged"):
+        instance.import_adr_batch(
+            PROJECT, _qualify_batch(instance, wire, (records[0],))
+        )
+    assert (wire.documents, wire.comments) == before
+    instance.import_adr_batch(PROJECT, records)
+    assert len(instance.list_adrs(PROJECT)) == 2
+    assert len(wire.documents) == 4
+
+
+def test_linear_supersession_partial_pair_refuses_wrong_replacement_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    source = instance.create_adr(PROJECT, "Source", "old")
+    replacement = instance.create_adr(PROJECT, "Replacement", "new")
+    wrong = instance.create_adr(PROJECT, "Wrong", "other")
+    for adr in (source, replacement, wrong):
+        instance.set_adr_status(adr, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}
+    binding, chains = instance._adr_snapshot(PROJECT)
+    metadata, body = instance._next_adr_metadata(
+        chains[replacement.id][-1], supersedes_id=source.id
+    )
+    instance._create_adr_document(binding, metadata, body)
+    before = len(wire.documents)
+    with pytest.raises(TrackerConflictError, match="does not match exact pair"):
+        instance.supersede_adr(accepted[source.id], wrong.id, project=PROJECT)
+    assert len(wire.documents) == before
+
+
+@pytest.mark.parametrize(
+    "issue_refs",
+    [
+        ("LIN-2", "lin-2"),
+        ("Lin-2", ISSUE_2_ID),
+    ],
+)
+def test_linear_adr_import_refuses_issue_alias_identity_collision_before_effect(
+    tracker, issue_refs
+):
+    instance, wire = tracker
+    call_offset = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="duplicate provider identity"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Alias collision",
+            body="old",
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            issue_refs=issue_refs,
+        )
+
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_adr_import_canonicalizes_single_issue_alias_and_replays_by_uuid(
+    tracker,
+):
+    instance, wire = tracker
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Canonical issue relation",
+        "body": "old",
+        "historical_status": "deprecated",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"old").hexdigest(),
+    }
+
+    imported = instance.import_adr(PROJECT, **kwargs, issue_refs=("lin-2",))
+    binding = instance._binding(PROJECT)
+    metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported.ref], binding
+    )
+    assert metadata["relations"]["issues"] == ["LIN-2"]
+    comment_id, expected_body = linear_module._adr_issue_link(
+        binding, imported.id, "LIN-2"
+    )
+    assert wire.comments[comment_id] == {
+        "id": comment_id,
+        "body": expected_body,
+        "issue": {"id": ISSUE_2_ID, "identifier": "LIN-2"},
+    }
+
+    call_offset = len(wire.calls)
+    replay = instance.import_adr(PROJECT, **kwargs, issue_refs=(ISSUE_2_ID,))
+
+    assert replay.ref == imported.ref
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [imported.id]
+    assert len(wire.comments) == 1
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+
+
+def test_linear_adr_import_replays_v0_before_reciprocal_relation_version(tracker):
+    instance, wire = tracker
+    target = instance.create_adr(PROJECT, "Historical target", "old")
+    instance.set_adr_status(target, "accepted", project=PROJECT)
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Historical replacement",
+        "body": "new",
+        "historical_status": "accepted",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"new").hexdigest(),
+        "supersedes": (target.id,),
+    }
+    original = wire.__call__
+
+    def interrupt_reciprocal(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(f"[Foundry ADR] {target.id}")
+            and "/ v0002" in variables["input"]["title"]
+        ):
+            raise OSError("reciprocal relation write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_reciprocal
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.list_adrs(PROJECT)
+
+    before = (len(wire.documents), len(wire.comments))
+    with pytest.raises(TrackerConflictError, match="existing origin"):
+        instance.import_adr(PROJECT, **{**kwargs, "source_ref": "YT-ADR-other"})
+    assert (len(wire.documents), len(wire.comments)) == before
+
+    imported = instance.import_adr(PROJECT, **kwargs)
+    assert imported.id == "LIN-ADR-0098"
+    assert {adr.id for adr in instance.list_adrs(PROJECT)} == {
+        target.id, imported.id,
+    }
+    assert {adr.id: adr for adr in instance.list_adrs(PROJECT)}[target.id].status == "superseded"
+
+
+def test_linear_adr_import_replays_v0_missing_witness_before_reciprocal_version(tracker):
+    instance, wire = tracker
+    target = instance.create_adr(PROJECT, "Witness target", "old")
+    instance.set_adr_status(target, "accepted", project=PROJECT)
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Witness replacement",
+        "body": "new",
+        "historical_status": "accepted",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"new").hexdigest(),
+        "supersedes": (target.id,),
+    }
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(
+                "[Foundry ADR witness] LIN-ADR-0098"
+            )
+        ):
+            raise OSError("import witness write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+
+    imported = instance.import_adr(PROJECT, **kwargs)
+    assert imported.id == "LIN-ADR-0098"
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert current[target.id].status == "superseded"
+
+
+def test_linear_adr_import_replays_after_first_of_two_reciprocal_versions(tracker):
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "First historical target", "one")
+    second = instance.create_adr(PROJECT, "Second historical target", "two")
+    for adr in (first, second):
+        instance.set_adr_status(adr, "accepted", project=PROJECT)
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Two historical targets",
+        "body": "replacement",
+        "historical_status": "accepted",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"replacement").hexdigest(),
+        "supersedes": (first.id, second.id),
+    }
+    original = wire.__call__
+
+    def interrupt_second(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(f"[Foundry ADR] {second.id}")
+            and "/ v0002" in variables["input"]["title"]
+        ):
+            raise OSError("second reciprocal write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_second
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.list_adrs(PROJECT)
+
+    imported = instance.import_adr(PROJECT, **kwargs)
+    assert imported.id == "LIN-ADR-0098"
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert current[first.id].status == "superseded"
+    assert current[second.id].status == "superseded"
+
+
+def test_linear_adr_import_replays_reciprocal_version_without_witness(tracker):
+    instance, wire = tracker
+    target = instance.create_adr(PROJECT, "Reciprocal witness target", "old")
+    instance.set_adr_status(target, "accepted", project=PROJECT)
+    kwargs = {
+        "adr_id": "LIN-ADR-0098",
+        "title": "Interrupted reciprocal witness",
+        "body": "replacement",
+        "historical_status": "accepted",
+        "source_ref": "YT-ADR-98",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(b"replacement").hexdigest(),
+        "supersedes": (target.id,),
+    }
+    original = wire.__call__
+
+    def interrupt_target_witness(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(
+                f"[Foundry ADR witness] {target.id}"
+            )
+            and "/ v0002" in variables["input"]["title"]
+        ):
+            raise OSError("reciprocal witness write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_target_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+
+    before = (len(wire.documents), len(wire.comments))
+    with pytest.raises(TrackerConflictError, match="existing origin"):
+        instance.import_adr(
+            PROJECT, **{**kwargs, "source_ref": "YT-ADR-other"}
+        )
+    assert (len(wire.documents), len(wire.comments)) == before
+
+    call_offset = len(wire.calls)
+    imported = instance.import_adr(PROJECT, **kwargs)
+    creates = [
+        variables["input"]["title"]
+        for document, variables in wire.calls[call_offset:]
+        if "FoundryLinearAdrDocumentCreate" in document
+    ]
+    assert creates == [f"[Foundry ADR witness] {target.id} / v0002"]
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert imported.id == "LIN-ADR-0098"
+    assert current[target.id].status == "superseded"
+
+
+def test_linear_adr_import_refuses_malformed_provider_issue_identifier_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    wire.issues["LIN-2"]["identifier"] = "LIN-two"
+    call_offset = len(wire.calls)
+
+    with pytest.raises(LinearTrackerError) as raised:
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Malformed provider identifier",
+            body="old",
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            issue_refs=("LIN-2",),
+        )
+
+    assert raised.value.operation == "adr.issue.resolve"
+    assert raised.value.code == "invalid_response"
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_adr_issue_relation_limit_accepts_100_and_refuses_101_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    for number in range(3, 102):
+        identifier = f"LIN-{number}"
+        native_id = str(uuid.UUID(int=number, version=4))
+        wire.issues[identifier] = raw_issue(identifier, native_id)
+    over_limit = tuple(f"LIN-{number}" for number in range(1, 102))
+    call_offset = len(wire.calls)
+
+    with pytest.raises(ValueError, match="historical import invalid"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Over issue relation bound",
+            body="old",
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            issue_refs=over_limit,
+        )
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+
+    at_limit = over_limit[:-1]
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0099",
+        title="Exact issue relation bound",
+        body="old",
+        historical_status="deprecated",
+        source_ref="YT-ADR-99",
+        source_created=1,
+        source_updated=2,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        issue_refs=at_limit,
+    )
+    metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported.ref], instance._binding(PROJECT)
+    )
+    assert len(metadata["relations"]["issues"]) == 100
+    assert set(metadata["relations"]["issues"]) == set(at_limit)
+    assert len(wire.comments) == 100
+
+
+@pytest.mark.parametrize("operation", ["supersede", "historical_import"])
+@pytest.mark.parametrize(("existing_relations", "accepted"), [(99, True), (100, False)])
+def test_linear_adr_supersedes_limit_is_prevalidated_before_provider_effect(
+    tracker,
+    operation,
+    existing_relations,
+    accepted,
+):
+    instance, wire = tracker
+    source, replacement = seed_linear_adr_relation_boundary(
+        wire, existing_relations
+    )
+    before_documents = copy.deepcopy(wire.documents)
+    before_comments = copy.deepcopy(wire.comments)
+    call_offset = len(wire.calls)
+
+    def mutate():
+        if operation == "supersede":
+            instance.supersede_adr(source, replacement.id, project=PROJECT)
+            return
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-7000",
+            title="Imported boundary ADR",
+            body="historical body",
+            historical_status="superseded",
+            source_ref="YT-ADR-boundary",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"historical body").hexdigest(),
+            superseded_by=replacement.id,
+            issue_refs=("LIN-2",),
+        )
+
+    if accepted:
+        mutate()
+        models = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+        replacement_metadata, _ = linear_module._parse_adr_document(
+            wire.documents[models[replacement.id].ref], instance._binding(PROJECT)
+        )
+        assert len(replacement_metadata["relations"]["supersedes"]) == 100
+        return
+
+    with pytest.raises(TrackerConflictError, match="derived candidate is invalid"):
+        mutate()
+
+    provider_creates = [
+        document
+        for document, _variables in wire.calls[call_offset:]
+        if "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+    ]
+    assert provider_creates == []
+    assert wire.documents == before_documents
+    assert wire.comments == before_comments
+
+
+@pytest.mark.parametrize("damage", ["archive", "tamper", "delete_previous"])
+def test_linear_adr_chain_refuses_archived_tampered_or_deleted_history(tracker, damage):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Guard chain", "body")
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+    documents = list(wire.documents.values())
+    if damage == "archive":
+        documents[-1]["archivedAt"] = "2026-09-24T00:00:00Z"
+    elif damage == "tamper":
+        documents[-1]["content"] += "tampered"
+    else:
+        del wire.documents[documents[0]["id"]]
+
+    with pytest.raises((LinearTrackerError, TrackerConflictError)):
+        instance.list_adrs(PROJECT)
+
+
+@pytest.mark.parametrize("composite", ["status_body", "supersedes_body"])
+def test_linear_adr_chain_refuses_witnessed_composite_version_delta(
+    tracker, composite
+):
+    instance, wire = tracker
+    if composite == "status_body":
+        original = instance.create_adr(PROJECT, "Status delta", "original body")
+        instance.set_adr_status(original, "accepted", project=PROJECT)
+        target_id = original.id
+    else:
+        source = instance.create_adr(PROJECT, "Source delta", "source body")
+        replacement = instance.create_adr(PROJECT, "Replacement delta", "old body")
+        instance.set_adr_status(source, "accepted", project=PROJECT)
+        instance.set_adr_status(replacement, "accepted", project=PROJECT)
+        accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+        instance.supersede_adr(accepted[source.id], replacement.id, project=PROJECT)
+        target_id = replacement.id
+
+    latest = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[target_id]
+    binding = instance._binding(PROJECT)
+    raw = wire.documents[latest.ref]
+    metadata, _ = linear_module._parse_adr_document(raw, binding)
+    changed_body = "externally combined body edit"
+    metadata["body_sha256"] = hashlib.sha256(changed_body.encode()).hexdigest()
+    raw["content"] = linear_module._adr_document_content(metadata, changed_body)
+    witness_id = linear_module._adr_witness_id(
+        PROJECT.id, target_id, metadata["sequence"]
+    )
+    wire.documents[witness_id] = linear_module._adr_witness_document(
+        binding, metadata, raw
+    )
+    assert linear_module._parse_adr_document(raw, binding)[0] == metadata
+    assert linear_module._parse_adr_witness(wire.documents[witness_id], binding)
+
+    with pytest.raises(TrackerConflictError, match="version chain diverged"):
+        instance.list_adrs(PROJECT)
+
+
+@pytest.mark.parametrize("history", ["unique", "head"])
+def test_linear_adr_witness_refuses_isolated_unique_or_head_deletion(tracker, history):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Witnessed", "body")
+    if history == "head":
+        instance.set_adr_status(created, "accepted", project=PROJECT)
+        created = instance.list_adrs(PROJECT)[0]
+
+    del wire.documents[created.ref]
+
+    with pytest.raises(
+        TrackerConflictError, match="witness has no matching version"
+    ):
+        instance.list_adrs(PROJECT)
+
+
+@pytest.mark.parametrize("reencoding", ["pretty", "duplicate_key"])
+def test_linear_adr_witness_refuses_semantically_equal_reencoding(
+    tracker, reencoding
+):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Canonical witness", "body")
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    witness = wire.documents[witness_id]
+    content = witness["content"]
+    encoded = content[len(linear_module._ADR_WITNESS_HEADER) : -len("\n-->")]
+    payload = json.loads(encoded)
+    if reencoding == "pretty":
+        changed = json.dumps(payload, indent=2, ensure_ascii=False)
+    else:
+        changed = (
+            f'{{"schema":{json.dumps(payload["schema"])},' + encoded[1:]
+        )
+    assert changed != encoded
+    assert json.loads(changed) == payload
+    witness["content"] = f"{linear_module._ADR_WITNESS_HEADER}{changed}\n-->"
+    call_offset = len(wire.calls)
+
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance.list_adrs(PROJECT)
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+
+
+def test_linear_adr_client_ids_are_stable_distinct_uuid_v4():
+    binding = {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]}
+    ids = (
+        linear_module._adr_document_id(PROJECT.id, "LIN-ADR-7000", 0),
+        linear_module._adr_witness_id(PROJECT.id, "LIN-ADR-7000", 0),
+        linear_module._adr_issue_link(binding, "LIN-ADR-7000", "LIN-2")[0],
+    )
+    assert len(set(ids)) == 3
+    assert all(uuid.UUID(value).version == 4 for value in ids)
+    assert all(uuid.UUID(value).variant == uuid.RFC_4122 for value in ids)
+    assert ids[0] == linear_module._adr_document_id(PROJECT.id, "LIN-ADR-7000", 0)
+    assert ids[1] == linear_module._adr_witness_id(PROJECT.id, "LIN-ADR-7000", 0)
+    assert ids[2] == linear_module._adr_issue_link(
+        binding, "LIN-ADR-7000", "LIN-2"
+    )[0]
+
+
+@pytest.mark.parametrize("mutation", ["document", "comment"])
+def test_linear_fake_rejects_uuid_v5_creation_ids(mutation):
+    wire = LinearWire()
+    bad_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "production-invalid"))
+    if mutation == "document":
+        response = wire(
+            linear_module._ADR_DOCUMENT_CREATE,
+            {"input": {"id": bad_id, "title": "ADR", "content": "body", "projectId": PROJECT.id}},
+        )
+    else:
+        response = wire(
+            linear_module._COMMENT_CREATE,
+            {"input": {"id": bad_id, "body": "relation", "issueId": ISSUE_2_ID}},
+        )
+    assert response["errors"]
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_adr_native_readback_accepts_only_observed_marker_escape(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Serialized marker", "exact body")
+    binding = instance._binding(PROJECT)
+    version = wire.documents[created.ref]
+    witness = wire.documents[
+        linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    ]
+
+    assert "\n\\-->\n\nexact body" in version["content"]
+    assert version["content"].count("\\[") == 2
+    assert version["content"].count("\\]") == 2
+    assert version["content"] not in created.body
+    assert created.body.endswith("\n-->\n\nexact body")
+    assert witness["content"].endswith("\n\\-->")
+    assert linear_module._parse_adr_document(version, binding)[1] == "exact body"
+    assert linear_module._parse_adr_witness(witness, binding)["document_id"] == created.ref
+
+    hostile_versions = []
+    for delimiter in ("\n\\\\-->\n\n", "\n\\-- >\n\n", "\n \\-->\n\n"):
+        hostile = copy.deepcopy(version)
+        hostile["content"] = hostile["content"].replace(
+            "\n\\-->\n\n", delimiter, 1
+        )
+        hostile_versions.append(hostile)
+    tampered_body = copy.deepcopy(version)
+    tampered_body["content"] += "tampered"
+    hostile_versions.append(tampered_body)
+    partially_unescaped_header = copy.deepcopy(version)
+    partially_unescaped_header["content"] = partially_unescaped_header[
+        "content"
+    ].replace("\\[", "[", 1)
+    hostile_versions.append(partially_unescaped_header)
+    for hostile in hostile_versions:
+        with pytest.raises(LinearTrackerError, match="invalid_response"):
+            linear_module._parse_adr_document(hostile, binding)
+
+    for suffix in ("\n\\\\-->", "\n\\-- >", "\n \\-->", "\n\\-->\n"):
+        hostile = copy.deepcopy(witness)
+        hostile["content"] = hostile["content"].removesuffix("\n\\-->") + suffix
+        with pytest.raises(LinearTrackerError, match="invalid_response"):
+            linear_module._parse_adr_witness(hostile, binding)
+
+
+@pytest.mark.parametrize(
+    ("opening_fence", "closing_fence"),
+    [("```text", "```"), ("~~~~ markdown", "~~~~~")],
+)
+def test_linear_adr_readback_rewrites_only_top_level_dash_lists(
+    tracker,
+    opening_fence,
+    closing_fence,
+):
+    header = (
+        '{"id":"PAT-ADR-0001","relations":'
+        '{"issue_ids":["PAT-1"]}}'
+    )
+    source_body = (
+        "## Decision\n\n"
+        "- first top-level item\n"
+        "- second top-level item\n"
+        "- third top-level item\n\n"
+        "* source star remains distinct\n\n"
+        "- - -\n\n"
+        f"{opening_fence}\n"
+        "- literal inside code\n"
+        f"{closing_fence}"
+    )
+    canonical = (
+        f"{linear_module._ADR_HEADER}{header}\n-->\n\n{source_body}"
+    )
+    provider_body = source_body.replace(
+        "- first top-level item", "* first top-level item", 1
+    ).replace(
+        "- second top-level item", "* second top-level item", 1
+    ).replace(
+        "- third top-level item", "* third top-level item", 1
+    )
+    provider = (
+        f"{linear_module._ADR_HEADER}"
+        f"{header.replace('[', r'\[').replace(']', r'\]')}"
+        f"\n\\-->\n\n{provider_body}"
+    )
+    hostile = provider.replace(
+        f"{opening_fence}\n- literal inside code",
+        f"{opening_fence}\n* literal inside code",
+        1,
+    )
+
+    assert "* source star remains distinct" in provider
+    assert "\n- - -\n" in provider
+    assert linear_markdown_readback(canonical) == provider
+    assert linear_module._linear_adr_readback_content(canonical) == provider
+    assert linear_module._adr_readback_content_matches(provider, canonical)
+    assert not linear_module._adr_readback_content_matches(hostile, canonical)
+
+    instance, wire = tracker
+    created = instance.create_adr(
+        PROJECT,
+        "Fenced literal",
+        source_body,
+    )
+    binding = instance._binding(PROJECT)
+    raw = wire.documents[created.ref]
+    assert raw["content"].endswith(provider_body)
+    assert linear_module._parse_adr_document(
+        raw,
+        binding,
+        source_body=source_body,
+    )[1] == source_body
+    hostile_raw = copy.deepcopy(raw)
+    hostile_raw["content"] = hostile_raw["content"].replace(
+        f"{opening_fence}\n- literal inside code",
+        f"{opening_fence}\n* literal inside code",
+        1,
+    )
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        linear_module._parse_adr_document(
+            hostile_raw,
+            binding,
+            source_body=source_body,
+        )
+
+
+def test_linear_adr_readback_refuses_ambiguous_raw_html_rewrite():
+    header = '{"id":"PAT-ADR-0001","relations":{"issue_ids":[]}}'
+    source_body = (
+        "- top-level item\n\n"
+        "<pre>\n"
+        "- literal inside raw HTML\n"
+        "</pre>"
+    )
+    canonical = (
+        f"{linear_module._ADR_HEADER}{header}\n-->\n\n{source_body}"
+    )
+    escaped_header = header.replace("[", "\\[").replace("]", "\\]")
+    provider = (
+        f"{linear_module._ADR_HEADER}{escaped_header}\n\\-->\n\n"
+        f"{source_body.replace('- top-level item', '* top-level item', 1)}"
+    )
+    hostile = provider.replace(
+        "- literal inside raw HTML",
+        "* literal inside raw HTML",
+        1,
+    )
+
+    assert linear_module._adr_readback_content_matches(canonical, canonical)
+    assert not linear_module._adr_readback_content_matches(provider, canonical)
+    assert not linear_module._adr_readback_content_matches(hostile, canonical)
+    with pytest.raises(ValueError, match="ambiguous raw HTML"):
+        linear_module._linear_adr_readback_content(canonical)
+    with pytest.raises(ValueError, match="ambiguous raw HTML"):
+        linear_markdown_readback(canonical)
+
+
+def test_linear_adr_raw_html_is_refused_before_any_provider_write(tracker):
+    instance, wire = tracker
+    body = "- item\n<pre>\n- literal\n</pre>"
+    for operation in (
+        lambda: instance.create_adr(PROJECT, "Raw HTML", body),
+        lambda: instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Historical raw HTML",
+            body=body,
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(body.encode()).hexdigest(),
+            issue_refs=("LIN-2",),
+        ),
+    ):
+        before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+        with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+            operation()
+        assert (wire.documents, wire.comments) == before
+        assert instance.list_adrs(PROJECT) == []
+
+    source, replacement = _historical_batch_pair(wire, instance)
+    replacement = {
+        **replacement,
+        "body": body,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+    }
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.import_adr_batch(PROJECT, (source, replacement))
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_adr_raw_html_link_refuses_before_reciprocal_comment(tracker):
+    instance, wire = tracker
+    existing = seed_linear_adr(
+        wire,
+        adr_id="LIN-ADR-0097",
+        status="accepted",
+        body="<pre>\n- literal\n</pre>",
+    )
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.link_adr_issue(existing, "LIN-2", project=PROJECT)
+
+    assert (wire.documents, wire.comments) == before
+    [readback] = instance.list_adrs(PROJECT)
+    assert readback.id == existing.id
+    assert readback.body.endswith("<pre>\n- literal\n</pre>")
+
+
+def _synthetic_profile_body():
+    return (
+        "## Contexte\n<fixture context>\n\n"
+        "## Décision\n<fixture decision>\n\n"
+        "## Conséquences\n<fixture consequence>\n\n"
+        "## Alternatives écartées\n- **<Alt>** — <fixture reason>\n"
+    )
+
+
+def _synthetic_profile_readback(body):
+    for heading in (
+        "## Contexte",
+        "## Décision",
+        "## Conséquences",
+        "## Alternatives écartées",
+    ):
+        body = body.replace(f"{heading}\n", f"{heading}\n\n", 1)
+    return body.replace("\n- **<Alt>**", "\n* **<Alt>**", 1).removesuffix("\n")
+
+
+def _synthetic_profile_kwargs(body):
+    return {
+        "adr_id": "TEST-ADR-0012",
+        "title": "Synthetic rendering profile",
+        "body": body,
+        "historical_status": "deprecated",
+        "source_ref": "synthetic-fixture",
+        "source_created": None,
+        "source_updated": None,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+    }
+
+
+def test_linear_profile_preserves_exact_source_witness(tracker, monkeypatch):
+    instance, wire = tracker
+    source = _synthetic_profile_body()
+    rendered = _synthetic_profile_readback(source)
+
+    assert hashlib.sha256(source.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256
+    assert hashlib.sha256(rendered.encode()).hexdigest() == (
+        SYNTHETIC_PROFILE_READBACK_SHA256
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0012_SOURCE_SHA256",
+        SYNTHETIC_PROFILE_SOURCE_SHA256,
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0012_READBACK_SHA256",
+        SYNTHETIC_PROFILE_READBACK_SHA256,
+    )
+    assert linear_markdown_body_readback(source) == rendered
+    assert linear_module._linear_markdown_readback_body(source) == rendered
+
+    created = instance.import_adr(PROJECT, **_synthetic_profile_kwargs(source))
+    raw = wire.documents[created.ref]
+    witness = wire.documents[
+        linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    ]
+    assert raw["content"].endswith(rendered)
+    assert not raw["content"].endswith("\n")
+    witness_payload = linear_module._parse_adr_witness(
+        witness, instance._binding(PROJECT)
+    )
+    assert base64.b64decode(witness_payload["source_body"]).decode() == source
+    assert instance.list_adrs(PROJECT)[0].body.endswith(source)
+
+    hostile = copy.deepcopy(raw)
+    hostile["content"] += "\n"
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        linear_module._parse_adr_document(
+            hostile, instance._binding(PROJECT), source_body=source
+        )
+
+
+def test_linear_profile_recovery_rejects_source_collision_before_effects(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    source = _synthetic_profile_body()
+    rendered = _synthetic_profile_readback(source)
+    assert hashlib.sha256(source.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256
+    assert hashlib.sha256(rendered.encode()).hexdigest() == (
+        SYNTHETIC_PROFILE_READBACK_SHA256
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0012_SOURCE_SHA256",
+        SYNTHETIC_PROFILE_SOURCE_SHA256,
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0012_READBACK_SHA256",
+        SYNTHETIC_PROFILE_READBACK_SHA256,
+    )
+    kwargs = _synthetic_profile_kwargs(source)
+    original = instance._transport
+
+    def interrupt(document, variables):
+        if variables.get("input", {}).get("title", "").startswith(
+            "[Foundry ADR witness] TEST-ADR-0012"
+        ):
+            raise OSError("witness unavailable")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+
+    collision = source.removesuffix("\n")
+    with pytest.raises(TrackerConflictError, match="source is not derivable"):
+        instance.import_adr(
+            PROJECT, **_synthetic_profile_kwargs(collision)
+        )
+    assert (wire.documents, wire.comments) == before
+
+    recovered = instance.import_adr(PROJECT, **kwargs)
+    assert recovered.body.endswith(source)
+    assert len(wire.documents) == 2
+
+
+def test_linear_adr_witness_preserves_lossy_dash_source_distinct_from_native_star(
+    tracker,
+):
+    instance, wire = tracker
+    dash = instance.create_adr(PROJECT, "Dash source", "intro\n\n- exact source")
+    star = instance.create_adr(PROJECT, "Star source", "intro\n\n* exact source")
+
+    dash_raw = wire.documents[dash.ref]
+    star_raw = wire.documents[star.ref]
+    assert dash_raw["content"].endswith("intro\n\n* exact source")
+    assert star_raw["content"].endswith("intro\n\n* exact source")
+
+    models = {model.id: model for model in instance.list_adrs(PROJECT)}
+    assert models[dash.id].body.endswith("intro\n\n- exact source")
+    assert models[star.id].body.endswith("intro\n\n* exact source")
+    assert models[dash.id].body != models[star.id].body
+
+
+def test_linear_adr_lossy_partial_pair_only_replays_exact_source(tracker):
+    instance, wire = tracker
+    source = "context\n\n- first\n- second"
+    created = instance.create_adr(PROJECT, "Lossy replay", source)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    del wire.documents[witness_id]
+    version_before = copy.deepcopy(wire.documents[created.ref])
+    writes_before = len(wire.documents)
+
+    with pytest.raises(TrackerConflictError):
+        instance.create_adr(
+            PROJECT, "Lossy replay", "context\n\n* first\n* second"
+        )
+    assert wire.documents == {created.ref: version_before}
+
+    recovered = instance.create_adr(PROJECT, "Lossy replay", source)
+    assert recovered.ref == created.ref
+    assert len(wire.documents) == writes_before + 1
+    assert wire.documents[created.ref] == version_before
+    assert recovered.body.endswith(source)
+
+
+def test_linear_adr_lossy_import_replays_exact_missing_witness(tracker):
+    instance, wire = tracker
+    source = "- imported source"
+    kwargs = {
+        "adr_id": "LIN-ADR-0099",
+        "title": "Interrupted import",
+        "body": source,
+        "historical_status": "proposed",
+        "source_ref": "YT-ADR-99",
+        "source_created": None,
+        "source_updated": None,
+        "expected_source_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "supersedes": (),
+        "superseded_by": None,
+        "issue_refs": (),
+    }
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        if variables.get("input", {}).get("title", "").startswith(
+            "[Foundry ADR witness] LIN-ADR-0099"
+        ):
+            raise OSError("witness unavailable")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    recovered = instance.import_adr(PROJECT, **kwargs)
+    assert recovered.body.endswith(source)
+    assert len(wire.documents) == 2
+
+
+@pytest.mark.parametrize("tamper", ["rendered", "source"])
+def test_linear_adr_lossy_binding_rejects_hostile_edits(tracker, tamper):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Bound source", "- exact source")
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+
+    if tamper == "rendered":
+        wire.documents[created.ref]["content"] = wire.documents[created.ref][
+            "content"
+        ].replace("* exact source", "* hostile source")
+    else:
+        witness = wire.documents[witness_id]
+        prefix = linear_module._ADR_WITNESS_HEADER
+        encoded = witness["content"][len(prefix) :].removesuffix("\n\\-->")
+        payload = json.loads(encoded)
+        hostile = b"* exact source"
+        payload["source_body"] = base64.b64encode(hostile).decode()
+        payload["source_body_sha256"] = hashlib.sha256(hostile).hexdigest()
+        witness["content"] = (
+            prefix
+            + json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n\\-->"
+        )
+
+    with pytest.raises((LinearTrackerError, TrackerConflictError)):
+        instance.list_adrs(PROJECT)
+
+
+def test_linear_adr_legacy_lossless_witness_remains_compatible(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Legacy compatible", "plain body")
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    witness = wire.documents[witness_id]
+    encoded = witness["content"][
+        len(linear_module._ADR_WITNESS_HEADER) :
+    ].removesuffix("\n\\-->")
+    payload = json.loads(encoded)
+    for key in ("source_encoding", "source_body", "source_body_sha256"):
+        del payload[key]
+    witness["content"] = (
+        linear_module._ADR_WITNESS_HEADER
+        + json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n\\-->"
+    )
+
+    [model] = instance.list_adrs(PROJECT)
+    assert model.id == created.id
+    assert model.body.endswith("plain body")
+
+
+def test_linear_adr_lossy_source_survives_lifecycle_and_import_paths(tracker):
+    instance, _wire = tracker
+    created = instance.create_adr(PROJECT, "Lifecycle", "- original")
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+    current = instance.list_adrs(PROJECT)[0]
+    updated_body = current.body.removesuffix("- original") + "- edited"
+    assert instance.update_body(current, current.body, updated_body, PROJECT)
+    current = instance.link_adr_issue(
+        instance.list_adrs(PROJECT)[0], "LIN-2", project=PROJECT
+    )
+    replacement = instance.create_adr(PROJECT, "Replacement", "- replacement")
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    accepted = {model.id: model for model in instance.list_adrs(PROJECT)}
+    instance.supersede_adr(
+        accepted[current.id], replacement.id, project=PROJECT
+    )
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0099",
+        title="Imported lossy",
+        body="- imported",
+        historical_status="proposed",
+        source_ref="YT-ADR-99",
+        source_created=None,
+        source_updated=None,
+        expected_source_sha256=hashlib.sha256(b"- imported").hexdigest(),
+        supersedes=(),
+        superseded_by=None,
+        issue_refs=(),
+    )
+
+    models = {model.id: model for model in instance.list_adrs(PROJECT)}
+    assert models[current.id].status == "superseded"
+    assert models[current.id].body.endswith("- edited")
+    assert models[replacement.id].body.endswith("- replacement")
+    assert models[imported.id].body.endswith("- imported")
+
+
+def test_linear_adr_lossy_status_retry_recovers_exact_missing_witness(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Interrupted status", "- original")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {created.id} / v0001"
+        ):
+            raise OSError("status witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.set_adr_status(created, "accepted", project=PROJECT)
+    instance._transport = original
+
+    version_ids = set(wire.documents)
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+
+    [recovered] = instance.list_adrs(PROJECT)
+    assert recovered.status == "accepted"
+    assert recovered.body.endswith("- original")
+    assert set(wire.documents) == version_ids | {
+        linear_module._adr_witness_id(PROJECT.id, created.id, 1)
+    }
+    assert len(wire.documents) == 4
+
+
+def test_linear_adr_lossy_link_retry_recovers_only_exact_target(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Interrupted link", "- original")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {created.id} / v0001"
+        ):
+            raise OSError("link witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    instance._transport = original
+
+    before_wrong_retry = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.link_adr_issue(created, "LIN-1", project=PROJECT)
+    assert (wire.documents, wire.comments) == before_wrong_retry
+
+    recovered = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert recovered.body.endswith("- original")
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+
+
+def test_linear_adr_lossy_edit_retry_recovers_only_exact_source(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Interrupted edit", "- original")
+    updated = created.body.removesuffix("- original") + "- edited"
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {created.id} / v0001"
+        ):
+            raise OSError("edit witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.update_body(created, created.body, updated, project=PROJECT)
+    instance._transport = original
+
+    before_wrong_retry = copy.deepcopy(wire.documents)
+    wrong_source = created.body.removesuffix("- original") + "* edited"
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.update_body(
+            created, created.body, wrong_source, project=PROJECT
+        )
+    assert wire.documents == before_wrong_retry
+
+    assert instance.update_body(
+        created, created.body, updated, project=PROJECT
+    )
+    [recovered] = instance.list_adrs(PROJECT)
+    assert recovered.body.endswith("- edited")
+    assert len(wire.documents) == 4
+
+
+@pytest.mark.parametrize("interrupted_side", ["replacement", "source"])
+def test_linear_adr_lossy_supersession_retry_recovers_each_exact_missing_witness(
+    tracker, interrupted_side
+):
+    instance, wire = tracker
+    source = instance.create_adr(PROJECT, "Interrupted source", "- original")
+    replacement = instance.create_adr(
+        PROJECT, "Interrupted replacement", "- replacement"
+    )
+    instance.set_adr_status(source, "accepted", project=PROJECT)
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    accepted = {item.id: item for item in instance.list_adrs(PROJECT)}
+    interrupted_id = replacement.id if interrupted_side == "replacement" else source.id
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {interrupted_id} / v0002"
+        ):
+            raise OSError("supersession witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.supersede_adr(
+            accepted[source.id], replacement.id, project=PROJECT
+        )
+    instance._transport = original
+
+    instance.supersede_adr(
+        accepted[source.id], replacement.id, project=PROJECT
+    )
+
+    recovered = {item.id: item for item in instance.list_adrs(PROJECT)}
+    assert recovered[source.id].status == "superseded"
+    assert recovered[source.id].body.endswith("- original")
+    assert recovered[replacement.id].body.endswith("- replacement")
+    assert len(wire.documents) == 12
+
+
+def test_linear_adr_lossy_interrupted_status_refuses_edited_readback(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Edited interruption", "- original")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(
+            f"[Foundry ADR witness] {created.id} / v0001"
+        ):
+            raise OSError("status witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.set_adr_status(created, "accepted", project=PROJECT)
+    instance._transport = original
+    interrupted_version_id = linear_module._adr_document_id(PROJECT.id, created.id, 1)
+    wire.documents[interrupted_version_id]["content"] = wire.documents[
+        interrupted_version_id
+    ]["content"].replace("* original", "* edited")
+    before_retry = copy.deepcopy(wire.documents)
+
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.set_adr_status(created, "accepted", project=PROJECT)
+
+    assert wire.documents == before_retry
+
+
+def test_linear_adr_missing_witness_fails_closed_and_exact_pair_replays(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Replay pair", "body")
+    before = len(wire.documents)
+
+    replay = instance.create_adr(PROJECT, "Replay pair", "body")
+    assert replay.ref == created.ref
+    assert len(wire.documents) == before
+
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    del wire.documents[witness_id]
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+    recovered = instance.create_adr(PROJECT, "Replay pair", "body")
+    assert recovered.ref == created.ref
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+
+
+@pytest.mark.parametrize("interrupted_slot", ["version", "witness"])
+def test_linear_adr_pair_recovers_accepted_effect_after_each_interruption(
+    tracker, interrupted_slot
+):
+    instance, wire = tracker
+    original = wire.__call__
+    interrupted = False
+
+    def transport(document, variables):
+        nonlocal interrupted
+        response = original(document, variables)
+        title = variables.get("input", {}).get("title", "")
+        matching_slot = (
+            title.startswith("[Foundry ADR] ")
+            if interrupted_slot == "version"
+            else title.startswith("[Foundry ADR witness] ")
+        )
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and matching_slot
+            and not interrupted
+        ):
+            interrupted = True
+            raise OSError("connection dropped after provider accepted document")
+        return response
+
+    instance._transport = transport
+    created = instance.create_adr(PROJECT, "Recovered witness", "body")
+
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+    assert len(wire.documents) == 2
+
+
+def test_linear_adr_witness_create_unavailable_leaves_detectable_partial_pair(tracker):
+    instance, wire = tracker
+    original = wire.__call__
+
+    def transport(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR witness]")
+        ):
+            raise OSError("provider unavailable before witness create")
+        return original(document, variables)
+
+    instance._transport = transport
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.create_adr(PROJECT, "Partial pair", "body")
+    instance._transport = original
+
+    assert len(wire.documents) == 1
+    version_id = linear_module._adr_document_id(PROJECT.id, "LIN-ADR-0001", 0)
+    assert set(wire.documents) == {version_id}
+    version_before_replay = copy.deepcopy(wire.documents[version_id])
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(PROJECT)
+    recovered = instance.create_adr(PROJECT, "Partial pair", "body")
+    assert recovered.status == "proposed"
+    assert recovered.ref == version_id
+    assert wire.documents[version_id] == version_before_replay
+    assert len(wire.documents) == 2
+    version_creates = [
+        variables["input"]["id"]
+        for document, variables in wire.calls
+        if "FoundryLinearAdrDocumentCreate" in document
+        and variables["input"]["title"].startswith("[Foundry ADR] ")
+    ]
+    assert version_creates == [version_id]
+
+
+def test_linear_adr_relations_are_reciprocal_and_project_bounded(tracker):
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "First reciprocal", "first")
+    second = instance.create_adr(PROJECT, "Second reciprocal", "second")
+    instance.set_adr_status(first, "accepted", project=PROJECT)
+    instance.set_adr_status(second, "accepted", project=PROJECT)
+    accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    instance.supersede_adr(accepted[first.id], second.id, project=PROJECT)
+
+    models = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    first_metadata, _ = linear_module._parse_adr_document(
+        wire.documents[models[first.id].ref], instance._binding(PROJECT)
+    )
+    second_metadata, _ = linear_module._parse_adr_document(
+        wire.documents[models[second.id].ref], instance._binding(PROJECT)
+    )
+    assert first_metadata["relations"]["superseded_by"] == second.id
+    assert first.id in second_metadata["relations"]["supersedes"]
+
+    wire.issues["LIN-2"]["project"] = {"id": "other-project"}
+    with pytest.raises(LinearBindingError, match="issue_outside_binding"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Cross project",
+            body="old",
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            issue_refs=("LIN-2",),
+        )
+
+
+def test_linear_adr_read_refuses_internally_witnessed_unilateral_relation(tracker):
+    instance, wire = tracker
+    first = instance.create_adr(PROJECT, "Unilateral first", "first")
+    second = instance.create_adr(PROJECT, "Unilateral second", "second")
+    binding = instance._binding(PROJECT)
+    raw = wire.documents[second.ref]
+    metadata, body = linear_module._parse_adr_document(raw, binding)
+    metadata["relations"]["supersedes"] = [first.id]
+    raw["title"] = linear_module._adr_document_title(metadata)
+    raw["content"] = linear_module._adr_document_content(metadata, body)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, second.id, 0)
+    wire.documents[witness_id] = linear_module._adr_witness_document(
+        binding, metadata, raw
+    )
+
+    with pytest.raises(TrackerConflictError, match="not reciprocal"):
+        instance.list_adrs(PROJECT)
+
+
+def test_linear_adr_issue_relation_requires_reciprocal_project_comment(tracker):
+    instance, wire = tracker
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0097",
+        title="Issue relation",
+        body="old",
+        historical_status="deprecated",
+        source_ref="YT-ADR-97",
+        source_created=1,
+        source_updated=2,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        issue_refs=("LIN-2",),
+    )
+    binding = instance._binding(PROJECT)
+    comment_id, expected_body = linear_module._adr_issue_link(
+        binding, imported.id, "LIN-2"
+    )
+    assert wire.comments[comment_id]["body"] == expected_body
+
+    del wire.comments[comment_id]
+    with pytest.raises(TrackerConflictError, match="issue relation is not reciprocal"):
+        instance.list_adrs(PROJECT)
+
+
+@pytest.mark.parametrize("damage", ["stored_alias", "comment_alias"])
+def test_linear_adr_issue_relation_read_refuses_alias_identity_drift(
+    tracker, damage
+):
+    instance, wire = tracker
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0097",
+        title="Canonical issue relation",
+        body="old",
+        historical_status="deprecated",
+        source_ref="YT-ADR-97",
+        source_created=1,
+        source_updated=2,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        issue_refs=("LIN-2",),
+    )
+    binding = instance._binding(PROJECT)
+    comment_id, _expected_body = linear_module._adr_issue_link(
+        binding, imported.id, "LIN-2"
+    )
+    if damage == "stored_alias":
+        raw = wire.documents[imported.ref]
+        metadata, body = linear_module._parse_adr_document(raw, binding)
+        metadata["relations"]["issues"] = ["lin-2"]
+        raw["content"] = linear_module._adr_document_content(metadata, body)
+        witness_id = linear_module._adr_witness_id(PROJECT.id, imported.id, 0)
+        wire.documents[witness_id] = linear_module._adr_witness_document(
+            binding, metadata, raw
+        )
+        match = "identifier is not canonical"
+    else:
+        wire.comments[comment_id]["issue"]["identifier"] = "lin-2"
+        match = "issue relation is not reciprocal"
+    call_offset = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match=match):
+        instance.list_adrs(PROJECT)
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
+
+
+def test_linear_adr_missing_relations_are_distinct_from_provider_outage(tracker):
+    instance, wire = tracker
+    digest = hashlib.sha256(b"old").hexdigest()
+    kwargs = {
+        "adr_id": "LIN-ADR-0099",
+        "title": "Missing relations",
+        "body": "old",
+        "historical_status": "deprecated",
+        "source_ref": "YT-ADR-99",
+        "source_created": 1,
+        "source_updated": 2,
+        "expected_source_sha256": digest,
+    }
+    with pytest.raises(AdrUnavailableError, match="LIN-ADR-0007"):
+        instance.import_adr(
+            PROJECT,
+            **{**kwargs, "historical_status": "accepted"},
+            supersedes=("LIN-ADR-0007",),
+        )
+    with pytest.raises(IssueUnavailableError, match="LIN-404"):
+        instance.import_adr(PROJECT, **kwargs, issue_refs=("LIN-404",))
+
+    original = wire.__call__
+
+    def unavailable(document, variables):
+        if "FoundryLinearIssue(" in document:
+            raise OSError("provider unavailable")
+        return original(document, variables)
+
+    instance._transport = unavailable
+    with pytest.raises(LinearTrackerError) as error:
+        instance.import_adr(PROJECT, **kwargs, issue_refs=("LIN-2",))
+    assert error.value.code == "transport_error"
+
+
+def test_linear_historical_proposed_adr_cannot_supersede_accepted_adr(tracker):
+    instance, wire = tracker
+    old = instance.create_adr(PROJECT, "Old accepted", "old")
+    instance.set_adr_status(old, "accepted", project=PROJECT)
+    before = len(wire.documents)
+
+    with pytest.raises(ValueError, match="historical import invalid"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0096",
+            title="Proposed replacement",
+            body="proposal",
+            historical_status="proposed",
+            source_ref="YT-ADR-96",
+            source_created=None,
+            source_updated=None,
+            expected_source_sha256=hashlib.sha256(b"proposal").hexdigest(),
+            supersedes=(old.id,),
+        )
+    assert len(wire.documents) == before
+
+
+def test_tracker_import_port_refuses_when_provider_does_not_implement_it():
+    unsupported = SimpleNamespace(name="unsupported")
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match="unsupported.adr_historical_import"
+    ):
+        Tracker.import_adr(
+            unsupported,
+            PROJECT,
+            adr_id="LIN-ADR-0099",
+            title="Historical",
+            body="body",
+            historical_status="deprecated",
+            source_ref="source",
+            source_created=None,
+            source_updated=None,
+            expected_source_sha256=hashlib.sha256(b"body").hexdigest(),
+        )
+
+
+def test_linear_adr_storage_survives_actual_youtrack_adapter_outage(
+    tracker, monkeypatch
+):
+    instance, _wire = tracker
+    youtrack = YouTrackTracker(
+        url="https://unavailable.example.invalid", token="offline-test-token"
+    )
+
+    def unavailable(*_args, **_kwargs):
+        raise OSError("YouTrack unavailable")
+
+    monkeypatch.setattr(youtrack, "_req", unavailable)
+    with pytest.raises(OSError, match="YouTrack unavailable"):
+        youtrack.list_adrs(PROJECT)
+
+    created = instance.create_adr(PROJECT, "No fallback", "body")
+
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+
+
+def test_linear_adr_read_refuses_collection_collision_and_bad_page_info(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Collision", "body")
+    original = wire.__call__
+
+    def collision(document, variables):
+        response = original(document, variables)
+        if "FoundryLinearAdrDocumentById" in document:
+            raw = wire.documents[created.ref]
+            response["data"]["documents"] = connection(
+                [copy.deepcopy(raw), copy.deepcopy(raw)]
+            )
+        return response
+
+    instance._transport = collision
+    with pytest.raises(TrackerConflictError, match="slot collision"):
+        instance._read_adr_document(created.ref)
+
+    def terminal_cursor(document, variables):
+        response = original(document, variables)
+        if "FoundryLinearAdrDocumentById" in document:
+            response["data"]["documents"]["pageInfo"]["endCursor"] = "last-node"
+        return response
+
+    instance._transport = terminal_cursor
+    assert instance._read_adr_document(created.ref)["id"] == created.ref
+
+    def malformed_cursor(document, variables):
+        response = terminal_cursor(document, variables)
+        if "FoundryLinearAdrDocumentById" in document:
+            response["data"]["documents"]["pageInfo"]["endCursor"] = 42
+        return response
+
+    instance._transport = malformed_cursor
+    with pytest.raises(LinearTrackerError):
+        instance._read_adr_document(created.ref)

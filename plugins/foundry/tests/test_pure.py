@@ -16,7 +16,11 @@ import foundry
 from foundry import query, registry, write
 from foundry.codehosts.github import GitHubCodeHost
 from foundry.models import Adr, Check, Issue, Link, Project, PullRequest
-from foundry.trackers.base import IssueUnavailableError
+from foundry.trackers.base import (
+    IssueUnavailableError,
+    TrackerCapabilityUnavailableError,
+    TrackerConflictError,
+)
 from foundry.trackers.youtrack import YouTrackTracker
 
 
@@ -393,6 +397,84 @@ def test_issue_propagates_unavailable_primary_error(monkeypatch):
 
     with pytest.raises(IssueUnavailableError):
         query.issue("A")
+
+
+def test_issue_projects_embedded_adr_index_conflict_as_distinct_status(monkeypatch):
+    # A conflict in the embedded ADR index (e.g. an ADR version without a matching
+    # witness) must not sink the whole issue read, must not surface as an empty
+    # list, and must not be conflated with a capability-unavailable tracker.
+    class _ConflictedAdrTracker(_FakeTracker):
+        def list_adrs(self, project):
+            raise TrackerConflictError("Linear ADR version witness diverged")
+
+    issues = [Issue(id="A", title="a", state="ready", body="text")]
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: _ConflictedAdrTracker(issues))
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    out = query.issue("A")
+    assert out["issue"]["id"] == "A"
+    assert out["adrs"] == {
+        "status": "conflict",
+        "tracker": "fake",
+        "reason": "Linear ADR version witness diverged",
+    }
+
+
+def test_issue_genuine_empty_adr_index_stays_an_empty_list(monkeypatch):
+    issues = [Issue(id="A", title="a", state="ready", body="text")]
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: _FakeTracker(issues, []))
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    out = query.issue("A")
+    assert out["adrs"] == []
+
+
+def test_issue_projects_adr_capability_unavailable_distinct_from_conflict(monkeypatch):
+    class _NoAdrCapabilityTracker(_FakeTracker):
+        def list_adrs(self, project):
+            raise TrackerCapabilityUnavailableError("fake", "adr_index")
+
+    issues = [Issue(id="A", title="a", state="ready", body="text")]
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: _NoAdrCapabilityTracker(issues))
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    out = query.issue("A")
+    assert out["adrs"] == {
+        "status": "unavailable",
+        "tracker": "fake",
+        "capability": "adr_index",
+    }
+
+
+def test_issue_propagates_unexpected_adr_index_error(monkeypatch):
+    # Transport, binding and payload failures must still propagate — only the typed
+    # capability-unavailable and conflict errors get projected into the payload.
+    class _BrokenAdrTracker(_FakeTracker):
+        def list_adrs(self, project):
+            raise RuntimeError("provider outage with sensitive detail")
+
+    issues = [Issue(id="A", title="a", state="ready", body="text")]
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: _BrokenAdrTracker(issues))
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    with pytest.raises(RuntimeError, match="provider outage"):
+        query.issue("A")
+
+
+def test_query_adrs_still_fails_closed_on_embedded_index_conflict(monkeypatch):
+    # AC2: `query adr`, `query adrs`, `frame` and ADR writes remain fail-closed on the
+    # same conflict — only the `issue` payload gets a projected status.
+    class _ConflictedAdrTracker(_FakeTracker):
+        def list_adrs(self, project):
+            raise TrackerConflictError("Linear ADR version witness diverged")
+
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: _ConflictedAdrTracker([]))
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    with pytest.raises(TrackerConflictError):
+        query.adrs()
+    with pytest.raises(TrackerConflictError):
+        query.adr("T-ADR-0001")
 
 
 def test_changelog_groups_shipped_issues(monkeypatch):

@@ -35,7 +35,9 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 The payload's `adrs` are only an index. Before review, load the full text of every cited
 accepted ADR with `query adr <ADR-ID>`; a tracker-only ADR cannot be recovered by the
-read-only Claude reviewer after it starts.
+read-only Claude reviewer after it starts. If `adrs` is instead a
+`{"status": "conflict", ...}` object, the embedded ADR index is in conflict — treat it
+as unresolved, not as "no ADRs", and carry that into step 5.
 
 ### 2. Code review (blank-context, two stages)
 Before launching anything, build a bounded packet with the literal sections `Goal:`
@@ -190,7 +192,9 @@ Record the blocking verdict for the role that must correct it (normally implemen
 with `routing escalation failure ... --kind review_blocking --idempotency-key <STABLE-REVIEW-EFFECT-ID>`.
 Reuse the identifier only for a replay of that exact observed review. If the correction is
 reviewed and blocked again, use the deterministic
-`review_blocking_after_fix` signal, which escalates immediately. Use the selected tier
+`review_blocking_after_fix` signal with `--root <ROOT> --base <BASE-SHA>` from the
+terminal blocked review proof; the CLI revalidates those immutable coordinates before
+consuming a remediation credit. Use the selected tier
 reported by that role's last route as `--current-tier`. If the decision reports
 `human_required=true`, STOP rather than starting a third correction loop. A
 `technical_blocked` result instead requires its bounded local diagnostic and never grants
@@ -203,6 +207,10 @@ them now — the decision is validated by shipping:
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr accept <ADR-ID>
 ```
+If the `query issue` payload's `adrs` is a `{"status": "conflict", ...}` object rather
+than a list, do not conclude "no proposed ADR to accept" — the index is unreadable, not
+empty. Acceptance stays blocked until the conflict is resolved (`query adr`/`query adrs`
+still fail closed on it); say so explicitly rather than silently skipping this step.
 
 ## Anti-rules
 - Never GraphQL (`gh pr create/merge/checks`). REST only — the adapter enforces it.

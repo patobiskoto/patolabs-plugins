@@ -25,8 +25,10 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 The payload carries the AC (`- [ ]` vs `- [x]`), the linked issues (lean — bodies via
 `query issue <ID>` if needed), the ADR index (constraints — `query adr <ADR-ID>` for
-the text of the cited ones, honor them), the PR URL if one was opened, and the last
-progress notes (`comments`) — the memory of what the previous session did and decided.
+the text of the cited ones, honor them; if `adrs` is instead a
+`{"status": "conflict", ...}` object, treat constraints as unknown, not as none), the
+PR URL if one was opened, and the last progress notes (`comments`) — the memory of what
+the previous session did and decided.
 
 ## 2. Reload the working state
 ```bash
@@ -82,9 +84,10 @@ digest, then resume only that local diagnostic turn with the exact generation:
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing escalation resume-technical <ISSUE-ID> --halt-generation <HALT-GENERATION-FROM-SHOW> --diagnostic-digest <64-HEX-DIGEST>
 ```
 
-This is limited to three recorded diagnostics, creates no provider or campaign grant,
-and its replay is idempotent. It does not reopen ordinary delegation. Build a correction
-route only after atomically claiming the exact stopped role and generation once:
+This is one recorded diagnostic for the exact stop generation, creates no provider or
+campaign grant, and its replay is idempotent. It does not reopen ordinary delegation.
+Build a correction route only after atomically claiming the exact stopped role and
+generation once:
 `routing escalation claim-technical-route <ISSUE-ID> <RECORDED-ROLE>
 --halt-generation <HALT-GENERATION-FROM-SHOW> --route-id <STABLE-LOCAL-ROUTE-ID>`.
 The replay reuses that exact ID; another role or ID is refused. Then Codex uses
@@ -97,13 +100,47 @@ because the remediation receipt is never an authority to call a provider. A revi
 route can only unlock its separately claimed fresh review; a provider invocation,
 including review, must independently acquire fresh capacity and revalidate its campaign
 authority, budget, snapshot, and gates. Do not rebuild an ordinary route from this
-response. For a released v1 stop
+response, except for the narrow credited correction recognized from the same role,
+generation, bound **terminal blocked** review, and durable `review_blocking_after_fix`
+consumption audit. Record that failure only through `routing escalation failure` with
+the immutable `--root` and `--base`: Foundry recomputes the diff and authenticates the
+issue/diff/root/base/claim/generation/proof binding from its review store. Do not pass a
+proof ID or digest as authority. The resulting ordinary Codex correction plan is
+single-use: the first plan CAS-claims it, while replay or a concurrent second plan is
+refused. The claim boundary revalidates the canonical proof against the exact current
+worktree root, immutable base, reviewed HEAD, and current diff bytes while holding the
+issue lock; a sibling worktree or stale HEAD cannot consume it. Codex task-name and
+Claude Agent role/turn-bound validations complete before that CAS, so an invalid launch
+request leaves the sole plan available for one corrected retry. That exception never
+reopens the technical route or grants provider/campaign authority.
+For a released v1 stop
 without a terminal classification, first run
 `reclassify-legacy-terminal` with the exact generation. It accepts either an exact
 failure receipt, or a receipt-free v1 ledger frozen into a causal snapshot digest; mixed
 or incomplete evidence returns `authority_ambiguous` and remains fail-closed. Request a
 human verdict only if the facts actually establish durable ambiguity or a strategy/product
 decision.
+
+If a human independently makes an explicit `strategy_decision` after inspecting the
+technical evidence, record that verdict against the same stopped issue and generation;
+only then may the human authorize one bounded retry window. For PAT-22 at generation 4,
+with its three preserved technical-diagnostic audit records, the recovery is:
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing escalation verdict PAT-22 implementer --current-tier apex --category strategy_decision
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing escalation resume PAT-22 --reason manual_retry_approved --halt-generation 4 --remediation-credits 1
+```
+
+This is a human strategy authorization, not a fourth technical route: it preserves the
+technical audit and apex floor, remains bound to PAT-22/generation 4, and creates no
+provider, campaign, PR, CI, or merge effect. A stale generation, different issue, replay,
+or exhausted one-credit window remains fail-closed.
+
+If that one credit is consumed and a later review creates a fresh technical stop,
+use the exact new generation with `resume-technical` only for its one local diagnostic.
+The exhausted human window remains exhausted; the validator requires a contiguous
+technical audit suffix and never turns the local receipt into a provider, campaign,
+PR, CI, or merge permission. A separate ordinary gate is still required for shipping.
 
 Cancellation re-halts the issue technically. Exhaustion, another role, another signal,
 stale state, or an incompatible generation stay fail-closed and do not by themselves
@@ -125,6 +162,20 @@ state is refused atomically. `remediation_rearm_audit` records only the controll
 UTC date, role, generation, granted credits, and the prior exhausted window link. The
 issue-level consumption audit remains append-only. Rearming does not reset counters,
 renew escalation limits, lower a floor, or expand any capability or authority.
+
+If that exhausted authorization at generation `G` was followed by a technical halt and a
+recorded `resume-technical` diagnostic at the current generation `H`, preserve that
+independent diagnostic rather than trying ordinary `resume`. A human may grant a fresh
+bounded window only with both CAS anchors:
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing escalation rearm-remediation <ISSUE-ID> <RECORDED-ROLE> --reason manual_retry_approved --halt-generation <EXHAUSTED-G> --current-halt-generation <DIAGNOSTIC-H> --remediation-credits <1..3>
+```
+
+The most recent local diagnostic and its claimed route must be for `H` and the same role. A missing, stale,
+concurrent, mismatched, or re-halted anchor is refused atomically. The successful audit
+keeps `H` as the active generation and records `exhausted_halt_generation=G`; it grants
+no provider, campaign, review, CI, PR, merge, or strategy verdict.
 
 ## 4. Reconstruct, announce, continue
 State in 2-3 sentences: what's done (AC checked, commits), what's in flight (uncommitted

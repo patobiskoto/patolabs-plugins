@@ -289,6 +289,62 @@ Each following `technical_blocked` generation can still open its one exact,
 contiguous `resume-technical` diagnostic; this preserves history without reviving that
 window or granting a campaign, provider, reservation, PR, CI, or merge effect.
 
+### PAT-22 generation-4 strategy recovery
+
+Live incident coordinates captured on 2026-09-24 (read-only ledger and GitHub
+readback): PAT-22, PR #17, head `229f634263ddcf46323d7ce42b7fb996baaf2bb8`,
+`review`, with a later `technical_blocked` stop at generation 5. The technical
+audit preceding the generation-4 strategy decision is preserved exactly:
+
+| Stop generation | Diagnostic digest | Local route ID | Reviewed diff hash |
+|---|---|---|---|
+| 1 | `ca3df663b17fea06633d001f9e4c35ad96723d3e37be1b6cd0a2c82467b98b29` | `pat22-witness-canonical-a514bbc` | `ea2bd529c28489adf76c5cc739b56752048ac694967a9d0641dd9bb06d8fc322` |
+| 2 | `c889a6b92aafd5753e2bf7cb50ea1891f905d0f6c8f4b70d4c1196d055d6f905` | `pat22-adr-uuidv4-6e743f0` | `489be79ac318bbb50126d395f17df2f7e47ea18d870494bca61f272ffe99ec00` |
+| 3 | `c5f231c1fc79816ccbdb7f24df347a2874325013c65d4c5f6a408c7a1847aee4` | `pat22-adr-exact-deltas-ea6dda7` | `70ee39e82391a599e9485f9a84a11001e5f4496ea4739c5e257e71f2101cb65b` |
+
+These are incident identifiers, not a new authorization. Read the live ledger
+again before acting; a changed generation, head or receipt invalidates this
+snapshot. PAT-23 remains in backlog; PAT-10 remains open and depends on the
+separate PAT-22/PAT-23 delivery proofs.
+
+PAT-22 at generation 4 retains its three consumed technical-diagnostic audit events and
+its apex floor. Those local receipts do not authorize a provider or campaign effect.
+If, after inspecting the evidence, a human independently records a typed
+`strategy_decision`, Foundry changes that exact stopped generation to `human_required`.
+The human may then run `resume --reason manual_retry_approved --halt-generation 4 --remediation-credits 1`.
+This opens exactly one bounded remediation credit; it does not
+rearm or alter the technical audit, lower the floor, or manufacture provider, campaign,
+PR, CI, or merge authority. Stale/wrong issue or generation coordinates, replay, and an
+exhausted credit remain fail-closed.
+
+After that credit is consumed and a later blocking review creates a new
+`technical_blocked` generation, `resume-technical` may clear exactly that generation
+for one local diagnostic. The exhausted human window remains exhausted. The ledger
+validator requires a contiguous technical-audit suffix after the authorization
+generation; a gap, duplicate, stale generation, provider effect, or campaign restart
+is refused. This fixes the mismatch that previously emitted a valid generation-5 stop
+but rejected its own local diagnostic transition; it grants no further review or merge.
+
+Offline gate recipe from the public checkout:
+
+```bash
+pytest -q plugins/foundry/tests/test_escalation.py::test_pat22_generation_four_requires_human_strategy_before_one_credit_retry
+pytest -q plugins/foundry/tests/test_routing.py::test_claimed_review_diff_requires_ledger_claim_and_exact_current_hash
+pytest -q plugins/foundry/tests/test_issue_merge.py::test_proof_bound_merge_refuses_a_base_that_moves_after_validation
+```
+
+Each command must report `1 passed`. The first double preserves the three old
+diagnostics, exercises the strategy decision and one-credit resume, then supplies a
+fresh PAT-22 diff to the ordinary merge path. Its fake PR #17 has a fixed base/head;
+an invalid/stale review proof produces zero merge effects, a valid review with red CI
+still produces zero effects, and only valid review plus green CI on that exact head
+calls Foundry's `issue.merge` once with the checked SHA. It also refuses a stale Git
+diff before a review claim and shows that the generation-5 local diagnostic has no
+spawn, provider, or campaign permission. The other tests exercise exact claimed-diff
+readback and base movement at the production merge gate. These are doubles, not a
+claim that PR #17 currently passed review, CI or merge; live gates must still be
+rerun on its eventual pushed head.
+
 ```bash
 python3 tooling/foundry_cli.py routing escalation resume-technical FOUNDRY-42 \
   --halt-generation <HALT-GENERATION-FROM-SHOW> \
@@ -316,6 +372,75 @@ budget/capacity. A reviewer may consume only its own technical route as a local
 diagnostic: this requires no Git diff or review claim and returns no spawn, provider,
 campaign, push, PR, CI, or merge authority. The route never finances a review.
 
+The sole exception to the ordinary-route refusal is a credited correction after an
+exact terminal **blocked** review bound to a consumed technical route. The trusted
+`routing escalation failure ... --kind review_blocking_after_fix` boundary requires
+the immutable `--root` and `--base`, recomputes the current diff, and re-reads the
+canonical review/proof store while holding the escalation transition. A missing,
+in-progress, passing, stale, wrong issue/diff/root/base/claim/generation, or malformed
+proof is refused; callers never supply a proof ID or digest as authority. It exists
+only when a human has
+rearmed an exhausted remediation window onto the same role and generation, that bound
+review has blocked, and its `review_blocking_after_fix` consumption audit follows the
+review claim. The ordinary plan remains limited to that stopped role and recorded
+generation; a foreign role, missing or malformed review binding, replay without this
+durable consumption record, or a later generation remains technically blocked. This
+recognition does not reopen the local route or create provider, campaign, PR, CI, or
+merge authority beyond the human remediation window already recorded. The ordinary
+Claude or Codex correction plan is then CAS-claimed in the durable credit audit:
+exactly one cross-host caller can receive it; replay and concurrent second plans are
+refused. At this one-shot boundary, the façade reopens the canonical proof and, while
+holding the same issue lock as the audit append, requires the caller's resolved worktree
+root and base to equal the proof coordinates, a stable current `HEAD` to equal the
+reviewed `HEAD`, and the current Git diff bytes to hash to the reviewed diff. A sibling
+worktree sharing the repository ledger, an empty commit with unchanged diff bytes, or a
+changed diff therefore fails without consuming the claim. Deterministic host validation
+(`task_name` for Codex; role contract, model and `max_turns` for the Claude hook) also
+finishes before this CAS, so a corrected retry can still claim the sole plan. This claim
+creates no provider, campaign, PR, CI, merge, or additional-review authority.
+
+After that plan has been claimed, the reviewer may bind exactly one new diff to the
+consumed technical route. This narrow CAS rearm requires the same issue, stopped role
+and halt generation, and the exact prior terminal **blocked** proof that funded the
+credited plan; its audit records the prior and new diff plus the terminal proof. A
+blocked proof without that prior correction-plan claim, a different proof/role/generation,
+or a replay is refused. Existing mergeable-terminal and pre-binding-pollution review
+paths remain separate.
+
+Released ledgers may contain the same consumed generation without the newer embedded
+`blocking_proof` member. They are never rewritten or credited again. The explicit
+`routing escalation attest-legacy-blocking-proof <ISSUE> <ROLE>
+--halt-generation <N> --root <ROOT> --base <BASE-SHA>` transition holds the issue CAS,
+re-hashes that exact Git range, authenticates the already-terminal canonical blocked
+proof, and appends a separate attestation bound to the one legacy consumption. Missing,
+wrong, stale, ambiguous, already-bound, or non-blocking proof state fails closed. The
+subsequent correction plan is claimed through the same append-only CAS journal used by
+new ledgers, so concurrent Claude and Codex callers still yield exactly one plan.
+This transition uses the ordinary HEAD-bound terminal-proof validator; a headless Git
+review cannot create a new attestation or correction claim.
+
+One released state is narrower still: PAT-22 generation 9 already carries its exact
+blocked-proof attestation and claimed correction, but its historical terminal review
+record predates immutable `head`. Only the credited-rearm callback may read that proof,
+under the issue lock and against every binding already recorded in the attestation. It
+authenticates that historical proof at its own immutable repository, root, base, head,
+diff, claim, and generation. The current worktree root must still equal the archived
+root, but its base may differ when the PR base has advanced. It accepts only the
+historical PAT-22 terminal-record shape and a blocked, non-all-pass proof in the
+recorded repository namespace. This read creates no attestation, credit, plan, generic
+reviewer authorization, acceptance sync, or merge authority. The distinct new reviewer
+claim is then independently bound to the current root, base, immutable HEAD, and diff.
+
+Both this transition and `routing escalation failure ...
+--kind review_blocking_after_fix` expose `--repository` for the uncommon case where the
+canonical review namespace is not the repository identity resolved from `--root`. Its
+value must be the exact namespace used by `claim-review` and `record-review-proof`; it
+is persisted with the authenticated blocking-proof binding so the later single-use
+plan claim reopens that same proof store. It grants no authority of its own. Existing
+consumption records without that field retain the root-derived default namespace.
+Omit it for the normal root-derived namespace. `--root` and `--base` remain mandatory trusted coordinates,
+and the diff is re-read while the escalation transition is locked.
+
 After either an exact reviewer or implementer route is consumed, it may unlock one fresh
 review only.
 Foundry first validates the claim, current Git diff, and immutable root/base coordinates
@@ -323,6 +448,124 @@ while holding the issue lock. It then binds that exact hash in the same escalati
 event. A pending route, a different role or route identity, a stale generation, a
 distinct hash, or a coordinate mismatch is refused without a claim or binding. This
 never authorizes a provider invocation or campaign effect.
+
+### PAT-10 recovery: separate authorized work from the final cutover
+
+PAT-10 is a final Linear cutover and acceptance issue.  A consumed technical-local
+route on PAT-10 is not a deadlock-breaking provider capability: it remains a local
+diagnostic receipt and reports `provider_effect_allowed=false` and
+`fresh_review_required=true`.  In particular, it cannot be reinterpreted as authority
+to implement the Linear adapter, import ADR data, run a migration, or resume a campaign.
+
+The recovery choice is to separate those prerequisites into independently authorized
+issues, then keep PAT-10 as the final cutover/acceptance issue.  This follows the
+issue-scoped state machine and FOUNDRY-ADR-0001's normal gated pipeline, preserves
+FOUNDRY-ADR-0013's bounded coordinator authority, and respects
+FOUNDRY-ADR-0014: technical exhaustion is `technical_blocked`, not a fabricated human
+verdict.  It also preserves FOUNDRY-ADR-0026: the adapter and the selective import are
+pre-cutover work; PAT-10 alone validates and publishes the final repository binding
+once its acceptance criteria are independently proven. "Selective" concerns ticket
+history, not the required 27-ADR reference corpus. A local or registry binding that
+already resolves to Linear is evidence to reconcile, not proof of the final cutover.
+
+Do not add a "fresh capability" transition to PAT-10.  Such a transition would turn a
+technical receipt into new provider authority and would bypass the normal per-issue
+authorization, review, CI, and human gates.  It is therefore not an implementation
+option without a new accepted ADR.
+
+Both options were evaluated against the same frozen recovery input used by the
+offline test: PAT-10 at halt generation `1`, local route
+`pat10-local-route-0001`, ready diff `a×64`, AC digest `b×64`, and authority
+`local_diagnostic` with `provider_effect_allowed=false`. The representative
+prerequisite coordinates are PAT-22 generation `1` / diff `c×64` / AC digest
+`d×64`, then PAT-23 generation `1` / AC digest `e×64`; these are fixture values,
+not claims about the live issues.
+
+| Option on those coordinates | Authority transition | Outcome |
+| --- | --- | --- |
+| Separate PAT-22 then PAT-23 | Keep the PAT-10 receipt bound to PAT-10 generation `1`, diff `a×64`, AC `b×64`; obtain distinct issue-scoped authority and proof for PAT-22 (`c×64`, `d×64`) and PAT-23 (`e×64`). | Chosen: a failed or stale PAT-10 final claim grants nothing, while the independent migration can resume and produce its own read-back. PAT-10 is reviewed only after those proofs exist. |
+| Add a fresh provider capability to PAT-10 | On that same PAT-10 generation `1`, diff `a×64`, AC `b×64`, promote `pat10-local-route-0001` from `local_diagnostic` to provider-write authority. | Rejected: this changes the receipt's authority rather than correcting the exhausted technical route. It would need a new accepted ADR and implementation before it could be considered; none is implied by PAT-21. |
+
+Operator recipe (the coordinator creates and authorizes the follow-up issues; this
+recipe performs no tracker/provider write itself):
+
+1. Preserve PAT-10's halted ledger and its local route/audit as evidence.  If a local
+   diagnostic is still needed, replay only the identical `resume-technical` inputs and
+   route ID for its current halt generation; a stale generation or a new route ID must
+   remain refused.
+2. Use PAT-22, the bounded adapter implementation issue whose acceptance criteria prove the
+   Linear provider surface independently.  Move only the reviewable adapter code from
+   the separate PAT-10 checkout into that issue's worktree; do not copy a PAT-10
+   technical receipt or claim into it.  Its ordinary implementation, review, CI, and
+   merge flow starts under that new issue's authority.
+3. Use PAT-23, the bounded ADR-import issue dependent on merged PAT-22.
+   Its acceptance criteria name the 27 required ADRs, a stable source snapshot/digest,
+   idempotent import behavior, and Linear read-back evidence. Before each Linear write,
+   this issue must have its own current authorization and project/operation preflight;
+   a PAT-10 technical receipt is not such authorization. It must not publish PAT-10's
+   final binding, write both trackers, or migrate terminal ticket history.
+4. After both follow-ups have independent review and delivery proof, re-read PAT-10's
+   AC and current binding.  Obtain a fresh PAT-10 review claim for the exact current
+   diff; changed or stale diffs are refused, and a replay only recovers the same claim.
+   Run PAT-10's normal final cutover/acceptance gates then.
+
+What remains is deliberately explicit: PAT-22 is in review with PR #17 open, while
+PAT-23 is created in Linear but unstarted; each needs its own authorization and gates. PAT-22 must deliver its
+provider proof, and PAT-23 must migrate and read back the 27 ADRs. PAT-10 remains open until those proofs
+exist and its own final cutover AC pass.  This recovery guidance does not close PAT-10.
+
+The executable offline recovery recipe is:
+
+```bash
+cd plugins/foundry
+pytest -q \
+  tests/test_escalation.py::test_pat10_recovery_isolated_from_separately_authorized_follow_up
+```
+
+It must report `1 passed`. The fixture fixes all comparison coordinates: PAT-10 halt
+generation `1`, its local route authority/ID, ready local-diff hash, and AC digest; PAT-22
+generation `1`, ready adapter-diff hash, independent delivery authority, and AC digest;
+and PAT-23 generation `1`, independent migration authority, AC digest, and stable fixture
+operation ID. It first proves the actual PAT-10 ledger path (`resume-technical` → atomic
+local-route claim → Codex `local_diagnostic` with no spawn), then keeps the ready local
+diff unable to claim the PAT-10 final review because PAT-22 delivery and PAT-23 read-back
+are absent.
+
+The causal double recipe has explicit stages. The PAT-10 correction emits only a
+non-authorizing ready-diff receipt. A separate PAT-22 adapter double requires both that
+receipt as source material and PAT-22's ordinary `subagent` plan, produces the candidate
+on PAT-22 coordinates, then mock-delivers an issue-scoped proof object. A raw coordinate
+dictionary cannot replace that proof object. Generated proofs with a different issue,
+generation, diff, authority, or AC digest are refused. Thus PAT-23 receives the output
+of the adapter/delivery path rather than a predeclared delivery dictionary, while the
+PAT-10 route ID and authority never cross that boundary.
+
+The PAT-23 stage reuses PAT-24's `OfflineProviderHandoff`, with provider state and
+local ledger persisted in separate files under `tmp_path`. Missing, expired, or
+drifted fixture capabilities yield zero provider effects and zero receipts. A crash
+before the first effect leaves only a local intent; replay after capacity expiry is
+refused, so that intent cannot create a first provider effect. In a separate positive
+operation, the test crashes after the provider effect but before the local receipt:
+the new double instance observes one durable provider effect and zero local receipts.
+Exact replay reconstructs one receipt without repeating the effect, even after
+capacity expiry. A different operation ID cannot claim the same provider-effect
+scope. The 27-ADR read-back is an explicitly simulated fixture projection after this
+receipt, not evidence of a Linear import; PAT-23 must perform the real read-back.
+
+This is deliberately an offline provider-double proof: it mutates neither a workspace
+nor Linear and does not assert that a real migration or final PAT-10 review happened.
+Its tmp-backed bearer, mock delivery proof, operation receipt, simulated effect, and all
+authority IDs are fixture mechanisms, not live Linear grants or evidence that
+PAT-22/PAT-23 is currently authorized or delivered. Persistence proves only the
+double's crash/replay contract; it does not turn the state file into provider evidence.
+Those remain PAT-23's independently authorized provider/read-back evidence and PAT-10's
+later exact-diff review/CI/human gates, respectively. Existing exact-diff and AC guards remain separate:
+`test_codex_recovered_reviewer_refuses_a_changed_git_diff` and
+`test_structured_ac_proof_is_exact_redacted_and_fails_closed_when_stale`.
+`test_technical_resume_is_atomic_and_idempotent_under_concurrency` separately covers
+the production routing ledger's `resume-technical` concurrency.
+The import issue must still bring its own live authorization and provider read-back
+before any real workspace migration.
 
 ### Audited human resume
 
@@ -364,10 +607,11 @@ resume, replacement by a newly credited window, exhaustion, invalidation, and
 cancellation. Events are chronological and cannot contain prompts, prose, diffs,
 provider output, secrets, or other free-form input.
 
-`halt_generation` is the identity of the human-resumed stop, not the ordinal
+`halt_generation` identifies the authorization's stop, not the ordinal
 `resume_count`: bounded technical resumes may advance the former without incrementing
-the latter. Normalization therefore accepts events only on generations actually cleared
-by a human resume and rejects technical-only generations.
+the latter. Normalization accepts consumption on a technical generation only after an
+audited rearm has bridged an exhausted earlier window to that generation; a diagnostic
+or claimed local route alone grants no credit.
 
 An exhausted authorization remains coherent without a halt only at its authorization
 generation G, allowing the exact just-exhausted correction/reviewer routing decision.
@@ -389,17 +633,33 @@ python3 tooling/foundry_cli.py routing escalation rearm-remediation FOUNDRY-42 i
   --remediation-credits <1..3>
 ```
 
-The positional role must equal the exhausted authorization's recorded role and
-`--halt-generation` must equal both its original generation and the current non-halted
-generation. The locked CAS refuses active, cancelled, invalidated, malformed, differently
-attributed, stale, or already re-halted state without changing the ledger. Success is the
-distinct action `remediation_rearmed`, never `resumed`; it replaces only the current
-window with a fresh 1..3-credit active window.
+The positional role must equal the exhausted authorization's recorded role. When no later
+technical generation exists, `--halt-generation` remains the exact original and current
+non-halted generation. When the exhausted window at generation `G` was followed by a
+separately recorded technical stop and `resume-technical` diagnostic at `H`, the operator
+must bind both facts explicitly:
+
+```bash
+python3 tooling/foundry_cli.py routing escalation rearm-remediation FOUNDRY-42 implementer \
+  --reason manual_retry_approved --halt-generation <EXHAUSTED-G> \
+  --current-halt-generation <DIAGNOSTIC-H> --remediation-credits <1..3>
+```
+
+`H` must be the current non-halted generation and the latest locally recorded diagnostic
+and claimed local route must be for `H` and the same role. The locked CAS refuses a missing, stale, concurrent,
+halted, differently attributed, active, cancelled, invalidated, or malformed state without
+changing the ledger. Success is the distinct action `remediation_rearmed`, never `resumed`;
+it replaces only the current window with a fresh 1..3-credit active window.
 
 Every successful rearm appends one bounded `remediation_rearm_audit` event with the fixed
-code `remediation_window_rearmed`, UTC `at`, controlled public `reason`, role, original
-halt generation, granted credits, and the exhausted window's `armed_at` plus original
-maximum as its link. The previous consumption events stay unchanged in the issue-level
+code `remediation_window_rearmed`, UTC `at`, controlled public `reason`, role, active
+generation, granted credits, and the exhausted window's `armed_at` plus original maximum
+as its link. A rearm after a later technical diagnostic also records
+`exhausted_halt_generation`, so the audit binds the new authorization to both `G` and `H`.
+If that new window is subsequently exhausted at `H`, an ordinary same-generation rearm
+may use `--halt-generation H`; normalization requires the earlier `G` to `H` bridge in
+the audit and rejects an unbridged technical generation.
+The previous consumption events stay unchanged in the issue-level
 `consumption_audit`; together with the link and rearm timestamp they keep the replaced
 window's exact audit interval accessible. Both Claude and Codex plans expose the same
 current authorization and rearm audit. The transition does not touch resume counts,
@@ -513,8 +773,16 @@ redacted deduplication path.
 The reviewer reads through `routing read-review --diff-hash <hash> --claim-id <id>
 --root <root> --base <base-sha>`.
 That command retains the ledger lock from the current active-generation and immutable
-coordinate checks through the current diff hash and byte emission, so a recovery cannot
-deliver bytes to its replaced owner. It rejects a stale or invented claim. After a
+coordinate and immutable-HEAD checks through the current diff hash and byte emission,
+so a recovery cannot deliver bytes to its replaced owner. An empty commit is HEAD drift
+even when it leaves the diff hash unchanged. A Git-coordinated ledger record (one with
+immutable coordinates or a durable claim publication) that has no `head` fails closed
+before diff bytes, proof creation, active validation, recovery, generic terminal rearm,
+acceptance sync, or merge. Only a bare non-Git `claim()` fixture retains headless
+compatibility. The sole read-only exception is the already-attested and already-claimed
+PAT-22 generation-9 blocked proof described above; normal terminal-proof lookup rejects
+it, and it cannot authorize an active reviewer operation by itself. The command rejects
+a stale or invented claim. After a
 complete verdict, the caller runs `routing record-review-proof` with the exact structured
 AC and quality outcomes while the claim is still active. That operation atomically binds
 the proof and terminalizes the generation; `complete-review` is a deprecated compatibility
