@@ -467,6 +467,38 @@ def project_entry(project=PROJECT):
     return {"key": project.key, "id": project.id, **copy.deepcopy(project.extra)}
 
 
+def _bind_query_registry(monkeypatch, tr):
+    """Bind a fresh Linear tracker to PROJECT for the checkout-identity resolution
+    that `query`/`frame` perform, without resolving from a repo basename."""
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tr)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(
+        registry,
+        "checkout_repository_identity",
+        lambda cwd=None: "github.com/acme/widgets",
+    )
+    monkeypatch.setattr(
+        registry,
+        "load",
+        lambda: {"linear": {"actual-checkout": project_entry()}},
+    )
+    monkeypatch.setattr(
+        registry,
+        "resolve",
+        lambda *_args: pytest.fail("Linear query must not resolve from a basename"),
+    )
+
+
+def _witness_document_id(wire):
+    matches = [
+        doc_id
+        for doc_id, doc in wire.documents.items()
+        if doc["title"].startswith("[Foundry ADR witness] ")
+    ]
+    assert len(matches) == 1, "expected exactly one ADR witness document"
+    return matches[0]
+
+
 def seed_linear_adr(
     wire,
     *,
@@ -837,6 +869,92 @@ def test_query_issue_resolves_fresh_binding_and_projects_linear_adrs(
     assert checkout_reads == [None]
     assert fresh._active_project == PROJECT
     assert result["issue"]["id"] == "LIN-2"
+    assert result["adrs"] == []
+
+
+def test_query_issue_projects_real_transport_missing_witness_as_conflict(
+    tracker, monkeypatch,
+):
+    # AC-4: exercise the real LinearWire transport, not a fake tracker — create an
+    # ADR through the adapter, delete its witness from the wire's documents, and
+    # confirm `query issue` keeps the issue payload readable behind a typed
+    # conflict projection instead of raising or losing data.
+    instance, wire = tracker
+    instance.create_adr(PROJECT, "Witness dropped", "decision body")
+    del wire.documents[_witness_document_id(wire)]
+
+    _bind_query_registry(monkeypatch, instance)
+
+    result = query.issue("LIN-2")
+
+    assert result["adrs"] == {
+        "status": "conflict",
+        "tracker": "linear",
+        "reason": "Linear ADR version witness is missing",
+    }
+    assert result["issue"]["id"] == "LIN-2"
+    assert result["project"] == PROJECT.key
+
+
+def test_query_adrs_adr_and_frame_stay_fail_closed_on_real_missing_witness(
+    tracker, monkeypatch,
+):
+    # AC-4: the same real-transport missing-witness state must not clear on read for
+    # `query adrs`, `query adr` or the frame's ADR-loading path — and none of them
+    # may perform a provider write while failing closed.
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Witness dropped", "decision body")
+    del wire.documents[_witness_document_id(wire)]
+
+    _bind_query_registry(monkeypatch, instance)
+    calls_before = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="Linear ADR version witness is missing"):
+        query.adrs()
+    with pytest.raises(TrackerConflictError, match="Linear ADR version witness is missing"):
+        query.adr(created.id)
+    with pytest.raises(TrackerConflictError, match="Linear ADR version witness is missing"):
+        frame.materialize({"adrs": [], "issues": []})
+
+    assert not any(
+        "DocumentCreate" in document or "CommentCreate" in document
+        for document, _ in wire.calls[calls_before:]
+    )
+
+
+def test_query_issue_propagates_real_transport_failure_on_adr_listing(
+    tracker, monkeypatch,
+):
+    # AC-4: a transport-level failure while listing ADR documents is not a
+    # conflict; it must propagate out of `query issue` as the typed transport
+    # error, not be swallowed or reprojected.
+    instance, wire = tracker
+
+    def flaky_transport(document, variables):
+        if "FoundryLinearAdrDocuments" in document:
+            raise OSError("connection reset")
+        return wire(document, variables)
+
+    flaky = LinearTracker(token="linear-test-secret", transport=flaky_transport)
+
+    _bind_query_registry(monkeypatch, flaky)
+
+    with pytest.raises(LinearTrackerError) as error:
+        query.issue("LIN-2")
+    assert error.value.code == "transport_error"
+
+
+def test_query_issue_real_transport_empty_adr_index_is_an_empty_list(
+    tracker, monkeypatch,
+):
+    # AC-4: an empty wire (no ADR documents at all) is a genuine empty index, not a
+    # conflict or an unavailable capability.
+    instance, wire = tracker
+
+    _bind_query_registry(monkeypatch, instance)
+
+    result = query.issue("LIN-2")
+
     assert result["adrs"] == []
 
 
