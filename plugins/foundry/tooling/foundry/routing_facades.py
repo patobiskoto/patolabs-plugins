@@ -802,6 +802,8 @@ def codex_review_plan(
         }
 
     def validate_credited_rearm(previous_diff_hash: str, expected_binding):
+        # Keep the legacy proof's historical root while allowing its base to
+        # advance; validate_claim() separately authenticates the new PR claim.
         binding = deduplicator.validated_claimed_correction_proof_binding(
             issue_id,
             previous_diff_hash,
