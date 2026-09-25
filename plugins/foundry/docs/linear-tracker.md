@@ -143,6 +143,80 @@ complete supported serialization for a known source candidate. It never treats `
 equivalent source bytes: the witness-retained source and its digest distinguish them even when
 their readable Markdown is identical. It does not apply a reverse rewrite to provider content
 or normalize any other Markdown variant.
+`FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
+SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
+and its existing Linear Document content SHA-256
+`9d723a7a64225d930531d968f78dba108f940eb7091d7110f8b12c037d29b193` form one
+closed pair. This does not describe a renderer and cannot create a new Document from
+the historical source. It permits only exact-ID readback of that surviving slot and
+creation of its missing witness; a missing slot or any byte difference fails before a
+provider write. Because the pinned readback covers the metadata header, including
+`origin.batch_sha256`, this recovery matches only a replay of the byte-identical
+original manifest; any other manifest diverges from the slot before effects. The witness retains the original UTF-8 source bytes, so ordinary ADR
+readers receive the historical Markdown byte-for-byte rather than the provider's
+lossy rendering.
+Every historical batch record must carry a qualification profile of the complete
+provider bytes of both Documents the import will create, observed before import on
+non-authoritative probe Documents in a separate Linear qualification project:
+
+- `qualification_project_id`: one UUID for the whole batch, never the ADR project;
+- `expected_linear_document_content`/`expected_linear_document_sha256` and
+  `document_probe_id`: the complete version-0 Document (metadata header and body) as
+  Linear returned it;
+- `expected_linear_witness_content`/`expected_linear_witness_sha256` and
+  `witness_probe_id`: the complete witness derived from that version readback, as Linear
+  returned it.
+
+The recovery-only `FOUNDRY-ADR-0001` record carries only the witness fields: its
+surviving slot is its own version evidence. `plan_adr_batch_qualification(project,
+records, observed_documents=None)` is the read-only planner the private campaign uses.
+For records without profile fields it returns each exact canonical version Document,
+its deterministic ID and title, and the probe title `[Foundry qualification probe]
+<ADR-ID> v0000 document <sha256>` naming those canonical bytes. That title is the
+operator's attestation of what the probe was created from, not provider proof; the
+guarantee rests on the probe's exact returned content and the assumption below. Given
+the observed version readbacks, it also returns each canonical witness and its
+`... witness <sha256>` probe title. It performs no provider write, and the import sends
+exactly the bytes it plans.
+
+Controlled recipe: plan; create each canonical version on a probe in the qualification
+project and read it back; plan again with those readbacks; create and read back each
+canonical witness likewise; store the probe IDs and readbacks only in the private
+migration receipt; then import. Before any batch effect, including reciprocal comments,
+the adapter reads every probe by ID. It refuses the batch unless each probe exists, is
+not archived, belongs to the declared qualification project, bears the exact title for
+the canonical bytes, and holds exactly the profiled bytes. It also refuses a
+qualification project equal to the ADR project or mixed across records, duplicate
+probe IDs, a probe ID equal to an ADR slot, a digest mismatch, a version readback
+whose metadata header is not the one qualified serialization of this exact metadata,
+and a witness readback outside its closed modelled serialization. It never falls back
+to a local Markdown renderer. The adapter does not judge the human readability of a
+probed body: the campaign reviews each observed rendering and records it in the private
+receipt before import. During import, the version and witness readbacks must
+equal the profiled bytes exactly.
+
+This proves, before any write to the ADR project, how Linear returned the identical
+complete content. It rests on one explicit assumption: Linear renders identical
+content identically in both projects. If Linear diverges at import, the version is
+already written: the post-write check stops the batch before its witness. That stop is
+the last defense, not pre-write proof; the unwitnessed slot then needs its own exact
+recovery qualification before any further import. The probe Documents are
+non-authoritative evidence only, are never ADRs and are retained rather than silently
+deleted. Their IDs and private bytes belong in the private migration receipt, never
+this repository. Once an ADR's witness exists, ordinary reads use the witness-held
+source body and the bound provider content digest, not the private manifest or probe
+Documents.
+
+This probe-bound readback is accepted at read time only for a batch-imported
+historical version 0 (`origin.kind` `migration` with `origin.batch_sha256`): its witness
+binds the qualified provider bytes and the exact source. Every native ADR and every
+later version keep the closed serialization check below, so a readable-body edit is
+refused even if the witness digest is recomputed to match. For those historical
+Documents the trade-off is explicit: a coordinated external edit of the readable body
+and its witness digest is not detectable by the adapter, as PAT-ADR-0002 already states
+for coordinated edits. A later typed version (accept, supersede, link, edit) of a
+historical ADR whose qualified readback differs from the local serialization model
+currently fails closed: its predecessor is read with the strict model.
 Exact-slot verification still checks
 the deterministic ID, title, project, archive state, canonical metadata encoding, and
 body digest. Witnesses bind the exact version bytes returned by Linear, including the
@@ -152,7 +226,7 @@ body changes therefore remain conflicts or invalid provider responses. A source-
 base64 re-encoding, digest edit, readable-body edit, or transformation outside the closed
 serialization rule fails closed.
 
-The pre-existing interrupted `PAT-ADR-0001` version-0 slot is recoverable only by replaying
+The pre-existing interrupted native `PAT-ADR-0001` version-0 slot is recoverable only by replaying
 the exact original source body. Recovery checks its deterministic Document ID and title,
 metadata and source digest, project, archive state, and the exact provider serialization before
 creating only the missing witness. It never updates or deletes the surviving version and never
