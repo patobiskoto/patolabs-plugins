@@ -153,21 +153,53 @@ creation of its missing witness; a missing slot or any byte difference fails bef
 provider write. The witness retains the original UTF-8 source bytes, so ordinary ADR
 readers receive the historical Markdown byte-for-byte rather than the provider's
 lossy rendering.
-Every other historical batch record must carry a private, exact readback profile:
-the source digest, the complete body bytes returned by a non-ADR Linear probe, and
-the SHA-256 of those returned bytes. The adapter verifies every profile and composes
-the already-qualified ADR header serialization with that exact body before any batch
-write. A missing profile, a digest mismatch, or a different returned version byte
-refuses the batch; it never falls back to a local Markdown renderer. The probe
-Documents are non-authoritative evidence only, are not ADRs, and are retained rather
-than silently deleted. Their IDs and private source/readback bytes belong in the
-private migration receipt, never this repository. Once an ADR's witness exists,
-ordinary reads use the witness-held source body and the bound provider content digest,
-not the private manifest or probe Documents.
-The probes contain standalone bodies. They do not prove Linear will render the body
-identically beneath an ADR metadata header; if that context changes the readback,
-the attempted version remains unwitnessed and the batch stops. Recovery then needs
-a separately qualified exact-slot profile before any further import.
+Every historical batch record must carry a qualification profile of the complete
+provider bytes of both Documents the import will create, observed before import on
+non-authoritative probe Documents in a separate Linear qualification project:
+
+- `qualification_project_id`: one UUID for the whole batch, never the ADR project;
+- `expected_linear_document_content`/`expected_linear_document_sha256` and
+  `document_probe_id`: the complete version-0 Document (metadata header and body) as
+  Linear returned it;
+- `expected_linear_witness_content`/`expected_linear_witness_sha256` and
+  `witness_probe_id`: the complete witness derived from that version readback, as Linear
+  returned it.
+
+The recovery-only `FOUNDRY-ADR-0001` record carries only the witness fields: its
+surviving slot is its own version evidence. `plan_adr_batch_qualification(project,
+records, observed_documents=None)` is the read-only planner the private campaign uses.
+For records without profile fields it returns each exact canonical version Document,
+its deterministic ID and title, and the probe title `[Foundry qualification probe]
+<ADR-ID> v0000 document <sha256>` that binds the probe to those canonical bytes. Given
+the observed version readbacks, it also returns each canonical witness and its
+`... witness <sha256>` probe title. It performs no provider write, and the import sends
+exactly the bytes it plans.
+
+Controlled recipe: plan; create each canonical version on a probe in the qualification
+project and read it back; plan again with those readbacks; create and read back each
+canonical witness likewise; store the probe IDs and readbacks only in the private
+migration receipt; then import. Before any batch effect, including reciprocal comments,
+the adapter reads every probe by ID. It refuses the batch unless each probe exists, is
+not archived, belongs to the declared qualification project, bears the exact title for
+the canonical bytes, and holds exactly the profiled bytes. It also refuses a
+qualification project equal to the ADR project or mixed across records, duplicate
+probe IDs, a probe ID equal to an ADR slot, a digest mismatch, a version readback
+whose metadata header is not the one qualified serialization of this exact metadata,
+and a witness readback outside its closed modelled serialization. It never falls back
+to a local Markdown renderer. During import, the version and witness readbacks must
+equal the profiled bytes exactly.
+
+This proves, before any write to the ADR project, how Linear returned the identical
+complete content. It rests on one explicit assumption: Linear renders identical
+content identically in both projects. If Linear diverges at import, the version is
+already written: the post-write check stops the batch before its witness. That stop is
+the last defense, not pre-write proof; the unwitnessed slot then needs its own exact
+recovery qualification before any further import. The probe Documents are
+non-authoritative evidence only, are never ADRs and are retained rather than silently
+deleted. Their IDs and private bytes belong in the private migration receipt, never
+this repository. Once an ADR's witness exists, ordinary reads use the witness-held
+source body and the bound provider content digest, not the private manifest or probe
+Documents.
 Exact-slot verification still checks
 the deterministic ID, title, project, archive state, canonical metadata encoding, and
 body digest. Witnesses bind the exact version bytes returned by Linear, including the
