@@ -3009,6 +3009,27 @@ def _historical_batch_pair(wire=None, instance=None):
     return source, replacement
 
 
+def _historical_partial_batch_record():
+    body = (
+        "historical body mentions FOUNDRY-123 without an authoritative typed "
+        "relation graph"
+    )
+    return {
+        "adr_id": "LIN-ADR-0043",
+        "title": "Historical relation gap",
+        "body": body,
+        "historical_status": "accepted",
+        "source_ref": "YT-A-43",
+        "source_created": 3,
+        "source_updated": 4,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (),
+        "superseded_by": None,
+        "issue_refs": (),
+        "missing_relations": ("issues", "superseded_by", "supersedes"),
+    }
+
+
 def _recovery_only_profile_record():
     body = "<private historical source kept out of the public fixture>"
     record = {
@@ -3248,6 +3269,319 @@ def test_linear_historical_batch_imports_reciprocal_closure_into_empty_project(t
         probe["project"]["id"] == QUALIFICATION_PROJECT_ID
         for probe in wire.readback_probes.values()
     )
+
+
+def _unqualified_profile(record):
+    """Well-formed full profile fields for tests that must fail before any probe read."""
+    return {
+        **record,
+        "qualification_project_id": QUALIFICATION_PROJECT_ID,
+        "expected_linear_document_content": "unused",
+        "expected_linear_document_sha256": hashlib.sha256(b"unused").hexdigest(),
+        "document_probe_id": "00000000-0000-4000-8000-00000000fffe",
+        "expected_linear_witness_content": "unused",
+        "expected_linear_witness_sha256": hashlib.sha256(b"unused").hexdigest(),
+        "witness_probe_id": "00000000-0000-4000-8000-00000000ffff",
+    }
+
+
+def test_linear_historical_partial_batch_binds_unknown_relations_and_exact_body(
+    tracker,
+):
+    instance, wire = tracker
+    record = _historical_partial_batch_record()
+    second_body = "second historical body"
+    second = {
+        **record,
+        "adr_id": "LIN-ADR-0044",
+        "title": "Second historical relation gap",
+        "body": second_body,
+        "source_ref": "YT-A-44",
+        "expected_source_sha256": hashlib.sha256(second_body.encode()).hexdigest(),
+    }
+    records = _qualify_batch(instance, wire, (record, second))
+    # The optional field is base-record data, never stripped as a profile field.
+    assert all(
+        _base_record(item)["missing_relations"] == record["missing_relations"]
+        for item in records
+    )
+
+    imported = instance.import_adr_batch(PROJECT, records)
+    binding = instance._binding(PROJECT)
+    metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported[0].ref], binding
+    )
+    witness = linear_module._parse_adr_witness(
+        wire.documents[
+            linear_module._adr_witness_id(PROJECT.id, record["adr_id"], 0)
+        ],
+        binding,
+    )
+
+    assert metadata["origin"]["missing_relations"] == [
+        "issues", "superseded_by", "supersedes",
+    ]
+    assert metadata["relations"] == {
+        "supersedes": [], "superseded_by": None, "issues": [],
+    }
+    assert witness[linear_module._ADR_BOUND_SOURCE_BODY] == record["body"]
+    assert {item.id: item.status for item in instance.list_adrs(PROJECT)} == {
+        record["adr_id"]: "accepted",
+        second["adr_id"]: "accepted",
+    }
+    assert wire.comments == {}
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    replay = instance.import_adr_batch(PROJECT, records[::-1])
+    assert [item.ref for item in replay] == [imported[1].ref, imported[0].ref]
+    assert (wire.documents, wire.comments) == before
+
+
+def test_linear_historical_batch_unknown_and_known_empty_have_distinct_manifest():
+    unknown_wire = LinearWire()
+    unknown_tracker = LinearTracker(
+        token="linear-test-secret", transport=unknown_wire
+    )
+    known_wire = LinearWire()
+    known_tracker = LinearTracker(token="linear-test-secret", transport=known_wire)
+    partial = _historical_partial_batch_record()
+    complete = dict(partial)
+    complete.pop("missing_relations")
+
+    unknown = unknown_tracker.import_adr_batch(
+        PROJECT, _qualify_batch(unknown_tracker, unknown_wire, (partial,))
+    )[0]
+    known = known_tracker.import_adr_batch(
+        PROJECT, _qualify_batch(known_tracker, known_wire, (complete,))
+    )[0]
+    binding = unknown_tracker._binding(PROJECT)
+    unknown_metadata, _body = linear_module._parse_adr_document(
+        unknown_wire.documents[unknown.ref], binding
+    )
+    known_metadata, _body = linear_module._parse_adr_document(
+        known_wire.documents[known.ref], binding
+    )
+
+    assert unknown.ref == known.ref
+    assert unknown_metadata["relations"] == known_metadata["relations"]
+    assert unknown_metadata["origin"]["missing_relations"] != (
+        known_metadata["origin"]["missing_relations"]
+    )
+    assert unknown_metadata["origin"]["batch_sha256"] != (
+        known_metadata["origin"]["batch_sha256"]
+    )
+    assert unknown_wire.documents[unknown.ref]["content"] != (
+        known_wire.documents[known.ref]["content"]
+    )
+
+
+def test_linear_historical_partial_batch_preserves_unknown_superseded_successor(
+    tracker,
+):
+    instance, wire = tracker
+    record = {
+        **_historical_partial_batch_record(),
+        "historical_status": "superseded",
+    }
+
+    (qualified,) = _qualify_batch(instance, wire, (record,))
+    imported = instance.import_adr_batch(PROJECT, (qualified,))[0]
+    metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported.ref], instance._binding(PROJECT)
+    )
+
+    assert imported.status == "superseded"
+    assert metadata["status"] == "superseded"
+    assert metadata["relations"]["superseded_by"] is None
+    assert "superseded_by" in metadata["origin"]["missing_relations"]
+    assert wire.comments == {}
+
+
+def test_linear_historical_partial_batch_refuses_changed_missing_flags_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    record = _historical_partial_batch_record()
+    instance.import_adr_batch(PROJECT, _qualify_batch(instance, wire, (record,)))
+    changed = {
+        **record,
+        "missing_relations": ("superseded_by", "supersedes"),
+    }
+    (changed,) = _qualify_batch(instance, wire, (changed,))
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    call_offset = len(wire.calls)
+
+    with pytest.raises(TrackerConflictError, match="slot diverged"):
+        instance.import_adr_batch(PROJECT, (changed,))
+
+    assert (wire.documents, wire.comments) == before
+    assert _no_batch_effect(wire, call_offset)
+
+
+@pytest.mark.parametrize(
+    "missing_relations",
+    [
+        ["issues"],
+        ("supersedes", "issues"),
+        ("issues", "issues"),
+        ("unknown",),
+    ],
+)
+def test_linear_historical_partial_batch_refuses_noncanonical_missing_relations(
+    tracker, missing_relations
+):
+    instance, wire = tracker
+    record = {
+        **_historical_partial_batch_record(),
+        "missing_relations": missing_relations,
+    }
+
+    with pytest.raises(ValueError, match="missing relations invalid"):
+        instance.plan_adr_batch_qualification(PROJECT, (record,))
+    with pytest.raises(ValueError, match="missing relations invalid"):
+        instance.import_adr_batch(PROJECT, (_unqualified_profile(record),))
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert wire.readback_probes == {}
+    assert _no_batch_effect(wire, 0)
+
+
+@pytest.mark.parametrize(
+    ("family", "field", "value"),
+    [
+        ("supersedes", "supersedes", ("LIN-ADR-0044",)),
+        ("superseded_by", "superseded_by", "LIN-ADR-0044"),
+        ("issues", "issue_refs", ("LIN-2",)),
+    ],
+)
+def test_linear_historical_partial_batch_refuses_nonempty_unknown_placeholder(
+    tracker, family, field, value
+):
+    instance, wire = tracker
+    record = {
+        **_historical_partial_batch_record(),
+        "missing_relations": (family,),
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match="unknown relation is not empty"):
+        instance.plan_adr_batch_qualification(PROJECT, (record,))
+    with pytest.raises(ValueError, match="unknown relation is not empty"):
+        instance.import_adr_batch(PROJECT, (_unqualified_profile(record),))
+
+    assert wire.documents == {}
+    assert wire.comments == {}
+    assert _no_batch_effect(wire, 0)
+
+
+def test_linear_historical_batch_refuses_mixed_relation_completeness_before_effect(
+    tracker,
+):
+    instance, wire = tracker
+    partial = _historical_partial_batch_record()
+    complete = {**partial, "adr_id": "LIN-ADR-0044"}
+    complete.pop("missing_relations")
+
+    with pytest.raises(ValueError, match="record fields invalid"):
+        instance.plan_adr_batch_qualification(PROJECT, (partial, complete))
+    with pytest.raises(ValueError, match="record fields invalid"):
+        instance.import_adr_batch(
+            PROJECT,
+            (_unqualified_profile(partial), _unqualified_profile(complete)),
+        )
+
+    assert wire.calls == []
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_historical_partial_batch_plan_and_import_share_exact_bytes(tracker):
+    instance, wire = tracker
+    gap = _historical_partial_batch_record()
+    successor_gap_body = "superseded historically; successor not exported"
+    successor_gap = {
+        **gap,
+        "adr_id": "LIN-ADR-0045",
+        "title": "Historical superseded without known successor",
+        "body": successor_gap_body,
+        "historical_status": "superseded",
+        "source_ref": "YT-A-45",
+        "expected_source_sha256": hashlib.sha256(
+            successor_gap_body.encode()
+        ).hexdigest(),
+        "issue_refs": ("LIN-2",),
+        "missing_relations": ("superseded_by",),
+    }
+    base = (gap, successor_gap)
+
+    # A family declared unknown while carrying a value is refused identically by
+    # the read-only planner and the import, before any read of a probe or write.
+    for family, field, value in (
+        ("supersedes", "supersedes", ("LIN-ADR-0043",)),
+        ("superseded_by", "superseded_by", "LIN-ADR-0043"),
+        ("issues", "issue_refs", ("LIN-2",)),
+    ):
+        hostile = {**successor_gap, "missing_relations": (family,), field: value}
+        calls_before = len(wire.calls)
+        with pytest.raises(ValueError, match="unknown relation is not empty"):
+            instance.plan_adr_batch_qualification(PROJECT, (gap, hostile))
+        with pytest.raises(ValueError, match="unknown relation is not empty"):
+            instance.import_adr_batch(
+                PROJECT,
+                (_unqualified_profile(gap), _unqualified_profile(hostile)),
+            )
+        assert _no_batch_effect(wire, calls_before)
+        # No qualification probe is read on the way to the refusal.
+        assert not any(
+            "FoundryLinearAdrDocumentById" in document
+            for document, _variables in wire.calls[calls_before:]
+        )
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+    plan = instance.plan_adr_batch_qualification(PROJECT, base)
+    records = _qualify_batch(instance, wire, base)
+    sent = []
+    original = wire.__call__
+
+    def record_sent(document, variables):
+        if "FoundryLinearAdrDocumentCreate" in document:
+            sent.append(copy.deepcopy(variables["input"]))
+        return original(document, variables)
+
+    instance._transport = record_sent
+    imported = instance.import_adr_batch(PROJECT, records)
+    by_id = {value["id"]: value for value in sent}
+    binding = instance._binding(PROJECT)
+    batch_digests = set()
+    for item in plan:
+        assert by_id[item["document_id"]]["content"] == item["document_content"]
+        assert by_id[item["document_id"]]["title"] == item["document_title"]
+        metadata, _body = linear_module._parse_adr_document(
+            wire.documents[item["document_id"]], binding
+        )
+        batch_digests.add(metadata["origin"]["batch_sha256"])
+        expected = {gap["adr_id"]: gap, successor_gap["adr_id"]: successor_gap}[
+            item["adr_id"]
+        ]
+        assert metadata["origin"]["missing_relations"] == list(
+            expected["missing_relations"]
+        )
+    assert len(batch_digests) == 1
+    assert {item.id: item.status for item in imported} == {
+        gap["adr_id"]: "accepted",
+        successor_gap["adr_id"]: "superseded",
+    }
+    # Status is preserved and no successor is inferred for the unknown family.
+    assert {item.id: item.status for item in instance.list_adrs(PROJECT)} == {
+        gap["adr_id"]: "accepted",
+        successor_gap["adr_id"]: "superseded",
+    }
+    successor_metadata, _body = linear_module._parse_adr_document(
+        wire.documents[imported[1].ref], binding
+    )
+    assert successor_metadata["relations"]["superseded_by"] is None
+    assert successor_metadata["relations"]["issues"] == ["LIN-2"]
 
 
 def test_linear_historical_batch_refuses_bad_or_changed_manifest_before_effect(tracker):

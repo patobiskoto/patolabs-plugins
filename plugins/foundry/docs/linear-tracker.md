@@ -327,16 +327,32 @@ three relation arguments explicitly after
 source qualification. A related ADR must already be present and accepted
 where it serves as a replacement; arbitrary mutually referencing batches are not seeded
 by the single-record port. The separate `import_adr_batch(project, records)` port
-accepts a finite manifest of 1–100 complete historical snapshots with all three
-relation fields explicit. It constructs every deterministic version-0 Document,
+accepts a finite manifest of 1–100 historical snapshots. Existing complete-batch
+callers keep passing all three relation fields explicitly. A partial-source manifest
+instead adds `missing_relations` to every record as a canonical sorted tuple drawn only
+from `issues`, `superseded_by`, and `supersedes`; complete and partial record shapes
+cannot be mixed in one batch. Every family named there must carry its empty native
+placeholder (`()`, `None`, or `()` respectively), while an unlisted empty field remains
+known-empty; a `superseded` record may have `superseded_by=None` only when
+`superseded_by` is listed. `missing_relations` belongs to the base historical record,
+never to the qualification profile: `plan_adr_batch_qualification` and the import
+validate it identically before any probe read or write. The normalized provenance,
+including those flags, is part of the planned version bytes, the full-manifest digest
+and exact slot readback, so unknown and known-empty never replay as one another. It
+constructs every deterministic version-0 Document,
 witness and reciprocal issue comment, validates the full hypothetical graph before
 the first write, then creates the exact slots additively. Ordinary reads fail closed
 through a partial batch; each version-0 migration origin persists a SHA-256 digest of
 the complete normalized manifest, propagated to later versions. An exact replay can
 complete matching slots regardless of record order; a subset or changed manifest
 collides before effects, while unrelated conflicts are also refused. This is not a
-provider-atomic transaction and is not permission to migrate the entire archive. PAT-23 owns the
-authorized manifest and audit; PAT-10 owns cutover.
+provider-atomic transaction and is not permission to migrate the entire archive. The
+PAT-23 source exposes no authoritative typed historical relation graph, so its
+unavailable families remain explicit provenance only: lexical `FOUNDRY-N` mentions in
+byte-exact bodies do not create Linear issue links, and an `accepted` source status is
+never changed to `superseded` by inference. PAT-23 owns the authorized manifest and
+audit; PAT-10 owns cutover.
+
 When import stops after version 0 (with or without its witness) but before reciprocal
 relation versions, an exact replay preflights the completed hypothetical graph before
 adding the missing witness and versions. It also completes a multi-relation import that
@@ -372,8 +388,10 @@ operator must separately, under the cutover authority:
 1. qualify the exact Linear workspace/team/project and record the stable IDs described
    above; keep the existing repository binding unchanged;
 2. export only the authorized live YouTrack ADR closure, retain each source reference and
-   timestamps, compute the SHA-256 of the byte-exact body, and map every issue relation to
-   an already qualified target-project issue;
+   timestamps, compute the SHA-256 of the byte-exact body, and map only authoritative
+   typed issue relations to an already qualified target-project issue; record an
+   unavailable relation family in canonical `missing_relations`, never by mining body
+   text;
 3. validate the entire authorized manifest offline with the same closed metadata and
    relation rules; unresolved or out-of-scope references stop the run;
 4. in a maintenance window, use the single-record port for independently seedable
