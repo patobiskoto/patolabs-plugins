@@ -128,8 +128,9 @@ at least as long as its opener. A `- ` literal inside such a fence and a source 
 byte-exact; a dash thematic break such as `- - -` is preserved too. A provider response that
 rewrites any of those is rejected. The bounded model does not parse raw HTML: a line outside a
 fence that begins with `<` after up to three spaces is rejected before any provider write,
-including batch comments and version creation. Such a historical source requires a separately
-validated rendering contract before import; the source bytes must not be changed to make it fit.
+including reciprocal issue-link comments, batch comments and version creation. Such a
+historical source requires a separately validated rendering contract before import;
+the source bytes must not be changed to make it fit.
 The adapter accepts canonical content or exactly the
 complete supported serialization for a known source candidate. It never treats `- ` and `* ` as
 equivalent source bytes: the witness-retained source and its digest distinguish them even when

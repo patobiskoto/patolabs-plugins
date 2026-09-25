@@ -3284,6 +3284,7 @@ class LinearTracker(Tracker):
         metadata, body = self._next_adr_metadata(
             versions[-1], issue_id=issue_id
         )
+        _preflight_adr_body_readback(body)
         # The comment is a deterministic reciprocal slot. If a process stops after
         # this write but before the version append, the exact call can reuse it.
         self._create_adr_issue_link(binding, adr.id, issue_id, native_id)

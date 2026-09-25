@@ -450,9 +450,11 @@ def seed_linear_adr(
     status,
     supersedes=(),
     superseded_by=None,
+    body=None,
 ):
     binding = {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]}
-    body = f"seed body for {adr_id}"
+    if body is None:
+        body = f"seed body for {adr_id}"
     digest = hashlib.sha256(body.encode()).hexdigest()
     metadata = {
         "schema": linear_module._ADR_SCHEMA,
@@ -3790,6 +3792,25 @@ def test_linear_adr_raw_html_is_refused_before_any_provider_write(tracker):
         instance.import_adr_batch(PROJECT, (source, replacement))
     assert wire.documents == {}
     assert wire.comments == {}
+
+
+def test_linear_adr_raw_html_link_refuses_before_reciprocal_comment(tracker):
+    instance, wire = tracker
+    existing = seed_linear_adr(
+        wire,
+        adr_id="LIN-ADR-0097",
+        status="accepted",
+        body="<pre>\n- literal\n</pre>",
+    )
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.link_adr_issue(existing, "LIN-2", project=PROJECT)
+
+    assert (wire.documents, wire.comments) == before
+    [readback] = instance.list_adrs(PROJECT)
+    assert readback.id == existing.id
+    assert readback.body.endswith("<pre>\n- literal\n</pre>")
 
 
 def test_linear_adr_witness_preserves_lossy_dash_source_distinct_from_native_star(
