@@ -63,8 +63,8 @@ tree and registry: workspace/project/team readback, all seven state UUIDs with o
 labels, the four Type label UUIDs with their exclusive group, selected estimate scale,
 empty or observed milestones, allowed operations, and the qualification-artifact check.
 The record may contain provider identifiers and observations, but never a token, account
-data, or private URL. FOUNDRY-159 alone may activate a verified binding or perform a
-cutover; FOUNDRY-162 creates neither a migration nor a dual-write path.
+data, or private URL. PAT-23 owns the bounded historical ADR import; PAT-10 owns
+the final verified repository cutover. PAT-22 activates neither binding nor dual-write.
 
 ## Exact support boundary
 
@@ -97,10 +97,153 @@ pre-write read, or post-write readback cannot prevent an external writer from be
 overwritten, so none is presented as an anti-overwrite guarantee.
 
 Unsupported capabilities fail explicitly with typed errors: existing-issue replacement,
-a true ADR knowledge base, atomic
-audited non-code Epic closure, project provisioning, and free-form provider-native search
-queries. `query issue` still returns the issue and projects the absent ADR knowledge base
-as a structured capability status.
+atomic audited non-code Epic closure, project provisioning, and free-form provider-native
+search queries. ADRs are stored as project-scoped Linear Documents, never substituted by
+a Git catalogue or YouTrack read. A document has a deterministic UUIDv4 client ID for its
+`(project, ADR, version)` slot, a closed metadata header and body/content digests. Every
+version also has a second deterministic UUIDv4 project Document: its witness binds the version
+ID and exact content hash. Reads require the pair in both directions. An isolated deletion
+of the only version, the head version, or its witness is therefore a conflict rather than
+an empty/older history. The two creates are not a Linear transaction: an interrupted
+response is recovered only by exact deterministic-ID readback; a process stop or provider
+failure between them leaves a detectable incomplete pair and all normal ADR reads fail
+closed. Replaying the byte-identical native creation can complete exactly one surviving
+`proposed` version-0 slot after validating every other pair and relation; a different
+title/body, more than one incomplete pair, or an orphan witness remains fail-closed.
+Normal reads also fail closed on a later-version partial write; only the matching typed
+operation may complete its exact missing witness after hypothetical whole-graph validation.
+The public `adr accept`, `adr edit`, `adr supersede`, and `adr link-issue` commands
+resolve a witnessed predecessor through the mutation-only port, so an incomplete
+pair cannot make the recovery command unreachable. This port never repairs on read:
+the typed operation must prove the exact candidate before appending or completing
+its witness. After an `adr edit` version and witness are both durable, replaying the
+same expected and updated files reconstructs that exact successor from its witnessed
+predecessor and returns unchanged without another provider write. That no-op proof
+requires an intact chain: changed files, a damaged witness, or a missing predecessor
+witness remain conflicts before any effect. A missing witness on the exact derived
+successor still follows the bounded interrupted-pair recovery above. A non-object entry
+in Linear's document list is an invalid provider response, not an empty ADR index.
+
+Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
+Each additive version must have exactly one typed delta: body, status, source
+supersession, one reciprocal `supersedes` addition, or one canonical ADR↔issue link;
+combined deltas fail closed even
+when a matching witness exists.
+`supersedes` and `superseded_by` must be reciprocal in the latest project snapshot;
+self-links, duplicates, missing ADRs, and more than 100 relations of either kind are
+refused. Before an import can write anything, every supplied issue reference is resolved
+through Linear and corroborated by both its returned readable identifier and native ID.
+Case variants and native UUID aliases are stored only as the canonical readable identifier;
+two inputs that resolve to the same native issue are a conflict, not two relations. The
+100-link bound applies before resolution and to the resulting canonical identity set.
+Reads and replay reject noncanonical stored aliases or malformed provider identities.
+Every issue relation is re-read and must belong to the configured team and project, and
+the issue must retain its deterministic reciprocal Foundry comment bound to the project,
+ADR, canonical readable issue ID, and exact native issue ID. Its deterministic client ID
+is UUIDv4, as Linear requires.
+The comment is created additively before the imported or native ADR
+version, uses exact-ID readback, and is replay-safe; an interrupted link can leave a
+harmless orphan comment but cannot expose a one-sided ADR relation. A missing issue/ADR
+has its own typed unavailable error; a transport or GraphQL failure remains a provider
+error and is never reclassified as a missing relation.
+Supersession appends both sides. These multiple Document creates are provider-additive but
+not provider-atomic. The exact command replay returns idempotently when both sides are
+present; if the replacement side completed and the source side did not, the same command
+may append only the missing source after checking both complete chains and the hypothetical
+reciprocal graph. If that exact source Document exists but its witness is missing,
+the replay verifies the byte-exact source candidate before completing only its witness.
+If the replacement-side version exists without its witness, the same command first
+preflights both hypothetical sides, completes that exact witness, then appends the source.
+A different pair or a second incomplete slot remains fail-closed. No incomplete graph is
+accepted as a read.
+
+Writes append a version rather than updating a document. Native creation starts
+`proposed`; status transitions and supersession are typed and constrained. The provider-
+neutral `link_adr_issue` port is exposed as `adr link-issue <ADR-ID> <ISSUE-ID>` and
+`frame` links newly created issues to their constraining ADRs when the provider supports
+that port. The one-relation append stores the canonical readable Linear identifier and
+requires the deterministic reciprocal comment; replay of the exact link is idempotent.
+If its version was written but its witness was interrupted, replay first validates the
+exact version, reciprocal comment and hypothetical full graph, then completes only the
+missing witness. A changed target or another incomplete slot cannot authorize repair.
+The provider-
+neutral historical-import port is distinct from native creation and defaults to a typed
+unsupported capability on trackers that do not implement it. Linear records the source
+reference, timestamps, source digest, historical status, relations, and exact target issue
+scope without invoking acceptance. Omitted relation arguments remain explicit in
+`origin.missing_relations`; an omitted value is never presented as a known-empty
+source relation, and an exact replay cannot replace it with a newly asserted empty
+value. In particular, a historical `superseded` status with an unknown successor is
+preserved as `superseded` only when `superseded_by` is omitted and recorded as unknown;
+an explicitly known-empty successor is invalid. The production import must pass all
+three relation arguments explicitly after
+source qualification. A related ADR must already be present and accepted
+where it serves as a replacement; arbitrary mutually referencing batches are not seeded
+by the single-record port. The separate `import_adr_batch(project, records)` port
+accepts a finite manifest of 1–100 complete historical snapshots with all three
+relation fields explicit. It constructs every deterministic version-0 Document,
+witness and reciprocal issue comment, validates the full hypothetical graph before
+the first write, then creates the exact slots additively. Ordinary reads fail closed
+through a partial batch; each version-0 migration origin persists a SHA-256 digest of
+the complete normalized manifest, propagated to later versions. An exact replay can
+complete matching slots regardless of record order; a subset or changed manifest
+collides before effects, while unrelated conflicts are also refused. This is not a
+provider-atomic transaction and is not permission to migrate the entire archive. PAT-23 owns the
+authorized manifest and audit; PAT-10 owns cutover.
+When import stops after version 0 (with or without its witness) but before reciprocal
+relation versions, an exact replay preflights the completed hypothetical graph before
+adding the missing witness and versions. It also completes a multi-relation import that
+stopped after the first reciprocal version, including when that exact version exists but
+its witness does not. The replay requires that this is the only incomplete version pair
+and that it is one of the reciprocal versions derived from the byte-identical import;
+other graph conflicts and a changed source snapshot remain fail-closed. This recovery is
+asymmetric because each version is written before its witness: a present version with its
+exact witness missing may be completed, while a present witness whose matching version
+Document is missing is an orphan and is refused before any `DocumentCreate` or
+`CommentCreate` effect. Batch reciprocal comments have a separate, earlier write order:
+they are all created before the first batch Document. Therefore an exact replay may fill
+a missing reciprocal comment only while no Document slot from that manifest exists. Once
+a version or witness is durable, an absent deterministic comment is treated as an
+external deletion and the replay refuses before any `DocumentCreate` or `CommentCreate`
+effect; it never invokes the comment-creation path or recreates the relation. A deletion
+interleaved after graph validation is caught by the final snapshot read. On a completed
+batch this produces no creation effect; on an advancing partial batch, missing Documents
+may already have been created before that final conflict, with no atomic rollback.
+For Linear `frame`, every `constrained_by` reference is resolved before creating any
+ADR, epic or issue; an unknown, ambiguous, unreadable, deprecated, or superseded
+reference cannot leave an issue with only its first reciprocal link. Indexes, incoming
+titles, and existing ADR IDs must name exactly one ADR: a collision is refused rather
+than selecting whichever alias was inserted last. Only `proposed` and `accepted` ADRs
+are active constraints. Provider multi-object failure after this preflight remains
+non-atomic and must not be mistaken for a completed frame.
+
+### Controlled production recipe
+
+The fake transport is the executable proof shipped by this repository. A production
+operator must separately, under the cutover authority:
+
+1. qualify the exact Linear workspace/team/project and record the stable IDs described
+   above; keep the existing repository binding unchanged;
+2. export only the authorized live YouTrack ADR closure, retain each source reference and
+   timestamps, compute the SHA-256 of the byte-exact body, and map every issue relation to
+   an already qualified target-project issue;
+3. validate the entire authorized manifest offline with the same closed metadata and
+   relation rules; unresolved or out-of-scope references stop the run;
+4. in a maintenance window, use the single-record port for independently seedable
+   records and the batch port for a closed reciprocal group, then read the complete
+   Linear ADR index back and compare IDs,
+   status, provenance, body digests, reciprocal relations, version/witness pairs, team and
+   project IDs;
+5. only after that independent readback may PAT-10 atomically change the repository
+   binding. Do not dual-write, accept imported ADRs implicitly, or delete the YouTrack
+   archive.
+
+No step above was run by PAT-22. This repository performs no real ADR write, historical
+import, or binding cutover. The witness is independent as a second provider object, not an
+immutable external transparency log. A workspace actor able to delete both a version and
+its witness can erase that pair without a surviving anchor; deleting every ADR and every
+witness is information-theoretically indistinguishable from a project that never had an
+ADR. Detecting coordinated erasure requires a separately decided external durable anchor.
 
 ## Append-only lifecycle guarantee
 
@@ -271,4 +414,4 @@ unavailable because it requires a provider-atomic parent/child audit.
 
 This implementation and its controlled transport round-trip do not activate a real
 workspace. No Linear binding or live write is performed here. Import, target-workspace
-validation, and the atomic cutover remain FOUNDRY-159 work.
+validation, and the atomic cutover remain PAT-23/PAT-10 work.

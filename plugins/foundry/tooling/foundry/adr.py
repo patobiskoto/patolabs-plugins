@@ -8,6 +8,7 @@ CLI:
   python3 -m foundry.adr accept <ADR-ID>
   python3 -m foundry.adr edit <ADR-ID> <expected-body.md> <updated-body.md>
 """
+
 from __future__ import annotations
 
 import sys
@@ -32,7 +33,9 @@ _SKELETON = """## Contexte
 
 def _project(tr):
     binding = write.mutation_project(tr)
-    return binding if binding is not None else tr.resolve_project(registry.repo_basename())
+    return (
+        binding if binding is not None else tr.resolve_project(registry.repo_basename())
+    )
 
 
 def create(title, status="proposed"):
@@ -45,7 +48,7 @@ def create(title, status="proposed"):
 def accept(adr_id):
     tr = foundry.tracker()
     p = _project(tr)
-    match = next((a for a in tr.list_adrs(p) if a.id == adr_id), None)
+    match = write.adr_for_mutation(tr, p, adr_id)
     if not match:
         raise SystemExit(f"ADR introuvable : {adr_id}")
     write.set_adr_status(tr, match, "accepted")
@@ -59,9 +62,32 @@ def _body_file(path: str) -> str:
 
 def edit(adr_id, expected_path, updated_path):
     changed = write.update_adr_body(
-        foundry.tracker(), adr_id, _body_file(expected_path), _body_file(updated_path),
+        foundry.tracker(),
+        adr_id,
+        _body_file(expected_path),
+        _body_file(updated_path),
     )
     print(f"✏️  {adr_id} · corps {'mis à jour' if changed else 'inchangé'}")
+
+
+def supersede(adr_id, replacement_id):
+    tr = foundry.tracker()
+    p = _project(tr)
+    current = write.adr_for_mutation(tr, p, adr_id)
+    if current is None:
+        raise SystemExit(f"ADR introuvable : {adr_id}")
+    write.supersede_adr(tr, current, replacement_id)
+    print(f"↪️  {adr_id} → superseded by {replacement_id}")
+
+
+def link_issue(adr_id, issue_id):
+    tr = foundry.tracker()
+    p = _project(tr)
+    current = write.adr_for_mutation(tr, p, adr_id)
+    if current is None:
+        raise SystemExit(f"ADR introuvable : {adr_id}")
+    linked = write.link_adr_issue(tr, current, issue_id)
+    print(f"🔗 {linked.id} ↔ {issue_id}")
 
 
 if __name__ == "__main__":
@@ -72,5 +98,14 @@ if __name__ == "__main__":
         accept(sys.argv[2])
     elif cmd == "edit":
         edit(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif cmd == "supersede":
+        supersede(sys.argv[2], sys.argv[3])
+    elif cmd == "link-issue":
+        link_issue(sys.argv[2], sys.argv[3])
     else:
-        raise SystemExit("usage: adr.py <create '<title>' [status] | accept|edit <ADR-ID>>")
+        raise SystemExit(
+            "usage: adr.py <create '<title>' [status] | accept <ADR-ID> | "
+            "edit <ADR-ID> <expected-body.md> <updated-body.md> | "
+            "supersede <ADR-ID> <replacement-ADR-ID> | "
+            "link-issue <ADR-ID> <ISSUE-ID>>"
+        )
