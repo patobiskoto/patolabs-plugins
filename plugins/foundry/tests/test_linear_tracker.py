@@ -2365,25 +2365,29 @@ def test_linear_frame_materializes_native_reciprocal_adr_issue_link(
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
     created = frame.materialize(
         {
-            "adrs": [{"title": "Frame decision", "body": "Decision"}],
+            "adrs": [
+                {"title": "Frame decision", "body": "Decision"},
+                {"title": "Second decision", "body": "Another decision"},
+            ],
             "issues": [
                 {
                     "title": "Implement decision",
                     "body": "- [ ] Done",
-                    "constrained_by": ["Frame decision"],
+                    "constrained_by": ["Frame decision", "Second decision"],
                 }
             ],
         }
     )
-    adr_id = created["adrs"][0]
+    adr_ids = created["adrs"]
     issue_id = created["issues"][0]
-    adr = instance.list_adrs(PROJECT)[0]
-    metadata, _ = linear_module._parse_adr_document(
-        wire.documents[adr.ref],
-        {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
-    )
-    assert metadata["relations"]["issues"] == [issue_id]
-    assert adr.id == adr_id
+    adrs = instance.list_adrs(PROJECT)
+    assert {adr.id for adr in adrs} == set(adr_ids)
+    for adr in adrs:
+        metadata, _ = linear_module._parse_adr_document(
+            wire.documents[adr.ref],
+            {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+        )
+        assert metadata["relations"]["issues"] == [issue_id]
 
 
 def test_linear_frame_rejects_any_unknown_adr_before_first_write(
@@ -2402,6 +2406,92 @@ def test_linear_frame_rejects_any_unknown_adr_before_first_write(
                 "constrained_by": ["Known upcoming", "LIN-ADR-9999"],
             }],
         })
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+@pytest.mark.parametrize("status", ["deprecated", "superseded"])
+def test_linear_frame_rejects_terminal_existing_adr_before_first_write(
+    tracker, monkeypatch, status
+):
+    instance, wire = tracker
+    terminal = instance.create_adr(PROJECT, "Retired decision", "decision")
+    instance.set_adr_status(terminal, "accepted", project=PROJECT)
+    if status == "deprecated":
+        terminal = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[terminal.id]
+        instance.set_adr_status(terminal, status, project=PROJECT)
+    else:
+        replacement = instance.create_adr(PROJECT, "Replacement", "decision")
+        instance.set_adr_status(replacement, "accepted", project=PROJECT)
+        accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+        instance.supersede_adr(accepted[terminal.id], replacement.id, project=PROJECT)
+    terminal = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[terminal.id]
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+    before_documents = copy.deepcopy(wire.documents)
+    before_comments = copy.deepcopy(wire.comments)
+
+    with pytest.raises(ValueError, match="ADR inactive"):
+        frame.materialize({
+            "adrs": [{"title": "Would be new", "body": "decision"}],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": ["Would be new", terminal.id],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == before_documents
+    assert wire.comments == before_comments
+
+
+@pytest.mark.parametrize("status", ["deprecated", "superseded", "unreadable", None])
+def test_linear_frame_rejects_inactive_upcoming_adr_before_first_write(
+    tracker, monkeypatch, status
+):
+    instance, wire = tracker
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    before_issues = copy.deepcopy(wire.issues)
+
+    with pytest.raises(ValueError, match="ADR inactive"):
+        frame.materialize({
+            "adrs": [{
+                "title": "Inactive decision", "body": "decision", "status": status,
+            }],
+            "epic": {"title": "Should not exist"},
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": ["Inactive decision"],
+            }],
+        })
+
+    assert wire.issues == before_issues
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
+def test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    unreadable = Adr("LIN-ADR-9999", "Unreadable", status=None)
+    monkeypatch.setattr(foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(instance, "list_adrs", lambda _project: [unreadable])
+    before_issues = copy.deepcopy(wire.issues)
+
+    with pytest.raises(ValueError, match="ADR inactive"):
+        frame.materialize({
+            "issues": [{
+                "title": "Should not exist", "body": "- [ ] Done",
+                "constrained_by": [unreadable.id],
+            }],
+        })
+
     assert wire.issues == before_issues
     assert wire.documents == {}
     assert wire.comments == {}

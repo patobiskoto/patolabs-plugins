@@ -122,9 +122,10 @@ Spec shape: `{ "adrs":[{title,body,status}], "epic":{title,body,fields},
 New issues default to `State: backlog` — sequencing them is the `foundry:roadmap`
 skill's job.
 With Linear, the bridge preflights every `constrained_by` reference before its first
-write; an unknown ADR refuses the frame without creating a partial issue. Linear's
-multiple provider writes are not a transaction, so a later provider failure still
-requires explicit reconciliation rather than assuming the frame completed.
+write; an unknown, unreadable, deprecated, or superseded ADR refuses the frame without
+creating a partial issue. Only `proposed` and `accepted` ADRs can constrain a new
+issue. Linear's multiple provider writes are not a transaction, so a later provider
+failure still requires explicit reconciliation rather than assuming the frame completed.
 
 ## 4. Hand off
 Report what was created and suggest `foundry:roadmap` to order the slice by value.
