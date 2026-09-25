@@ -2414,6 +2414,7 @@ def test_linear_frame_rejects_any_unknown_adr_before_first_write(
 @pytest.mark.parametrize(
     "adrs",
     [
+        [{"title": "0", "body": "decision"}],
         [
             {"title": "First decision", "body": "decision"},
             {"title": "0", "body": "decision"},
@@ -2423,7 +2424,11 @@ def test_linear_frame_rejects_any_unknown_adr_before_first_write(
             {"title": "Repeated decision", "body": "second"},
         ],
     ],
-    ids=["incoming-title-collides-with-index", "duplicate-incoming-title"],
+    ids=[
+        "incoming-title-collides-with-own-index",
+        "incoming-title-collides-with-other-index",
+        "duplicate-incoming-title",
+    ],
 )
 def test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write(
     tracker, monkeypatch, adrs

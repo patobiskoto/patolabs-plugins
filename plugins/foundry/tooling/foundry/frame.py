@@ -34,9 +34,8 @@ def _project(tr):
 
 def _register_adr_alias(aliases: dict[str, tuple[str, int | str]], key: str,
                         target: tuple[str, int | str]) -> None:
-    """Register one preflight ADR reference key without changing its meaning."""
-    previous = aliases.get(key)
-    if previous is not None and previous != target:
+    """Register one unique preflight ADR reference key."""
+    if key in aliases:
         raise ValueError(f"Référence ADR ambiguë pour relation Linear : {key}")
     aliases[key] = target
 
