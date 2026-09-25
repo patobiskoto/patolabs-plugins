@@ -110,6 +110,20 @@ failure between them leaves a detectable incomplete pair and all normal ADR read
 closed. Replaying the byte-identical native creation can complete exactly one surviving
 `proposed` version-0 slot after validating every other pair and relation; a different
 title/body, more than one incomplete pair, or an orphan witness remains fail-closed.
+
+Linear's Markdown readback escapes the closing delimiter of these ADR HTML comments:
+the canonical version separator sent as `\n-->\n\n` is returned as
+`\n\\-->\n\n`, and the witness suffix sent as `\n-->` is returned as
+`\n\\-->`. In the version comment header it also escapes JSON array brackets as
+`\\[` and `\\]`. The adapter accepts canonical content or exactly this one observed
+serialization in that deterministic header. It does not strip backslashes, rewrite the
+body, or normalize any other Markdown variant. Exact-slot verification still checks
+the deterministic ID, title, project, archive state, canonical metadata encoding, and
+body digest. Witnesses bind the exact version bytes returned by Linear, including the
+inserted backslash, and later versions bind the same exact readback bytes through
+`previous_sha256`. Extra backslashes, whitespace, altered delimiters, re-encoded JSON, or
+body changes therefore remain conflicts or invalid provider responses.
+
 Normal reads also fail closed on a later-version partial write; only the matching typed
 operation may complete its exact missing witness after hypothetical whole-graph validation.
 The public `adr accept`, `adr edit`, `adr supersede`, and `adr link-issue` commands

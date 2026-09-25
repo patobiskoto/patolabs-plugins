@@ -351,6 +351,44 @@ def _adr_document_content(metadata: dict, body: str) -> str:
     return f"{_ADR_HEADER}{header}\n-->\n\n{body}"
 
 
+def _linear_adr_readback_content(content: str) -> str:
+    """Return the sole provider serialization accepted beside canonical bytes.
+
+    Linear escapes the closing delimiter of an HTML comment in Markdown readback.
+    Keep compatibility pinned to the observed deterministic header transformation:
+    JSON brackets and the marker delimiter only. Body bytes remain untouched.
+    """
+    if content.startswith(_ADR_HEADER):
+        payload = content[len(_ADR_HEADER) :]
+        encoded, separator, body = payload.partition("\n-->\n\n")
+        if not separator:
+            raise ValueError("canonical ADR document delimiter is missing")
+        encoded = encoded.replace("[", "\\[").replace("]", "\\]")
+        return f"{_ADR_HEADER}{encoded}\n\\-->\n\n{body}"
+    if content.startswith(_ADR_WITNESS_HEADER) and content.endswith("\n-->"):
+        suffix = "\n-->"
+        return f"{content[:-len(suffix)]}\n\\-->"
+    raise ValueError("canonical ADR content is invalid")
+
+
+def _adr_readback_content_matches(observed: object, canonical: str) -> bool:
+    return (
+        observed == canonical
+        or observed == _linear_adr_readback_content(canonical)
+    )
+
+
+def _exact_adr_document_matches(raw: object, expected: dict) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    return all(
+        _adr_readback_content_matches(raw.get(key), value)
+        if key == "content"
+        else raw.get(key) == value
+        for key, value in expected.items()
+    )
+
+
 def _adr_witness_document(binding: dict, metadata: dict, raw: dict) -> dict:
     witness = {
         "schema": _ADR_WITNESS_SCHEMA,
@@ -384,10 +422,14 @@ def _parse_adr_witness(raw: dict, binding: dict) -> dict:
     content = raw.get("content")
     if not isinstance(content, str) or not content.startswith(_ADR_WITNESS_HEADER):
         raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
-    encoded, separator, remainder = content[len(_ADR_WITNESS_HEADER) :].partition(
-        "\n-->"
-    )
-    if not separator or remainder:
+    payload = content[len(_ADR_WITNESS_HEADER) :]
+    encoded = None
+    for delimiter in ("\n-->", "\n\\-->"):
+        candidate, separator, remainder = payload.partition(delimiter)
+        if separator and not remainder:
+            encoded = candidate
+            break
+    if encoded is None:
         raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
     try:
         witness = json.loads(encoded)
@@ -425,11 +467,13 @@ def _parse_adr_witness(raw: dict, binding: dict) -> dict:
         or raw.get("title")
         != f"{_ADR_WITNESS_PREFIX}{adr_id} / v{sequence:04d}"
         or raw.get("project", {}).get("id") != binding["project_id"]
-        or content
-        != (
-            f"{_ADR_WITNESS_HEADER}"
-            f"{json.dumps(witness, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
-            "\n-->"
+        or not _adr_readback_content_matches(
+            content,
+            (
+                f"{_ADR_WITNESS_HEADER}"
+                f"{json.dumps(witness, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
+                "\n-->"
+            ),
         )
     ):
         raise LinearTrackerError("adr.witness.normalize", None, "invalid_response")
@@ -442,8 +486,25 @@ def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
     content = raw.get("content")
     if not isinstance(content, str) or not content.startswith(_ADR_HEADER):
         raise LinearTrackerError("adr.normalize", None, "invalid_response")
-    encoded, separator, body = content[len(_ADR_HEADER) :].partition("\n-->\n\n")
-    if not separator:
+    payload = content[len(_ADR_HEADER) :]
+    encoded = None
+    body = None
+    for delimiter, linear_serialized in (
+        ("\n-->\n\n", False),
+        ("\n\\-->\n\n", True),
+    ):
+        candidate, separator, candidate_body = payload.partition(delimiter)
+        if not separator:
+            continue
+        if linear_serialized:
+            candidate = candidate.replace("\\[", "[").replace("\\]", "]")
+        try:
+            json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        encoded, body = candidate, candidate_body
+        break
+    if encoded is None or body is None:
         raise LinearTrackerError("adr.normalize", None, "invalid_response")
     try:
         metadata = json.loads(encoded)
@@ -606,7 +667,9 @@ def _parse_adr_document(raw: dict, binding: dict) -> tuple[dict, str]:
         or raw.get("id") != _adr_document_id(binding["project_id"], adr_id, sequence)
         or raw.get("title") != _adr_document_title(metadata)
         or raw.get("project", {}).get("id") != binding["project_id"]
-        or content != _adr_document_content(metadata, body)
+        or not _adr_readback_content_matches(
+            content, _adr_document_content(metadata, body)
+        )
     ):
         raise LinearTrackerError("adr.normalize", None, "invalid_response")
     return metadata, body
@@ -2482,11 +2545,18 @@ class LinearTracker(Tracker):
     @staticmethod
     def _adr_model(versions: list[tuple[dict, dict]]) -> Adr:
         metadata, raw = versions[-1]
+        _, body = _parse_adr_document(
+            raw,
+            {
+                "project_id": metadata["project_id"],
+                "team_id": metadata["team_id"],
+            },
+        )
         return Adr(
             id=metadata["id"],
             title=metadata["title"],
             status=metadata["status"],
-            body=raw["content"],
+            body=_adr_document_content(metadata, body),
             ref=raw["id"],
         )
 
@@ -2544,7 +2614,7 @@ class LinearTracker(Tracker):
             if raw is None:
                 return None
             _parse_adr_document(raw, binding)
-            if any(raw.get(k) != v for k, v in expected.items()):
+            if not _exact_adr_document_matches(raw, expected):
                 raise TrackerConflictError(
                     "Linear ADR version slot already has different content"
                 )
@@ -2559,7 +2629,7 @@ class LinearTracker(Tracker):
             if raw is None:
                 return None
             _parse_adr_witness(raw, binding)
-            if any(raw.get(k) != v for k, v in witness.items()):
+            if not _exact_adr_document_matches(raw, witness):
                 raise TrackerConflictError(
                     "Linear ADR witness slot already has different content"
                 )
@@ -2588,8 +2658,8 @@ class LinearTracker(Tracker):
             raw for raw in documents
             if isinstance(raw, dict) and raw.get("id") == candidate["id"]
         ]
-        if len(matches) != 1 or any(
-            matches[0].get(key) != value for key, value in candidate.items()
+        if len(matches) != 1 or not _exact_adr_document_matches(
+            matches[0], candidate
         ):
             raise TrackerConflictError("Linear ADR interrupted version slot diverged")
         witness = _adr_witness_document(binding, metadata, matches[0])
@@ -2788,7 +2858,9 @@ class LinearTracker(Tracker):
         if (
             len(versions) < 2
             or updated_body == expected_body
-            or versions[-2][1]["content"] != expected_body
+            or not _adr_readback_content_matches(
+                versions[-2][1].get("content"), expected_body
+            )
         ):
             return False
         old_header, separator, _ = expected_body.partition("\n-->\n\n")
@@ -2805,8 +2877,9 @@ class LinearTracker(Tracker):
             "project": {"id": metadata["project_id"]},
             "archivedAt": None,
         }
-        return versions[-1][0] == metadata and all(
-            versions[-1][1].get(key) == value for key, value in candidate.items()
+        return (
+            versions[-1][0] == metadata
+            and _exact_adr_document_matches(versions[-1][1], candidate)
         )
 
     def _append_adr_versions(self, project, changes):
@@ -3101,7 +3174,13 @@ class LinearTracker(Tracker):
                 "archivedAt": None,
             }
             _parse_adr_document(candidate, binding)
-            witness = _adr_witness_document(binding, metadata, candidate)
+            readback_candidate = {
+                **candidate,
+                "content": _linear_adr_readback_content(candidate["content"]),
+            }
+            witness = _adr_witness_document(
+                binding, metadata, readback_candidate
+            )
             candidates.append((metadata, body, candidate, witness))
 
         by_id = {}
@@ -3126,8 +3205,13 @@ class LinearTracker(Tracker):
             for expected in (candidate, witness):
                 current = by_id.get(expected["id"])
                 if current is None:
-                    hypothetical.append(expected)
-                elif any(current.get(key) != value for key, value in expected.items()):
+                    hypothetical.append({
+                        **expected,
+                        "content": _linear_adr_readback_content(
+                            expected["content"]
+                        ),
+                    })
+                elif not _exact_adr_document_matches(current, expected):
                     raise TrackerConflictError("Linear ADR batch slot diverged")
         chains = _adr_chain(hypothetical, binding)
         for metadata, _body, _candidate, _witness in candidates:
@@ -3335,7 +3419,9 @@ class LinearTracker(Tracker):
         }
         _parse_adr_document(candidate, binding)
         if adr_id in chains:
-            if any(chains[adr_id][0][1].get(k) != v for k, v in candidate.items()):
+            if not _exact_adr_document_matches(
+                chains[adr_id][0][1], candidate
+            ):
                 raise TrackerConflictError(
                     "Linear ADR migration conflicts with existing origin"
                 )
@@ -3354,10 +3440,7 @@ class LinearTracker(Tracker):
             interrupted_pair is not None
             and interrupted_pair[0]["id"] == adr_id
             and interrupted_pair[0]["sequence"] == 0
-            and all(
-                interrupted_pair[2].get(key) == value
-                for key, value in candidate.items()
-            )
+            and _exact_adr_document_matches(interrupted_pair[2], candidate)
         )
         changes = []
         for target_id in sorted(supersedes):
@@ -3641,8 +3724,8 @@ class LinearTracker(Tracker):
         hypothetical = {key: list(value) for key, value in chains.items()}
         hypothetical[adr.id].append((metadata, candidate))
         self._validate_adr_graph(hypothetical, binding)
-        if dangling_source is not None and any(
-            dangling_source.get(key) != value for key, value in candidate.items()
+        if dangling_source is not None and not _exact_adr_document_matches(
+            dangling_source, candidate
         ):
             raise TrackerConflictError(
                 "Linear ADR interrupted supersession source slot diverged"
@@ -3670,7 +3753,9 @@ class LinearTracker(Tracker):
                 raise
             binding, documents = self._adr_documents(project)
             predecessors = [raw for raw in documents if raw.get("id") == adr.ref]
-            if len(predecessors) != 1 or predecessors[0]["content"] != expected_body:
+            if len(predecessors) != 1 or not _adr_readback_content_matches(
+                predecessors[0].get("content"), expected_body
+            ):
                 raise TrackerConflictError("Linear ADR interrupted body predecessor diverged")
             old, _ = _parse_adr_document(predecessors[0], binding)
             old_header, sep, _ = expected_body.partition("\n-->\n\n")
@@ -3692,7 +3777,9 @@ class LinearTracker(Tracker):
         versions = chains.get(adr.id)
         if versions is None or versions[-1][1]["id"] != adr.ref:
             raise TrackerConflictError("Linear ADR body changed before edit")
-        if versions[-1][1]["content"] != expected_body:
+        if not _adr_readback_content_matches(
+            versions[-1][1].get("content"), expected_body
+        ):
             if self._is_exact_adr_body_replay(
                 versions, expected_body, updated_body
             ):

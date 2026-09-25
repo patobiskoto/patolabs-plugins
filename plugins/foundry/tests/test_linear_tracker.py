@@ -101,6 +101,21 @@ def raw_issue(identifier, native_id, *, title="Issue", body="- [ ] acceptance"):
     }
 
 
+def linear_markdown_readback(content):
+    """Reproduce Linear's observed escaping of ADR comment closers."""
+    if content.startswith(linear_module._ADR_HEADER):
+        payload = content[len(linear_module._ADR_HEADER) :]
+        header, separator, body = payload.partition("\n-->\n\n")
+        assert separator
+        header = header.replace("[", "\\[").replace("]", "\\]")
+        return f"{linear_module._ADR_HEADER}{header}\n\\-->\n\n{body}"
+    if content.startswith(linear_module._ADR_WITNESS_HEADER):
+        suffix = "\n-->"
+        assert content.endswith(suffix)
+        return f"{content[:-len(suffix)]}\n\\-->"
+    return content
+
+
 class LinearWire:
     """Stateful GraphQL fake retaining exact native identifiers across mutations."""
 
@@ -165,7 +180,7 @@ class LinearWire:
             created = {
                 "id": value["id"],
                 "title": value["title"],
-                "content": value["content"],
+                "content": linear_markdown_readback(value["content"]),
                 "archivedAt": None,
                 "project": {"id": value["projectId"]},
             }
@@ -3547,6 +3562,50 @@ def test_linear_fake_rejects_uuid_v5_creation_ids(mutation):
     assert wire.comments == {}
 
 
+def test_linear_adr_native_readback_accepts_only_observed_marker_escape(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Serialized marker", "exact body")
+    binding = instance._binding(PROJECT)
+    version = wire.documents[created.ref]
+    witness = wire.documents[
+        linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    ]
+
+    assert "\n\\-->\n\nexact body" in version["content"]
+    assert version["content"].count("\\[") == 2
+    assert version["content"].count("\\]") == 2
+    assert version["content"] not in created.body
+    assert created.body.endswith("\n-->\n\nexact body")
+    assert witness["content"].endswith("\n\\-->")
+    assert linear_module._parse_adr_document(version, binding)[1] == "exact body"
+    assert linear_module._parse_adr_witness(witness, binding)["document_id"] == created.ref
+
+    hostile_versions = []
+    for delimiter in ("\n\\\\-->\n\n", "\n\\-- >\n\n", "\n \\-->\n\n"):
+        hostile = copy.deepcopy(version)
+        hostile["content"] = hostile["content"].replace(
+            "\n\\-->\n\n", delimiter, 1
+        )
+        hostile_versions.append(hostile)
+    tampered_body = copy.deepcopy(version)
+    tampered_body["content"] += "tampered"
+    hostile_versions.append(tampered_body)
+    partially_unescaped_header = copy.deepcopy(version)
+    partially_unescaped_header["content"] = partially_unescaped_header[
+        "content"
+    ].replace("\\[", "[", 1)
+    hostile_versions.append(partially_unescaped_header)
+    for hostile in hostile_versions:
+        with pytest.raises(LinearTrackerError, match="invalid_response"):
+            linear_module._parse_adr_document(hostile, binding)
+
+    for suffix in ("\n\\\\-->", "\n\\-- >", "\n \\-->", "\n\\-->\n"):
+        hostile = copy.deepcopy(witness)
+        hostile["content"] = hostile["content"].removesuffix("\n\\-->") + suffix
+        with pytest.raises(LinearTrackerError, match="invalid_response"):
+            linear_module._parse_adr_witness(hostile, binding)
+
+
 def test_linear_adr_missing_witness_fails_closed_and_exact_pair_replays(tracker):
     instance, wire = tracker
     created = instance.create_adr(PROJECT, "Replay pair", "body")
@@ -3616,11 +3675,23 @@ def test_linear_adr_witness_create_unavailable_leaves_detectable_partial_pair(tr
     instance._transport = original
 
     assert len(wire.documents) == 1
+    version_id = linear_module._adr_document_id(PROJECT.id, "LIN-ADR-0001", 0)
+    assert set(wire.documents) == {version_id}
+    version_before_replay = copy.deepcopy(wire.documents[version_id])
     with pytest.raises(TrackerConflictError, match="version witness is missing"):
         instance.list_adrs(PROJECT)
     recovered = instance.create_adr(PROJECT, "Partial pair", "body")
     assert recovered.status == "proposed"
+    assert recovered.ref == version_id
+    assert wire.documents[version_id] == version_before_replay
     assert len(wire.documents) == 2
+    version_creates = [
+        variables["input"]["id"]
+        for document, variables in wire.calls
+        if "FoundryLinearAdrDocumentCreate" in document
+        and variables["input"]["title"].startswith("[Foundry ADR] ")
+    ]
+    assert version_creates == [version_id]
 
 
 def test_linear_adr_relations_are_reciprocal_and_project_bounded(tracker):
