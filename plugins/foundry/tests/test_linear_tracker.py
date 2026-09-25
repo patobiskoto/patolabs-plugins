@@ -2822,6 +2822,30 @@ def test_linear_historical_batch_recovers_exact_partial_version_witness(tracker)
     assert len(wire.comments) == 1
 
 
+def test_linear_historical_batch_refuses_orphan_witness_before_effect(tracker):
+    instance, wire = tracker
+    records = _historical_batch_pair()
+    instance.import_adr_batch(PROJECT, records)
+    version_id = linear_module._adr_document_id(
+        PROJECT.id, records[0]["adr_id"], 0
+    )
+    del wire.documents[version_id]
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    calls_before = len(wire.calls)
+
+    with pytest.raises(
+        TrackerConflictError, match="batch witness has no matching version"
+    ):
+        instance.import_adr_batch(PROJECT, records)
+
+    assert (wire.documents, wire.comments) == before
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[calls_before:]
+    )
+
+
 def test_linear_historical_batch_recovers_completed_first_half(tracker):
     instance, wire = tracker
     records = _historical_batch_pair()
