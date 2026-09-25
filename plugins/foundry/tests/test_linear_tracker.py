@@ -6,7 +6,6 @@ import base64
 import copy
 import hashlib
 import json
-import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -110,13 +109,50 @@ def linear_markdown_readback(content):
         header, separator, body = payload.partition("\n-->\n\n")
         assert separator
         header = header.replace("[", "\\[").replace("]", "\\]")
-        body = re.sub(r"(?m)^- ", "* ", body)
+        body = linear_markdown_body_readback(body)
         return f"{linear_module._ADR_HEADER}{header}\n\\-->\n\n{body}"
     if content.startswith(linear_module._ADR_WITNESS_HEADER):
         suffix = "\n-->"
         assert content.endswith(suffix)
         return f"{content[:-len(suffix)]}\n\\-->"
     return content
+
+
+def linear_markdown_body_readback(body):
+    """Independently model the observed top-level list-marker rewrite."""
+    rendered = []
+    fence = None
+    for source_line in body.splitlines(keepends=True):
+        line = source_line.removesuffix("\n").removesuffix("\r")
+        candidate = line.lstrip(" ")
+        indentation = len(line) - len(candidate)
+        if fence is not None:
+            marker, opening_length = fence
+            length = len(candidate) - len(candidate.lstrip(marker))
+            rendered.append(source_line)
+            if (
+                indentation <= 3
+                and length >= opening_length
+                and not candidate[length:].strip(" \t")
+            ):
+                fence = None
+            continue
+        if indentation <= 3 and candidate[:1] in {"`", "~"}:
+            marker = candidate[0]
+            length = len(candidate) - len(candidate.lstrip(marker))
+            info = candidate[length:]
+            if length >= 3 and not (marker == "`" and "`" in info):
+                fence = (marker, length)
+                rendered.append(source_line)
+                continue
+        if indentation <= 3 and candidate.startswith("<"):
+            raise ValueError("ambiguous raw HTML block in fake readback")
+        if source_line.startswith("- "):
+            thematic = line.replace(" ", "").replace("\t", "")
+            if len(thematic) < 3 or set(thematic) != {"-"}:
+                source_line = f"* {source_line[2:]}"
+        rendered.append(source_line)
+    return "".join(rendered)
 
 
 class LinearWire:
@@ -3607,6 +3643,117 @@ def test_linear_adr_native_readback_accepts_only_observed_marker_escape(tracker)
         hostile["content"] = hostile["content"].removesuffix("\n\\-->") + suffix
         with pytest.raises(LinearTrackerError, match="invalid_response"):
             linear_module._parse_adr_witness(hostile, binding)
+
+
+@pytest.mark.parametrize(
+    ("opening_fence", "closing_fence"),
+    [("```text", "```"), ("~~~~ markdown", "~~~~~")],
+)
+def test_linear_adr_readback_rewrites_only_top_level_dash_lists(
+    tracker,
+    opening_fence,
+    closing_fence,
+):
+    header = (
+        '{"id":"PAT-ADR-0001","relations":'
+        '{"issue_ids":["PAT-1"]}}'
+    )
+    source_body = (
+        "## Decision\n\n"
+        "- first top-level item\n"
+        "- second top-level item\n"
+        "- third top-level item\n\n"
+        "* source star remains distinct\n\n"
+        "- - -\n\n"
+        f"{opening_fence}\n"
+        "- literal inside code\n"
+        f"{closing_fence}"
+    )
+    canonical = (
+        f"{linear_module._ADR_HEADER}{header}\n-->\n\n{source_body}"
+    )
+    provider_body = source_body.replace(
+        "- first top-level item", "* first top-level item", 1
+    ).replace(
+        "- second top-level item", "* second top-level item", 1
+    ).replace(
+        "- third top-level item", "* third top-level item", 1
+    )
+    provider = (
+        f"{linear_module._ADR_HEADER}"
+        f"{header.replace('[', r'\[').replace(']', r'\]')}"
+        f"\n\\-->\n\n{provider_body}"
+    )
+    hostile = provider.replace(
+        f"{opening_fence}\n- literal inside code",
+        f"{opening_fence}\n* literal inside code",
+        1,
+    )
+
+    assert "* source star remains distinct" in provider
+    assert "\n- - -\n" in provider
+    assert linear_markdown_readback(canonical) == provider
+    assert linear_module._linear_adr_readback_content(canonical) == provider
+    assert linear_module._adr_readback_content_matches(provider, canonical)
+    assert not linear_module._adr_readback_content_matches(hostile, canonical)
+
+    instance, wire = tracker
+    created = instance.create_adr(
+        PROJECT,
+        "Fenced literal",
+        source_body,
+    )
+    binding = instance._binding(PROJECT)
+    raw = wire.documents[created.ref]
+    assert raw["content"].endswith(provider_body)
+    assert linear_module._parse_adr_document(
+        raw,
+        binding,
+        source_body=source_body,
+    )[1] == source_body
+    hostile_raw = copy.deepcopy(raw)
+    hostile_raw["content"] = hostile_raw["content"].replace(
+        f"{opening_fence}\n- literal inside code",
+        f"{opening_fence}\n* literal inside code",
+        1,
+    )
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        linear_module._parse_adr_document(
+            hostile_raw,
+            binding,
+            source_body=source_body,
+        )
+
+
+def test_linear_adr_readback_refuses_ambiguous_raw_html_rewrite():
+    header = '{"id":"PAT-ADR-0001","relations":{"issue_ids":[]}}'
+    source_body = (
+        "- top-level item\n\n"
+        "<pre>\n"
+        "- literal inside raw HTML\n"
+        "</pre>"
+    )
+    canonical = (
+        f"{linear_module._ADR_HEADER}{header}\n-->\n\n{source_body}"
+    )
+    escaped_header = header.replace("[", "\\[").replace("]", "\\]")
+    provider = (
+        f"{linear_module._ADR_HEADER}{escaped_header}\n\\-->\n\n"
+        f"{source_body.replace('- top-level item', '* top-level item', 1)}"
+    )
+    hostile = provider.replace(
+        "- literal inside raw HTML",
+        "* literal inside raw HTML",
+        1,
+    )
+
+    assert linear_module._adr_readback_content_matches(canonical, canonical)
+    assert not linear_module._adr_readback_content_matches(provider, canonical)
+    assert not linear_module._adr_readback_content_matches(hostile, canonical)
+    with pytest.raises(ValueError, match="ambiguous raw HTML"):
+        linear_module._linear_adr_readback_content(canonical)
+    with pytest.raises(ValueError, match="ambiguous raw HTML"):
+        linear_markdown_readback(canonical)
 
 
 def test_linear_adr_witness_preserves_lossy_dash_source_distinct_from_native_star(

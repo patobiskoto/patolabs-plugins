@@ -355,12 +355,72 @@ def _adr_document_content(metadata: dict, body: str) -> str:
     return f"{_ADR_HEADER}{header}\n-->\n\n{body}"
 
 
+def _markdown_fence_opening(line: str) -> tuple[str, int] | None:
+    """Return a descriptor for one supported Markdown fence opener."""
+    candidate = line.lstrip(" ")
+    if len(line) - len(candidate) > 3 or not candidate:
+        return None
+    marker = candidate[0]
+    if marker not in {"`", "~"}:
+        return None
+    length = len(candidate) - len(candidate.lstrip(marker))
+    if length < 3:
+        return None
+    info = candidate[length:]
+    if marker == "`" and "`" in info:
+        return None
+    return marker, length
+
+
+def _markdown_fence_closing(
+    line: str,
+    marker: str,
+    opening_length: int,
+) -> bool:
+    candidate = line.lstrip(" ")
+    if len(line) - len(candidate) > 3:
+        return False
+    length = len(candidate) - len(candidate.lstrip(marker))
+    return (
+        length >= opening_length
+        and not candidate[length:].strip(" \t")
+    )
+
+
+def _linear_markdown_readback_body(body: str) -> str:
+    """Model only Linear's observed top-level dash-list serialization."""
+    rendered = []
+    fence = None
+    for source_line in body.splitlines(keepends=True):
+        line = source_line.removesuffix("\n").removesuffix("\r")
+        if fence is not None:
+            rendered.append(source_line)
+            if _markdown_fence_closing(line, *fence):
+                fence = None
+            continue
+        opening = _markdown_fence_opening(line)
+        if opening is not None:
+            fence = opening
+            rendered.append(source_line)
+            continue
+        candidate = line.lstrip(" ")
+        if len(line) - len(candidate) <= 3 and candidate.startswith("<"):
+            raise ValueError("ambiguous raw HTML block in ADR body")
+        if source_line.startswith("- "):
+            thematic = line.replace(" ", "").replace("\t", "")
+            if len(thematic) < 3 or set(thematic) != {"-"}:
+                source_line = f"* {source_line[2:]}"
+        rendered.append(source_line)
+    return "".join(rendered)
+
+
 def _linear_adr_readback_content(content: str) -> str:
     """Return the sole provider serialization accepted beside canonical bytes.
 
     Linear escapes the closing delimiter of an HTML comment in Markdown readback.
     Keep compatibility pinned to the observed deterministic header transformation:
-    JSON brackets, the marker delimiter, and top-level dash list markers only.
+    JSON brackets, the marker delimiter, and top-level dash list markers outside
+    fenced code only.
     """
     if content.startswith(_ADR_HEADER):
         payload = content[len(_ADR_HEADER) :]
@@ -368,7 +428,7 @@ def _linear_adr_readback_content(content: str) -> str:
         if not separator:
             raise ValueError("canonical ADR document delimiter is missing")
         encoded = encoded.replace("[", "\\[").replace("]", "\\]")
-        body = re.sub(r"(?m)^- ", "* ", body)
+        body = _linear_markdown_readback_body(body)
         return f"{_ADR_HEADER}{encoded}\n\\-->\n\n{body}"
     if content.startswith(_ADR_WITNESS_HEADER) and content.endswith("\n-->"):
         suffix = "\n-->"
@@ -377,10 +437,12 @@ def _linear_adr_readback_content(content: str) -> str:
 
 
 def _adr_readback_content_matches(observed: object, canonical: str) -> bool:
-    return (
-        observed == canonical
-        or observed == _linear_adr_readback_content(canonical)
-    )
+    if observed == canonical:
+        return True
+    try:
+        return observed == _linear_adr_readback_content(canonical)
+    except ValueError:
+        return False
 
 
 def _exact_adr_document_matches(raw: object, expected: dict) -> bool:

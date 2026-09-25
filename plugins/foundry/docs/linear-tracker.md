@@ -120,11 +120,19 @@ Linear's Markdown readback escapes the closing delimiter of these ADR HTML comme
 the canonical version separator sent as `\n-->\n\n` is returned as
 `\n\\-->\n\n`, and the witness suffix sent as `\n-->` is returned as
 `\n\\-->`. In the version comment header it also escapes JSON array brackets as
-`\\[` and `\\]`. Linear also serializes top-level `- ` list markers as `* `. The adapter
-accepts canonical content or exactly that complete observed serialization for a known source
-candidate. It never treats `- ` and `* ` as equivalent source bytes: the witness-retained
-source and its digest distinguish them even when their readable Markdown is identical. It does
-not apply a reverse rewrite to provider content or normalize any other Markdown variant.
+`\\[` and `\\]`. The observed PAT-ADR-0001 readback also serializes its three column-0
+`- ` list markers as `* `. The adapter models that rewrite only for column-0 markers outside
+fenced code. It recognizes backtick and tilde fence openers of at least three characters, with
+up to three leading spaces and an optional info string, and only a same-character closing fence
+at least as long as its opener. A `- ` literal inside such a fence and a source `* ` marker stay
+byte-exact; a dash thematic break such as `- - -` is preserved too. A provider response that
+rewrites any of those is rejected. The bounded model does not parse raw HTML: a line outside a
+fence that begins with `<` after up to three spaces makes the serialized variant ineligible, so
+only canonical bytes can match that body. The adapter accepts canonical content or exactly the
+complete supported serialization for a known source candidate. It never treats `- ` and `* ` as
+equivalent source bytes: the witness-retained source and its digest distinguish them even when
+their readable Markdown is identical. It does not apply a reverse rewrite to provider content
+or normalize any other Markdown variant.
 Exact-slot verification still checks
 the deterministic ID, title, project, archive state, canonical metadata encoding, and
 body digest. Witnesses bind the exact version bytes returned by Linear, including the
