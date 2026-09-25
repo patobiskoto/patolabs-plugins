@@ -206,8 +206,9 @@ a missing reciprocal comment only while no Document slot from that manifest exis
 a version or witness is durable, an absent deterministic comment is treated as an
 external deletion and the replay refuses before any `DocumentCreate` or `CommentCreate`
 effect; it never invokes the comment-creation path or recreates the relation. A deletion
-interleaved after graph validation is caught by the final snapshot read and likewise
-fails closed without either creation effect.
+interleaved after graph validation is caught by the final snapshot read. On a completed
+batch this produces no creation effect; on an advancing partial batch, missing Documents
+may already have been created before that final conflict, with no atomic rollback.
 For Linear `frame`, every `constrained_by` reference is resolved before creating any
 ADR, epic or issue; an unknown, ambiguous, unreadable, deprecated, or superseded
 reference cannot leave an issue with only its first reciprocal link. Indexes, incoming
