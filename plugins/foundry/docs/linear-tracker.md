@@ -102,27 +102,43 @@ search queries. ADRs are stored as project-scoped Linear Documents, never substi
 a Git catalogue or YouTrack read. A document has a deterministic UUIDv4 client ID for its
 `(project, ADR, version)` slot, a closed metadata header and body/content digests. Every
 version also has a second deterministic UUIDv4 project Document: its witness binds the version
-ID and exact content hash. Reads require the pair in both directions. An isolated deletion
+ID, the exact content hash returned by Linear, and (for newly written witnesses) the exact
+UTF-8 source body as canonical base64 plus its SHA-256. The version remains readable Markdown;
+the witness is the durable, reversible source representation. Reads require the pair in both
+directions. An isolated deletion
 of the only version, the head version, or its witness is therefore a conflict rather than
 an empty/older history. The two creates are not a Linear transaction: an interrupted
 response is recovered only by exact deterministic-ID readback; a process stop or provider
 failure between them leaves a detectable incomplete pair and all normal ADR reads fail
 closed. Replaying the byte-identical native creation can complete exactly one surviving
 `proposed` version-0 slot after validating every other pair and relation; a different
-title/body, more than one incomplete pair, or an orphan witness remains fail-closed.
+title/body, more than one incomplete pair, or an orphan witness remains fail-closed. Legacy
+witnesses without the source field remain compatible only when the readable body itself still
+matches its declared source digest byte-for-byte.
 
 Linear's Markdown readback escapes the closing delimiter of these ADR HTML comments:
 the canonical version separator sent as `\n-->\n\n` is returned as
 `\n\\-->\n\n`, and the witness suffix sent as `\n-->` is returned as
 `\n\\-->`. In the version comment header it also escapes JSON array brackets as
-`\\[` and `\\]`. The adapter accepts canonical content or exactly this one observed
-serialization in that deterministic header. It does not strip backslashes, rewrite the
-body, or normalize any other Markdown variant. Exact-slot verification still checks
+`\\[` and `\\]`. Linear also serializes top-level `- ` list markers as `* `. The adapter
+accepts canonical content or exactly that complete observed serialization for a known source
+candidate. It never treats `- ` and `* ` as equivalent source bytes: the witness-retained
+source and its digest distinguish them even when their readable Markdown is identical. It does
+not apply a reverse rewrite to provider content or normalize any other Markdown variant.
+Exact-slot verification still checks
 the deterministic ID, title, project, archive state, canonical metadata encoding, and
 body digest. Witnesses bind the exact version bytes returned by Linear, including the
 inserted backslash, and later versions bind the same exact readback bytes through
 `previous_sha256`. Extra backslashes, whitespace, altered delimiters, re-encoded JSON, or
-body changes therefore remain conflicts or invalid provider responses.
+body changes therefore remain conflicts or invalid provider responses. A source-body edit,
+base64 re-encoding, digest edit, readable-body edit, or transformation outside the closed
+serialization rule fails closed.
+
+The pre-existing interrupted `PAT-ADR-0001` version-0 slot is recoverable only by replaying
+the exact original source body. Recovery checks its deterministic Document ID and title,
+metadata and source digest, project, archive state, and the exact provider serialization before
+creating only the missing witness. It never updates or deletes the surviving version and never
+allocates a second version ID; a native `* ` source that merely renders the same is rejected.
 
 Normal reads also fail closed on a later-version partial write; only the matching typed
 operation may complete its exact missing witness after hypothetical whole-graph validation.

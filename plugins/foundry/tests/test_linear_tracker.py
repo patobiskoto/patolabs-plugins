@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -108,6 +110,7 @@ def linear_markdown_readback(content):
         header, separator, body = payload.partition("\n-->\n\n")
         assert separator
         header = header.replace("[", "\\[").replace("]", "\\]")
+        body = re.sub(r"(?m)^- ", "* ", body)
         return f"{linear_module._ADR_HEADER}{header}\n\\-->\n\n{body}"
     if content.startswith(linear_module._ADR_WITNESS_HEADER):
         suffix = "\n-->"
@@ -3604,6 +3607,178 @@ def test_linear_adr_native_readback_accepts_only_observed_marker_escape(tracker)
         hostile["content"] = hostile["content"].removesuffix("\n\\-->") + suffix
         with pytest.raises(LinearTrackerError, match="invalid_response"):
             linear_module._parse_adr_witness(hostile, binding)
+
+
+def test_linear_adr_witness_preserves_lossy_dash_source_distinct_from_native_star(
+    tracker,
+):
+    instance, wire = tracker
+    dash = instance.create_adr(PROJECT, "Dash source", "intro\n\n- exact source")
+    star = instance.create_adr(PROJECT, "Star source", "intro\n\n* exact source")
+
+    dash_raw = wire.documents[dash.ref]
+    star_raw = wire.documents[star.ref]
+    assert dash_raw["content"].endswith("intro\n\n* exact source")
+    assert star_raw["content"].endswith("intro\n\n* exact source")
+
+    models = {model.id: model for model in instance.list_adrs(PROJECT)}
+    assert models[dash.id].body.endswith("intro\n\n- exact source")
+    assert models[star.id].body.endswith("intro\n\n* exact source")
+    assert models[dash.id].body != models[star.id].body
+
+
+def test_linear_adr_lossy_partial_pair_only_replays_exact_source(tracker):
+    instance, wire = tracker
+    source = "context\n\n- first\n- second"
+    created = instance.create_adr(PROJECT, "Lossy replay", source)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    del wire.documents[witness_id]
+    version_before = copy.deepcopy(wire.documents[created.ref])
+    writes_before = len(wire.documents)
+
+    with pytest.raises(TrackerConflictError):
+        instance.create_adr(
+            PROJECT, "Lossy replay", "context\n\n* first\n* second"
+        )
+    assert wire.documents == {created.ref: version_before}
+
+    recovered = instance.create_adr(PROJECT, "Lossy replay", source)
+    assert recovered.ref == created.ref
+    assert len(wire.documents) == writes_before + 1
+    assert wire.documents[created.ref] == version_before
+    assert recovered.body.endswith(source)
+
+
+def test_linear_adr_lossy_import_replays_exact_missing_witness(tracker):
+    instance, wire = tracker
+    source = "- imported source"
+    kwargs = {
+        "adr_id": "LIN-ADR-0099",
+        "title": "Interrupted import",
+        "body": source,
+        "historical_status": "proposed",
+        "source_ref": "YT-ADR-99",
+        "source_created": None,
+        "source_updated": None,
+        "expected_source_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "supersedes": (),
+        "superseded_by": None,
+        "issue_refs": (),
+    }
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        if variables.get("input", {}).get("title", "").startswith(
+            "[Foundry ADR witness] LIN-ADR-0099"
+        ):
+            raise OSError("witness unavailable")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.import_adr(PROJECT, **kwargs)
+    instance._transport = original
+    recovered = instance.import_adr(PROJECT, **kwargs)
+    assert recovered.body.endswith(source)
+    assert len(wire.documents) == 2
+
+
+@pytest.mark.parametrize("tamper", ["rendered", "source"])
+def test_linear_adr_lossy_binding_rejects_hostile_edits(tracker, tamper):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Bound source", "- exact source")
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+
+    if tamper == "rendered":
+        wire.documents[created.ref]["content"] = wire.documents[created.ref][
+            "content"
+        ].replace("* exact source", "* hostile source")
+    else:
+        witness = wire.documents[witness_id]
+        prefix = linear_module._ADR_WITNESS_HEADER
+        encoded = witness["content"][len(prefix) :].removesuffix("\n\\-->")
+        payload = json.loads(encoded)
+        hostile = b"* exact source"
+        payload["source_body"] = base64.b64encode(hostile).decode()
+        payload["source_body_sha256"] = hashlib.sha256(hostile).hexdigest()
+        witness["content"] = (
+            prefix
+            + json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n\\-->"
+        )
+
+    with pytest.raises((LinearTrackerError, TrackerConflictError)):
+        instance.list_adrs(PROJECT)
+
+
+def test_linear_adr_legacy_lossless_witness_remains_compatible(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Legacy compatible", "plain body")
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    witness = wire.documents[witness_id]
+    encoded = witness["content"][
+        len(linear_module._ADR_WITNESS_HEADER) :
+    ].removesuffix("\n\\-->")
+    payload = json.loads(encoded)
+    for key in ("source_encoding", "source_body", "source_body_sha256"):
+        del payload[key]
+    witness["content"] = (
+        linear_module._ADR_WITNESS_HEADER
+        + json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n\\-->"
+    )
+
+    [model] = instance.list_adrs(PROJECT)
+    assert model.id == created.id
+    assert model.body.endswith("plain body")
+
+
+def test_linear_adr_lossy_source_survives_lifecycle_and_import_paths(tracker):
+    instance, _wire = tracker
+    created = instance.create_adr(PROJECT, "Lifecycle", "- original")
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+    current = instance.list_adrs(PROJECT)[0]
+    updated_body = current.body.removesuffix("- original") + "- edited"
+    assert instance.update_body(current, current.body, updated_body, PROJECT)
+    current = instance.link_adr_issue(
+        instance.list_adrs(PROJECT)[0], "LIN-2", project=PROJECT
+    )
+    replacement = instance.create_adr(PROJECT, "Replacement", "- replacement")
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    accepted = {model.id: model for model in instance.list_adrs(PROJECT)}
+    instance.supersede_adr(
+        accepted[current.id], replacement.id, project=PROJECT
+    )
+    imported = instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0099",
+        title="Imported lossy",
+        body="- imported",
+        historical_status="proposed",
+        source_ref="YT-ADR-99",
+        source_created=None,
+        source_updated=None,
+        expected_source_sha256=hashlib.sha256(b"- imported").hexdigest(),
+        supersedes=(),
+        superseded_by=None,
+        issue_refs=(),
+    )
+
+    models = {model.id: model for model in instance.list_adrs(PROJECT)}
+    assert models[current.id].status == "superseded"
+    assert models[current.id].body.endswith("- edited")
+    assert models[replacement.id].body.endswith("- replacement")
+    assert models[imported.id].body.endswith("- imported")
 
 
 def test_linear_adr_missing_witness_fails_closed_and_exact_pair_replays(tracker):
