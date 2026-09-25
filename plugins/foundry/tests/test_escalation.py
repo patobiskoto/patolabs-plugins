@@ -36,6 +36,7 @@ from foundry.routing import (
     acceptance_criteria,
     main,
     git_diff,
+    repository_identity,
     review_diff_hash,
 )
 from foundry.routing_facades import codex_spawn_plan
@@ -2525,6 +2526,10 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     repository_root = tmp_path / "repo"
     repository_root.mkdir()
     base, diff = _git_review_fixture(repository_root)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://example.invalid/pat-22.git"],
+        cwd=repository_root, check=True,
+    )
     monkeypatch.setenv("FOUNDRY_DATA", str(state_dir))
     store = EscalationStore.for_root(repository_root, state_dir=state_dir)
     issue = "PAT-22"
@@ -2537,7 +2542,7 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     monkeypatch.setattr(foundry, "tracker", lambda: tracker)
 
     repository_arg = ["--repository", review_namespace] if review_namespace else []
-    proof_repository = review_namespace or str(repository_root.resolve())
+    proof_repository = review_namespace or repository_identity(repository_root)
     main([
         "claim-review", "--git-diff", "--issue", issue,
         "--root", str(repository_root), "--base", base,
@@ -2670,16 +2675,71 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
             coordinates={"root": str(repository_root.resolve()), "base": base},
         )
 
+    # PAT-32: a PR base can advance after the historical blocked review.  The
+    # old proof remains bound to A while the replacement reviewer claim must
+    # bind independently to B and the current HEAD.
+    historical_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository_root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "checkout", "-qb", "advanced-base", base],
+        cwd=repository_root, check=True,
+    )
+    (repository_root / "base-advance.txt").write_text(
+        "base advanced\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "base-advance.txt"], cwd=repository_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base advanced"],
+                   cwd=repository_root, check=True)
+    current_base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository_root, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "--detach", historical_head],
+                   cwd=repository_root, check=True)
+    historical_binding = store.status(issue)[
+        "legacy_blocking_proof_attestations"
+    ][-1]["blocking_proof"]
+    # Base B is deliberately different but the root is unchanged, so the
+    # historical binding remains readable before the new claim is attempted.
+    assert legacy_ledger.validated_claimed_correction_proof_binding(
+        issue, diff_hash, historical_binding,
+        coordinates={"root": str(repository_root.resolve()), "base": current_base},
+    )["proof_id"] == historical_binding["proof_id"]
+
+    sibling_root = tmp_path / "sibling"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(sibling_root), historical_head],
+        cwd=repository_root, check=True,
+    )
+    (sibling_root / "reviewed.txt").write_text(
+        "base\nreviewed correction\nsibling correction\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "reviewed.txt"], cwd=sibling_root, check=True)
+    subprocess.run(["git", "commit", "-qm", "sibling correction"],
+                   cwd=sibling_root, check=True)
+    sibling_diff_hash = review_diff_hash(git_diff(sibling_root, current_base))
+    before_sibling = store._path(issue).read_bytes()
+    with pytest.raises(SystemExit, match="coordonnées de review différentes"):
+        main([
+            "claim-review", "--git-diff", "--issue", issue,
+            "--root", str(sibling_root), "--base", current_base,
+            "--claim-attempt-token", "6" * 64, *repository_arg,
+        ])
+    assert store._path(issue).read_bytes() == before_sibling
+    assert legacy_ledger.is_claimed(sibling_diff_hash) is False
+
     (repository_root / "reviewed.txt").write_text(
         "base\nreviewed correction\ncredited correction\n", encoding="utf-8",
     )
     subprocess.run(["git", "add", "reviewed.txt"], cwd=repository_root, check=True)
     subprocess.run(["git", "commit", "-qm", "credited correction"],
                    cwd=repository_root, check=True)
-    corrected_diff = review_diff_hash(git_diff(repository_root, base))
+    corrected_diff = review_diff_hash(git_diff(repository_root, current_base))
     main([
         "claim-review", "--git-diff", "--issue", issue,
-        "--root", str(repository_root), "--base", base,
+        "--root", str(repository_root), "--base", current_base,
         "--claim-attempt-token", "8" * 64, *repository_arg,
     ])
     corrected_claim = json.loads(capsys.readouterr().out)
@@ -2687,6 +2747,9 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     corrected_review = json.loads(
         (legacy_ledger.directory / corrected_diff).read_text(encoding="utf-8"),
     )
+    assert corrected_review["coordinates"] == {
+        "root": str(repository_root.resolve()), "base": current_base,
+    }
     assert corrected_review["head"] == subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repository_root, check=True,
         capture_output=True, text=True,
@@ -2709,7 +2772,7 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
         main([
             "read-review", "--diff-hash", corrected_diff,
             "--claim-id", corrected_claim["claim_id"],
-            "--root", str(repository_root), "--base", base,
+            "--root", str(repository_root), "--base", current_base,
             *repository_arg,
         ])
     assert capsys.readouterr().out == ""
@@ -2725,7 +2788,7 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     with pytest.raises(SystemExit, match="unique réarm"):
         main([
             "claim-review", "--git-diff", "--issue", issue,
-            "--root", str(repository_root), "--base", base,
+            "--root", str(repository_root), "--base", current_base,
             "--claim-attempt-token", "7" * 64, *repository_arg,
         ])
     assert store._path(issue).read_bytes() == before_replay
