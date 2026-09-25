@@ -41,9 +41,11 @@ Existing-issue field, state, parent, body, and AC replacement remain unavailable
 provider CAS. Foundry's PR lifecycle is instead represented by deterministic append-only
 Linear comments: Foundry queries project the proven state, PR link and AC result while
 the native Linear fields remain untouched. A complete cockpit Evidence Plane envelope
-can be journaled but has no state, AC or merge authority. Linear also has no Foundry ADR
-knowledge base or atomic Epic closure. Live cutover and ChatGPT MCP activation remain
-separate planned work.
+can be journaled but has no state, AC or merge authority. Linear stores Foundry ADRs as
+versioned, witness-bound project Documents; atomic Epic closure remains unavailable.
+This repository itself is bound to Linear (project PAT) for issues and ADRs; the
+historical YouTrack project is only a read-only origin archive. ChatGPT MCP activation
+remains separate planned work.
 
 ## Plugins
 

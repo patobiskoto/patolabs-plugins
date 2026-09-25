@@ -646,9 +646,21 @@ YouTrack adapter requires a mutation binding, and the write tier validates that 
 project before any issue or ADR lifecycle effect. Consequently, queries through a
 historical alias still read terminal history and ADRs, while a lifecycle write through
 any alias of that same YouTrack project fails closed. The public checkout independently
-rejects an explicit YouTrack override through its Linear marker. Linear has no native
-Foundry ADR knowledge base, so the selective migration manifest records which decisions
-are referenced rather than inventing mutable ADR issues.
+rejects an explicit YouTrack override through its Linear marker.
+
+### ADR authority after the historical import
+
+The selective manifest of 2026-09-22 predates the Linear ADR adapter: its `adrs` entries
+(`decision: archive-reference`) and `adr_reference_reason` record that, at cutover time,
+decisions were referenced in the YouTrack archive. That manifest is the immutable
+cutover input bound by the marker and is not rewritten. Its ADR clause is superseded by
+accepted PAT-ADR-0001 and the audited PAT-23 import: the Linear project PAT now holds
+the 27 historical Foundry ADRs as witness-bound Documents, beside the native PAT ADRs.
+For this repository, Linear is the only ADR reference; YouTrack is solely the read-only
+origin archive, and Foundry has no Git-catalogue or YouTrack fallback for ADR reads.
+`linear-cutover-operations.json` records this under `adr_authority` (batch digest,
+audit digest, qualification project, count and superseded clause) without publishing
+any private source body or receipt.
 
 This is an operational guarantee of the current versioned Foundry paths, not a claim
 that the YouTrack server revoked write credentials. Direct REST calls, bespoke adapter

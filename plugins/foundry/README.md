@@ -396,7 +396,8 @@ hooks/             SessionStart + PreToolUse workflow guards and Claude logical-
 agents/             Claude logical roles + internal read-only/worker effort profiles;
                    no agent frontmatter fixes a provider model
 skills/review-pr/  portable two-stage review contract (AC compliance, then quality)
-docs/adr/          Foundry's own ADRs (it's piloted with its own method)
+docs/adr/          bootstrap copies of early Foundry ADRs; the authoritative ADRs of this
+                   repository live in its Linear project (PAT), see docs/linear-tracker.md
 docs/model-routing-pilot-*.md   frozen manual measurement protocol + results sheet
 ```
 

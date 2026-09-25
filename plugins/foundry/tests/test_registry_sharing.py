@@ -864,6 +864,43 @@ def test_interrupted_marker_publication_stays_fail_closed_and_is_recoverable(
     assert recovered.tracker == "linear"
 
 
+def test_live_cutover_records_linear_adr_authority_without_rewriting_input():
+    root = Path(__file__).resolve().parents[3]
+    marker = json.loads((root / ".foundry/tracker.json").read_text(encoding="utf-8"))
+    operations = json.loads(
+        (root / "plugins/foundry/docs/linear-cutover-operations.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    public_manifest = json.loads(
+        (root / "plugins/foundry/docs/linear-selective-migration-manifest.json")
+        .read_text(encoding="utf-8")
+    )
+    authority = operations["adr_authority"]
+
+    # The ADR clause of the immutable cutover input is superseded, not rewritten.
+    assert marker["migration_manifest_digest"] == (
+        operations["attestation"]["cutover_manifest"]["digest"]
+    )
+    assert {item["decision"] for item in public_manifest["adrs"]} == {"archive-reference"}
+    assert authority["authority"] == "linear"
+    assert authority["decision"] == "PAT-ADR-0001"
+    assert authority["import_issue"] == "PAT-23"
+    assert authority["historical_adr_count"] == 27
+    assert sum(authority["historical_statuses"].values()) == 27
+    assert authority["missing_relations"] == ["issues", "superseded_by", "supersedes"]
+    assert all(
+        target.startswith("linear-selective-migration-manifest.json#")
+        for target in authority["supersedes"]
+    )
+    for digest in (
+        authority["batch_sha256"],
+        authority["source_manifest_file_sha256"],
+        authority["post_write_audit_sha256"],
+    ):
+        assert len(digest) == 64 and int(digest, 16) >= 0
+
+
 def test_live_cutover_attestation_separates_private_input_and_public_redaction():
     root = Path(__file__).resolve().parents[3]
     marker = json.loads((root / ".foundry/tracker.json").read_text(encoding="utf-8"))

@@ -80,5 +80,35 @@
       "rollback_receipt": "PAT-12 pre-change Linear comment"
     },
     "linear_api_token": "keychain-configured"
+  },
+  "adr_authority": {
+    "authority": "linear",
+    "decision": "PAT-ADR-0001",
+    "source_body_exactness": "PAT-ADR-0002",
+    "unknown_relations": "PAT-ADR-0003",
+    "import_issue": "PAT-23",
+    "imported_at": "2026-09-25",
+    "historical_adr_count": 27,
+    "historical_statuses": {
+      "accepted": 25,
+      "deprecated": 1,
+      "proposed": 1
+    },
+    "batch_sha256": "94729124ab1267f6ada99c0815e04b0a083a330e44cb3499ba58ab7b541baed2",
+    "source_manifest_file_sha256": "263ab3aea0aef80be177fc7984888629929f41c223704b369dd92473bfd0ef3a",
+    "post_write_audit_sha256": "c127aaaf0514a9d249f3a0d6cbbed5a4e48c1ddfb0506fb2b9c03dfd22ebc015",
+    "qualification_project_id": "24a6b8a3-45d8-4b2c-b983-294141fdaca5",
+    "missing_relations": [
+      "issues",
+      "superseded_by",
+      "supersedes"
+    ],
+    "version_history": "unavailable-in-source",
+    "supersedes": [
+      "linear-selective-migration-manifest.json#adrs[].decision=archive-reference",
+      "linear-selective-migration-manifest.json#adr_reference_reason"
+    ],
+    "audit_record": "PAT-23 Linear comments",
+    "private_evidence": "operator-held receipts; never published"
   }
 }
