@@ -3756,6 +3756,42 @@ def test_linear_adr_readback_refuses_ambiguous_raw_html_rewrite():
         linear_markdown_readback(canonical)
 
 
+def test_linear_adr_raw_html_is_refused_before_any_provider_write(tracker):
+    instance, wire = tracker
+    body = "- item\n<pre>\n- literal\n</pre>"
+    for operation in (
+        lambda: instance.create_adr(PROJECT, "Raw HTML", body),
+        lambda: instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0098",
+            title="Historical raw HTML",
+            body=body,
+            historical_status="deprecated",
+            source_ref="YT-ADR-98",
+            source_created=1,
+            source_updated=2,
+            expected_source_sha256=hashlib.sha256(body.encode()).hexdigest(),
+            issue_refs=("LIN-2",),
+        ),
+    ):
+        before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+        with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+            operation()
+        assert (wire.documents, wire.comments) == before
+        assert instance.list_adrs(PROJECT) == []
+
+    source, replacement = _historical_batch_pair()
+    replacement = {
+        **replacement,
+        "body": body,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+    }
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.import_adr_batch(PROJECT, (source, replacement))
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+
 def test_linear_adr_witness_preserves_lossy_dash_source_distinct_from_native_star(
     tracker,
 ):

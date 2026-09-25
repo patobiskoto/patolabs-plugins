@@ -414,6 +414,16 @@ def _linear_markdown_readback_body(body: str) -> str:
     return "".join(rendered)
 
 
+def _preflight_adr_body_readback(body: str) -> None:
+    """Refuse a body with an unmodelled Linear rendering before any write."""
+    try:
+        _linear_markdown_readback_body(body)
+    except ValueError as exc:
+        raise TrackerConflictError(
+            "Linear ADR body has unsupported Markdown serialization"
+        ) from exc
+
+
 def _linear_adr_readback_content(content: str) -> str:
     """Return the sole provider serialization accepted beside canonical bytes.
 
@@ -2764,6 +2774,7 @@ class LinearTracker(Tracker):
         return raw
 
     def _create_adr_document(self, binding: dict, metadata: dict, body: str) -> dict:
+        _preflight_adr_body_readback(body)
         doc_id = _adr_document_id(
             binding["project_id"], metadata["id"], metadata["sequence"]
         )
@@ -3112,6 +3123,8 @@ class LinearTracker(Tracker):
         )
 
     def _append_adr_versions(self, project, changes):
+        for _previous, _metadata, body in changes:
+            _preflight_adr_body_readback(body)
         binding, chains = self._adr_snapshot(project)
         for previous, metadata, _body in changes:
             if (
@@ -3386,6 +3399,7 @@ class LinearTracker(Tracker):
             manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode()).hexdigest()
         for metadata, body in prepared:
+            _preflight_adr_body_readback(body)
             metadata["origin"]["batch_sha256"] = batch_sha256
             candidate = {
                 "id": _adr_document_id(binding["project_id"], metadata["id"], 0),
@@ -3774,6 +3788,11 @@ class LinearTracker(Tracker):
                     (related_metadata, related_candidate)
                 )
             self._validate_adr_graph(hypothetical, binding)
+        _preflight_adr_body_readback(body)
+        if interrupted_pair is not None:
+            _preflight_adr_body_readback(interrupted_pair[1])
+        for _previous, _metadata, related_body in changes:
+            _preflight_adr_body_readback(related_body)
         for issue_id in canonical_issue_refs:
             self._create_adr_issue_link(
                 binding, adr_id, issue_id, issue_native_ids[issue_id]
@@ -4013,7 +4032,9 @@ class LinearTracker(Tracker):
         hypothetical = _adr_chain(hypothetical_documents, binding)
         self._validate_adr_graph(hypothetical, binding)
 
+        _preflight_adr_body_readback(source_body)
         if dangling_side == "replacement":
+            _preflight_adr_body_readback(replacement_body)
             self._create_adr_document(
                 binding, replacement_metadata, replacement_body
             )
