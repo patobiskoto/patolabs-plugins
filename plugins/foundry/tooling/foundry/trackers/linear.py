@@ -509,7 +509,7 @@ def _paired_delimiters(fragment: str, delimiter: str) -> list[tuple[int, int]]:
 
 
 def _paired_backtick_delimiters(fragment: str) -> list[tuple[int, int, int]]:
-    """Pair equal-length backtick runs without splitting a multi-backtick span."""
+    """Pair active equal-length backtick runs without inventing a delimiter."""
     runs = [(match.start(), len(match.group())) for match in re.finditer(r"`+", fragment)]
     pairs = []
     index = 0
@@ -519,8 +519,11 @@ def _paired_backtick_delimiters(fragment: str) -> list[tuple[int, int, int]]:
         # unescaped opening delimiter is active, Markdown keeps backslashes
         # literal, so an apparently escaped equal-length run still closes it.
         if _is_escaped(fragment, start):
-            index += 1
-            continue
+            start += 1
+            length -= 1
+            if not length:
+                index += 1
+                continue
         closing = next(
             (
                 candidate
@@ -613,20 +616,27 @@ def _reject_multiline_emphasis(
     Delimiter runs are consumed one or two characters at a time, as emphasis and
     strong emphasis can share a run.  Keeping a run whole would miss the outer
     emphasis in ``***a**\n b*`` after the inner ``**`` pair consumes only part of
-    the opening run.  The sole allowed multiline formatting span is the recorded
-    simple bold form, checked against its exact source grammar below.
+    the opening run.  An escape consumes only the first marker of a run.  The sole
+    allowed multiline formatting span is the recorded simple bold form, checked
+    against its exact source grammar below.
     """
-    runs = [
-        (match.start(), match.group())
-        for match in re.finditer(re.escape(marker) + "+", fragment)
-        if not _is_escaped(fragment, match.start())
-    ]
+    runs = []
+    for match in re.finditer(re.escape(marker) + "+", fragment):
+        position = match.start()
+        run = match.group()
+        # A backslash escapes one punctuation character, not the complete run.
+        # Keep any residual markers available for real emphasis delimiters.
+        if _is_escaped(fragment, position):
+            position += 1
+            run = run[1:]
+        if run:
+            runs.append((position, run))
     # Each opener keeps its unconsumed delimiter count. Opening delimiters are
     # consumed from the right and closing delimiters from the left, so a residual
     # marker can still form an outer span with a later run.
     openers: list[tuple[int, int, bool]] = []
     for position, run in runs:
-        if marker == "~" and run != "~~":
+        if marker == "~" and len(run) < 2:
             continue
         can_open = _is_emphasis_opener(fragment, position, run)
         can_close = _is_emphasis_closer(fragment, position, run)
@@ -639,7 +649,8 @@ def _reject_multiline_emphasis(
                 # CommonMark's multiple-of-three restriction prevents a run
                 # that can serve both roles from being paired ambiguously.
                 if (
-                    (opener_can_close or can_open)
+                    marker != "~"
+                    and (opener_can_close or can_open)
                     and (opener_remaining + closing_remaining) % 3 == 0
                     and (
                         opener_remaining % 3 != 0
@@ -658,11 +669,13 @@ def _reject_multiline_emphasis(
             opener_start = opener + opener_remaining - use
             closer_end = position + closing_consumed + use
             span = fragment[opener_start:closer_end]
+            bold_match = _MULTILINE_BOLD.match(fragment, opener_start)
             allowed_multiline_bold = (
                 allow_observed_bold
                 and marker == "*"
                 and use == 2
-                and _MULTILINE_BOLD.fullmatch(span) is not None
+                and bold_match is not None
+                and bold_match.end() == closer_end
             )
             if "\n" in span and not allowed_multiline_bold:
                 raise ValueError("unsupported multiline inline Markdown in ADR body")
@@ -677,7 +690,7 @@ def _reject_multiline_emphasis(
                 )
             else:
                 openers.pop(opener_index)
-        if can_open and closing_remaining:
+        if can_open and closing_remaining >= (2 if marker == "~" else 1):
             openers.append(
                 (position + closing_consumed, closing_remaining, can_close)
             )
@@ -712,7 +725,8 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
             continue
         if any(bstart <= start < bend for bstart, bend in bold_ranges):
             raise ValueError("unsupported multiline inline Markdown in ADR body")
-        if length != 1 or (match := _MULTILINE_INLINE_CODE.fullmatch(span)) is None:
+        match = _MULTILINE_INLINE_CODE.match(fragment, start)
+        if length != 1 or match is None or match.end() != end + length:
             raise ValueError("unsupported multiline inline Markdown in ADR body")
         code_replacements.append(
             (start, end + length, f"`{match['before']} {match['after']}`")

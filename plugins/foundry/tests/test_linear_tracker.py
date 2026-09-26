@@ -5333,6 +5333,20 @@ def test_linear_adr_pat71_observed_multiline_readback_recovers_missing_witness(
         "**a*\n  b*",
         "*a\n  **b***",
         "___a__\n  b_",
+        "\\***bold\n  next**",
+        "**bold\n  next\\***",
+        "\\***bold\n  next\\***",
+        "\\___emphasis\n  next__",
+        "__emphasis\n  next\\___",
+        "\\~~~strike\n  next~~",
+        "~~strike\n  next\\~~~",
+        "a~~strike\n  next~~~~b",
+        "\\``code\n  next`",
+        "\\```code\n  next``",
+        "``code\n  next\\``",
+        "even \\\\*emphasis\n  next*",
+        "even \\\\_emphasis\n  next_",
+        "even \\\\~~strike\n  next~~",
         "*outer **inner\n  next***",
         "**outer *inner\n  next***",
         "**bold *nested\n  emphasis* continues**",
@@ -5365,6 +5379,27 @@ def test_linear_adr_multiline_preflight_keeps_separate_and_literal_spans():
         "escaped \\*one\n  two\\* and \\_one\n  two\\_\n"
         "`**literal bold**`"
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "escaped \\*\\*bold\n  next\\*\\*",
+        "escaped \\_\\_emphasis\n  next\\_\\_",
+        "escaped \\~\\~strike\n  next\\~\\~",
+        "escaped \\`\\`code\n  next\\`\\`",
+        "single-line \\***bold**",
+        "single-line \\___emphasis__",
+        "single-line \\~~~strike~~",
+        "single-line \\``code`",
+        "unbalanced \\``literal\n  next``",
+        "unbalanced `literal\n  next\\``",
+    ),
+)
+def test_linear_adr_multiline_preflight_preserves_escaped_or_unbalanced_runs(
+    source,
+):
+    assert linear_module._linear_markdown_readback_body(source) == source
 
 
 def test_linear_adr_multiline_preflight_preserves_escaped_backticks_with_parity():
