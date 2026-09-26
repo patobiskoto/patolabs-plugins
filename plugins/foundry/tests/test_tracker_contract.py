@@ -5,10 +5,11 @@ guarantees that ``tracker-contract.v1.json`` stays internally consistent (closed
 vocabulary, every cited operation really exists on the ``Tracker`` ABC, every cited
 provider really has an adapter module) and that the doc references the same version.
 Beyond schema consistency, it also pins the AC-1 core/non-core asymmetry (no core
-operation cell may be ``refused``; no non-core cell may be a blocking ``gap``) and a
-handful of cheap, code-tied assertions (capability flags, missing method overrides, the
-ghprojects stub actually raising ``NotImplementedError``) so a status cell cannot drift
-away from the adapter code it claims to describe without failing this suite.
+operation cell may be ``refused``; no non-core cell may be a blocking ``gap``), the
+owner ticket on every blocking core cell, the cells gated on the pending no-CAS ADR,
+and a handful of cheap, code-tied assertions (capability flags, missing method
+overrides, the ghprojects stub actually raising ``NotImplementedError``) so a status
+cell cannot drift away from the adapter code it claims to describe without failing.
 """
 import importlib
 import inspect
@@ -123,6 +124,72 @@ def test_every_gap_cell_names_a_pat_ticket():
             )
 
 
+def test_every_blocking_core_cell_names_an_owner_ticket():
+    """AC-1: every core cell that blocks V1 exit (``gap`` or ``to_qualify``) traces to
+    the ticket that owns closing it, or to PAT-65 where only qualification is known."""
+    contract = _load_contract()
+    for operation in contract["operations"]:
+        if not operation["core"]:
+            continue
+        for provider, cell in operation["cells"].items():
+            if cell["status"] not in _BLOCKING_STATUSES:
+                continue
+            ticket = cell.get("ticket")
+            assert isinstance(ticket, str) and _GAP_TICKET_RE.match(ticket), (
+                f"{operation['id']}.{provider} blocks V1 ({cell['status']}) without a "
+                f"well-formed PAT-<n> owner ticket"
+            )
+
+
+def test_blocked_by_adr_references_a_declared_pending_adr():
+    contract = _load_contract()
+    pending = {adr["id"] for adr in contract["pending_adrs"]}
+    for adr in contract["pending_adrs"]:
+        assert adr["status"] == "to_create_and_accept"
+        assert adr["proposed_in"] == "PAT-53"
+    for operation in contract["operations"]:
+        for provider, cell in operation["cells"].items():
+            if "blocked_by_adr" not in cell:
+                continue
+            assert cell["blocked_by_adr"] in pending, (
+                f"{operation['id']}.{provider} cites an undeclared pending ADR"
+            )
+            assert operation["core"] and cell["status"] == "gap", (
+                f"{operation['id']}.{provider} is gated on an ADR but is not a core gap"
+            )
+
+
+@pytest.mark.parametrize(
+    ("operation_id", "provider", "ticket"),
+    [
+        ("frame-intake-groom-evolve-existing", "linear", "PAT-55"),
+        ("epics-children-reparent-existing", "linear", "PAT-55"),
+        ("acceptance-criteria-sync", "linear", "PAT-56"),
+        ("epic-closure", "youtrack", "PAT-69"),
+        ("epic-closure", "linear", "PAT-69"),
+    ],
+)
+def test_durable_invariant_gaps_are_blocked_by_the_no_cas_adr(
+    operation_id, provider, ticket,
+):
+    """Criterion 3: closing these gaps reverses linear.py's no-replacement invariant or
+    the atomic epic-closure invariant, so each is gated on the one consolidated ADR."""
+    contract = _load_contract()
+    operation = next(o for o in contract["operations"] if o["id"] == operation_id)
+    cell = operation["cells"][provider]
+    assert cell["status"] == "gap"
+    assert cell["ticket"] == ticket
+    assert cell["blocked_by_adr"] == "no-cas-write-guarantees-v1"
+
+
+def test_doc_does_not_point_at_an_untracked_adr_draft():
+    """The pending ADR is referenced by title only, never by an out-of-repo path."""
+    doc = DOC_PATH.read_text(encoding="utf-8")
+    assert "Garanties d'écriture sans CAS pour les trackers V1" in " ".join(doc.split())
+    assert "pat53-adr-draft" not in doc
+    assert "/tmp/" not in doc
+
+
 def test_every_provider_listed_has_an_adapter_module():
     contract = _load_contract()
     # tests/test_tracker_contract.py -> tests -> foundry -> plugins -> repo root
@@ -165,14 +232,8 @@ def test_ghprojects_stub_cells_are_to_qualify_not_guessed():
         cell = operation["cells"].get("ghprojects")
         if cell is None:
             continue
-        if operation["id"] == "identity-and-project-resolution":
-            # resolve_project delegates to registry.resolve(), which is basename-keyed
-            # (same PAT-54 gap as YouTrack), not canonical-identity resolution: it is
-            # unqualified, not a proven real capability.
-            assert cell["status"] == "to_qualify"
-            continue
-        if operation["id"] == "project-provisioning":
-            # Explicitly out-of-core-scope capabilities: refused, not merely unqualified.
+        if operation["id"] == "full-administrative-provisioning":
+            # Explicitly out-of-core-scope capability: refused, not merely unqualified.
             assert cell["status"] == "refused"
             continue
         assert cell["status"] == "to_qualify", (
@@ -182,7 +243,7 @@ def test_ghprojects_stub_cells_are_to_qualify_not_guessed():
 
 
 def test_youtrack_identity_resolution_is_a_pat54_gap():
-    """B1: YouTrack's project resolution is basename/PROJECT_REPO-keyed, not
+    """YouTrack's project resolution is basename/PROJECT_REPO-keyed, not
     canonical-identity based; it must not be pinned 'supported'."""
     contract = _load_contract()
     op = next(
@@ -193,6 +254,36 @@ def test_youtrack_identity_resolution_is_a_pat54_gap():
     assert op["cells"]["youtrack"]["status"] == "gap"
     assert op["cells"]["youtrack"]["ticket"] == "PAT-54"
     assert op["cells"]["linear"]["status"] == "supported"
+
+
+def test_repository_bootstrap_is_core_and_full_provisioning_is_not():
+    """Criterion 4 excludes full administrative provisioning, not the minimal
+    create-or-recover bootstrap PAT-54 owns on all three trackers."""
+    contract = _load_contract()
+    by_id = {o["id"]: o for o in contract["operations"]}
+    bootstrap = by_id["repository-bootstrap"]
+    assert bootstrap["core"] is True
+    assert {p: c["status"] for p, c in bootstrap["cells"].items()} == {
+        "youtrack": "gap", "linear": "gap", "ghprojects": "to_qualify",
+    }
+    assert {c["ticket"] for c in bootstrap["cells"].values()} == {"PAT-54"}
+    provisioning = by_id["full-administrative-provisioning"]
+    assert provisioning["core"] is False
+    assert provisioning["cells"]["linear"]["status"] == "refused"
+    assert provisioning["cells"]["ghprojects"]["status"] == "refused"
+    assert "project-provisioning" not in by_id
+
+
+def test_youtrack_provisioning_ignores_canonical_repository():
+    """Grounds the youtrack repository-bootstrap gap: provisioning is not bound to
+    canonical identity, and Linear inherits the base refusal."""
+    from foundry.trackers.base import Tracker
+    from foundry.trackers.linear import LinearTracker
+    from foundry.trackers.youtrack import YouTrackTracker
+
+    assert YouTrackTracker.project_provisioning_supported is True
+    assert YouTrackTracker.project_provisioning_requires_repository is False
+    assert LinearTracker.provision_project is Tracker.provision_project
 
 
 def test_operations_cover_every_criterion_1_core_journey():
@@ -232,7 +323,7 @@ def test_youtrack_epic_closure_flag_matches_the_gap_cell():
 
 
 def test_youtrack_has_no_import_adr_override():
-    """B4/PAT-64: YouTrack cannot yet be an import TARGET; it inherits the base
+    """PAT-64: YouTrack cannot yet be an import TARGET; it inherits the base
     refusal rather than overriding import_adr/import_adr_batch."""
     from foundry.trackers.youtrack import YouTrackTracker
 
@@ -241,7 +332,7 @@ def test_youtrack_has_no_import_adr_override():
 
 
 def test_ghprojects_core_methods_are_unimplemented_stubs():
-    """B4/N4: the stub adapter must actually raise NotImplementedError for every
+    """The stub adapter must actually raise NotImplementedError for every
     core method, grounding the json/'md 'to_qualify' cells in live code, not prose."""
     from foundry.trackers.ghprojects import GitHubProjectsTracker
 

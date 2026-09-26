@@ -4,11 +4,30 @@
   "generated_for": "PAT-53",
   "doc": "plugins/foundry/docs/tracker-contract.md",
   "status_vocabulary": {
-    "supported": "the operation is implemented against the real provider API and exercised by tests today",
-    "gap": "the operation is required by a core journey (operations[].core == true) but is currently unimplemented or explicitly refused by the adapter; blocks V1 exit for that provider until the cited ticket closes it. A non-core operation is never a gap: an unimplemented non-core capability is 'refused' (a deliberate, documented exclusion) instead",
-    "refused": "the adapter's refusal is deliberate, not an oversight, and never blocks V1 exit. This status is valid ONLY on a non-core operation (operations[].core == false): criterion 1 requires every core operation to reach 'supported' before V1 ships, so 'refused' can never appear as a core-operation cell — an unsupported core operation is always 'gap' or 'to_qualify', both of which block V1 exit for that provider",
-    "to_qualify": "the operation's real behaviour against the live provider is not yet qualified; PAT-65 must qualify it on authorized test resources before any status other than to_qualify can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap' — it is not a weaker or exempt status, only a different reason (unqualified transport vs. known-missing implementation)"
+    "supported": "the operation is implemented against the real provider API, exercised by tests today, and meets the tracker-contract.md #4.2 target guarantee for its journey family",
+    "gap": "the operation is required by a core journey (operations[].core == true) but is unimplemented, explicitly refused by the adapter, or below the #4.2 target guarantee; blocks V1 exit for that provider until the owner ticket closes it. A non-core operation is never a gap: an unimplemented non-core capability is 'refused' instead",
+    "refused": "the adapter's refusal is deliberate and never blocks V1 exit. Valid ONLY on a non-core operation (operations[].core == false): criterion 1 requires every core operation to reach 'supported', so an unsupported core operation is always 'gap' or 'to_qualify', both of which block V1 exit for that provider",
+    "to_qualify": "the operation's real behaviour against the live provider is not qualified; PAT-65 must qualify it on authorized test resources before any other status can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap'; only the reason differs (unqualified transport vs. known-missing implementation)"
   },
+  "cell_fields": {
+    "status": "one value of status_vocabulary",
+    "evidence": "code citation grounding the status",
+    "ticket": "owner ticket (PAT-<n>) implementing the missing capability, or PAT-65 where only qualification is known; required on every core 'gap' and 'to_qualify' cell",
+    "blocked_by_adr": "id of an entry in pending_adrs; present when closing the cell changes a durable invariant, so no code may land before that ADR is explicitly accepted"
+  },
+  "pending_adrs": [
+    {
+      "id": "no-cas-write-guarantees-v1",
+      "title": "Garanties d'écriture sans CAS pour les trackers V1",
+      "status": "to_create_and_accept",
+      "proposed_in": "PAT-53",
+      "doc_section": "tracker-contract.md #4.3",
+      "invariants_changed": [
+        "linear.py:8-11 — existing-issue replacement is unavailable without a provider CAS (PAT-55, PAT-56 on Linear)",
+        "base.py:262-276 and write.py:371-376 — epic closure is an atomic provider graph operation persisted in one transaction (PAT-69 on YouTrack and Linear)"
+      ]
+    }
+  ],
   "providers": {
     "youtrack": {
       "module": "plugins/foundry/tooling/foundry/trackers/youtrack.py",
@@ -24,13 +43,13 @@
       "module": "plugins/foundry/tooling/foundry/trackers/ghprojects.py",
       "class": "GitHubProjectsTracker",
       "v1_core": true,
-      "note": "stub adapter; every method except resolve_project raises NotImplementedError today, and resolve_project itself is only registry-basename lookup (to_qualify, see identity-and-project-resolution). Real qualification is PAT-65; implementation is split across PAT-57 (read), PAT-58 (ADR storage), PAT-66 (bounded write), PAT-67 (full frame-to-merge lifecycle)."
+      "note": "stub adapter. It overrides resolve_project (a registry.resolve() basename lookup, ghprojects.py:30-32) and the ten abstract methods search, get_issue, create_issue, update_fields, set_state, link, add_comment, list_adrs, create_adr, set_adr_status, each raising NotImplementedError (ghprojects.py:19-24, 34-62). Every other Tracker member is inherited from base.py: optional ports raise their typed unavailability errors, validate_* and preflight_issue_operation are no-ops, resolve_checkout_project falls back to the basename lookup (base.py:135-152). PAT-65 qualifies; PAT-54/57/58/59/64/66/67 implement."
     },
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
       "class": "DevHubTracker",
       "v1_core": false,
-      "note": "Foundry's own internal pilot tracker (dogfooding / benchmark campaigns). Not one of the three repository-facing V1 trackers; listed for contrast only, e.g. it is the only adapter with epic_closure_supported and epic_subgraph_supported today."
+      "note": "Foundry's internal pilot tracker, not one of the three repository-facing V1 trackers; listed for contrast only: it is the only adapter with epic_closure_supported and epic_subgraph_supported (devhub.py:220-223)."
     }
   },
   "operations": [
@@ -48,16 +67,42 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-54",
-          "evidence": "registry.resolve() (registry.py:755-773) looks a repo up by basename (registry.repo_basename(), which honours the PROJECT_REPO env alias, registry.py:653-664) once no marker binding matches; registry.entry_for() (registry.py:699-705) falls back to the same basename lookup; base Tracker.validate_mutation_repository/validate_mutation_project (base.py:170-184) are no-ops and YouTrackTracker does not override either. Two repositories that share a basename (or an operator-set PROJECT_REPO alias) are not distinguished by canonical host/owner/repo identity today — exactly the collision criterion 2 forbids. PAT-54 is the per-repo binding/bootstrap ticket that closes this for all three trackers"
+          "evidence": "resolve_project is registry.resolve('youtrack', repo) (youtrack.py:260-261). Without a marker, registry.resolve() (registry.py:725-773) looks the entry up by the name it is given, taken from registry.repo_basename() (registry.py:653-664: PROJECT_REPO or the remote's last path segment); with a marker, registry._matching_registry_bindings() (registry.py:298-311) falls back to the basename entry when no canonical_repo matches. YouTrack mutations resolve no binding: write.mutation_project returns None after validate_legacy_mutation (write.py:50-56), and validate_mutation_repository/validate_mutation_project/validate_issue_binding are the base no-ops (base.py:164-184). Two repositories sharing a basename are not distinguished"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:1250 resolve_project (discards the repo basename argument entirely), :1258 resolve_checkout_project (canonical_repo via registry.checkout_repository_identity(), never PROJECT_REPO/basename), :1278 validate_mutation_repository re-resolves the checkout identity before any mutation; registry.resolve_canonical_repository (registry.py:800-830) matches only on canonical_repo, never basename"
+          "evidence": "resolve_project discards its repo argument (linear.py:1250-1256); resolve_checkout_project and validate_mutation_repository (linear.py:1258-1280) use registry.resolve_canonical_repository (registry.py:800-830), which matches only canonical_repo and fails closed on ambiguity; every issue read or written is asserted to belong to the bound team and project UUIDs (_assert_issue_project, linear.py:2016-2026)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "ticket": "PAT-65",
-          "evidence": "ghprojects.py resolve_project delegates to registry.resolve('ghprojects', repo) (basename-keyed, same PAT-54 gap as YouTrack) and every other Tracker method is NotImplementedError; the normalized key shape for a GitHub Projects v2 issue (which repository-identity-scoped form distinguishes two numerically identical issue numbers across repositories) is PAT-65's open qualification, not decided here"
+          "ticket": "PAT-54",
+          "evidence": "resolve_project delegates to registry.resolve('ghprojects', repo) (ghprojects.py:30-32), the same basename-keyed lookup as YouTrack; the repository-identity-scoped normalized key a Project v2 issue needs is PAT-65's qualification"
+        }
+      }
+    },
+    {
+      "id": "repository-bootstrap",
+      "journey": "contexte/backlog (create-or-recover the repository's own project and binding)",
+      "core": true,
+      "tracker_abc": [
+        "provision_project",
+        "resolve_checkout_project"
+      ],
+      "cells": {
+        "youtrack": {
+          "status": "gap",
+          "ticket": "PAT-54",
+          "evidence": "the only bootstrap path is setup_project.setup (setup_project.py:94-122) -> provision_project (youtrack.py:115-120) -> provision_youtrack_project (youtrack_provisioning.py:90-182), which is full administrative provisioning: it recovers an existing project by shortName alone (youtrack_provisioning.py:55-61), adds values to instance-global State/Priority/Type bundles (youtrack_provisioning.py:29-52, 104-120) and creates global custom fields. provision_project does not forward canonical_repository (youtrack.py:115-120) and setup registers the binding under the operator-supplied repository name (setup_project.py:118). No minimal create-or-recover bound to canonical identity exists"
+        },
+        "linear": {
+          "status": "gap",
+          "ticket": "PAT-54",
+          "evidence": "no provision_project override: the base raises ProjectProvisioningUnavailableError (base.py:114-128) and setup refuses (setup_project.py:96-101); the binding is registered by hand (docs/linear-tracker.md 'Required binding')"
+        },
+        "ghprojects": {
+          "status": "to_qualify",
+          "ticket": "PAT-54",
+          "evidence": "no provision_project override (base refusal, base.py:114-128); what a GitHub Projects v2 create-or-recover can bind to is unqualified (PAT-65)"
         }
       }
     },
@@ -72,15 +117,17 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py search() lists project issues and forwards an optional native query string; get_issue hydrates links+AC"
+          "evidence": "search() pages the project's issues and get_issue hydrates links and AC (youtrack.py:285-301)"
         },
         "linear": {
-          "status": "supported",
-          "evidence": "linear.py:2251 search() pages the whole project via GraphQL; :2291 get_issue reads one issue"
+          "status": "gap",
+          "ticket": "PAT-54",
+          "evidence": "search() (linear.py:2251-2289) normalizes every page node through _to_issue (linear.py:2278-2279), which raises on any state, label or projectMilestone absent from the binding (linear.py:2141-2142, 2156-2157, 2204-2205): one unmapped value fails the whole-project read. Adding a mapping changes the registry binding digest pinned by .foundry/tracker.json (registry.py:412-413), so keeping the binding complete needs the coherent binding update of PAT-44/PAT-54"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "ghprojects.py search/get_issue both call _todo() -> NotImplementedError; PAT-65 qualifies GitHub Projects v2 read shape before PAT-57 implements it"
+          "ticket": "PAT-57",
+          "evidence": "search/get_issue raise NotImplementedError (ghprojects.py:34-38)"
         }
       }
     },
@@ -94,18 +141,18 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py search() appends an arbitrary caller-supplied query string to its YouTrack search DSL filter"
+          "evidence": "search() appends the caller's query string to its 'project: KEY' filter (youtrack.py:287)"
         },
         "linear": {
           "status": "refused",
-          "evidence": "linear.py:2252 search() raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query') whenever query is non-empty — an explicit, deliberate refusal, not an oversight"
+          "evidence": "search() raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query') whenever query is non-empty (linear.py:2252-2255)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "search() is fully stubbed; whether GitHub's GraphQL item filters can support this is unqualified (PAT-65)"
+          "evidence": "search() raises NotImplementedError; GitHub's item filters are unqualified (PAT-65)"
         }
       },
-      "note": "Criterion 4 excludes 'recherche native libre' from V1 core scope; every cell here is either supported opportunistically, explicitly refused, or unqualified — none is a gap."
+      "note": "Criterion 4 excludes free native search from V1 core."
     },
     {
       "id": "frame-intake-groom-create",
@@ -117,15 +164,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py create_issue posts custom fields + optional parent link, then reads back via get_issue"
+          "evidence": "create_issue posts the issue with its custom fields, reads it back, then links the parent if any (youtrack.py:333-343); creation is outside the #4.2 replay floor and meets S2/S4 (one POST, errors raised)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:2401 create_issue builds the GraphQL input, verifies title/body/fields/parent by reading back the created issue before returning (TrackerConflictError on divergence, no retry)"
+          "evidence": "create_issue (linear.py:2401-2453) creates with a client id, then verifies title, body, fields and parent on readback, TrackerConflictError on divergence, no retry"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "create_issue() -> NotImplementedError (PAT-65 qualifies, PAT-66 implements the bounded write tranche)"
+          "ticket": "PAT-66",
+          "evidence": "create_issue raises NotImplementedError (ghprojects.py:40-41)"
         }
       }
     },
@@ -139,17 +187,20 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "supported",
-          "evidence": "youtrack.py:345 update_fields posts customFields directly; update_body (line 392) does a locked read-verify-write-readback on the issue description"
+          "status": "gap",
+          "ticket": "PAT-55",
+          "evidence": "update_body meets the #4.2 floor at level 1 (youtrack.py:392-448), but update_fields posts customFields unconditionally, with no expected-value check and no compared readback (youtrack.py:345-351): level -1, below the grooming target S1-S4"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-55",
-          "evidence": "linear.py:2455 update_fields raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-field-replacement') unconditionally; linear.py:2856 update_body raises BodyUpdateUnavailableError for any Issue resource ('aucune précondition atomique anti-écrasement') — grooming an already-created Linear issue's fields/body is not implemented today"
+          "blocked_by_adr": "no-cas-write-guarantees-v1",
+          "evidence": "update_fields raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-field-replacement') unconditionally (linear.py:2455-2470); update_body raises BodyUpdateUnavailableError for an Issue (linear.py:2856-2868); set_state refuses every state except in-progress/review/done (linear.py:2481-2484). Enabling in-place replacement reverses the module invariant linear.py:8-11"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "update_fields() -> NotImplementedError; no update_body override (base default also unavailable)"
+          "ticket": "PAT-66",
+          "evidence": "update_fields raises NotImplementedError (ghprojects.py:43-44); update_body is the base refusal"
         }
       }
     },
@@ -163,15 +214,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py:366 posts to /issues/{id}/comments"
+          "evidence": "add_comment is one POST to /issues/{id}/comments (youtrack.py:366-369), never retried; not replay-idempotent, which the #4.2 free-text rule tolerates because a note carries no state"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:2821 add_comment creates then reads back the comment, refusing on divergence"
+          "evidence": "add_comment (linear.py:2821-2854) creates the comment, reads it back and refuses on divergence, no retry; provider-assigned id, so a replay duplicates the note (free-text rule, #4.2)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "add_comment() -> NotImplementedError"
+          "ticket": "PAT-66",
+          "evidence": "add_comment raises NotImplementedError (ghprojects.py:52-53)"
         }
       }
     },
@@ -185,15 +237,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py create_issue links the created issue as subtask-of parent when parent is supplied"
+          "evidence": "create_issue links the created issue as subtask-of parent when parent is supplied (youtrack.py:341-342)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:2432 create_issue sets parentId on the GraphQL input and verifies the readback parent id matches"
+          "evidence": "create_issue asserts the parent belongs to the binding, sets parentId (linear.py:2432-2435) and verifies the readback parent id (linear.py:2451-2452)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "create_issue() -> NotImplementedError; whether GitHub Projects v2 sub-issues map onto Foundry's parent/child model is unqualified (PAT-65)"
+          "ticket": "PAT-66",
+          "evidence": "create_issue raises NotImplementedError; whether Project v2 sub-issues map onto Foundry's parent/child model is unqualified (PAT-65)"
         }
       }
     },
@@ -206,17 +259,20 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "supported",
-          "evidence": "youtrack.py:358 link() issues a YouTrack command for any link_type including subtask-of, with no special-casing"
+          "status": "gap",
+          "ticket": "PAT-55",
+          "evidence": "link() posts a YouTrack command for any link_type (youtrack.py:358-364) without reading the current parent or comparing a readback: level -1, below the grooming target S1-S4"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-55",
-          "evidence": "linear.py:2770 link() raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-parent-replacement') for subtask-of/parent-of specifically; only relates/depends-on/blocks are implemented (:2775 onward)"
+          "blocked_by_adr": "no-cas-write-guarantees-v1",
+          "evidence": "link() raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-parent-replacement') for subtask-of/parent-of (linear.py:2770-2774), under the invariant linear.py:8-11"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "link() -> NotImplementedError"
+          "ticket": "PAT-66",
+          "evidence": "link() raises NotImplementedError (ghprojects.py:49-50)"
         }
       }
     },
@@ -230,15 +286,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py link() covers every _LINK_ROLE mapping including depends-on/blocks/relates"
+          "evidence": "link() maps depends-on/blocks/relates through _LINK_ROLE (youtrack.py:36-42, 358-364); an additive relation, outside the #4.2 replay floor, meeting S2/S4 (one POST, errors raised)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:2752 link() implements depends-on/blocks/relates via issueRelationCreate with readback verification"
+          "evidence": "link() skips an existing identical relation, creates depends-on/blocks/relates via issueRelationCreate and verifies it on readback (linear.py:2775-2819)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "link() -> NotImplementedError"
+          "ticket": "PAT-66",
+          "evidence": "link() raises NotImplementedError (ghprojects.py:49-50)"
         }
       }
     },
@@ -252,21 +309,21 @@
       "cells": {
         "youtrack": {
           "status": "refused",
-          "evidence": "no override in youtrack.py; base Tracker.get_epic_subgraph (base.py) raises EpicSubgraphUnavailableError by default and epic_subgraph_supported is not set to True"
+          "evidence": "no override; the base raises EpicSubgraphUnavailableError (base.py:96-111)"
         },
         "linear": {
           "status": "refused",
-          "evidence": "no override in linear.py; same base default applies"
+          "evidence": "no override; the base raises EpicSubgraphUnavailableError (base.py:96-111)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; base default applies, and no probe has qualified whether it is feasible"
+          "evidence": "no override; the base default applies and feasibility is unqualified"
         }
       },
-      "note": "base.py documents this port as 'optional read-only graph projection'. Today only DevHub (non-V1) implements it, for its own wave-preview orchestration (epic_preview.py, authority.tracker == 'devhub'). The core epics/children/dependencies journey does not need it: it is already served by search()+link()+create_issue(parent=...) above."
+      "note": "Optional read-only projection; only DevHub implements it, for its own wave preview. The core journey is served by search(), link() and create_issue(parent=...)."
     },
     {
-      "id": "project-provisioning",
+      "id": "full-administrative-provisioning",
       "journey": "administrative provisioning (excluded from V1 core per criterion 4)",
       "core": false,
       "tracker_abc": [
@@ -275,18 +332,18 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py:113 project_provisioning_supported = True; provision_project (line 115) creates/recovers the provider project idempotently"
+          "evidence": "project_provisioning_supported = True (youtrack.py:113); provision_youtrack_project creates or recovers the project, fills instance-global State/Priority/Type bundles and creates global custom fields (youtrack_provisioning.py:90-182)"
         },
         "linear": {
           "status": "refused",
-          "evidence": "no override in linear.py; base Tracker.provision_project (base.py) raises ProjectProvisioningUnavailableError by default; a Linear project/team is configured by hand (docs/linear-tracker.md 'Required binding')"
+          "evidence": "no override; the base raises ProjectProvisioningUnavailableError (base.py:114-128)"
         },
         "ghprojects": {
           "status": "refused",
-          "evidence": "no override; base default applies, and 'full administrative provisioning' is explicit optional/excluded scope per criterion 4"
+          "evidence": "no override; the base raises ProjectProvisioningUnavailableError (base.py:114-128)"
         }
       },
-      "note": "criterion 4 explicitly excludes 'provisioning administratif complet' from V1 core. YouTrack's support is a pre-existing convenience, not a V1 requirement; Linear/ghprojects refusing it does not block V1."
+      "note": "Distinct from the core repository-bootstrap row: this row is provisioning beyond create-or-recover of the repository's own binding."
     },
     {
       "id": "adr-read",
@@ -298,15 +355,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py:519 list_adrs paginates project-scoped Knowledge Base articles, anchored-prefix matched"
+          "evidence": "list_adrs pages the project-scoped articles and keeps anchored-prefix matches (youtrack.py:519-537)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py ADR documents section (_adr_documents/_adr_chain from line ~2885) reconstructs Adr models from Linear Documents + version witnesses"
+          "evidence": "list_adrs (linear.py:3527-3529) rebuilds Adr models from the Document/witness chains (_adr_documents, linear.py:2885; _adr_chain)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "list_adrs() -> NotImplementedError; the choice of where GitHub-tracked repos store ADRs at all is explicitly PAT-65's open question, not PAT-53's"
+          "ticket": "PAT-58",
+          "evidence": "list_adrs raises NotImplementedError (ghprojects.py:55-56); ADR storage is PAT-65's open question"
         }
       }
     },
@@ -320,15 +378,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py:539 create_adr posts a new Knowledge Base article with a statut header"
+          "evidence": "create_adr numbers the ADR as max+1 over a fresh list_adrs and posts a Knowledge Base article with a statut header (youtrack.py:539-548); there is no uniqueness precondition, so two concurrent creators can mint the same ADR id (creation is outside the #4.2 replay floor; S2/S4 met)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py _create_adr_document (line 3108) creates a Document plus a version-0 witness, verified by readback (PAT-ADR-0002 byte-exact contract)"
+          "evidence": "create_adr calls _create_adr_document directly (linear.py:3623), which creates the version-0 Document and its witness at deterministic ids with byte-exact readback (linear.py:3108-3200, 3298-3335; PAT-ADR-0002)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "create_adr() -> NotImplementedError; storage choice is PAT-65/PAT-58"
+          "ticket": "PAT-58",
+          "evidence": "create_adr raises NotImplementedError (ghprojects.py:58-59)"
         }
       }
     },
@@ -342,22 +401,23 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py:550 set_adr_status rewrites the statut header through the bounded update_body path"
+          "evidence": "set_adr_status reads the article and rewrites its statut header through update_body's level-1 path (youtrack.py:550-558)"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-47",
-          "evidence": "linear.py implements set_adr_status for native ADRs against the Document/witness chain; an imported historical ADR whose qualified Linear rendering differs from the local model cannot receive any successor version (accept, supersede, link, edit): its predecessor is re-read with the strict model and fails closed (PAT-47, review of PR #32 / PAT-40)"
+          "evidence": "set_adr_status appends a successor version for native ADRs (linear.py:4520-4521); an imported historical ADR whose qualified Linear rendering differs from the local model cannot receive any successor version (accept, supersede, link, edit): its predecessor is re-read with the strict model and fails closed"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "set_adr_status() -> NotImplementedError"
+          "ticket": "PAT-58",
+          "evidence": "set_adr_status raises NotImplementedError (ghprojects.py:61-62)"
         }
       }
     },
     {
       "id": "adr-supersession-and-issue-linking",
-      "journey": "lecture/création/évolution ADR (optional enhancement beyond status field)",
+      "journey": "lecture/création/évolution ADR (optional enhancement beyond the status field)",
       "core": false,
       "tracker_abc": [
         "supersede_adr",
@@ -366,18 +426,18 @@
       "cells": {
         "youtrack": {
           "status": "refused",
-          "evidence": "neither method is overridden in youtrack.py; base Tracker defaults raise TrackerCapabilityUnavailableError(self.name, 'adr_supersession'|'adr_issue_link'). YouTrack represents supersession through the same statut header set_adr_status already writes"
+          "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError(self.name, 'adr_supersession'|'adr_issue_link') (base.py:400-410)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:1112 adr_issue_link_supported = True; link_adr_issue (line 3629) and supersede_adr (line 4523) are both implemented against the Document/witness chain"
+          "evidence": "adr_issue_link_supported = True (linear.py:1112); link_adr_issue (linear.py:3629-3672) and supersede_adr (linear.py:4523-4567) append versions to the Document/witness chain"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "neither overridden; base default applies"
+          "evidence": "not overridden; the base default applies"
         }
       },
-      "note": "Not a distinct core requirement: criterion 1's 'évolution ADR' is served by set_adr_status (status transitions, including a superseded status value) on every V1-core provider. These two methods are an optional reciprocal-linking enhancement Linear happens to offer; their absence on YouTrack/ghprojects does not block V1."
+      "note": "ADR evolution in criterion 1 is served by set_adr_status on every V1 provider; these methods are an optional reciprocal-linking enhancement."
     },
     {
       "id": "issue-lifecycle-transitions",
@@ -389,16 +449,18 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "supported",
-          "evidence": "youtrack.py:353 set_state delegates to update_fields(State=...); base start_transition_path default (in-progress from any non-in-progress state) is unchanged"
+          "status": "gap",
+          "ticket": "PAT-56",
+          "evidence": "set_state is update_fields(State=...) (youtrack.py:353-356): an unconditional POST with no expected predecessor state and no compared readback, so a RESUME replay can overwrite a concurrent state change (level -1, below the #4.2 status/resume target S1-S5)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:2472 set_state enforces in-progress/review/done, requires a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done) before writing through _project_lifecycle's append-only marker"
+          "evidence": "set_state accepts only in-progress/review/done (linear.py:2481-2484); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done; linear.py:2486-2507); each transition is an append-only deterministic-id lifecycle marker written by _project_lifecycle (linear.py:1835-2003): identical replay converges, divergence fails closed. Other states belong to frame-intake-groom-evolve-existing"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "set_state() -> NotImplementedError; PAT-67 covers the full frame-to-merge lifecycle once PAT-65 qualifies transport"
+          "ticket": "PAT-67",
+          "evidence": "set_state raises NotImplementedError (ghprojects.py:46-47)"
         }
       }
     },
@@ -412,16 +474,18 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "youtrack.py:112 acceptance_sync_supported = True; sync_acceptance_body (line 450) validates the proof then reuses update_body's locked read-verify-write-readback — labelled explicitly as a bounded fallback, not CAS (see update_body docstring lines 396-402)"
+          "evidence": "acceptance_sync_supported = True (youtrack.py:112); sync_acceptance_body validates the proof then reuses update_body's level-1 read-verify-write-readback (youtrack.py:450-466), labelled as bounded, not CAS (youtrack.py:396-402)"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-56",
-          "evidence": "linear.py:1114 acceptance_sync_supported = False; sync_acceptance_body (line 2870) raises AcceptanceSyncUnavailableError unconditionally ('aucune précondition atomique anti-écrasement'), refusing any in-place checkbox rewrite of an existing issue body — the same existing-issue-body-replacement gap as PAT-55, not a missing analogue of _update_adr_body (Linear's ADR body path is append-only versioning, not an in-place overwrite; see tracker-contract.md #4 level 2). Separately, and already supported today, Linear projects acceptance-completeness through a proof-bound append-only lifecycle marker instead of an in-place checkbox: acceptance_proof_projection_supported = True (linear.py:1117), project_acceptance_proof (linear.py:2510-2562) appends an 'acceptance' lifecycle marker after re-verifying body+review state, and _to_issue (linear.py:2212-2217) derives Issue.ac_done from that projection, never from the issue's native checkbox text. What remains a gap is exactly the in-place checkbox sync sync_acceptance_body promises on YouTrack, not 'no bounded fallback at all'"
+          "blocked_by_adr": "no-cas-write-guarantees-v1",
+          "evidence": "acceptance_sync_supported = False (linear.py:1114); sync_acceptance_body raises AcceptanceSyncUnavailableError unconditionally (linear.py:2870-2882), under the invariant linear.py:8-11. Linear already projects AC completeness through a proof-bound append-only marker: acceptance_proof_projection_supported = True (linear.py:1117), project_acceptance_proof (linear.py:2510-2562), Issue.ac_done derived from that projection, never from native checkbox text (linear.py:2211-2217). The pending ADR decides whether that projection is the V1 AC authority (no in-place write) or in-place sync is required"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; base default AcceptanceSyncUnavailableError applies"
+          "ticket": "PAT-67",
+          "evidence": "not overridden; the base raises AcceptanceSyncUnavailableError (base.py:194-211)"
         }
       }
     },
@@ -436,15 +500,15 @@
       "cells": {
         "youtrack": {
           "status": "refused",
-          "evidence": "not overridden; base Tracker defaults raise TrackerCapabilityUnavailableError(self.name, 'acceptance-override-receipt'|'...-recovery'); YouTrack keeps the free-text audit note fallback the base docstring describes"
+          "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError and documents the free-text audit note fallback (base.py:213-242)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:1119 acceptance_override_projection_supported = True; project_acceptance_override (line 2570) and recover_acceptance_override (line 2616) append a typed receipt (PAT-49)"
+          "evidence": "acceptance_override_projection_supported = True (linear.py:1118); project_acceptance_override (linear.py:2570) and recover_acceptance_override (linear.py:2616) append a typed receipt (PAT-49)"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; base default applies"
+          "evidence": "not overridden; the base default applies"
         }
       }
     },
@@ -460,19 +524,22 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-69",
-          "evidence": "youtrack.py:108 epic_closure_supported = False, with an explicit code comment: 'YouTrack exposes neither an atomic parent+children compare-and-transition nor a provider-verified receipt store'; no close_epic/get_epic_closure override, so base Tracker raises EpicClosureUnavailableError. skills/close-epic/SKILL.md documents the same refusal to callers"
+          "blocked_by_adr": "no-cas-write-guarantees-v1",
+          "evidence": "epic_closure_supported = False with the comment 'YouTrack exposes neither an atomic parent+children compare-and-transition nor a provider-verified receipt store. A read-then-command emulation would race' (youtrack.py:106-108); no close_epic/get_epic_closure override, so the base raises EpicClosureUnavailableError (base.py:262-286). A no-CAS closure replaces the atomic invariant of base.py:262-276 and write.py:371-376"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-69",
-          "evidence": "no epic_closure_supported override (defaults False) and no close_epic/get_epic_closure override in linear.py; write.close_epic (write.py:377) checks getattr(tracker, 'epic_closure_supported', False) and raises before any provider call"
+          "blocked_by_adr": "no-cas-write-guarantees-v1",
+          "evidence": "no epic_closure_supported override (base default False) and no close_epic/get_epic_closure override; write.close_epic raises before any provider call (write.py:377). A no-CAS closure replaces the atomic invariant of base.py:262-276 and write.py:371-376"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; base default applies, and PAT-65 has not qualified whether GitHub Projects v2 exposes anything closer to an atomic parent/child close"
+          "ticket": "PAT-69",
+          "evidence": "no override; the base default applies; whether GitHub Projects v2 offers any parent/child precondition is unqualified Owner PAT-69 (epic closure in the active tracker), after PAT-65 qualifies what GitHub Projects v2 offers."
         }
       },
-      "note": "DevHub (non-V1) is the only adapter with epic_closure_supported = True today (devhub.py:220-223, close_epic at line 825), proving the port but not satisfying V1's three trackers."
+      "note": "DevHub (non-V1) is the only adapter with epic_closure_supported = True (devhub.py:220-223; close_epic at devhub.py:825)."
     },
     {
       "id": "tombstone-archived-source-after-switch",
@@ -485,15 +552,16 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-43",
-          "evidence": "validate_mutation_project has a base no-op default (base.py:170-184), and YouTrackTracker does not override it. YouTrack's only existing tombstone check is validate_legacy_mutation (youtrack.py:263-283), which refuses a write when the checkout's OWN historical registry binding (basename or PROJECT_REPO alias) is archived, via registry.require_writable_project (registry.py:776-797); it does not yet refuse a write that targets an archived project purely by provider identifier (bypassing registry binding lookup), which is what a post-PAT-64 switch source needs for every write shape"
+          "evidence": "validate_mutation_project is the base no-op (base.py:177-184) and is not overridden. The only tombstone check, validate_legacy_mutation (youtrack.py:263-283), refuses a write when the checkout's own registry binding (basename or PROJECT_REPO) is archived or shares its project with an archived alias, via registry.require_writable_project (registry.py:776-797); a write addressed to an archived project by provider identifier alone is not refused"
         },
         "linear": {
           "status": "supported",
-          "evidence": "resolve_checkout_project (linear.py:1258-1276) resolves every read/write through registry.resolve_canonical_repository (registry.py:800-830), which excludes any binding entry with archive is True from its matches and raises SystemExit when none remain; validate_mutation_repository (linear.py:1278-1280) calls resolve_checkout_project before any mutation, so an archived Linear project binding refuses both reads-for-mutation and writes. preflight_issue_operation (linear.py:1282-1296) is a distinct seam that only gates the openpr/merge capability flags — it is not the tombstone mechanism and is not cited for that reason. PAT-10's cutover already made YouTrack-as-source read-only from this repo's Linear binding"
+          "evidence": "resolve_checkout_project (linear.py:1258-1276) resolves through registry.resolve_canonical_repository (registry.py:800-830), which excludes archived entries and raises SystemExit when none remain; validate_mutation_repository (linear.py:1278-1280) runs it before any mutation"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; not yet a switch target or source"
+          "ticket": "PAT-64",
+          "evidence": "not overridden; not yet a switch source or target"
         }
       }
     },
@@ -510,18 +578,19 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-64",
-          "evidence": "youtrack.py has no import_adr/import_adr_batch override; base Tracker defaults raise TrackerCapabilityUnavailableError(self.name, 'adr_historical_import'|'adr_historical_batch_import'), so YouTrack cannot yet be an import TARGET of a fidelity copy from another tracker"
+          "evidence": "no import_adr/import_adr_batch override; the base raises TrackerCapabilityUnavailableError(self.name, 'adr_historical_import'|'adr_historical_batch_import') (base.py:348-392), so YouTrack cannot be an import target"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:4157 import_adr and :4065 import_adr_batch implement bounded, idempotent, provenance-preserving historical ADR import (PAT-23/PAT-ADR-0001..0003); this is the precedent PAT-64 generalizes to every source/target pair, not the general capability itself"
+          "evidence": "import_adr (linear.py:4157) and import_adr_batch (linear.py:4065) implement bounded, idempotent, provenance-preserving historical ADR import (PAT-ADR-0001..0003); the YouTrack->Linear precedent PAT-64 generalizes"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; storage choice (PAT-65) must land before an import target can exist"
+          "ticket": "PAT-64",
+          "evidence": "not overridden; ADR storage (PAT-65) must exist before an import target can"
         }
       },
-      "note": "criterion 4 states the repo-switch-by-faithful-copy is core V1 (PAT-64), grounded in the existing YouTrack->Linear precedent (FOUNDRY-ADR-0026, PAT-ADR-0001..0003, registry cutover). PAT-64 generalizes a one-directional, one-pair precedent into a source/target-agnostic capability across the three trackers; it is listed as a gap for every leg that is not yet the already-proven Linear-as-target leg."
+      "note": "Criterion 4 makes the repository switch by faithful copy of live work and ADRs (PAT-64) core V1, grounded in the YouTrack->Linear precedent (FOUNDRY-ADR-0026, PAT-ADR-0001..0003)."
     },
     {
       "id": "release-and-changelog-scope",
@@ -534,25 +603,26 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "query.py changelog()/milestones() derive release scope purely from normalized Issue.milestone/state fields returned by search(); no changelog-specific provider method exists"
+          "evidence": "query.py changelog() (query.py:490-518) and milestones() (query.py:380-385) derive release scope from Issue.milestone/state returned by search(); YouTrack reads Milestone as a custom field (youtrack.py:239)"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-59",
-          "evidence": "same query.py changelog() path, but Linear milestones must be mapped in the binding: an issue in an unmapped projectMilestone makes the read fail (linear.py:2204-2205, milestone_id_unmapped) and a mapping change alters the registry binding digest checked against .foundry/tracker.json, so it needs the coherent binding update of PAT-44/PAT-54 first"
+          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py:2204-2205, milestone_id_unmapped), and adding a mapping changes the registry binding digest pinned by .foundry/tracker.json (registry.py:412-413), so it needs the coherent binding update of PAT-44/PAT-54 first"
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "depends on backlog-read above"
+          "ticket": "PAT-59",
+          "evidence": "depends on backlog-read (PAT-57) and on how Project v2 represents milestones (PAT-65)"
         }
       },
-      "note": "Ship-iOS (plugins/ship-ios/scripts/changelog_bridge.py) consumes only the foundry_cli.py 'query changelog' JSON subprocess output; it never imports a Tracker adapter or touches provider credentials, keeping the Tracker/Ship-iOS boundary intact regardless of which of the three providers is active."
+      "note": "Ship-iOS (plugins/ship-ios/scripts/changelog_bridge.py) consumes only the 'query changelog' JSON of foundry_cli.py; it imports no Tracker adapter and holds no provider credential."
     }
   ],
   "open_points_not_decided_here": [
     {
       "id": "ghprojects-graphql-vs-rest-only-codehost-rule",
-      "description": "GitHub Projects v2 has no REST API surface; it is GraphQL-only. Foundry's code-host rule (skills/open-pr, skills/merge-pr) is 'REST only, never GraphQL' for the GitHub *code host* adapter (merge-pr/SKILL.md: 'Never GraphQL ... REST only — the adapter enforces it'). A repository that picks ghprojects as its *tracker* would still use the REST-only GitHub code-host adapter for PRs/merges, but its *tracker* adapter would need GraphQL. This tension between the tracker and code-host GitHub API surfaces is recorded here for PAT-65 to resolve; PAT-53 does not decide it."
+      "description": "GitHub Projects v2 is GraphQL-only. Foundry's code-host rule is 'Never GraphQL ... REST only — the adapter enforces it' (skills/merge-pr/SKILL.md:226). A repository choosing ghprojects keeps the REST-only GitHub code-host adapter for PRs/merges, but its tracker adapter would need GraphQL. PAT-65 resolves this tension; PAT-53 does not."
     }
   ]
 }
