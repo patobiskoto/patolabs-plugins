@@ -410,7 +410,11 @@ def repository_tracker_binding(cwd: str | None = None) -> RepositoryTrackerBindi
         key=project_coordinate["key"], project_id=project_coordinate["id"],
     )
     if data["registry_binding_digest"] != registry_digest:
-        raise ValueError("binding tracker du registre modifié depuis le cutover")
+        raise ValueError(
+            "binding tracker du registre modifié depuis le cutover : restaurez "
+            "l'entrée approuvée exacte ou suspendez le dépôt; n'utilisez pas "
+            "registry register pour contourner ce refus"
+        )
     return RepositoryTrackerBinding(
         tracker=data["tracker"], repository=repository, project=project,
         registry_binding_digest=registry_digest,
@@ -763,8 +767,9 @@ def resolve(tracker: str, repo: str, cwd: str | None = None) -> Project:
     e = data[repo]
     if e.get("archive") is True:
         raise SystemExit(
-            f"Binding tracker archivé : '{repo}' ne peut plus recevoir "
-            f"d'écriture via '{tracker}'."
+            f"Binding tracker archivé : l'alias '{repo}' est un tombstone; "
+            f"lisez l'archive via un alias non archivé du même projet "
+            f"sur '{tracker}'."
         )
     return Project(key=e["key"], id=e["id"],
                    extra={
@@ -856,7 +861,9 @@ def register(tracker: str, repo: str, key: str, project_id: str, **extra) -> Non
         current = data.get(tracker, {}).get(repo)
         if isinstance(current, dict) and current.get("archive") is True:
             raise ValueError(
-                f"binding archive '{tracker}/{repo}' immuable sans rollback explicite"
+                f"binding archive '{tracker}/{repo}' immuable : restaurez "
+                "l'entrée approuvée exacte ou suspendez le dépôt; registry "
+                "register ne réactive jamais un tombstone"
             )
         data.setdefault(tracker, {})[repo] = {"key": key, "id": project_id, **extra}
         _save(data)
@@ -901,7 +908,9 @@ def register_alias(tracker: str, source_repo: str, alias_repo: str) -> bool:
         current = bindings.get(alias_repo)
         if isinstance(current, dict) and current.get("archive") is True:
             raise ValueError(
-                f"binding archive '{tracker}/{alias_repo}' immuable sans rollback explicite"
+                f"binding archive '{tracker}/{alias_repo}' immuable : restaurez "
+                "l'entrée approuvée exacte ou suspendez le dépôt; registry "
+                "register ne réactive jamais un tombstone"
             )
         if current:
             source_identity = (source.get("key"), source.get("id"))

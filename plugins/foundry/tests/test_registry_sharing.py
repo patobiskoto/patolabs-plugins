@@ -355,7 +355,7 @@ def test_generic_registration_cannot_remove_an_archive_tombstone(monkeypatch, tm
     })
     before = (state / "registry.json").read_bytes()
 
-    with pytest.raises(ValueError, match="archive.*immuable"):
+    with pytest.raises(ValueError, match="restaurez l'entrée approuvée exacte"):
         registry.register("youtrack", "public", "FOUNDRY", "0-3")
 
     assert (state / "registry.json").read_bytes() == before
@@ -376,7 +376,7 @@ def test_alias_registration_cannot_replace_an_archive_tombstone(monkeypatch, tmp
     registry._save(data)
     before = (state / "registry.json").read_bytes()
 
-    with pytest.raises(ValueError, match="archive.*immuable"):
+    with pytest.raises(ValueError, match="restaurez l'entrée approuvée exacte"):
         registry.register_alias("youtrack", "source", "public")
 
     assert (state / "registry.json").read_bytes() == before
@@ -711,6 +711,44 @@ def test_repository_marker_rejects_symlink_origin_mismatch_and_registry_drift(
     registry._save(data)
     with pytest.raises(ValueError, match="incompatibles avec le registre"):
         registry.repository_tracker_binding(str(repo))
+
+
+def test_registry_digest_drift_requires_exact_approved_recovery(monkeypatch, tmp_path):
+    repo, _extra = _prepare_cutover(monkeypatch, tmp_path)
+    registry.cutover_repository_tracker(
+        "linear", "PAT", _LINEAR_PROJECT_ID,
+        migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+    )
+    data = registry.load()
+    data["linear"]["public"]["label_ids"] = {"reconfigured": (
+        "00000000-0000-4000-8000-000000000099"
+    )}
+    registry._save(data)
+    monkeypatch.setenv("FOUNDRY_TRACKER", "youtrack")
+
+    with pytest.raises(ValueError, match="restaurez l'entrée approuvée exacte"):
+        registry.tracker_name_for_checkout(str(repo))
+
+    # The invalid marker remains authoritative: an environment default cannot turn
+    # this into a YouTrack fallback, and no registry write happened during refusal.
+    assert registry.load() == data
+
+
+def test_archived_alias_error_directs_reads_to_a_live_archive_alias(monkeypatch, tmp_path):
+    repo, _extra = _prepare_cutover(monkeypatch, tmp_path)
+    historical = _make_repo(tmp_path, "claude-plugins")
+    registry.cutover_repository_tracker(
+        "linear", "PAT", _LINEAR_PROJECT_ID,
+        migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+    )
+
+    with pytest.raises(SystemExit, match="alias non archivé du même projet"):
+        registry.resolve("youtrack", "public", cwd=str(tmp_path))
+
+    archive = registry.resolve("youtrack", "claude-plugins", cwd=str(historical))
+    assert archive.key == "FOUNDRY"
+    with pytest.raises(SystemExit, match="archive lisible"):
+        registry.require_writable_project("youtrack", archive)
 
 
 def test_cutover_requires_registered_target_and_preserves_historical_archive(
