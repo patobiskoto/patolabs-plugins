@@ -489,12 +489,12 @@ def _linear_foundry_adr_0012_v1_readback(body: str) -> str | None:
 
 
 _MULTILINE_INLINE_CODE = re.compile(
-    r"(?<![A-Za-z0-9_`])`(?!`)(?P<before>[^`\n]+)\n"
-    r"(?P<indent>[ \t]+)(?P<after>[^`\n]+)`(?![A-Za-z0-9_`])"
+    r"(?<![A-Za-z0-9_`])`(?![\s`])(?P<before>[^`\n]+)(?<!\s)\n"
+    r"(?P<indent>[ \t]+)(?!\s)(?P<after>[^`\n]+)(?<!\s)`(?![A-Za-z0-9_`])"
 )
 _MULTILINE_BOLD = re.compile(
-    r"(?<![A-Za-z0-9_*\\])\*\*(?!\*)(?P<before>[^*`_\[\]\n]+)\n"
-    r"(?P<indent>[ \t]+)(?P<after>[^*`_\[\]\n]+)\*\*(?![A-Za-z0-9_*])"
+    r"(?<![A-Za-z0-9_*\\])\*\*(?![\s*])(?P<before>[^*`_~\[\]\n]+)(?<!\s)\n"
+    r"(?P<indent>[ \t]+)(?!\s)(?P<after>[^*`_~\[\]\n]+)(?<!\s)\*\*(?![A-Za-z0-9_*])"
 )
 _MULTILINE_LINK_DESTINATION = re.compile(r"\]\([^\n]*\n[^)]*\)")
 
@@ -751,13 +751,17 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     for start, end, replacement in reversed(code_replacements):
         rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
 
-    # Code spans are literal: delimiters inside them cannot open a bold span.
-    rendered = _MULTILINE_BOLD.sub(
-        lambda match: (
-            f"**{match['before']}**\n{match['indent']}**{match['after']}**"
-        ),
-        rendered,
-    )
+    # Regex matches are only candidates: literal delimiters cannot be rendered
+    # as strong spans, and the same source flanking rules qualify replacements.
+    def render_bold(match: re.Match[str]) -> str:
+        if not (
+            _is_emphasis_opener(rendered, match.start(), "**")
+            and _is_emphasis_closer(rendered, match.end() - 2, "**")
+        ):
+            return match.group()
+        return f"**{match['before']}**\n{match['indent']}**{match['after']}**"
+
+    rendered = _MULTILINE_BOLD.sub(render_bold, rendered)
     if any(
         "\n" in rendered[start : end + length]
         for start, end, length in _paired_backtick_delimiters(rendered)

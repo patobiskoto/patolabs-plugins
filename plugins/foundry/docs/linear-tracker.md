@@ -129,7 +129,11 @@ byte-exact; a dash thematic break such as `- - -` is preserved too. A provider r
 rewrites any of those is rejected. PAT-71 adds two more closed source-to-readback forms outside
 fenced code: a single-backtick inline code span crossing one newline with continuation indentation
 is returned on one line with one space, and a simple `**bold**` span crossing that same shape is
-returned as two independently bold spans on either side of the newline. These forms are not
+returned as two independently bold spans on either side of the newline. Each text fragment
+must have non-whitespace edges after continuation indentation is removed; variants requiring
+extra whitespace trimming are unqualified and refused. Bold delimiters must actually open and
+close a strong span, and nested formatting (including strikethrough) is not a simple bold form.
+Whitespace-adjacent literal bold delimiters are left unchanged. These forms are not
 reverse-normalized: the witness retains the source bytes. Any other multiline inline construction
 (including emphasis, links, nested marks, or a multi-backtick code span) is refused before any
 provider write. The bounded model does not parse raw HTML: a line outside a
