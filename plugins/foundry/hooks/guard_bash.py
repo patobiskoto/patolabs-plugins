@@ -23,10 +23,11 @@ open here too would silently drop the R1 guard exactly when it matters, so an
 R1-candidate command (`gh pr create/merge`, `git push`) is still denied, naming
 the binding error as the cause; a non-candidate command is unaffected (the
 cheap `_is_candidate` prefilter runs first and never touches the registry).
-An unreadable/invalid global registry raises the same ValueError, so
-those commands are then denied in any git checkout (an unregistered repo cannot
-be proven) until the registry is repaired. Any OTHER unexpected failure
-keeps failing OPEN. The pure `deny_reason()` is
+A malformed global registry (invalid JSON or content) raises the same
+ValueError, so those commands are then denied in any git checkout with an
+`origin` remote (an unregistered repo cannot be proven) until the registry
+is repaired. A registry that cannot be read at all (OSError) and any OTHER
+unexpected failure keep failing OPEN. The pure `deny_reason()` is
 what the tests pin. This is a discipline tool, not a sandbox: `bash -c '…'`
 indirection is out of scope by design.
 """
