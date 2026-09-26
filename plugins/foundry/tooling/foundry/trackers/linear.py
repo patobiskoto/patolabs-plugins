@@ -636,8 +636,9 @@ def _reject_multiline_emphasis(
             runs.append((position, run))
     # Each opener keeps its unconsumed delimiter count. Opening delimiters are
     # consumed from the right and closing delimiters from the left, so a residual
-    # marker can still form an outer span with a later run.
-    openers: list[tuple[int, int, bool]] = []
+    # marker can still form an outer span with a later run. The rule of three
+    # uses original run lengths, never the counts left after partial consumption.
+    openers: list[tuple[int, int, bool, int]] = []
     for position, run in runs:
         if marker == "~" and len(run) < 2:
             continue
@@ -648,16 +649,18 @@ def _reject_multiline_emphasis(
         while can_close and closing_remaining and openers:
             opener_index = None
             for candidate in range(len(openers) - 1, -1, -1):
-                _opener, opener_remaining, opener_can_close = openers[candidate]
+                (
+                    _opener, opener_remaining, opener_can_close, opener_length
+                ) = openers[candidate]
                 # CommonMark's multiple-of-three restriction prevents a run
                 # that can serve both roles from being paired ambiguously.
                 if (
                     marker != "~"
                     and (opener_can_close or can_open)
-                    and (opener_remaining + closing_remaining) % 3 == 0
+                    and (opener_length + len(run)) % 3 == 0
                     and (
-                        opener_remaining % 3 != 0
-                        or closing_remaining % 3 != 0
+                        opener_length % 3 != 0
+                        or len(run) % 3 != 0
                     )
                 ):
                     continue
@@ -665,7 +668,9 @@ def _reject_multiline_emphasis(
                 break
             if opener_index is None:
                 break
-            opener, opener_remaining, opener_can_close = openers[opener_index]
+            (
+                opener, opener_remaining, opener_can_close, opener_length
+            ) = openers[opener_index]
             use = 2 if opener_remaining >= 2 and closing_remaining >= 2 else 1
             if marker == "~" and use != 2:
                 break
@@ -690,12 +695,13 @@ def _reject_multiline_emphasis(
                     opener,
                     opener_remaining,
                     opener_can_close,
+                    opener_length,
                 )
             else:
                 openers.pop(opener_index)
         if can_open and closing_remaining >= (2 if marker == "~" else 1):
             openers.append(
-                (position + closing_consumed, closing_remaining, can_close)
+                (position + closing_consumed, closing_remaining, can_close, len(run))
             )
 
 
