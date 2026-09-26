@@ -29,7 +29,15 @@ or version conflict, an unsupported provider, a malformed/mixed/legacy proof, or
 silent truncation fails closed before merge. For a provider without this concurrency
 contract (currently YouTrack), check the boxes manually and rerun. The explicit human fallback is
 `--allow-incomplete-ac --ac-override-reason=<public-audit-code>`; it records an audit
-note but never changes tracker checkboxes or AC text.
+note but never changes tracker checkboxes or AC text. On a tracker with the typed
+override port (currently Linear), the authority is instead a deterministic append-only
+`acceptance-override` lifecycle receipt bound to the current review generation, PR URL,
+head/base SHAs, diff digest and reason code, written before the code-host merge; the
+issue then reads `done` with AC still incomplete. If an issue was merged under override
+without that receipt and now fails with “done proof lacks matching acceptance”, re-run
+exactly the same `issue merge <ID> <PR> --allow-incomplete-ac --ac-override-reason=<code>`:
+it appends only the missing receipt bound to the existing done receipt, never merges or
+rewrites anything, and a second replay is a no-op. YouTrack/DevHub keep the prose note.
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" query issue <ISSUE-ID>
 ```

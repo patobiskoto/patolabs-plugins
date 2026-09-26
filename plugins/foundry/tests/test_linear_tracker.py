@@ -2061,6 +2061,480 @@ def test_linear_acceptance_projection_refuses_incomplete_or_stale_proof_before_w
     assert len(wire.comments) == before
 
 
+OVERRIDE_PR_URL = "https://github.com/acme/widgets/pull/17"
+OVERRIDE_DIFF = b"override-diff"
+OVERRIDE_DIGEST = hashlib.sha256(OVERRIDE_DIFF).hexdigest()
+
+
+def _override_merge_harness(monkeypatch, instance, pr, merge_pr):
+    """Drive the real issue.merge against the Linear fake; no network, no git."""
+    events = []
+    instance._activate(PROJECT)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(
+        issue, "_cleanup_branch",
+        lambda _branch: events.append(("cleanup",)) or "linked-worktree",
+    )
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: "acme/widgets",
+        get_pr=lambda *_args: pr,
+        merge_pr=merge_pr,
+        delete_branch=lambda *_args: events.append(("delete",)),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "git_head", lambda: pr.sha)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: OVERRIDE_DIFF)
+    monkeypatch.setattr(issue, "repository_identity", lambda: "github.com/acme/widgets")
+    monkeypatch.setattr(
+        write,
+        "ci_gate",
+        lambda *_args, **_kwargs: {
+            "passed": True, "waived": False, "total": 1, "pending": [], "failing": [],
+        },
+    )
+
+    class Store:
+        def __init__(self, _repository):
+            pass
+
+        def valid_for_merge(self, **_coordinates):
+            raise routing.RoutingConfigError("no structured proof")
+
+    monkeypatch.setattr(issue, "AcceptanceProofStore", Store)
+    return events
+
+
+def _lifecycle_rows(wire, issue_id, operation):
+    return [
+        row
+        for row in wire.issues[issue_id]["comments"]["nodes"]
+        if f"{linear_module._LIFECYCLE_SCHEMA}:{operation}:" in row["body"]
+    ]
+
+
+OVERRIDE_FLAGS = {"--allow-incomplete-ac", "--ac-override-reason=human_confirmed"}
+
+
+def test_linear_override_merge_publishes_typed_receipt_before_codehost_merge(
+    tracker, monkeypatch, capsys,
+):
+    instance, wire = tracker
+    pr = PullRequest(
+        number=17, url=OVERRIDE_PR_URL, head="feat/lin-2", base="main",
+        base_sha="b" * 40, sha="a" * 40,
+    )
+    observed_at_merge = []
+
+    def merge_pr(*_args, **_kwargs):
+        observed_at_merge.append(
+            [
+                instance._decode_lifecycle_comment("LIN-2", row["body"])[1]
+                for row in _lifecycle_rows(wire, "LIN-2", "acceptance-override")
+            ]
+        )
+        return SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
+
+    events = _override_merge_harness(monkeypatch, instance, pr, merge_pr)
+
+    issue.merge("LIN-2", "17", flags=OVERRIDE_FLAGS)
+
+    # The typed receipt is durable before the irreversible code-host effect.
+    assert observed_at_merge == [
+        [
+            {
+                "native_state_id": STATE_IDS["ready"],
+                "review_generation": 1,
+                "pr_url": OVERRIDE_PR_URL,
+                "head_sha": "a" * 40,
+                "base_sha": "b" * 40,
+                "review_digest": OVERRIDE_DIGEST,
+                "reason": "human_confirmed",
+            }
+        ]
+    ]
+    assert events == [("delete",), ("cleanup",)]
+    completed = instance.get_issue("LIN-2")
+    assert completed.state == "done"
+    assert (completed.ac_done, completed.ac_total) == (0, 1)
+    projection = instance._lifecycle_projection("LIN-2", wire.issues["LIN-2"])
+    assert projection["acceptance_complete"] is False
+    assert projection["acceptance_override"] == "human_confirmed"
+    # No AC box is ever checked; the prose note exists but carries no authority.
+    assert wire.issues["LIN-2"]["description"] == "- [ ] acceptance"
+    prose = [
+        row["body"]
+        for row in wire.issues["LIN-2"]["comments"]["nodes"]
+        if not row["body"].startswith(linear_module._LIFECYCLE_HEADER)
+    ]
+    assert prose == [
+        "Audit merge: override humain explicite des AC incomplètes (human_confirmed)."
+    ]
+    assert "AC sync: human-override/0" in capsys.readouterr().out
+
+
+def test_linear_override_replay_after_interruption_before_merge_completes(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    pr = PullRequest(
+        number=17, url=OVERRIDE_PR_URL, head="feat/lin-2", base="main",
+        base_sha="b" * 40, sha="a" * 40,
+    )
+    attempts = []
+
+    def merge_pr(*_args, **_kwargs):
+        attempts.append("merge")
+        if len(attempts) == 1:
+            raise RuntimeError("gh: connection reset (HTTP 502)")
+        return SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
+
+    _override_merge_harness(monkeypatch, instance, pr, merge_pr)
+
+    with pytest.raises(RuntimeError, match="HTTP 502"):
+        issue.merge("LIN-2", "17", flags=OVERRIDE_FLAGS)
+    interrupted = instance.get_issue("LIN-2")
+    assert interrupted.state == "review"
+    assert interrupted.ac_done == 0
+    receipts_before_replay = copy.deepcopy(
+        _lifecycle_rows(wire, "LIN-2", "acceptance-override")
+    )
+    assert len(receipts_before_replay) == 1
+
+    issue.merge("LIN-2", "17", flags=OVERRIDE_FLAGS)
+
+    assert attempts == ["merge", "merge"]
+    assert _lifecycle_rows(wire, "LIN-2", "acceptance-override") == receipts_before_replay
+    assert len(_lifecycle_rows(wire, "LIN-2", "state-done")) == 1
+    completed = instance.get_issue("LIN-2")
+    assert (completed.state, completed.ac_done) == ("done", 0)
+    # The prose note is only written with a newly created receipt, not on replay.
+    assert sum(
+        not row["body"].startswith(linear_module._LIFECYCLE_HEADER)
+        for row in wire.issues["LIN-2"]["comments"]["nodes"]
+    ) == 1
+
+
+def _append_lifecycle_row(instance, wire, issue_id, operation, payload):
+    _marker, body, comment_id = instance._lifecycle_marker(operation, issue_id, payload)
+    native = wire.issues[issue_id]
+    wire.comments[comment_id] = {
+        "id": comment_id,
+        "body": body,
+        "issue": {"id": native["id"], "identifier": issue_id},
+    }
+    native["comments"]["nodes"].append(
+        {"id": comment_id, "body": body, "createdAt": "2026-09-25T10:00:00Z"}
+    )
+
+
+def _pat10_shape(instance, wire, monkeypatch):
+    """Two review generations, the legacy prose audit, then done without AC proof."""
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    first = TransitionContext(
+        pr_url=OVERRIDE_PR_URL, head_sha="1" * 40, base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    latest = TransitionContext(
+        pr_url=OVERRIDE_PR_URL, head_sha="a" * 40, base_sha="b" * 40,
+        review_digest=OVERRIDE_DIGEST,
+    )
+    instance.set_state("LIN-2", "review", context=first, project=PROJECT)
+    instance.set_state("LIN-2", "review", context=latest, project=PROJECT)
+    instance.add_comment(
+        "LIN-2",
+        "Audit merge: override humain explicite des AC incomplètes (human_confirmed).",
+        project=PROJECT,
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
+    _append_lifecycle_row(
+        instance, wire, "LIN-2", "state-done",
+        {
+            "state": "done",
+            "native_state_id": STATE_IDS["review"],
+            "pr_url": latest.pr_url,
+            "head_sha": latest.head_sha,
+            "base_sha": latest.base_sha,
+            "review_digest": latest.review_digest,
+            "review_generation": 2,
+            "merge_sha": "f" * 40,
+        },
+    )
+    return latest
+
+
+def test_linear_done_without_acceptance_or_override_still_fails_closed(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    _pat10_shape(instance, wire, monkeypatch)
+
+    with pytest.raises(TrackerConflictError, match="lacks matching acceptance"):
+        instance.get_issue("LIN-2")
+    with pytest.raises(TrackerConflictError, match="lacks matching acceptance"):
+        instance.search(PROJECT)
+
+
+def test_linear_override_recovery_after_done_appends_only_missing_receipt(
+    tracker, monkeypatch, capsys,
+):
+    instance, wire = tracker
+    latest = _pat10_shape(instance, wire, monkeypatch)
+    before = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+    pr = PullRequest(
+        number=17, url=OVERRIDE_PR_URL, head="feat/lin-2", base="main",
+        base_sha="b" * 40, sha=latest.head_sha, merged=True, merge_sha="f" * 40,
+    )
+
+    def merge_pr(*_args, **_kwargs):
+        raise AssertionError("an already-merged PR must never be merged again")
+
+    events = _override_merge_harness(monkeypatch, instance, pr, merge_pr)
+    monkeypatch.setattr(
+        issue, "git_head", lambda: (_ for _ in ()).throw(AssertionError("git")),
+    )
+
+    issue.merge("LIN-2", "17", flags=OVERRIDE_FLAGS)
+
+    after = wire.issues["LIN-2"]["comments"]["nodes"]
+    # Append-only: every prior row is byte-identical and exactly one row is added.
+    assert after[: len(before)] == before
+    assert len(after) == len(before) + 1
+    added = instance._decode_lifecycle_comment("LIN-2", after[-1]["body"])
+    assert added[0] == "acceptance-override"
+    assert added[1] == {
+        "native_state_id": STATE_IDS["review"],
+        "review_generation": 2,
+        "pr_url": latest.pr_url,
+        "head_sha": latest.head_sha,
+        "base_sha": latest.base_sha,
+        "review_digest": latest.review_digest,
+        "reason": "human_confirmed",
+    }
+    assert "reçu override AC ajouté" in capsys.readouterr().out
+    recovered = instance.get_issue("LIN-2")
+    assert (recovered.state, recovered.pr_url, recovered.ac_done) == (
+        "done", OVERRIDE_PR_URL, 0,
+    )
+    assert {item.id: item.state for item in instance.search(PROJECT)} == {
+        "LIN-1": "ready", "LIN-2": "done",
+    }
+    assert events == [("delete",), ("cleanup",)]
+
+    # A second exact replay is a tracker no-op.
+    snapshot = copy.deepcopy(after)
+    issue.merge("LIN-2", "17", flags=OVERRIDE_FLAGS)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == snapshot
+    assert "reçu override AC ajouté" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("flags", "pr_changes", "message"),
+    [
+        ({"--allow-no-ci"}, {}, None),
+        (OVERRIDE_FLAGS, {"merge_sha": "9" * 40}, "Reprise override AC refusée"),
+        (OVERRIDE_FLAGS, {"sha": "9" * 40}, "Reprise override AC refusée"),
+        (OVERRIDE_FLAGS, {"merged": False, "merge_sha": None}, None),
+        (
+            {"--allow-incomplete-ac", "--ac-override-reason=Free text"},
+            {},
+            "code-public",
+        ),
+    ],
+)
+def test_linear_override_recovery_refuses_inexact_replay_without_write(
+    tracker, monkeypatch, flags, pr_changes, message,
+):
+    instance, wire = tracker
+    latest = _pat10_shape(instance, wire, monkeypatch)
+    before = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+    fields = {
+        "number": 17, "url": OVERRIDE_PR_URL, "head": "feat/lin-2", "base": "main",
+        "base_sha": "b" * 40, "sha": latest.head_sha, "merged": True,
+        "merge_sha": "f" * 40, **pr_changes,
+    }
+    pr = PullRequest(**fields)
+
+    def merge_pr(*_args, **_kwargs):
+        raise AssertionError("no merge")
+
+    _override_merge_harness(monkeypatch, instance, pr, merge_pr)
+
+    expected = (
+        pytest.raises(SystemExit, match=message)
+        if message
+        else pytest.raises(TrackerConflictError, match="lacks matching acceptance")
+    )
+    with expected:
+        issue.merge("LIN-2", "17", flags=flags)
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == before
+
+
+def _override_payload(review, **changes):
+    return {
+        "native_state_id": STATE_IDS["ready"],
+        "review_generation": 1,
+        "pr_url": review.pr_url,
+        "head_sha": review.head_sha,
+        "base_sha": review.base_sha,
+        "review_digest": review.review_digest,
+        "reason": "human_confirmed",
+        **changes,
+    }
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"reason": "Human confirmed it"}, "override malformed or stale"),
+        ({"reason": "ok"}, "override malformed or stale"),
+        ({"reason": None}, "override malformed or stale"),
+        ({"review_generation": 2}, "override malformed or stale"),
+        ({"review_generation": "1"}, "override malformed or stale"),
+        ({"head_sha": "9" * 40}, "override malformed or stale"),
+        ({"base_sha": "9" * 40}, "override malformed or stale"),
+        ({"pr_url": "https://github.com/acme/widgets/pull/18"}, "override malformed"),
+        ({"review_digest": "9" * 64}, "override malformed or stale"),
+        ({"note": "free text is never evidence"}, "override malformed or stale"),
+    ],
+)
+def test_linear_forged_or_misbound_override_receipt_fails_closed(
+    tracker, changes, message,
+):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url=OVERRIDE_PR_URL, head_sha="a" * 40, base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    _append_lifecycle_row(
+        instance, wire, "LIN-2", "acceptance-override",
+        _override_payload(review, **changes),
+    )
+
+    with pytest.raises(TrackerConflictError, match=message):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_override_receipt_tampering_or_duplicate_fails_closed(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url=OVERRIDE_PR_URL, head_sha="a" * 40, base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    assert instance.project_acceptance_override(
+        "LIN-2", "human_confirmed", review, project=PROJECT,
+    ) is True
+    assert instance.get_issue("LIN-2").state == "review"
+    native = wire.issues["LIN-2"]
+    row = copy.deepcopy(_lifecycle_rows(wire, "LIN-2", "acceptance-override")[0])
+
+    native["comments"]["nodes"].append(copy.deepcopy(row))
+    with pytest.raises(TrackerConflictError, match="duplicate projection"):
+        instance.get_issue("LIN-2")
+    native["comments"]["nodes"].pop()
+
+    tampered = next(
+        item for item in native["comments"]["nodes"] if item["id"] == row["id"]
+    )
+    tampered["body"] = row["body"].replace("human_confirmed", "human_confirmes")
+    with pytest.raises(TrackerConflictError, match="integrity invalid"):
+        instance.get_issue("LIN-2")
+    tampered["body"] = row["body"]
+
+    # A competing override for the same generation shares the deterministic slot.
+    before = copy.deepcopy(native["comments"]["nodes"])
+    with pytest.raises(TrackerConflictError, match="divergent before comment"):
+        instance.project_acceptance_override(
+            "LIN-2", "other_reason", review, project=PROJECT,
+        )
+    assert native["comments"]["nodes"] == before
+    # An exact replay is a no-op.
+    assert instance.project_acceptance_override(
+        "LIN-2", "human_confirmed", review, project=PROJECT,
+    ) is False
+    assert native["comments"]["nodes"] == before
+
+
+def test_linear_override_of_older_generation_does_not_prove_latest_done(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    first = TransitionContext(
+        pr_url=OVERRIDE_PR_URL, head_sha="a" * 40, base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    second = TransitionContext(
+        pr_url=OVERRIDE_PR_URL, head_sha="d" * 40, base_sha="b" * 40,
+        review_digest="e" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=first, project=PROJECT)
+    instance.project_acceptance_override(
+        "LIN-2", "human_confirmed", first, project=PROJECT,
+    )
+    instance.set_state("LIN-2", "review", context=second, project=PROJECT)
+    assert instance._lifecycle_projection("LIN-2", wire.issues["LIN-2"])[
+        "acceptance_override"
+    ] is None
+
+    # A stale override for the previous head cannot be written for the new generation.
+    before = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+    with pytest.raises(TrackerConflictError, match="current review projection"):
+        instance.project_acceptance_override(
+            "LIN-2", "human_confirmed", first, project=PROJECT,
+        )
+    with pytest.raises(TrackerCapabilityUnavailableError, match="override-reason"):
+        instance.project_acceptance_override(
+            "LIN-2", "Free text", second, project=PROJECT,
+        )
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == before
+
+    _append_lifecycle_row(
+        instance, wire, "LIN-2", "state-done",
+        {
+            "state": "done",
+            "native_state_id": STATE_IDS["ready"],
+            "pr_url": second.pr_url,
+            "head_sha": second.head_sha,
+            "base_sha": second.base_sha,
+            "review_digest": second.review_digest,
+            "review_generation": 2,
+            "merge_sha": "f" * 40,
+        },
+    )
+    with pytest.raises(TrackerConflictError, match="lacks matching acceptance"):
+        instance.get_issue("LIN-2")
+
+
+def test_linear_override_and_later_acceptance_of_one_generation_stay_readable(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    review = TransitionContext(
+        pr_url=OVERRIDE_PR_URL, head_sha="a" * 40, base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
+    instance.project_acceptance_override(
+        "LIN-2", "human_confirmed", review, project=PROJECT,
+    )
+    write.sync_acceptance(
+        instance, "LIN-2", "- [ ] acceptance", proof("LIN-2", "- [ ] acceptance"),
+    )
+
+    projected = instance.get_issue("LIN-2")
+    assert (projected.state, projected.ac_done) == ("review", 1)
+    projection = instance._lifecycle_projection("LIN-2", wire.issues["LIN-2"])
+    assert projection["acceptance_complete"] is True
+    assert projection["acceptance_override"] is None
+
+
 def test_linear_cockpit_projection_requires_complete_go_and_never_changes_lifecycle(
     tracker,
 ):

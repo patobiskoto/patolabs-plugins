@@ -423,6 +423,45 @@ priority, labels and parent are never replaced by Foundry. Native checked boxes 
 deliberately not counted as proven completion: without the matching append-only review
 receipt, Foundry reports them incomplete and requires the structured proof before merge.
 
+### Typed human AC override receipt (PAT-49)
+
+The documented human fallback `issue merge <ID> <PR> --allow-incomplete-ac
+--ac-override-reason=<code>` does not turn prose into evidence. On Linear it appends,
+before the GitHub merge and after the current review generation has been re-projected,
+one typed `acceptance-override` receipt (marker
+`foundry-linear-lifecycle.v1:acceptance-override:<digest>`) whose payload is exactly
+`native_state_id`, `review_generation`, `pr_url`, `head_sha`, `base_sha`, `review_digest`
+and `reason`. The four coordinates must equal those of the review receipt of that
+generation; `reason` must match `[a-z0-9_-]{3,80}`. Like an AC receipt it occupies the
+deterministic issue+operation+generation comment slot, so a replay with the same reason
+is a no-op and a different reason for the same generation fails closed. The historical
+free-text line “Audit merge: override humain explicite …” is still written once, next
+to a newly created receipt, but carries no authority.
+
+The projection accepts `state-done` when the done generation has either a valid AC
+receipt or a valid override receipt. An override never checks a box and never counts as
+acceptance: `ac_done` stays `0`, the internal projection keeps `acceptance_complete` false
+and exposes the reason as `acceptance_override`. `done` with neither receipt still fails
+with `Linear done proof lacks matching acceptance`; a forged, malformed or duplicated
+override, or one bound to another generation, PR, head, base or diff digest, fails
+closed. An override for an older generation is kept as history but does not prove a later
+generation. In native-state ordering an override sits right after its review generation,
+like the AC receipt, and before `state-done`, including when it was appended after that
+done receipt by recovery.
+
+Recovery of an issue merged under override before this receipt existed (the PAT-10
+shape: `state-review`, the free-text audit note, then `state-done`, no AC receipt): once
+the fix is deployed, re-run exactly the same
+`issue merge <ID> <PR> --allow-incomplete-ac --ac-override-reason=<code>`. Only when the
+ordinary read fails, the PR is merged and the override flags are present does Foundry
+use the recovery-only projection mode reserved for writing this receipt. It requires the
+done receipt to match the merged PR URL, head SHA and merge SHA and the current native
+state to be the done receipt's snapshot, then appends only the missing override bound to
+the done receipt's generation and coordinates. It performs no new merge and no comment
+deletion or rewrite; the readback uses the ordinary strict projection, after which the
+issue and project-wide search read as `done`. A second replay is a no-op. Ordinary reads
+are not relaxed.
+
 Each receipt uses a deterministic client-supplied Linear comment UUID derived from its
 canonical operation slot. Singleton operations use one issue+operation slot; review and
 AC operations use one issue+operation+generation slot. The canonical payload remains in
@@ -454,7 +493,8 @@ the slot is treated as a collision, never as a replay or an absent comment.
 Native workflow snapshots may legitimately evolve while those receipts accumulate.
 Foundry first validates every receipt's shape, integrity, review generation, AC proof and
 merge coordinates, then orders their native-state IDs by lifecycle causality:
-`state-in-progress`, each review generation and its acceptance proof, then `state-done`.
+`state-in-progress`, each review generation with its acceptance proof and/or typed
+override receipt, then `state-done`.
 Every ID must belong to the repository's explicit Linear binding. Repeated IDs and
 forward movement through `backlog|ready → in-progress → review → done` are accepted;
 skipped stages are allowed, but regressions and movement through `blocked`, `dropped` or
@@ -465,7 +505,8 @@ an ordinary query remains fail-closed until that receipt exists.
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
 matches the latest reviewed generation and its AC proof, and carries the exact merge
-SHA. This includes issues with zero Foundry lifecycle comments: search and direct reads
+SHA (or, for a merge under the human override, the typed override receipt of that
+generation). This includes issues with zero Foundry lifecycle comments: search and direct reads
 fail closed instead of exposing native `done` through the native-state fallback.
 Zero-receipt nonterminal issues keep their explicitly mapped native state. The
 bounded `state-done` write path may recover the interval after GitHub has moved the native

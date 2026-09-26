@@ -89,6 +89,7 @@ class Tracker(ABC):
     epic_subgraph_supported: bool = False
     append_only_lifecycle_supported: bool = False
     acceptance_proof_projection_supported: bool = False
+    acceptance_override_projection_supported: bool = False
     cockpit_evidence_projection_supported: bool = False
 
     # --- optional read-only graph projection -----------------------------
@@ -208,6 +209,37 @@ class Tracker(ABC):
         raise AcceptanceSyncUnavailableError(
             f"synchronisation AC indisponible pour le tracker {self.name}"
         )
+
+    def project_acceptance_override(
+        self,
+        issue_id: str,
+        reason: str,
+        context: TransitionContext,
+        project: Project | None = None,
+    ) -> bool:
+        """Append a typed receipt of an explicit human AC override before merge.
+
+        ``reason`` is the validated public audit code and ``context`` the exact
+        current review coordinates. The receipt never checks an AC or counts as
+        acceptance. Providers without it keep the free-text audit note fallback
+        (``acceptance_override_projection_supported`` stays ``False``).
+        """
+        del issue_id, reason, context, project
+        raise TrackerCapabilityUnavailableError(self.name, "acceptance-override-receipt")
+
+    def recover_acceptance_override(
+        self,
+        issue_id: str,
+        reason: str,
+        *,
+        pr_url: str,
+        head_sha: str,
+        merge_sha: str,
+        project: Project | None = None,
+    ) -> bool:
+        """Append only the missing override receipt of an already-merged issue."""
+        del issue_id, reason, pr_url, head_sha, merge_sha, project
+        raise TrackerCapabilityUnavailableError(self.name, "acceptance-override-recovery")
 
     def update_body(
         self,

@@ -291,6 +291,15 @@ def openpr(issue_id=None, base=None, flags=()):
     print(f"🔗 PR #{pr.number} {action} : {pr.url}\n   {issue_id} → review")
 
 
+def _ac_override_reason(flags) -> str:
+    """Return the validated public reason code of an explicit human AC override."""
+    reason = next((value.split("=", 1)[1] for value in flags
+                   if value.startswith("--ac-override-reason=")), "")
+    if not reason or not re.fullmatch(r"[a-z0-9_-]{3,80}", reason):
+        raise SystemExit("⛔ Override AC refusé — --ac-override-reason=<code-public> requis.")
+    return reason
+
+
 def merge(issue_id, pr_number, flags=()):
     allow_no_ci = "--allow-no-ci" in flags
     tr, ch = foundry.tracker(), foundry.codehost()
@@ -304,7 +313,29 @@ def merge(issue_id, pr_number, flags=()):
             ch.name, repo, pr, operation="codehost.get_pr",
         ),
     )
-    current = tr.get_issue(issue_id)
+    override_recovered = False
+    try:
+        current = tr.get_issue(issue_id)
+    except TrackerConflictError:
+        # Bounded recovery of an issue merged under the human AC override before the
+        # typed receipt existed: only the exact replay of that override on the
+        # already-merged PR may append the missing receipt; ordinary reads stay strict.
+        if not ("--allow-incomplete-ac" in flags
+                and getattr(tr, "acceptance_override_projection_supported", False)
+                and pr.merged and pr.merge_sha):
+            raise
+        reason = _ac_override_reason(flags)
+        try:
+            override_recovered = write.recover_acceptance_override(
+                tr, issue_id, reason,
+                pr_url=pr.url, head_sha=pr.sha, merge_sha=pr.merge_sha,
+            )
+        except TrackerConflictError as exc:
+            raise SystemExit(
+                "⛔ Reprise override AC refusée — aucun reçu done exact de cette PR "
+                f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
+            ) from None
+        current = tr.get_issue(issue_id)
     transition_context = None
     review_diff = None
     pr_base_sha = None
@@ -328,9 +359,10 @@ def merge(issue_id, pr_number, flags=()):
             cleanup_mode = _cleanup_branch(pr.head)
             cleanup = (" · nettoyage local délégué à Codex"
                        if cleanup_mode == "linked-worktree" else "")
+            recovered = " · reçu override AC ajouté" if override_recovered else ""
             print(
                 f"✅ Reprise PR #{pr_number} · reçu déjà durable {pr.merge_sha} · "
-                f"{issue_id} déjà done{cleanup}"
+                f"{issue_id} déjà done{recovered}{cleanup}"
             )
             return
         head = git_head()
@@ -374,20 +406,38 @@ def merge(issue_id, pr_number, flags=()):
                 raise SystemExit(
                     "⛔ Merge refusé — AC tracker incomplètes et preuve structurée invalide "
                     f"({exc}). Utilise l'override humain explicite si nécessaire.") from None
-            reason = next((value.split("=", 1)[1] for value in flags
-                           if value.startswith("--ac-override-reason=")), "")
-            if not reason or not re.fullmatch(r"[a-z0-9_-]{3,80}", reason):
-                raise SystemExit("⛔ Override AC refusé — --ac-override-reason=<code-public> requis.")
+            reason = _ac_override_reason(flags)
             # This is deliberately an audit-only human escape hatch; it never modifies
             # checkboxes or turns prose into evidence.
-            try:
-                write.add_comment(
-                    tr,
-                    issue_id, f"Audit merge: override humain explicite des AC incomplètes ({reason}).",
-                )
-            except Exception as exc:
-                raise SystemExit("⛔ Merge refusé — écriture de la note d'audit AC impossible.") from exc
-            acceptance_sync = {"status": "human-override", "checked": 0}
+            audit_text = f"Audit merge: override humain explicite des AC incomplètes ({reason})."
+            if getattr(tr, "acceptance_override_projection_supported", False):
+                # The typed receipt, bound to this exact review generation, is the only
+                # authority; it is durable before any code-host effect so a replay can
+                # finish the merge. The prose note is best-effort and never evidence.
+                if transition_context is None:
+                    raise SystemExit("⛔ Override AC refusé — coordonnées de review bornées absentes.")
+                try:
+                    created = write.project_acceptance_override(
+                        tr, issue_id, reason, transition_context,
+                    )
+                except Exception as exc:
+                    raise SystemExit(
+                        "⛔ Merge refusé — reçu typé d'override AC impossible ; "
+                        "aucun merge tenté."
+                    ) from exc
+                if created:
+                    try:
+                        write.add_comment(tr, issue_id, audit_text)
+                    except Exception:
+                        pass
+                acceptance_sync = {"status": "human-override", "checked": 0,
+                                   "audit": "append-only-override"}
+            else:
+                try:
+                    write.add_comment(tr, issue_id, audit_text)
+                except Exception as exc:
+                    raise SystemExit("⛔ Merge refusé — écriture de la note d'audit AC impossible.") from exc
+                acceptance_sync = {"status": "human-override", "checked": 0}
         else:
             _observe_receipt(
                 issue_id, "review",
