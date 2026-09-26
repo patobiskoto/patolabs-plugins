@@ -260,6 +260,28 @@ class YouTrackTracker(Tracker):
     def resolve_project(self, repo: str) -> Project:
         return registry.resolve("youtrack", repo)
 
+    def validate_legacy_mutation(self) -> None:
+        """Refuse a lifecycle write through a cutover tombstone; keep legacy resolution.
+
+        YouTrack writes address issues directly and historically resolve no binding,
+        so an unregistered checkout keeps that behaviour. When the checkout's
+        historical binding (basename or ``PROJECT_REPO`` alias, case preserved) is
+        itself archived, or addresses a project another alias archived, the write is
+        refused before any provider effect.
+        """
+        repo = registry.repo_basename()
+        entry = registry.load().get(self.name, {}).get(repo)
+        if not isinstance(entry, dict):
+            return
+        if entry.get("archive") is True:
+            raise SystemExit(
+                f"Binding tracker archivé : '{repo}' ne peut plus recevoir "
+                f"d'écriture via '{self.name}'."
+            )
+        registry.require_writable_project(
+            self.name, Project(key=entry.get("key"), id=entry.get("id")),
+        )
+
     def search(self, project: Project, query: str = "", page_size: int = 1000) -> list[Issue]:
         """Read every issue page; ``page_size`` is useful for read-only smoke tests."""
         q = f"project: {project.key}" + (f" {query}" if query else "")

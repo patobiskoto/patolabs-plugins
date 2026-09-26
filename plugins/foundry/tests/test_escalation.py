@@ -2539,7 +2539,7 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
         resolve_checkout_project=lambda _root: None,
         get_issue=lambda _issue: SimpleNamespace(id=issue, body=body),
     )
-    monkeypatch.setattr(foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(foundry, "tracker", lambda **_kwargs: tracker)
 
     repository_arg = ["--repository", review_namespace] if review_namespace else []
     proof_repository = review_namespace or repository_identity(repository_root)

@@ -139,7 +139,7 @@ def _print_local_scout(payload):
 
 def _provider_transport_preflight() -> tuple[str, str | None]:
     """Resolve only public provider coordinates before any broad config read."""
-    tracker_name = config.tracker_name()
+    tracker_name = registry.tracker_name_for_checkout()
     if tracker_name == "devhub":
         from foundry.trackers.devhub import validate_base_url
 
@@ -363,7 +363,12 @@ def main(argv=None):
             endpoint = "provider stub"
         elif tracker_name == "linear":
             config.require("LINEAR_API_TOKEN")
-            endpoint = "official GraphQL endpoint"
+            binding = registry.repository_tracker_binding()
+            endpoint = (
+                f"repository binding {binding.configuration_digest}"
+                if binding is not None
+                else "official GraphQL endpoint"
+            )
         else:
             raise SystemExit(f"Tracker inconnu : {tracker_name}")
         check("Config", True, f"tracker={tracker_name} codehost={config.codehost_name()} · {endpoint}")

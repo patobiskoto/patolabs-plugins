@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from foundry import edit, write
+from foundry import edit, registry, write
 from foundry.models import Adr, Issue
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
@@ -212,6 +212,56 @@ def test_write_sync_acceptance_reports_exact_checked_count(monkeypatch):
     assert write.sync_acceptance(tracker, "T-1", tracker.issue_body, proof) == {
         "status": "updated", "checked": 1, "audit": "provider",
     }
+
+
+_ARCHIVED_REGISTRY = {"youtrack": {
+    "claude-plugins": {"key": "FOUNDRY", "id": "0-3", "ms_bundle": "163-7"},
+    "patolabs-plugins": {
+        "key": "FOUNDRY", "id": "0-3", "ms_bundle": "163-7", "archive": True,
+    },
+    "OrfeoApp": {"key": "ORFEO", "id": "0-1"},
+    "orfeo-alias": {"key": "ORFEO", "id": "0-1"},
+}}
+
+
+@pytest.mark.parametrize("checkout", ("claude-plugins", "patolabs-plugins"))
+def test_youtrack_archive_stays_readable_but_write_tier_refuses_before_effect(
+    monkeypatch, checkout,
+):
+    tracker = ScriptedYouTrack()
+    monkeypatch.setattr(registry, "load", lambda: _ARCHIVED_REGISTRY)
+    monkeypatch.setattr(registry, "repo_basename", lambda _cwd=None: checkout)
+    monkeypatch.setattr(
+        registry,
+        "checkout_repository_identity",
+        lambda _cwd=None: pytest.fail("YouTrack writes keep legacy resolution"),
+    )
+
+    # Both the archived alias and a sibling alias of the same native project are
+    # refused before any provider request.
+    with pytest.raises(SystemExit, match="archiv"):
+        write.set_field(tracker, "FOUNDRY-159", "Priority", "P1")
+    assert tracker.calls == []
+
+
+@pytest.mark.parametrize("checkout", ("OrfeoApp", "orfeo-alias", "unregistered-repo"))
+def test_youtrack_writes_keep_legacy_resolution_outside_a_tombstone(
+    monkeypatch, checkout,
+):
+    # Mixed-case names, PROJECT_REPO-style aliases and unregistered checkouts keep
+    # the historical behaviour: no canonical-remote lookup, no new refusal.
+    tracker = ScriptedYouTrack()
+    monkeypatch.setattr(registry, "load", lambda: _ARCHIVED_REGISTRY)
+    monkeypatch.setattr(registry, "repo_basename", lambda _cwd=None: checkout)
+    monkeypatch.setattr(
+        registry,
+        "checkout_repository_identity",
+        lambda _cwd=None: pytest.fail("YouTrack writes keep legacy resolution"),
+    )
+
+    assert write.mutation_project(tracker) is None
+    assert write.update_issue_body(tracker, "ORFEO-7", "old", "new")
+    assert tracker.calls
 
 
 def test_unsupported_tracker_body_write_fails_explicitly():

@@ -1,0 +1,125 @@
+{
+  "schema_version": 2,
+  "cutover_at": "2026-09-22T14:10:47Z",
+  "repository": "github.com/patobiskoto/patolabs-plugins",
+  "source": {
+    "tracker": "youtrack",
+    "project": "FOUNDRY",
+    "mode_after_cutover": "readable-archive",
+    "write_boundary": "current-foundry-project-tombstone",
+    "server_side_write_prevention": "not-attested",
+    "snapshot_at": "2026-09-22T10:42:55Z",
+    "snapshot_digest": "sha256:4e3042ceaf4536cc4191a4490ed34d3f9bd1cda3dbcc40c729d9257959990d59"
+  },
+  "target": {
+    "tracker": "linear",
+    "team_key": "PAT",
+    "team_id": "1b38b4c0-322c-4b56-8049-57a31f40974b",
+    "project_id": "aeb77381-f8aa-48d3-a2a5-e6b2d2773007",
+    "linear_readback_at": "2026-09-22T14:09:24Z",
+    "linear_readback_digest": "sha256:9c4cdf15512fc2379c671506b9b265b5a4a5de8792989893a4e6751229d10a61",
+    "issues": {
+      "FOUNDRY-153": "PAT-8",
+      "FOUNDRY-158": "PAT-9",
+      "FOUNDRY-159": "PAT-10",
+      "FOUNDRY-164": "PAT-11"
+    }
+  },
+  "attestation": {
+    "cutover_manifest": {
+      "role": "immutable-cutover-input",
+      "availability": "private-operator-evidence",
+      "digest": "sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77",
+      "binding": ".foundry/tracker.json#migration_manifest_digest"
+    },
+    "public_redacted_manifest": {
+      "role": "public-audit-derivative",
+      "path": "plugins/foundry/docs/linear-selective-migration-manifest.json",
+      "digest": "sha256:4589727201ae44a00d0b47c92fca38a6fcc7a5bbde7eba0e8668a07e60d721dc",
+      "derivation": {
+        "source_digest": "sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77",
+        "transformation": "replace-private-youtrack-url-with-archive-reference",
+        "redacted_fields": [
+          "source.issue_url_reference"
+        ]
+      }
+    },
+    "marker_path": ".foundry/tracker.json",
+    "marker_digest": "sha256:5a8e26afa4b0472bca05d2b9d892055100ce8c3e65e19d4369935b90ad935cff",
+    "configuration_digest": "sha256:6ea05b8c0b8ec37f4981999a31783403dd8a038c3a14725eff6612206d453004",
+    "registry_binding_digest": "sha256:683bcc34930457c19d1920f8ea24e235fe6b9b5228a1639a8967d6397ea798d6"
+  },
+  "rollback_preflight": {
+    "documented_at": "2026-09-22T10:22:43.917Z",
+    "evidence_kind": "private-append-only-session-receipt",
+    "evidence_digest": "sha256:44b08dc9085887b6177f749cd62519f32779845a5e27b0bafb59c9092e5e1ca3",
+    "public_document": "plugins/foundry/docs/linear-tracker.md",
+    "boundary": "allowed only before the first Linear lifecycle write; after it, recovery is forward-only on Linear, YouTrack is never reactivated and dual-write remains forbidden"
+  },
+  "validation": {
+    "public_repository_effective_tracker": "linear",
+    "public_repository_youtrack_override": "refused",
+    "historical_repository_effective_tracker": "youtrack-readable-archive",
+    "youtrack_source_lifecycle_writes": "refused-by-current-foundry-project-tombstone-for-checkouts-bound-to-that-project",
+    "obsolete_code_or_direct_rest_write_prevention": "not-claimed",
+    "github_issues_backlog": false,
+    "github_main_protection": {
+      "observed_at": "2026-09-22T16:06:32Z",
+      "required_pull_request": true,
+      "strict_status_checks": [
+        "foundry",
+        "catalogue",
+        "ship-ios"
+      ],
+      "enforce_admins": true,
+      "required_linear_history": true,
+      "required_conversation_resolution": true,
+      "allow_force_pushes": false,
+      "allow_deletions": false,
+      "concurrent_rulesets": 0,
+      "rollback_receipt": "PAT-12 pre-change Linear comment"
+    },
+    "linear_api_token": "keychain-configured"
+  },
+  "adr_authority": {
+    "authority": "linear",
+    "decision": "PAT-ADR-0001",
+    "source_body_exactness": "PAT-ADR-0002",
+    "unknown_relations": "PAT-ADR-0003",
+    "import_issue": "PAT-23",
+    "imported_at": "2026-09-25",
+    "historical_adr_count": 27,
+    "historical_statuses": {
+      "accepted": 25,
+      "deprecated": 1,
+      "proposed": 1
+    },
+    "batch_sha256": "94729124ab1267f6ada99c0815e04b0a083a330e44cb3499ba58ab7b541baed2",
+    "source_manifest_file_sha256": "263ab3aea0aef80be177fc7984888629929f41c223704b369dd92473bfd0ef3a",
+    "post_write_audit_sha256": "c127aaaf0514a9d249f3a0d6cbbed5a4e48c1ddfb0506fb2b9c03dfd22ebc015",
+    "qualification_project_id": "24a6b8a3-45d8-4b2c-b983-294141fdaca5",
+    "missing_relations": [
+      "issues",
+      "superseded_by",
+      "supersedes"
+    ],
+    "version_history": "unavailable-in-source",
+    "supersedes": [
+      "linear-selective-migration-manifest.json#adrs[].decision=archive-reference",
+      "linear-selective-migration-manifest.json#adr_reference_reason"
+    ],
+    "audit_record": "PAT-23 Linear comments",
+    "private_evidence": "operator-held receipts; never published"
+  },
+  "incidents": [
+    {
+      "id": "pat10-youtrack-write-2026-09-26",
+      "observed_at": "2026-09-26",
+      "kind": "unintended-youtrack-write",
+      "effect": "7 issues created in the YouTrack archive project FOUNDRY (FOUNDRY-166..FOUNDRY-172); parent command failed",
+      "cause": "Foundry CLI run from a checkout of main without the repository tracker marker or FOUNDRY_TRACKER=linear; the host default tracker (YouTrack) resolved and main had no archive tombstone on that path",
+      "containment": "no further YouTrack write; deletion left to the maintainer; follow-ups recreated in Linear as PAT-42..PAT-48; issue-key tombstone hardening tracked by PAT-43",
+      "acceptance_impact": "PAT-10 criterion 'YouTrack strictly read-only during the operation' is not met; merge requires an audited human override and the criterion stays unchecked"
+    }
+  ]
+}

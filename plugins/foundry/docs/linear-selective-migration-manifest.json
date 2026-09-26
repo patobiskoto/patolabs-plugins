@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "cutover_issue": "FOUNDRY-159",
+  "source": {
+    "tracker": "youtrack",
+    "project": "FOUNDRY",
+    "repository": "github.com/patobiskoto/claude-plugins",
+    "issue_url_reference": "private-readable-archive",
+    "mode_after_cutover": "readable-archive"
+  },
+  "target": {
+    "tracker": "linear",
+    "team_key": "PAT",
+    "team_id": "1b38b4c0-322c-4b56-8049-57a31f40974b",
+    "project_id": "aeb77381-f8aa-48d3-a2a5-e6b2d2773007",
+    "repository": "github.com/patobiskoto/patolabs-plugins"
+  },
+  "issues": [
+    {
+      "source_id": "FOUNDRY-153",
+      "decision": "migrate-live",
+      "reason": "active epic owning the public repository cutover",
+      "source_state": "backlog",
+      "target_state": "backlog",
+      "priority": "P0",
+      "estimate": null,
+      "type": "Epic",
+      "acceptance_total": 6,
+      "body_digest": "sha256:babf9230534faa92d4fb14a2984b7527f0e790541e14cf35e588d8c59945766d",
+      "pr_url": null,
+      "target_id": "PAT-8",
+      "target_readback_digest": "sha256:2fa918eb55dfc1e955d9f807d766ce275b5afc9bc13dacc992474135260ef2ee",
+      "links": [
+        {"type": "parent-of", "target": "FOUNDRY-158", "disposition": "migrate-relation"},
+        {"type": "parent-of", "target": "FOUNDRY-159", "disposition": "migrate-relation"},
+        {"type": "parent-of", "target": "FOUNDRY-164", "disposition": "migrate-relation"},
+        {"type": "parent-of", "target": "FOUNDRY-154", "disposition": "archive-reference"},
+        {"type": "parent-of", "target": "FOUNDRY-155", "disposition": "archive-reference"},
+        {"type": "parent-of", "target": "FOUNDRY-156", "disposition": "archive-reference"},
+        {"type": "parent-of", "target": "FOUNDRY-157", "disposition": "archive-reference"},
+        {"type": "parent-of", "target": "FOUNDRY-160", "disposition": "archive-reference"},
+        {"type": "parent-of", "target": "FOUNDRY-161", "disposition": "archive-reference"},
+        {"type": "parent-of", "target": "FOUNDRY-162", "disposition": "archive-reference"},
+        {"type": "parent-of", "target": "FOUNDRY-163", "disposition": "archive-reference"}
+      ]
+    },
+    {
+      "source_id": "FOUNDRY-154",
+      "decision": "retain-terminal-archive",
+      "reason": "done with complete acceptance proof and merged PR #1",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 5,
+      "type": "Task",
+      "acceptance_total": 6,
+      "body_digest": "sha256:2f16ee0196e54ccb13942b2e79ca58ce64fd9576ad5737f2312da3fa723c7f42",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/1"
+    },
+    {
+      "source_id": "FOUNDRY-155",
+      "decision": "retain-terminal-archive",
+      "reason": "done with complete acceptance proof and merged PR #3",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 5,
+      "type": "Task",
+      "acceptance_total": 6,
+      "body_digest": "sha256:4941001afccc8b54cdae2456471ec95bc9cb1c6ad8f20de933238f7e04f90245",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/3"
+    },
+    {
+      "source_id": "FOUNDRY-156",
+      "decision": "retain-terminal-archive",
+      "reason": "done with complete acceptance proof and merged PR #2",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 8,
+      "type": "Feature",
+      "acceptance_total": 6,
+      "body_digest": "sha256:e3f5d77761ba576d3457302dcac2aeaf29a91c4a09498583409a57b440fbd8c7",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/2"
+    },
+    {
+      "source_id": "FOUNDRY-157",
+      "decision": "retain-terminal-archive",
+      "reason": "done with complete acceptance proof and merged PR #4",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 13,
+      "type": "Feature",
+      "acceptance_total": 7,
+      "body_digest": "sha256:d254fcb5bcc2e0aef35efa0bbc48af75aaa427bedd87b4022400356e7b5b9cfb",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/4"
+    },
+    {
+      "source_id": "FOUNDRY-158",
+      "decision": "migrate-live",
+      "reason": "open PR #6 remains in review and blocks FOUNDRY-164",
+      "source_state": "review",
+      "target_state": "review",
+      "priority": "P0",
+      "estimate": 5,
+      "type": "Task",
+      "acceptance_total": 7,
+      "body_digest": "sha256:1b3234e374dfc4ae359b4cd8e692e365405997c1c775c4b23c4d6230120ac600",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/6",
+      "target_id": "PAT-9",
+      "target_readback_digest": "sha256:9365256b5f0cc2108781376bd40142d12491c51146945cff590cdee76bcaf412",
+      "links": [
+        {"type": "subtask-of", "target": "FOUNDRY-153", "disposition": "migrate-relation"},
+        {"type": "blocks", "target": "FOUNDRY-164", "disposition": "migrate-relation"}
+      ]
+    },
+    {
+      "source_id": "FOUNDRY-159",
+      "decision": "migrate-live",
+      "reason": "cutover implementation is in progress and will complete through Linear",
+      "source_state": "in-progress",
+      "target_state": "in-progress",
+      "priority": "P0",
+      "estimate": 8,
+      "type": "Task",
+      "acceptance_total": 7,
+      "body_digest": "sha256:38b01ba2587dd0c9fb75dcaa0cfd3874ee9bf1380e693538a15a7fa301890c29",
+      "pr_url": null,
+      "target_id": "PAT-10",
+      "target_readback_digest": "sha256:b86050394c4441f2c3fde01809824ee73dfb12e678528ff2e8a7da6d816d4ca4",
+      "links": [
+        {"type": "subtask-of", "target": "FOUNDRY-153", "disposition": "migrate-relation"},
+        {"type": "depends-on", "target": "FOUNDRY-162", "disposition": "archive-reference"},
+        {"type": "depends-on", "target": "FOUNDRY-163", "disposition": "archive-reference"}
+      ]
+    },
+    {
+      "source_id": "FOUNDRY-160",
+      "decision": "retain-terminal-archive",
+      "reason": "done with complete acceptance proof and merged PR #5",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 5,
+      "type": "Bug",
+      "acceptance_total": 6,
+      "body_digest": "sha256:5c8b0983f679345b399dcffb1a0a4036dc9c86415543a8e34c4273a20031ed47",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/5"
+    },
+    {
+      "source_id": "FOUNDRY-161",
+      "decision": "retain-terminal-archive",
+      "reason": "done with complete acceptance proof and merged PR #10",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 8,
+      "type": "Feature",
+      "acceptance_total": 6,
+      "body_digest": "sha256:ea6375546b4d747a720406911e5bb38557bf17f68cc8b9599a7a15905a48f8d5",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/10"
+    },
+    {
+      "source_id": "FOUNDRY-162",
+      "decision": "retain-terminal-archive",
+      "reason": "done with complete acceptance proof and merged PR #7",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 8,
+      "type": "Feature",
+      "acceptance_total": 7,
+      "body_digest": "sha256:450542652c9f3732d10a8a7dc094b11ac2cd7cd23d3e87dd993dda4f44154c5f",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/7"
+    },
+    {
+      "source_id": "FOUNDRY-163",
+      "decision": "retain-terminal-archive",
+      "reason": "done with complete acceptance proof and merged PR #11",
+      "source_state": "done",
+      "priority": "P0",
+      "estimate": 13,
+      "type": "Feature",
+      "acceptance_total": 7,
+      "body_digest": "sha256:cfa3b8c62b5ce6cf66cfd1855f1bb67604811aa78fdf963a9c455cf65d196653",
+      "pr_url": "https://github.com/patobiskoto/patolabs-plugins/pull/11"
+    },
+    {
+      "source_id": "FOUNDRY-164",
+      "decision": "migrate-live-do-not-start",
+      "reason": "approved backlog design must remain unstarted until explicit maintainer decision",
+      "source_state": "Submitted",
+      "target_state": "backlog",
+      "state_mapping_reason": "YouTrack Submitted maps to Foundry backlog",
+      "priority": "P1",
+      "estimate": 13,
+      "type": "Feature",
+      "acceptance_total": 10,
+      "body_digest": "sha256:7e40e534afa4cf0fa3724abe2756594efaa208a308a59d880937f95a06f05b31",
+      "pr_url": null,
+      "target_id": "PAT-11",
+      "target_readback_digest": "sha256:00a89c05177feb9db95d1e8273e67426b6bbecfa9d665e723957746d1e92da02",
+      "links": [
+        {"type": "subtask-of", "target": "FOUNDRY-153", "disposition": "migrate-relation"},
+        {"type": "depends-on", "target": "FOUNDRY-158", "disposition": "migrate-relation"},
+        {"type": "depends-on", "target": "FOUNDRY-161", "disposition": "archive-reference"}
+      ]
+    }
+  ],
+  "adrs": [
+    {"source_id": "FOUNDRY-ADR-0001", "source_status": "accepted", "body_digest": "sha256:eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0002", "source_status": "accepted", "body_digest": "sha256:abb3117275dd01f04a9bcc07e1ef553c910ce92f9425a4216ca101b2c4661465", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0006", "source_status": "accepted", "body_digest": "sha256:ea28d37b96959e250157db0ec2de9d8a4db7193015aa6af687ecf39c455e550b", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0008", "source_status": "accepted", "body_digest": "sha256:2f21f43315d00e24a50c41b47da32000d07b9a472d816874e1b94b53f482654f", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0013", "source_status": "accepted", "body_digest": "sha256:d67bc4ad5ef75c2319051f78a66e69b938ca7110f22fd36b1085401c9d009a6b", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0014", "source_status": "accepted", "body_digest": "sha256:a85aafe94e4d6ec577098545c0fa8d77618b31cfda3d63aed2c9c72be354f092", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0017", "source_status": "accepted", "body_digest": "sha256:c418537244f6cc115ce5a09961e865e58ab23506d2249a7bf501f94bc8000645", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0018", "source_status": "accepted", "body_digest": "sha256:ce9869d73a2ce0620c673ec53d6a00c8c3b87d7d8a2eb59cc254bbce8e14c5ea", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0023", "source_status": "accepted", "body_digest": "sha256:2517a191def9add142c310246ae6a47b7b6d0a6be3e6a50088efeebc27799688", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0024", "source_status": "accepted", "body_digest": "sha256:4c366f8a5ff47dcbb0b2c556b313c3d9edb98cf7ef9ed4aaeb1515f1ae01016e", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0025", "source_status": "accepted", "body_digest": "sha256:5a3bb5e51fcb0be5a59d86fa7e12290e126e36e453c2907ac4ad3927eef3ac14", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0026", "source_status": "accepted", "body_digest": "sha256:eca2ce30b1f26486b2fda93481c13b151944d65fbcdaea46100f17fd25cb951e", "decision": "archive-reference"},
+    {"source_id": "FOUNDRY-ADR-0027", "source_status": "proposed", "body_digest": "sha256:909595478977d01ac5259ab08d9259da58e481ae1431f404f416393bfaa55a7b", "decision": "archive-reference"}
+  ],
+  "adr_reference_reason": "Linear adapter has no native Foundry ADR knowledge base; source status and digest remain authoritative in the readable YouTrack archive.",
+  "evidence": {
+    "source_snapshot_at": "2026-09-22T10:42:55Z",
+    "source_snapshot_digest": "sha256:4e3042ceaf4536cc4191a4490ed34d3f9bd1cda3dbcc40c729d9257959990d59",
+    "linear_readback_at": "2026-09-22T14:09:24Z",
+    "linear_readback_digest": "sha256:9c4cdf15512fc2379c671506b9b265b5a4a5de8792989893a4e6751229d10a61",
+    "binding_attestation": "recorded-in-linear-cutover-operations.json",
+    "operations_log": "plugins/foundry/docs/linear-cutover-operations.json"
+  }
+}

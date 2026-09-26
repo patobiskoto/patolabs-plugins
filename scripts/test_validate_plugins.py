@@ -253,10 +253,12 @@ class PublicSurfaceContract(unittest.TestCase):
         self.assertIn("native Linear fields remain untouched", readme)
         self.assertIn("no state, AC or merge authority", readme)
         self.assertNotIn("relations/comments/PR projection", readme)
-        self.assertIn(
-            "Live cutover and ChatGPT MCP activation remain separate planned work",
-            " ".join(readme.split()),
-        )
+        flat = " ".join(readme.split())
+        self.assertIn("ChatGPT MCP activation remains separate planned work", flat)
+        self.assertIn("bound to Linear (project PAT) for issues and ADRs", flat)
+        self.assertIn("designated a read-only origin archive", flat)
+        self.assertIn("witness-bound project Documents", flat)
+        self.assertNotIn("no Foundry ADR knowledge base", flat)
 
         claude = json.loads(self.text("plugins/foundry/.claude-plugin/plugin.json"))
         codex = json.loads(self.text("plugins/foundry/.codex-plugin/plugin.json"))
@@ -264,6 +266,8 @@ class PublicSurfaceContract(unittest.TestCase):
             self.assertIn("append-only lifecycle projection", facade)
             self.assertIn("never replaces existing issue fields", facade)
             self.assertIn("unavailable", facade)
+            self.assertIn("witness-bound project Documents", facade)
+            self.assertNotIn("ADR knowledge base remain unavailable", facade)
 
     def test_external_contributions_are_explicitly_declined(self) -> None:
         self.assertIn("not accepting external contributions", self.text("README.md"))

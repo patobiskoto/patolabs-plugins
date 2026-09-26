@@ -587,6 +587,9 @@ def seed_linear_adr_relation_boundary(wire, relation_count):
 def test_factory_recognizes_linear_without_changing_youtrack_devhub_or_stub(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        "foundry.registry.repository_tracker_binding", lambda _cwd=None: None,
+    )
     secrets = {
         "YOUTRACK_URL": "https://example.youtrack.cloud",
         "YOUTRACK_TOKEN": "youtrack-secret",
@@ -967,6 +970,7 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
     _, wire = tracker
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     checkout_reads = []
+    tracker_roots = []
     captured = {}
 
     class ProofStore:
@@ -982,7 +986,11 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
         '{"outcomes": [], "quality": {"verdict": "pass"}}',
         encoding="utf-8",
     )
-    monkeypatch.setattr(foundry, "tracker", lambda name=None: fresh)
+    monkeypatch.setattr(
+        foundry,
+        "tracker",
+        lambda name=None, cwd=None: tracker_roots.append(cwd) or fresh,
+    )
     monkeypatch.setenv("PROJECT_REPO", "decoy")
     monkeypatch.setattr(
         registry,
@@ -1032,6 +1040,7 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
         ]
     )
 
+    assert tracker_roots == [str(tmp_path)]
     assert checkout_reads == [str(tmp_path)]
     assert captured["repository"] == "acme/widgets"
     assert captured["issue_id"] == "LIN-2"

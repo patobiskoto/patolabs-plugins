@@ -50,6 +50,9 @@ def validate_state(state: str) -> str:
 def mutation_project(tracker):
     """Resolve the current repo binding for adapters that require write isolation."""
     if not getattr(tracker, "requires_mutation_binding", False):
+        legacy_validator = getattr(tracker, "validate_legacy_mutation", None)
+        if callable(legacy_validator):
+            legacy_validator()
         return None
     repo = registry.repo_basename()
     validator = getattr(tracker, "validate_mutation_repository", None)
@@ -64,8 +67,13 @@ def mutation_project(tracker):
     validator(repo, checkout_identity)
     resolver = getattr(tracker, "resolve_checkout_project", None)
     if callable(resolver):
-        return resolver(checkout_identity=checkout_identity)
-    return tracker.resolve_project(repo)
+        project = resolver(checkout_identity=checkout_identity)
+    else:
+        project = tracker.resolve_project(repo)
+    project_validator = getattr(tracker, "validate_mutation_project", None)
+    if callable(project_validator):
+        project_validator(project)
+    return project
 
 
 def preflight_issue_operation(tracker, operation: str) -> None:

@@ -2681,7 +2681,7 @@ def main(
                     "preuve AC soumise : seules les clés outcomes et quality sont autorisées."
                 )
             from foundry import tracker
-            active_tracker = tracker()
+            active_tracker = tracker(cwd=args.root)
             active_tracker.resolve_checkout_project(args.root)
             current = active_tracker.get_issue(args.issue)
             repository = args.repository or repository_identity(args.root)
