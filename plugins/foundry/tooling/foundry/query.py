@@ -22,6 +22,7 @@ import sys
 import foundry
 from foundry import registry
 from foundry.trackers.base import (
+    AdrUnavailableError,
     IssueUnavailableError,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
@@ -391,15 +392,17 @@ def _adr_index(tr, p):
 
 
 def _adr_index_or_capability(tr, p):
-    """Keep an issue readable when its tracker has no ADR knowledge base, or when the
-    embedded ADR index itself is in conflict.
+    """Keep an issue readable when its tracker has no ADR knowledge base, when the
+    embedded ADR index itself is in conflict, or when the embedded ADR index refers to
+    an ADR (e.g. a supersession target) that is absent from it.
 
-    Only the provider's typed capability and conflict errors are projected — each as
-    its own explicit, distinct status, never as an empty list and never conflated with
-    each other. Transport, binding and payload failures still propagate rather than
-    being mistaken for either. `query adr`, `query adrs`, `frame` and ADR writes stay
-    fail-closed on the same conflict — this projection only keeps the issue payload
-    readable; it does not repair or normalize the conflict.
+    Only the provider's typed capability, conflict and unavailable-ADR errors are
+    projected — each as its own explicit, distinct status, never as an empty list and
+    never conflated with each other. Transport, binding and payload failures still
+    propagate rather than being mistaken for any of them. `query adr`, `query adrs`,
+    `frame` and ADR writes stay fail-closed on the same conflict or unavailable ADR —
+    this projection only keeps the issue payload readable; it does not repair or
+    normalize either integrity error.
     """
     try:
         return _adr_index(tr, p)
@@ -412,6 +415,12 @@ def _adr_index_or_capability(tr, p):
     except TrackerConflictError as exc:
         return {
             "status": "conflict",
+            "tracker": tr.name,
+            "reason": str(exc),
+        }
+    except AdrUnavailableError as exc:
+        return {
+            "status": "adr_unavailable",
             "tracker": tr.name,
             "reason": str(exc),
         }
@@ -437,10 +446,15 @@ def issue(issue_id: str):
             "note": "adrs is an INDEX when the provider supports an ADR knowledge "
                     "base; otherwise it is a typed capability status, or — if the "
                     "embedded ADR index itself is in conflict — a typed conflict "
-                    "status ({\"status\": \"conflict\", ...}). A conflict here does "
-                    "not clear on read: `query adr`, `query adrs`, `frame` and ADR "
-                    "writes stay fail-closed on it. Load the full text of "
-                    "constraining ADRs with "
+                    "status ({\"status\": \"conflict\", ...}), or — if the index "
+                    "refers to an ADR absent from it (e.g. a missing supersession "
+                    "target) — a typed unavailable-ADR status "
+                    "({\"status\": \"adr_unavailable\", ...}). Neither clears on "
+                    "read: `query adr`, `query adrs`, `frame` and ADR writes stay "
+                    "fail-closed on it. Treat ADR constraints as UNKNOWN (never as "
+                    "none) while either status holds, and do not accept or skip an "
+                    "ADR-gated step on the strength of this projection. Load the "
+                    "full text of constraining ADRs with "
                     "`query adr <ADR-ID>` when available.",
             "adrs": _adr_index_or_capability(tr, p)}
 

@@ -44,7 +44,8 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 The payload's `adrs` are only an index. Before review, load the full text of every cited
 accepted ADR with `query adr <ADR-ID>`; a tracker-only ADR cannot be recovered by the
 read-only Claude reviewer after it starts. If `adrs` is instead a
-`{"status": "conflict", ...}` object, the embedded ADR index is in conflict — treat it
+`{"status": "conflict", ...}` or `{"status": "adr_unavailable", ...}` object, the
+embedded ADR index is in conflict, or refers to an ADR absent from it — treat it
 as unresolved, not as "no ADRs", and carry that into step 5.
 
 ### 2. Code review (blank-context, two stages)
@@ -215,10 +216,11 @@ them now — the decision is validated by shipping:
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr accept <ADR-ID>
 ```
-If the `query issue` payload's `adrs` is a `{"status": "conflict", ...}` object rather
-than a list, do not conclude "no proposed ADR to accept" — the index is unreadable, not
-empty. Acceptance stays blocked until the conflict is resolved (`query adr`/`query adrs`
-still fail closed on it); say so explicitly rather than silently skipping this step.
+If the `query issue` payload's `adrs` is a `{"status": "conflict", ...}` or
+`{"status": "adr_unavailable", ...}` object rather than a list, do not conclude "no
+proposed ADR to accept" — the index is unreadable, not empty. Acceptance stays blocked
+until the conflict or unavailable ADR is resolved (`query adr`/`query adrs` still fail
+closed on either); say so explicitly rather than silently skipping this step.
 
 ## Anti-rules
 - Never GraphQL (`gh pr create/merge/checks`). REST only — the adapter enforces it.

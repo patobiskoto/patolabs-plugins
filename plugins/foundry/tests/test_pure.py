@@ -17,6 +17,7 @@ from foundry import query, registry, write
 from foundry.codehosts.github import GitHubCodeHost
 from foundry.models import Adr, Check, Issue, Link, Project, PullRequest
 from foundry.trackers.base import (
+    AdrUnavailableError,
     IssueUnavailableError,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
@@ -446,6 +447,27 @@ def test_issue_projects_adr_capability_unavailable_distinct_from_conflict(monkey
     }
 
 
+def test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status(monkeypatch):
+    # A missing supersession target in the embedded ADR index (AdrUnavailableError)
+    # must not sink the whole issue read, must not surface as an empty list, and must
+    # not be conflated with either the conflict or the capability-unavailable status.
+    class _UnavailableAdrTracker(_FakeTracker):
+        def list_adrs(self, project):
+            raise AdrUnavailableError("T-ADR-0002")
+
+    issues = [Issue(id="A", title="a", state="ready", body="text")]
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: _UnavailableAdrTracker(issues))
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    out = query.issue("A")
+    assert out["issue"]["id"] == "A"
+    assert out["adrs"] == {
+        "status": "adr_unavailable",
+        "tracker": "fake",
+        "reason": "ADR unavailable: T-ADR-0002",
+    }
+
+
 def test_issue_propagates_unexpected_adr_index_error(monkeypatch):
     # Transport, binding and payload failures must still propagate — only the typed
     # capability-unavailable and conflict errors get projected into the payload.
@@ -474,6 +496,22 @@ def test_query_adrs_still_fails_closed_on_embedded_index_conflict(monkeypatch):
     with pytest.raises(TrackerConflictError):
         query.adrs()
     with pytest.raises(TrackerConflictError):
+        query.adr("T-ADR-0001")
+
+
+def test_query_adrs_still_fails_closed_on_unavailable_adr(monkeypatch):
+    # AC1: `query adr`, `query adrs` remain fail-closed on a missing supersession
+    # target too — only the `issue` payload gets a projected status.
+    class _UnavailableAdrTracker(_FakeTracker):
+        def list_adrs(self, project):
+            raise AdrUnavailableError("T-ADR-0002")
+
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: _UnavailableAdrTracker([]))
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    with pytest.raises(AdrUnavailableError):
+        query.adrs()
+    with pytest.raises(AdrUnavailableError):
         query.adr("T-ADR-0001")
 
 
