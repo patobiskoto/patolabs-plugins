@@ -610,8 +610,10 @@ def _reject_multiline_emphasis(
 
     A delimiter can be ordinary text (``2 * 3``), an opener, or a closer.  Pairing
     every other character loses that distinction and can hide a later real span.
-    Runs are kept whole so bold and triple-marker forms cannot be mistaken for
-    single emphasis.  The sole allowed multiline formatting span is the recorded
+    Delimiter runs are consumed one or two characters at a time, as emphasis and
+    strong emphasis can share a run.  Keeping a run whole would miss the outer
+    emphasis in ``***a**\n b*`` after the inner ``**`` pair consumes only part of
+    the opening run.  The sole allowed multiline formatting span is the recorded
     simple bold form, checked against its exact source grammar below.
     """
     runs = [
@@ -619,26 +621,66 @@ def _reject_multiline_emphasis(
         for match in re.finditer(re.escape(marker) + "+", fragment)
         if not _is_escaped(fragment, match.start())
     ]
-    openers: list[tuple[str, int]] = []
+    # Each opener keeps its unconsumed delimiter count. Opening delimiters are
+    # consumed from the right and closing delimiters from the left, so a residual
+    # marker can still form an outer span with a later run.
+    openers: list[tuple[int, int, bool]] = []
     for position, run in runs:
         if marker == "~" and run != "~~":
             continue
         can_open = _is_emphasis_opener(fragment, position, run)
         can_close = _is_emphasis_closer(fragment, position, run)
-        if can_close and openers:
-            opener_run, opener = openers.pop()
-            span = fragment[opener : position + len(run)]
-            if "\n" not in span:
-                continue
-            if (
+        closing_remaining = len(run)
+        closing_consumed = 0
+        while can_close and closing_remaining and openers:
+            opener_index = None
+            for candidate in range(len(openers) - 1, -1, -1):
+                _opener, opener_remaining, opener_can_close = openers[candidate]
+                # CommonMark's multiple-of-three restriction prevents a run
+                # that can serve both roles from being paired ambiguously.
+                if (
+                    (opener_can_close or can_open)
+                    and (opener_remaining + closing_remaining) % 3 == 0
+                    and (
+                        opener_remaining % 3 != 0
+                        or closing_remaining % 3 != 0
+                    )
+                ):
+                    continue
+                opener_index = candidate
+                break
+            if opener_index is None:
+                break
+            opener, opener_remaining, opener_can_close = openers[opener_index]
+            use = 2 if opener_remaining >= 2 and closing_remaining >= 2 else 1
+            if marker == "~" and use != 2:
+                break
+            opener_start = opener + opener_remaining - use
+            closer_end = position + closing_consumed + use
+            span = fragment[opener_start:closer_end]
+            allowed_multiline_bold = (
                 allow_observed_bold
-                and opener_run == run == "**"
+                and marker == "*"
+                and use == 2
                 and _MULTILINE_BOLD.fullmatch(span) is not None
-            ):
-                continue
-            raise ValueError("unsupported multiline inline Markdown in ADR body")
-        if can_open:
-            openers.append((run, position))
+            )
+            if "\n" in span and not allowed_multiline_bold:
+                raise ValueError("unsupported multiline inline Markdown in ADR body")
+            opener_remaining -= use
+            closing_remaining -= use
+            closing_consumed += use
+            if opener_remaining:
+                openers[opener_index] = (
+                    opener,
+                    opener_remaining,
+                    opener_can_close,
+                )
+            else:
+                openers.pop(opener_index)
+        if can_open and closing_remaining:
+            openers.append(
+                (position + closing_consumed, closing_remaining, can_close)
+            )
 
 
 def _linear_nonfenced_markdown_readback(fragment: str) -> str:
