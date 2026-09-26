@@ -403,8 +403,8 @@ operator must separately, under the cutover authority:
    binding. Do not dual-write, accept imported ADRs implicitly, or delete the YouTrack
    archive.
 
-No step above was run by PAT-22. This repository performs no real ADR write, historical
-import, or binding cutover. The witness is independent as a second provider object, not an
+PAT-22 itself ran none of these steps. They were later run for this repository by
+PAT-23 (historical import and audit) and PAT-10 (binding cutover). The witness is independent as a second provider object, not an
 immutable external transparency log. A workspace actor able to delete both a version and
 its witness can erase that pair without a surviving anchor; deleting every ADR and every
 witness is information-theoretically indistinguishable from a project that never had an
@@ -641,9 +641,11 @@ the derivation edge; a generic `manifest_digest` is intentionally not used for b
 
 The private `claude-plugins` binding remains resolvable for reads. The archived
 `patolabs-plugins` alias is also a project-wide mutation tombstone for its matching
-YouTrack key and native project ID. In the current public Foundry implementation, the
-YouTrack adapter requires a mutation binding, and the write tier validates that resolved
-project before any issue or ADR lifecycle effect. Consequently, queries through a
+YouTrack key and native project ID. In the current public Foundry implementation,
+YouTrack writes keep their historical resolution (checkout basename or `PROJECT_REPO`
+alias, case preserved; an unregistered checkout resolves no binding). Before any issue or
+ADR lifecycle effect, the write tier refuses only when that binding is archived or
+addresses a native project another alias archived. Consequently, queries through a
 historical alias still read terminal history and ADRs, while a lifecycle write through
 any alias of that same YouTrack project fails closed. The public checkout independently
 rejects an explicit YouTrack override through its Linear marker.
@@ -672,7 +674,9 @@ attested by this cutover record.
 Rollback is permitted only before the first post-cutover Linear lifecycle write and
 requires a separately reviewed recovery that restores one provider while keeping the
 other unavailable. After any such write, recovery is forward-only: preserve both audit
-histories and repair Linear. Removing the marker or re-enabling YouTrack while Linear is
+histories and repair Linear. For this repository that window is closed: Linear lifecycle
+writes and the PAT-23 ADR import happened after the cutover, so YouTrack can never become
+its active tracker again; an uncertain Linear state suspends the workflow instead. Removing the marker or re-enabling YouTrack while Linear is
 writable is not a rollback; it is forbidden dual-write.
 
 For the live PAT-10 cutover, this boundary was documented in an append-only local

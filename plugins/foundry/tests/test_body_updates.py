@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from foundry import edit, registry, write
-from foundry.models import Adr, Issue, Project
+from foundry.models import Adr, Issue
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     BodyUpdateUnavailableError,
@@ -26,10 +26,6 @@ def isolated_body_locks(monkeypatch, tmp_path):
 
 class ScriptedYouTrack(YouTrackTracker):
     """A stateful in-memory YouTrack wire fake recording each attempted request."""
-
-    # These tests exercise the bounded provider body algorithm directly. The
-    # separate write-tier regression below enables the real mutation boundary.
-    requires_mutation_binding = False
 
     def __init__(self, *, issue_body="old", article_body="old", after_write=None):
         self.issue_body = issue_body
@@ -218,43 +214,54 @@ def test_write_sync_acceptance_reports_exact_checked_count(monkeypatch):
     }
 
 
+_ARCHIVED_REGISTRY = {"youtrack": {
+    "claude-plugins": {"key": "FOUNDRY", "id": "0-3", "ms_bundle": "163-7"},
+    "patolabs-plugins": {
+        "key": "FOUNDRY", "id": "0-3", "ms_bundle": "163-7", "archive": True,
+    },
+    "OrfeoApp": {"key": "ORFEO", "id": "0-1"},
+    "orfeo-alias": {"key": "ORFEO", "id": "0-1"},
+}}
+
+
+@pytest.mark.parametrize("checkout", ("claude-plugins", "patolabs-plugins"))
 def test_youtrack_archive_stays_readable_but_write_tier_refuses_before_effect(
-    monkeypatch,
+    monkeypatch, checkout,
 ):
-    project = Project(key="FOUNDRY", id="0-3", extra={"ms_bundle": "163-7"})
     tracker = ScriptedYouTrack()
-    tracker.requires_mutation_binding = True
-    registry_data = {"youtrack": {
-        "claude-plugins": {
-            "key": "FOUNDRY", "id": "0-3", "ms_bundle": "163-7",
-        },
-        "patolabs-plugins": {
-            "key": "FOUNDRY", "id": "0-3", "ms_bundle": "163-7",
-            "archive": True,
-        },
-    }}
-    monkeypatch.setattr(registry, "load", lambda: registry_data)
+    monkeypatch.setattr(registry, "load", lambda: _ARCHIVED_REGISTRY)
+    monkeypatch.setattr(registry, "repo_basename", lambda _cwd=None: checkout)
     monkeypatch.setattr(
         registry,
         "checkout_repository_identity",
-        lambda _cwd=None: "github.com/patobiskoto/claude-plugins",
+        lambda _cwd=None: pytest.fail("YouTrack writes keep legacy resolution"),
     )
+
+    # Both the archived alias and a sibling alias of the same native project are
+    # refused before any provider request.
+    with pytest.raises(SystemExit, match="archiv"):
+        write.set_field(tracker, "FOUNDRY-159", "Priority", "P1")
+    assert tracker.calls == []
+
+
+@pytest.mark.parametrize("checkout", ("OrfeoApp", "orfeo-alias", "unregistered-repo"))
+def test_youtrack_writes_keep_legacy_resolution_outside_a_tombstone(
+    monkeypatch, checkout,
+):
+    # Mixed-case names, PROJECT_REPO-style aliases and unregistered checkouts keep
+    # the historical behaviour: no canonical-remote lookup, no new refusal.
+    tracker = ScriptedYouTrack()
+    monkeypatch.setattr(registry, "load", lambda: _ARCHIVED_REGISTRY)
+    monkeypatch.setattr(registry, "repo_basename", lambda _cwd=None: checkout)
     monkeypatch.setattr(
         registry,
-        "resolve",
-        lambda provider, repo, cwd=None: project
-        if (provider, repo) == ("youtrack", "claude-plugins")
-        else pytest.fail((provider, repo, cwd)),
-    )
-    monkeypatch.setattr(
-        registry, "repo_basename", lambda _cwd=None: "claude-plugins",
+        "checkout_repository_identity",
+        lambda _cwd=None: pytest.fail("YouTrack writes keep legacy resolution"),
     )
 
-    assert tracker.resolve_checkout_project() == project
-    with pytest.raises(SystemExit, match="archive lisible"):
-        write.set_field(tracker, "FOUNDRY-159", "Priority", "P1")
-
-    assert tracker.calls == []
+    assert write.mutation_project(tracker) is None
+    assert write.update_issue_body(tracker, "ORFEO-7", "old", "new")
+    assert tracker.calls
 
 
 def test_unsupported_tracker_body_write_fails_explicitly():

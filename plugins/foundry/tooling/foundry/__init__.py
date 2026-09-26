@@ -15,7 +15,10 @@ def tracker(name: str | None = None, cwd: str | None = None) -> Tracker:
     """Return the explicitly active tracker for the current repository."""
     from foundry import registry
 
-    binding = registry.repository_tracker_binding(cwd)
+    try:
+        binding = registry.repository_tracker_binding(cwd)
+    except ValueError as exc:
+        raise SystemExit(f"Binding tracker du dépôt invalide : {exc}") from None
     if name is None:
         name = binding.tracker if binding is not None else config.tracker_name()
     elif binding is not None and name != binding.tracker:

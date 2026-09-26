@@ -1360,7 +1360,6 @@ def test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id
 
     assert tuple(wire.comments) == comment_ids
     assert len(comment_ids) == 1
-    parsed = uuid.UUID(comment_ids[0])
     comment_id = comment_ids[0]
     parsed = uuid.UUID(comment_id)
     assert comment_id == "e16710eb-46d7-43d8-ba0d-0931e9882d7b"

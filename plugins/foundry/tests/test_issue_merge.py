@@ -1153,7 +1153,6 @@ def test_youtrack_merge_checks_proven_criteria_before_codehost_merge(
     )
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
     tracker = object.__new__(YouTrackTracker)
-    tracker.requires_mutation_binding = False
     current = tracker._to_issue({
         "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
     })
@@ -1189,7 +1188,6 @@ def test_youtrack_merge_multiline_pseudo_checkbox_cannot_hide_unchecked_ac(
     )
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
     tracker = object.__new__(YouTrackTracker)
-    tracker.requires_mutation_binding = False
     current = tracker._to_issue({
         "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
     })

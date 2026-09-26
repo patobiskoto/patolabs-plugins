@@ -50,6 +50,9 @@ def validate_state(state: str) -> str:
 def mutation_project(tracker):
     """Resolve the current repo binding for adapters that require write isolation."""
     if not getattr(tracker, "requires_mutation_binding", False):
+        legacy_validator = getattr(tracker, "validate_legacy_mutation", None)
+        if callable(legacy_validator):
+            legacy_validator()
         return None
     repo = registry.repo_basename()
     validator = getattr(tracker, "validate_mutation_repository", None)

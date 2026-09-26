@@ -50,10 +50,11 @@
       "source_id": "FOUNDRY-ADR-0026",
       "source_status": "accepted",
       "body_digest": "sha256:REPLACE",
-      "decision": "archive-reference"
+      "decision": "linear-adr-import",
+      "target_adr_id": "FOUNDRY-ADR-0026"
     }
   ],
-  "adr_reference_reason": "Linear adapter has no native Foundry ADR knowledge base; source status and digest remain authoritative in the readable YouTrack archive.",
+  "adr_reference_reason": "ADRs are imported into the Linear project as witness-bound Documents through the audited batch import (see linear-tracker.md); the YouTrack project is only the read-only origin archive.",
   "evidence": {
     "source_snapshot_at": null,
     "source_snapshot_digest": null,

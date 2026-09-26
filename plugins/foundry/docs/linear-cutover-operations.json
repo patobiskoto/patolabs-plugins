@@ -54,13 +54,13 @@
     "evidence_kind": "private-append-only-session-receipt",
     "evidence_digest": "sha256:44b08dc9085887b6177f749cd62519f32779845a5e27b0bafb59c9092e5e1ca3",
     "public_document": "plugins/foundry/docs/linear-tracker.md",
-    "boundary": "allowed only before the first Linear lifecycle write; otherwise an explicit migration decision is required and dual-write remains forbidden"
+    "boundary": "allowed only before the first Linear lifecycle write; after it, recovery is forward-only on Linear, YouTrack is never reactivated and dual-write remains forbidden"
   },
   "validation": {
     "public_repository_effective_tracker": "linear",
     "public_repository_youtrack_override": "refused",
     "historical_repository_effective_tracker": "youtrack-readable-archive",
-    "youtrack_source_lifecycle_writes": "refused-by-current-foundry-project-tombstone",
+    "youtrack_source_lifecycle_writes": "refused-by-current-foundry-project-tombstone-for-checkouts-bound-to-that-project",
     "obsolete_code_or_direct_rest_write_prevention": "not-claimed",
     "github_issues_backlog": false,
     "github_main_protection": {
