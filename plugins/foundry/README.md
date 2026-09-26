@@ -84,8 +84,9 @@ environment variables. Linear's exact capability and binding contract is documen
 
 The current dual-host upgrade, trusted configuration, override diagnosis, verification,
 and exact-ref rollback are in
-[`docs/migration-0.8.0.md`](docs/migration-0.8.0.md). The former
-[`0.7.0 migration`](docs/migration-0.7.0.md) remains historical release evidence.
+[`docs/migration-0.9.0.md`](docs/migration-0.9.0.md). The former
+[`0.8.0 migration`](docs/migration-0.8.0.md) and
+[`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
 Foundry never installs, downloads, starts, or selects a local model during an upgrade.
 
 Dev Hub Epic orchestration starts with a deterministic read-only preview. It consumes
@@ -217,14 +218,18 @@ attestation, and fail-closed recommendation are indexed by
 The immutable-record versus corrected-publication boundary, raw-trace linkage, packet-null
 semantics, and offline reproduction command are specified by the versioned
 [`RESULTS-CONTRACT-v4.md`](benchmarks/foundry-35/RESULTS-CONTRACT-v4.md).
-The current [`0.8.0 release notes`](docs/release-0.8.0.md) publish the separate
-FOUNDRY-46 Claude and Codex evidence and the FOUNDRY-47 `keep` decision. The frozen v2
-matrix is `inconclusive` on both hosts: unavailable cost, allocation, test, review,
-downstream, security, host-version, and weighted-aggregate data remain `null`, never
-zero. The historical 7.42% price-snapshot observation is noncausal and is not a savings
-claim. No local model is promoted, and every production resolver, default, gate,
-fallback, mapping, and authority remains unchanged. The
+The [`0.8.0 release notes`](docs/release-0.8.0.md) publish the separate FOUNDRY-46
+Claude and Codex evidence and the FOUNDRY-47 `keep` decision. The frozen v2 matrix is
+`inconclusive` on both hosts: unavailable cost, allocation, test, review, downstream,
+security, host-version, and weighted-aggregate data remain `null`, never zero. The
+historical 7.42% price-snapshot observation is noncausal and is not a savings claim. No
+local model is promoted, and every production resolver, default, gate, fallback,
+mapping, and authority remains unchanged. The
 [`0.7.0 release report`](docs/release-0.7.0.md) remains immutable historical evidence.
+The current [`0.9.0 release notes`](docs/release-0.9.0.md) publish the completed Linear
+ADR adapter (versioned ADR Documents, the completed historical ADR import), this
+repository's own cutover to Linear project PAT, and the typed human AC override receipt;
+they do not change any benchmark evidence, resolver, model mapping, or gate above.
 
 On Claude Code, skills invoke logical roles and a `PreToolUse` hook applies the resolved
 model, effort profile, capability, and turn cap to the actual Agent call. Agent

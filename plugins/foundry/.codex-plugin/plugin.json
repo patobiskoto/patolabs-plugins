@@ -1,7 +1,7 @@
 {
   "name": "foundry",
   "description": "Idea to merge: guided framing, ADRs, precise issues, value-first roadmap, and a gated delivery loop over pluggable tracker and code-host adapters.",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "author": {
     "name": "pato"
   },
