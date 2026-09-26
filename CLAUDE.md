@@ -36,7 +36,11 @@ push to the default branch are denied by the `PreToolUse` Bash guard
 (`plugins/foundry/hooks/guard_bash.py::deny_reason`), and a git `pre-push` hook in
 `plugins/foundry/.githooks/` gives the same guarantee outside either agent (enable it
 with `git config core.hooksPath plugins/foundry/.githooks`). See FOUNDRY-ADR-0001 for
-why the tracker must stay authoritative over the merge path.
+why the tracker must stay authoritative over the merge path. The guard's usual fail-open
+on internal errors has one exception (PAT-42): an invalid, drifted, or ambiguous repo
+tracker binding (`registry.entry_for()` raising `ValueError`) still denies these same
+commands, naming the binding error, instead of silently reopening the guard in exactly
+the state where every other Foundry command already fails closed.
 
 ## R2 — Scan the ADR index before an architecture choice
 

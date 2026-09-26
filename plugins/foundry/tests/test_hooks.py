@@ -5,14 +5,27 @@ registry): given a Bash command, the set of protected branch names and the curre
 branch, allow or deny with a reason. The adversarial matrix covers the bypasses and
 false positives found in review: git/gh global flags, force refspecs, quoted text,
 --all/--mirror, undeterminable default branch.
+
+PAT-42 adds a second layer, exercised end-to-end via `main()`/subprocess: when
+`registry.entry_for()` raises `ValueError` (invalid marker, registry-digest drift,
+ambiguous binding), R1-candidate commands must still deny — the one state where
+every other Foundry command already fails closed must not become the exception
+that reopens `gh pr create/merge` or a direct push to the default branch.
 """
 import importlib.util
+import json
 import os
+import subprocess
 
 _GUARD = os.path.join(os.path.dirname(__file__), "..", "hooks", "guard_bash.py")
 _spec = importlib.util.spec_from_file_location("guard_bash", _GUARD)
 guard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(guard)
+
+from foundry import registry  # noqa: E402 — guard's sys.path.insert made this importable
+
+_LINEAR_PROJECT_ID = "00000000-0000-4000-8000-000000000000"
+_MANIFEST_DIGEST = "sha256:" + "a" * 64
 
 
 def _deny(cmd, defaults=frozenset({"main"}), current="feat/x-1"):
@@ -119,3 +132,242 @@ def test_session_start_matcher_covers_every_session_entry():
     with open(hooks_json) as f:
         matcher = json.load(f)["hooks"]["SessionStart"][0]["matcher"]
     assert set(matcher.split("|")) == {"startup", "resume", "clear", "compact"}
+
+
+# ---------------------------------------------------------------------------
+# PAT-42 — fail-closed on a broken tracker binding, end-to-end through main()
+# ---------------------------------------------------------------------------
+
+def _clear_data_env(monkeypatch):
+    for key in ("FOUNDRY_DATA", "PLUGIN_DATA", "CLAUDE_PLUGIN_DATA", "PROJECT_REPO"):
+        monkeypatch.delenv(key, raising=False)
+
+
+def _make_repo(tmp_path, name="demo", remote="acme/demo"):
+    repo = tmp_path / name
+    repo.mkdir()
+
+    def run(*a):
+        subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)
+
+    run("init", "-b", "main")
+    run("config", "remote.origin.url", f"https://github.com/{remote}.git")
+    run("checkout", "-b", "feat/x-1")
+    run("-c", "user.name=t", "-c", "user.email=t@t", "commit",
+        "--allow-empty", "-m", "init")
+    return repo
+
+
+def _linear_binding(canonical_repo):
+    identifiers = iter(
+        f"00000000-0000-4000-8000-{index:012d}" for index in range(1, 15)
+    )
+    return {
+        "canonical_repo": canonical_repo,
+        "team_id": next(identifiers),
+        "state_ids": {
+            state: next(identifiers)
+            for state in (
+                "backlog", "ready", "in-progress", "review", "blocked", "done", "dropped",
+            )
+        },
+        "type_label_ids": {
+            kind: next(identifiers) for kind in ("Epic", "Feature", "Bug", "Task")
+        },
+        "milestone_ids": {"M1": next(identifiers)},
+        "label_ids": {"pilot": next(identifiers)},
+    }
+
+
+def _hook_env(home):
+    """The env Codex gives hook commands: plugin-private dirs set, but the guard
+    (like the registry) must ignore them — only HOME/FOUNDRY_DATA matter."""
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "PLUGIN_DATA": str(home / "plugin-private"),
+        "CLAUDE_PLUGIN_DATA": str(home / "claude-private"),
+    }
+    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
+
+
+def _run_guard(repo, command, home):
+    r = subprocess.run(
+        ["python3", _GUARD],
+        input=json.dumps({"cwd": str(repo), "tool_input": {"command": command}}),
+        env=_hook_env(home),
+        capture_output=True, text=True, check=True,
+    )
+    return r.stdout
+
+
+def _decision(stdout):
+    if not stdout.strip():
+        return None
+    return json.loads(stdout)["hookSpecificOutput"]
+
+
+def _cutover_to_linear(monkeypatch, tmp_path, repo):
+    """A valid registered+cutover-over repo — the nominal broken-binding starting
+    point every PAT-42 fixture corrupts from here."""
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    registry.register("youtrack", "demo", "FOUNDRY", "0-3")
+    extra = _linear_binding("github.com/acme/demo")
+    registry.register("linear", "demo", "PAT", _LINEAR_PROJECT_ID, **extra)
+    registry.cutover_repository_tracker(
+        "linear", "PAT", _LINEAR_PROJECT_ID,
+        migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+    )
+
+
+def test_nominal_registered_repo_still_denies(monkeypatch, tmp_path):
+    repo = _make_repo(tmp_path)
+    _cutover_to_linear(monkeypatch, tmp_path, repo)
+
+    decision = _decision(_run_guard(repo, "gh pr create --title x", tmp_path))
+    assert decision["permissionDecision"] == "deny"
+    decision = _decision(_run_guard(repo, "git push origin main", tmp_path))
+    assert decision["permissionDecision"] == "deny"
+
+
+def test_nominal_unregistered_repo_allows(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = _make_repo(tmp_path)
+
+    assert _decision(_run_guard(repo, "gh pr create --title x", tmp_path)) is None
+    assert _decision(_run_guard(repo, "git push origin main", tmp_path)) is None
+
+
+def test_nominal_non_candidate_command_allowed_when_registered(monkeypatch, tmp_path):
+    repo = _make_repo(tmp_path)
+    _cutover_to_linear(monkeypatch, tmp_path, repo)
+
+    assert _decision(_run_guard(repo, "git status", tmp_path)) is None
+    assert _decision(_run_guard(repo, "gh pr view 12", tmp_path)) is None
+
+
+def test_invalid_marker_denies_gh_pr_and_default_push(monkeypatch, tmp_path):
+    repo = _make_repo(tmp_path)
+    _cutover_to_linear(monkeypatch, tmp_path, repo)
+    marker = repo / ".foundry" / "tracker.json"
+    marker.write_text("{not valid json", encoding="utf-8")
+
+    for command in ("gh pr create --title x", "gh pr merge 12 --squash"):
+        decision = _decision(_run_guard(repo, command, tmp_path))
+        assert decision["permissionDecision"] == "deny"
+        assert "marqueur tracker de dépôt invalide" in decision["permissionDecisionReason"]
+
+    decision = _decision(_run_guard(repo, "git push origin main", tmp_path))
+    assert decision["permissionDecision"] == "deny"
+    assert "marqueur tracker de dépôt invalide" in decision["permissionDecisionReason"]
+
+
+def test_registry_digest_drift_denies_gh_pr_and_default_push(monkeypatch, tmp_path):
+    repo = _make_repo(tmp_path)
+    _cutover_to_linear(monkeypatch, tmp_path, repo)
+    data = registry.load()
+    data["linear"]["demo"]["team_id"] = "00000000-0000-4000-8000-000000000099"
+    registry._save(data)
+
+    decision = _decision(_run_guard(repo, "gh pr create --title x", tmp_path))
+    assert decision["permissionDecision"] == "deny"
+    assert "modifié depuis le cutover" in decision["permissionDecisionReason"]
+
+    decision = _decision(_run_guard(repo, "git push origin main", tmp_path))
+    assert decision["permissionDecision"] == "deny"
+    assert "modifié depuis le cutover" in decision["permissionDecisionReason"]
+
+
+def test_ambiguous_binding_denies_gh_pr_and_default_push(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = _make_repo(tmp_path)
+    registry.register("youtrack", "demo", "FOUNDRY", "0-3",
+                       canonical_repo="github.com/acme/demo")
+    registry.register("devhub", "other", "OTHER", "42",
+                       canonical_repo="github.com/acme/demo")
+
+    decision = _decision(_run_guard(repo, "gh pr create --title x", tmp_path))
+    assert decision["permissionDecision"] == "deny"
+    assert "ambigus" in decision["permissionDecisionReason"]
+
+    decision = _decision(_run_guard(repo, "git push origin main", tmp_path))
+    assert decision["permissionDecision"] == "deny"
+    assert "ambigus" in decision["permissionDecisionReason"]
+
+
+def test_broken_binding_push_to_non_default_branch_still_allowed(monkeypatch, tmp_path):
+    """A broken binding fails closed only for what deny_reason() would already
+    deny — a push to a work branch (not the default) must stay allowed."""
+    repo = _make_repo(tmp_path)
+    _cutover_to_linear(monkeypatch, tmp_path, repo)
+    marker = repo / ".foundry" / "tracker.json"
+    marker.write_text("{not valid json", encoding="utf-8")
+
+    assert _decision(_run_guard(repo, "git push -u origin feat/x-1", tmp_path)) is None
+
+
+def test_broken_binding_non_candidate_command_allowed(monkeypatch, tmp_path):
+    """Non-candidate commands stay allowed even with a broken binding — the guard
+    only ever reasons about R1-candidate segments."""
+    repo = _make_repo(tmp_path)
+    _cutover_to_linear(monkeypatch, tmp_path, repo)
+    marker = repo / ".foundry" / "tracker.json"
+    marker.write_text("{not valid json", encoding="utf-8")
+
+    assert _decision(_run_guard(repo, "git status", tmp_path)) is None
+    assert _decision(_run_guard(repo, "gh pr view 12", tmp_path)) is None
+
+
+def test_non_candidate_command_never_touches_the_registry(monkeypatch, capsys, tmp_path):
+    """The cheap `_is_candidate` prefilter must run before any registry read —
+    even in a broken-binding repo, `git status`/`gh pr view` never call
+    `registry.entry_for` at all. `main()` swallows exceptions (fail-open), so
+    the probe records calls instead of raising, and a candidate command proves
+    the patch is actually seen by `main()`."""
+    import io
+
+    calls = []
+
+    def _broken_binding(*args, **_kwargs):
+        calls.append(args)
+        raise ValueError("marqueur tracker de dépôt invalide")
+
+    # `guard.main()` does `from foundry import registry` internally — that binds
+    # to the SAME cached module object imported at the top of this file.
+    monkeypatch.setattr(registry, "entry_for", _broken_binding)
+
+    def _run(command):
+        monkeypatch.setattr(guard.sys, "stdin", io.StringIO(json.dumps({
+            "cwd": str(tmp_path), "tool_input": {"command": command},
+        })))
+        guard.main()
+        return capsys.readouterr().out
+
+    for command in ("git status", "gh pr view 12"):
+        assert _run(command) == ""
+    assert calls == []
+
+    out = _run("gh pr merge 12")
+    assert len(calls) == 1
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_binding_error_deny_names_the_cause():
+    # binding_error_deny_reason() is the pure decision the end-to-end tests above
+    # exercise through main() — pin it directly too.
+    reason = guard.binding_error_deny_reason(
+        "gh pr create --title x", {"main"}, "feat/x-1", "marqueur tracker de dépôt invalide",
+    )
+    assert reason is not None
+    assert "marqueur tracker de dépôt invalide" in reason
+    assert "gh pr create/merge" in reason
+
+    assert guard.binding_error_deny_reason(
+        "git status", {"main"}, "feat/x-1", "marqueur tracker de dépôt invalide",
+    ) is None
