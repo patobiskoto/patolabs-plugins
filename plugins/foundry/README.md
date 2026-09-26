@@ -483,7 +483,7 @@ binding is invalid, has drifted, or is ambiguous — `registry.entry_for()` rais
 `ValueError` — the guard fails CLOSED instead for `gh pr create`/`merge` and a push to
 the default branch, naming the binding error as the cause; this is exactly the state
 where every other Foundry command already refuses to run, so the guard must not be the
-one door left open. Any other unexpected failure, and any command the cheap
+one door left open. This includes an unreadable or invalid global Foundry registry: since the guard then cannot prove a repo is unregistered, these same commands are denied in any git checkout until the registry is repaired. Any other unexpected failure, and any command the cheap
 `_is_candidate` prefilter does not flag, still fails open — non-candidate commands never
 read the registry at all. Logical entrypoints have a minimal `Read` capability and
 self-stop if routing did not attach its marker. Codex discovers the same

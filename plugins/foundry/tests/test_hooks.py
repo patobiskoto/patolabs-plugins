@@ -257,9 +257,10 @@ def test_invalid_marker_denies_gh_pr_and_default_push(monkeypatch, tmp_path):
     marker = repo / ".foundry" / "tracker.json"
     marker.write_text("{not valid json", encoding="utf-8")
 
-    decision = _decision(_run_guard(repo, "gh pr create --title x", tmp_path))
-    assert decision["permissionDecision"] == "deny"
-    assert "marqueur tracker de dépôt invalide" in decision["permissionDecisionReason"]
+    for command in ("gh pr create --title x", "gh pr merge 12 --squash"):
+        decision = _decision(_run_guard(repo, command, tmp_path))
+        assert decision["permissionDecision"] == "deny"
+        assert "marqueur tracker de dépôt invalide" in decision["permissionDecisionReason"]
 
     decision = _decision(_run_guard(repo, "git push origin main", tmp_path))
     assert decision["permissionDecision"] == "deny"
@@ -323,23 +324,38 @@ def test_broken_binding_non_candidate_command_allowed(monkeypatch, tmp_path):
     assert _decision(_run_guard(repo, "gh pr view 12", tmp_path)) is None
 
 
-def test_non_candidate_command_never_touches_the_registry(monkeypatch):
+def test_non_candidate_command_never_touches_the_registry(monkeypatch, capsys, tmp_path):
     """The cheap `_is_candidate` prefilter must run before any registry read —
     even in a broken-binding repo, `git status`/`gh pr view` never call
-    `registry.entry_for` at all."""
+    `registry.entry_for` at all. `main()` swallows exceptions (fail-open), so
+    the probe records calls instead of raising, and a candidate command proves
+    the patch is actually seen by `main()`."""
+    import io
 
-    def _boom(*_args, **_kwargs):
-        raise AssertionError("non-candidate command touched the registry")
+    calls = []
+
+    def _broken_binding(*args, **_kwargs):
+        calls.append(args)
+        raise ValueError("marqueur tracker de dépôt invalide")
 
     # `guard.main()` does `from foundry import registry` internally — that binds
-    # to the SAME cached module object imported at the top of this file, so
-    # patching it here is visible inside main() too.
-    monkeypatch.setattr(registry, "entry_for", _boom)
-    import io
-    monkeypatch.setattr(guard.sys, "stdin", io.StringIO(json.dumps({
-        "cwd": "/nonexistent", "tool_input": {"command": "git status"},
-    })))
-    guard.main()  # must not raise / must not print a deny
+    # to the SAME cached module object imported at the top of this file.
+    monkeypatch.setattr(registry, "entry_for", _broken_binding)
+
+    def _run(command):
+        monkeypatch.setattr(guard.sys, "stdin", io.StringIO(json.dumps({
+            "cwd": str(tmp_path), "tool_input": {"command": command},
+        })))
+        guard.main()
+        return capsys.readouterr().out
+
+    for command in ("git status", "gh pr view 12"):
+        assert _run(command) == ""
+    assert calls == []
+
+    out = _run("gh pr merge 12")
+    assert len(calls) == 1
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_binding_error_deny_names_the_cause():
