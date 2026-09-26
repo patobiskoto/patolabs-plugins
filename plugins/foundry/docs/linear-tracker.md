@@ -259,13 +259,18 @@ in Linear's document list is an invalid provider response, not an empty ADR inde
 of the conflicts above — none of them repair or normalize on read. `query issue <ID>` is
 the one exception: its `adrs` field only keeps the issue payload itself readable when the
 embedded index read raises a typed `TrackerConflictError` (e.g. a version without a
-matching witness). It projects that as an explicit, distinct status —
-`{"status": "conflict", "tracker": <tracker name>, "reason": <fixed conflict message>}` —
-the adapter's conflict messages are static literals (e.g. "Linear ADR version witness is
-missing"), never interpolated or sanitized provider text —
-never an empty list and never the `{"status": "unavailable", ...}` capability shape used
-when a tracker has no ADR knowledge base at all. Transport, binding, and other provider
-errors from the embedded index still propagate out of `query issue` unchanged.
+matching witness) or a typed `AdrUnavailableError` (e.g. a supersession relation whose
+target ADR is absent from the embedded index). It projects each as its own explicit,
+distinct status —
+`{"status": "conflict", "tracker": <tracker name>, "reason": <fixed conflict message>}`
+for the former, `{"status": "adr_unavailable", "tracker": <tracker name>,
+"reason": "ADR unavailable: <adr id>"}` for the latter. Conflict messages are static
+literals (e.g. "Linear ADR version witness is missing"); the unavailable-ADR message
+interpolates only the missing ADR identifier, which metadata validation has already
+matched against the ADR-ID pattern, never other provider text. Neither is ever an empty
+list, never the `{"status": "unavailable", ...}` capability shape used when a tracker has
+no ADR knowledge base at all, and never conflated with each other. Transport, binding, and other provider errors from the embedded index still
+propagate out of `query issue` unchanged.
 
 Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
 Each additive version must have exactly one typed delta: body, status, source
