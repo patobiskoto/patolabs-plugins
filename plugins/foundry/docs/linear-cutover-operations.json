@@ -119,7 +119,7 @@
       "effect": "7 issues created in the YouTrack archive project FOUNDRY (FOUNDRY-166..FOUNDRY-172); parent command failed",
       "cause": "Foundry CLI run from a checkout of main without the repository tracker marker or FOUNDRY_TRACKER=linear; the host default tracker (YouTrack) resolved and main had no archive tombstone on that path",
       "containment": "no further YouTrack write; deletion left to the maintainer; follow-ups recreated in Linear as PAT-42..PAT-48; issue-key tombstone hardening tracked by PAT-43",
-      "acceptance_impact": "PAT-10 criterion 'YouTrack strictly read-only during the operation' is not met; merged only under an audited human override"
+      "acceptance_impact": "PAT-10 criterion 'YouTrack strictly read-only during the operation' is not met; merge requires an audited human override and the criterion stays unchecked"
     }
   ]
 }

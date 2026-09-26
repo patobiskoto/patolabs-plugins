@@ -901,6 +901,23 @@ def test_live_cutover_records_linear_adr_authority_without_rewriting_input():
         assert len(digest) == 64 and int(digest, 16) >= 0
 
 
+def test_live_cutover_keeps_the_youtrack_write_incident_on_record():
+    root = Path(__file__).resolve().parents[3]
+    operations = json.loads(
+        (root / "plugins/foundry/docs/linear-cutover-operations.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    (incident,) = [
+        item for item in operations["incidents"]
+        if item["id"] == "pat10-youtrack-write-2026-09-26"
+    ]
+    assert incident["kind"] == "unintended-youtrack-write"
+    assert "FOUNDRY-166..FOUNDRY-172" in incident["effect"]
+    assert "PAT-42..PAT-48" in incident["containment"]
+    assert "not met" in incident["acceptance_impact"]
+
+
 def test_live_cutover_attestation_separates_private_input_and_public_redaction():
     root = Path(__file__).resolve().parents[3]
     marker = json.loads((root / ".foundry/tracker.json").read_text(encoding="utf-8"))

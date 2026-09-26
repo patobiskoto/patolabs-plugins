@@ -44,7 +44,8 @@ the native Linear fields remain untouched. A complete cockpit Evidence Plane env
 can be journaled but has no state, AC or merge authority. Linear stores Foundry ADRs as
 versioned, witness-bound project Documents; atomic Epic closure remains unavailable.
 This repository itself is bound to Linear (project PAT) for issues and ADRs; the
-historical YouTrack project is only a read-only origin archive. ChatGPT MCP activation
+historical YouTrack project is designated a read-only origin archive (see the cutover
+incident record in `plugins/foundry/docs/linear-cutover-operations.json`). ChatGPT MCP activation
 remains separate planned work.
 
 ## Plugins
@@ -80,7 +81,7 @@ is a monorepo (and what it deliberately does not change).
 cd plugins/foundry && pip install pytest ruff && pytest -q -m "not integration" tests  # Foundry: pure logic
 ```
 
-Foundry is piloted with its own method (project `FOUNDRY`); the pipeline runs in-repo via
+Foundry is piloted with its own method (Linear project `PAT`, bound by `.foundry/tracker.json`); the pipeline runs in-repo via
 `python3 plugins/foundry/tooling/foundry_cli.py <module>`. Runtime configuration resolves
 from environment variables, Claude plugin options, the macOS keychain, then
 `~/.config/foundry/config.env`.
