@@ -664,6 +664,12 @@ origin archive, and Foundry has no Git-catalogue or YouTrack fallback for ADR re
 audit digest, qualification project, count and superseded clause) without publishing
 any private source body or receipt.
 
+The strict read-only boundary did not hold for the whole operation: on 2026-09-26 a
+Foundry command run from a `main` checkout without this marker resolved the host default
+tracker and created seven issues in the YouTrack archive. The incident, its containment
+and its acceptance impact are recorded under `incidents` in
+`linear-cutover-operations.json`.
+
 This is an operational guarantee of the current versioned Foundry paths, not a claim
 that the YouTrack server revoked write credentials. Direct REST calls, bespoke adapter
 calls that bypass the write tier, or arbitrary execution of obsolete code from the
