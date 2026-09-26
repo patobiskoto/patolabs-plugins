@@ -28,12 +28,14 @@ closed vocabulary:
   below the §4.2 target) and `to_qualify` (real provider behaviour not probed) both
   **block** V1 exit for that provider. `refused` never appears on a core operation.
 - On a **non-core** operation `refused` is the expected state for a provider that
-  deliberately does not offer it and never blocks V1; `supported` and `to_qualify` are
-  allowed; `gap` is not.
-- Every core `gap` and `to_qualify` cell names its owner ticket (`ticket`). A cell whose
+  deliberately does not offer it and never blocks V1; `gap` is not allowed. A non-core
+  `to_qualify` is temporary: before V1 exit it must resolve to `supported` or to
+  `refused` through a typed refusal, never a bare `NotImplementedError`.
+- Every core `gap` and `to_qualify` cell, and every non-core `to_qualify` cell, names its
+  owner ticket (`ticket`). A cell whose
   closure changes a durable invariant also carries `blocked_by_adr` (§4.3).
 
-`test_tracker_contract.py` enforces these three rules.
+`test_tracker_contract.py` enforces the first two rules and the owner tickets, and checks the `blocked_by_adr` cells against the invariants listed in §4.3; only a few cells are tied to adapter code by the test, the rest are grounded by their cited evidence.
 
 | Core journey | Representative `Tracker` ops | YouTrack | Linear | ghprojects |
 |---|---|---|---|---|
@@ -47,9 +49,10 @@ closed vocabulary:
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs; **gap** PAT-47 for successors of imported historical ADRs | `to_qualify` PAT-58 |
 | Start/resume/review/merge | `set_state` | **gap** PAT-56 (blind, not replay-safe) | supported (`in-progress`/`review`/`done`) | `to_qualify` PAT-67 |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | **gap** PAT-56, blocked by ADR | `to_qualify` PAT-67 |
-| Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, blocked by ADR | **gap** PAT-69, blocked by ADR | `to_qualify` PAT-65 |
+| Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, blocked by ADR | **gap** PAT-69, blocked by ADR | `to_qualify` PAT-69 (after PAT-65) |
 | Périmètre de release/changelog | `search` via `query.py changelog()` | supported | **gap** PAT-59 | `to_qualify` PAT-59 |
-| Bascule par copie fidèle (PAT-64): import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (YouTrack→Linear precedent) | `to_qualify` PAT-64 |
+| Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
+| Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
 | Bascule (PAT-64): archived source refuses writes | `validate_mutation_project` | **gap** PAT-43 | supported | `to_qualify` PAT-64 |
 
 The JSON is authoritative for every cell and its evidence; read it before relying on a
@@ -79,9 +82,14 @@ cell.
 - **PAT-69** — Neither YouTrack nor Linear implements `close_epic`/`get_epic_closure`;
   `write.close_epic` refuses before any provider call (`write.py:377`). Only the non-V1
   DevHub adapter implements the port (`devhub.py:220-223`, `825`).
-- **PAT-64** — YouTrack has no `import_adr`/`import_adr_batch` override, so it cannot be a
-  switch target. The proven leg is YouTrack→Linear (FOUNDRY-ADR-0026,
-  PAT-ADR-0001..0003); PAT-64 generalizes it to every pair.
+- **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
+  target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR
+  import target. No adapter copies live work faithfully: Linear's `create_issue` sends a
+  random client id (`linear.py:2425`), so a replay duplicates the issue, and nothing
+  copies lifecycle receipts, acceptance proofs or comments. This repository's
+  YouTrack→Linear live-work move was a private operator-side selective migration, and
+  `registry cutover` performs no provider I/O (`linear-tracker.md`). PAT-64 must provide
+  both halves for every pair.
 - **PAT-43** — YouTrack's only tombstone check, `validate_legacy_mutation`
   (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:776-797`),
   refuses a write only when the checkout's own registry binding is archived or shares
@@ -202,8 +210,8 @@ never **excludes** them, and no text in Foundry may say otherwise.
   `expected_body`, one write, one readback. A non-Foundry writer landing between the read
   and the write still wins (`youtrack.py:109-111`, `396-402`). `sync_acceptance_body`
   (`youtrack.py:450-466`) and `set_adr_status` (`youtrack.py:550-558`) use this path.
-- **Level 2 — append-only versions at deterministic ids.** Linear ADR Documents are
-  never overwritten: each version is created at `_adr_document_id(project_id, adr_id,
+- **Level 2 — append-only versions at deterministic ids.** Foundry never overwrites a Linear ADR
+  Document (a human edit in Linear is detected by the witness, not prevented): each version is created at `_adr_document_id(project_id, adr_id,
   sequence)` (`linear.py:337-338`) by `_create_exact_adr_document`
   (`linear.py:3298-3335`), which reads the slot, creates it with that client id, and
   verifies the readback byte-exactly, failing closed if the slot holds other content.

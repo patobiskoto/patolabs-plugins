@@ -7,12 +7,12 @@
     "supported": "the operation is implemented against the real provider API, exercised by tests today, and meets the tracker-contract.md #4.2 target guarantee for its journey family",
     "gap": "the operation is required by a core journey (operations[].core == true) but is unimplemented, explicitly refused by the adapter, or below the #4.2 target guarantee; blocks V1 exit for that provider until the owner ticket closes it. A non-core operation is never a gap: an unimplemented non-core capability is 'refused' instead",
     "refused": "the adapter's refusal is deliberate and never blocks V1 exit. Valid ONLY on a non-core operation (operations[].core == false): criterion 1 requires every core operation to reach 'supported', so an unsupported core operation is always 'gap' or 'to_qualify', both of which block V1 exit for that provider",
-    "to_qualify": "the operation's real behaviour against the live provider is not qualified; PAT-65 must qualify it on authorized test resources before any other status can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap'; only the reason differs (unqualified transport vs. known-missing implementation)"
+    "to_qualify": "the operation's real behaviour against the live provider is not qualified; PAT-65 must qualify it on authorized test resources before any other status can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap'; only the reason differs (unqualified transport vs. known-missing implementation). On a non-core operation 'to_qualify' is temporary: before V1 exit it must resolve to 'supported' or to 'refused' with a typed refusal (never a bare NotImplementedError), and it names its owner ticket (PAT-65 unless stated)"
   },
   "cell_fields": {
     "status": "one value of status_vocabulary",
     "evidence": "code citation grounding the status",
-    "ticket": "owner ticket (PAT-<n>) implementing the missing capability, or PAT-65 where only qualification is known; required on every core 'gap' and 'to_qualify' cell",
+    "ticket": "owner ticket (PAT-<n>); required on every core 'gap' and 'to_qualify' cell and on every non-core 'to_qualify' cell",
     "blocked_by_adr": "id of an entry in pending_adrs; present when closing the cell changes a durable invariant, so no code may land before that ADR is explicitly accepted"
   },
   "pending_adrs": [
@@ -25,7 +25,8 @@
       "invariants_changed": [
         "linear.py:8-11 — existing-issue replacement is unavailable without a provider CAS (PAT-55, PAT-56 on Linear)",
         "base.py:262-276 and write.py:371-376 — epic closure is an atomic provider graph operation persisted in one transaction (PAT-69 on YouTrack and Linear)"
-      ]
+      ],
+      "creation_owner": "maintainer, through foundry:adr (created as proposed, then explicitly accepted) before any code of PAT-55, PAT-56 or PAT-69 starts"
     }
   ],
   "providers": {
@@ -149,7 +150,8 @@
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "search() raises NotImplementedError; GitHub's item filters are unqualified (PAT-65)"
+          "evidence": "search() raises NotImplementedError; GitHub's item filters are unqualified (PAT-65)",
+          "ticket": "PAT-65"
         }
       },
       "note": "Criterion 4 excludes free native search from V1 core."
@@ -317,7 +319,8 @@
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; the base default applies and feasibility is unqualified"
+          "evidence": "no override; the base default applies and feasibility is unqualified",
+          "ticket": "PAT-65"
         }
       },
       "note": "Optional read-only projection; only DevHub implements it, for its own wave preview. The core journey is served by search(), link() and create_issue(parent=...)."
@@ -434,7 +437,8 @@
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "not overridden; the base default applies"
+          "evidence": "not overridden; the base default applies",
+          "ticket": "PAT-65"
         }
       },
       "note": "ADR evolution in criterion 1 is served by set_adr_status on every V1 provider; these methods are an optional reciprocal-linking enhancement."
@@ -508,7 +512,8 @@
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "not overridden; the base default applies"
+          "evidence": "not overridden; the base default applies",
+          "ticket": "PAT-65"
         }
       }
     },
@@ -536,7 +541,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-69",
-          "evidence": "no override; the base default applies; whether GitHub Projects v2 offers any parent/child precondition is unqualified Owner PAT-69 (epic closure in the active tracker), after PAT-65 qualifies what GitHub Projects v2 offers."
+          "evidence": "no override; the base default applies. Whether GitHub Projects v2 offers any parent/child precondition is unqualified (PAT-65); the capability itself is owned by PAT-69 (epic closure in the active tracker)."
         }
       },
       "note": "DevHub (non-V1) is the only adapter with epic_closure_supported = True (devhub.py:220-223; close_epic at devhub.py:825)."
@@ -566,13 +571,12 @@
       }
     },
     {
-      "id": "cross-tracker-live-work-and-adr-copy",
-      "journey": "bascule de dépôt par copie fidèle (PAT-64)",
+      "id": "cross-tracker-adr-import",
+      "journey": "bascule de dépôt par copie fidèle (PAT-64) — ADR",
       "core": true,
       "tracker_abc": [
         "import_adr",
-        "import_adr_batch",
-        "provision_project"
+        "import_adr_batch"
       ],
       "cells": {
         "youtrack": {
@@ -582,15 +586,44 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "import_adr (linear.py:4157) and import_adr_batch (linear.py:4065) implement bounded, idempotent, provenance-preserving historical ADR import (PAT-ADR-0001..0003); the YouTrack->Linear precedent PAT-64 generalizes"
+          "evidence": "import_adr (linear.py:4157) and import_adr_batch (linear.py:4065) implement bounded, idempotent, provenance-preserving historical ADR import (PAT-ADR-0001..0003), proven by the YouTrack->Linear ADR import of this repository (PAT-23)"
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-64",
-          "evidence": "not overridden; ADR storage (PAT-65) must exist before an import target can"
+          "evidence": "not overridden; GitHub ADR storage (PAT-65/PAT-58) must exist before an import target can"
         }
       },
-      "note": "Criterion 4 makes the repository switch by faithful copy of live work and ADRs (PAT-64) core V1, grounded in the YouTrack->Linear precedent (FOUNDRY-ADR-0026, PAT-ADR-0001..0003)."
+      "note": "ADR half of the switch only. The live-work half is the next row."
+    },
+    {
+      "id": "cross-tracker-live-work-copy",
+      "journey": "bascule de dépôt par copie fidèle (PAT-64) — travail vivant",
+      "core": true,
+      "tracker_abc": [
+        "create_issue",
+        "link",
+        "add_comment",
+        "set_state"
+      ],
+      "cells": {
+        "youtrack": {
+          "status": "gap",
+          "ticket": "PAT-64",
+          "evidence": "no faithful-copy import path: create_issue/link/add_comment/set_state are blind POSTs (youtrack.py:333-369) with no source reference, replay key or comparison against the source item"
+        },
+        "linear": {
+          "status": "gap",
+          "ticket": "PAT-64",
+          "evidence": "no adapter import of live work: create_issue sends a random uuid4 client id (linear.py:2425), so a replay duplicates the issue, and nothing copies lifecycle receipts, acceptance proofs or comments. The YouTrack->Linear live-work leg of this repository was a private operator-side selective migration; `registry cutover` does no provider I/O (docs/linear-tracker.md, 'Repository-scoped activation and atomic cutover')"
+        },
+        "ghprojects": {
+          "status": "to_qualify",
+          "ticket": "PAT-64",
+          "evidence": "stub; write tranche PAT-66 must exist first"
+        }
+      },
+      "note": "Criterion 4 makes the switch by faithful copy of live work AND ADRs core V1; only the ADR half has adapter code today."
     },
     {
       "id": "release-and-changelog-scope",

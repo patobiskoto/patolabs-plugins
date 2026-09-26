@@ -8,8 +8,8 @@ Beyond schema consistency, it also pins the AC-1 core/non-core asymmetry (no cor
 operation cell may be ``refused``; no non-core cell may be a blocking ``gap``), the
 owner ticket on every blocking core cell, the cells gated on the pending no-CAS ADR,
 and a handful of cheap, code-tied assertions (capability flags, missing method
-overrides, the ghprojects stub actually raising ``NotImplementedError``) so a status
-cell cannot drift away from the adapter code it claims to describe without failing.
+overrides, the ghprojects stub actually raising ``NotImplementedError``). Only those
+few cells are tied to code; the other cells' evidence is checked by review, not here.
 """
 import importlib
 import inspect
@@ -368,3 +368,29 @@ def test_expected_gap_tickets_are_actually_cited(ticket):
         if cell.get("status") == "gap"
     }
     assert ticket in cited
+
+
+def test_non_core_to_qualify_cells_name_an_owner_and_must_resolve_before_v1():
+    contract = _load_contract()
+    assert "must resolve to 'supported' or to 'refused'" in contract["status_vocabulary"]["to_qualify"]
+    for operation in contract["operations"]:
+        if operation["core"]:
+            continue
+        for provider, cell in operation["cells"].items():
+            if cell["status"] == "to_qualify":
+                assert re.fullmatch(r"PAT-\d+", cell.get("ticket", "")), (operation["id"], provider)
+
+
+def test_switch_rows_separate_adr_import_from_live_work_copy():
+    rows = {operation["id"]: operation for operation in _load_contract()["operations"]}
+    assert rows["cross-tracker-adr-import"]["cells"]["linear"]["status"] == "supported"
+    live = rows["cross-tracker-live-work-copy"]
+    assert live["core"] is True
+    assert live["cells"]["linear"]["status"] == "gap"
+    assert live["cells"]["linear"]["ticket"] == "PAT-64"
+    assert "cross-tracker-live-work-and-adr-copy" not in rows
+
+
+def test_pending_adr_names_a_creation_owner():
+    for adr in _load_contract()["pending_adrs"]:
+        assert adr.get("creation_owner")
