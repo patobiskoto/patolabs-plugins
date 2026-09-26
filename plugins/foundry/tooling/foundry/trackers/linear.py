@@ -19,6 +19,7 @@ from datetime import datetime
 import hashlib
 import json
 import re
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -572,8 +573,8 @@ def _is_emphasis_opener(fragment: str, position: int, marker: str) -> bool:
     before = fragment[position - 1] if position else " "
     after_position = position + len(marker)
     after = fragment[after_position] if after_position < len(fragment) else " "
-    before_punctuation = _is_ascii_punctuation(before)
-    after_punctuation = _is_ascii_punctuation(after)
+    before_punctuation = _is_markdown_punctuation(before)
+    after_punctuation = _is_markdown_punctuation(after)
     left_flanking = not after.isspace() and (
         not after_punctuation or before.isspace() or before_punctuation
     )
@@ -589,8 +590,8 @@ def _is_emphasis_closer(fragment: str, position: int, marker: str) -> bool:
     before = fragment[position - 1] if position else " "
     after_position = position + len(marker)
     after = fragment[after_position] if after_position < len(fragment) else " "
-    before_punctuation = _is_ascii_punctuation(before)
-    after_punctuation = _is_ascii_punctuation(after)
+    before_punctuation = _is_markdown_punctuation(before)
+    after_punctuation = _is_markdown_punctuation(after)
     left_flanking = not after.isspace() and (
         not after_punctuation or before.isspace() or before_punctuation
     )
@@ -602,8 +603,10 @@ def _is_emphasis_closer(fragment: str, position: int, marker: str) -> bool:
     )
 
 
-def _is_ascii_punctuation(value: str) -> bool:
-    return value.isascii() and not value.isalnum() and not value.isspace()
+def _is_markdown_punctuation(value: str) -> bool:
+    return (
+        value.isascii() and not value.isalnum() and not value.isspace()
+    ) or unicodedata.category(value).startswith(("P", "S"))
 
 
 def _reject_multiline_emphasis(
