@@ -5329,6 +5329,17 @@ def test_linear_adr_pat71_observed_multiline_readback_recovers_missing_witness(
         "~~strike\n  continues~~",
         "***bold and emphasis\n  continues***",
         "****bold\n  next****",
+        'foo\\\nbar',
+        'foo  \nbar',
+        'foo   \nbar',
+        'foo\\\\\\\nbar',
+        'before <em>hello\n  world</em>',
+        'before <em\n  title="x">world</em>',
+        'before <!-- hello\n  world -->',
+        'before <![CDATA[hello\n  world]]>',
+        '**before <em>hello</em>\n  next**',
+        '**bold\\\n  next**',
+
         "` code\n  next`",
         "`code\n  next `",
         "` code\n  next `",
@@ -5424,6 +5435,11 @@ def test_linear_adr_multiline_preflight_keeps_separate_and_literal_spans():
         "single-line \\``code`",
         "****a**\n b**c**",
         "literal punctuation —。»£€©\n  continues",
+        'foo\\\\\nbar',
+        'foo\\\\\\\\\nbar',
+        'escaped \\<em>hello\n  world\\</em>',
+        '```text\nfoo\\\nbar  \n<em>hello\n world</em>\n```',
+
         "** bold\n  next**",
         "**\tbold\n  next**",
         "**bold\n  next **",
@@ -5442,6 +5458,17 @@ def test_linear_adr_multiline_preflight_preserves_escaped_or_unbalanced_runs(
     source,
 ):
     assert linear_module._linear_markdown_readback_body(source) == source
+
+
+@pytest.mark.parametrize(
+    ("source", "readback"),
+    (
+        ("`foo\\\n  bar`", "`foo\\ bar`"),
+        ("`<em>foo\n  bar</em>`", "`<em>foo bar</em>`"),
+    ),
+)
+def test_linear_adr_qualified_code_keeps_break_and_html_markers_literal(source, readback):
+    assert linear_module._linear_markdown_readback_body(source) == readback
 
 
 def test_linear_adr_multiline_preflight_preserves_escaped_backticks_with_parity():

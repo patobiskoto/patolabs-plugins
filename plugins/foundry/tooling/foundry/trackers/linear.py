@@ -497,6 +497,7 @@ _MULTILINE_BOLD = re.compile(
     r"(?P<indent>[ \t]+)(?!\s)(?P<after>[^*`_~\[\]\n]+)(?<!\s)\*\*(?![A-Za-z0-9_*])"
 )
 _MULTILINE_LINK_DESTINATION = re.compile(r"\]\([^\n]*\n[^)]*\)")
+_RAW_INLINE_HTML = re.compile(r"<(?:/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>])|[!?])")
 
 
 def _paired_delimiters(fragment: str, delimiter: str) -> list[tuple[int, int]]:
@@ -705,6 +706,21 @@ def _reject_multiline_emphasis(
             )
 
 
+def _reject_unqualified_inline_breaks_and_html(fragment: str) -> None:
+    """Refuse hardbreaks and raw HTML without interpreting an HTML surface."""
+    for match in re.finditer("\n", fragment):
+        position = match.start()
+        if fragment[max(0, position - 2) : position] == "  " or _is_escaped(
+            fragment, position
+        ):
+            raise ValueError("unsupported multiline inline Markdown in ADR body")
+    if "\n" in fragment and any(
+        not _is_escaped(fragment, match.start())
+        for match in _RAW_INLINE_HTML.finditer(fragment)
+    ):
+        raise ValueError("unsupported multiline inline Markdown in ADR body")
+
+
 def _reject_multiline_link_labels(fragment: str) -> None:
     """Refuse each matched label, including nested and escaped brackets."""
     openers: list[int] = []
@@ -729,6 +745,7 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     source_code_spans = _paired_backtick_delimiters(fragment)
     bold_ranges = _paired_delimiters(fragment, "**")
     source_masked = _masked_backtick_spans(fragment, preserve_newlines=True)
+    _reject_unqualified_inline_breaks_and_html(source_masked)
     _reject_multiline_emphasis(source_masked, "*", allow_observed_bold=True)
     _reject_multiline_emphasis(source_masked, "_")
     _reject_multiline_emphasis(source_masked, "~")

@@ -135,8 +135,10 @@ extra whitespace trimming are unqualified and refused. Bold delimiters must actu
 close a strong span, and nested formatting (including strikethrough) is not a simple bold form.
 Whitespace-adjacent literal bold delimiters are left unchanged. These forms are not
 reverse-normalized: the witness retains the source bytes. Any other multiline inline construction
-(including emphasis, links, nested marks, or a multi-backtick code span) is refused before any
-provider write. The bounded model does not parse raw HTML: a line outside a
+(including emphasis, links, nested marks, hardbreaks, or a multi-backtick code span) is refused before any
+provider write. An odd trailing backslash or two trailing spaces creates an unqualified
+hardbreak outside code. Raw HTML in a multiline fragment is refused outside inline code,
+as well as at the start of a line. The bounded model does not parse raw HTML: a line outside a
 fence that begins with `<` after up to three spaces is rejected before any provider write,
 including reciprocal issue-link comments, batch comments and version creation. The sole
 exception is the versioned `foundry-adr-0012-v1` profile: its exact source-body SHA-256
