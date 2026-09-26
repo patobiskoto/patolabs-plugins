@@ -416,6 +416,11 @@ ports. YouTrack, Linear, and DevHubTracker v1 are real adapters; `trackers/ghpro
 remains a deliberate stub. See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the
 Linear adapter and repository marker, and
 [`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated DevHub pilot cutover.
+The portable V1 functional contract across all three trackers — core journeys, identity
+model, mutation-guarantee levels without a provider CAS, and the capability matrix
+grounding every `gap`/`refused`/`to_qualify` cell in adapter code — is
+[`docs/tracker-contract.md`](docs/tracker-contract.md) and its machine-readable
+[`docs/tracker-contract.v1.json`](docs/tracker-contract.v1.json) (PAT-53).
 
 Every Tracker implements the common normalized issue and ADR read/write surface.
 Capabilities that are not universal stay explicit and default-off on the port. Project
