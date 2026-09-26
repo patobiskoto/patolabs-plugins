@@ -411,10 +411,15 @@ docs/model-routing-pilot-*.md   frozen manual measurement protocol + results she
 
 Active tracker/code-host are **parameters** (`FOUNDRY_TRACKER` / `FOUNDRY_CODEHOST`), not
 constants; a repository's `.foundry/tracker.json` marker, when present, takes precedence
-over the host-global tracker default. `trackers/base.py` and `codehosts/base.py` are the
-ports. YouTrack, Linear, and DevHubTracker v1 are real adapters; `trackers/ghprojects.py`
-remains a deliberate stub. See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the
-Linear adapter and repository marker, and
+over `FOUNDRY_TRACKER` for every Foundry command started from that checkout, including a
+nested directory. A present marker that is malformed, moved, ambiguous in the registry,
+or whose binding digest drifted refuses the command; it never falls back to
+`FOUNDRY_TRACKER`. Only an absent marker uses the host-global default. A repository may
+have one active binding: multiple active provider bindings for its canonical remote are
+refused. `trackers/base.py` and `codehosts/base.py` are the ports. YouTrack, Linear, and
+DevHubTracker v1 are real adapters; `trackers/ghprojects.py` remains a deliberate stub.
+See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the Linear adapter, marker,
+and bounded recovery procedure, and
 [`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated DevHub pilot cutover.
 The portable V1 functional contract across all three trackers — core journeys, identity
 model, mutation-guarantee levels without a provider CAS, and the capability matrix

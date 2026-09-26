@@ -673,6 +673,30 @@ temporarily unavailable, never dual-writable; replaying the exact command comple
 transition idempotently. Multiple source bindings, a different existing marker, or a
 changed target binding are refused.
 
+### Reprise après dérive locale du binding
+
+Un marqueur présent dont le `registry_binding_digest` ne correspond plus à l'entrée de
+registre, dont les coordonnées ne correspondent plus, ou qui rencontre des bindings
+actifs ambigus suspend le dépôt. Ce refus a priorité sur `FOUNDRY_TRACKER`; ne supprimez
+pas le marqueur et ne sélectionnez pas un autre provider pour le contourner. Le message
+de `registry register` n'annonce pas de rollback : cette commande ne réactive jamais un
+tombstone et ne peut pas prouver qu'une nouvelle entrée est celle approuvée au cutover.
+
+La reprise est une restauration locale séparément revue de **l'état exact approuvé
+connu** : conservez le marqueur et le registre divergents comme éléments de diagnostic,
+retrouvez la copie approuvée du binding complet et du marqueur, vérifiez leur identité de
+dépôt, leurs coordonnées et leurs trois digests, puis restaurez ces octets sous le même
+verrou opérationnel. Relancez `foundry:doctor` depuis le checkout; il doit relire le
+marqueur et le binding attendu avant toute commande de cycle de vie. Si cette copie
+approuvée exacte n'est pas disponible, le workflow reste suspendu. Cette version ne
+fournit volontairement pas de commande générique de réparation, de suppression de
+marqueur ni de réactivation d'archive.
+
+Cette procédure ne crée aucun write provider et ne change jamais le tombstone source.
+Une interruption pendant la publication initiale est le seul cas rejouable par
+`registry cutover`, avec les mêmes coordonnées et le même digest de manifeste; une
+divergence postérieure n'autorise ni ce replay ni un nouveau cutover.
+
 The complete local publication transaction is serialized by a process-shared registry
 lock. Marker absence, target binding, source archival, marker replacement and exact
 readback are evaluated within that lock. Two concurrent calls with different manifest
