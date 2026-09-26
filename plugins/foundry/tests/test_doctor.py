@@ -7,25 +7,110 @@ from foundry import doctor
 from foundry.escalation import EscalationStore
 
 
-def test_doctor_reports_missing_local_hook_path_as_actionable_warning(tmp_path, capsys):
+def _make_hook(repo, relative_dir):
+    """Create an executable pre-push hook under ``repo/relative_dir``."""
+    hook_dir = repo / relative_dir
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    hook_path = hook_dir / "pre-push"
+    hook_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hook_path.chmod(0o755)
+    return hook_path
+
+
+def _make_runner(hooks_path_stdout, hooks_path_returncode=0, toplevel=None, toplevel_returncode=0):
+    """Build a fake ``runner`` that answers both ``git config --get core.hooksPath``
+    and ``git rev-parse --show-toplevel`` distinctly, the way real git does."""
     commands = []
 
     def runner(command, **kwargs):
         commands.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+        if command[3:5] == ["rev-parse", "--show-toplevel"]:
+            stdout = "" if toplevel is None else f"{toplevel}\n"
+            return subprocess.CompletedProcess(command, toplevel_returncode, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(command, hooks_path_returncode, stdout=hooks_path_stdout, stderr="")
+
+    runner.commands = commands
+    return runner
+
+
+def test_doctor_reports_missing_local_hook_path_as_actionable_warning(tmp_path, capsys):
+    runner = _make_runner("", hooks_path_returncode=1, toplevel=str(tmp_path))
 
     payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
     doctor._print_local_hook(payload)
 
-    assert commands == [(
+    assert (
         ["git", "-C", str(tmp_path), "config", "--get", "core.hooksPath"],
         {"capture_output": True, "text": True, "check": False},
-    )]
+    ) in runner.commands
     assert payload["status"] == "warning"
     assert payload["detail"] == "core.hooksPath absent, vide ou illisible"
     output = capsys.readouterr().out
-    assert "🟠 Hook local .githooks/pre-push" in output
+    assert "🟠 Hook local pre-push" in output
     assert "git config core.hooksPath .githooks" in output
+
+
+def test_doctor_falls_back_to_monorepo_hook_dir_in_fix_command(tmp_path, capsys):
+    """When only the monorepo path exists, the fix command must point at it, not .githooks."""
+    _make_hook(tmp_path, "plugins/foundry/.githooks")
+    runner = _make_runner("", hooks_path_returncode=1, toplevel=str(tmp_path))
+
+    payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+    doctor._print_local_hook(payload)
+
+    assert payload["status"] == "warning"
+    output = capsys.readouterr().out
+    assert "git config core.hooksPath plugins/foundry/.githooks" in output
+
+
+def test_doctor_accepts_monorepo_hook_dir_as_healthy(tmp_path, capsys):
+    """AGENTS.md#R1's documented monorepo hook path is a healthy configuration too."""
+    _make_hook(tmp_path, "plugins/foundry/.githooks")
+    runner = _make_runner("plugins/foundry/.githooks\n", toplevel=str(tmp_path))
+
+    payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+    doctor._print_local_hook(payload)
+
+    assert payload["status"] == "healthy"
+    output = capsys.readouterr().out
+    assert "🟢 Hook local pre-push" in output
+
+
+def test_doctor_rejects_known_candidate_missing_hook_file(tmp_path, capsys):
+    """A candidate directory that exists but has no pre-push hook stays orange."""
+    (tmp_path / ".githooks").mkdir()
+    runner = _make_runner(".githooks\n", toplevel=str(tmp_path))
+
+    payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+
+    assert payload["status"] == "warning"
+    assert "aucun hook pre-push exécutable" in payload["detail"]
+
+
+def test_doctor_resolves_healthy_hook_from_a_subdirectory(tmp_path, capsys):
+    """core.hooksPath is resolved by Git relative to the toplevel, not the cwd doctor
+    happens to run from (e.g. plugins/foundry inside this monorepo)."""
+    _make_hook(tmp_path, "plugins/foundry/.githooks")
+    subdirectory = tmp_path / "plugins" / "foundry"
+    runner = _make_runner("plugins/foundry/.githooks\n", toplevel=str(tmp_path))
+
+    payload = doctor.local_hook_diagnostic(subdirectory, runner=runner)
+    doctor._print_local_hook(payload)
+
+    assert payload["status"] == "healthy"
+    output = capsys.readouterr().out
+    assert "🟢 Hook local pre-push" in output
+
+
+def test_doctor_falls_back_to_repository_when_toplevel_resolution_fails(tmp_path, capsys):
+    """If `git rev-parse --show-toplevel` fails, fall back to the given root rather
+    than erroring the whole diagnostic."""
+    _make_hook(tmp_path, ".githooks")
+    runner = _make_runner(".githooks\n", toplevel=None, toplevel_returncode=128)
+
+    payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+
+    assert payload["status"] == "healthy"
 
 
 def test_local_scout_doctor_is_non_invasive_and_redacted(tmp_path):
@@ -41,30 +126,29 @@ def test_local_scout_doctor_is_non_invasive_and_redacted(tmp_path):
 
 
 def test_doctor_reports_incorrect_local_hook_path_as_actionable_warning(tmp_path, capsys):
-    def runner(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=".other-hooks\n", stderr="")
+    runner = _make_runner(".other-hooks\n", toplevel=str(tmp_path))
 
     payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
     doctor._print_local_hook(payload)
 
     assert payload["status"] == "warning"
-    assert "attendu '.githooks'" in payload["detail"]
+    assert "attendu '.githooks' ou 'plugins/foundry/.githooks'" in payload["detail"]
     assert "git config core.hooksPath .githooks" in capsys.readouterr().out
 
 
 def test_doctor_preserves_surrounding_spaces_in_local_hook_path(tmp_path):
-    def runner(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=" .githooks \n", stderr="")
+    runner = _make_runner(" .githooks \n", toplevel=str(tmp_path))
 
     payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
 
     assert payload["status"] == "warning"
-    assert payload["detail"] == "core.hooksPath=' .githooks ', attendu '.githooks'"
+    assert payload["detail"] == (
+        "core.hooksPath=' .githooks ', attendu '.githooks' ou 'plugins/foundry/.githooks'"
+    )
 
 
 def test_doctor_treats_empty_local_hook_path_as_missing(tmp_path):
-    def runner(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout="\n", stderr="")
+    runner = _make_runner("\n", toplevel=str(tmp_path))
 
     payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
 
@@ -73,21 +157,32 @@ def test_doctor_treats_empty_local_hook_path_as_missing(tmp_path):
 
 
 def test_doctor_reports_correct_local_hook_path_as_healthy(tmp_path, capsys):
-    def runner(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=".githooks\n", stderr="")
+    _make_hook(tmp_path, ".githooks")
+    runner = _make_runner(".githooks\n", toplevel=str(tmp_path))
 
     payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
     doctor._print_local_hook(payload)
 
     assert payload["status"] == "healthy"
     output = capsys.readouterr().out
-    assert "🟢 Hook local .githooks/pre-push" in output
+    assert "🟢 Hook local pre-push" in output
     assert "frontière de sécurité" in output
 
 
 def test_doctor_accepts_crlf_terminated_local_hook_path(tmp_path):
-    def runner(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout=".githooks\r\n", stderr="")
+    _make_hook(tmp_path, ".githooks")
+    runner = _make_runner(".githooks\r\n", toplevel=str(tmp_path))
+
+    payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+
+    assert payload["status"] == "healthy"
+
+
+def test_doctor_accepts_absolute_hooks_path_matching_toplevel_candidate(tmp_path, capsys):
+    """A trivially-resolvable absolute core.hooksPath (<toplevel>/<candidate>) is healthy too."""
+    _make_hook(tmp_path, ".githooks")
+    absolute_value = str(tmp_path / ".githooks")
+    runner = _make_runner(f"{absolute_value}\n", toplevel=str(tmp_path))
 
     payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
 

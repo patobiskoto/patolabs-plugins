@@ -495,4 +495,10 @@ policy. In Codex linked worktrees, `start-issue` creates the issue branch from t
 default branch without trying to check that default branch out in the worktree, and
 `merge-pr` delegates local worktree cleanup to Codex. Belt-and-braces for pushes made
 outside either agent: a `git` pre-push hook ships in `.githooks/` — enable it with
-`git config core.hooksPath .githooks`.
+`git config core.hooksPath .githooks`. `foundry.doctor`'s local-hook check (PAT-45)
+accepts either `.githooks` (a consumer repo, where this hook is copied) or
+`plugins/foundry/.githooks` (this monorepo itself, per AGENTS.md#R1) as healthy — but
+only when the configured path resolves, relative to the repo, to a directory that
+actually holds an executable `pre-push`; any other configured value, or a candidate
+directory missing that file, stays an actionable orange warning, and the suggested fix
+command names whichever candidate directory exists in the current checkout.

@@ -33,6 +33,72 @@ def check(label, ok, detail=""):
     return ok
 
 
+# Directories the pre-push hook is known to live in: ``.githooks`` is where Foundry's
+# own belt-and-braces instructions (README.md) tell a *consumer* repo to point
+# ``core.hooksPath`` — the hook is copied there. ``plugins/foundry/.githooks`` is where
+# this monorepo versions the same hook in place (AGENTS.md#R1), since it *is* the
+# Foundry plugin rather than a consumer of it. Both are accepted; neither loosens the
+# diagnosis for a repo whose configured path resolves to neither.
+CANDIDATE_HOOK_DIRS = (".githooks", "plugins/foundry/.githooks")
+
+
+def _hook_dir_healthy(toplevel, relative_dir):
+    """True if ``relative_dir`` (relative to the working-tree ``toplevel``) has an
+    executable pre-push hook."""
+    hook_path = os.path.join(toplevel, relative_dir, "pre-push")
+    return os.path.isfile(hook_path) and os.access(hook_path, os.X_OK)
+
+
+def _suggested_hook_dir(toplevel):
+    """Pick the candidate hook directory that actually exists in this checkout."""
+    for candidate in CANDIDATE_HOOK_DIRS:
+        if _hook_dir_healthy(toplevel, candidate):
+            return candidate
+    return CANDIDATE_HOOK_DIRS[0]
+
+
+def _matching_candidate(value, toplevel):
+    """Return the candidate name ``value`` designates, or ``None``.
+
+    ``core.hooksPath`` is resolved by Git relative to the working-tree toplevel, not
+    to whatever directory a command happens to run from — so a relative value is
+    matched against the known candidates as-is, and an absolute value is matched only
+    when it trivially equals ``<toplevel>/<candidate>``.
+    """
+    if value in CANDIDATE_HOOK_DIRS:
+        return value
+    if os.path.isabs(value):
+        normalized_value = os.path.normpath(value)
+        for candidate in CANDIDATE_HOOK_DIRS:
+            if normalized_value == os.path.normpath(os.path.join(toplevel, candidate)):
+                return candidate
+    return None
+
+
+def _repo_toplevel(repository, runner):
+    """Resolve the working-tree toplevel; fall back to ``repository`` if git fails.
+
+    ``core.hooksPath`` is always resolved by Git relative to the toplevel, never to
+    the directory a command happens to run from, so every hook-directory check below
+    must use this — not ``repository`` — as its base.
+    """
+    command = ["git", "-C", repository, "rev-parse", "--show-toplevel"]
+    try:
+        result = runner(command, capture_output=True, text=True, check=False)
+    except (FileNotFoundError, OSError):
+        return repository
+    if result.returncode != 0:
+        return repository
+    stdout = result.stdout or ""
+    if stdout.endswith("\r\n"):
+        value = stdout[:-2]
+    elif stdout.endswith("\n"):
+        value = stdout[:-1]
+    else:
+        value = stdout
+    return value or repository
+
+
 def local_hook_diagnostic(root=None, *, runner=subprocess.run):
     """Inspect the effective local Git hook path without changing Git config."""
     repository = os.fspath(root if root is not None else os.getcwd())
@@ -65,15 +131,22 @@ def local_hook_diagnostic(root=None, *, runner=subprocess.run):
             "detail": "lecture de core.hooksPath impossible",
             "command": command,
         }
-    if result.returncode == 0 and value == ".githooks":
+    toplevel = _repo_toplevel(repository, runner)
+    fix_command = f"git config core.hooksPath {_suggested_hook_dir(toplevel)}"
+    matched_candidate = _matching_candidate(value, toplevel) if (result.returncode == 0 and value) else None
+    if matched_candidate is not None and _hook_dir_healthy(toplevel, matched_candidate):
         return {
             "ok": True,
             "status": "healthy",
-            "detail": "core.hooksPath=.githooks",
+            "detail": f"core.hooksPath={value}",
             "command": command,
+            "fix_command": fix_command,
         }
-    if result.returncode == 0 and value:
-        detail = f"core.hooksPath={value!r}, attendu '.githooks'"
+    candidates_detail = " ou ".join(repr(candidate) for candidate in CANDIDATE_HOOK_DIRS)
+    if matched_candidate is not None:
+        detail = f"core.hooksPath={value!r}, mais aucun hook pre-push exécutable trouvé dans ce dossier"
+    elif result.returncode == 0 and value:
+        detail = f"core.hooksPath={value!r}, attendu {candidates_detail}"
     else:
         detail = "core.hooksPath absent, vide ou illisible"
     return {
@@ -81,19 +154,20 @@ def local_hook_diagnostic(root=None, *, runner=subprocess.run):
         "status": "warning",
         "detail": detail,
         "command": command,
+        "fix_command": fix_command,
     }
 
 
 def _print_local_hook(payload):
     if payload["status"] == "healthy":
-        check("Hook local .githooks/pre-push", True, payload["detail"])
+        check("Hook local pre-push", True, payload["detail"])
     elif payload["status"] == "warning":
         print(
-            "  🟠 Hook local .githooks/pre-push"
-            f" — {payload['detail']} ; active-le avec : git config core.hooksPath .githooks"
+            "  🟠 Hook local pre-push"
+            f" — {payload['detail']} ; active-le avec : {payload['fix_command']}"
         )
     else:
-        check("Hook local .githooks/pre-push", False, payload["detail"])
+        check("Hook local pre-push", False, payload["detail"])
     print(
         "  🟠 Garde-fou local — fail-open opérationnel ; "
         "il ne constitue pas une frontière de sécurité",
