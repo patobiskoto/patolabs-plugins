@@ -705,6 +705,20 @@ def _reject_multiline_emphasis(
             )
 
 
+def _reject_multiline_link_labels(fragment: str) -> None:
+    """Refuse each matched label, including nested and escaped brackets."""
+    openers: list[int] = []
+    for position, value in enumerate(fragment):
+        if value not in "[]" or _is_escaped(fragment, position):
+            continue
+        if value == "[":
+            openers.append(position)
+        elif openers:
+            opener = openers.pop()
+            if "\n" in fragment[opener : position + 1]:
+                raise ValueError("unsupported multiline inline Markdown in ADR body")
+
+
 def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     """Render the two qualified multiline inline forms and reject every other one.
 
@@ -720,14 +734,7 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     _reject_multiline_emphasis(source_masked, "~")
     if _MULTILINE_LINK_DESTINATION.search(source_masked) is not None:
         raise ValueError("unsupported multiline inline Markdown in ADR body")
-    open_bracket = None
-    for position, value in enumerate(source_masked):
-        if value == "[" and open_bracket is None:
-            open_bracket = position
-        elif value == "]" and open_bracket is not None:
-            if "\n" in source_masked[open_bracket : position + 1]:
-                raise ValueError("unsupported multiline inline Markdown in ADR body")
-            open_bracket = None
+    _reject_multiline_link_labels(source_masked)
     for start, end, length in source_code_spans:
         span = fragment[start : end + length]
         if "\n" not in span:
@@ -762,14 +769,7 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     _reject_multiline_emphasis(masked, "~")
     if _MULTILINE_LINK_DESTINATION.search(masked) is not None:
         raise ValueError("unsupported multiline inline Markdown in ADR body")
-    open_bracket = None
-    for position, value in enumerate(masked):
-        if value == "[" and open_bracket is None:
-            open_bracket = position
-        elif value == "]" and open_bracket is not None:
-            if "\n" in masked[open_bracket : position + 1]:
-                raise ValueError("unsupported multiline inline Markdown in ADR body")
-            open_bracket = None
+    _reject_multiline_link_labels(masked)
     return rendered
 
 
