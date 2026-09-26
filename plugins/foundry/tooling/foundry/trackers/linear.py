@@ -59,9 +59,13 @@ _LIFECYCLE_OPERATIONS = frozenset(
         "state-review",
         "state-done",
         "acceptance",
+        "acceptance-override",
     "cockpit-evidence",
     }
 )
+# Public audit code of an explicit human AC override (never free text).
+_AC_OVERRIDE_REASON = re.compile(r"[a-z0-9_-]{3,80}\Z")
+_AC_OVERRIDE_BOUND_KEYS = ("pr_url", "head_sha", "base_sha", "review_digest")
 _ADR_SCHEMA = "foundry-linear-adr.v1"
 _ADR_HEADER = "<!-- foundry-linear-adr.v1\n"
 _ADR_DOCUMENT_PREFIX = "[Foundry ADR] "
@@ -1111,6 +1115,7 @@ class LinearTracker(Tracker):
     bounded_transition_proofs = True
     append_only_lifecycle_supported = True
     acceptance_proof_projection_supported = True
+    acceptance_override_projection_supported = True
     cockpit_evidence_projection_supported = True
 
     def __init__(
@@ -1369,7 +1374,7 @@ class LinearTracker(Tracker):
         }
         if operation == "state-review":
             slot["generation"] = payload.get("generation")
-        elif operation == "acceptance":
+        elif operation in {"acceptance", "acceptance-override"}:
             slot["generation"] = payload.get("review_generation")
         slot_canonical = json.dumps(
             slot,
@@ -1485,6 +1490,28 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear acceptance proof malformed or stale")
 
     @staticmethod
+    def _validate_acceptance_override_projection(
+        payload: dict,
+        review: dict | None,
+    ) -> None:
+        """Validate one typed human AC override bound to one exact review generation.
+
+        The override is audit evidence that AC were *not* proven; it never counts as
+        acceptance and only its public reason code (never prose) is retained.
+        """
+        if (
+            set(payload)
+            != {"native_state_id", "review_generation", "reason", *_AC_OVERRIDE_BOUND_KEYS}
+            or type(payload.get("review_generation")) is not int
+            or not isinstance(payload.get("reason"), str)
+            or _AC_OVERRIDE_REASON.fullmatch(payload["reason"]) is None
+            or review is None
+            or payload["review_generation"] != review.get("generation")
+            or any(payload.get(key) != review.get(key) for key in _AC_OVERRIDE_BOUND_KEYS)
+        ):
+            raise TrackerConflictError("Linear acceptance override malformed or stale")
+
+    @staticmethod
     def _native_state_can_advance(previous: str, current: str) -> bool:
         if previous == current:
             return True
@@ -1557,7 +1584,7 @@ class LinearTracker(Tracker):
             and current_name == "in-progress"
         )
         pending_forward = (
-            pending_operation in {"state-review", "acceptance"}
+            pending_operation in {"state-review", "acceptance", "acceptance-override"}
             and current_name != "done"
             and self._native_state_can_advance(latest_name, current_name)
         )
@@ -1610,8 +1637,11 @@ class LinearTracker(Tracker):
                 "state": None,
                 "pr_url": None,
                 "acceptance_complete": False,
+                "acceptance_override": None,
                 "in_progress": None,
                 "acceptance_by_generation": {},
+                "acceptance_override_by_generation": {},
+                "done": None,
                 "review_generation": 0,
                 "latest_review": None,
                 "latest_review_body_digest": None,
@@ -1722,19 +1752,60 @@ class LinearTracker(Tracker):
             bound_review = reviews_by_generation.get(generation)
             self._validate_acceptance_projection(issue_id, body, payload, bound_review)
             acceptance_by_generation[generation] = payload
+        override_by_generation = {}
+        for payload, _comment_body in rows.get("acceptance-override", []):
+            generation = payload.get("review_generation")
+            bound_review = (
+                reviews_by_generation.get(generation)
+                if type(generation) is int
+                else None
+            )
+            self._validate_acceptance_override_projection(payload, bound_review)
+            if generation in override_by_generation:
+                raise TrackerConflictError("Linear lifecycle duplicate projection")
+            override_by_generation[generation] = payload
+        acceptance_override = None
         if review is not None:
             acceptance_complete = review["generation"] in acceptance_by_generation
-        if done is not None and not acceptance_complete:
+            override = override_by_generation.get(review["generation"])
+            if override is not None and not acceptance_complete:
+                # Audited human override: AC stay incomplete, only the reason is exposed.
+                acceptance_override = override["reason"]
+        if (
+            done is not None
+            and not acceptance_complete
+            and acceptance_override is None
+            # Bounded recovery only: the writer of the missing override receipt must
+            # read this exact shape; its readback and every ordinary read stay strict.
+            and pending_operation != "acceptance-override"
+        ):
             raise TrackerConflictError("Linear done proof lacks matching acceptance")
 
+        state_by_id = {
+            identifier: name
+            for name, identifier in self._binding(self._project())["state_ids"].items()
+        }
         ordered = []
         if in_progress is not None:
             ordered.append(in_progress)
         for review_payload, _review_body in reviews:
             ordered.append(review_payload)
-            acceptance = acceptance_by_generation.get(review_payload["generation"])
-            if acceptance is not None:
-                ordered.append(acceptance)
+            bound = [
+                receipt
+                for receipt in (
+                    acceptance_by_generation.get(review_payload["generation"]),
+                    override_by_generation.get(review_payload["generation"]),
+                )
+                if receipt is not None
+            ]
+            # Both receipts of one generation sit between its review and the next
+            # causal receipt; their mutual order is only the native-state order.
+            if len(bound) == 2 and not self._native_state_can_advance(
+                str(state_by_id.get(bound[0].get("native_state_id"))),
+                str(state_by_id.get(bound[1].get("native_state_id"))),
+            ):
+                bound.reverse()
+            ordered.extend(bound)
         if done is not None:
             ordered.append(done)
         self._validate_native_state_history(
@@ -1742,7 +1813,7 @@ class LinearTracker(Tracker):
             ordered,
             native_state_id,
             pending_operation=pending_operation,
-            acceptance_complete=acceptance_complete,
+            acceptance_complete=acceptance_complete or acceptance_override is not None,
             done=done,
         )
         return {
@@ -1751,6 +1822,9 @@ class LinearTracker(Tracker):
             "in_progress": in_progress,
             "acceptance_by_generation": acceptance_by_generation,
             "acceptance_complete": acceptance_complete,
+            "acceptance_override": acceptance_override,
+            "acceptance_override_by_generation": override_by_generation,
+            "done": done,
             "review_generation": review.get("generation") if review else 0,
             "latest_review": review,
             "latest_review_body_digest": (
@@ -1817,10 +1891,12 @@ class LinearTracker(Tracker):
             if projection["review_generation"] < 1:
                 raise TrackerConflictError("Linear done proof lacks matching review")
             bounded_payload["review_generation"] = projection["review_generation"]
-        elif operation == "acceptance":
-            previous = projection["acceptance_by_generation"].get(
-                payload.get("review_generation"),
-            )
+        elif operation in {"acceptance", "acceptance-override"}:
+            previous = projection[
+                "acceptance_by_generation"
+                if operation == "acceptance"
+                else "acceptance_override_by_generation"
+            ].get(payload.get("review_generation"))
             if previous is not None:
                 bounded_payload["native_state_id"] = previous["native_state_id"]
         _marker, body, comment_id = self._lifecycle_marker(
@@ -1847,9 +1923,10 @@ class LinearTracker(Tracker):
             fresh = self._read_raw(issue_id)
             self._lifecycle_projection(issue_id, fresh)
             return False
-        if operation not in {"state-review", "acceptance"} and existing:
+        per_generation = {"state-review", "acceptance", "acceptance-override"}
+        if operation not in per_generation and existing:
             raise TrackerConflictError("Linear lifecycle divergent before comment")
-        if operation in {"state-review", "acceptance"}:
+        if operation in per_generation:
             generation = bounded_payload.get(
                 "generation" if operation == "state-review" else "review_generation",
             )
@@ -2483,6 +2560,112 @@ class LinearTracker(Tracker):
             projected,
             project,
         )
+
+    @staticmethod
+    def _acceptance_override_reason(reason: object) -> str:
+        if not isinstance(reason, str) or _AC_OVERRIDE_REASON.fullmatch(reason) is None:
+            raise TrackerCapabilityUnavailableError("linear", "acceptance-override-reason")
+        return reason
+
+    def project_acceptance_override(
+        self,
+        issue_id: str,
+        reason: str,
+        context: TransitionContext,
+        project: Project | None = None,
+    ) -> bool:
+        """Append the typed human AC override for the exact current review generation.
+
+        This is written before the code-host merge. It never checks an AC box and never
+        counts as acceptance; it only lets a later ``state-done`` receipt of the same
+        generation be read as "done under an explicit, audited AC override".
+        """
+        if project is None:
+            raise LinearBindingError("mutation_project_required")
+        reason = self._acceptance_override_reason(reason)
+        if (
+            not isinstance(context, TransitionContext)
+            or context.merge_sha is not None
+            or not all(getattr(context, key) for key in _AC_OVERRIDE_BOUND_KEYS)
+        ):
+            raise TrackerCapabilityUnavailableError(self.name, "lifecycle-proof")
+        self._activate(project)
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, self._binding(project))
+        lifecycle = self._lifecycle_projection(
+            issue_id,
+            raw,
+            pending_operation="acceptance-override",
+        )
+        review = lifecycle["latest_review"]
+        if (
+            lifecycle["state"] != "review"
+            or review is None
+            or any(review[key] != getattr(context, key) for key in _AC_OVERRIDE_BOUND_KEYS)
+        ):
+            raise TrackerConflictError(
+                "Linear acceptance override lacks the current review projection"
+            )
+        payload = {
+            "review_generation": review["generation"],
+            "reason": reason,
+            **{key: review[key] for key in _AC_OVERRIDE_BOUND_KEYS},
+        }
+        return self._project_lifecycle(issue_id, "acceptance-override", payload, project)
+
+    def recover_acceptance_override(
+        self,
+        issue_id: str,
+        reason: str,
+        *,
+        pr_url: str,
+        head_sha: str,
+        merge_sha: str,
+        project: Project | None = None,
+    ) -> bool:
+        """Append only the missing override of an issue already merged under override.
+
+        Bounded recovery for a ``state-done`` receipt that has neither an acceptance
+        nor an override receipt for its review generation (receipts written before
+        the typed override existed). The raw issue is read through the recovery-only
+        projection mode; the receipt is bound to the done receipt's own generation and
+        coordinates, which must match the exact merged PR. Nothing is merged, deleted
+        or rewritten, and the readback is validated by the ordinary strict projection.
+        """
+        if project is None:
+            raise LinearBindingError("mutation_project_required")
+        reason = self._acceptance_override_reason(reason)
+        self._activate(project)
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, self._binding(project))
+        lifecycle = self._lifecycle_projection(
+            issue_id,
+            raw,
+            pending_operation="acceptance-override",
+        )
+        done = lifecycle["done"]
+        state = raw.get("state")
+        native_state_id = state.get("id") if isinstance(state, dict) else None
+        if (
+            done is None
+            or done["pr_url"] != pr_url
+            or done["head_sha"] != head_sha
+            or done["merge_sha"] != merge_sha
+            or native_state_id != done["native_state_id"]
+        ):
+            raise TrackerConflictError(
+                "Linear acceptance override recovery lacks the exact done receipt"
+            )
+        if lifecycle["acceptance_complete"]:
+            raise TrackerConflictError(
+                "Linear acceptance override recovery not applicable"
+            )
+        payload = {
+            "review_generation": done["review_generation"],
+            "reason": reason,
+            **{key: done[key] for key in _AC_OVERRIDE_BOUND_KEYS},
+        }
+        return self._project_lifecycle(issue_id, "acceptance-override", payload, project)
 
     def project_cockpit_evidence(
         self,

@@ -1282,3 +1282,126 @@ def test_human_ac_override_requires_public_reason_and_preserves_tracker_ac(monke
     assert [event[0] for event in events] == ["proof", "proof", "comment", "merge", "delete", "done"]
     assert "human_confirmed" in events[2][2]
     assert (current.body, current.ac_done, current.ac_total) == original
+
+
+def test_youtrack_human_ac_override_keeps_prose_audit_without_typed_receipt(
+    monkeypatch, tmp_path,
+):
+    body = "- [ ] current contract\n"
+    events, _current = _incomplete_merge_harness(
+        monkeypatch, proof_error=RoutingConfigError("no proof"), body=body,
+    )
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
+    tracker = object.__new__(YouTrackTracker)
+    current = tracker._to_issue({
+        "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
+    })
+    monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
+
+    def request(method, path, payload=None, fields=None):
+        assert (method, path) == ("POST", "/issues/DEMO-7/comments")
+        events.append(("comment", payload["text"]))
+        return {"id": "comment-1"}
+
+    monkeypatch.setattr(tracker, "_req", request)
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    assert YouTrackTracker.acceptance_override_projection_supported is False
+
+    issue.merge(
+        "DEMO-7", "12",
+        flags={"--allow-incomplete-ac", "--ac-override-reason=human_confirmed"},
+    )
+
+    assert [event[0] for event in events] == [
+        "proof", "comment", "merge", "delete", "done",
+    ]
+    assert events[1][1] == (
+        "Audit merge: override humain explicite des AC incomplètes (human_confirmed)."
+    )
+    assert current.body == body
+
+
+def _typed_override_harness(monkeypatch, *, receipt_error=None, created=True):
+    events, current = _incomplete_merge_harness(
+        monkeypatch, proof_error=RoutingConfigError("no proof"),
+    )
+    tracker = issue.foundry.tracker()
+    tracker.bounded_transition_proofs = True
+    tracker.acceptance_override_projection_supported = True
+    current.state = "review"
+
+    def project_acceptance_override(issue_id, reason, context):
+        events.append(("override-receipt", issue_id, reason, context))
+        if receipt_error:
+            raise receipt_error
+        return created
+
+    tracker.project_acceptance_override = project_acceptance_override
+    monkeypatch.setattr(
+        write, "transition",
+        lambda _tracker, _issue_id, state, context=None: events.append((state, context)),
+    )
+    return events
+
+
+@pytest.mark.parametrize("created", [True, False])
+def test_typed_ac_override_receipt_is_durable_before_codehost_merge(
+    monkeypatch, created,
+):
+    events = _typed_override_harness(monkeypatch, created=created)
+
+    issue.merge(
+        "DEMO-7", "12",
+        flags={"--allow-incomplete-ac", "--ac-override-reason=human_confirmed"},
+    )
+
+    names = [event[0] for event in events]
+    assert names == [
+        "proof", "override-receipt", *(["comment"] if created else []),
+        "in-progress", "review", "merge", "done", "delete",
+    ]
+    receipt = events[1]
+    assert receipt[1:3] == ("DEMO-7", "human_confirmed")
+    assert receipt[3] == TransitionContext(
+        pr_url="https://github.com/acme/demo/pull/12",
+        head_sha="a" * 40,
+        base_sha="c" * 40,
+        review_digest=hashlib.sha256(b"exact-diff").hexdigest(),
+    )
+
+
+def test_typed_ac_override_receipt_failure_blocks_merge_without_prose(monkeypatch):
+    events = _typed_override_harness(
+        monkeypatch, receipt_error=TrackerConflictError("divergent"),
+    )
+
+    with pytest.raises(SystemExit, match="reçu typé d'override AC impossible"):
+        issue.merge(
+            "DEMO-7", "12",
+            flags={"--allow-incomplete-ac", "--ac-override-reason=human_confirmed"},
+        )
+
+    assert [event[0] for event in events] == ["proof", "override-receipt"]
+
+
+def test_unreadable_issue_is_not_recovered_without_override_port(monkeypatch):
+    events, _current = _incomplete_merge_harness(monkeypatch)
+    tracker = issue.foundry.tracker()
+
+    def unreadable(_issue_id):
+        raise TrackerConflictError("done proof lacks matching acceptance")
+
+    tracker.get_issue = unreadable
+    codehost = issue.foundry.codehost()
+    merged = SimpleNamespace(
+        sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
+        merged=True, merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
+    )
+    codehost.get_pr = lambda *_: merged
+
+    with pytest.raises(TrackerConflictError, match="lacks matching acceptance"):
+        issue.merge(
+            "DEMO-7", "12",
+            flags={"--allow-incomplete-ac", "--ac-override-reason=human_confirmed"},
+        )
+    assert events == []
