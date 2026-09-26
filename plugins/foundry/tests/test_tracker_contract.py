@@ -1,9 +1,14 @@
 """PAT-53: pin the tracker contract v1 capability matrix.
 
-This is a deterministic, framing-level pin — not the PAT-68 conformance suite. It only
+This is a deterministic, framing-level pin — not the PAT-68 conformance suite. It
 guarantees that ``tracker-contract.v1.json`` stays internally consistent (closed status
 vocabulary, every cited operation really exists on the ``Tracker`` ABC, every cited
 provider really has an adapter module) and that the doc references the same version.
+Beyond schema consistency, it also pins the AC-1 core/non-core asymmetry (no core
+operation cell may be ``refused``; no non-core cell may be a blocking ``gap``) and a
+handful of cheap, code-tied assertions (capability flags, missing method overrides, the
+ghprojects stub actually raising ``NotImplementedError``) so a status cell cannot drift
+away from the adapter code it claims to describe without failing this suite.
 """
 import importlib
 import inspect
@@ -20,6 +25,7 @@ DOC_PATH = DOCS / "tracker-contract.md"
 
 _STATUS_VOCABULARY = {"supported", "gap", "refused", "to_qualify"}
 _GAP_TICKET_RE = re.compile(r"^PAT-\d+$")
+_BLOCKING_STATUSES = {"gap", "to_qualify"}
 
 
 def _load_contract():
@@ -44,6 +50,53 @@ def test_status_vocabulary_is_closed_and_declared():
     contract = _load_contract()
     declared = set(contract["status_vocabulary"])
     assert declared == _STATUS_VOCABULARY
+
+
+def test_status_vocabulary_documents_core_blocking_semantics():
+    """Vocabulary text must say gap/to_qualify block core V1 exit, refused never does."""
+    contract = _load_contract()
+    vocab = contract["status_vocabulary"]
+    assert "core" in vocab["gap"] and "block" in vocab["gap"]
+    assert "core" in vocab["to_qualify"] and "block" in vocab["to_qualify"]
+    assert "non-core" in vocab["refused"] or "never" in vocab["refused"]
+
+
+def test_every_operation_declares_a_core_flag():
+    contract = _load_contract()
+    for operation in contract["operations"]:
+        assert isinstance(operation.get("core"), bool), (
+            f"{operation['id']} is missing a boolean 'core' flag"
+        )
+
+
+def test_no_core_operation_cell_is_refused():
+    """AC-1: a core operation's cell may never be 'refused' — that would silently
+    exempt a core journey from V1's exit criterion. Unsupported core capability is
+    always 'gap' or 'to_qualify', both of which block V1 for that provider."""
+    contract = _load_contract()
+    for operation in contract["operations"]:
+        if not operation["core"]:
+            continue
+        for provider, cell in operation["cells"].items():
+            assert cell["status"] != "refused", (
+                f"{operation['id']}.{provider} is a CORE operation and cannot be "
+                f"'refused' — an unsupported core capability is a 'gap' or "
+                f"'to_qualify', never a deliberate optional exclusion"
+            )
+
+
+def test_non_core_operation_cell_is_never_a_gap():
+    """A non-core (optional/excluded) operation cannot carry a blocking 'gap' cell —
+    nothing optional is a 'must close before V1' item by definition."""
+    contract = _load_contract()
+    for operation in contract["operations"]:
+        if operation["core"]:
+            continue
+        for provider, cell in operation["cells"].items():
+            assert cell["status"] != "gap", (
+                f"{operation['id']}.{provider} is not core and must not carry a "
+                f"blocking 'gap' status"
+            )
 
 
 def test_every_cell_status_is_in_the_closed_vocabulary():
@@ -113,8 +166,10 @@ def test_ghprojects_stub_cells_are_to_qualify_not_guessed():
         if cell is None:
             continue
         if operation["id"] == "identity-and-project-resolution":
-            # resolve_project is provider-agnostic registry lookup; the one real cell.
-            assert cell["status"] == "supported"
+            # resolve_project delegates to registry.resolve(), which is basename-keyed
+            # (same PAT-54 gap as YouTrack), not canonical-identity resolution: it is
+            # unqualified, not a proven real capability.
+            assert cell["status"] == "to_qualify"
             continue
         if operation["id"] == "project-provisioning":
             # Explicitly out-of-core-scope capabilities: refused, not merely unqualified.
@@ -126,9 +181,28 @@ def test_ghprojects_stub_cells_are_to_qualify_not_guessed():
         )
 
 
-def test_operations_cover_every_criterion_1_core_journey():
+def test_youtrack_identity_resolution_is_a_pat54_gap():
+    """B1: YouTrack's project resolution is basename/PROJECT_REPO-keyed, not
+    canonical-identity based; it must not be pinned 'supported'."""
     contract = _load_contract()
-    journeys = " ".join(op["journey"] for op in contract["operations"])
+    op = next(
+        o for o in contract["operations"]
+        if o["id"] == "identity-and-project-resolution"
+    )
+    assert op["core"] is True
+    assert op["cells"]["youtrack"]["status"] == "gap"
+    assert op["cells"]["youtrack"]["ticket"] == "PAT-54"
+    assert op["cells"]["linear"]["status"] == "supported"
+
+
+def test_operations_cover_every_criterion_1_core_journey():
+    """Every criterion-1 core journey marker must be covered by at least one
+    operation that is itself marked core — a marker appearing only on a non-core
+    operation would not actually satisfy criterion 1."""
+    contract = _load_contract()
+    core_journeys = " ".join(
+        op["journey"] for op in contract["operations"] if op["core"]
+    )
     for marker in (
         "contexte/backlog",
         "frame/intake/groom",
@@ -140,12 +214,59 @@ def test_operations_cover_every_criterion_1_core_journey():
         "release/changelog",
         "PAT-64",
     ):
-        assert marker in journeys, f"no operation covers the core journey marker {marker!r}"
+        assert marker in core_journeys, (
+            f"no CORE operation covers the core journey marker {marker!r}"
+        )
+
+
+def test_linear_acceptance_sync_flag_matches_the_gap_cell():
+    from foundry.trackers.linear import LinearTracker
+
+    assert LinearTracker.acceptance_sync_supported is False
+
+
+def test_youtrack_epic_closure_flag_matches_the_gap_cell():
+    from foundry.trackers.youtrack import YouTrackTracker
+
+    assert YouTrackTracker.epic_closure_supported is False
+
+
+def test_youtrack_has_no_import_adr_override():
+    """B4/PAT-64: YouTrack cannot yet be an import TARGET; it inherits the base
+    refusal rather than overriding import_adr/import_adr_batch."""
+    from foundry.trackers.youtrack import YouTrackTracker
+
+    assert "import_adr" not in YouTrackTracker.__dict__
+    assert "import_adr_batch" not in YouTrackTracker.__dict__
+
+
+def test_ghprojects_core_methods_are_unimplemented_stubs():
+    """B4/N4: the stub adapter must actually raise NotImplementedError for every
+    core method, grounding the json/'md 'to_qualify' cells in live code, not prose."""
+    from foundry.trackers.ghprojects import GitHubProjectsTracker
+
+    tracker = GitHubProjectsTracker()
+    calls = {
+        "search": (None,),
+        "get_issue": (None,),
+        "create_issue": (None, None, None),
+        "update_fields": (None, None),
+        "set_state": (None, None),
+        "link": (None, None, None),
+        "add_comment": (None, None),
+        "list_adrs": (None,),
+        "create_adr": (None, None, None),
+        "set_adr_status": (None, None),
+    }
+    for method_name, args in calls.items():
+        method = getattr(tracker, method_name)
+        with pytest.raises(NotImplementedError):
+            method(*args)
 
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-55", "PAT-56", "PAT-69", "PAT-64", "PAT-43", "PAT-47", "PAT-59"],
+    ["PAT-54", "PAT-55", "PAT-56", "PAT-69", "PAT-64", "PAT-43", "PAT-47", "PAT-59"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

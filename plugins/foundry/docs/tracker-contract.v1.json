@@ -5,9 +5,9 @@
   "doc": "plugins/foundry/docs/tracker-contract.md",
   "status_vocabulary": {
     "supported": "the operation is implemented against the real provider API and exercised by tests today",
-    "gap": "the operation is required by a core journey but is currently unimplemented or explicitly refused by the adapter; blocks V1 for that provider until the cited ticket closes it",
-    "refused": "the operation is explicitly out of V1's core scope (an optional capability); the adapter's refusal is deliberate, not an oversight, and never blocks V1",
-    "to_qualify": "the operation's real behaviour against the live provider is not yet qualified; PAT-65 must qualify it on authorized test resources before any status other than to_qualify can be asserted"
+    "gap": "the operation is required by a core journey (operations[].core == true) but is currently unimplemented or explicitly refused by the adapter; blocks V1 exit for that provider until the cited ticket closes it. A non-core operation is never a gap: an unimplemented non-core capability is 'refused' (a deliberate, documented exclusion) instead",
+    "refused": "the adapter's refusal is deliberate, not an oversight, and never blocks V1 exit. This status is valid ONLY on a non-core operation (operations[].core == false): criterion 1 requires every core operation to reach 'supported' before V1 ships, so 'refused' can never appear as a core-operation cell — an unsupported core operation is always 'gap' or 'to_qualify', both of which block V1 exit for that provider",
+    "to_qualify": "the operation's real behaviour against the live provider is not yet qualified; PAT-65 must qualify it on authorized test resources before any status other than to_qualify can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap' — it is not a weaker or exempt status, only a different reason (unqualified transport vs. known-missing implementation)"
   },
   "providers": {
     "youtrack": {
@@ -24,7 +24,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/ghprojects.py",
       "class": "GitHubProjectsTracker",
       "v1_core": true,
-      "note": "stub adapter; every method except resolve_project raises NotImplementedError today. Real qualification is PAT-65; implementation is split across PAT-57 (read), PAT-58 (ADR storage), PAT-59 (bounded write), PAT-67 (full frame-to-merge lifecycle)."
+      "note": "stub adapter; every method except resolve_project raises NotImplementedError today, and resolve_project itself is only registry-basename lookup (to_qualify, see identity-and-project-resolution). Real qualification is PAT-65; implementation is split across PAT-57 (read), PAT-58 (ADR storage), PAT-66 (bounded write), PAT-67 (full frame-to-merge lifecycle)."
     },
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
@@ -37,6 +37,7 @@
     {
       "id": "identity-and-project-resolution",
       "journey": "contexte/backlog",
+      "core": true,
       "tracker_abc": [
         "resolve_project",
         "resolve_checkout_project",
@@ -45,22 +46,25 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "supported",
-          "evidence": "registry.resolve() keyed on repo basename; base Tracker default validate_* no-ops (trackers/base.py)"
+          "status": "gap",
+          "ticket": "PAT-54",
+          "evidence": "registry.resolve() (registry.py:755-773) looks a repo up by basename (registry.repo_basename(), which honours the PROJECT_REPO env alias, registry.py:653-664) once no marker binding matches; registry.entry_for() (registry.py:699-705) falls back to the same basename lookup; base Tracker.validate_mutation_repository/validate_mutation_project (base.py:170-184) are no-ops and YouTrackTracker does not override either. Two repositories that share a basename (or an operator-set PROJECT_REPO alias) are not distinguished by canonical host/owner/repo identity today — exactly the collision criterion 2 forbids. PAT-54 is the per-repo binding/bootstrap ticket that closes this for all three trackers"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:1250 resolve_project, :1258 resolve_checkout_project (canonical_repo, never PROJECT_REPO/basename alias), :1278 validate_mutation_repository"
+          "evidence": "linear.py:1250 resolve_project (discards the repo basename argument entirely), :1258 resolve_checkout_project (canonical_repo via registry.checkout_repository_identity(), never PROJECT_REPO/basename), :1278 validate_mutation_repository re-resolves the checkout identity before any mutation; registry.resolve_canonical_repository (registry.py:800-830) matches only on canonical_repo, never basename"
         },
         "ghprojects": {
-          "status": "supported",
-          "evidence": "ghprojects.py resolve_project delegates to registry.resolve('ghprojects', repo) — the stub docstring calls this part real; the rest is stubbed"
+          "status": "to_qualify",
+          "ticket": "PAT-65",
+          "evidence": "ghprojects.py resolve_project delegates to registry.resolve('ghprojects', repo) (basename-keyed, same PAT-54 gap as YouTrack) and every other Tracker method is NotImplementedError; the normalized key shape for a GitHub Projects v2 issue (which repository-identity-scoped form distinguishes two numerically identical issue numbers across repositories) is PAT-65's open qualification, not decided here"
         }
       }
     },
     {
       "id": "backlog-read",
       "journey": "contexte/backlog",
+      "core": true,
       "tracker_abc": [
         "search",
         "get_issue"
@@ -83,6 +87,7 @@
     {
       "id": "native-free-text-search",
       "journey": "contexte/backlog (optional)",
+      "core": false,
       "tracker_abc": [
         "search(query=...)"
       ],
@@ -105,6 +110,7 @@
     {
       "id": "frame-intake-groom-create",
       "journey": "frame/intake/groom",
+      "core": true,
       "tracker_abc": [
         "create_issue"
       ],
@@ -126,6 +132,7 @@
     {
       "id": "frame-intake-groom-evolve-existing",
       "journey": "frame/intake/groom",
+      "core": true,
       "tracker_abc": [
         "update_fields",
         "update_body(Issue)"
@@ -149,6 +156,7 @@
     {
       "id": "mid-flight-comment",
       "journey": "frame/intake/groom, start/resume",
+      "core": true,
       "tracker_abc": [
         "add_comment"
       ],
@@ -170,6 +178,7 @@
     {
       "id": "epics-children-creation",
       "journey": "epics/enfants/dépendances",
+      "core": true,
       "tracker_abc": [
         "create_issue(parent=...)"
       ],
@@ -191,6 +200,7 @@
     {
       "id": "epics-children-reparent-existing",
       "journey": "epics/enfants/dépendances",
+      "core": true,
       "tracker_abc": [
         "link(subtask-of|parent-of, existing issue)"
       ],
@@ -213,6 +223,7 @@
     {
       "id": "dependencies-relates-blocks",
       "journey": "epics/enfants/dépendances",
+      "core": true,
       "tracker_abc": [
         "link(depends-on|blocks|relates)"
       ],
@@ -234,6 +245,7 @@
     {
       "id": "epic-subgraph-projection",
       "journey": "epics/enfants/dépendances (optional bounded projection)",
+      "core": false,
       "tracker_abc": [
         "get_epic_subgraph"
       ],
@@ -256,6 +268,7 @@
     {
       "id": "project-provisioning",
       "journey": "administrative provisioning (excluded from V1 core per criterion 4)",
+      "core": false,
       "tracker_abc": [
         "provision_project"
       ],
@@ -278,6 +291,7 @@
     {
       "id": "adr-read",
       "journey": "lecture/création/évolution ADR",
+      "core": true,
       "tracker_abc": [
         "list_adrs"
       ],
@@ -299,6 +313,7 @@
     {
       "id": "adr-create",
       "journey": "lecture/création/évolution ADR",
+      "core": true,
       "tracker_abc": [
         "create_adr"
       ],
@@ -320,6 +335,7 @@
     {
       "id": "adr-status-evolution",
       "journey": "lecture/création/évolution ADR",
+      "core": true,
       "tracker_abc": [
         "set_adr_status"
       ],
@@ -342,6 +358,7 @@
     {
       "id": "adr-supersession-and-issue-linking",
       "journey": "lecture/création/évolution ADR (optional enhancement beyond status field)",
+      "core": false,
       "tracker_abc": [
         "supersede_adr",
         "link_adr_issue"
@@ -365,6 +382,7 @@
     {
       "id": "issue-lifecycle-transitions",
       "journey": "start/resume/review/merge, état",
+      "core": true,
       "tracker_abc": [
         "set_state",
         "start_transition_path"
@@ -387,6 +405,7 @@
     {
       "id": "acceptance-criteria-sync",
       "journey": "état et AC",
+      "core": true,
       "tracker_abc": [
         "sync_acceptance_body"
       ],
@@ -398,7 +417,7 @@
         "linear": {
           "status": "gap",
           "ticket": "PAT-56",
-          "evidence": "linear.py:1114 acceptance_sync_supported = False; sync_acceptance_body (line 2870) raises AcceptanceSyncUnavailableError unconditionally ('aucune précondition atomique anti-écrasement'). Linear already has an equivalent bounded read-verify-write path for ADR bodies (_update_adr_body) but it is not extended to issue AC checkboxes yet"
+          "evidence": "linear.py:1114 acceptance_sync_supported = False; sync_acceptance_body (line 2870) raises AcceptanceSyncUnavailableError unconditionally ('aucune précondition atomique anti-écrasement'), refusing any in-place checkbox rewrite of an existing issue body — the same existing-issue-body-replacement gap as PAT-55, not a missing analogue of _update_adr_body (Linear's ADR body path is append-only versioning, not an in-place overwrite; see tracker-contract.md #4 level 2). Separately, and already supported today, Linear projects acceptance-completeness through a proof-bound append-only lifecycle marker instead of an in-place checkbox: acceptance_proof_projection_supported = True (linear.py:1117), project_acceptance_proof (linear.py:2510-2562) appends an 'acceptance' lifecycle marker after re-verifying body+review state, and _to_issue (linear.py:2212-2217) derives Issue.ac_done from that projection, never from the issue's native checkbox text. What remains a gap is exactly the in-place checkbox sync sync_acceptance_body promises on YouTrack, not 'no bounded fallback at all'"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -409,6 +428,7 @@
     {
       "id": "acceptance-override-receipt",
       "journey": "état et AC (human override before merge)",
+      "core": false,
       "tracker_abc": [
         "project_acceptance_override",
         "recover_acceptance_override"
@@ -431,6 +451,7 @@
     {
       "id": "epic-closure",
       "journey": "clôture d'epic",
+      "core": true,
       "tracker_abc": [
         "close_epic",
         "get_epic_closure"
@@ -456,6 +477,7 @@
     {
       "id": "tombstone-archived-source-after-switch",
       "journey": "clôture / bascule de dépôt (PAT-64)",
+      "core": true,
       "tracker_abc": [
         "validate_mutation_project"
       ],
@@ -463,11 +485,11 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-43",
-          "evidence": "validate_mutation_project has a base no-op default (base.py); YouTrack's existing archived-project write refusal is being generalized (per scratchpad intake note) to writes that target an archived project purely by identifier, not only by registry binding — needed so a post-PAT-64 switch source stays refused for every write shape"
+          "evidence": "validate_mutation_project has a base no-op default (base.py:170-184), and YouTrackTracker does not override it. YouTrack's only existing tombstone check is validate_legacy_mutation (youtrack.py:263-283), which refuses a write when the checkout's OWN historical registry binding (basename or PROJECT_REPO alias) is archived, via registry.require_writable_project (registry.py:776-797); it does not yet refuse a write that targets an archived project purely by provider identifier (bypassing registry binding lookup), which is what a post-PAT-64 switch source needs for every write shape"
         },
         "linear": {
           "status": "supported",
-          "evidence": "linear.py:1282 preflight_issue_operation and the append-only lifecycle marker refuse writes outside the bound project/team; PAT-10's cutover already made YouTrack-as-source read-only from this repo's Linear binding"
+          "evidence": "resolve_checkout_project (linear.py:1258-1276) resolves every read/write through registry.resolve_canonical_repository (registry.py:800-830), which excludes any binding entry with archive is True from its matches and raises SystemExit when none remain; validate_mutation_repository (linear.py:1278-1280) calls resolve_checkout_project before any mutation, so an archived Linear project binding refuses both reads-for-mutation and writes. preflight_issue_operation (linear.py:1282-1296) is a distinct seam that only gates the openpr/merge capability flags — it is not the tombstone mechanism and is not cited for that reason. PAT-10's cutover already made YouTrack-as-source read-only from this repo's Linear binding"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -478,6 +500,7 @@
     {
       "id": "cross-tracker-live-work-and-adr-copy",
       "journey": "bascule de dépôt par copie fidèle (PAT-64)",
+      "core": true,
       "tracker_abc": [
         "import_adr",
         "import_adr_batch",
@@ -503,6 +526,7 @@
     {
       "id": "release-and-changelog-scope",
       "journey": "périmètre de release/changelog",
+      "core": true,
       "tracker_abc": [
         "search",
         "get_issue"
