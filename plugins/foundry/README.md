@@ -478,11 +478,18 @@ pushes to the default branch
 (pointing to the `foundry:open-pr` / `foundry:merge-pr` skills instead). The workflow
 guard is a no-op outside registered repos and routing ignores non-Foundry agents. The
 hooks remain fail-open on internal errors per ADR-0005; explicit policy violations can
-still be denied. Logical entrypoints have a minimal `Read` capability and self-stop if
-routing did not attach its marker. Codex discovers the same `hooks/hooks.json`; users
-must still approve/trust hooks according to their local Codex policy. In Codex linked
-worktrees, `start-issue` creates the issue branch from the default branch without trying
-to check that default branch out in the worktree, and `merge-pr` delegates local worktree
-cleanup to Codex. Belt-and-braces for pushes made outside either agent:
-a `git` pre-push hook ships in `.githooks/` — enable it with
+still be denied. **One exception (PAT-42, AGENTS.md#R1)**: when the repo's tracker
+binding is invalid, has drifted, or is ambiguous — `registry.entry_for()` raising
+`ValueError` — the guard fails CLOSED instead for `gh pr create`/`merge` and a push to
+the default branch, naming the binding error as the cause; this is exactly the state
+where every other Foundry command already refuses to run, so the guard must not be the
+one door left open. Any other unexpected failure, and any command the cheap
+`_is_candidate` prefilter does not flag, still fails open — non-candidate commands never
+read the registry at all. Logical entrypoints have a minimal `Read` capability and
+self-stop if routing did not attach its marker. Codex discovers the same
+`hooks/hooks.json`; users must still approve/trust hooks according to their local Codex
+policy. In Codex linked worktrees, `start-issue` creates the issue branch from the
+default branch without trying to check that default branch out in the worktree, and
+`merge-pr` delegates local worktree cleanup to Codex. Belt-and-braces for pushes made
+outside either agent: a `git` pre-push hook ships in `.githooks/` — enable it with
 `git config core.hooksPath .githooks`.

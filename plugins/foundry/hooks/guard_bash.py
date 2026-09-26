@@ -15,9 +15,17 @@ commit messages, grep patterns — never trips the guard, and git/gh global
 flags (`git -C dir push`, `gh -R o/r pr merge`) can't slip past it.
 
 Everything else passes, unregistered repos are untouched, and any internal
-error fails OPEN (exit 0): a guard hook must never break normal work. The
-pure `deny_reason()` is what the tests pin. This is a discipline tool, not
-a sandbox: `bash -c '…'` indirection is out of scope by design.
+error fails OPEN (exit 0): a guard hook must never break normal work — EXCEPT
+one case (PAT-42, AGENTS.md#R1): `registry.entry_for()` raising `ValueError`
+means the repo's tracker binding is invalid, drifted, or ambiguous — i.e. the
+one state where every other Foundry command already fails closed. Failing
+open here too would silently drop the R1 guard exactly when it matters, so an
+R1-candidate command (`gh pr create/merge`, `git push`) is still denied, naming
+the binding error as the cause; a non-candidate command is unaffected (the
+cheap `_is_candidate` prefilter runs first and never touches the registry).
+Any OTHER unexpected failure keeps failing OPEN. The pure `deny_reason()` is
+what the tests pin. This is a discipline tool, not a sandbox: `bash -c '…'`
+indirection is out of scope by design.
 """
 import json
 import os
@@ -164,6 +172,39 @@ def _git(cwd, *args):
     return r.stdout.strip()
 
 
+def _emit_deny(reason: str) -> None:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason,
+    }}, ensure_ascii=False))
+
+
+def _defaults_for(registry, cwd) -> set:
+    """Best-effort default branch, falling back to {main, master} — including
+    when the binding itself is what's broken (registry.default_branch() only
+    reads git, never the registry, but stays defensive: a binding error must
+    never turn into an unguarded push)."""
+    try:
+        default = registry.default_branch(cwd)
+    except Exception:
+        default = None
+    return {default} if default else {"main", "master"}
+
+
+def binding_error_deny_reason(command: str, defaults: set, current: str, cause: str) -> str | None:
+    """Same decision as `deny_reason`, prefixed with the binding error that put
+    the repo in this state — PAT-42: an invalid/drifted/ambiguous tracker
+    binding must not silently reopen R1 for gh pr create/merge or a push to
+    the default branch."""
+    reason = deny_reason(command, defaults, current)
+    if reason is None:
+        return None
+    return (f"binding tracker Foundry invalide ou en dérive ({cause}) — {reason} "
+            f"Corrige d'abord le binding (registry/.foundry/tracker.json) avant "
+            f"de continuer.")
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -175,18 +216,27 @@ def main():
             return
         from foundry import registry
         # identity from the repo at cwd itself, across all trackers — never from env
-        if not registry.entry_for(cwd, use_env=False):
+        try:
+            entry = registry.entry_for(cwd, use_env=False)
+        except ValueError as exc:
+            # PAT-42: an invalid marker, a registry-digest drift or an ambiguous
+            # binding must fail CLOSED for R1-candidate commands — every other
+            # Foundry command already fails closed in this state; the guard must
+            # not become the exception that lets `gh pr create/merge` or a push
+            # to the default branch slip through.
+            defaults = _defaults_for(registry, cwd)
+            current = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD") or ""
+            reason = binding_error_deny_reason(command, defaults, current, str(exc))
+            if reason:
+                _emit_deny(reason)
             return
-        default = registry.default_branch(cwd)
-        defaults = {default} if default else {"main", "master"}
+        if not entry:
+            return
+        defaults = _defaults_for(registry, cwd)
         current = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD") or ""
         reason = deny_reason(command, defaults, current)
         if reason:
-            print(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }}, ensure_ascii=False))
+            _emit_deny(reason)
     except Exception:
         return  # fail open: a broken guard must not block normal work
 
