@@ -9,6 +9,7 @@ import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -74,6 +75,7 @@ SYNTHETIC_PROFILE_SOURCE_SHA256 = (
 SYNTHETIC_PROFILE_READBACK_SHA256 = (
     "ba804beb182ed1abac6c22fa1feac5e1f388a6967ea5748a3c85b6bb1f1816f7"
 )
+PAT71_FIXTURES = Path(__file__).with_name("fixtures")
 
 
 def connection(nodes):
@@ -5260,6 +5262,98 @@ def test_linear_adr_readback_rewrites_only_top_level_dash_lists(
             binding,
             source_body=source_body,
         )
+
+
+def test_linear_adr_pat71_observed_multiline_readback_recovers_missing_witness(
+    tracker,
+):
+    """The recorded provider bytes recover only the witness, never the version."""
+    instance, wire = tracker
+    source = (PAT71_FIXTURES / "pat71-source-body.md").read_text().removesuffix("\n")
+    observed = (PAT71_FIXTURES / "pat71-observed-readback.md").read_text()
+    project = Project(
+        key="PAT",
+        id="aeb77381-f8aa-48d3-a2a5-e6b2d2773007",
+        extra={
+            **PROJECT.extra,
+            "team_id": "1b38b4c0-322c-4b56-8049-57a31f40974b",
+        },
+    )
+    metadata_header, separator, observed_body = observed.partition("\n\\-->\n\n")
+    assert separator
+    metadata = json.loads(
+        metadata_header[len(linear_module._ADR_HEADER) :]
+        .replace("\\[", "[")
+        .replace("\\]", "]")
+    )
+    canonical = linear_module._adr_document_content(metadata, source)
+    assert observed_body == linear_module._linear_markdown_readback_body(source)
+    assert observed == linear_module._linear_adr_readback_content(canonical)
+
+    document_id = linear_module._adr_document_id(project.id, "PAT-ADR-0006", 0)
+    wire.documents[document_id] = {
+        "id": document_id,
+        "title": linear_module._adr_document_title(metadata),
+        "content": observed,
+        "project": {"id": project.id},
+        "archivedAt": None,
+    }
+    before = copy.deepcopy(wire.documents)
+    wire.calls.clear()
+
+    recovered = instance.create_adr(project, metadata["title"], source)
+
+    witness_id = linear_module._adr_witness_id(project.id, recovered.id, 0)
+    assert recovered.id == "PAT-ADR-0006"
+    assert wire.documents[document_id] == before[document_id]
+    assert witness_id in wire.documents
+    assert set(wire.documents) == {document_id, witness_id}
+    assert [adr.id for adr in instance.list_adrs(project)] == ["PAT-ADR-0006"]
+
+    document_creates = [
+        variables
+        for query, variables in wire.calls
+        if "documentCreate" in query
+    ]
+    assert len(document_creates) == 1
+    assert document_creates[0]["input"]["id"] == witness_id
+    assert all("documentUpdate" not in query for query, _ in wire.calls)
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        "unsupported *emphasis\n  continues*",
+        "unsupported _emphasis\n  continues_",
+        "unsupported [link\n  label](https://example.invalid)",
+        "[link](https://example.invalid/one\n  two)",
+        "unsupported **bold `nested\n  code`**",
+        "[outer `code\n  next`](https://example.invalid)",
+        "_outer `code\n  next`_",
+        "a*emphasis\n  next*b",
+        "unsupported ``code\n  span``",
+    ),
+)
+def test_linear_adr_multiline_inline_forms_are_refused_before_write(tracker, body):
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "Unsupported multiline", body)
+    assert wire.documents == {}
+
+
+def test_linear_adr_multiline_preflight_keeps_separate_and_literal_spans():
+    source = (
+        "`one`\n`two`\n"
+        "**one**\n**two**\n"
+        "escaped \\*one\n  two\\* and \\_one\n  two\\_\n"
+        "`**literal\n  bold**`"
+    )
+    assert linear_module._linear_markdown_readback_body(source) == (
+        "`one`\n`two`\n"
+        "**one**\n**two**\n"
+        "escaped \\*one\n  two\\* and \\_one\n  two\\_\n"
+        "`**literal bold**`"
+    )
 
 
 def test_linear_adr_readback_refuses_ambiguous_raw_html_rewrite():

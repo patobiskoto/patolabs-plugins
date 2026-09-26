@@ -126,7 +126,13 @@ fenced code. It recognizes backtick and tilde fence openers of at least three ch
 up to three leading spaces and an optional info string, and only a same-character closing fence
 at least as long as its opener. A `- ` literal inside such a fence and a source `* ` marker stay
 byte-exact; a dash thematic break such as `- - -` is preserved too. A provider response that
-rewrites any of those is rejected. The bounded model does not parse raw HTML: a line outside a
+rewrites any of those is rejected. PAT-71 adds two more closed source-to-readback forms outside
+fenced code: a single-backtick inline code span crossing one newline with continuation indentation
+is returned on one line with one space, and a simple `**bold**` span crossing that same shape is
+returned as two independently bold spans on either side of the newline. These forms are not
+reverse-normalized: the witness retains the source bytes. Any other multiline inline construction
+(including emphasis, links, nested marks, or a multi-backtick code span) is refused before any
+provider write. The bounded model does not parse raw HTML: a line outside a
 fence that begins with `<` after up to three spaces is rejected before any provider write,
 including reciprocal issue-link comments, batch comments and version creation. The sole
 exception is the versioned `foundry-adr-0012-v1` profile: its exact source-body SHA-256

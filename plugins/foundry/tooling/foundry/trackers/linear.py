@@ -487,22 +487,205 @@ def _linear_foundry_adr_0012_v1_readback(body: str) -> str | None:
     return rendered
 
 
+_MULTILINE_INLINE_CODE = re.compile(
+    r"(?<![A-Za-z0-9_`])`(?!`)(?P<before>[^`\n]+)\n"
+    r"(?P<indent>[ \t]+)(?P<after>[^`\n]+)`(?![A-Za-z0-9_`])"
+)
+_MULTILINE_BOLD = re.compile(
+    r"(?<![A-Za-z0-9_*\\])\*\*(?!\*)(?P<before>[^*`_\[\]\n]+)\n"
+    r"(?P<indent>[ \t]+)(?P<after>[^*`_\[\]\n]+)\*\*(?![A-Za-z0-9_*])"
+)
+_MULTILINE_BOLD_SPAN = re.compile(
+    r"(?<![A-Za-z0-9_*\\])\*\*(?!\*)(?P<span>(?:(?!\*\*).)*\n"
+    r"(?:(?!\*\*).)*)\*\*(?![A-Za-z0-9_*])",
+    re.DOTALL,
+)
+_MULTILINE_LINK_DESTINATION = re.compile(r"\]\([^\n]*\n[^)]*\)")
+
+
+def _paired_delimiters(fragment: str, delimiter: str) -> list[tuple[int, int]]:
+    """Return adjacent delimiter pairs; unpaired markers are ordinary text."""
+    positions = []
+    start = 0
+    while (position := fragment.find(delimiter, start)) >= 0:
+        positions.append(position)
+        start = position + len(delimiter)
+    return list(zip(positions[::2], positions[1::2]))
+
+
+def _paired_backtick_delimiters(fragment: str) -> list[tuple[int, int, int]]:
+    """Pair equal-length backtick runs without splitting a multi-backtick span."""
+    runs = [(match.start(), len(match.group())) for match in re.finditer(r"`+", fragment)]
+    pairs = []
+    index = 0
+    while index + 1 < len(runs):
+        start, length = runs[index]
+        closing = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(runs))
+                if runs[candidate][1] == length
+            ),
+            None,
+        )
+        if closing is None:
+            index += 1
+            continue
+        end, _ = runs[closing]
+        pairs.append((start, end, length))
+        index = closing + 1
+    return pairs
+
+
+def _masked_inline_spans(fragment: str, delimiter: str) -> str:
+    masked = list(fragment)
+    for start, end in _paired_delimiters(fragment, delimiter):
+        masked[start : end + len(delimiter)] = "x" * (end + len(delimiter) - start)
+    return "".join(masked)
+
+
+def _masked_backtick_spans(fragment: str, *, preserve_newlines: bool = False) -> str:
+    masked = list(fragment)
+    for start, end, length in _paired_backtick_delimiters(fragment):
+        masked[start : end + length] = [
+            "\n" if preserve_newlines and value == "\n" else "x"
+            for value in fragment[start : end + length]
+        ]
+    return "".join(masked)
+
+
+def _is_emphasis_opener(fragment: str, position: int, marker: str) -> bool:
+    before = fragment[position - 1] if position else " "
+    after = fragment[position + 1] if position + 1 < len(fragment) else " "
+    return not after.isspace() and (before.isspace() or not before.isalnum())
+
+
+def _is_emphasis_closer(fragment: str, position: int, marker: str) -> bool:
+    before = fragment[position - 1] if position else " "
+    after = fragment[position + 1] if position + 1 < len(fragment) else " "
+    return not before.isspace() and (after.isspace() or not after.isalnum())
+
+
+def _reject_multiline_emphasis(fragment: str, marker: str) -> None:
+    positions = []
+    for position, value in enumerate(fragment):
+        if (
+            value != marker
+            or (position and fragment[position - 1] == "\\")
+            or (marker == "*" and fragment[position : position + 2] == "**")
+            or (marker == "*" and position and fragment[position - 1 : position + 1] == "**")
+            or (
+                marker == "*"
+                and (position == 0 or fragment[position - 1] == "\n")
+                and position + 1 < len(fragment)
+                and fragment[position + 1].isspace()
+            )
+        ):
+            continue
+        positions.append(position)
+    for opener, closer in zip(positions[::2], positions[1::2]):
+        if "\n" in fragment[opener : closer + 1]:
+            raise ValueError("unsupported multiline inline Markdown in ADR body")
+
+
+def _linear_nonfenced_markdown_readback(fragment: str) -> str:
+    """Render the two qualified multiline inline forms and reject every other one.
+
+    This is deliberately a source-to-readback model.  It has no inverse: the
+    witness remains the sole source-byte recovery path.
+    """
+    code_replacements = []
+    source_code_spans = _paired_backtick_delimiters(fragment)
+    bold_ranges = _paired_delimiters(fragment, "**")
+    source_masked = _masked_backtick_spans(fragment, preserve_newlines=True)
+    _reject_multiline_emphasis(source_masked, "*")
+    _reject_multiline_emphasis(source_masked, "_")
+    if _MULTILINE_LINK_DESTINATION.search(source_masked) is not None:
+        raise ValueError("unsupported multiline inline Markdown in ADR body")
+    open_bracket = None
+    for position, value in enumerate(source_masked):
+        if value == "[" and open_bracket is None:
+            open_bracket = position
+        elif value == "]" and open_bracket is not None:
+            if "\n" in source_masked[open_bracket : position + 1]:
+                raise ValueError("unsupported multiline inline Markdown in ADR body")
+            open_bracket = None
+    for start, end, length in source_code_spans:
+        span = fragment[start : end + length]
+        if "\n" not in span:
+            continue
+        if any(bstart <= start < bend for bstart, bend in bold_ranges):
+            raise ValueError("unsupported multiline inline Markdown in ADR body")
+        if length != 1 or (match := _MULTILINE_INLINE_CODE.fullmatch(span)) is None:
+            raise ValueError("unsupported multiline inline Markdown in ADR body")
+        code_replacements.append(
+            (start, end + length, f"`{match['before']} {match['after']}`")
+        )
+    for match in _MULTILINE_BOLD_SPAN.finditer(fragment):
+        if any(
+            start <= match.start() < end + length
+            for start, end, length in source_code_spans
+        ):
+            continue
+        if not _MULTILINE_BOLD.fullmatch(match.group()):
+            raise ValueError("unsupported multiline inline Markdown in ADR body")
+    rendered = fragment
+    for start, end, replacement in reversed(code_replacements):
+        rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
+
+    # Code spans are literal: delimiters inside them cannot open a bold span.
+    rendered = _MULTILINE_BOLD.sub(
+        lambda match: (
+            f"**{match['before']}**\n{match['indent']}**{match['after']}**"
+        ),
+        rendered,
+    )
+    if any(
+        "\n" in rendered[start : end + length]
+        for start, end, length in _paired_backtick_delimiters(rendered)
+    ):
+        raise ValueError("unsupported multiline inline Markdown in ADR body")
+    masked = _masked_inline_spans(_masked_backtick_spans(rendered), "**")
+    _reject_multiline_emphasis(masked, "*")
+    _reject_multiline_emphasis(masked, "_")
+    if _MULTILINE_LINK_DESTINATION.search(masked) is not None:
+        raise ValueError("unsupported multiline inline Markdown in ADR body")
+    open_bracket = None
+    for position, value in enumerate(masked):
+        if value == "[" and open_bracket is None:
+            open_bracket = position
+        elif value == "]" and open_bracket is not None:
+            if "\n" in masked[open_bracket : position + 1]:
+                raise ValueError("unsupported multiline inline Markdown in ADR body")
+            open_bracket = None
+    return rendered
+
+
 def _linear_markdown_readback_body(body: str) -> str:
     """Model only closed, observed Linear Markdown serializations."""
     qualified = _linear_foundry_adr_0012_v1_readback(body)
     if qualified is not None:
         return qualified
     rendered = []
+    nonfenced = []
+
+    def flush_nonfenced() -> None:
+        if nonfenced:
+            rendered.append(_linear_nonfenced_markdown_readback("".join(nonfenced)))
+            nonfenced.clear()
+
     fence = None
     for source_line in body.splitlines(keepends=True):
         line = source_line.removesuffix("\n").removesuffix("\r")
         if fence is not None:
+            flush_nonfenced()
             rendered.append(source_line)
             if _markdown_fence_closing(line, *fence):
                 fence = None
             continue
         opening = _markdown_fence_opening(line)
         if opening is not None:
+            flush_nonfenced()
             fence = opening
             rendered.append(source_line)
             continue
@@ -513,7 +696,8 @@ def _linear_markdown_readback_body(body: str) -> str:
             thematic = line.replace(" ", "").replace("\t", "")
             if len(thematic) < 3 or set(thematic) != {"-"}:
                 source_line = f"* {source_line[2:]}"
-        rendered.append(source_line)
+        nonfenced.append(source_line)
+    flush_nonfenced()
     return "".join(rendered)
 
 
