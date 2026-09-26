@@ -5325,6 +5325,13 @@ def test_linear_adr_pat71_observed_multiline_readback_recovers_missing_witness(
     (
         "unsupported *emphasis\n  continues*",
         "unsupported _emphasis\n  continues_",
+        "2 * 3 then *emphasis\n  continues*",
+        "~~strike\n  continues~~",
+        "***bold and emphasis\n  continues***",
+        "****bold\n  next****",
+        "*outer **inner\n  next***",
+        "**outer *inner\n  next***",
+        "**bold *nested\n  emphasis* continues**",
         "unsupported [link\n  label](https://example.invalid)",
         "[link](https://example.invalid/one\n  two)",
         "unsupported **bold `nested\n  code`**",
@@ -5353,6 +5360,21 @@ def test_linear_adr_multiline_preflight_keeps_separate_and_literal_spans():
         "**one**\n**two**\n"
         "escaped \\*one\n  two\\* and \\_one\n  two\\_\n"
         "`**literal bold**`"
+    )
+
+
+def test_linear_adr_multiline_preflight_preserves_escaped_backticks_with_parity():
+    escaped = "literal \\`escaped\n  backticks\\`"
+    even_slashes = "literal \\\\`code\n  continues\\\\`"
+    slash_inside_code = "`foo\\\n  continues\\`"
+
+    assert linear_module._paired_backtick_delimiters(escaped) == []
+    assert linear_module._linear_markdown_readback_body(escaped) == escaped
+    assert linear_module._linear_markdown_readback_body(even_slashes) == (
+        "literal \\\\`code continues\\\\`"
+    )
+    assert linear_module._linear_markdown_readback_body(slash_inside_code) == (
+        "`foo\\ continues\\`"
     )
 
 

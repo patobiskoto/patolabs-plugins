@@ -495,11 +495,6 @@ _MULTILINE_BOLD = re.compile(
     r"(?<![A-Za-z0-9_*\\])\*\*(?!\*)(?P<before>[^*`_\[\]\n]+)\n"
     r"(?P<indent>[ \t]+)(?P<after>[^*`_\[\]\n]+)\*\*(?![A-Za-z0-9_*])"
 )
-_MULTILINE_BOLD_SPAN = re.compile(
-    r"(?<![A-Za-z0-9_*\\])\*\*(?!\*)(?P<span>(?:(?!\*\*).)*\n"
-    r"(?:(?!\*\*).)*)\*\*(?![A-Za-z0-9_*])",
-    re.DOTALL,
-)
 _MULTILINE_LINK_DESTINATION = re.compile(r"\]\([^\n]*\n[^)]*\)")
 
 
@@ -520,6 +515,12 @@ def _paired_backtick_delimiters(fragment: str) -> list[tuple[int, int, int]]:
     index = 0
     while index + 1 < len(runs):
         start, length = runs[index]
+        # Escaped backticks are literal only while outside a code span.  Once an
+        # unescaped opening delimiter is active, Markdown keeps backslashes
+        # literal, so an apparently escaped equal-length run still closes it.
+        if _is_escaped(fragment, start):
+            index += 1
+            continue
         closing = next(
             (
                 candidate
@@ -535,6 +536,16 @@ def _paired_backtick_delimiters(fragment: str) -> list[tuple[int, int, int]]:
         pairs.append((start, end, length))
         index = closing + 1
     return pairs
+
+
+def _is_escaped(fragment: str, position: int) -> bool:
+    """Whether the character at ``position`` has an odd slash prefix."""
+    slashes = 0
+    position -= 1
+    while position >= 0 and fragment[position] == "\\":
+        slashes += 1
+        position -= 1
+    return bool(slashes % 2)
 
 
 def _masked_inline_spans(fragment: str, delimiter: str) -> str:
@@ -556,36 +567,78 @@ def _masked_backtick_spans(fragment: str, *, preserve_newlines: bool = False) ->
 
 def _is_emphasis_opener(fragment: str, position: int, marker: str) -> bool:
     before = fragment[position - 1] if position else " "
-    after = fragment[position + 1] if position + 1 < len(fragment) else " "
-    return not after.isspace() and (before.isspace() or not before.isalnum())
+    after_position = position + len(marker)
+    after = fragment[after_position] if after_position < len(fragment) else " "
+    before_punctuation = _is_ascii_punctuation(before)
+    after_punctuation = _is_ascii_punctuation(after)
+    left_flanking = not after.isspace() and (
+        not after_punctuation or before.isspace() or before_punctuation
+    )
+    right_flanking = not before.isspace() and (
+        not before_punctuation or after.isspace() or after_punctuation
+    )
+    return left_flanking and (
+        marker[0] != "_" or not right_flanking or not before.isalnum()
+    )
 
 
 def _is_emphasis_closer(fragment: str, position: int, marker: str) -> bool:
     before = fragment[position - 1] if position else " "
-    after = fragment[position + 1] if position + 1 < len(fragment) else " "
-    return not before.isspace() and (after.isspace() or not after.isalnum())
+    after_position = position + len(marker)
+    after = fragment[after_position] if after_position < len(fragment) else " "
+    before_punctuation = _is_ascii_punctuation(before)
+    after_punctuation = _is_ascii_punctuation(after)
+    left_flanking = not after.isspace() and (
+        not after_punctuation or before.isspace() or before_punctuation
+    )
+    right_flanking = not before.isspace() and (
+        not before_punctuation or after.isspace() or after_punctuation
+    )
+    return right_flanking and (
+        marker[0] != "_" or not left_flanking or not after.isalnum()
+    )
 
 
-def _reject_multiline_emphasis(fragment: str, marker: str) -> None:
-    positions = []
-    for position, value in enumerate(fragment):
-        if (
-            value != marker
-            or (position and fragment[position - 1] == "\\")
-            or (marker == "*" and fragment[position : position + 2] == "**")
-            or (marker == "*" and position and fragment[position - 1 : position + 1] == "**")
-            or (
-                marker == "*"
-                and (position == 0 or fragment[position - 1] == "\n")
-                and position + 1 < len(fragment)
-                and fragment[position + 1].isspace()
-            )
-        ):
+def _is_ascii_punctuation(value: str) -> bool:
+    return value.isascii() and not value.isalnum() and not value.isspace()
+
+
+def _reject_multiline_emphasis(
+    fragment: str, marker: str, *, allow_observed_bold: bool = False
+) -> None:
+    """Refuse multiline Markdown spans using their actual open/close roles.
+
+    A delimiter can be ordinary text (``2 * 3``), an opener, or a closer.  Pairing
+    every other character loses that distinction and can hide a later real span.
+    Runs are kept whole so bold and triple-marker forms cannot be mistaken for
+    single emphasis.  The sole allowed multiline formatting span is the recorded
+    simple bold form, checked against its exact source grammar below.
+    """
+    runs = [
+        (match.start(), match.group())
+        for match in re.finditer(re.escape(marker) + "+", fragment)
+        if not _is_escaped(fragment, match.start())
+    ]
+    openers: list[tuple[str, int]] = []
+    for position, run in runs:
+        if marker == "~" and run != "~~":
             continue
-        positions.append(position)
-    for opener, closer in zip(positions[::2], positions[1::2]):
-        if "\n" in fragment[opener : closer + 1]:
+        can_open = _is_emphasis_opener(fragment, position, run)
+        can_close = _is_emphasis_closer(fragment, position, run)
+        if can_close and openers:
+            opener_run, opener = openers.pop()
+            span = fragment[opener : position + len(run)]
+            if "\n" not in span:
+                continue
+            if (
+                allow_observed_bold
+                and opener_run == run == "**"
+                and _MULTILINE_BOLD.fullmatch(span) is not None
+            ):
+                continue
             raise ValueError("unsupported multiline inline Markdown in ADR body")
+        if can_open:
+            openers.append((run, position))
 
 
 def _linear_nonfenced_markdown_readback(fragment: str) -> str:
@@ -598,8 +651,9 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     source_code_spans = _paired_backtick_delimiters(fragment)
     bold_ranges = _paired_delimiters(fragment, "**")
     source_masked = _masked_backtick_spans(fragment, preserve_newlines=True)
-    _reject_multiline_emphasis(source_masked, "*")
+    _reject_multiline_emphasis(source_masked, "*", allow_observed_bold=True)
     _reject_multiline_emphasis(source_masked, "_")
+    _reject_multiline_emphasis(source_masked, "~")
     if _MULTILINE_LINK_DESTINATION.search(source_masked) is not None:
         raise ValueError("unsupported multiline inline Markdown in ADR body")
     open_bracket = None
@@ -621,14 +675,6 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
         code_replacements.append(
             (start, end + length, f"`{match['before']} {match['after']}`")
         )
-    for match in _MULTILINE_BOLD_SPAN.finditer(fragment):
-        if any(
-            start <= match.start() < end + length
-            for start, end, length in source_code_spans
-        ):
-            continue
-        if not _MULTILINE_BOLD.fullmatch(match.group()):
-            raise ValueError("unsupported multiline inline Markdown in ADR body")
     rendered = fragment
     for start, end, replacement in reversed(code_replacements):
         rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
@@ -648,6 +694,7 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     masked = _masked_inline_spans(_masked_backtick_spans(rendered), "**")
     _reject_multiline_emphasis(masked, "*")
     _reject_multiline_emphasis(masked, "_")
+    _reject_multiline_emphasis(masked, "~")
     if _MULTILINE_LINK_DESTINATION.search(masked) is not None:
         raise ValueError("unsupported multiline inline Markdown in ADR body")
     open_bracket = None
