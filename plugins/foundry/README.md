@@ -77,15 +77,17 @@ codex plugin add foundry@patolabs
 After either installation, run `/foundry:configure` and `/foundry:doctor` in Claude Code,
 or `$foundry:configure` and `$foundry:doctor` in Codex. Non-secret settings are shared in
 `~/.config/foundry/config.env`; credentials belong in the macOS keychain (or a secret
-manager-backed `YOUTRACK_TOKEN` / `LINEAR_API_TOKEN` on other systems), never in a
+manager-backed `YOUTRACK_TOKEN` / `LINEAR_API_TOKEN` / `DEVHUB_TRACKER_TOKEN` /
+`DEVHUB_TRACKER_PROOF_SECRET` / `DEVHUB_COMMAND_TOKEN` on other systems), never in a
 repository or chat. Both runtimes also accept explicit provider and `FOUNDRY_*`
 environment variables. Linear's exact capability and binding contract is documented in
 [`docs/linear-tracker.md`](docs/linear-tracker.md).
 
 The current dual-host upgrade, trusted configuration, override diagnosis, verification,
-and exact-ref rollback are in
-[`docs/migration-0.8.0.md`](docs/migration-0.8.0.md). The former
-[`0.7.0 migration`](docs/migration-0.7.0.md) remains historical release evidence.
+and rollback constraints are in
+[`docs/migration-0.9.0.md`](docs/migration-0.9.0.md). The former
+[`0.8.0 migration`](docs/migration-0.8.0.md) and
+[`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
 Foundry never installs, downloads, starts, or selects a local model during an upgrade.
 
 Dev Hub Epic orchestration starts with a deterministic read-only preview. It consumes
@@ -103,7 +105,7 @@ budget and concurrency before effect. Its authority snapshot and operator entry 
 
 Reinstall/refresh from the merged marketplace snapshot; do not edit an installed cache.
 The cachebuster commands below are only for a local source-development marketplace and
-are not part of a published 0.8.0 upgrade or rollback.
+are not part of a published 0.9.0 upgrade or rollback.
 
 ```text
 # Claude Code
@@ -217,14 +219,18 @@ attestation, and fail-closed recommendation are indexed by
 The immutable-record versus corrected-publication boundary, raw-trace linkage, packet-null
 semantics, and offline reproduction command are specified by the versioned
 [`RESULTS-CONTRACT-v4.md`](benchmarks/foundry-35/RESULTS-CONTRACT-v4.md).
-The current [`0.8.0 release notes`](docs/release-0.8.0.md) publish the separate
-FOUNDRY-46 Claude and Codex evidence and the FOUNDRY-47 `keep` decision. The frozen v2
-matrix is `inconclusive` on both hosts: unavailable cost, allocation, test, review,
-downstream, security, host-version, and weighted-aggregate data remain `null`, never
-zero. The historical 7.42% price-snapshot observation is noncausal and is not a savings
-claim. No local model is promoted, and every production resolver, default, gate,
-fallback, mapping, and authority remains unchanged. The
+The [`0.8.0 release notes`](docs/release-0.8.0.md) publish the separate FOUNDRY-46
+Claude and Codex evidence and the FOUNDRY-47 `keep` decision. The frozen v2 matrix is
+`inconclusive` on both hosts: unavailable cost, allocation, test, review, downstream,
+security, host-version, and weighted-aggregate data remain `null`, never zero. The
+historical 7.42% price-snapshot observation is noncausal and is not a savings claim. No
+local model is promoted, and every production resolver, default, gate, fallback,
+mapping, and authority remains unchanged. The
 [`0.7.0 release report`](docs/release-0.7.0.md) remains immutable historical evidence.
+The current [`0.9.0 release notes`](docs/release-0.9.0.md) publish the completed Linear
+ADR adapter (versioned ADR Documents, the completed historical ADR import), this
+repository's own cutover to Linear project PAT, and the typed human AC override receipt;
+they do not change any benchmark evidence, resolver, model mapping, or gate above.
 
 On Claude Code, skills invoke logical roles and a `PreToolUse` hook applies the resolved
 model, effort profile, capability, and turn cap to the actual Agent call. Agent
@@ -387,7 +393,7 @@ tooling/foundry/
   routing.py       shared semantic model policy, fallbacks, override warnings,
                    and cross-host review deduplication
   escalation.py    locked per-issue counters, risk floors, ceiling, and human stop
-  trackers/        Tracker port + youtrack/devhub (real) + ghprojects (stub)
+  trackers/        Tracker port + youtrack/linear/devhub (real) + ghprojects (stub)
   codehosts/       CodeHost port + github (real)
   registry.py      repo → project map (runtime data dir, then ~/.config/foundry)
   config.py        env → Claude options → keychain → config-file fallback
@@ -404,9 +410,12 @@ docs/model-routing-pilot-*.md   frozen manual measurement protocol + results she
 ## Providers (pluggable)
 
 Active tracker/code-host are **parameters** (`FOUNDRY_TRACKER` / `FOUNDRY_CODEHOST`), not
-constants. `trackers/base.py` and `codehosts/base.py` are the ports. YouTrack and
-DevHubTracker v1 are real adapters; `trackers/ghprojects.py` remains a deliberate stub.
-See [`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated pilot cutover.
+constants; a repository's `.foundry/tracker.json` marker, when present, takes precedence
+over the host-global tracker default. `trackers/base.py` and `codehosts/base.py` are the
+ports. YouTrack, Linear, and DevHubTracker v1 are real adapters; `trackers/ghprojects.py`
+remains a deliberate stub. See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the
+Linear adapter and repository marker, and
+[`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated DevHub pilot cutover.
 
 Every Tracker implements the common normalized issue and ADR read/write surface.
 Capabilities that are not universal stay explicit and default-off on the port. Project
@@ -441,7 +450,9 @@ anything.
 
 ## Develop Foundry (dogfooding)
 
-Foundry is piloted with its own tools (project `FOUNDRY`). In-repo, config falls back to
+Foundry is piloted with its own tools: this repository is bound to Linear project `PAT`
+through its `.foundry/tracker.json` marker (the former YouTrack project `FOUNDRY` is an
+archive). In-repo, config falls back to
 `~/.config/foundry/config.env` (or the legacy `~/.config/orfeo-poc/youtrack.env`), so the
 tooling runs without installing the plugin:
 

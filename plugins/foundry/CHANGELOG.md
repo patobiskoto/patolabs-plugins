@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.0 — 2026-09-26
+
 ### Added
 - A fail-closed Linear tracker adapter using explicit repository, team, project,
   workflow-state, label, and milestone identifiers, resolved from the actual checkout's
@@ -12,8 +14,35 @@
   `issue openpr` and `issue merge` instead use deterministic-ID, append-only comments;
   Foundry validates and projects their PR/state/AC receipts without changing native
   Linear fields. Complete cockpit Evidence Plane envelopes are append-only advisory
-  audit records and never state, AC, CI or merge authority. The ADR knowledge base and
-  atomic Epic closure remain unavailable, and live cutover remains FOUNDRY-159.
+  audit records and never state, AC, CI or merge authority. Linear stores ADRs as
+  versioned, witness-bound project Documents (PAT-22); atomic Epic closure remains
+  unavailable; this repository is cut over to Linear project PAT (PAT-10).
+- `query issue` reports an explicit `conflict` status instead of presenting a
+  conflicted embedded ADR index as empty, so a caller can tell "no ADR" apart from
+  "the index disagrees with itself" (PAT-41).
+- Tolerant Markdown serialization handling for Linear's own rendering of the ADR
+  delimiter and angle-bracket content, so its reformatting never masks a real
+  alteration, while byte-exact source bodies stay verifiable through witnesses
+  (PAT-37/PAT-38/PAT-39).
+- `plan_adr_batch_qualification`, a read-only planner that performs no provider write
+  and returns the exact version Document and witness bytes, and probe titles, a
+  historical batch import would create; the import itself reads every non-authoritative
+  qualification probe by ID and checks its complete readback before any effect
+  (PAT-40).
+- Explicit `missing_relations` on the records of a partial-source historical ADR
+  manifest, so each unknown relation family is listed in a canonical, sorted tuple
+  rather than omitted or presented as silently empty, and the audited import of the
+  repository's 27 historical ADRs into Linear (no private data), which declared all
+  three families unknown (PAT-23).
+- A repository-scoped `.foundry/tracker.json` marker that takes precedence over the
+  host-global tracker default, a `registry cutover` command that binds a project by its
+  exact manifest digest, an archive tombstone recording the former YouTrack binding, and
+  an operations log capturing `adr_authority` and `incidents` for the cutover (PAT-10).
+- A typed `acceptance-override` receipt for a human AC override merge on Linear, with
+  recovery replay so an interrupted override merge can resume from its exact receipt
+  instead of re-deciding the override (PAT-49).
+- Public-repository main-branch protection, read back from the actual GitHub branch
+  protection rules rather than assumed (PAT-12).
 - A dedicated, audit-bound `rearm-remediation` transition for a just-exhausted bounded
   correction window that is not yet halted. It CAS-binds the issue, recorded role,
   original halt generation, controlled human reason, and 1..3 new credits; preserves
@@ -54,6 +83,21 @@
   and fail closed before transport. An already-done retry
   performs cleanup without a second merge or illegal rewind. YouTrack remains the
   default and no routing, gate, review, or merge authority moves to Dev Hub.
+
+### Fixed
+- Linear lifecycle fixes: blocking premature GitHub closure of a Linear-tracked issue
+  (PAT-26) and tolerating a Backlog-to-In-Progress transition after a PR is already
+  attested (PAT-28).
+- Tracker-neutral escalation and bounded-remediation fixes: controlled resumption after
+  exhausted technical diagnostics (PAT-27); rearming an exhausted window after a
+  technical diagnostic generation (PAT-29); making remediation usable after a review on
+  an already-consumed technical route (PAT-30); allowing exactly one new review after a
+  credited correction on such a route (PAT-31); and rearming a corrected review across a
+  PR base advance (PAT-32).
+- Documented and tested contracts without a product-code change: resuming the Linear
+  cutover after technical remediation without widening its permissions (PAT-21), and an
+  offline test double proving the provider handoff stays idempotent and capability
+  stays valid after a crash (PAT-24).
 
 ## 0.8.1 — 2026-09-13
 
