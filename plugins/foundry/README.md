@@ -78,7 +78,7 @@ After either installation, run `/foundry:configure` and `/foundry:doctor` in Cla
 or `$foundry:configure` and `$foundry:doctor` in Codex. Non-secret settings are shared in
 `~/.config/foundry/config.env`; credentials belong in the macOS keychain (or a secret
 manager-backed `YOUTRACK_TOKEN` / `LINEAR_API_TOKEN` / `DEVHUB_TRACKER_TOKEN` /
-`DEVHUB_TRACKER_PROOF_SECRET` on other systems), never in a
+`DEVHUB_TRACKER_PROOF_SECRET` / `DEVHUB_COMMAND_TOKEN` on other systems), never in a
 repository or chat. Both runtimes also accept explicit provider and `FOUNDRY_*`
 environment variables. Linear's exact capability and binding contract is documented in
 [`docs/linear-tracker.md`](docs/linear-tracker.md).
@@ -393,7 +393,7 @@ tooling/foundry/
   routing.py       shared semantic model policy, fallbacks, override warnings,
                    and cross-host review deduplication
   escalation.py    locked per-issue counters, risk floors, ceiling, and human stop
-  trackers/        Tracker port + youtrack/devhub (real) + ghprojects (stub)
+  trackers/        Tracker port + youtrack/linear/devhub (real) + ghprojects (stub)
   codehosts/       CodeHost port + github (real)
   registry.py      repo → project map (runtime data dir, then ~/.config/foundry)
   config.py        env → Claude options → keychain → config-file fallback
@@ -410,9 +410,12 @@ docs/model-routing-pilot-*.md   frozen manual measurement protocol + results she
 ## Providers (pluggable)
 
 Active tracker/code-host are **parameters** (`FOUNDRY_TRACKER` / `FOUNDRY_CODEHOST`), not
-constants. `trackers/base.py` and `codehosts/base.py` are the ports. YouTrack and
-DevHubTracker v1 are real adapters; `trackers/ghprojects.py` remains a deliberate stub.
-See [`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated pilot cutover.
+constants; a repository's `.foundry/tracker.json` marker, when present, takes precedence
+over the host-global tracker default. `trackers/base.py` and `codehosts/base.py` are the
+ports. YouTrack, Linear, and DevHubTracker v1 are real adapters; `trackers/ghprojects.py`
+remains a deliberate stub. See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the
+Linear adapter and repository marker, and
+[`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated DevHub pilot cutover.
 
 Every Tracker implements the common normalized issue and ADR read/write surface.
 Capabilities that are not universal stay explicit and default-off on the port. Project
@@ -447,7 +450,9 @@ anything.
 
 ## Develop Foundry (dogfooding)
 
-Foundry is piloted with its own tools (project `FOUNDRY`). In-repo, config falls back to
+Foundry is piloted with its own tools: this repository is bound to Linear project `PAT`
+through its `.foundry/tracker.json` marker (the former YouTrack project `FOUNDRY` is an
+archive). In-repo, config falls back to
 `~/.config/foundry/config.env` (or the legacy `~/.config/orfeo-poc/youtrack.env`), so the
 tooling runs without installing the plugin:
 

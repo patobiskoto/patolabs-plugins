@@ -2,13 +2,12 @@
 
 Release decision: **publish the shared Claude Code/Codex package, including the Linear
 tracker adapter, its versioned ADR Documents, the completed historical ADR import, and
-the repository's own cutover to Linear, with production disposition `keep`.** Foundry
-0.9.0 keeps every 0.8.x model mapping, reasoning effort, route, and routing gate
-unchanged; the CI gate semantics of FOUNDRY-ADR-0002 are unchanged too. It adds the
-Linear tracker adapter (base adapter plus versioned ADR Documents, the repository
-tracker marker, and the typed AC-override receipt), an opt-in DevHubTracker v1, the
-Dev Hub command worker, the Epic execution preview, the Epic-closure contract, and
-`rearm-remediation` — described below.
+the repository's own cutover to Linear.** Foundry 0.9.0 keeps every 0.8.x model mapping,
+reasoning effort, route, and routing gate unchanged; the CI gate semantics of
+FOUNDRY-ADR-0002 are unchanged too. It adds the Linear tracker adapter (base adapter
+plus versioned ADR Documents, the repository tracker marker, and the typed AC-override
+receipt), an opt-in DevHubTracker v1, the Dev Hub command worker, the Epic execution
+preview, the Epic-closure contract, and `rearm-remediation` — described below.
 
 The two package manifests report exactly `0.9.0`. The Claude and Codex catalogues keep
 their supported, versionless source-pointer schemas and both resolve to the same
@@ -43,11 +42,16 @@ in 0.8.x:
   tolerates Linear's own reformatting of the ADR delimiter and angle-bracket content
   without masking a real alteration; byte-exact source bodies stay verifiable through
   witnesses (PAT-37/PAT-38/PAT-39).
-- `plan_adr_batch_qualification` reads back and qualifies every historical ADR Document
-  as complete on a non-authoritative probe before a batch import proceeds (PAT-40).
-- Every historical ADR record carries an explicit `missing_relations` field: an unknown
-  relation family (for example a superseding ADR not itself imported) is a canonical,
-  sorted, typed-unavailable tuple, never an omitted or silently-empty value (PAT-23).
+- `plan_adr_batch_qualification` is a read-only planner that performs no provider
+  write: it returns the exact version Document and witness bytes, and the probe titles,
+  a historical batch import would create. The import itself reads every
+  non-authoritative qualification probe by ID, and checks its complete readback, before
+  any effect (PAT-40).
+- A partial-source manifest declares `missing_relations` on its historical ADR records:
+  each unknown relation family (for example a superseding ADR not itself imported) is
+  listed in a canonical, sorted tuple, never an omitted or silently-empty value. The
+  PAT-23 import declared all three families (`issues`, `superseded_by`, `supersedes`)
+  unknown (PAT-23).
 - The repository's 27 historical ADRs are imported into Linear under audit, carrying no
   private data (PAT-23).
 - `query issue` reports an explicit `conflict` status instead of presenting a
@@ -81,8 +85,10 @@ automatic; in both cases below, the operator re-runs the exact same
 `issue merge <ID> <PR> --allow-incomplete-ac --ac-override-reason=<code>` command:
 
 - If the receipt was already written and the merge was interrupted before completion
-  was observed, replaying that same command is a no-op: Foundry reads the existing
-  receipt instead of asking for a second human override decision.
+  was observed, replaying that same command resumes the merge from the existing receipt
+  instead of asking for a second human override decision. Only the receipt write is
+  idempotent: the replay still runs the CI gate, the merge if it has not happened yet,
+  the done receipt, and branch cleanup.
 - For an issue merged under override before this receipt existed at all (the PAT-10
   shape: review state, the historical free-text audit note, then done, no receipt),
   re-running the same command backfills exactly the missing override receipt bound to
@@ -91,19 +97,26 @@ automatic; in both cases below, the operator re-runs the exact same
 
 This does not weaken the override path's audit requirement or turn recovery into a
 second, independent human decision; it makes both the interrupted and the backfill case
-resumable from one deterministic, idempotent command instead of an ad hoc repair.
+recoverable by re-running the same command instead of an ad hoc repair.
 
 ## Lifecycle and remediation stability (PAT-21, PAT-24, PAT-26–PAT-32)
 
-A round of fixes stabilizes the Linear-tracked bounded-remediation and lifecycle paths
-this same release introduces above: blocking premature GitHub closure of a
-Linear-tracked issue, tolerating a Backlog-to-In-Progress transition after a PR is
-already attested, making remediation usable after a review on an already-consumed
-technical route (including controlled resumption of an exhausted diagnostic window and
-rearming across a PR base advance), allowing exactly one new review after a credited
-correction on a consumed technical route, and proving the provider handoff stays
-idempotent with valid capability after a crash. None of these change the escalation
-ceiling, tier floors, or the human-stop contract of FOUNDRY-ADR-0006.
+- Linear lifecycle fixes: blocking premature GitHub closure of a Linear-tracked issue
+  (PAT-26) and tolerating a Backlog-to-In-Progress transition after a PR is already
+  attested (PAT-28).
+- Tracker-neutral escalation and bounded-remediation fixes: controlled resumption after
+  exhausted technical diagnostics (PAT-27), rearming an exhausted window after a
+  technical diagnostic generation (PAT-29), making remediation usable after a review on
+  an already-consumed technical route (PAT-30), allowing exactly one new review after a
+  credited correction on such a route (PAT-31), and rearming a corrected review across
+  a PR base advance (PAT-32).
+- Documented and tested contracts without a product-code change: resuming PAT-10 after
+  technical remediation without widening its permissions (PAT-21), and an offline test
+  double proving the provider handoff stays idempotent with valid capability after a
+  crash (PAT-24).
+
+None of these change the escalation ceiling, tier floors, or the human-stop contract of
+FOUNDRY-ADR-0006.
 
 ## Also in 0.9.0: Dev Hub command worker, Epic preview, Epic closure, and rearm-remediation
 
@@ -164,8 +177,8 @@ architect, gate, fallback owner, or source of product authority in 0.9.0.
 
 ## Upgrade, verification, and rollback
 
-Use [`migration-0.9.0.md`](migration-0.9.0.md) for the tested Claude Code and Codex
-command contracts: switching an existing installation away from a former private
+Use [`migration-0.9.0.md`](migration-0.9.0.md) for the Claude Code and Codex command
+contracts: switching an existing installation away from a former private
 marketplace, marketplace/package upgrade, reload/new-task boundary, shared
 `foundry:configure`, read-only `foundry:doctor`, and verification that a Linear-bound
 repository resolves `tracker=linear` from its `.foundry/tracker.json` marker. That same
