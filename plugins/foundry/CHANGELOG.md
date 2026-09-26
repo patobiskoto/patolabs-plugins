@@ -38,7 +38,7 @@
 - A typed `acceptance-override` receipt for a human AC override merge on Linear, with
   recovery replay so an interrupted override merge can resume from its exact receipt
   instead of re-deciding the override (PAT-49).
-- Public-repository main-branch protection, attested against the actual GitHub branch
+- Public-repository main-branch protection, read back from the actual GitHub branch
   protection rules rather than assumed (PAT-12).
 - A dedicated, audit-bound `rearm-remediation` transition for a just-exhausted bounded
   correction window that is not yet halted. It CAS-binds the issue, recorded role,

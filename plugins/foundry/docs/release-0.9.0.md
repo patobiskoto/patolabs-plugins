@@ -3,10 +3,12 @@
 Release decision: **publish the shared Claude Code/Codex package, including the Linear
 tracker adapter, its versioned ADR Documents, the completed historical ADR import, and
 the repository's own cutover to Linear, with production disposition `keep`.** Foundry
-0.9.0 keeps every 0.8.x model mapping, reasoning effort, context policy, route, default,
-routing gate, fallback and escalation signal unchanged. It adds tracker capabilities
-(Linear ADR Documents, the repository tracker marker, the typed AC-override receipt)
-described below; the CI gate semantics of FOUNDRY-ADR-0002 are unchanged.
+0.9.0 keeps every 0.8.x model mapping, reasoning effort, route, and routing gate
+unchanged; the CI gate semantics of FOUNDRY-ADR-0002 are unchanged too. It adds the
+Linear tracker adapter (base adapter plus versioned ADR Documents, the repository
+tracker marker, and the typed AC-override receipt), an opt-in DevHubTracker v1, the
+Dev Hub command worker, the Epic execution preview, the Epic-closure contract, and
+`rearm-remediation` — described below.
 
 The two package manifests report exactly `0.9.0`. The Claude and Codex catalogues keep
 their supported, versionless source-pointer schemas and both resolve to the same
@@ -21,17 +23,20 @@ against a source that already reported `0.8.1` and therefore did not refresh the
 installed code. 0.9.0 is a version bump specifically so that a fresh
 `/plugin update foundry@patolabs` / `codex plugin remove foundry@patolabs` +
 `codex plugin add foundry@patolabs` cycle actually replaces the installed package on
-both hosts, whichever marketplace it currently points at. See
-[`migration-0.9.0.md`](migration-0.9.0.md) for the exact dual-host commands, including
-the one-time switch away from a former private marketplace if an installation still
-points at one.
+both hosts — provided the marketplace source is already
+`patobiskoto/patolabs-plugins`. An installation still pointed at a former private
+marketplace does **not** receive 0.9.0 from this cycle: updating against a source that
+never published 0.9.0 cannot produce it. See [`migration-0.9.0.md`](migration-0.9.0.md)
+for the exact dual-host commands, including the one-time switch away from a former
+private marketplace that such an installation needs first.
 
-## Linear tracker adapter: versioned ADR Documents and completed historical import
+## Linear tracker adapter: base adapter, versioned ADR Documents, and completed historical import
 
-Building on the fail-closed Linear tracker adapter (issue reads, creation, and
-non-replacing relations/comments; existing issue field/state/parent/body replacement
-stays typed-unavailable because Linear exposes no atomic anti-overwrite precondition),
-0.9.0 completes the ADR half of that adapter:
+0.9.0 introduces the fail-closed Linear tracker adapter itself — issue reads, creation,
+and non-replacing relations/comments; existing issue field/state/parent/body
+replacement stays typed-unavailable because Linear exposes no atomic anti-overwrite
+precondition — and, in the same release, completes its ADR half. None of this existed
+in 0.8.x:
 
 - Linear stores ADRs as **versioned, witness-bound project Documents** (PAT-22). Each
   surviving slot carries its own version evidence, and Markdown serialization handling
@@ -48,8 +53,9 @@ stays typed-unavailable because Linear exposes no atomic anti-overwrite precondi
 - `query issue` reports an explicit `conflict` status instead of presenting a
   conflicted embedded ADR index as empty (PAT-41).
 
-**Atomic Epic closure remains unavailable** in the Linear adapter, unchanged from
-0.8.x's DevHub/YouTrack posture: no adapter emulates it with a racy read/write.
+**Atomic Epic closure is unavailable** in the new Linear adapter, matching YouTrack's
+existing posture; the new opt-in DevHubTracker v1 (below) reports the same capability
+unavailable too. No adapter emulates it with a racy read/write.
 
 ## This repository is cut over to Linear project PAT
 
@@ -70,16 +76,27 @@ See [`docs/linear-tracker.md`](linear-tracker.md) for the complete adapter contr
 ## Human AC override: typed receipt and recovery replay
 
 A human `--allow-incomplete-ac --ac-override-reason=<public-audit-code>` merge on Linear
-now produces a typed `acceptance-override` receipt. If the override merge is interrupted
-after the receipt is written but before completion is observed, recovery replays from
-that exact receipt instead of re-deciding the override (PAT-49). This does not weaken the
-override path's audit requirement; it makes the interrupted case resumable without a
-second human decision.
+now produces a typed `acceptance-override` receipt (PAT-49). Recovery is **not**
+automatic; in both cases below, the operator re-runs the exact same
+`issue merge <ID> <PR> --allow-incomplete-ac --ac-override-reason=<code>` command:
+
+- If the receipt was already written and the merge was interrupted before completion
+  was observed, replaying that same command is a no-op: Foundry reads the existing
+  receipt instead of asking for a second human override decision.
+- For an issue merged under override before this receipt existed at all (the PAT-10
+  shape: review state, the historical free-text audit note, then done, no receipt),
+  re-running the same command backfills exactly the missing override receipt bound to
+  the already-merged PR/head/base/generation, once the done receipt and current native
+  state match; it performs no new merge.
+
+This does not weaken the override path's audit requirement or turn recovery into a
+second, independent human decision; it makes both the interrupted and the backfill case
+resumable from one deterministic, idempotent command instead of an ad hoc repair.
 
 ## Lifecycle and remediation stability (PAT-21, PAT-24, PAT-26–PAT-32)
 
 A round of fixes stabilizes the Linear-tracked bounded-remediation and lifecycle paths
-carried over from the 0.8.x Linear cutover work: blocking premature GitHub closure of a
+this same release introduces above: blocking premature GitHub closure of a
 Linear-tracked issue, tolerating a Backlog-to-In-Progress transition after a PR is
 already attested, making remediation usable after a review on an already-consumed
 technical route (including controlled resumption of an exhausted diagnostic window and
@@ -88,11 +105,36 @@ correction on a consumed technical route, and proving the provider handoff stays
 idempotent with valid capability after a crash. None of these change the escalation
 ceiling, tier floors, or the human-stop contract of FOUNDRY-ADR-0006.
 
+## Also in 0.9.0: Dev Hub command worker, Epic preview, Epic closure, and rearm-remediation
+
+Beyond the Linear work above, this release also adds:
+
+- An outbound **Dev Hub command worker** with exact claim/heartbeat bindings, monotonic
+  local receipts, and a concrete Claude execution path whose model floor and dollar
+  ceiling are fixed before the effect; a host-shared SQLite ledger reserves observed
+  budget and concurrency atomically across worker processes before launch.
+- A read-only, deterministic **Epic execution preview** over Dev Hub's complete
+  versioned subgraph: classifications, human gates, dependency waves and a stable digest,
+  with no branch, agent, command, budget, tracker-mutation, or merge authority.
+- A provider-neutral, non-code **Epic closure** command and Tracker contract, with a
+  receipt binding the exact project/parent version/AC/child set; DevHub Tracker v1 and
+  YouTrack both report this capability unavailable rather than emulate it.
+- `rearm-remediation`, a dedicated audit-bound transition for a just-exhausted bounded
+  correction window, preserving counters and tier floors and requiring a controlled
+  human reason.
+- An opt-in **DevHubTracker v1** provider (normalized project/issue/link/comment/ADR
+  operations, bounded HMAC receipts, versioned idempotent writes); YouTrack remains the
+  default and no routing, gate, review, or merge authority moves to Dev Hub.
+
+See `CHANGELOG.md`'s 0.9.0 section for the complete list of changes in each area.
+
 ## Public main-branch protection (PAT-12)
 
-The public repository's `main` branch protection is attested against the actual GitHub
-branch protection rules, closing the gap where the repository being public was assumed
-protected rather than verified. This complements, and does not replace, the `PreToolUse`
+The public repository's `main` branch protection is **read back** from the actual
+GitHub branch protection rules — an operational snapshot, not a GitHub-signed
+attestation (see [`docs/public-repository-security.md`](public-repository-security.md))
+— closing the gap where the repository being public was assumed protected rather than
+verified. This complements, and does not replace, the `PreToolUse`
 Bash guard and pre-push hook that already deny a direct push to the default branch
 (AGENTS.md/CLAUDE.md#R1).
 
@@ -126,7 +168,9 @@ Use [`migration-0.9.0.md`](migration-0.9.0.md) for the tested Claude Code and Co
 command contracts: switching an existing installation away from a former private
 marketplace, marketplace/package upgrade, reload/new-task boundary, shared
 `foundry:configure`, read-only `foundry:doctor`, and verification that a Linear-bound
-repository resolves `tracker=linear` from its `.foundry/tracker.json` marker.
+repository resolves `tracker=linear` from its `.foundry/tracker.json` marker. That same
+guide also states plainly why there is **no rollback below 0.9.0** for this or any other
+Linear-bound repository, and what a downgrade implies for a repository that is not.
 
 ## Evidence index and limits
 

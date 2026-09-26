@@ -1,12 +1,16 @@
 # Migrating Foundry 0.8.x to 0.9.0
 
 Foundry 0.9.0 is one shared implementation distributed through two host packages. It
-completes the Linear ADR adapter (versioned ADR Documents, the completed historical ADR
-import, and this repository's own cutover to Linear project PAT), and adds a typed
-override receipt with recovery replay for a human AC override merge on Linear. It does
-**not** migrate tracker data, reset the registry, enable telemetry or local
-preprocessing, or change a model mapping, route, effort, context policy, default, gate,
-fallback, escalation rule, or capability.
+introduces the fail-closed Linear tracker adapter itself and, in the same release,
+completes its ADR half (versioned ADR Documents, the completed historical ADR import),
+cuts this repository over to Linear project PAT, and adds a typed override receipt with
+recovery replay for a human AC override merge on Linear — none of that existed in 0.8.x.
+It does **not** migrate tracker data, reset the registry, enable telemetry or local
+preprocessing, or change a model mapping, route, reasoning effort, context policy,
+default, gate, or fallback; CI gate semantics (FOUNDRY-ADR-0002) are unchanged. It does
+add new tracker and workflow capabilities — see
+[`release-0.9.0.md`](release-0.9.0.md) for the complete list — none of which removes or
+weakens an existing one.
 
 The two package manifests are the version authority and must both report `0.9.0`. The
 Claude and Codex catalogue schemas have no plugin-version field: they retain only their
@@ -18,11 +22,16 @@ valid source pointers to `./plugins/foundry`. Do not add a catalogue `version` k
 hosts. If your installation still points at a former private marketplace source, switch
 it once before the ordinary upgrade below.
 
+Removing a marketplace source uninstalls the plugins it provided, so this switch is not
+an update: it must end with a fresh `install`/`add`, not the "existing installation"
+upgrade commands below.
+
 Claude Code:
 
 ```text
 claude plugin marketplace remove patolabs
 claude plugin marketplace add patobiskoto/patolabs-plugins
+claude plugin install foundry@patolabs
 ```
 
 Codex:
@@ -30,10 +39,17 @@ Codex:
 ```sh
 codex plugin marketplace remove patolabs
 codex plugin marketplace add https://github.com/patobiskoto/patolabs-plugins.git
+codex plugin add foundry@patolabs
 ```
 
-Then continue with the upgrade commands below. An installation already pointed at
-`patobiskoto/patolabs-plugins` skips straight to the upgrade.
+The Codex command above spells the source as an explicit Git URL because it is
+replacing an entirely different marketplace source; the fresh-install command further
+below spells the same source as the bare `patobiskoto/patolabs-plugins` shorthand
+Codex resolves against GitHub by default. Both forms name the same repository.
+
+Then run `/foundry:configure` and `/foundry:doctor` (Claude Code) or `$foundry:configure`
+and `$foundry:doctor` (Codex) to confirm the fresh install. An installation already
+pointed at `patobiskoto/patolabs-plugins` skips straight to the ordinary upgrade below.
 
 ## Upgrade Claude Code
 
@@ -121,22 +137,37 @@ skill-driven check.
 ## Verify the Linear cutover after upgrading in this repository
 
 This repository carries a `.foundry/tracker.json` marker that binds it to Linear project
-`PAT` (PAT-10); that marker takes precedence over any host-global tracker default. To
-verify the cutover took effect after upgrading, run doctor from the checkout and confirm
-it resolves `tracker=linear` from the marker rather than a global default or an
-environment override:
+`PAT` (PAT-10); that marker takes precedence over any host-global tracker default. Verify
+the *installed* 0.9.0 package's cutover, not this checkout's own source tree — the
+checkout is not what either host actually loaded. Run doctor from this repository's root
+through the installed plugin:
+
+```text
+# Claude Code, from this repository root
+/foundry:doctor
+```
 
 ```sh
-python3 tooling/foundry_cli.py doctor
+# Codex, from this repository root
+$foundry:doctor
 ```
 
 A Linear-bound repository whose marker resolves correctly reports `tracker=linear` in
-that doctor output. If it instead reports `youtrack` or `devhub`, the marker at
-`.foundry/tracker.json` is missing, unreadable, or shadowed by an explicit
-`FOUNDRY_TRACKER` environment override in the current shell; clear the override and
-re-run doctor before treating any Linear query or write as authoritative. See
-[`docs/linear-tracker.md`](linear-tracker.md) for the complete marker and registry
-contract.
+that doctor output; the marker always wins over an explicit `FOUNDRY_TRACKER`
+environment override naming a different provider — `tracker_name_for_checkout` uses the
+repository binding whenever the marker file is present at all, so a present, valid
+marker is never silently shadowed. A **malformed, moved, or unreadable** marker is
+refused, not silently ignored: doctor's first check prints a red `Config` error instead
+of any tracker name, because `repository_tracker_binding` raises before ever falling
+back to a default (`tooling/foundry/registry.py`). Only a **missing** marker file (no
+`.foundry/tracker.json` at all) falls through to the host-global default, which is
+`youtrack` unless `FOUNDRY_TRACKER` says otherwise. So: if doctor reports
+`tracker=youtrack` or `tracker=devhub` for this repository, the marker file is missing
+outright; if doctor instead prints a red `Config` error, the marker is present but
+invalid. Either way, restore `.foundry/tracker.json` from version control before
+treating any Linear query or write as authoritative — never delete it and never set
+`FOUNDRY_TRACKER` to work around it. See [`docs/linear-tracker.md`](linear-tracker.md)
+for the complete marker and registry contract.
 
 ## Diagnose host overrides without exposing values
 
@@ -160,51 +191,51 @@ cannot force the model of the already-open main conversation. Reviewer remains a
 frontier/high, architect at least apex/high, and at most two tier increases are available
 per issue before human intervention.
 
-## Roll back both hosts to the exact 0.8.1 source
+## Rollback
 
-Rollback is a package-source operation, not a data migration. Use a trusted, detached
-checkout of the exact published 0.8.1 source commit or a later signed 0.8.1 release ref
-if one is published. Do not use a moving branch, edit an installed cache, or synthesize a
-catalogue version. Before changing either host, verify both manifests in that checkout
-report exactly `0.8.1` and preserve the checkout for audit:
+Rollback is a package-source downgrade, not a data migration, and it interacts with the
+Linear cutover very differently depending on whether the repository is Linear-bound.
 
-```sh
-git clone https://github.com/patobiskoto/patolabs-plugins.git /tmp/patolabs-plugins-0.8.1
-git -C /tmp/patolabs-plugins-0.8.1 checkout --detach <0.8.1-commit>
-python3 -c 'import json,pathlib; r=pathlib.Path("/tmp/patolabs-plugins-0.8.1/plugins/foundry"); assert {json.loads((r/p/"plugin.json").read_text())["version"] for p in (".claude-plugin",".codex-plugin")} == {"0.8.1"}'
-```
+### No rollback below 0.9.0 for a Linear-bound repository
 
-Claude Code has no version selector in its update command. Remove only the package and
-marketplace source, add the verified detached checkout as the marketplace, then install
-and start a new session:
+This repository — and any other repository carrying a `.foundry/tracker.json` marker
+bound to Linear — has **no rollback path below 0.9.0**. Every Foundry version before
+0.9.0 has no Linear adapter, no repository marker, and no acceptance-override receipt at
+all, so it cannot "read" any of them; concretely, pre-0.9.0 code never consults
+`.foundry/tracker.json` and instead resolves the host-global default tracker
+(`tooling/foundry/registry.py` around L422-428). That is exactly what happened here on
+2026-09-26: a Foundry command run from a `main` checkout without the marker resolved the
+host default and wrote seven issues into the archived YouTrack project (recorded as
+incident `pat10-youtrack-write-2026-09-26` under `incidents` in
+[`docs/linear-cutover-operations.json`](linear-cutover-operations.json)).
+[`docs/linear-tracker.md`](linear-tracker.md) records that, for this repository, the
+rollback window closed the moment the first post-cutover Linear lifecycle write and the
+PAT-23 ADR import happened: recovery is forward-only, and **removing the marker or
+re-enabling YouTrack while Linear is writable is not a rollback — it is forbidden
+dual-write.** Do not do either.
 
-```sh
-claude plugin uninstall foundry@patolabs
-claude plugin marketplace remove patolabs
-claude plugin marketplace add /tmp/patolabs-plugins-0.8.1
-claude plugin install foundry@patolabs
-claude plugin list --json
-```
+If a genuine defect in 0.9.0 code needs to be backed out, fix forward instead: the
+Linear cutover marker, versioned ADR Documents, and typed override receipts are
+read-compatible historical data regardless of which Foundry version is installed, but
+Foundry does not offer, and this repository cannot use, a supported downgrade path that
+runs an earlier codebase against it.
 
-Codex can use the same verified checkout. Replace only its package and marketplace
-snapshot, then start a new task:
+### Other repositories
 
-```sh
-codex plugin remove foundry@patolabs
-codex plugin marketplace remove patolabs
-codex plugin marketplace add /tmp/patolabs-plugins-0.8.1
-codex plugin add foundry@patolabs
-codex plugin list --marketplace patolabs --json
-```
-
-After either rollback, run the host's 0.8.1 `foundry:doctor` form and re-check the
-installed manifest. Shared config, token, registry, and telemetry remain in place. The
-Linear tracker marker, versioned ADR Documents, and `acceptance-override` receipts
-written under 0.9.0 are read-compatible historical data on 0.8.1; rolling back does not
-delete them, it only removes the 0.9.0 code that reads and extends them. To return to
-0.9.0, remove the detached marketplace, add/refresh the normal
-`patobiskoto/patolabs-plugins` source, and repeat the appropriate upgrade procedure
-above.
+A repository that never carried a `.foundry/tracker.json` marker (still on YouTrack,
+DevHub, or the host default) is not bound by the paragraph above, but this guide still
+cannot hand it a verified downgrade command: there is no published, tagged 0.8.1 commit
+or signed release ref in this public repository to pin (0.8.1 predates this mirror's
+tagging discipline), and a bare manifest-version check cannot by itself establish that
+an arbitrary commit whose manifests happen to say `0.8.1` is a trustworthy published
+0.8.1 source. In practice, downgrading such a repository means locating your own
+trusted pre-0.9.0 checkout (for example a local clone made before this upgrade),
+verifying both its manifests report the version you actually intend to run, and
+repeating the marketplace remove/add and install/reinstall steps above against that
+checkout instead of `patobiskoto/patolabs-plugins`. Shared config, token, registry, and
+telemetry remain in place either way. To return to 0.9.0 afterward, remove that
+detached marketplace source, add/refresh the normal `patobiskoto/patolabs-plugins`
+source, and repeat the appropriate upgrade procedure above.
 
 ## Post-upgrade behavior to expect
 
@@ -214,13 +245,17 @@ above.
   or silently-empty one.
 - `query issue` reports an explicit `conflict` status instead of an empty index when the
   embedded ADR index disagrees with itself.
-- A human AC override merge on Linear produces a typed `acceptance-override` receipt;
-  an interruption after the receipt is written replays from that receipt instead of
-  re-deciding the override.
+- A human AC override merge on Linear produces a typed `acceptance-override` receipt.
+  Recovery is not automatic: re-running the exact same override command replays from an
+  existing receipt (interrupted case) or backfills a missing one for a pre-existing
+  override merge (PAT-10 shape) instead of asking for a second human decision.
 - This repository's `.foundry/tracker.json` marker resolves `tracker=linear`; verify with
   `foundry:doctor` after upgrading.
-- Atomic Epic closure remains unavailable in the Linear adapter, unchanged from 0.8.x.
-- Main-profile guidance, mappings, reviewer/architect floors, ordinary fallback,
-  escalation ceiling, gates, and capabilities are unchanged.
+- Atomic Epic closure is unavailable in the new Linear adapter, matching YouTrack's
+  existing posture; no adapter emulates it with a racy read/write.
+- Model mappings, reasoning efforts, routes, reviewer/architect floors, ordinary
+  fallback, escalation ceiling, and CI gate semantics are unchanged. 0.9.0 adds new
+  tracker and workflow capabilities (see [`release-0.9.0.md`](release-0.9.0.md)); it does
+  not remove or weaken any existing one.
 - Local preprocessing remains disabled and non-privileged. No 0.9.0 result promotes a
   local model or runtime. See [`release-0.9.0.md`](release-0.9.0.md).

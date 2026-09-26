@@ -77,13 +77,14 @@ codex plugin add foundry@patolabs
 After either installation, run `/foundry:configure` and `/foundry:doctor` in Claude Code,
 or `$foundry:configure` and `$foundry:doctor` in Codex. Non-secret settings are shared in
 `~/.config/foundry/config.env`; credentials belong in the macOS keychain (or a secret
-manager-backed `YOUTRACK_TOKEN` / `LINEAR_API_TOKEN` on other systems), never in a
+manager-backed `YOUTRACK_TOKEN` / `LINEAR_API_TOKEN` / `DEVHUB_TRACKER_TOKEN` /
+`DEVHUB_TRACKER_PROOF_SECRET` on other systems), never in a
 repository or chat. Both runtimes also accept explicit provider and `FOUNDRY_*`
 environment variables. Linear's exact capability and binding contract is documented in
 [`docs/linear-tracker.md`](docs/linear-tracker.md).
 
 The current dual-host upgrade, trusted configuration, override diagnosis, verification,
-and exact-ref rollback are in
+and rollback constraints are in
 [`docs/migration-0.9.0.md`](docs/migration-0.9.0.md). The former
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
@@ -104,7 +105,7 @@ budget and concurrency before effect. Its authority snapshot and operator entry 
 
 Reinstall/refresh from the merged marketplace snapshot; do not edit an installed cache.
 The cachebuster commands below are only for a local source-development marketplace and
-are not part of a published 0.8.0 upgrade or rollback.
+are not part of a published 0.9.0 upgrade or rollback.
 
 ```text
 # Claude Code
