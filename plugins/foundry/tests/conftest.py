@@ -11,6 +11,22 @@ TOOLING = Path(__file__).resolve().parents[1] / "tooling"
 sys.path.insert(0, str(TOOLING))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_versioned_repository_marker(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, tmp_path: Path,
+):
+    """Keep unit tests outside this checkout's executable tracker marker.
+
+    Repository-binding tests explicitly ``chdir`` into a temporary Git checkout.
+    Explicitly opt-in integration tests retain their own configured environment.
+    The ordinary unit suite must never inherit the versioned
+    ``.foundry/tracker.json`` of the checkout that happens to run it.
+    """
+    if request.node.get_closest_marker("integration") is not None:
+        return
+    monkeypatch.chdir(tmp_path)
+
+
 # FOUNDRY-127: benchmark-campaign and POC tests (FOUNDRY-ADR-0019) are tagged with the
 # opt-in `benchmark_campaign` marker (see pytest.ini) purely from this conftest, never
 # by editing the test files themselves. Several of these files are hashed byte-for-byte

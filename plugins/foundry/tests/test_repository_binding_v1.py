@@ -94,6 +94,26 @@ def test_factory_and_doctor_refuse_existing_state_before_global_devhub(
             call()
 
 
+def test_resolve_refuses_ambiguous_canonical_bindings_without_effects(isolated):
+    repo = _repo(isolated, "acme", "same")
+    registry.register(
+        "youtrack", "same", "ONE", "0-1",
+        canonical_repo="github.com/acme/same",
+    )
+    registry.register(
+        "ghprojects", "same", "TWO", "PVT_2",
+        canonical_repo="github.com/acme/same", owner="acme", number="2",
+    )
+    registry_path = isolated / "state" / "registry.json"
+    before = registry_path.read_bytes()
+
+    with pytest.raises(SystemExit, match="bindings actifs ambigus"):
+        registry.resolve("youtrack", "same", cwd=str(repo))
+
+    assert registry_path.read_bytes() == before
+    assert not (repo / ".foundry/tracker.json").exists()
+
+
 def test_legacy_selection_beats_global_devhub_in_factory_and_doctor(isolated, monkeypatch):
     repo = _repo(isolated, "acme", "same")
     monkeypatch.chdir(repo)

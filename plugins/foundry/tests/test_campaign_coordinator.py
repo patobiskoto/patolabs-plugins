@@ -241,11 +241,19 @@ class FakePipeline:
 
 
 class FakeExecutor:
-    def __init__(self, *, cost_ceiling=80, costs=None, outcomes=None, delay=0.0):
+    def __init__(
+        self, *, cost_ceiling=80, costs=None, outcomes=None, delay=0.0,
+        synchronize_issues=(),
+    ):
         self.cost_ceiling = cost_ceiling
         self.costs = costs or {}
         self.outcomes = outcomes or {}
         self.delay = delay
+        self.synchronize_issues = frozenset(synchronize_issues)
+        self.rendezvous = (
+            threading.Barrier(len(self.synchronize_issues), timeout=2)
+            if self.synchronize_issues else None
+        )
         self.calls = []
         self.resolve_calls = []
         self.proposals = {}
@@ -279,6 +287,12 @@ class FakeExecutor:
             self.active += 1
             self.peak = max(self.peak, self.active)
         try:
+            if envelope.issue_id in self.synchronize_issues:
+                assert self.rendezvous is not None
+                try:
+                    self.rendezvous.wait()
+                except threading.BrokenBarrierError:
+                    pytest.fail("expected synchronized issues to execute concurrently")
             if self.delay:
                 time.sleep(self.delay)
             self.calls.append((envelope.issue_id, envelope.attempt))
@@ -315,7 +329,8 @@ def coordinator(tmp_path, spec, pipeline=None, executor=None):
 def test_dag_waves_run_with_real_bounded_concurrency_and_normal_gates(tmp_path):
     spec = campaign()
     engine, store, pipeline, executor = coordinator(
-        tmp_path, spec, executor=FakeExecutor(delay=0.04),
+        tmp_path, spec,
+        executor=FakeExecutor(synchronize_issues={"APP-2", "APP-3"}),
     )
 
     outcome = engine.run(spec)
