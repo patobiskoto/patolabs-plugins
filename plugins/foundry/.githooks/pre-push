@@ -2,13 +2,5 @@
 # Foundry guard: no direct pushes to the default branch — work lands via PR
 # (/foundry:open-pr → /foundry:merge-pr). Enable with:
 #   git config core.hooksPath .githooks
-while read -r _local_ref _local_sha remote_ref _remote_sha; do
-  case "$remote_ref" in
-    refs/heads/main|refs/heads/master)
-      echo "⛔ push direct vers ${remote_ref#refs/heads/} refusé — passe par une PR" >&2
-      echo "   (/foundry:open-pr puis /foundry:merge-pr)." >&2
-      exit 1
-      ;;
-  esac
-done
-exit 0
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
+exec python3 "$hook_dir/../hooks/privacy_pre_push.py" "$@"
