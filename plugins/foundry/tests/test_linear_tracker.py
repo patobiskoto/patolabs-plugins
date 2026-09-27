@@ -176,7 +176,19 @@ def linear_markdown_body_readback(body):
             if len(thematic) < 3 or set(thematic) != {"-"}:
                 source_line = f"* {source_line[2:]}"
         rendered.append(source_line)
-    return "".join(rendered)
+    rendered_body = "".join(rendered)
+    if hashlib.sha256(body.encode()).hexdigest() == linear_module._PAT_72_SOURCE_SHA256:
+        assert body.count(linear_module._PAT_72_BLANK_LINE_FRAGMENT) == 1
+        assert rendered_body.count(linear_module._PAT_72_BLANK_LINE_FRAGMENT) == 1
+        rendered_body = rendered_body.replace(
+            linear_module._PAT_72_BLANK_LINE_FRAGMENT,
+            linear_module._PAT_72_RENDERED_FRAGMENT,
+            1,
+        )
+        assert hashlib.sha256(rendered_body.encode()).hexdigest() == (
+            linear_module._PAT_72_READBACK_SHA256
+        )
+    return rendered_body
 
 
 class LinearWire:
@@ -5607,6 +5619,233 @@ def test_linear_adr_pat71_observed_multiline_readback_recovers_missing_witness(
     ]
     assert len(document_creates) == 1
     assert document_creates[0]["input"]["id"] == witness_id
+    assert all("documentUpdate" not in query for query, _ in wire.calls)
+
+
+def test_linear_pat72_digest_pinned_blank_line_readback_recovers_only_witness(
+    tracker, monkeypatch
+):
+    """One observed blank-line collapse is not a general whitespace rule."""
+    instance, wire = tracker
+    source = (
+        "Before the qualified paragraph.\n\n"
+        "Other whitespace stays exact.\n\n\nStill other whitespace.\n\n"
+        "```markdown\n"
+        "fenced blank lines stay exact\n\n\n"
+        "and remain code\n"
+        "```\n\n"
+        "append-only à identifiant déterministe, il est préféré à un remplacement en place.\n"
+        "\n"
+        "\n"
+        "**Portée des propriétés.** After the qualified paragraph.\n"
+    )
+    source_digest = hashlib.sha256(source.encode()).hexdigest()
+    fragment = linear_module._PAT_72_BLANK_LINE_FRAGMENT
+    rendered_fragment = linear_module._PAT_72_RENDERED_FRAGMENT
+    rendered = source.replace(fragment, rendered_fragment, 1)
+    rendered_digest = hashlib.sha256(rendered.encode()).hexdigest()
+    monkeypatch.setattr(linear_module, "_PAT_72_SOURCE_SHA256", source_digest)
+    monkeypatch.setattr(linear_module, "_PAT_72_READBACK_SHA256", rendered_digest)
+
+    assert linear_module._linear_markdown_readback_body(source) == rendered
+    assert "Other whitespace stays exact.\n\n\nStill other whitespace." in rendered
+    assert "fenced blank lines stay exact\n\n\nand remain code" in rendered
+    linear_module._preflight_adr_body_readback(source)
+    # A neighbouring whitespace sequence does not qualify merely because it looks
+    # similar to Linear's one observed collapse.
+    assert linear_module._linear_markdown_readback_body(
+        source.replace("Before", "Changed", 1)
+    ) == source.replace("Before", "Changed", 1)
+
+    metadata = {
+        "schema": linear_module._ADR_SCHEMA,
+        "project_id": PROJECT.id,
+        "team_id": PROJECT.extra["team_id"],
+        "id": "LIN-ADR-0001",
+        "title": "PAT-72 qualified source",
+        "status": "proposed",
+        "sequence": 0,
+        "previous_id": None,
+        "previous_sha256": None,
+        "body_sha256": source_digest,
+        "origin": {"kind": "native"},
+        "relations": {"supersedes": [], "superseded_by": None, "issues": []},
+    }
+    document_id = linear_module._adr_document_id(PROJECT.id, metadata["id"], 0)
+    wire.documents[document_id] = {
+        "id": document_id,
+        "title": linear_module._adr_document_title(metadata),
+        "content": linear_module._linear_adr_readback_content(
+            linear_module._adr_document_content(metadata, source)
+        ),
+        "project": {"id": PROJECT.id},
+        "archivedAt": None,
+    }
+    before = copy.deepcopy(wire.documents[document_id])
+    wire.calls.clear()
+
+    recovered = instance.create_adr(PROJECT, metadata["title"], source)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, metadata["id"], 0)
+    assert recovered.ref == document_id
+    assert wire.documents[document_id] == before
+    assert set(wire.documents) == {document_id, witness_id}
+    witness = linear_module._parse_adr_witness(
+        wire.documents[witness_id], instance._binding(PROJECT)
+    )
+    assert base64.b64decode(witness["source_body"]).decode() == source
+    document_creates = [
+        variables["input"]["id"]
+        for query, variables in wire.calls
+        if "FoundryLinearAdrDocumentCreate" in query
+    ]
+    assert document_creates == [witness_id]
+
+
+def test_linear_pat72_recovery_refuses_corruption_and_retries_interrupted_witness(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    source = (
+        "append-only à identifiant déterministe, il est préféré à un remplacement en place.\n"
+        "\n"
+        "\n"
+        "**Portée des propriétés.**\n"
+    )
+    rendered = source.replace(
+        linear_module._PAT_72_BLANK_LINE_FRAGMENT,
+        linear_module._PAT_72_RENDERED_FRAGMENT,
+        1,
+    )
+    monkeypatch.setattr(
+        linear_module, "_PAT_72_SOURCE_SHA256", hashlib.sha256(source.encode()).hexdigest()
+    )
+    monkeypatch.setattr(
+        linear_module, "_PAT_72_READBACK_SHA256", hashlib.sha256(rendered.encode()).hexdigest()
+    )
+    metadata = {
+        "schema": linear_module._ADR_SCHEMA,
+        "project_id": PROJECT.id,
+        "team_id": PROJECT.extra["team_id"],
+        "id": "LIN-ADR-0001",
+        "title": "PAT-72 interrupted witness",
+        "status": "proposed",
+        "sequence": 0,
+        "previous_id": None,
+        "previous_sha256": None,
+        "body_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "origin": {"kind": "native"},
+        "relations": {"supersedes": [], "superseded_by": None, "issues": []},
+    }
+    document_id = linear_module._adr_document_id(PROJECT.id, metadata["id"], 0)
+    raw = {
+        "id": document_id,
+        "title": linear_module._adr_document_title(metadata),
+        "content": linear_module._linear_adr_readback_content(
+            linear_module._adr_document_content(metadata, source)
+        ),
+        "project": {"id": PROJECT.id},
+        "archivedAt": None,
+    }
+    wire.documents[document_id] = copy.deepcopy(raw)
+    wire.documents[document_id]["content"] = wire.documents[document_id][
+        "content"
+    ].replace("**Portée", "**Corrompue", 1)
+    persisted = copy.deepcopy(wire.documents)
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.create_adr(PROJECT, metadata["title"], source)
+    assert wire.documents == persisted
+
+    wire.documents[document_id] = raw
+    original = wire.__call__
+    interrupted = False
+
+    def interrupt_witness(document, variables):
+        nonlocal interrupted
+        response = original(document, variables)
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith("[Foundry ADR witness]")
+            and not interrupted
+        ):
+            interrupted = True
+            raise OSError("connection dropped after witness create")
+        return response
+
+    instance._transport = interrupt_witness
+    recovered = instance.create_adr(PROJECT, metadata["title"], source)
+    assert recovered.ref == document_id
+    assert set(wire.documents) == {
+        document_id,
+        linear_module._adr_witness_id(PROJECT.id, metadata["id"], 0),
+    }
+
+
+def test_linear_pat72_interrupted_edit_replays_only_sequence_one_witness(
+    tracker, monkeypatch
+):
+    """A dropped v1 witness resumes from the complete v0 predecessor only."""
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "PAT-72 edit replay", "original body")
+    source = (
+        "append-only à identifiant déterministe, il est préféré à un remplacement en place.\n"
+        "\n"
+        "\n"
+        "**Portée des propriétés.**\n"
+    )
+    rendered = source.replace(
+        linear_module._PAT_72_BLANK_LINE_FRAGMENT,
+        linear_module._PAT_72_RENDERED_FRAGMENT,
+        1,
+    )
+    monkeypatch.setattr(
+        linear_module, "_PAT_72_SOURCE_SHA256", hashlib.sha256(source.encode()).hexdigest()
+    )
+    monkeypatch.setattr(
+        linear_module, "_PAT_72_READBACK_SHA256", hashlib.sha256(rendered.encode()).hexdigest()
+    )
+    assert linear_module._linear_markdown_readback_body(source) == rendered
+    updated = created.body.replace("original body", source)
+    original = wire.__call__
+
+    def interrupt_before_witness(document, variables):
+        if (
+            "FoundryLinearAdrDocumentCreate" in document
+            and variables["input"]["title"].startswith(
+                f"[Foundry ADR witness] {created.id} / v0001"
+            )
+        ):
+            raise OSError("witness create interrupted before provider write")
+        return original(document, variables)
+
+    instance._transport = interrupt_before_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.update_body(created, created.body, updated, project=PROJECT)
+    instance._transport = original
+
+    version_id = linear_module._adr_document_id(PROJECT.id, created.id, 1)
+    version_before_replay = copy.deepcopy(wire.documents[version_id])
+    assert len(wire.documents) == 3
+    wire.calls.clear()
+
+    assert instance.update_body(created, created.body, updated, project=PROJECT)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 1)
+    assert wire.documents[version_id] == version_before_replay
+    assert set(wire.documents) == {
+        created.ref,
+        linear_module._adr_witness_id(PROJECT.id, created.id, 0),
+        version_id,
+        witness_id,
+    }
+    witness = linear_module._parse_adr_witness(
+        wire.documents[witness_id], instance._binding(PROJECT)
+    )
+    assert base64.b64decode(witness["source_body"]).decode() == source
+    document_creates = [
+        variables["input"]["id"]
+        for query, variables in wire.calls
+        if "FoundryLinearAdrDocumentCreate" in query
+    ]
+    assert document_creates == [witness_id]
     assert all("documentUpdate" not in query for query, _ in wire.calls)
 
 
