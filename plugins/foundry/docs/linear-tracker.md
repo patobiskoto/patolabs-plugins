@@ -7,6 +7,12 @@ never identity evidence for Linear. It never discovers a team, project, state, l
 milestone, or issue from display text. The GraphQL endpoint is fixed to
 `https://api.linear.app/graphql`; there is no YouTrack fallback.
 
+For Patolabs' operational convention (one shared team may contain several product
+Projects, while each checkout remains bound to one of them), see
+[Organisation Linear par produit](linear-product-organization.md). That convention is
+separate from the provider contract: the stable binding coordinates below, rather than a
+Project name, team name or prefix, enforce the selected product boundary.
+
 ## Required binding
 
 Store the credential interactively so it never appears in argv, chat, the registry, or
