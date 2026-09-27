@@ -82,8 +82,10 @@ properties; an observed unchanged target keeps the original error, and any other
 divergence is a conflict. A partially completed multi-field call therefore leaves only
 independently observed effects. A later explicit invocation freshly observes them and
 skips targets already applied; there is no automatic rewrite of an ambiguous effect and
-no durable field-write intent across invocations. Issue-only `update_body` retains its
-single targeted read/write/readback. Unrelated fields are never sent in a Project-field
+no durable field-write intent across invocations. Issue-only `update_body` also rereads after an ambiguous PATCH response, converges
+only on the exact requested body with other observable properties preserved, and
+skips an already applied body on explicit replay. The native update timestamp and
+body-derived checkbox counters are allowed to follow the PATCH. Unrelated fields are never sent in a Project-field
 mutation or an Issue-body PATCH.
 
 GitHub's qualified endpoints expose no expected-version/CAS parameter. These are
@@ -131,7 +133,12 @@ payloads, which is deliberately kept distinct from the Foundry issue key, Issue
 number, Project item ID, Project ID, field ID and select-option ID. `relates` uses the
 qualified symmetric `addRelatesTo` GraphQL mutation over the two distinct Issue node
 IDs, then reads the complete `relatesTo` connection from the Project item; a truncated,
-foreign, duplicate or malformed relation fails closed. `add_comment` first proves one
+foreign, duplicate or malformed relation fails closed. Both REST and GraphQL link
+mutations reread the two endpoints even after an ambiguous response, without a
+second mutation. The requested link must be observed and the endpoints' unrelated
+properties preserved; an unchanged result keeps the original transport error and
+a divergent result is an explicit conflict. An unavailable readback remains an
+unknown effect, without an automatic retry. `add_comment` first proves one
 unique, complete, non-ADR delivery item in the active Project as well as the exact bound
 REST Issue. A canonical-repository Issue outside that Project and a `foundry:adr`
 support are refused before the POST. The one non-authoritative free-text POST validates

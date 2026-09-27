@@ -1030,7 +1030,7 @@ def test_pat66_relates_uses_distinct_issue_node_ids_and_symmetric_readback(monke
     tracker = GitHubProjectsTracker()
     initial = _write_issue(links=[])
     observed = _write_issue(links=[Link("relates", "outward", "GHQUAL-2")])
-    reads = iter([initial, _write_issue(links=[]), initial, _write_issue(links=[]), observed])
+    reads = iter([initial, _write_issue(links=[]), initial, _write_issue(links=[]), observed, _write_issue(links=[])])
     calls = []
     monkeypatch.setattr(tracker, "_native_issue", lambda issue, *_: (1 if issue.endswith("1") else 2, 1001 if issue.endswith("1") else 1002))
     monkeypatch.setattr(tracker, "get_issue", lambda issue: next(reads))
@@ -1675,3 +1675,112 @@ def test_hydration_reads_complete_native_hierarchy_and_dependency_directions():
     assert issue.comments == [{"text": "commentaire é", "created": 1790510520000}]
     assert issue.created == 1790510400000
     assert issue.updated == 1790510460000
+
+
+class _BodyRelationTransport:
+    """Real adapter transport boundaries, with an explicitly injected lost reply."""
+
+    def __init__(self, operation, outcome):
+        self.operation, self.outcome = operation, outcome
+        self.body = "UTF-8 é"
+        self.priority = "P1"
+        self.related = False
+        self.external_link = False
+        self.writes = 0
+        self.events = []
+
+    def _project_payload(self):
+        page = _page("item-1", 1, None, False)
+        nodes = page["data"]["user"]["projectV2"]["items"]["nodes"]
+        other = _page("item-2", 2, None, False)["data"]["user"]["projectV2"]["items"]["nodes"][0]
+        nodes.append(other)
+        priority = next(v for v in nodes[0]["fieldValues"]["nodes"] if v["field"]["id"] == "priority")
+        priority.update(name=self.priority, optionId=f"priority-{self.priority.lower()}")
+        if self.related and self.operation == "graphql-link":
+            for source, target in ((nodes[0], nodes[1]), (nodes[1], nodes[0])):
+                content = target["content"]
+                source["content"]["relatesTo"]["nodes"] = [{
+                    "id": content["id"], "number": content["number"],
+                    "repository": content["repository"],
+                }]
+        return page
+
+    def __call__(self, command, **kwargs):
+        graphql = command[2] == "graphql"
+        query = next((v for v in command if v.startswith("query=")), "")
+        mutation = (graphql and "query=mutation" in query) or (
+            not graphql and command[3] != "GET"
+        )
+        if mutation:
+            self.writes += 1
+            self.events.append("write")
+            if self.outcome in {"applied", "unrelated", "unrelated_links", "read_unavailable"}:
+                if self.operation == "body":
+                    self.body = next(v.removeprefix("body=") for v in command if v.startswith("body="))
+                else:
+                    self.related = True
+            if self.outcome == "divergent":
+                if self.operation == "body":
+                    self.body = "external body"
+                else:
+                    self.priority = "P2"
+            if self.outcome == "unrelated":
+                self.priority = "P2"
+            if self.outcome == "unrelated_links":
+                self.external_link = True
+            return subprocess.CompletedProcess(command, 1, "", "synthetic lost response")
+        self.events.append("read")
+        if self.writes and self.outcome == "read_unavailable":
+            return subprocess.CompletedProcess(command, 1, "", "synthetic read unavailable")
+        if graphql:
+            payload = self._project_payload()
+        else:
+            path = command[-1]
+            if path.endswith("/parent"):
+                return subprocess.CompletedProcess(
+                    command, 1,
+                    json.dumps({"message": "No parent issue found", "status": "404"}),
+                    "gh: No parent issue found (HTTP 404)",
+                )
+            number = 2 if "/issues/2" in path else 1
+            if path.endswith(f"/issues/{number}"):
+                payload = _rest_issue(number)
+                if number == 1:
+                    payload["body"] = self.body
+            elif number == 1 and "/dependencies/blocking" in path and self.external_link:
+                payload = [_rest_issue(3)]
+            elif "/dependencies/" in path and self.related and self.operation == "rest-link":
+                reverse = number == 2 and "/blocking" in path
+                forward = number == 1 and "/blocked_by" in path
+                payload = [_rest_issue(1 if reverse else 2)] if reverse or forward else []
+            else:
+                payload = []
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+
+@pytest.mark.parametrize("operation", ["body", "rest-link", "graphql-link"])
+@pytest.mark.parametrize("outcome", ["applied", "unchanged", "divergent", "unrelated", "unrelated_links", "read_unavailable"])
+def test_pat66_body_and_links_observe_ambiguous_write_once(operation, outcome):
+    transport = _BodyRelationTransport(operation, outcome)
+    tracker = GitHubProjectsTracker(runner=transport)
+    initial = tracker.get_issue("GHQUAL-1")
+
+    def call():
+        if operation == "body":
+            return tracker.update_body(initial, initial.body, "desired é", project=PROJECT)
+        return tracker.link(
+            "GHQUAL-1", "depends-on" if operation == "rest-link" else "relates",
+            "GHQUAL-2", project=PROJECT,
+        )
+
+    if outcome == "applied":
+        call()
+        call()  # An explicit completed replay observes the target, never writes.
+    elif outcome in {"unchanged", "read_unavailable"}:
+        with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+            call()
+    else:
+        with pytest.raises(TrackerConflictError, match="divergent après écriture"):
+            call()
+    assert transport.writes == 1
+    assert "read" in transport.events[transport.events.index("write") + 1:]

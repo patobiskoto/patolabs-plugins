@@ -1593,14 +1593,26 @@ class GitHubProjectsTracker(Tracker):
         binding = self._authoritative_binding(project or self._project())
         number = self._number(resource.id, binding)
         current = self.get_issue(resource.id)
-        if current.body != expected_body:
-            raise TrackerConflictError("corps GitHub modifié avant écriture bornée")
         if current.body == updated_body:
             return False
-        self._rest_write("PATCH", f"repos/{binding.repo}/issues/{number}", {"body": updated_body}, "issue.body_write")
-        if self.get_issue(resource.id).body != updated_body:
-            raise TrackerConflictError("corps GitHub divergent après écriture ; aucune seconde tentative")
-        return True
+        if current.body != expected_body:
+            raise TrackerConflictError("corps GitHub modifié avant écriture bornée")
+        write_error: GitHubProjectsTrackerError | None = None
+        try:
+            self._rest_write("PATCH", f"repos/{binding.repo}/issues/{number}", {"body": updated_body}, "issue.body_write")
+        except GitHubProjectsTrackerError as exc:
+            write_error = exc
+        readback = self.get_issue(resource.id)
+        # The Issue timestamp and checkbox counters derive from the body PATCH;
+        # every other observable property must remain at its predecessor value.
+        ignored = {"body", "updated", "ac_done", "ac_total"}
+        before_other = {k: v for k, v in current.to_dict().items() if k not in ignored}
+        after_other = {k: v for k, v in readback.to_dict().items() if k not in ignored}
+        if readback.body == updated_body and after_other == before_other:
+            return True
+        if write_error is not None and readback.to_dict() == current.to_dict():
+            raise write_error
+        raise TrackerConflictError("corps GitHub divergent après écriture ; aucune seconde tentative") from write_error
 
     def set_state(self, issue_id, state, context=None, project=None): raise TrackerCapabilityUnavailableError(self.name, "set_state")
     @staticmethod
@@ -1632,21 +1644,53 @@ class GitHubProjectsTracker(Tracker):
         elif link_type == "relates":
             _, src_node = self._item_coordinate(src_id, binding)
             _, dst_node = self._item_coordinate(dst_id, binding)
-            query = """mutation($issue:ID!,$related:ID!){addRelatesTo(input:{issueId:$issue,relatedIssueId:$related}){issue{id} relatedIssue{id}}}"""
-            data = self._graphql_mutation(query, {"issue": src_node, "related": dst_node}, "issue.relates_write")
-            result = data.get("addRelatesTo")
-            if (not isinstance(result, dict) or not isinstance(result.get("issue"), dict)
-                    or not isinstance(result.get("relatedIssue"), dict)
-                    or result["issue"].get("id") != src_node
-                    or result["relatedIssue"].get("id") != dst_node):
-                raise GitHubProjectsTrackerError("issue.relates_write", "ambiguous_mutation_response")
             path = None
         else:
             raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
-        if path is not None:
-            self._rest_write("POST", path, payload, "issue.link_write")
-        if not self._has_link(self.get_issue(src_id), link_type, dst_id):
-            raise TrackerConflictError("lien GitHub divergent après écriture ; aucune seconde tentative")
+        write_error: GitHubProjectsTrackerError | None = None
+        try:
+            if path is not None:
+                self._rest_write("POST", path, payload, "issue.link_write")
+            else:
+                query = """mutation($issue:ID!,$related:ID!){addRelatesTo(input:{issueId:$issue,relatedIssueId:$related}){issue{id} relatedIssue{id}}}"""
+                data = self._graphql_mutation(query, {"issue": src_node, "related": dst_node}, "issue.relates_write")
+                result = data.get("addRelatesTo")
+                if (not isinstance(result, dict) or not isinstance(result.get("issue"), dict)
+                        or not isinstance(result.get("relatedIssue"), dict)
+                        or result["issue"].get("id") != src_node
+                        or result["relatedIssue"].get("id") != dst_node):
+                    raise GitHubProjectsTrackerError("issue.relates_write", "ambiguous_mutation_response")
+        except GitHubProjectsTrackerError as exc:
+            write_error = exc
+        read_src, read_dst = self.get_issue(src_id), self.get_issue(dst_id)
+        # Native relation endpoints change the graph and may advance timestamps;
+        # they must not change either endpoint's other observable properties.
+        def unrelated(issue, is_source):
+            snapshot = {k: v for k, v in issue.to_dict().items() if k not in {"links", "updated"}}
+            reverse = {"subtask-of": "parent-of", "parent-of": "subtask-of",
+                       "depends-on": "blocks", "blocks": "depends-on", "relates": "relates"}
+            affected_type = link_type if is_source else reverse[link_type]
+            affected_target = dst_id if is_source else src_id
+            # Reparenting replaces the child's single parent; other relations,
+            # including other children of either Epic, are not this operation.
+            def affected(link):
+                return link.type == affected_type and (
+                    affected_type == "subtask-of" or link.target == affected_target
+                )
+            snapshot["links"] = sorted(
+                (link.type, link.direction, link.target)
+                for link in issue.links if not affected(link)
+            )
+            return snapshot
+        if (self._has_link(read_src, link_type, dst_id)
+                and unrelated(read_src, True) == unrelated(fresh_src, True)
+                and unrelated(read_dst, False) == unrelated(fresh_dst, False)):
+            return
+        if (write_error is not None
+                and read_src.to_dict() == fresh_src.to_dict()
+                and read_dst.to_dict() == fresh_dst.to_dict()):
+            raise write_error
+        raise TrackerConflictError("lien GitHub divergent après écriture ; aucune seconde tentative") from write_error
 
     def add_comment(self, issue_id, text, project=None):
         binding = self._authoritative_binding(project or self._project())
