@@ -104,6 +104,12 @@ race still exists. A comment call sends one `commentCreate` and reads back that 
 comment ID; retry after an ambiguous outcome can duplicate the comment. None of these
 operations is advertised as generally exactly-once.
 
+Native `related` is symmetric. For that kind only, Foundry sorts the two native endpoint
+IDs before deriving the UUID and before sending `issueId`/`relatedIssueId`. Therefore
+`A relates B` and `B relates A` address and verify the same native representation even
+when both endpoint projections are temporarily hidden. `blocks` and `depends-on` keep
+their directional source/target order; parent links continue to use `parentId`.
+
 Linear exposes no compare-and-swap precondition for an existing issue. Under
 PAT-ADR-0006, grooming field, description and parent replacements use bounded detection:
 capture the targeted expected snapshot, re-read it immediately before one `issueUpdate`,

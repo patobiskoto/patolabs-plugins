@@ -20,6 +20,13 @@ apply confirmed changes through `foundry_cli.py edit set-field`, `edit body`,
 `edit create-issue`, and the shared `write.py`/`Tracker` ports; neither host calls a
 provider API directly.
 
+The normalized `set-field` syntax is identical on both hosts. `Estimate` takes a base-10
+integer. `Labels` takes one comma-separated argument such as `"api,backend"`; surrounding
+space and empty segments are ignored, and `""` means an empty label list. The CLI converts
+that argument to the portable list before calling the shared write port. Linear turns the
+list into label-ID deltas, DevHub sends it as its native JSON list, and YouTrack joins it
+to the historical comma-separated custom-field string (`[]` becomes `""`) before POST.
+
 **Authority.** The exit criteria (1-4) come from the PAT-51 epic's acceptance criteria.
 Where a rule restates an accepted decision it cites the ADR (FOUNDRY-ADR-0002,
 FOUNDRY-ADR-0013, FOUNDRY-ADR-0017, FOUNDRY-ADR-0026, PAT-ADR-0001..0003,
@@ -113,8 +120,12 @@ active cross-project links and parents keep each native coordinate independent, 
 unregistered checkout can still write to an active project. For a repository with a V1
 marker, the factory enables the shared mutation binding and `validate_issue_binding`
 checks every issue endpoint against that canonical native project before the write tier
-calls the mutation. Direct adapter calls and marker-free legacy resolution retain the
-historical cross-project capability. This provider-bound guard complements the
+calls the mutation. `edit create-issue` also uses that write tier: it validates an existing
+parent against the canonical project before the adapter can prepare a Milestone or POST
+the child. The YouTrack adapter repeats that comparison when its
+`requires_mutation_binding` flag is active, so a direct bound call has the same refusal.
+Direct unbound adapter calls and marker-free legacy resolution retain the historical
+cross-project capability. This provider-bound guard complements the
 checkout-bound legacy check (`youtrack.py:271-291`); it does not claim a shared
 `validate_mutation_project` override or change the no-CAS guarantees in §4. A
 Milestone field update preserves `ms_bundle` only from an explicit or historical

@@ -18,27 +18,30 @@ import sys
 from pathlib import Path
 
 import foundry
-from foundry import registry, write
-
-
-def _project(tr):
-    binding = write.mutation_project(tr)
-    return binding if binding is not None else tr.resolve_project(registry.repo_basename())
+from foundry import write
 
 
 def create_issue(spec_json):
     tr = foundry.tracker()
     spec = json.loads(spec_json)
-    it = tr.create_issue(_project(tr), spec["title"], spec.get("body", ""),
-                         fields=spec.get("fields"), parent=spec.get("parent"))
+    it = write.create_issue(
+        tr,
+        spec["title"],
+        spec.get("body", ""),
+        fields=spec.get("fields"),
+        parent=spec.get("parent"),
+    )
     print(f"🆕 {it.id} — {it.title}")
 
 
 def set_field(issue_id, field, value):
     tr = foundry.tracker()
-    # numeric coercion for Estimate
     if field == "Estimate":
         value = int(value)
+    elif field == "Labels":
+        # The portable port carries a list.  Keep one host-independent CLI syntax
+        # instead of leaking each adapter's native label representation.
+        value = [label.strip() for label in value.split(",") if label.strip()]
     write.set_field(tr, issue_id, field, value)
     print(f"✏️  {issue_id} · {field} = {value}")
 

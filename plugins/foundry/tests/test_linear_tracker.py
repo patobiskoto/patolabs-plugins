@@ -16,7 +16,7 @@ import pytest
 
 import foundry
 from foundry import adr as adr_module
-from foundry import evidence_plane, frame, issue, query, registry, routing, write
+from foundry import edit, evidence_plane, frame, issue, query, registry, routing, write
 from foundry.trackers import linear as linear_module
 from foundry.models import (
     Adr,
@@ -912,6 +912,22 @@ def test_linear_label_grooming_uses_provider_deltas(tracker):
     assert "labelIds" not in update[1]["input"]
 
 
+def test_edit_set_field_normalizes_label_cli_value_before_linear_payload(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(edit.foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+
+    edit.set_field("LIN-2", "Labels", " api ")
+
+    update = next(c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0])
+    assert update[1]["input"] == {
+        "addedLabelIds": ["label-api"],
+        "removedLabelIds": ["label-pilot"],
+    }
+
+
 def test_linear_field_write_recovers_ambiguous_effect_and_replay_is_noop(tracker):
     instance, wire = tracker
     original = wire.__call__
@@ -1060,6 +1076,79 @@ def test_linear_relation_replay_converges_by_unique_id_when_projection_is_hidden
         if node.get("id") == mutations[0][1]["input"]["id"]
     ]
     assert len(stored) == 1
+
+
+def test_linear_inverse_relates_replay_uses_same_hidden_projection_slot(tracker):
+    instance, wire = tracker
+    original_transport = wire.__call__
+    original_read = instance._read_raw
+    projection_hidden = False
+
+    def interrupted_once(document, variables):
+        nonlocal projection_hidden
+        result = original_transport(document, variables)
+        if "FoundryLinearIssueRelationCreate" in document and not projection_hidden:
+            projection_hidden = True
+            raise RuntimeError("response lost after provider effect")
+        return result
+
+    def hidden_projection(issue_id):
+        raw = original_read(issue_id)
+        if projection_hidden:
+            raw["relations"] = connection([])
+            raw["inverseRelations"] = connection([])
+        return raw
+
+    instance._transport = interrupted_once
+    instance._read_raw = hidden_projection
+
+    instance.link("LIN-2", "relates", "LIN-1", project=PROJECT)
+    instance.link("LIN-1", "relates", "LIN-2", project=PROJECT)
+
+    mutations = [
+        call for call in wire.calls
+        if "FoundryLinearIssueRelationCreate" in call[0]
+    ]
+    assert len(mutations) == 2
+    assert mutations[0][1]["input"] == mutations[1][1]["input"]
+    assert mutations[0][1]["input"]["issueId"] == ISSUE_1_ID
+    assert mutations[0][1]["input"]["relatedIssueId"] == ISSUE_2_ID
+    stored = [
+        node
+        for issue in wire.issues.values()
+        for node in issue["relations"]["nodes"]
+        if node.get("id") == mutations[0][1]["input"]["id"]
+    ]
+    assert len(stored) == 1
+
+
+def test_linear_inverse_relates_replay_refuses_conflicting_canonical_slot(tracker):
+    instance, wire = tracker
+    instance.link("LIN-2", "relates", "LIN-1", project=PROJECT)
+    relation = wire.issues["LIN-1"]["relations"]["nodes"][0]
+    relation["relatedIssue"] = {
+        "id": ISSUE_1_ID,
+        "identifier": "LIN-1",
+    }
+    original_read = instance._read_raw
+
+    def hidden_projection(issue_id):
+        raw = original_read(issue_id)
+        raw["relations"] = connection([])
+        raw["inverseRelations"] = connection([])
+        return raw
+
+    instance._read_raw = hidden_projection
+
+    with pytest.raises(TrackerConflictError, match="occupied by another relation"):
+        instance.link("LIN-1", "relates", "LIN-2", project=PROJECT)
+
+    mutations = [
+        call for call in wire.calls
+        if "FoundryLinearIssueRelationCreate" in call[0]
+    ]
+    assert len(mutations) == 2
+    assert mutations[0][1]["input"]["id"] == mutations[1][1]["input"]["id"]
 
 
 @pytest.mark.parametrize("lookup_error", ["relation not found", "permission denied"])

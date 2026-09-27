@@ -147,7 +147,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_issue checks the supplied native project against the exact-coordinate archive tombstone, proves an existing parent before the create effect, posts the issue with its custom fields, reads it back, then links the parent if any (youtrack.py:468-484); creation is outside the #4.2 replay floor and meets S2/S4 (one create POST, errors raised)"
+          "evidence": "edit.create_issue routes through write.create_issue. For a marker-bound repository, the shared seam resolves the canonical project and validates an existing parent against it before the adapter can prepare a Milestone or POST the child; YouTrack repeats the project comparison when requires_mutation_binding is active, then rechecks its exact-coordinate archive tombstone, posts the issue, reads it back and links the parent. Marker-free/direct unbound adapter calls retain the historical active cross-project parent capability. Creation is outside the #4.2 replay floor and meets S2/S4 (one create POST, errors raised)."
         },
         "linear": {
           "status": "supported",
@@ -171,11 +171,11 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "For the marker-bound portable vocabulary, update_fields refuses null clears and unknown native fields, captures only its targeted field snapshot and re-reads it before the first possible effect; a Milestone enum create retains the existing provider capability and is followed by another issue snapshot check before the one customFields POST, then exact targeted readback (youtrack.py:486-576). The historical arbitrary custom-field escape hatch remains outside that guarantee. update_body uses the bounded expected_body path (youtrack.py:641-699). This is bounded detection, not CAS."
+          "evidence": "For the marker-bound portable vocabulary, update_fields refuses null clears and unknown native fields, captures only its targeted field snapshot and re-reads it before the first possible effect; a Milestone enum create retains the existing provider capability and is followed by another issue snapshot check before the one customFields POST, then exact targeted readback. edit.set_field converts Labels CSV syntax to the portable list; YouTrack serializes that list back to its native comma-separated custom-field string, including [] -> empty string, and normalized readback returns the list. The historical arbitrary custom-field escape hatch remains outside that guarantee. update_body uses the bounded expected_body path. This is bounded detection, not CAS."
         },
         "linear": {
           "status": "supported",
-          "evidence": "PAT-ADR-0006 authorizes bounded in-place grooming: update_fields and issue update_body capture/re-read a targeted snapshot, perform one issueUpdate and verify readback; ambiguous responses recover by read only (linear.py:3002-3064, 3497-3526). Label/type writes use addedLabelIds/removedLabelIds rather than a complete label replacement."
+          "evidence": "PAT-ADR-0006 authorizes bounded in-place grooming: update_fields and issue update_body capture/re-read a targeted snapshot, perform one issueUpdate and verify readback; ambiguous responses recover by read only. edit.set_field converts the host-independent comma-separated Labels CLI argument to the portable list before write.set_field; Linear then uses addedLabelIds/removedLabelIds rather than a complete label replacement."
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -217,7 +217,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_issue proves an existing parent's native project before creating the child, then links the created issue as subtask-of that parent (youtrack.py:468-484)"
+          "evidence": "For a marker-bound repository, edit.create_issue -> write.create_issue validates the existing parent against the canonical project before any adapter effect, including Milestone preparation. YouTrack repeats the project comparison when requires_mutation_binding is active, then preserves its native tombstone preflight and links the created issue as subtask-of that parent; the direct unbound legacy adapter path retains active cross-project parents."
         },
         "linear": {
           "status": "supported",
@@ -267,7 +267,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "link() validates and snapshots both endpoints, skips an existing identical relation, and creates depends-on/blocks/relates via issueRelationCreate at a deterministic UUIDv4 derived from canonical project/type/endpoints. The qualified input schema defines that UUIDv4 as the native identifier and issueRelation(id) as a unique-identifier lookup. Success and ambiguous recovery verify the exact ID/type/endpoints; a replay whose endpoint projections remain absent can request only that same identity, then converges through exact lookup or fails closed without another slot (linear.py:3389-3519)."
+          "evidence": "link() validates and snapshots both endpoints, skips an existing identical relation, and creates depends-on/blocks/relates via issueRelationCreate at a deterministic UUIDv4 derived from canonical project/type/endpoints. For symmetric related only, both the slot identity and native payload sort endpoint IDs, so inverse calls converge on the same exact representation even with hidden projections; blocks/depends-on remain directional. The qualified input schema defines that UUIDv4 as the native identifier and issueRelation(id) as a unique-identifier lookup. Success and ambiguous recovery verify the exact ID/type/endpoints; a replay whose endpoint projections remain absent can request only that same identity, then converges through exact lookup or fails closed without another slot."
         },
         "ghprojects": {
           "status": "to_qualify",

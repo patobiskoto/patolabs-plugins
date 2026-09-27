@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import itertools
+import json
 import re
 import urllib.parse
 from pathlib import Path
 
 import pytest
 
-from foundry import registry, write
+from foundry import edit, registry, write
 from foundry.models import Adr, Issue, Link, Project
 from foundry.trackers.base import (
     TrackerCapabilityUnavailableError,
@@ -1130,6 +1131,115 @@ def test_bound_write_port_refuses_foreign_issue_and_link_endpoint_before_effect(
     assert calls == [
         ("GET", "/issues/ACTIVE-1", None, "project(id,shortName)"),
         ("GET", "/issues/FOREIGN-1", None, "project(id,shortName)"),
+    ]
+
+
+def test_edit_create_issue_refuses_foreign_parent_before_any_provider_effect(
+    monkeypatch,
+):
+    tracker = object.__new__(YouTrackTracker)
+    tracker.requires_mutation_binding = True
+    calls = []
+
+    def request(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body, fields))
+        if method == "GET" and path == "/issues/FOREIGN-1":
+            return {"project": {"id": "0-foreign", "shortName": "FOREIGN"}}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker._prewrite = lambda *_args: pytest.fail(
+        "Milestone preparation must stay after canonical parent validation"
+    )
+    project = Project(key="ACTIVE", id="0-active")
+    monkeypatch.setattr(edit.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+
+    with pytest.raises(SystemExit, match="pas au projet canonique 'ACTIVE'"):
+        edit.create_issue(json.dumps({
+            "title": "must refuse",
+            "fields": {"Milestone": "M1"},
+            "parent": "FOREIGN-1",
+        }))
+
+    assert calls == [
+        ("GET", "/issues/FOREIGN-1", None, "project(id,shortName)"),
+    ]
+
+
+def test_bound_youtrack_create_issue_refuses_foreign_parent_before_effect(monkeypatch):
+    tracker = object.__new__(YouTrackTracker)
+    tracker.requires_mutation_binding = True
+    calls = []
+
+    def request(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body, fields))
+        if method == "GET" and path == "/issues/FOREIGN-1":
+            return {"project": {"id": "0-foreign", "shortName": "FOREIGN"}}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker._prewrite = lambda *_args: pytest.fail(
+        "Milestone preparation must stay after canonical parent validation"
+    )
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+
+    with pytest.raises(SystemExit, match="pas au projet canonique 'ACTIVE'"):
+        tracker.create_issue(
+            Project(key="ACTIVE", id="0-active"),
+            "must refuse",
+            "body",
+            fields={"Milestone": "M1"},
+            parent="FOREIGN-1",
+        )
+
+    assert calls == [
+        ("GET", "/issues/FOREIGN-1", None, "project(id,shortName)"),
+    ]
+
+
+def test_edit_set_field_labels_round_trips_youtrack_native_csv_and_clear(monkeypatch):
+    tracker = object.__new__(YouTrackTracker)
+    tracker.requires_mutation_binding = True
+    native_labels = "pilot"
+    payloads = []
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal native_labels
+        if method == "GET" and path == "/issues/ACTIVE-1":
+            return {"project": {"id": "0-active", "shortName": "ACTIVE"}}
+        if method == "POST" and path == "/issues/ACTIVE-1":
+            payloads.append(body)
+            native_labels = body["customFields"][0]["value"]
+            return {"idReadable": "ACTIVE-1"}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker.get_issue = lambda issue_id: tracker._to_issue({
+        "idReadable": issue_id,
+        "summary": "issue",
+        "customFields": [{"name": "Labels", "value": native_labels}],
+    })
+    project = Project(key="ACTIVE", id="0-active")
+    monkeypatch.setattr(edit.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+
+    edit.set_field("ACTIVE-1", "Labels", " api, backend ,, ")
+    assert tracker.get_issue("ACTIVE-1").labels == ["api", "backend"]
+    edit.set_field("ACTIVE-1", "Labels", "")
+    assert tracker.get_issue("ACTIVE-1").labels == []
+
+    assert [payload["customFields"][0]["value"] for payload in payloads] == [
+        "api,backend",
+        "",
     ]
 
 

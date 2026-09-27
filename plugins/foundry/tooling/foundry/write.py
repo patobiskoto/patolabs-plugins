@@ -99,6 +99,30 @@ def issue_binding(tracker, *issue_ids):
     return project
 
 
+def create_issue(
+    tracker,
+    title: str,
+    body: str = "",
+    fields: dict | None = None,
+    parent: str | None = None,
+) -> Issue:
+    """Create an issue through the common repository-bound write seam."""
+    project = mutation_project(tracker)
+    if project is None:
+        project = tracker.resolve_project(registry.repo_basename())
+    elif parent is not None:
+        # The adapter create may emit provider effects before attaching the parent.
+        # Prove the existing endpoint against the canonical repository first.
+        tracker.validate_issue_binding(project, parent)
+    return tracker.create_issue(
+        project,
+        title,
+        body,
+        fields=fields,
+        parent=parent,
+    )
+
+
 def adr_binding(tracker, *adr_ids):
     """Resolve and validate the current project before an ADR mutation."""
     project = mutation_project(tracker)

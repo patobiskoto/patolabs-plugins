@@ -310,6 +310,12 @@ class YouTrackTracker(Tracker):
 
     def _cf_write(self, name, value):
         vtype = _FIELD_TYPES.get(name, "SimpleIssueCustomField")
+        if name == "Labels" and isinstance(value, list):
+            if any(not isinstance(label, str) for label in value):
+                raise ValueError("YouTrack Labels must be a list of strings")
+            # The portable port carries a list; the historical native custom field
+            # stores that vocabulary as one comma-separated string.
+            value = ",".join(value)
         v = {"name": value} if name in _ENUM_VALUE else value
         return {"name": name, "$type": vtype, "value": v}
 
@@ -472,7 +478,16 @@ class YouTrackTracker(Tracker):
             # ``create_issue`` will link the newly-created child afterwards.  Prove
             # the existing target first so an archived parent cannot leave an
             # unrelated child behind before the command endpoint is refused.
-            self._issue_target_project(parent)
+            parent_target = self._issue_target_project(parent)
+            if (
+                self.requires_mutation_binding
+                and not self._same_native_project(parent_target, project)
+            ):
+                raise SystemExit(
+                    "Mutation YouTrack refusée : "
+                    f"l'issue '{parent}' appartient au projet natif "
+                    f"'{parent_target.key}', pas au projet canonique '{project.key}'."
+                )
         self._prewrite(fields, project)  # the given project, NOT the cwd's
         cfs = [self._cf_write(k, v) for k, v in (fields or {}).items() if v is not None]
         raw = self._req("POST", "/issues",

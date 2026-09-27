@@ -362,6 +362,8 @@ def _issue_relation_id(
     project_id: str, relation: str, source_id: str, target_id: str,
 ) -> str:
     """Return the provider id for one canonical append-only relation slot."""
+    if relation == "related":
+        source_id, target_id = sorted((source_id, target_id))
     return _adr_client_uuid(
         "foundry-linear-issue-relation.v1:"
         f"{project_id}:{relation}:{source_id}:{target_id}"
@@ -3444,6 +3446,11 @@ class LinearTracker(Tracker):
             relation = "blocks"
         elif link_type == "depends-on":
             source, target, relation = dst_raw, src_raw, "blocks"
+        elif source["id"] > target["id"]:
+            # Linear's `related` relation is symmetric.  Bind both its deterministic
+            # identity and native payload to one endpoint order so inverse replays
+            # converge even when endpoint projections are temporarily hidden.
+            source, target = target, source
         source_links = self._to_issue(source, project).links
         target_links = self._to_issue(target, project).links
         fresh_source = self._read_raw(source["identifier"])
