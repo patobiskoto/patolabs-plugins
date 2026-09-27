@@ -567,6 +567,20 @@
       "operations": [
         "mid-flight-comment"
       ]
+    },
+    {
+      "id": "linear-adr-pagination",
+      "test": "test_linear_tracker.py::test_linear_adr_read_refuses_collection_collision_and_bad_page_info",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "pagination",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "adr-read"
+      ]
     }
   ]
 }
