@@ -45,12 +45,19 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 
 - Red on config → run `foundry:configure`, set Claude install options, or provide
   environment variables.
-- Red after a repo rename → alias the previous binding; this preserves project metadata
-  and never provisions a second tracker project:
+- Red after a canonical remote rename → suspend and reconcile the approved binding and
+  marker through the recovery procedure. `registry alias` copies the old canonical
+  identity and cannot authorize a different remote. For a legacy basename-only binding,
+  an additional local alias can preserve project metadata without provisioning:
 
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" registry alias youtrack <old-repo> <new-repo>
 ```
 
-- Red for a genuinely new project → run `setup_project "<Name>" <KEY> <repo>`; use
-  `registry register` only when binding a known tracker project without an old alias.
+- Red for a new checkout targeting an existing provider project → use
+  `registry bootstrap <tracker> <repo> <KEY> <project-id> [k=v …]`;
+  it verifies provider coordinates before publishing a canonical binding and marker.
+- Administrative project creation remains the historical optional setup path:
+  `setup_project "<Name>" <KEY> <repo>`, only on a proven unbound checkout and a provider
+  supporting provisioning. `registry register` is a legacy registry API, not the V1
+  bootstrap or marker-recovery path.

@@ -132,6 +132,12 @@ query FoundryLinearIssue($id: String!) {{
 }}
 """
 
+_PROJECT_BINDING_QUERY = """
+query FoundryLinearProjectBinding($id: String!) {
+  project(id: $id) { id team { id key } }
+}
+"""
+
 _ISSUES_QUERY = f"""
 query FoundryLinearIssues($teamId: ID!, $projectId: ID!, $after: String) {{
   issues(
@@ -1564,6 +1570,20 @@ class LinearTracker(Tracker):
         self._binding(self._active_project)
         return self._active_project
 
+    def verify_project_identity(self, project: Project) -> bool:
+        binding = self._binding(project)
+        data = self._graphql(
+            _PROJECT_BINDING_QUERY, {"id": project.id}, "project-binding-read",
+        )
+        raw = data.get("project")
+        team = raw.get("team") if isinstance(raw, dict) else None
+        return bool(
+            isinstance(team, dict)
+            and raw.get("id") == project.id
+            and team.get("id") == binding["team_id"]
+            and team.get("key") == project.key
+        )
+
     def resolve_project(self, repo: str) -> Project:
         # The provider-neutral port historically passes a repository basename here.
         # Linear must never treat that value (or PROJECT_REPO) as identity evidence:
@@ -1578,17 +1598,9 @@ class LinearTracker(Tracker):
         *,
         checkout_identity: str | None = None,
     ) -> Project:
-        try:
-            observed = (
-                registry.checkout_repository_identity(cwd)
-                if checkout_identity is None
-                else registry.canonical_repository_identity(checkout_identity)
-            )
-        except ValueError:
-            raise SystemExit(
-                "Binding Linear refusé : identité canonique du checkout invalide ou absente."
-            ) from None
-        project = registry.resolve_canonical_repository(self.name, observed)
+        project = super().resolve_checkout_project(
+            cwd, checkout_identity=checkout_identity,
+        )
         self._activate(project)
         return project
 

@@ -282,6 +282,10 @@ def test_factory_instantiates_devhub_without_changing_other_providers(monkeypatc
     )
     monkeypatch.setattr(foundry.config, "tracker_name", lambda: "devhub")
     monkeypatch.setattr(
+        "foundry.registry.repository_tracker_selection",
+        lambda _cwd=None, **_kwargs: {"mode": "unbound", "binding": None},
+    )
+    monkeypatch.setattr(
         foundry.config, "require_public", lambda key: "http://127.0.0.1:3000",
     )
     monkeypatch.setattr(foundry.config, "require", lambda key: {

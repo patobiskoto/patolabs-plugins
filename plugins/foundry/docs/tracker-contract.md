@@ -2,13 +2,14 @@
 
 This is the versioned, portable functional contract Foundry V1.0.0 holds every tracker
 adapter to. A repository chooses exactly one tracker among YouTrack, Linear and GitHub
-Projects (`ghprojects`) through `.foundry/tracker.json` / `FOUNDRY_TRACKER`, and runs
+Projects (`ghprojects`) through a versioned `.foundry/tracker.json`, and runs
 the same journeys in Claude Code and Codex. GitHub as a *code host* (PRs, merges, CI) is
-a separate dimension (§3).
+a separate dimension (§3). `FOUNDRY_TRACKER` remains only a host setting used by
+explicit setup and historical tooling; it never substitutes for a repository binding.
 
 Every claim below is grounded in the current adapter code, cited by file and line. The
 machine-readable capability matrix is [`tracker-contract.v1.json`](tracker-contract.v1.json)
-(`contract: "foundry.tracker-contract.v1"`, `version: 1`);
+(`contract: "foundry.tracker-contract.v1"`, `version: 2`);
 [`test_tracker_contract.py`](../tests/test_tracker_contract.py) pins its schema and
 cross-checks it against the `Tracker` ABC and the adapter modules. This contract records
 capabilities and requirements; it changes no adapter behaviour.
@@ -39,9 +40,9 @@ closed vocabulary:
 
 | Core journey | Representative `Tracker` ops | YouTrack | Linear | ghprojects |
 |---|---|---|---|---|
-| Contexte/backlog: identity and project resolution | `resolve_project`, `resolve_checkout_project`, `validate_mutation_*` | **gap** PAT-54 (basename-keyed, §2) | supported | `to_qualify` PAT-54 |
-| Contexte/backlog: repository bootstrap (create-or-recover the binding) | `provision_project`, `resolve_checkout_project` | **gap** PAT-54 (only path is full provisioning, §5) | **gap** PAT-54 (none) | `to_qualify` PAT-54 |
-| Contexte/backlog: read | `search`, `get_issue` | supported | **gap** PAT-54 (one unmapped state/label/milestone fails the whole read) | `to_qualify` PAT-57 |
+| Contexte/backlog: identity and project resolution | `resolve_project`, `resolve_checkout_project`, `validate_mutation_*` | supported | supported | supported (binding only; workflow qualification remains PAT-65) |
+| Contexte/backlog: repository bootstrap (bind an existing verified project) | `verify_project_identity`, `resolve_checkout_project` | supported | supported | supported (binding only) |
+| Contexte/backlog: read | `search`, `get_issue` | supported | supported (unknown mapping fails closed; `registry update` resumes) | `to_qualify` PAT-57 |
 | Frame/intake/groom: create, comment | `create_issue`, `add_comment` | supported | supported | `to_qualify` PAT-66 |
 | Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | **gap** PAT-55 (blind field writes, §4) | **gap** PAT-55, blocked by ADR | `to_qualify` PAT-66 |
 | Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | `to_qualify` PAT-66 |
@@ -58,40 +59,31 @@ closed vocabulary:
 The JSON is authoritative for every cell and its evidence; read it before relying on a
 cell.
 
-**Gaps found in the current adapters:**
-
-- **PAT-54** — YouTrack and `ghprojects` resolve by repository basename, not canonical
-  identity (§2). No provider has a minimal create-or-recover bootstrap bound to
-  canonical identity (§5). Linear's backlog read fails as a whole when one issue carries
-  a state, label or `projectMilestone` absent from the binding (`_to_issue`,
-  `linear.py:2141-2142`, `2156-2157`, `2204-2205`, applied to every page node by
-  `search()`, `linear.py:2278-2279`); adding a mapping changes the registry binding
-  digest the marker pins (`registry.py:412-413`), so it needs the coherent binding
-  update of PAT-44/PAT-54.
+**Remaining gaps found in the current adapters:**
 - **PAT-55** — Grooming an existing issue. YouTrack `update_fields` and `link` are
   unconditional POSTs (`youtrack.py:345-364`, level −1). Linear refuses: `update_fields`
-  (`linear.py:2455-2470`), `update_body` for an issue (`linear.py:2856-2868`), `link`
-  with `subtask-of`/`parent-of` (`linear.py:2770-2774`), and `set_state` for any state
-  other than `in-progress`/`review`/`done` (`linear.py:2481-2484`), all under the module
+  (`linear.py:2784-2799`), `update_body` for an issue (`linear.py:3185-3197`), `link`
+  with `subtask-of`/`parent-of` (`linear.py:3099-3103`), and `set_state` for any state
+  other than `in-progress`/`review`/`done` (`linear.py:2810-2813`), all under the module
   invariant `linear.py:8-11`.
 - **PAT-56** — States and AC. YouTrack `set_state` is `update_fields` under another name
   (`youtrack.py:353-356`): blind and not replay-safe. Linear `sync_acceptance_body`
-  refuses unconditionally (`linear.py:2870-2882`); Linear already projects AC
+  refuses unconditionally (`linear.py:3199-3211`); Linear already projects AC
   completeness through a proof-bound append-only marker (`project_acceptance_proof`,
-  `linear.py:2510-2562`; `Issue.ac_done` derives from it, `linear.py:2211-2217`).
+  `linear.py:2839-2891`; `Issue.ac_done` derives from it, `linear.py:2540-2546`).
 - **PAT-69** — Neither YouTrack nor Linear implements `close_epic`/`get_epic_closure`;
   `write.close_epic` refuses before any provider call (`write.py:377`). Only the non-V1
   DevHub adapter implements the port (`devhub.py:220-223`, `825`).
 - **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
   target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR
   import target. No adapter copies live work faithfully: Linear's `create_issue` sends a
-  random client id (`linear.py:2425`), so a replay duplicates the issue, and nothing
+  random client id (`linear.py:2754`), so a replay duplicates the issue, and nothing
   copies lifecycle receipts, acceptance proofs or comments. This repository's
   YouTrack→Linear live-work move was a private operator-side selective migration, and
   `registry cutover` performs no provider I/O (`linear-tracker.md`). PAT-64 must provide
   both halves for every pair.
 - **PAT-43** — YouTrack's only tombstone check, `validate_legacy_mutation`
-  (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:776-797`),
+  (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:1429-1450`),
   refuses a write only when the checkout's own registry binding is archived or shares
   its project with an archived alias; it must refuse every write addressed to an
   archived project by provider identifier.
@@ -99,74 +91,98 @@ cell.
   from the local model cannot receive a successor version (accept, supersede, link,
   edit).
 - **PAT-59** — Linear release scope reads the same milestone mapping: an issue in an
-  unmapped `projectMilestone` fails the read (`linear.py:2204-2205`).
+  unmapped `projectMilestone` fails the read (`linear.py:2533-2534`). The PAT-54
+  `registry update` path can now publish the missing mapping coherently; PAT-59 still
+  owns the release-scope semantics and live provider qualification.
 
 **Explicit refusals (non-core):** free native-text `search(query=…)` on Linear
-(`linear.py:2252-2255`, `provider-native-search-query`); full administrative
+(`linear.py:2581-2584`, `provider-native-search-query`); full administrative
 provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack and Linear
 (optional projection used only by DevHub); `supersede_adr`/`link_adr_issue` on YouTrack
 (ADR evolution is served by `set_adr_status`); the typed acceptance-override receipt on
 YouTrack (free-text audit note fallback, `base.py:213-228`).
 
-**`to_qualify` (`ghprojects`).** `ghprojects.py` overrides `resolve_project` — a
-`registry.resolve()` basename lookup (`ghprojects.py:30-32`) — and the ten abstract
-methods `search`, `get_issue`, `create_issue`, `update_fields`, `set_state`, `link`,
+**`to_qualify` (`ghprojects`).** PAT-54 supplies the canonical checkout binding and
+read-only existing-project probe. The ten workflow methods `search`, `get_issue`,
+`create_issue`, `update_fields`, `set_state`, `link`,
 `add_comment`, `list_adrs`, `create_adr` and `set_adr_status`, each raising
-`NotImplementedError` (`ghprojects.py:19-24`, `34-62`). Everything else is inherited
+`NotImplementedError` (`ghprojects.py:22-27`, `110-138`). Everything else is inherited
 from `base.py` unchanged: optional ports raise their typed unavailability error
 (`EpicClosureUnavailableError`, `BodyUpdateUnavailableError`,
 `AcceptanceSyncUnavailableError`, `ProjectProvisioningUnavailableError`,
 `EpicSubgraphUnavailableError`, `TrackerCapabilityUnavailableError`); the
-`validate_*` checks and `preflight_issue_operation` are no-ops; `resolve_checkout_project`
-falls back to the basename lookup (`base.py:135-152`). PAT-65 qualifies GitHub
+`validate_*` checks and `preflight_issue_operation` are no-ops. PAT-65 qualifies GitHub
 Projects v2 and GitHub-hosted ADR storage on authorized test resources; each cell's
-`ticket` names the tranche that implements it (PAT-54, 57, 58, 59, 64, 66, 67) or PAT-65
+`ticket` names the tranche that implements it (PAT-57, 58, 59, 64, 66, 67) or PAT-65
 where only qualification is known.
 
 ## 2. Identity model
 
 **Canonical repository identity.** `registry.canonical_repository_identity()`
-(`registry.py:206-260`) normalizes HTTPS, URL-style SSH, scp-style SSH and ssh-config
+(`registry.py:219-273`) normalizes HTTPS, URL-style SSH, scp-style SSH and ssh-config
 alias remotes into a credential-free, lower-cased `host/owner/repo`, without DNS
-resolution. `registry.checkout_repository_identity()` (`registry.py:263-272`) applies it
+resolution. `registry.checkout_repository_identity()` (`registry.py:276-285`) applies it
 to the checkout's actual `origin`, never to an environment alias. A
 `.foundry/tracker.json` marker (`registry.py:73`) binds a repository to one tracker
 binding under that identity.
 
-**Linear resolves and validates by canonical identity only.** `resolve_project` discards
-its repository-name argument (`linear.py:1250-1256`); `resolve_checkout_project` and
-`validate_mutation_repository` (`linear.py:1258-1280`) go through
-`registry.resolve_canonical_repository()` (`registry.py:800-830`), which matches only
-`canonical_repo` and fails closed on an ambiguous or missing match. Every issue Linear
-reads or writes is asserted to belong to the bound team and project UUIDs
-(`_assert_issue_project`, `linear.py:2016-2026`).
+The registry keeps the historical basename key when it is available. If another
+repository on the same provider already owns that basename, bootstrap stores the new
+binding under an internal deterministic key composed of the basename and the SHA-256 of
+the canonical identity. This storage key is never selection authority: marker reads,
+factory/doctor resolution and updates match `canonical_repo`. A basename lookup remains
+only the compatibility fallback for a legacy entry without `canonical_repo`, so
+`first/same` and `second/same` can both be active without sharing a binding.
 
-**YouTrack and `ghprojects` still resolve by basename.** Without a marker,
-`registry.resolve()` (`registry.py:725-773`) looks the entry up by the name it is given,
-which callers take from `registry.repo_basename()` (`registry.py:653-664`: the
-`PROJECT_REPO` override or the remote's last path segment); `registry.entry_for()`
-(`registry.py:667-705`) does the same. With a marker,
-`registry._matching_registry_bindings()` (`registry.py:298-311`) prefers a
-`canonical_repo` match but falls back to the basename entry. YouTrack mutations resolve
-no binding at all: `write.mutation_project` returns `None` for a provider without
-`requires_mutation_binding` after `validate_legacy_mutation` (`write.py:50-56`), and
-YouTrack addresses issues directly by id (`youtrack.py:290-301`, `345-369`) with the
-base no-op `validate_issue_binding` (`base.py:164-165`). Two repositories sharing a
-basename, or a stale `PROJECT_REPO`, are therefore not distinguished by these providers;
-PAT-54 closes this.
+**One checkout selection for all three adapters.**
+`repository_tracker_selection()` reads the marker from the Git root and validates its
+canonical origin, provider, project coordinates and registry digest
+(`registry.py:397-669`). The default `Tracker.resolve_checkout_project()` consumes that
+selection for YouTrack and `ghprojects` (`base.py:142-172`); Linear keeps its exact
+canonical registry resolution and provider-level team/project assertions
+(`linear.py:1587-1609`, `2346-2355`). `foundry.effective_tracker_name()` is the shared
+selection used by both the implicit factory and doctor (`foundry/__init__.py:15-43`,
+`doctor.py:214-230`), so a repository V1 binding wins even when the host setting names
+the DevHub pilot. Before using a host-selected DevHub pilot, the factory and doctor
+validate the local selection: an existing legacy binding wins, and ambiguous,
+interrupted or archived bindings refuse. The canonical DevHub pilot is represented
+explicitly as `mode=pilot`, including historical DevHub markers, outside the three
+V1 trackers; `--require-v1` refuses it.
+A valid marker cannot mask another active canonical or matching legacy provider
+binding: the published binding reader and mapping update refuse that ambiguity
+before effects (`registry.py:354-369`, `486-522`, `1130-1220`). Archived bindings
+are excluded from the active-provider check. Only a proven unbound checkout or a
+host diagnostic outside Git can use the global
+pilot setting. A V1 canonical registry entry whose marker is absent is an interrupted
+or moved publication and fails before provider access. `PROJECT_REPO` and
+`FOUNDRY_TRACKER` cannot change that result. The administrative setup boundary alone
+passes the configured provider explicitly, but only after
+`repository_tracker_selection(allow_unbound=True)` has proved that the checkout has no
+marker, canonical binding, legacy basename binding or matching tombstone. An existing
+legacy binding or an interrupted V1 publication is refused before provider selection,
+credentials, provisioning or registry writes. A genuinely new repository retains the
+historical explicit provisioning flow; normal implicit factory calls stay closed.
 
-**The guarantee V1 requires** — two issues `#12` in two repositories are never
-interchangeable, and no project or issue is discovered by name, basename, key or prefix
-alone — holds today only for Linear.
+**Legacy is explicit and bounded.** With no marker and no canonical V1 entry, Foundry
+accepts legacy mode only when the actual remote basename has exactly one historical
+active registry entry and that entry has no `canonical_repo`. `registry selection`
+reports `mode=legacy`; `registry selection --require-v1` refuses it and points to
+`registry upgrade`. An unregistered repository, two legacy providers for one basename,
+or a canonical entry without its marker is never treated as a new legacy repository.
+DevHub remains the separately identified internal pilot outside the three-provider V1
+matrix.
 
 **Normalized issue key.** `Issue.id` (`models.py:22-23`) is the provider's
 human-readable identifier (YouTrack `idReadable`, Linear `identifier`), of the form
 `<PREFIX>-<NUMBER>`. It is unique within one provider instance but it is not a
-repository identity: registry entries are keyed by repository name and several aliases
-may point at one provider project (`register_alias`, `registry.py:865-922`;
-`require_writable_project`, `registry.py:776-797`, treats them as one project).
-The key is therefore interpreted only together with the resolved binding: Linear
-enforces this (`_assert_issue_project`); YouTrack does not yet (PAT-54). For
+repository identity: historical registry entries use the repository name, homonyms use
+an internal deterministic key, and several aliases may point at one provider project
+(`register_alias`, `registry.py:1540-1599`;
+`require_writable_project`, `registry.py:1429-1450`, treats them as one project).
+The key is therefore interpreted only together with the resolved binding. Linear
+enforces the provider project on each hydrated issue (`_assert_issue_project`); YouTrack
+gets the repository project before each V1 mutation, while its provider-level
+issue/project assertion remains part of later adapter hardening. For
 `ghprojects`, a GitHub issue number is per repository and one Project v2 can hold issues
 from several repositories, so its normalized key must carry the issue's repository
 identity (for example `host/owner/repo#12`); PAT-65 qualifies the wire format, this
@@ -184,7 +200,8 @@ skills only see the normalized `Issue`/`Adr`/`Project` models (`models.py`).
   merges, over REST only; it is a separate provider choice (`FOUNDRY_CODEHOST`), and
   GitHub is its only adapter whatever the tracker.
 - **Ship-iOS never talks to a Tracker adapter.** `plugins/ship-ios/scripts/changelog_bridge.py`
-  shells out to `foundry_cli.py query changelog <MILESTONE>` and consumes only that JSON;
+  first shells out to `registry selection` (optionally `--require-v1`), then to
+  `foundry_cli.py query changelog <MILESTONE>` from the same checkout and consumes only that JSON;
   it imports no tracker module and holds no provider credential, and exits 3 when
   Foundry is absent so the caller falls back to a changelog file.
 
@@ -212,28 +229,28 @@ never **excludes** them, and no text in Foundry may say otherwise.
   (`youtrack.py:450-466`) and `set_adr_status` (`youtrack.py:550-558`) use this path.
 - **Level 2 — append-only versions at deterministic ids.** Foundry never overwrites a Linear ADR
   Document (a human edit in Linear is detected by the witness, not prevented): each version is created at `_adr_document_id(project_id, adr_id,
-  sequence)` (`linear.py:337-338`) by `_create_exact_adr_document`
-  (`linear.py:3298-3335`), which reads the slot, creates it with that client id, and
+  sequence)` (`linear.py:344-345`) by `_create_exact_adr_document`
+  (`linear.py:3627-3664`), which reads the slot, creates it with that client id, and
   verifies the readback byte-exactly, failing closed if the slot holds other content.
-  `_append_adr_versions` (`linear.py:3506-3525`) refuses when the chain head moved before
+  `_append_adr_versions` (`linear.py:3835-3854`) refuses when the chain head moved before
   the append and verifies after it. Call sites: `create_adr` calls
-  `_create_adr_document` directly (`linear.py:3623`); `set_adr_status`
-  (`linear.py:4520-4521`), `supersede_adr` (`linear.py:4555-4567`), `link_adr_issue`
-  (`linear.py:3629-3672`) and `_update_adr_body` (`linear.py:4769-4770`) append. The
+  `_create_adr_document` directly (`linear.py:3952`); `set_adr_status`
+  (`linear.py:4849-4850`), `supersede_adr` (`linear.py:4884-4896`), `link_adr_issue`
+  (`linear.py:3958-4001`) and `_update_adr_body` (`linear.py:5098-5099`) append. The
   witness carries the SHA-256 of the canonical UTF-8 body (PAT-ADR-0002). Two writers of
   the same slot with different content are detected by the exact readback, relying on
   the provider refusing a second create with an existing id.
 - **Level 2.5 — append-only lifecycle markers.** Linear `set_state` and
   `project_acceptance_proof` append a comment whose id derives from the SHA-256 of
   `(schema, operation, issue[, generation])` (`_lifecycle_marker`,
-  `linear.py:1349-1388`); `_project_lifecycle` (`linear.py:1835-2003`) reads, appends
+  `linear.py:1679-1717`); `_project_lifecycle` (`linear.py:2164-2332`) reads, appends
   once, and reads back. An identical replay converges on the existing comment
-  (`linear.py:1914-1925`). A generation enters the slot only for `state-review`,
+  (`linear.py:2243-2254`). A generation enters the slot only for `state-review`,
   `acceptance` and `acceptance-override`; for `state-in-progress`, `state-done` and
   `cockpit-evidence` a different payload maps to the same id and is refused
-  (`linear.py:1926-1928`, `1946-1953`), so each issue records one start and one done
+  (`linear.py:2255-2257`, `2275-2282`), so each issue records one start and one done
   marker. A different writer appending between Foundry's read and append is detected by
-  the readback (`linear.py:2000-2001`), not excluded.
+  the readback (`linear.py:2329-2330`), not excluded.
 - **Level 3 — provider transaction plus receipt.** Only DevHub's `close_epic`
   (`devhub.py:825`), outside V1.
 
@@ -265,12 +282,12 @@ machine.
 | Grooming: fields, body, parent of an existing issue | S1-S4 on every write (body: met, level 1; fields and parent: not met, level −1 — PAT-55) | S1-S4 in-place replacement, which reverses `linear.py:8-11` — PAT-55, blocked by ADR (§4.3) |
 | AC state | S1-S4 on the checkbox body (met, level 1) | Either the existing proof-bound append-only projection is declared the V1 AC authority (S5/S6 met, no in-place write, invariant kept), or in-place checkbox sync under S1-S4 (reverses `linear.py:8-11`); the ADR chooses — PAT-56, blocked by ADR |
 | Status projection | S1-S5 with the expected predecessor state re-read before `set_state` (not met — PAT-56) | `in-progress`/`review`/`done`: met (level 2.5); other states belong to grooming (PAT-55) |
-| Resume | S5 on every replayable write (not met for `set_state` — PAT-56); free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | met for lifecycle markers; `add_comment` (`linear.py:2821-2854`) follows the free-text rule |
+| Resume | S5 on every replayable write (not met for `set_state` — PAT-56); free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | met for lifecycle markers; `add_comment` (`linear.py:3150-3183`) follows the free-text rule |
 | Epic closure | Fresh read of the full parent/children graph and AC proofs, one write, append-only receipt at a deterministic id bound to the exact set of terminal children and carrying the FOUNDRY-ADR-0017 human verdict, readback, fail closed on any divergence — PAT-69, blocked by ADR | same — PAT-69, blocked by ADR |
 
 Creation of new records (issue, relation, comment, ADR) is outside S5: YouTrack and
 Linear creations are not replay-idempotent today (provider-assigned or random ids, e.g.
-`linear.py:2425`); V1 requires S2 and S4 for them. GitHub Projects' targets are set by
+`linear.py:2754`); V1 requires S2 and S4 for them. GitHub Projects' targets are set by
 PAT-65: absent a qualified provider precondition, this floor applies.
 
 ### 4.3 Durable invariants and the pending ADR
@@ -305,31 +322,92 @@ and permissions); free native-text search; general inter-tracker migration beyon
 PAT-64 switch; code hosts other than GitHub.
 
 **In scope, and distinct from the above: repository bootstrap** (core row
-`repository-bootstrap`, PAT-54) — create or recover the repository's own project and
-register a binding keyed by canonical identity, never discovering a project by name or
-key alone. Today:
+`repository-bootstrap`, PAT-54) binds an existing provider project after a readback; it
+never creates an organization, team, project, board, field, workflow or permission.
 
-- YouTrack's only path is `setup_project.setup` (`setup_project.py:94-122`) →
-  `provision_project` (`youtrack.py:115-120`) → `provision_youtrack_project`
-  (`youtrack_provisioning.py:90-182`). That is full administrative provisioning: it
-  recovers an existing project by `shortName` alone (`youtrack_provisioning.py:55-61`),
-  adds values to instance-global State/Priority/Type bundles
-  (`youtrack_provisioning.py:29-52`, `104-120`) and creates global custom fields. It
-  does not forward `canonical_repository` (`youtrack.py:115-120`), and `setup` registers
-  the binding under the operator-supplied repository name (`setup_project.py:118`).
-- Linear has no `provision_project`; `setup` refuses (`setup_project.py:96-101`) and the
-  binding is registered by hand (`docs/linear-tracker.md`, "Required binding").
-- `ghprojects` inherits the base refusal (`base.py:114-128`).
+```text
+foundry_cli.py registry bootstrap <tracker> <repo> <KEY> <project-id> [k=v …]
+foundry_cli.py registry upgrade <tracker> <legacy-repo>
+foundry_cli.py registry selection [--require-v1]
+foundry_cli.py registry update <tracker> <repo> <KEY> <project-id> \
+  <expected-configuration-sha256> [complete k=v …]
+```
+
+`bootstrap` derives the canonical identity from the checkout rather than from an
+argument. Before the local publication, YouTrack reads the exact native project id/key;
+Linear reads the exact project id, team UUID and team key after validating every UUID
+map; YouTrack V1 extras are limited to `canonical_repo` and optional non-empty
+`ms_bundle`. Undeclared keys, including credential keys, refuse before provider readback
+or persistence. GitHub Projects reads the exact owner/number/node id and the linked canonical
+repository. A foreign coordinate, unavailable provider or incomplete binding refuses
+before the registry or marker changes (`registry.py:1638-1788`, `992-1099`;
+`youtrack.py:247-258`; `linear.py:1573-1585`; `ghprojects.py:36-104`). The GitHub query follows GitHub's documented
+organization/user `projectV2(number:)` lookup and `ProjectV2.repositories` connection;
+it is capped at ten 100-repository pages and needs only `read:project` permission
+([GitHub Projects API guide](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-api-to-manage-projects),
+[ProjectV2 reference](https://docs.github.com/en/graphql/reference/projects)). This is
+an offline-tested binding probe, not PAT-65's live workflow qualification.
+
+If the provider's basename slot already belongs to a different canonical repository,
+bootstrap publishes the new entry under its deterministic disambiguated storage key.
+Exact replay finds that entry by `canonical_repo`; it does not overwrite the older
+binding or any alias/tombstone. The storage key is registry-internal and changes neither marker schema.
+Schema 1 and schema 2 have distinct wire formats but preserve the same canonical
+repository-to-tracker binding semantics.
+
+`upgrade` starts only from the checkout basename's exact active historical entry,
+performs the same provider readback, retains that exact verified candidate, and compares
+it with the current legacy entry under the publication lock before adding `canonical_repo`
+and publishing a marker. A concurrent change is refused without publishing it as V1. It
+does not alter another alias or any archive tombstone. New bindings use marker schema 2
+with `activation.kind=bootstrap`; upgraded bindings use `upgrade`. Neither carries a
+migration-manifest digest. Existing schema-1 migration markers remain readable.
+
+Every adapter resolves again through the strict shared checkout selection before
+activation, including Linear; a factory created before an interrupted update cannot
+consume the divergent registry mappings.
+
+`registry cutover` now emits schema 2 with `activation.kind=migration` and is the only
+path that requires `activation.manifest_digest`.
+
+`update` is the coherent recovery for reviewed field, label and milestone mapping
+changes. Its input is the complete replacement binding plus the marker's expected
+`configuration_digest`, not a partial cache edit. Under the same local registry lock it
+compares the marker, old registry digest and complete candidate, refuses a concurrent
+winner, updates every active alias for that canonical checkout together, publishes the
+matching marker and reads both back. After the exact local compare succeeds, the CLI
+uses only the provider identity readback port, independently of the normal factory.
+This narrow read-only probe permits interrupted publication recovery; ordinary commands
+continue refusing the divergent marker. Exact
+replay completes an interruption between registry and marker publication. This is a
+local compare-and-publish boundary only; it neither mutates provider data nor claims a
+provider CAS. Marker structure, schema version, activation vocabulary and every digest
+are parsed by the same strict reader before either file can be written, including during
+replay (`registry.py:397-487`, `1130-1220`). Bootstrap also validates the marker
+path before registry publication: dangling marker symlinks, symlinked `.foundry`
+directories and non-directory parents refuse without replacing existing paths. Archive tombstones and unrelated bindings
+are preserved.
+
+The hook lookup `entry_for()` uses the same strict checkout selection. Multiple active
+legacy bindings are refused instead of selecting `FOUNDRY_TRACKER`; SessionStart reports
+the invalid binding and the Bash guard denies R1 commands. A foreign canonical homonym
+does not inherit another repository’s Foundry context. Explicit legacy aliases outside
+V1 remain usable only when their active binding is unique.
 
 The non-core `full-administrative-provisioning` row records YouTrack's existing
-provisioning as an optional capability and Linear/`ghprojects` as refused.
+provisioning as an optional capability and Linear/`ghprojects` as refused. Setup refuses
+a repository argument different from the verified checkout and an occupied
+basename slot across all providers before constructing the provider, including a foreign
+canonical homonym. It rechecks the complete checkout selection across providers under the
+publication lock, refusing a concurrently added binding or tombstone. Use the existing-project
+bootstrap path for homonyms; administrative setup never replaces their bindings.
 
-**Open point for PAT-65.** GitHub Projects v2 is GraphQL-only (`ghprojects.py` module
-docstring). Foundry's code-host rule is REST only (`skills/merge-pr/SKILL.md:226`:
+**Open workflow point for PAT-65.** GitHub Projects v2 is GraphQL-only (`ghprojects.py`
+module docstring). Foundry's code-host rule is REST only (`skills/merge-pr/SKILL.md:226`:
 "Never GraphQL (`gh pr create/merge/checks`). REST only — the adapter enforces it.").
 A repository choosing `ghprojects` keeps the REST-only code-host adapter for PRs and
-merges; only its tracker adapter would need GraphQL. PAT-65 resolves this tension; this
-contract does not.
+merges. Its tracker adapter uses one read-only GraphQL probe for PAT-54 binding and will
+use GraphQL for tracker operations only as PAT-65 and the owner tickets qualify them.
 
 ## 6. Conformance test plan
 
@@ -347,6 +425,6 @@ contract does not.
 
 ## Document status
 
-This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 1`. A change to
+This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 2`. A change to
 any status cell, the operation list or the closed status vocabulary bumps the JSON
 `version` and this heading together.

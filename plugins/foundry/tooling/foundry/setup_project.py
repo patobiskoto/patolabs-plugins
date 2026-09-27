@@ -92,12 +92,44 @@ def import_adrs(tracker, project, adr_dir):
 
 
 def setup(name, short, repo, adr_dir=None):
-    tracker = foundry.tracker()
+    # Prove locally that this checkout is genuinely new before even selecting or
+    # constructing a provider.  Legacy bindings and interrupted V1 publications must
+    # be upgraded/recovered, never shadowed through an adverse host-global setting.
+    try:
+        selection = registry.repository_tracker_selection(allow_unbound=True)
+    except (SystemExit, ValueError) as exc:
+        raise SystemExit(f"Setup tracker refusé : {exc}") from None
+    if selection["mode"] != "unbound":
+        raise SystemExit(
+            f"Setup tracker refusé : le dépôt possède déjà un binding "
+            f"{selection['mode']}."
+        )
+
+    if repo != selection["repo"]:
+        raise SystemExit(
+            "Setup tracker refusé : nom de dépôt incompatible avec le checkout."
+        )
+
+    # Setup is the one boundary that intentionally selects the configured provider:
+    # a fresh repository has no binding yet, while normal factory calls stay closed.
+    provider = foundry.config.tracker_name()
+    # The administrative setup publishes a legacy basename entry. It must never
+    # replace a foreign canonical slot that the unbound preflight correctly ignored.
+    if any(
+        repo in entries for entries in registry.load().values()
+        if isinstance(entries, dict)
+    ):
+        raise SystemExit(
+            f"Setup tracker refusé : clé '{provider}/{repo}' déjà occupée. "
+            "Utilisez registry bootstrap pour lier un projet existant."
+        )
+    tracker = foundry.tracker(provider)
     if not tracker.project_provisioning_supported:
         raise SystemExit(
             f"Le tracker '{tracker.name}' ne prend pas en charge le provisionnement "
             "de projet. Crée le projet avec l'outil du provider, puis utilise "
-            "'registry register', ou configure un tracker compatible."
+            "'registry bootstrap' avec son binding complet vérifié, ou configure "
+            "un tracker compatible."
         )
 
     canonical_repository = None
@@ -115,7 +147,10 @@ def setup(name, short, repo, adr_dir=None):
         raise RuntimeError(
             f"le tracker {tracker.name} a retourné le projet {project.key}, attendu {short}"
         )
-    registry.register(tracker.name, repo, project.key, project.id, **project.extra)
+    registry.register(
+        tracker.name, repo, project.key, project.id,
+        require_absent=True, **project.extra,
+    )
     print(f"📇 enregistré : {repo} → {project.key} ({project.id}) [{tracker.name}]")
     if adr_dir:
         import_adrs(tracker, project, adr_dir)

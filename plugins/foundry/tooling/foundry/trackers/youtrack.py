@@ -247,9 +247,9 @@ class YouTrackTracker(Tracker):
     def verify_project_identity(self, project: Project) -> bool:
         """Confirm an explicitly supplied native id and key refer to one project.
 
-        This provider-specific read is used by destructive test infrastructure so a
-        mistyped native id cannot redirect writes to a different project.  It is not
-        part of the tracker port and does not consult the repository registry.
+        The shared tracker port uses this read before V1 binding publication.
+        Destructive test infrastructure also uses it to prevent a mistyped native
+        id from redirecting writes. It does not consult the repository registry.
         """
         project_id = urllib.parse.quote(project.id, safe="")
         raw = self._req(

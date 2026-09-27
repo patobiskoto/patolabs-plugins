@@ -432,6 +432,19 @@ class LinearWire:
 def tracker(tmp_path, monkeypatch):
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
     wire = LinearWire()
+
+    # These transport tests use synthetic non-UUID provider ids. Mock the strict
+    # checkout-selection boundary, not the adapter resolution. Real marker/digest
+    # behavior for all three adapters is covered in test_repository_binding_v1.
+    def selected_checkout(cwd=None):
+        canonical = registry.checkout_repository_identity(cwd)
+        project = registry.resolve_canonical_repository("linear", canonical)
+        return {
+            "mode": "v1", "tracker": "linear",
+            "binding": SimpleNamespace(repository=canonical, project=project),
+        }
+
+    monkeypatch.setattr(registry, "repository_tracker_selection", selected_checkout)
     return LinearTracker(token="linear-test-secret", transport=wire), wire
 
 
@@ -1089,6 +1102,10 @@ def test_checkout_resolution_refuses_contradictory_canonical_bindings(
     monkeypatch,
 ):
     _, wire = tracker
+    monkeypatch.setattr(
+        registry, "checkout_repository_identity",
+        lambda cwd=None: "github.com/acme/widgets",
+    )
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     contradictory = project_entry()
     contradictory.update({"key": "OTHER", "id": "other-project"})

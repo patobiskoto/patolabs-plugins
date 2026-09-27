@@ -67,6 +67,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("milestone")
     ap.add_argument("--foundry-cli")
+    ap.add_argument(
+        "--require-v1-binding", action="store_true",
+        help="refuse a legacy repository binding before querying the changelog",
+    )
     args = ap.parse_args()
 
     cli = _find_cli(args.foundry_cli)
@@ -75,8 +79,27 @@ def main() -> int:
               file=sys.stderr)
         return 3
 
-    r = subprocess.run(["python3", cli, "query", "changelog", args.milestone],
-                       capture_output=True, text=True)
+    selection_command = ["python3", cli, "registry", "selection"]
+    if args.require_v1_binding:
+        selection_command.append("--require-v1")
+    selection = subprocess.run(
+        selection_command, capture_output=True, text=True, check=False,
+    )
+    if selection.returncode != 0:
+        print(selection.stderr or selection.stdout, file=sys.stderr)
+        return selection.returncode
+    try:
+        selected = json.loads(selection.stdout)
+        if selected.get("tracker") not in {"youtrack", "linear", "ghprojects"}:
+            raise ValueError
+    except (TypeError, ValueError):
+        print("Sélection tracker Foundry invalide.", file=sys.stderr)
+        return 2
+
+    r = subprocess.run(
+        ["python3", cli, "query", "changelog", args.milestone],
+        capture_output=True, text=True, check=False,
+    )
     if r.returncode != 0:
         print(r.stderr or r.stdout, file=sys.stderr)
         return r.returncode
