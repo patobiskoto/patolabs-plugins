@@ -2148,7 +2148,15 @@ class LinearTracker(Tracker):
         if not ordered_ids:
             ordered_ids = cockpit_ids
             logical_names = [state_by_id[identifier] for identifier in ordered_ids]
-        elif any(identifier not in set(ordered_ids) for identifier in cockpit_ids):
+        elif any(
+            identifier not in (
+                {state_ids[name] for name in observed_names} | set(ordered_ids)
+            )
+            for identifier in cockpit_ids
+        ):
+            # Advisory cockpit receipts record native observations too. A valid
+            # historic observation must not be mistaken for a logical target.
+            # Neither set gives cockpit evidence lifecycle or acceptance authority.
             raise TrackerConflictError("Linear native state changed outside lifecycle")
         if not ordered_ids:
             raise TrackerConflictError("Linear lifecycle native state proof malformed")

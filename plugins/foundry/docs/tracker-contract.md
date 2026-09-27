@@ -317,7 +317,9 @@ never **excludes** them, and no text in Foundry may say otherwise.
   against the initially validated readback. Explicitly selected bases remain valid;
   retargeting is refused even when both branches point at the same commit.
   The override recovery port therefore requires `base_sha` explicitly. An already
-  aligned native State does not skip receipt authentication.
+  aligned native State does not skip receipt authentication. Historical advisory
+  cockpit observations are checked against the validated native observation history
+  as well as logical targets; they never grant lifecycle or acceptance authority.
 
   Query observations, including next-issue and roadmap profiles, expose
   `normalized_state`, `native_state`, and

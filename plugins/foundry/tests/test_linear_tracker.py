@@ -3553,9 +3553,7 @@ def test_linear_override_and_later_acceptance_of_one_generation_stay_readable(
     assert projection["acceptance_override"] is None
 
 
-def test_linear_cockpit_projection_requires_complete_go_and_never_changes_lifecycle(
-    tracker,
-):
+def _project_complete_cockpit_fixture(tracker):
     instance, wire = tracker
     repository = "github.com/acme/widgets"
     issue_id = "LIN-2"
@@ -8002,3 +8000,71 @@ def test_linear_final_merge_readback_refuses_changed_refs_at_same_base_sha(
     assert events == []
     assert _lifecycle_rows(wire, "LIN-2", "state-done") == []
     assert wire.issues["LIN-2"]["state"]["id"] == STATE_IDS["review"]
+
+
+
+def test_linear_cockpit_projection_requires_complete_go_and_never_changes_lifecycle(tracker):
+    _project_complete_cockpit_fixture(tracker)
+
+
+@pytest.mark.parametrize("native", ["in-progress", "done"])
+def test_linear_historical_cockpit_and_lifecycle_observations_remain_readable(tracker, native):
+    instance, wire = tracker
+    _project_complete_cockpit_fixture(tracker)
+    _historical_done_shape(instance, wire)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[native]
+    before = copy.deepcopy(wire.issues["LIN-2"])
+    offset = len(wire.calls)
+
+    observed = instance.observe_issue("LIN-2")
+    assert observed.normalized_state == "done"
+    assert observed.native_state == native
+    assert observed.projection_status == ("aligned" if native == "done" else "disagreement")
+    assert (observed.ac_done, observed.ac_total) == (1, 1)
+    if native == "done":
+        assert instance.get_issue("LIN-2").state == "done"
+    else:
+        with pytest.raises(TrackerConflictError, match="native state changed"):
+            instance.get_issue("LIN-2")
+    assert wire.issues["LIN-2"] == before
+    assert not any("FoundryLinearIssueUpdate" in document or "FoundryLinearCommentCreate" in document
+                   for document, _variables in wire.calls[offset:])
+
+
+def test_linear_cockpit_does_not_complete_historical_review_acceptance(tracker):
+    instance, wire = tracker
+    _project_complete_cockpit_fixture(tracker)
+    instance._activate(PROJECT)
+    _append_lifecycle_row(instance, wire, "LIN-2", "state-review", {
+        "state": "review", "native_state_id": STATE_IDS["ready"],
+        "pr_url": OVERRIDE_PR_URL, "head_sha": "a" * 40,
+        "base_sha": "b" * 40, "review_digest": OVERRIDE_DIGEST,
+        "generation": 1, "previous_projection_digest": None,
+    })
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["review"]
+    before = copy.deepcopy(wire.issues["LIN-2"])
+
+    projected = instance.get_issue("LIN-2")
+    assert projected.state == "review"
+    assert (projected.ac_done, projected.ac_total) == (0, 1)
+    assert wire.issues["LIN-2"] == before
+
+
+def test_linear_combined_history_still_refuses_foreign_cockpit_native_coordinate(tracker):
+    instance, wire = tracker
+    _project_complete_cockpit_fixture(tracker)
+    row = _lifecycle_rows(wire, "LIN-2", "cockpit-evidence")[0]
+    payload = instance._decode_lifecycle_comment("LIN-2", row["body"])[1]
+    payload = {**payload, "native_state_id": "state-foreign"}
+    _, row["body"], _ = instance._lifecycle_marker("cockpit-evidence", "LIN-2", payload)
+    _historical_done_shape(instance, wire)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    before = copy.deepcopy(wire.issues["LIN-2"])
+
+    with pytest.raises(TrackerConflictError, match="native state proof malformed"):
+        instance.get_issue("LIN-2")
+    observed = instance.observe_issue("LIN-2")
+    assert observed.projection_status == "unknown"
+    assert observed.normalized_state is None
+    assert observed.ac_done == 0
+    assert wire.issues["LIN-2"] == before
