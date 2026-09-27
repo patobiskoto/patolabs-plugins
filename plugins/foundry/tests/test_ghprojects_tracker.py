@@ -191,9 +191,92 @@ def test_pat66_foreign_project_refuses_before_any_transport(operation, args):
     assert calls == []
 
 
-def _write_issue(*, priority="P1", body="body", links=()):
-    return Issue(id="GHQUAL-1", title="issue 1", priority=priority, body=body,
-                 links=list(links))
+def _write_issue(*, priority="P1", estimate=None, body="body", links=()):
+    return Issue(
+        id="GHQUAL-1", title="issue 1", priority=priority, estimate=estimate,
+        body=body, links=list(links),
+    )
+
+
+class _FieldWriteTransport:
+    """Stateful GitHub transport for per-field S1/S2/S3 adverse paths."""
+
+    def __init__(
+        self, *, priority="P1", estimate=3, lost_response_applies=None,
+        drift_after_priority=False,
+    ):
+        self.priority = priority
+        self.estimate = estimate
+        self.body = "UTF-8 é"
+        self.lost_response_applies = lost_response_applies
+        self.drift_after_priority = drift_after_priority
+        self.failure_sent = False
+        self.events = []
+        self.mutation_fields = []
+
+    def _project_payload(self):
+        payload = _page("item-1", 1, None, False)
+        values = payload["data"]["user"]["projectV2"]["items"]["nodes"][0][
+            "fieldValues"
+        ]["nodes"]
+        priority = next(row for row in values if row["field"]["id"] == "priority")
+        priority["name"] = self.priority
+        priority["optionId"] = f"priority-{self.priority.casefold()}"
+        estimate = next(row for row in values if row["field"]["id"] == "estimate")
+        estimate["number"] = self.estimate
+        return payload
+
+    def _apply(self, field):
+        if field == "priority":
+            self.priority = "P2"
+            if self.drift_after_priority:
+                self.body = "third-party body"
+        elif field == "estimate":
+            self.estimate = 5
+        else:
+            pytest.fail(f"unexpected field mutation: {field}")
+
+    def __call__(self, command, **kwargs):
+        if command[2] == "graphql":
+            query = next(arg for arg in command if arg.startswith("query="))
+            if "updateProjectV2ItemFieldValue" in query:
+                field = next(
+                    arg.removeprefix("field=")
+                    for arg in command if arg.startswith("field=")
+                )
+                self.events.append(f"write:{field}")
+                self.mutation_fields.append(field)
+                if self.lost_response_applies is not None and not self.failure_sent:
+                    self.failure_sent = True
+                    if self.lost_response_applies:
+                        self._apply(field)
+                    return subprocess.CompletedProcess(
+                        command, 1, "", "synthetic transport failure",
+                    )
+                self._apply(field)
+                payload = {
+                    "data": {
+                        "updateProjectV2ItemFieldValue": {
+                            "projectV2Item": {"id": "item-1"},
+                        },
+                    },
+                }
+            else:
+                self.events.append("read:project")
+                payload = self._project_payload()
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        path = command[-1]
+        if path == "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1":
+            payload = _rest_issue(1)
+            payload["body"] = self.body
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if path.endswith("/parent"):
+            return subprocess.CompletedProcess(
+                command, 1,
+                json.dumps({"message": "No parent issue found", "status": "404"}),
+                "gh: No parent issue found (HTTP 404)",
+            )
+        return subprocess.CompletedProcess(command, 0, "[]", "")
 
 
 def test_pat66_targeted_field_write_rereads_and_preserves_unrelated_values(monkeypatch):
@@ -218,6 +301,18 @@ def test_pat66_drift_before_field_write_has_no_effect(monkeypatch):
     reads = iter([_write_issue(priority="P1"), _write_issue(priority="P2")])
     writes = []
     monkeypatch.setattr(tracker, "get_issue", lambda issue_id: next(reads))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-1", "node-1"))
+    monkeypatch.setattr(
+        tracker, "_field_catalog",
+        lambda *_: {
+            "priority": type(
+                "F", (), {
+                    "id": "priority", "data_type": "SINGLE_SELECT",
+                    "options": {"P2": "p2"},
+                },
+            )(),
+        },
+    )
     monkeypatch.setattr(tracker, "_set_project_field", lambda *args: writes.append(args))
 
     with pytest.raises(TrackerConflictError, match="avant écriture"):
@@ -225,10 +320,73 @@ def test_pat66_drift_before_field_write_has_no_effect(monkeypatch):
     assert writes == []
 
 
+def test_pat66_field_already_at_target_has_no_mutation():
+    transport = _FieldWriteTransport(priority="P2")
+    tracker = GitHubProjectsTracker(runner=transport)
+
+    updated = tracker.update_fields(
+        "GHQUAL-1", {"Priority": "P2"}, project=PROJECT,
+    )
+
+    assert updated.priority == "P2"
+    assert transport.mutation_fields == []
+
+
+@pytest.mark.parametrize("applied", [True, False])
+def test_pat66_ambiguous_field_write_is_observed_once_without_rewrite(
+    applied,
+):
+    transport = _FieldWriteTransport(lost_response_applies=applied)
+    tracker = GitHubProjectsTracker(runner=transport)
+
+    if applied:
+        updated = tracker.update_fields(
+            "GHQUAL-1", {"Priority": "P2"}, project=PROJECT,
+        )
+        assert updated.priority == "P2"
+    else:
+        with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+            tracker.update_fields(
+                "GHQUAL-1", {"Priority": "P2"}, project=PROJECT,
+            )
+    assert transport.mutation_fields == ["priority"]
+    mutation = transport.events.index("write:priority")
+    assert "read:project" in transport.events[mutation + 1:]
+
+
+def test_pat66_multi_field_write_observes_each_effect_before_the_next():
+    transport = _FieldWriteTransport()
+    tracker = GitHubProjectsTracker(runner=transport)
+
+    updated = tracker.update_fields(
+        "GHQUAL-1", {"Priority": "P2", "Estimate": 5}, project=PROJECT,
+    )
+
+    assert (updated.priority, updated.estimate) == ("P2", 5)
+    assert transport.mutation_fields == ["priority", "estimate"]
+    priority_write = transport.events.index("write:priority")
+    estimate_write = transport.events.index("write:estimate")
+    assert "read:project" in transport.events[priority_write + 1:estimate_write]
+    assert "read:project" in transport.events[estimate_write + 1:]
+
+
+def test_pat66_unrelated_drift_after_one_field_stops_multi_field_write():
+    transport = _FieldWriteTransport(drift_after_priority=True)
+    tracker = GitHubProjectsTracker(runner=transport)
+
+    with pytest.raises(TrackerConflictError, match="divergent après écriture"):
+        tracker.update_fields(
+            "GHQUAL-1", {"Priority": "P2", "Estimate": 5}, project=PROJECT,
+        )
+
+    assert transport.mutation_fields == ["priority"]
+
+
 def test_pat66_comment_response_loss_is_one_post_without_retry(monkeypatch):
     tracker = GitHubProjectsTracker()
     writes = []
     monkeypatch.setattr(tracker, "_native_issue", lambda *_: (1, 1001))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-1", "node-1"))
     def lost(*args):
         writes.append(args)
         raise GitHubProjectsTrackerError("issue.comment", "transport_failed")
@@ -238,6 +396,39 @@ def test_pat66_comment_response_loss_is_one_post_without_retry(monkeypatch):
         tracker.add_comment("GHQUAL-1", "non-authoritative note", project=PROJECT)
     assert len(writes) == 1
     assert writes[0][0:2] == ("POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/comments")
+
+
+@pytest.mark.parametrize(
+    ("project_item_number", "adr"),
+    [(2, False), (1, True)],
+    ids=["outside-project", "adr-support"],
+)
+def test_pat66_comment_requires_active_project_delivery_item_before_post(
+    project_item_number, adr,
+):
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        if command[2] == "graphql":
+            payload = _page(
+                f"item-{project_item_number}", project_item_number, None, False,
+                adr=adr,
+            )
+        else:
+            assert command[-1].endswith("/issues/1")
+            payload = _rest_issue(1)
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    with pytest.raises(IssueUnavailableError):
+        GitHubProjectsTracker(runner=runner).add_comment(
+            "GHQUAL-1", "must stay absent", project=PROJECT,
+        )
+
+    assert not any(
+        "-X" in command and command[command.index("-X") + 1] == "POST"
+        for command in calls
+    )
 
 
 def test_pat66_create_known_partial_attachment_never_reposts_issue(monkeypatch, tmp_path):
@@ -819,6 +1010,7 @@ def test_pat66_completed_replay_refuses_drift_without_rewriting(monkeypatch, tmp
 def test_pat66_comment_readback_requires_bound_issue_and_exact_comment(monkeypatch):
     tracker = GitHubProjectsTracker()
     monkeypatch.setattr(tracker, "_native_issue", lambda *_: (1, 1001))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-1", "node-1"))
     monkeypatch.setattr(
         tracker, "_rest_write", lambda *_: {
             "id": 44, "body": "note é",

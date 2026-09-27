@@ -288,3 +288,26 @@ le même répertoire de données Foundry sur une machine ; aucune coordination
 entre machines ni garantie exactly-once globale n’est revendiquée. Zéro candidat
 pour un effet encore inconnu reste un refus ; une création externe identique
 dans la fenêtre initiale zéro → POST reste un risque résiduel explicite.
+
+### Recette PAT-66 : champs et exclusion des supports ADR
+
+Une nouvelle invocation a demandé la priorité et l’estimation déjà présentes
+sur `GHQUAL-5` : aucune mutation de champ n’a été envoyée. La priorité a ensuite
+été réellement modifiée de P1 vers P2 ; le transport de qualification a injecté
+une perte de réponse après cette unique mutation. La relecture autoritative a
+confirmé P2 et la conservation des propriétés non visées. Un nouveau rejeu vers
+P2 n’a envoyé aucune mutation. Cette perte de réponse est une injection explicite,
+pas une panne GitHub revendiquée.
+
+Une tentative de commentaire de livraison sur le support ADR expérimental
+`GHQUAL-3` a été refusée après les lectures de qualification et avant tout POST.
+Le support et ses versions sont restés intacts. Les tests de transport couvrent
+également une issue du dépôt absente du Project, le résultat partiel de plusieurs
+champs, l’effet non observé et une divergence de propriété non visée.
+
+Chaque champ possède une borne de lecture/écriture/relecture indépendante ;
+aucune transaction entre champs ni exclusion concurrente n’est revendiquée.
+Contrairement à la création, les champs existants n’ont pas de journal durable
+d’intention : une relecture indisponible laisse un effet inconnu et aucun retry
+automatique. Une invocation ultérieure explicite repart d’une lecture fraîche.
+La fenêtre S1→S2 résiduelle de PAT-ADR-0006 reste assumée.

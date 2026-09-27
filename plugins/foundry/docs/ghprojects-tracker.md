@@ -73,9 +73,18 @@ non-ADR delivery item in this exact Project as well as an Issue at the exact bou
 URL before the child is made. A canonical-repository Issue outside the Project and a
 `foundry:adr` support are both refused before the first write. The parent is attached
 with its Issue number and the child's distinct integer native Issue ID.
-`update_fields` and issue-only `update_body` reread their targeted snapshot just
-before one narrow mutation and reread it afterwards.  Unrelated fields are never
-sent in a Project-field mutation or an Issue-body PATCH.
+`update_fields` first returns without mutation when every requested field is already
+at its target. Otherwise, each field has its own fresh read, one narrow mutation and
+immediate authoritative readback before the next field may start. The readback also
+compares every other property exposed by the normalized Issue read. A lost mutation
+response converges only when that read proves the target and preserves those unrelated
+properties; an observed unchanged target keeps the original error, and any other
+divergence is a conflict. A partially completed multi-field call therefore leaves only
+independently observed effects. A later explicit invocation freshly observes them and
+skips targets already applied; there is no automatic rewrite of an ambiguous effect and
+no durable field-write intent across invocations. Issue-only `update_body` retains its
+single targeted read/write/readback. Unrelated fields are never sent in a Project-field
+mutation or an Issue-body PATCH.
 
 GitHub's qualified endpoints expose no expected-version/CAS parameter. These are
 therefore bounded detection, never CAS or exclusion: a third-party change between
@@ -122,7 +131,11 @@ payloads, which is deliberately kept distinct from the Foundry issue key, Issue
 number, Project item ID, Project ID, field ID and select-option ID. `relates` uses the
 qualified symmetric `addRelatesTo` GraphQL mutation over the two distinct Issue node
 IDs, then reads the complete `relatesTo` connection from the Project item; a truncated,
-foreign, duplicate or malformed relation fails closed. `add_comment` is one non-authoritative free-text POST; it validates a normal
-response against the exact bound Issue URL and requires an exact comment-ID/body
-readback. It cannot safely replay a lost response without duplicating it. REST integer
-IDs and booleans retain their JSON types; UTF-8 text remains literal.
+foreign, duplicate or malformed relation fails closed. `add_comment` first proves one
+unique, complete, non-ADR delivery item in the active Project as well as the exact bound
+REST Issue. A canonical-repository Issue outside that Project and a `foundry:adr`
+support are refused before the POST. The one non-authoritative free-text POST validates
+a normal response against the exact bound Issue URL and requires an exact
+comment-ID/body readback. It cannot safely replay a lost response without duplicating
+the note. REST integer IDs and booleans retain their JSON types; UTF-8 text remains
+literal.

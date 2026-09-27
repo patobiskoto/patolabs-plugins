@@ -1078,6 +1078,23 @@ class GitHubProjectsTracker(Tracker):
     def _snapshot(issue: Issue, fields: dict[str, Any]) -> dict[str, Any]:
         return {name: getattr(issue, name) for name in fields}
 
+    @staticmethod
+    def _issue_snapshot(issue: Issue) -> dict[str, Any]:
+        """Capture every normalized property observable around a narrow field write."""
+        return issue.to_dict()
+
+    @classmethod
+    def _field_result_snapshot(
+        cls, issue: Issue, semantic: str, value: Any,
+    ) -> dict[str, Any]:
+        expected = cls._issue_snapshot(issue)
+        expected[semantic] = value
+        if semantic == "state":
+            # PAT-57 exposes this Project field through both the legacy display
+            # value and the explicit normalized-state observation.
+            expected["normalized_state"] = value
+        return expected
+
     def _item_coordinate(self, issue_id: str, binding: _Binding) -> tuple[str, str]:
         """Return distinct Project item and Issue node IDs for one bound issue."""
         # Reuse PAT-57's exhaustive page and catalog validation before a raw
@@ -1531,21 +1548,44 @@ class GitHubProjectsTracker(Tracker):
         portable = self._portable_fields(fields)
         if not portable:
             return self.get_issue(issue_id)
-        before = self.get_issue(issue_id)
-        expected = self._snapshot(before, portable)
-        fresh = self.get_issue(issue_id)
-        if self._snapshot(fresh, portable) != expected:
-            raise TrackerConflictError("champs GitHub modifiés avant écriture bornée")
+        current = self.get_issue(issue_id)
+        if self._snapshot(current, portable) == portable:
+            return current
+        observed = self._issue_snapshot(current)
         item_id, _ = self._item_coordinate(issue_id, binding)
         catalog = self._write_catalog(binding, portable)
-        # Each provider call has a narrow, independently verified target.  A later
-        # field failure leaves a known partial result and is never retried here.
+        # GitHub has no multi-field transaction.  Give every individual field its
+        # own S1/S2/S3 observation boundary, and advance to the next field only
+        # after the previous target and all unrelated observable properties match.
         for semantic, value in portable.items():
-            self._set_project_field(item_id, binding.project_id, catalog[semantic], value)
-        readback = self.get_issue(issue_id)
-        if self._snapshot(readback, portable) != portable:
-            raise TrackerConflictError("champs GitHub divergents après écriture ; aucune seconde tentative")
-        return readback
+            if getattr(current, semantic) == value:
+                continue
+            fresh = self.get_issue(issue_id)
+            if self._issue_snapshot(fresh) != observed:
+                raise TrackerConflictError(
+                    "champs GitHub modifiés avant écriture bornée",
+                )
+            expected = self._field_result_snapshot(fresh, semantic, value)
+            write_error: GitHubProjectsTrackerError | None = None
+            try:
+                self._set_project_field(
+                    item_id, binding.project_id, catalog[semantic], value,
+                )
+            except GitHubProjectsTrackerError as exc:
+                # A transport loss may follow a committed GraphQL mutation.  The
+                # sole recovery is this authoritative observation; never rewrite.
+                write_error = exc
+            readback = self.get_issue(issue_id)
+            actual = self._issue_snapshot(readback)
+            if actual == expected:
+                current, observed = readback, actual
+                continue
+            if write_error is not None and actual == observed:
+                raise write_error
+            raise TrackerConflictError(
+                "champ GitHub divergent après écriture ; aucune seconde tentative",
+            ) from write_error
+        return current
 
     def update_body(self, resource, expected_body, updated_body, project=None):
         if not isinstance(resource, Issue) or not isinstance(expected_body, str) or not isinstance(updated_body, str):
@@ -1613,6 +1653,9 @@ class GitHubProjectsTracker(Tracker):
         if not isinstance(text, str) or not text:
             raise GitHubProjectsTrackerError("issue.comment", "invalid_comment")
         number, _ = self._native_issue(issue_id, binding, "issue.comment_prewrite")
+        # A canonical REST Issue is not sufficient authority: comments belong only
+        # to one unique, complete, non-ADR delivery item in the active Project.
+        self._item_coordinate(issue_id, binding)
         # Free-text progress notes do not carry state.  A lost response may have
         # created one note; it is deliberately surfaced, never blindly replayed.
         raw = self._rest_write("POST", f"repos/{binding.repo}/issues/{number}/comments", {"body": text}, "issue.comment")
