@@ -482,7 +482,7 @@ def merge(issue_id, pr_number, flags=()):
         )
     transition_context = None
     review_diff = None
-    pr_base_sha = None
+    pr_base_sha = _require_pr_base_sha(pr) if bounded_lifecycle else None
     acceptance_sync = {"status": "already-complete", "checked": 0}
     proof = None
     if getattr(tr, "bounded_transition_proofs", False):

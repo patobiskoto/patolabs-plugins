@@ -368,7 +368,10 @@ branch when the original predecessor was not durably retained; it does not infer
 coordinate from the current native State. For a bounded native tracker, `issue merge`
 also authenticates the ticket's linked PR URL and the requested PR's exact
 number/head/base/state coordinates before any merge, tracker transition, branch cleanup,
-or execution-receipt effect, whether the PR is open or already merged.
+or execution-receipt effect, whether the PR is open or already merged. For both native
+state-bound and proof-bound trackers, an open PR is reread after CI and immediately
+before merge; a changed base ref or SHA is refused. This remains bounded detection,
+not a CAS: GitHub provides no expected-base parameter for the merge endpoint.
 
 Issue creation and free-text comments are outside S5: YouTrack and Linear issue creates
 use provider-assigned or fresh client ids, and ambiguous free-text comment replay can

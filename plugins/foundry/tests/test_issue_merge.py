@@ -612,6 +612,57 @@ def test_youtrack_public_merge_resume_uses_original_review_predecessor(
         assert len(posts) == 1
 
 
+@pytest.mark.parametrize("change", [{"base": "release"}, {"base_sha": "d" * 40}, None])
+@pytest.mark.parametrize("read_number", [2, 3], ids=["after-ci", "final-before-merge"])
+def test_youtrack_public_merge_checks_final_base_coordinates(monkeypatch, change, read_number):
+    native = {"state": "review"}
+    events = []
+    pr_url = "https://github.com/acme/demo/pull/12"
+    tracker, posts = _youtrack_transport(monkeypatch, native, pr_url=pr_url)
+    original = SimpleNamespace(
+        number=12, url=pr_url, sha="a" * 40, base_sha="c" * 40,
+        head="feat/demo-7", base="main", state="open", merged=False, merge_sha=None,
+    )
+    reads = 0
+
+    def get_pr(*_args):
+        nonlocal reads
+        reads += 1
+        events.append("read")
+        if change and reads >= read_number:
+            return SimpleNamespace(**{**vars(original), **change})
+        return original
+
+    def merge_pr(*_args, **kwargs):
+        assert events[-1] == "read"
+        assert kwargs["sha"] == original.sha
+        events.append("merge")
+        return SimpleNamespace(merged=True, sha="b" * 40, head=original.head)
+
+    codehost = SimpleNamespace(
+        name="github", resolve_repo=lambda: "acme/demo", get_pr=get_pr,
+        merge_pr=merge_pr, delete_branch=lambda *_args: events.append("delete"),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(write, "preflight_merge_effect", lambda *_args: events.append("guard"))
+    monkeypatch.setattr(write, "ci_gate", lambda *_args, **_kwargs: {
+        "passed": True, "waived": False, "total": 1, "pending": [], "failing": [],
+    })
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+    if change:
+        with pytest.raises(SystemExit, match="coordonnées GitHub.*changé"):
+            issue.merge("DEMO-7", "12")
+        assert "merge" not in events and "delete" not in events
+        assert posts == [] and native["state"] == "review"
+    else:
+        issue.merge("DEMO-7", "12")
+        assert reads == 3 and native["state"] == "done"
+        assert len(posts) == 1 and events[-1] == "delete"
+
+
 @pytest.mark.parametrize("merged", [False, True], ids=["open", "already-merged"])
 def test_youtrack_public_merge_refuses_wrong_linked_pr_before_any_effect(
     monkeypatch, merged,
