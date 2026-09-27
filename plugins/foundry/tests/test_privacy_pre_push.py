@@ -102,6 +102,22 @@ def test_tag_commit_and_annotated_tag_messages(repositories):
     git(local, "push", "origin", "v-clean")
 
 
+@pytest.mark.parametrize("field", ["tagger", "message"])
+@pytest.mark.parametrize("email", BAD)
+def test_nested_annotated_tags(repositories, field, email):
+    local, _ = repositories
+    commit(local, message="nested tag target")
+    env = os.environ.copy()
+    if field == "tagger":
+        env["GIT_COMMITTER_EMAIL"] = email
+    git(local, "tag", "-a", "inner", "-m", email if field == "message" else "release", env=env)
+    git(local, "tag", "-a", "outer", "inner", "-m", "clean outer release")
+    assert git(local, "push", "origin", "outer", check=False).returncode != 0
+    git(local, "tag", "-a", "inner-clean", "-m", "safe release")
+    git(local, "tag", "-a", "outer-clean", "inner-clean", "-m", "safe outer")
+    git(local, "push", "origin", "outer-clean")
+
+
 def test_deletion_and_default_branch_contract(repositories):
     local, remote = repositories
     commit(local)

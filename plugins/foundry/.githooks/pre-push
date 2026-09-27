@@ -57,10 +57,19 @@ def check_push(remote: str, lines: list[str]) -> None:
                 exclusions.add(peeled)
     commits = set()
     for tip in tips:
-        kind = git("cat-file", "-t", tip).strip()
-        if kind == b"tag" and any(email in git("cat-file", "tag", tip) for email in FORBIDDEN_EMAILS):
-            raise ValueError(f"retired identity in annotated tag {tip}")
-        peeled = git("rev-parse", tip + "^{}").decode().strip()
+        peeled = tip
+        seen_tags = set()
+        while git("cat-file", "-t", peeled).strip() == b"tag":
+            if peeled in seen_tags:
+                raise ValueError("cyclic annotated tag chain")
+            seen_tags.add(peeled)
+            raw_tag = git("cat-file", "tag", peeled)
+            if any(email in raw_tag for email in FORBIDDEN_EMAILS):
+                raise ValueError(f"retired identity in annotated tag {peeled}")
+            target = raw_tag.splitlines()[0].split()
+            if len(target) != 2 or target[0] != b"object":
+                raise ValueError("unreadable annotated tag target")
+            peeled = target[1].decode("ascii")
         if git("cat-file", "-t", peeled).strip() != b"commit":
             continue
         args = ["rev-list", peeled]
