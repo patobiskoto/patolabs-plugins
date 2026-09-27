@@ -140,7 +140,7 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12",
         sha="a" * 40, base_sha="c" * 40, head="feat/demo-7-pilot",
-        base="main", merged=False,
+        base="main", state="open", merged=False,
     )
     landed = SimpleNamespace(
         sha="b" * 40, head=pull_request.head, merged=True,
@@ -462,7 +462,7 @@ def test_proof_bound_tracker_persists_done_receipt_before_branch_delete(monkeypa
         ),
     )
     head = SimpleNamespace(
-        number=12, sha="a" * 40, head="feat/demo-7", base="release", merged=False,
+        number=12, sha="a" * 40, head="feat/demo-7", base="release", state="open", merged=False,
         base_sha="c" * 40,
         url="https://github.com/acme/demo/pull/12",
     )
@@ -512,7 +512,7 @@ def test_proof_bound_retry_uses_existing_merge_receipt_without_merging_twice(mon
         ),
     )
     pr = SimpleNamespace(
-        number=12, sha="a" * 40, head="feat/demo-7", base="main", merged=True,
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", state="closed", merged=True,
         base_sha="c" * 40,
         merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
     )
@@ -564,7 +564,7 @@ def test_youtrack_public_merge_resume_uses_original_review_predecessor(
         base_sha="c" * 40,
         head="feat/demo-7",
         base="main",
-        merged=True,
+        state="closed", merged=True,
         merge_sha="b" * 40,
     )
     codehost = SimpleNamespace(
@@ -629,7 +629,7 @@ def test_youtrack_public_merge_refuses_wrong_linked_pr_before_any_effect(
         base_sha="c" * 40,
         head="feat/demo-7",
         base="main",
-        merged=merged,
+        state="closed" if merged else "open", merged=merged,
         merge_sha="b" * 40 if merged else None,
     )
     effects = []
@@ -672,7 +672,7 @@ def test_already_done_exact_pr_retry_only_finishes_cleanup(monkeypatch, capsys):
         ),
     )
     pr = SimpleNamespace(
-        number=12, sha="a" * 40, head="feat/demo-7", base="main", merged=True,
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", state="closed", merged=True,
         base_sha="c" * 40,
         merge_sha="b" * 40, url=pr_url,
     )
@@ -705,7 +705,7 @@ def test_already_done_retry_refuses_mismatched_pr_receipt(monkeypatch):
         ),
     )
     pr = SimpleNamespace(
-        number=12, sha="a" * 40, head="feat/demo-7", base="main", merged=True,
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", state="closed", merged=True,
         base_sha="c" * 40,
         merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
     )
@@ -1061,7 +1061,7 @@ def test_proof_bound_merge_rejects_invalid_api_base_before_gates_or_effects(
     )
     pull_request = SimpleNamespace(
         number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha=base_sha,
-        merged=False, url="https://github.com/acme/demo/pull/12",
+        state="open", merged=False, url="https://github.com/acme/demo/pull/12",
     )
     codehost = SimpleNamespace(
         resolve_repo=lambda: "acme/demo", get_pr=lambda *_args: pull_request,
@@ -1097,7 +1097,7 @@ def test_proof_bound_merge_refuses_a_base_that_moves_after_validation(monkeypatc
     )
     original = SimpleNamespace(
         number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
-        merged=False, url="https://github.com/acme/demo/pull/12",
+        state="open", merged=False, url="https://github.com/acme/demo/pull/12",
     )
     stale = SimpleNamespace(**{**vars(original), "base_sha": "d" * 40})
     reads = iter((original, stale))
@@ -1134,7 +1134,7 @@ def test_proof_bound_coordinate_reread_is_last_network_call_before_merge(monkeyp
     )
     pr = SimpleNamespace(
         number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
-        merged=False, url="https://github.com/acme/demo/pull/12",
+        state="open", merged=False, url="https://github.com/acme/demo/pull/12",
     )
     landed = SimpleNamespace(sha="b" * 40, head=pr.head, merged=True)
     pr_reads = 0
@@ -1294,7 +1294,7 @@ def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
     )
     head = SimpleNamespace(
         number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
-        merged=False, url="https://github.com/acme/demo/pull/12",
+        state="open", merged=False, url="https://github.com/acme/demo/pull/12",
     )
     landed = SimpleNamespace(sha="b" * 40, head=head.head, merged=True)
 
@@ -1636,7 +1636,7 @@ def test_unreadable_issue_is_not_recovered_without_override_port(monkeypatch):
     codehost = issue.foundry.codehost()
     merged = SimpleNamespace(
         number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
-        merged=True, merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
+        state="closed", merged=True, merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
     )
     codehost.get_pr = lambda *_: merged
 

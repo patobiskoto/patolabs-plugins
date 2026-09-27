@@ -7938,3 +7938,67 @@ def test_linear_merged_recovery_authenticates_all_coordinates_before_effects(
         or "FoundryLinearCommentCreate" in document
         for document, _variables in wire.calls[call_offset:]
     )
+
+
+def test_linear_closed_unmerged_pr_refuses_before_any_lifecycle_effect(tracker, monkeypatch):
+    instance, wire = tracker
+    latest = _pat10_shape(instance, wire, monkeypatch)
+    pr = PullRequest(
+        number=17, url=OVERRIDE_PR_URL, head="feat/lin-2", base="main",
+        base_sha="b" * 40, sha=latest.head_sha, merged=False, state="closed",
+    )
+    events = _override_merge_harness(
+        monkeypatch, instance, pr,
+        lambda *_args, **_kwargs: pytest.fail("no merge"),
+    )
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: events.append("receipt"))
+    before = copy.deepcopy(wire.issues["LIN-2"])
+    offset = len(wire.calls)
+
+    with pytest.raises(SystemExit, match="coordonnées exactes"):
+        issue.merge("LIN-2", "17", flags=OVERRIDE_FLAGS)
+
+    assert wire.issues["LIN-2"] == before
+    assert events == []
+    assert not any(
+        "FoundryLinearIssueUpdate" in document or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[offset:]
+    )
+
+
+@pytest.mark.parametrize(
+    "changed", [
+        {"number": 18}, {"head": "feat/other"}, {"base": "release"},
+        {"state": "closed"}, {"merged": True, "merge_sha": "f" * 40},
+    ],
+)
+def test_linear_final_merge_readback_refuses_changed_refs_at_same_base_sha(
+    tracker, monkeypatch, changed,
+):
+    instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state(
+        "LIN-2", "review", project=PROJECT,
+        context=TransitionContext(
+            pr_url=OVERRIDE_PR_URL, head_sha="a" * 40,
+            base_sha="b" * 40, review_digest=OVERRIDE_DIGEST,
+        ),
+    )
+    pr = PullRequest(
+        number=17, url=OVERRIDE_PR_URL, head="feat/lin-2", base="main",
+        base_sha="b" * 40, sha="a" * 40,
+    )
+    fresh = PullRequest(**{**vars(pr), **changed})
+    events = _override_merge_harness(
+        monkeypatch, instance, pr,
+        lambda *_args, **_kwargs: pytest.fail("changed PR must never merge"),
+    )
+    reads = iter((pr, pr, fresh))
+    issue.foundry.codehost().get_pr = lambda *_args: next(reads)
+
+    with pytest.raises(SystemExit, match="coordonnées GitHub.*changé"):
+        issue.merge("LIN-2", "17", flags=OVERRIDE_FLAGS)
+
+    assert events == []
+    assert _lifecycle_rows(wire, "LIN-2", "state-done") == []
+    assert wire.issues["LIN-2"]["state"]["id"] == STATE_IDS["review"]

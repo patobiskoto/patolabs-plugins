@@ -312,6 +312,10 @@ never **excludes** them, and no text in Foundry may say otherwise.
   authenticate the issue-linked PR number and URL before tracker effects. Already
   merged Linear recovery also compares head/base/merge SHAs to the authentic done
   receipt before override recovery, native repair, local receipts or branch cleanup.
+  Closed, unmerged PRs are refused before effects. The final pre-merge relecture
+  compares number, URL, head/base branch names, head/base/merge SHAs and state/merged
+  against the initially validated readback. Explicitly selected bases remain valid;
+  retargeting is refused even when both branches point at the same commit.
   The override recovery port therefore requires `base_sha` explicitly. An already
   aligned native State does not skip receipt authentication.
 

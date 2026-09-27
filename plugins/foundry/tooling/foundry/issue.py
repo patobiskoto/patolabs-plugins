@@ -122,8 +122,10 @@ def _require_unchanged_pr_coordinates(ch, repo, pr_number, original, base_sha) -
     """Fail closed when the code-host no longer exposes the reviewed PR coordinates."""
     fresh = ch.get_pr(repo, int(pr_number))
     fresh_base_sha = _require_pr_base_sha(fresh)
-    if (fresh.sha != original.sha or fresh_base_sha != base_sha
-            or fresh.url != original.url or fresh.merged != original.merged):
+    if (fresh_base_sha != base_sha or any(
+        getattr(fresh, key, None) != getattr(original, key, None)
+        for key in ("number", "url", "sha", "head", "base", "state", "merged", "merge_sha")
+    )):
         raise SystemExit(
             "⛔ Merge refusé — les coordonnées GitHub de la PR ont changé "
             "depuis la preuve (head/base/état). Relance les gates sur la PR courante."
@@ -141,6 +143,8 @@ def _require_pr_coordinates(pr, pr_number: int) -> str:
         and re.fullmatch(r"[0-9a-f]{40}", str(getattr(pr, "sha", None)))
         is not None
         and isinstance(getattr(pr, "merged", None), bool)
+        and getattr(pr, "state", None) in {"open", "closed"}
+        and (pr.merged or pr.state == "open")
         and (
             not pr.merged
             or re.fullmatch(r"[0-9a-f]{40}", str(getattr(pr, "merge_sha", None)))
