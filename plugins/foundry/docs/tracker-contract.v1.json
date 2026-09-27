@@ -498,14 +498,12 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-69",
-          "evidence": "epic_closure_supported = False with the comment 'YouTrack exposes neither an atomic parent+children compare-and-transition nor a provider-verified receipt store. A read-then-command emulation would race' (youtrack.py); no close_epic/get_epic_closure override, so the base raises EpicClosureUnavailableError (base.py). A no-CAS closure replaces the atomic invariant of base.py and write.py"
+          "status": "supported",
+          "evidence": "bounded_epic_closure_supported and close_epic/get_epic_closure bind the original parent predecessor, exact required children, transitive dependency edges, positive non-empty checked-body AC coordinates and versions into a deterministic append-only audit; they perform one targeted parent write and reread the full graph (youtrack.py). Unknown, override, dropped and zero-criteria nodes fail closed. This is PAT-ADR-0006 bounded detection, never CAS or a provider transaction."
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-69",
-          "evidence": "no epic_closure_supported override (base default False) and no close_epic/get_epic_closure override; write.close_epic raises before any provider call (write.py). A no-CAS closure replaces the atomic invariant of base.py and write.py"
+          "status": "supported",
+          "evidence": "bounded_epic_closure_supported and close_epic/get_epic_closure bind the original parent predecessor, exact required children, transitive dependency edges, versions and authenticated review-bound acceptance proof coordinates into a deterministic-id audit comment; they project only the parent State and reread the full graph (linear.py). Unknown, override, dropped and zero-criteria nodes fail closed under PAT-ADR-0006's named S1-S2 residual risk."
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -513,7 +511,7 @@
           "evidence": "no override; the base default applies. Whether GitHub Projects v2 offers any parent/child precondition is unqualified (PAT-65); the capability itself is owned by PAT-69 (epic closure in the active tracker)."
         }
       },
-      "note": "DevHub (non-V1) is the only adapter with epic_closure_supported = True (devhub.py; close_epic at devhub.py)."
+      "note": "DevHub (non-V1) retains its stronger atomic epic_closure_supported transaction; GitHub Projects remains unqualified and refuses through the base port."
     },
     {
       "id": "tombstone-archived-source-after-switch",

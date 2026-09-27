@@ -29,7 +29,10 @@ import urllib.request
 import uuid
 
 from foundry import config, registry
-from foundry.models import Adr, Issue, Link, Project, TransitionContext
+from foundry.models import (
+    Adr, EpicClosureChild, EpicClosureDependency, EpicClosureOutcome,
+    EpicClosureReceipt, Issue, Link, Project, TransitionContext,
+)
 from foundry.trackers.base import (
     _UNSPECIFIED_ADR_RELATION,
     AcceptanceSyncUnavailableError,
@@ -1628,6 +1631,7 @@ class LinearTracker(Tracker):
     acceptance_proof_projection_supported = True
     acceptance_override_projection_supported = True
     cockpit_evidence_projection_supported = True
+    bounded_epic_closure_supported = True
 
     def __init__(
         self,
@@ -2895,6 +2899,44 @@ class LinearTracker(Tracker):
             projection_status = "unknown"
         if lifecycle["acceptance_complete"]:
             done = total
+        acceptance_status = "unknown"
+        acceptance_source = None
+        acceptance_coordinates = None
+        review_generation = lifecycle.get("review_generation")
+        accepted = lifecycle.get("acceptance_by_generation", {}).get(
+            review_generation
+        )
+        overridden = lifecycle.get("acceptance_override_by_generation", {}).get(
+            review_generation
+        )
+        if lifecycle["acceptance_complete"] and isinstance(accepted, dict):
+            acceptance_status = "accepted"
+            acceptance_source = "linear-acceptance-proof"
+            acceptance_coordinates = json.dumps(
+                {
+                    "body_digest": accepted.get("body_digest"),
+                    "checked": accepted.get("checked"),
+                    "native_state_id": accepted.get("native_state_id"),
+                    "proof_id": (accepted.get("proof") or {}).get("proof_id"),
+                    "review_generation": accepted.get("review_generation"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        elif lifecycle.get("acceptance_override") is not None and isinstance(
+            overridden, dict
+        ):
+            acceptance_status = "override"
+            acceptance_source = "linear-acceptance-override"
+            acceptance_coordinates = json.dumps(
+                {
+                    "native_state_id": overridden.get("native_state_id"),
+                    "reason": overridden.get("reason"),
+                    "review_generation": overridden.get("review_generation"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         priority = raw.get("priority", 0)
         if priority not in _LINEAR_TO_PRIORITY:
             raise LinearTrackerError("normalize", None, "invalid_response")
@@ -2930,9 +2972,16 @@ class LinearTracker(Tracker):
             comments=comments,
             created=_epoch_ms(raw.get("createdAt")),
             updated=_epoch_ms(raw.get("updatedAt")),
+            # Linear exposes no independent issue revision.  Its server-managed
+            # update timestamp is the only fresh, provider-issued coordinate this
+            # bounded (non-CAS) path may bind into a closure receipt.
+            version=_epoch_ms(raw.get("updatedAt")),
             normalized_state=lifecycle["state"],
             native_state=native_state,
             projection_status=projection_status,
+            acceptance_status=acceptance_status,
+            acceptance_source=acceptance_source,
+            acceptance_coordinates=acceptance_coordinates,
         )
 
     def search(self, project: Project, query: str = "") -> list[Issue]:
@@ -3838,6 +3887,222 @@ class LinearTracker(Tracker):
             raise TrackerConflictError(
                 "Linear relation deterministic id is occupied by another relation"
             )
+
+    @staticmethod
+    def _epic_closure_audit(receipt: EpicClosureReceipt) -> tuple[str, str, str]:
+        value = {"schema": "foundry-epic-closure.v1", "receipt": receipt.to_dict()}
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+        audit_id = f"linear:epic:{digest}"
+        return audit_id, (
+            "Foundry Epic closure audit (append-only).\n"
+            f"marker: foundry-epic-closure.v1:{digest}\ncoordinates: {canonical}"
+        ), str(uuid.UUID(digest[:32], version=4))
+
+    @classmethod
+    def _closure_from_issue(
+        cls, issue: Issue, project: Project, *, require_done: bool = True,
+    ) -> EpicClosureOutcome | None:
+        matches = []
+        for row in issue.comments:
+            text = row.get("text") if isinstance(row, dict) else None
+            if not isinstance(text, str) or not text.startswith("Foundry Epic closure audit (append-only).\n"):
+                continue
+            lines = text.splitlines()
+            try:
+                raw = json.loads(lines[2].removeprefix("coordinates: "))["receipt"]
+                dependencies = tuple(
+                    EpicClosureDependency(
+                        source_id=item["source_id"],
+                        target=EpicClosureChild(**item["target"]),
+                    )
+                    for item in raw.get("dependencies", ())
+                )
+                receipt = EpicClosureReceipt(**{
+                    **raw,
+                    "children": tuple(EpicClosureChild(**x) for x in raw["children"]),
+                    "dependencies": dependencies,
+                })
+            except (IndexError, KeyError, TypeError, ValueError):
+                raise TrackerConflictError("audit de clôture Linear malformé") from None
+            audit_id, expected, _comment_id = cls._epic_closure_audit(receipt)
+            if len(lines) != 3 or text != expected or lines[1] != f"marker: foundry-epic-closure.v1:{audit_id.removeprefix('linear:epic:')}":
+                raise TrackerConflictError("audit de clôture Linear divergent")
+            matches.append((receipt, audit_id))
+        if len(matches) > 1:
+            raise TrackerConflictError("audit de clôture Linear dupliqué")
+        if not matches:
+            return None
+        receipt, audit_id = matches[0]
+        if require_done and (
+            issue.state != "done"
+            or issue.version is None
+            or issue.version <= receipt.parent_version
+        ):
+            raise TrackerConflictError("audit de clôture Linear sans parent clôturé")
+        return EpicClosureOutcome(
+            receipt,
+            issue.version if require_done else receipt.parent_version + 1,
+            audit_id,
+            replayed=True,
+        )
+
+    @classmethod
+    def _closure_from_raw(
+        cls, raw: dict, project: Project, *, require_done: bool = True,
+    ) -> EpicClosureOutcome | None:
+        """Read the Epic audit without treating it as a code-issue lifecycle proof."""
+        identifier = raw.get("identifier")
+        state = raw.get("state")
+        if not isinstance(identifier, str) or not isinstance(state, dict):
+            raise LinearTrackerError("epic-closure.readback", None, "invalid_response")
+        comments = [
+            {"text": row.get("body")}
+            for row in _connection(raw.get("comments"), "epic-closure.comments")
+        ]
+        issue = Issue(
+            id=identifier, title="", state=(
+                "done" if state.get("id") == cls._binding(project)["state_ids"]["done"] else None
+            ),
+            version=_epoch_ms(raw.get("updatedAt")), comments=comments,
+        )
+        return cls._closure_from_issue(issue, project, require_done=require_done)
+
+    def get_epic_closure(self, project: Project, parent_id: str) -> EpicClosureOutcome | None:
+        self.validate_issue_binding(project, parent_id)
+        binding = self._activate(project)
+        raw = self._read_raw(parent_id)
+        self._assert_issue_project(raw, binding)
+        outcome = self._closure_from_raw(raw, project)
+        if outcome is None:
+            return None
+        from foundry.write import bounded_epic_graph_snapshot
+
+        try:
+            parent = self._to_issue(raw, project, observe_lifecycle=True)
+            current, dependencies = bounded_epic_graph_snapshot(
+                self, project, parent,
+            )
+        except (SystemExit, TrackerConflictError) as exc:
+            raise TrackerConflictError(
+                "graphe Epic Linear divergent au rejeu"
+            ) from exc
+        if (
+            current != outcome.receipt.children
+            or dependencies != outcome.receipt.dependencies
+        ):
+            raise TrackerConflictError("graphe Epic Linear divergent au rejeu")
+        return outcome
+
+    def get_pending_epic_closure(
+        self, project: Project, parent_id: str,
+    ) -> EpicClosureReceipt | None:
+        self.validate_issue_binding(project, parent_id)
+        binding = self._activate(project)
+        raw = self._read_raw(parent_id)
+        self._assert_issue_project(raw, binding)
+        state = raw.get("state")
+        native_state_id = state.get("id") if isinstance(state, dict) else None
+        if native_state_id == binding["state_ids"]["done"]:
+            return None
+        pending = self._closure_from_raw(raw, project, require_done=False)
+        if pending is None:
+            return None
+        receipt = pending.receipt
+        current_version = _epoch_ms(raw.get("updatedAt"))
+        current_state = next(
+            (
+                name for name, identifier in binding["state_ids"].items()
+                if identifier == native_state_id
+            ),
+            None,
+        )
+        if (
+            current_version is None
+            or current_version < receipt.parent_version
+            or current_state != receipt.parent_state
+        ):
+            raise TrackerConflictError(
+                "audit pending Linear séparé de son prédécesseur original"
+            )
+        return receipt
+
+    def close_epic(self, project: Project, receipt: EpicClosureReceipt) -> EpicClosureOutcome:
+        binding = self._activate(project)
+        self.validate_issue_binding(project, receipt.parent_id, *(x.id for x in receipt.children))
+        parent = self.get_issue(receipt.parent_id)
+        observed = self._closure_from_issue(parent, project, require_done=False)
+        if observed is not None and parent.state == "done":
+            existing = self._closure_from_issue(parent, project)
+            if existing is None or existing.receipt != receipt:
+                raise TrackerConflictError("audit de clôture Linear divergent")
+            return existing
+        if observed is not None and observed.receipt != receipt:
+            raise TrackerConflictError("audit pending Linear divergent")
+        from foundry.write import bounded_epic_graph_snapshot
+
+        try:
+            children, dependencies = bounded_epic_graph_snapshot(
+                self, project, parent,
+            )
+        except SystemExit as exc:
+            raise TrackerConflictError(
+                "graphe Epic Linear divergent avant écriture"
+            ) from exc
+        if (((observed is None and parent.version != receipt.parent_version)
+                or (observed is not None and (
+                    parent.version is None or parent.version < receipt.parent_version
+                )))
+                or parent.type != receipt.parent_type
+                or parent.ac_done != receipt.parent_ac_done or parent.ac_total != receipt.parent_ac_total
+                or parent.state != receipt.parent_state
+                or children != receipt.children
+                or dependencies != receipt.dependencies):
+            raise TrackerConflictError("graphe Epic Linear divergent avant écriture")
+        audit_id, body, comment_id = self._epic_closure_audit(receipt)
+        raw = self._read_raw(receipt.parent_id)
+        self._assert_issue_project(raw, binding)
+        prior = self._read_comment(comment_id, "epic-closure.comment.read")
+        if observed is None and prior is None:
+            try:
+                data = self._graphql(_COMMENT_CREATE, {"input": {"id": comment_id, "issueId": raw["id"], "body": body}}, "epic-closure.comment.create")
+                created = self._mutation_payload(data, "commentCreate", "epic-closure.comment.create").get("comment")
+                if not isinstance(created, dict) or created.get("id") != comment_id or created.get("body") != body:
+                    raise LinearTrackerError("epic-closure.comment.create", None, "invalid_response")
+            except LinearTrackerError:
+                prior = self._read_comment(comment_id, "epic-closure.comment.recover")
+                if not isinstance(prior, dict) or prior.get("body") != body:
+                    raise
+        elif prior is None or prior.get("body") != body or (prior.get("issue") or {}).get("id") != raw["id"]:
+            raise TrackerConflictError("audit de clôture Linear collision")
+        # The audit is append-only and carries the deterministic replay identity;
+        # only after it exists can the one targeted parent State projection run.
+        # This remains PAT-ADR-0006 bounded detection, not a transaction.
+        self._project_native_state(receipt.parent_id, "done", project, binding)
+        closed_raw = self._read_raw(receipt.parent_id)
+        self._assert_issue_project(closed_raw, binding)
+        recovered = self._closure_from_raw(closed_raw, project)
+        if recovered is None or recovered.receipt != receipt:
+            raise TrackerConflictError("audit de clôture Linear absent après écriture")
+        try:
+            closed_parent = self._to_issue(
+                closed_raw, project, observe_lifecycle=True,
+            )
+            closed_children, closed_dependencies = bounded_epic_graph_snapshot(
+                self, project, closed_parent,
+            )
+        except (SystemExit, TrackerConflictError) as exc:
+            raise TrackerConflictError(
+                "graphe Epic Linear divergent après écriture"
+            ) from exc
+        if (
+            closed_children != receipt.children
+            or closed_dependencies != receipt.dependencies
+        ):
+            raise TrackerConflictError(
+                "graphe Epic Linear divergent après écriture"
+            )
+        return EpicClosureOutcome(receipt, recovered.closed_parent_version, audit_id)
 
     def add_comment(
         self,

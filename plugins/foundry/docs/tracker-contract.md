@@ -63,7 +63,7 @@ closed vocabulary:
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | `to_qualify` PAT-58 |
 | Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 |
-| Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-69 (after PAT-65) |
+| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | `to_qualify` PAT-69 (after PAT-65) |
 | Périmètre de release/changelog | `search` via `query.py changelog()` | supported | **gap** PAT-59 | `to_qualify` PAT-59 |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
 | Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
@@ -94,9 +94,10 @@ cell.
   replacement refused, while `write.sync_acceptance` uses its proof-bound append-only
   projection (`project_acceptance_proof`, `linear.py`) as the V1 AC authority; native
   checkboxes and external state automation never count as positive acceptance evidence.
-- **PAT-69** — Neither YouTrack nor Linear implements `close_epic`/`get_epic_closure`;
-  `write.close_epic` refuses before any provider call (`write.py`). Only the non-V1
-  DevHub adapter implements the port (`devhub.py`).
+- **PAT-69** — YouTrack and Linear implement `close_epic`/`get_epic_closure` through
+  PAT-ADR-0006's bounded path. GitHub Projects remains unqualified and refuses through
+  the base port. The non-V1 DevHub adapter retains the stronger atomic form of the port
+  (`devhub.py`).
 - **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
   target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR
   import target. No adapter copies live work faithfully: Linear's `create_issue` sends a
@@ -358,7 +359,7 @@ machine.
 | AC state | S1-S4 on the checkbox body (met, level 1) | PAT-ADR-0006 declares the proof-bound append-only projection the V1 authority (S5/S6); native checkbox replacement remains refused |
 | Status projection | S1-S5: the public operation supplies its original predecessor coordinate, `set_state` retains it through the effective S1 transport read before one native State write, and an exact retry at the target converges; another state or a missing predecessor fails closed | `in-progress`/`review`/`done`: one targeted native State projection under S1-S5 plus its append-only receipt; historical native observations and proof-bound logical targets are validated separately, only the latest relevant receipt may repair a missing projection, disagreement is observable, and a bare native terminal state is never positive proof |
 | Resume | S5 on every replayable transition through the predecessor coordinate; free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | exact native/receipt recovery completes only the missing effect; `add_comment` (`linear.py`) follows the free-text rule |
-| Epic closure | Fresh read of the full parent/children graph and AC proofs, one write, append-only receipt at a deterministic id bound to the exact set of terminal children and carrying the FOUNDRY-ADR-0017 human verdict, readback, fail closed on any divergence — authorized by PAT-ADR-0006, implementation PAT-69 | same — authorized by PAT-ADR-0006, implementation PAT-69 |
+| Epic closure | Fresh read of the parent, exact required children and complete transitive dependency graph; every node must be `done` with non-empty qualified AC evidence (unknown, zero-criteria, override and dropped remain refusals). One targeted parent write is paired with a deterministic append-only audit carrying the original predecessor, exact graph/proof coordinates and explicit FOUNDRY-ADR-0017 human verdict, then the full graph is read back. Divergence fails closed. This is bounded detection with the named S1→S2 overwrite risk, never CAS or an atomic transaction. | same, with Linear's append-only review-bound acceptance proof as authority; an override receipt remains distinct and blocks closure |
 
 The low-level CLI makes the predecessor explicit when the active adapter requires
 bounded native transitions: `edit transition <ISSUE-ID> <target> <expected-state>`.
@@ -392,8 +393,8 @@ PAT-ADR-0006, **Garanties d'écriture sans CAS pour les trackers V1**, is accept
 explicitly amends Linear's former blanket refusal for PAT-55 grooming fields, body and
 parent under S1-S4 and the named S1→S2 risk. It keeps Linear native checkbox replacement
 refused and selects the existing append-only proof projection as V1 AC authority for
-PAT-56. It also authorizes PAT-69's bounded Epic-closure shape while leaving that
-implementation outside PAT-55. The machine-readable contract therefore has no pending
+PAT-56. It also authorizes PAT-69's bounded Epic-closure shape. The machine-readable
+contract therefore has no pending
 ADR entry or `blocked_by_adr` cell; remaining `gap` cells are implementation work owned
 by their tickets. A future stronger or weaker guarantee still requires another accepted
 ADR before code.

@@ -125,6 +125,69 @@ class AtomicEpicTracker:
         return replace(self.stored, replayed=True)
 
 
+class BoundedEpicTracker(AtomicEpicTracker):
+    """PAT-ADR-0006 fixture: no provider transaction or CAS is claimed."""
+
+    name = "bounded-fixture"
+    epic_closure_supported = False
+    bounded_epic_closure_supported = True
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        for issue_id in ("DEMO-2", "DEMO-3"):
+            child = self.issues[issue_id]
+            child.ac_done = child.ac_total = 1
+            child.acceptance_status = "accepted"
+            child.acceptance_source = "synthetic-qualified-proof"
+            child.acceptance_coordinates = '{"proof":"qualified"}'
+
+    def _current_receipt_coordinates(self):
+        parent = self.issues["DEMO-1"]
+        child_ids = sorted(
+            relation.target for relation in parent.links
+            if relation.type == "parent-of"
+        )
+        return parent, tuple(
+            EpicClosureChild(
+                id=child_id,
+                version=self.issues[child_id].version,
+                state=self.issues[child_id].state,
+                ac_done=self.issues[child_id].ac_done,
+                ac_total=self.issues[child_id].ac_total,
+                acceptance_status=self.issues[child_id].acceptance_status,
+                acceptance_source=self.issues[child_id].acceptance_source,
+                acceptance_coordinates=self.issues[child_id].acceptance_coordinates,
+            )
+            for child_id in child_ids
+        )
+
+
+def test_bounded_epic_closure_requires_exact_human_acceptance(monkeypatch):
+    tracker = BoundedEpicTracker()
+    tracker.issues["DEMO-3"].state = "done"
+    monkeypatch.setattr(write.registry, "repo_basename", lambda: "demo")
+
+    with pytest.raises(SystemExit, match="verdict humain explicite"):
+        write.close_epic(tracker, "DEMO-1")
+    with pytest.raises(SystemExit, match="verdict humain explicite"):
+        write.close_epic(tracker, "DEMO-1", human_verdict="override")
+
+    outcome = write.close_epic(
+        tracker, "DEMO-1", human_verdict="accepted",
+        issued_at=1_800_000_000_000, nonce="nonce_1234567890abcdef",
+    )
+    assert outcome.receipt.human_verdict == "accepted"
+
+
+def test_bounded_epic_closure_refuses_dropped_child_as_a_waiver(monkeypatch):
+    tracker = BoundedEpicTracker()
+    monkeypatch.setattr(write.registry, "repo_basename", lambda: "demo")
+
+    with pytest.raises(SystemExit, match="dérogé, pas accepté"):
+        write.close_epic(tracker, "DEMO-1", human_verdict="accepted")
+    assert tracker.close_calls == 0
+
+
 @pytest.mark.parametrize(("ac_done", "ac_total"), [(0, 0), (2, 2)])
 def test_close_epic_binds_exact_project_parent_children_version_time_and_nonce(
     monkeypatch, ac_done, ac_total,
@@ -304,7 +367,7 @@ def test_devhub_old_server_contract_fails_closed_without_fallback(monkeypatch):
     )]
 
 
-def test_youtrack_refuses_epic_closure_before_any_request(monkeypatch):
+def test_youtrack_refuses_missing_human_verdict_before_any_request(monkeypatch):
     tracker = YouTrackTracker(
         url="http://127.0.0.1:8080",
         token="tracker-token-at-least-twenty-four",
@@ -316,7 +379,8 @@ def test_youtrack_refuses_epic_closure_before_any_request(monkeypatch):
     )
 
     assert tracker.epic_closure_supported is False
-    with pytest.raises(EpicClosureUnavailableError):
+    assert tracker.bounded_epic_closure_supported is True
+    with pytest.raises(SystemExit, match="verdict humain explicite"):
         write.close_epic(tracker, "DEMO-1")
 
 

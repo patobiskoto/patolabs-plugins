@@ -18,8 +18,16 @@ import urllib.parse
 import urllib.request
 
 from foundry import config, registry
-from foundry.routing import RoutingConfigError, synchronize_acceptance_body
-from foundry.models import Adr, Issue, Link, Project, TransitionContext
+from foundry.routing import (
+    RoutingConfigError,
+    acceptance_criteria,
+    acceptance_digest,
+    synchronize_acceptance_body,
+)
+from foundry.models import (
+    Adr, EpicClosureChild, EpicClosureDependency, EpicClosureOutcome,
+    EpicClosureReceipt, Issue, Link, Project, TransitionContext,
+)
 from foundry.trackers.base import (
     IssueUnavailableError,
     Tracker,
@@ -114,6 +122,9 @@ class YouTrackTracker(Tracker):
     # YouTrack exposes neither an atomic parent+children compare-and-transition nor
     # a provider-verified receipt store. A read-then-command emulation would race.
     epic_closure_supported = False
+    # PAT-ADR-0006 explicitly authorizes this bounded path.  It is not a
+    # provider transaction and retains the named S1->S2 residual race.
+    bounded_epic_closure_supported = True
     # YouTrack exposes no compare-and-swap precondition.  update_body therefore
     # serializes Foundry writers through a local file lock and uses read-verify-write-readback;
     # another client can still race between those requests.
@@ -246,6 +257,26 @@ class YouTrackTracker(Tracker):
         done, total = self._ac_counts(body)
         labels = self._cf(raw, "Labels")
         native_state = self._cf(raw, "State")
+        acceptance_status = "unknown"
+        acceptance_source = None
+        acceptance_coordinates = None
+        if total > 0 and done == total:
+            try:
+                criteria = acceptance_criteria(body)
+            except RoutingConfigError:
+                criteria = []
+            if len(criteria) == total:
+                acceptance_status = "accepted"
+                acceptance_source = "youtrack-checked-body"
+                acceptance_coordinates = json.dumps(
+                    {
+                        "ac_digest": acceptance_digest(criteria),
+                        "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+                        "native_state": native_state,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
         return Issue(
             id=raw["idReadable"], title=raw.get("summary", ""),
             state=native_state, priority=self._cf(raw, "Priority"),
@@ -255,8 +286,14 @@ class YouTrackTracker(Tracker):
             ac_done=done, ac_total=total, links=self._links(raw),
             pr_url=self._cf(raw, "GitHub PR"), body=body,
             created=raw.get("created"), updated=raw.get("updated"),
+            # YouTrack does not expose a separate revision through this endpoint;
+            # its server-issued update timestamp is the bounded closure coordinate.
+            version=raw.get("updated"),
             normalized_state=native_state, native_state=native_state,
-            projection_status="native-only")
+            projection_status="native-only",
+            acceptance_status=acceptance_status,
+            acceptance_source=acceptance_source,
+            acceptance_coordinates=acceptance_coordinates)
 
     # ---- Tracker port ---------------------------------------------------
     def verify_project_identity(self, project: Project) -> bool:
@@ -311,8 +348,11 @@ class YouTrackTracker(Tracker):
                 raise IssueUnavailableError(issue_id) from None
             raise
         issue = self._to_issue(raw)
+        # Closure receipts are durable authority, so do not discard older rows
+        # during normalization.  A bounded closure must either find its exact
+        # audit or fail closed; a display-oriented last-ten window is unsound.
         issue.comments = [{"text": c.get("text"), "created": c.get("created")}
-                          for c in (raw.get("comments") or [])[-10:]]
+                          for c in (raw.get("comments") or [])]
         return issue
 
     def _cf_write(self, name, value):
@@ -683,6 +723,204 @@ class YouTrackTracker(Tracker):
     ) -> None:
         self._issue_target_project(issue_id)
         self._req("POST", f"/issues/{issue_id}/comments", {"text": text}, "id")
+
+    @staticmethod
+    def _epic_closure_audit(receipt: EpicClosureReceipt) -> tuple[str, str]:
+        """Canonical append-only audit payload; the digest is its replay identity."""
+        value = {"schema": "foundry-epic-closure.v1", "receipt": receipt.to_dict()}
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+        return f"foundry-epic-closure.v1:{digest}", (
+            "Foundry Epic closure audit (append-only).\n"
+            f"marker: foundry-epic-closure.v1:{digest}\ncoordinates: {canonical}"
+        )
+
+    @classmethod
+    def _closure_from_issue(
+        cls, issue: Issue, project: Project, *, require_done: bool = True,
+    ) -> EpicClosureOutcome | None:
+        matches = []
+        for row in issue.comments:
+            text = row.get("text") if isinstance(row, dict) else None
+            if not isinstance(text, str) or not text.startswith("Foundry Epic closure audit (append-only).\n"):
+                continue
+            lines = text.splitlines()
+            if len(lines) != 3 or not lines[1].startswith("marker: ") or not lines[2].startswith("coordinates: "):
+                raise TrackerConflictError("audit de clôture YouTrack malformé")
+            try:
+                value = json.loads(lines[2].removeprefix("coordinates: "))
+                raw = value["receipt"]
+                children = tuple(EpicClosureChild(**child) for child in raw["children"])
+                dependencies = tuple(
+                    EpicClosureDependency(
+                        source_id=item["source_id"],
+                        target=EpicClosureChild(**item["target"]),
+                    )
+                    for item in raw.get("dependencies", ())
+                )
+                receipt = EpicClosureReceipt(**{
+                    **raw,
+                    "children": children,
+                    "dependencies": dependencies,
+                })
+            except (KeyError, TypeError, ValueError):
+                raise TrackerConflictError("audit de clôture YouTrack malformé") from None
+            marker, expected = cls._epic_closure_audit(receipt)
+            if text != expected or lines[1] != f"marker: {marker}":
+                raise TrackerConflictError("audit de clôture YouTrack divergent")
+            if receipt.project_key != project.key or receipt.project_id != project.id or receipt.parent_id != issue.id:
+                raise TrackerConflictError("audit de clôture YouTrack hors coordonnées")
+            matches.append((receipt, marker))
+        if len(matches) > 1:
+            raise TrackerConflictError("audit de clôture YouTrack dupliqué")
+        if not matches:
+            return None
+        receipt, marker = matches[0]
+        if require_done and (
+            issue.state != "done"
+            or issue.version is None
+            or issue.version <= receipt.parent_version
+        ):
+            raise TrackerConflictError("audit de clôture YouTrack sans parent clôturé")
+        return EpicClosureOutcome(
+            receipt,
+            issue.version if require_done else receipt.parent_version + 1,
+            marker,
+            replayed=True,
+        )
+
+    def get_epic_closure(self, project: Project, parent_id: str) -> EpicClosureOutcome | None:
+        self.validate_issue_binding(project, parent_id)
+        parent = self.get_issue(parent_id)
+        outcome = self._closure_from_issue(parent, project)
+        if outcome is None:
+            return None
+        from foundry.write import bounded_epic_graph_snapshot
+
+        try:
+            current, dependencies = bounded_epic_graph_snapshot(
+                self, project, parent,
+            )
+        except (SystemExit, TrackerConflictError) as exc:
+            raise TrackerConflictError(
+                "graphe Epic YouTrack divergent au rejeu"
+            ) from exc
+        if (
+            current != outcome.receipt.children
+            or dependencies != outcome.receipt.dependencies
+        ):
+            raise TrackerConflictError("graphe Epic YouTrack divergent au rejeu")
+        return outcome
+
+    def get_pending_epic_closure(
+        self, project: Project, parent_id: str,
+    ) -> EpicClosureReceipt | None:
+        self.validate_issue_binding(project, parent_id)
+        parent = self.get_issue(parent_id)
+        if parent.state == "done":
+            return None
+        pending = self._closure_from_issue(parent, project, require_done=False)
+        if pending is None:
+            return None
+        receipt = pending.receipt
+        if (
+            parent.version is None
+            or parent.version < receipt.parent_version
+            or parent.state != receipt.parent_state
+        ):
+            raise TrackerConflictError(
+                "audit pending YouTrack séparé de son prédécesseur original"
+            )
+        return receipt
+
+    def close_epic(self, project: Project, receipt: EpicClosureReceipt) -> EpicClosureOutcome:
+        self.validate_issue_binding(project, receipt.parent_id, *(child.id for child in receipt.children))
+        before = self.get_issue(receipt.parent_id)
+        observed = self._closure_from_issue(before, project, require_done=False)
+        if observed is not None and before.state == "done":
+            existing = self._closure_from_issue(before, project)
+            if existing is None or existing.receipt != receipt:
+                raise TrackerConflictError("audit de clôture YouTrack divergent")
+            return existing
+        if observed is not None and observed.receipt != receipt:
+            raise TrackerConflictError("audit pending YouTrack divergent")
+        if before.state == "done":
+            raise TrackerConflictError("Epic YouTrack done sans audit récupérable")
+        from foundry.write import bounded_epic_graph_snapshot
+
+        try:
+            expected_children, expected_dependencies = bounded_epic_graph_snapshot(
+                self, project, before,
+            )
+        except SystemExit as exc:
+            raise TrackerConflictError(
+                "graphe Epic YouTrack divergent avant écriture"
+            ) from exc
+        if (
+            ((observed is None and before.version != receipt.parent_version)
+             or (observed is not None and (
+                 before.version is None or before.version < receipt.parent_version
+             )))
+            or before.type != receipt.parent_type
+            or before.ac_done != receipt.parent_ac_done or before.ac_total != receipt.parent_ac_total
+            or before.state != receipt.parent_state
+            or expected_children != receipt.children
+            or expected_dependencies != receipt.dependencies
+        ):
+            raise TrackerConflictError("graphe Epic YouTrack divergent avant écriture")
+        audit_id, audit = self._epic_closure_audit(receipt)
+        if observed is None:
+            try:
+                self.add_comment(receipt.parent_id, audit, project)
+            except Exception as error:
+                # The provider may have committed the append-only audit before
+                # losing the response.  Recover by exact read only; never retry.
+                recovered_pending = self._closure_from_issue(
+                    self.get_issue(receipt.parent_id), project, require_done=False,
+                )
+                if recovered_pending is None or recovered_pending.receipt != receipt:
+                    raise error
+        # Read the pending audit before the single parent write.  An ambiguous
+        # audit response is never retried; absence is a closed failure.
+        pending = self._closure_from_issue(
+            self.get_issue(receipt.parent_id), project, require_done=False,
+        )
+        if pending is None or pending.receipt != receipt:
+            raise TrackerConflictError("audit de clôture YouTrack absent avant écriture")
+        try:
+            self.set_state(
+                receipt.parent_id, "done",
+                TransitionContext(expected_state=receipt.parent_state), project,
+            )
+        except Exception as error:
+            # Same bounded recovery for a response lost after the targeted State
+            # effect: exact done + exact audit is success, anything else fails.
+            recovered_parent = self.get_issue(receipt.parent_id)
+            recovered = self._closure_from_issue(recovered_parent, project)
+            if recovered is None or recovered.receipt != receipt:
+                raise error
+        closed = self.get_issue(receipt.parent_id)
+        if closed.state != "done" or closed.version is None or closed.version <= receipt.parent_version:
+            raise TrackerConflictError("Epic YouTrack divergent après écriture")
+        recovered = self._closure_from_issue(closed, project)
+        if recovered is None or recovered.receipt != receipt:
+            raise TrackerConflictError("audit de clôture YouTrack absent après écriture")
+        try:
+            closed_children, closed_dependencies = bounded_epic_graph_snapshot(
+                self, project, closed,
+            )
+        except (SystemExit, TrackerConflictError) as exc:
+            raise TrackerConflictError(
+                "graphe Epic YouTrack divergent après écriture"
+            ) from exc
+        if (
+            closed_children != receipt.children
+            or closed_dependencies != receipt.dependencies
+        ):
+            raise TrackerConflictError(
+                "graphe Epic YouTrack divergent après écriture"
+            )
+        return EpicClosureOutcome(receipt, closed.version, audit_id)
 
     @contextmanager
     def _body_lock(self, resource_type: str, resource_id: str):

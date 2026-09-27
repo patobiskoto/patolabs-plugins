@@ -335,7 +335,7 @@ def test_ghprojects_core_methods_are_unimplemented_stubs():
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-69", "PAT-64", "PAT-59"],
+    ["PAT-64", "PAT-59"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

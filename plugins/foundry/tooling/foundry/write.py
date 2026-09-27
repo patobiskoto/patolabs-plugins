@@ -10,10 +10,12 @@ from __future__ import annotations
 import re
 import secrets
 import time
+import json
 
 from foundry import registry
 from foundry.models import (
     EpicClosureChild,
+    EpicClosureDependency,
     EpicClosureOutcome,
     EpicClosureReceipt,
     Issue,
@@ -35,7 +37,10 @@ ALLOWED_STATES = {
     "done",
     "dropped",
 }
+# DevHub retains its historical atomic contract, which permits a dropped child.
+# PAT-ADR-0006 providers apply the stricter accepted-only rule below.
 EPIC_CHILD_TERMINAL_STATES = frozenset({"done", "dropped"})
+_EPIC_HUMAN_VERDICT = "accepted"
 _SAFE_RECEIPT_NONCE = re.compile(r"[A-Za-z0-9_-]{16,128}")
 _SAFE_AUDIT_ID = re.compile(r"[A-Za-z0-9._:-]{1,160}")
 
@@ -327,6 +332,126 @@ def _validate_epic_parent(parent) -> None:
         )
 
 
+def _bounded_epic_node(issue: Issue, *, role: str) -> EpicClosureChild:
+    """Build one strictly accepted graph coordinate for PAT-ADR-0006."""
+    if issue.state == "dropped":
+        raise SystemExit(
+            f"Clôture Epic refusée : {role} {issue.id} est dérogé, pas accepté."
+        )
+    if issue.state != "done":
+        raise SystemExit(
+            f"Clôture Epic refusée : {role} {issue.id} n'est pas terminal accepté."
+        )
+    version = _exact_positive_version(issue.version, f"version {role}")
+    ac_done = _exact_nonnegative_int(issue.ac_done, f"AC {role} satisfaites")
+    ac_total = _exact_nonnegative_int(issue.ac_total, f"AC {role} totales")
+    if ac_total == 0 or ac_done != ac_total:
+        raise SystemExit(
+            f"Clôture Epic refusée : la preuve AC de {role} {issue.id} est inconnue."
+        )
+    if issue.acceptance_status != "accepted":
+        qualifier = "dérogée" if issue.acceptance_status == "override" else "inconnue"
+        raise SystemExit(
+            f"Clôture Epic refusée : la preuve de {role} {issue.id} est {qualifier}."
+        )
+    if (
+        not isinstance(issue.acceptance_source, str)
+        or not issue.acceptance_source
+        or not isinstance(issue.acceptance_coordinates, str)
+        or not issue.acceptance_coordinates
+    ):
+        raise SystemExit(
+            f"Clôture Epic refusée : coordonnées de preuve de {role} {issue.id} absentes."
+        )
+    return EpicClosureChild(
+        id=issue.id,
+        version=version,
+        state=issue.state,
+        ac_done=ac_done,
+        ac_total=ac_total,
+        acceptance_status=issue.acceptance_status,
+        acceptance_source=issue.acceptance_source,
+        acceptance_coordinates=issue.acceptance_coordinates,
+    )
+
+
+def bounded_epic_graph_snapshot(
+    tracker, project: Project, parent: Issue,
+) -> tuple[tuple[EpicClosureChild, ...], tuple[EpicClosureDependency, ...]]:
+    """Read the complete required-child/dependency graph in canonical order.
+
+    This is the one canonical builder used by the write preflight, provider S1,
+    readback and replay.  It has no write side effect.
+    """
+    child_ids = [
+        relation.target for relation in parent.links if relation.type == "parent-of"
+    ]
+    if not child_ids:
+        raise SystemExit(
+            "Clôture Epic refusée : aucun enfant requis n'est lié à l'Epic."
+        )
+    if any(not isinstance(item, str) or not item for item in child_ids):
+        raise SystemExit("Clôture Epic refusée : lien enfant invalide.")
+    if len(child_ids) != len(set(child_ids)):
+        raise SystemExit("Clôture Epic refusée : liens enfants dupliqués.")
+    child_ids.sort()
+    tracker.validate_issue_binding(project, parent.id, *child_ids)
+    cache: dict[str, Issue] = {parent.id: parent}
+
+    def fetch(issue_id: str) -> Issue:
+        if issue_id not in cache:
+            tracker.validate_issue_binding(project, parent.id, issue_id)
+            candidate = tracker.get_issue(issue_id)
+            if candidate.id != issue_id:
+                raise SystemExit(
+                    "Clôture Epic refusée : identité du graphe contradictoire."
+                )
+            cache[issue_id] = candidate
+        return cache[issue_id]
+
+    children = tuple(
+        _bounded_epic_node(fetch(child_id), role="enfant")
+        for child_id in child_ids
+    )
+    edges: list[EpicClosureDependency] = []
+    expanded: set[str] = set()
+
+    def visit(source: Issue, path: tuple[str, ...]) -> None:
+        dependency_ids = [
+            relation.target
+            for relation in source.links
+            if relation.type == "depends-on"
+        ]
+        if any(not isinstance(item, str) or not item for item in dependency_ids):
+            raise SystemExit("Clôture Epic refusée : lien de dépendance invalide.")
+        if len(dependency_ids) != len(set(dependency_ids)):
+            raise SystemExit(
+                f"Clôture Epic refusée : dépendances dupliquées pour {source.id}."
+            )
+        for target_id in sorted(dependency_ids):
+            if target_id in path:
+                raise SystemExit(
+                    "Clôture Epic refusée : cycle dans le graphe de dépendances."
+                )
+            tracker.validate_issue_binding(project, parent.id, source.id, target_id)
+            target = fetch(target_id)
+            edges.append(EpicClosureDependency(
+                source_id=source.id,
+                target=_bounded_epic_node(target, role="dépendance"),
+            ))
+            if target_id not in expanded:
+                visit(target, (*path, target_id))
+        expanded.add(source.id)
+
+    for root in (parent, *(cache[item] for item in child_ids)):
+        if root.id not in expanded:
+            visit(root, (root.id,))
+    ordered = tuple(sorted(edges, key=lambda edge: (edge.source_id, edge.target.id)))
+    if len({(edge.source_id, edge.target.id) for edge in ordered}) != len(ordered):
+        raise SystemExit("Clôture Epic refusée : graphe de dépendances dupliqué.")
+    return children, ordered
+
+
 def _validate_epic_outcome(
     outcome,
     *,
@@ -367,19 +492,77 @@ def _validate_epic_outcome(
         raise SystemExit("Clôture Epic refusée : AC du reçu incomplètes.")
     if type(receipt.children) is not tuple or not receipt.children:
         raise SystemExit("Clôture Epic refusée : liste complète des enfants absente.")
-    child_ids = []
-    for child in receipt.children:
+    bounded_receipt = receipt.human_verdict is not None
+    if bounded_receipt and (
+        receipt.human_verdict != _EPIC_HUMAN_VERDICT
+        or not isinstance(receipt.parent_state, str)
+        or receipt.parent_state in EPIC_CHILD_TERMINAL_STATES
+    ):
+        raise SystemExit("Clôture Epic refusée : prédécesseur ou verdict invalide.")
+
+    def validate_node(child: EpicClosureChild, label: str) -> None:
         if (
             type(child) is not EpicClosureChild
             or not isinstance(child.id, str)
             or not child.id
             or child.state not in EPIC_CHILD_TERMINAL_STATES
         ):
-            raise SystemExit("Clôture Epic refusée : coordonnée enfant invalide.")
-        _exact_positive_version(child.version, "version enfant du reçu")
+            raise SystemExit(f"Clôture Epic refusée : coordonnée {label} invalide.")
+        _exact_positive_version(child.version, f"version {label} du reçu")
+        _exact_nonnegative_int(child.ac_done, f"AC {label} satisfaites du reçu")
+        _exact_nonnegative_int(child.ac_total, f"AC {label} totales du reçu")
+        if child.ac_done != child.ac_total:
+            raise SystemExit(f"Clôture Epic refusée : AC {label} incomplètes ou inconnues.")
+        if bounded_receipt:
+            if child.ac_total == 0 or child.acceptance_status != "accepted":
+                raise SystemExit(f"Clôture Epic refusée : preuve {label} non acceptée.")
+            if not isinstance(child.acceptance_source, str) or not child.acceptance_source:
+                raise SystemExit(f"Clôture Epic refusée : source de preuve {label} absente.")
+            if not isinstance(child.acceptance_coordinates, str):
+                raise SystemExit(f"Clôture Epic refusée : coordonnées de preuve {label} absentes.")
+            try:
+                coordinates = json.loads(child.acceptance_coordinates)
+            except (TypeError, ValueError):
+                coordinates = None
+            if not isinstance(coordinates, dict) or not coordinates:
+                raise SystemExit(f"Clôture Epic refusée : coordonnées de preuve {label} invalides.")
+
+    child_ids = []
+    for child in receipt.children:
+        validate_node(child, "enfant")
         child_ids.append(child.id)
     if child_ids != sorted(child_ids) or len(child_ids) != len(set(child_ids)):
         raise SystemExit("Clôture Epic refusée : ensemble enfant non canonique.")
+    if type(receipt.dependencies) is not tuple:
+        raise SystemExit("Clôture Epic refusée : graphe de dépendances invalide.")
+    dependency_keys = []
+    adjacency: dict[str, list[str]] = {}
+    known_nodes = {receipt.parent_id, *child_ids}
+    for dependency in receipt.dependencies:
+        if (
+            type(dependency) is not EpicClosureDependency
+            or not isinstance(dependency.source_id, str)
+            or not dependency.source_id
+        ):
+            raise SystemExit("Clôture Epic refusée : dépendance invalide.")
+        validate_node(dependency.target, "dépendance")
+        dependency_keys.append((dependency.source_id, dependency.target.id))
+        adjacency.setdefault(dependency.source_id, []).append(dependency.target.id)
+        known_nodes.add(dependency.target.id)
+    if dependency_keys != sorted(dependency_keys) or len(dependency_keys) != len(set(dependency_keys)):
+        raise SystemExit("Clôture Epic refusée : graphe de dépendances non canonique.")
+    if any(source not in known_nodes for source in adjacency):
+        raise SystemExit("Clôture Epic refusée : source de dépendance étrangère.")
+
+    def reject_cycle(node: str, path: frozenset[str]) -> None:
+        if node in path:
+            raise SystemExit("Clôture Epic refusée : cycle de dépendances dans le reçu.")
+        for target in adjacency.get(node, ()):
+            reject_cycle(target, path | {node})
+
+    reject_cycle(receipt.parent_id, frozenset())
+    for child_id in child_ids:
+        reject_cycle(child_id, frozenset())
     _exact_nonnegative_int(receipt.issued_at, "horodatage du reçu")
     if not isinstance(receipt.nonce, str) or not _SAFE_RECEIPT_NONCE.fullmatch(
         receipt.nonce
@@ -406,26 +589,45 @@ def close_epic(
     *,
     issued_at: int | None = None,
     nonce: str | None = None,
+    human_verdict: str | None = None,
 ) -> EpicClosureOutcome:
-    """Close one non-code Epic through an atomic provider graph operation.
+    """Close one non-code Epic through its qualified audited capability.
 
-    The client preflight makes errors cheap and clear. It is not the concurrency
-    boundary: a supporting tracker must compare the receipt against the complete,
-    locked parent graph and durably store the state change plus its replayable audit.
+    The client preflight makes errors cheap and clear.  DevHub owns the atomic
+    boundary; PAT-ADR-0006 adapters instead apply their documented fresh-read,
+    one targeted parent-write, append-only-audit and readback sequence.
     """
-    if not getattr(tracker, "epic_closure_supported", False):
+    atomic = getattr(tracker, "epic_closure_supported", False)
+    bounded = getattr(tracker, "bounded_epic_closure_supported", False)
+    if not atomic and not bounded:
         raise EpicClosureUnavailableError(
             f"clôture Epic non-code indisponible pour le tracker {tracker.name}"
         )
     if not isinstance(parent_id, str) or not parent_id:
         raise SystemExit("Clôture Epic refusée : identifiant parent invalide.")
+    if bounded and human_verdict != _EPIC_HUMAN_VERDICT:
+        raise SystemExit(
+            "Clôture Epic refusée : verdict humain explicite `accepted` requis."
+        )
     project = _epic_closure_project(tracker)
     tracker.validate_issue_binding(project, parent_id)
-    parent = tracker.get_issue(parent_id)
+    try:
+        parent = tracker.get_issue(parent_id)
+    except TrackerConflictError:
+        # A Linear bounded Epic closure deliberately has no code-issue lifecycle
+        # receipt.  Its native done projection is therefore unreadable through
+        # the code-lifecycle normalizer; recover only from its exact audit.
+        prior = tracker.get_epic_closure(project, parent_id)
+        if prior is None:
+            raise
+        parent = Issue(
+            id=parent_id, title="", state="done", type=prior.receipt.parent_type,
+            ac_done=prior.receipt.parent_ac_done, ac_total=prior.receipt.parent_ac_total,
+            version=prior.closed_parent_version,
+        )
     if parent.id != parent_id:
         raise SystemExit("Clôture Epic refusée : identité parent contradictoire.")
     _validate_epic_parent(parent)
-
     if parent.state == "done":
         prior = tracker.get_epic_closure(project, parent_id)
         if prior is None:
@@ -453,38 +655,89 @@ def close_epic(
             "Clôture Epic refusée : un Epic dropped ne peut pas être clôturé done."
         )
 
-    child_ids = []
-    for relation in parent.links:
-        if relation.type != "parent-of":
-            continue
-        if not isinstance(relation.target, str) or not relation.target:
-            raise SystemExit("Clôture Epic refusée : lien enfant invalide.")
-        child_ids.append(relation.target)
-    if not child_ids:
-        raise SystemExit(
-            "Clôture Epic refusée : aucun enfant requis n'est lié à l'Epic."
-        )
-    if len(child_ids) != len(set(child_ids)):
-        raise SystemExit("Clôture Epic refusée : liens enfants dupliqués.")
-    child_ids.sort()
-    tracker.validate_issue_binding(project, parent_id, *child_ids)
+    if bounded:
+        pending_getter = getattr(tracker, "get_pending_epic_closure", None)
+        pending = pending_getter(project, parent_id) if callable(pending_getter) else None
+        if pending is not None:
+            if type(pending) is not EpicClosureReceipt:
+                raise SystemExit("Clôture Epic refusée : audit pending invalide.")
+            if (
+                pending.project_key != project.key
+                or pending.project_id != project.id
+                or pending.parent_id != parent.id
+                or parent.version is None
+                or parent.version < pending.parent_version
+                or pending.parent_state != parent.state
+                or pending.parent_type != parent.type
+                or pending.parent_ac_done != parent.ac_done
+                or pending.parent_ac_total != parent.ac_total
+                or pending.human_verdict != human_verdict
+                or (issued_at is not None and pending.issued_at != issued_at)
+                or (nonce is not None and pending.nonce != nonce)
+            ):
+                raise TrackerConflictError(
+                    "audit pending contradictoire avec le prédécesseur original"
+                )
+            children, dependencies = bounded_epic_graph_snapshot(
+                tracker, project, parent,
+            )
+            if (
+                pending.children != children
+                or pending.dependencies != dependencies
+            ):
+                raise TrackerConflictError(
+                    "graphe Epic divergent depuis l'audit pending"
+                )
+            outcome = tracker.close_epic(project, pending)
+            return _validate_epic_outcome(
+                outcome,
+                project=project,
+                parent=parent,
+                expected=pending,
+            )
 
-    children = []
-    for child_id in child_ids:
-        child = tracker.get_issue(child_id)
-        if child.id != child_id:
-            raise SystemExit("Clôture Epic refusée : identité enfant contradictoire.")
-        if child.state not in EPIC_CHILD_TERMINAL_STATES:
-            raise SystemExit(
-                f"Clôture Epic refusée : l'enfant {child_id} n'est pas terminal."
-            )
-        children.append(
-            EpicClosureChild(
-            id=child_id,
-            version=_exact_positive_version(child.version, "version enfant"),
-            state=child.state,
-            )
+    dependencies: tuple[EpicClosureDependency, ...] = ()
+    if bounded:
+        children, dependencies = bounded_epic_graph_snapshot(
+            tracker, project, parent,
         )
+    else:
+        child_ids = []
+        for relation in parent.links:
+            if relation.type != "parent-of":
+                continue
+            if not isinstance(relation.target, str) or not relation.target:
+                raise SystemExit("Clôture Epic refusée : lien enfant invalide.")
+            child_ids.append(relation.target)
+        if not child_ids:
+            raise SystemExit(
+                "Clôture Epic refusée : aucun enfant requis n'est lié à l'Epic."
+            )
+        if len(child_ids) != len(set(child_ids)):
+            raise SystemExit("Clôture Epic refusée : liens enfants dupliqués.")
+        child_ids.sort()
+        tracker.validate_issue_binding(project, parent_id, *child_ids)
+        atomic_children = []
+        for child_id in child_ids:
+            child = tracker.get_issue(child_id)
+            if child.id != child_id:
+                raise SystemExit("Clôture Epic refusée : identité enfant contradictoire.")
+            if child.state not in EPIC_CHILD_TERMINAL_STATES:
+                raise SystemExit(
+                    f"Clôture Epic refusée : l'enfant {child_id} n'est pas terminal."
+                )
+            atomic_children.append(EpicClosureChild(
+                id=child_id,
+                version=_exact_positive_version(child.version, "version enfant"),
+                state=child.state,
+                ac_done=_exact_nonnegative_int(child.ac_done, "AC enfant satisfaites"),
+                ac_total=_exact_nonnegative_int(child.ac_total, "AC enfant totales"),
+            ))
+            if child.ac_done != child.ac_total:
+                raise SystemExit(
+                    f"Clôture Epic refusée : les AC de l'enfant {child_id} sont incomplètes ou inconnues."
+                )
+        children = tuple(atomic_children)
 
     issued = int(time.time() * 1000) if issued_at is None else issued_at
     _exact_nonnegative_int(issued, "horodatage")
@@ -504,6 +757,9 @@ def close_epic(
         children=tuple(children),
         issued_at=issued,
         nonce=receipt_nonce,
+        human_verdict=human_verdict if bounded else None,
+        parent_state=parent.state if bounded else None,
+        dependencies=dependencies,
     )
     outcome = tracker.close_epic(project, receipt)
     return _validate_epic_outcome(

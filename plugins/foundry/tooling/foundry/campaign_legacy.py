@@ -13,7 +13,7 @@ import stat
 import struct
 import time
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 import foundry
@@ -1181,7 +1181,7 @@ def _read_mapping(path: str | Path) -> object:
 def _closure_digest(outcome: object) -> str:
     return _digest({
         "contract": "foundry-provider-epic-closure-audit.v1",
-        "receipt": asdict(outcome.receipt),
+        "receipt": outcome.receipt.to_dict(),
         "closed_parent_version": outcome.closed_parent_version,
         "audit_id": outcome.audit_id,
     })
