@@ -747,14 +747,21 @@ the derivation edge; a generic `manifest_digest` is intentionally not used for b
 
 The private `claude-plugins` binding remains resolvable for reads. The archived
 `patolabs-plugins` alias is also a project-wide mutation tombstone for its matching
-YouTrack key and native project ID. In the current public Foundry implementation,
-YouTrack writes keep their historical resolution (checkout basename or `PROJECT_REPO`
-alias, case preserved; an unregistered checkout resolves no binding). Before any issue or
-ADR lifecycle effect, the write tier refuses only when that binding is archived or
-addresses a native project another alias archived. Consequently, queries through a
-historical alias still read terminal history and ADRs, while a lifecycle write through
-any alias of that same YouTrack project fails closed. The public checkout independently
-rejects an explicit YouTrack override through its Linear marker.
+YouTrack key and native project ID. Current Foundry keeps historical checkout resolution,
+then adds a provider-bound preflight at every YouTrack mutation boundary: it reads the
+target issue or article's native `project(id,shortName)` and refuses before effects when
+either exact coordinate matches an archived binding. Explicit issue/ADR creation checks
+the supplied native project before milestone setup or creation; links and parent creation
+check each existing endpoint independently. Matching is exact, never prefix-based, so
+active cross-project relations keep working and an unregistered checkout can still write
+to an active project. Queries through historical aliases remain readable. The public
+checkout independently rejects an explicit YouTrack override through its Linear marker.
+
+This is the protection shipped after PAT-43; it does not rewrite or retroactively prove
+the 2026-09-22 cutover. The selective manifest and `linear-cutover-operations.json` remain
+immutable snapshots of what that operation observed and attested. In particular, the
+incident below remains part of the historical record; no new receipt or provider proof is
+inferred from the current guard.
 
 ### ADR authority after the historical import
 

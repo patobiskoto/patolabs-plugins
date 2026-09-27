@@ -1160,6 +1160,10 @@ def test_youtrack_merge_checks_proven_criteria_before_codehost_merge(
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
 
     def request(method, path, payload=None, fields=None):
+        if (method, path, fields) == (
+            "GET", "/issues/DEMO-7", "project(id,shortName)",
+        ):
+            return {"project": {"id": "0-demo", "shortName": "DEMO"}}
         assert method == "POST"
         if path == "/issues/DEMO-7":
             current.body = payload["description"]
@@ -1195,6 +1199,10 @@ def test_youtrack_merge_multiline_pseudo_checkbox_cannot_hide_unchecked_ac(
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
 
     def request(method, path, payload=None, fields=None):
+        if (method, path, fields) == (
+            "GET", "/issues/DEMO-7", "project(id,shortName)",
+        ):
+            return {"project": {"id": "0-demo", "shortName": "DEMO"}}
         assert method == "POST"
         if path == "/issues/DEMO-7":
             current.body = payload["description"]
@@ -1299,6 +1307,10 @@ def test_youtrack_human_ac_override_keeps_prose_audit_without_typed_receipt(
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
 
     def request(method, path, payload=None, fields=None):
+        if (method, path, fields) == (
+            "GET", "/issues/DEMO-7", "project(id,shortName)",
+        ):
+            return {"project": {"id": "0-demo", "shortName": "DEMO"}}
         assert (method, path) == ("POST", "/issues/DEMO-7/comments")
         events.append(("comment", payload["text"]))
         return {"id": "comment-1"}

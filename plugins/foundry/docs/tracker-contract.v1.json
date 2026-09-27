@@ -160,7 +160,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_issue posts the issue with its custom fields, reads it back, then links the parent if any (youtrack.py:333-343); creation is outside the #4.2 replay floor and meets S2/S4 (one POST, errors raised)"
+          "evidence": "create_issue checks the supplied native project against the exact-coordinate archive tombstone, proves an existing parent before the create effect, posts the issue with its custom fields, reads it back, then links the parent if any (youtrack.py:400-416); creation is outside the #4.2 replay floor and meets S2/S4 (one create POST, errors raised)"
         },
         "linear": {
           "status": "supported",
@@ -185,7 +185,7 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-55",
-          "evidence": "update_body meets the #4.2 floor at level 1 (youtrack.py:392-448), but update_fields posts customFields unconditionally, with no expected-value check and no compared readback (youtrack.py:345-351): level -1, below the grooming target S1-S4"
+          "evidence": "update_body meets the #4.2 floor at level 1 (youtrack.py:469-527), but after its archived-target preflight update_fields posts customFields with no expected-value check and no compared readback (youtrack.py:418-425): level -1, below the grooming target S1-S4"
         },
         "linear": {
           "status": "gap",
@@ -210,7 +210,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "add_comment is one POST to /issues/{id}/comments (youtrack.py:366-369), never retried; not replay-idempotent, which the #4.2 free-text rule tolerates because a note carries no state"
+          "evidence": "add_comment first proves the issue's native project is writable, then sends one POST to /issues/{id}/comments (youtrack.py:442-446), never retried; not replay-idempotent, which the #4.2 free-text rule tolerates because a note carries no state"
         },
         "linear": {
           "status": "supported",
@@ -233,7 +233,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_issue links the created issue as subtask-of parent when parent is supplied (youtrack.py:341-342)"
+          "evidence": "create_issue proves an existing parent's native project before creating the child, then links the created issue as subtask-of that parent (youtrack.py:400-416)"
         },
         "linear": {
           "status": "supported",
@@ -257,7 +257,7 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-55",
-          "evidence": "link() posts a YouTrack command for any link_type (youtrack.py:358-364) without reading the current parent or comparing a readback: level -1, below the grooming target S1-S4"
+          "evidence": "link() proves both native target projects are writable, then posts a YouTrack command for any link_type (youtrack.py:432-440) without reading the current parent relation or comparing a readback: level -1, below the grooming target S1-S4"
         },
         "linear": {
           "status": "gap",
@@ -282,7 +282,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "link() maps depends-on/blocks/relates through _LINK_ROLE (youtrack.py:36-42, 358-364); an additive relation, outside the #4.2 replay floor, meeting S2/S4 (one POST, errors raised)"
+          "evidence": "link() maps depends-on/blocks/relates through _LINK_ROLE and preserves the two active projects' independently read native coordinates before one command POST (youtrack.py:36-42, 432-440); an additive relation, outside the #4.2 replay floor, meeting S2/S4 (one POST, errors raised)"
         },
         "linear": {
           "status": "supported",
@@ -352,7 +352,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "list_adrs pages the project-scoped articles and keeps anchored-prefix matches (youtrack.py:519-537)"
+          "evidence": "list_adrs pages the project-scoped articles and keeps anchored-prefix matches (youtrack.py:598-616)"
         },
         "linear": {
           "status": "supported",
@@ -375,7 +375,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_adr numbers the ADR as max+1 over a fresh list_adrs and posts a Knowledge Base article with a statut header (youtrack.py:539-548); there is no uniqueness precondition, so two concurrent creators can mint the same ADR id (creation is outside the #4.2 replay floor; S2/S4 met)"
+          "evidence": "create_adr checks the supplied native project against the exact-coordinate archive tombstone, numbers the ADR as max+1 over a fresh list_adrs and posts a Knowledge Base article with a statut header (youtrack.py:618-628); there is no uniqueness precondition, so two concurrent creators can mint the same ADR id (creation is outside the #4.2 replay floor; S2/S4 met)"
         },
         "linear": {
           "status": "supported",
@@ -398,7 +398,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "set_adr_status reads the article and rewrites its statut header through update_body's level-1 path (youtrack.py:550-558)"
+          "evidence": "set_adr_status proves the article's native project is writable, reads it and rewrites its statut header through update_body's level-1 path (youtrack.py:630-639)"
         },
         "linear": {
           "status": "gap",
@@ -449,7 +449,7 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-56",
-          "evidence": "set_state is update_fields(State=...) (youtrack.py:353-356): an unconditional POST with no expected predecessor state and no compared readback, so a RESUME replay can overwrite a concurrent state change (level -1, below the #4.2 status/resume target S1-S5)"
+          "evidence": "set_state is update_fields(State=...) (youtrack.py:427-430): after the archived-target preflight it POSTs with no expected predecessor state and no compared readback, so a RESUME replay can overwrite a concurrent state change (level -1, below the #4.2 status/resume target S1-S5)"
         },
         "linear": {
           "status": "supported",
@@ -472,7 +472,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "acceptance_sync_supported = True (youtrack.py:112); sync_acceptance_body validates the proof then reuses update_body's level-1 read-verify-write-readback (youtrack.py:450-466), labelled as bounded, not CAS (youtrack.py:396-402)"
+          "evidence": "acceptance_sync_supported = True (youtrack.py:112); sync_acceptance_body validates the proof then reuses update_body's archived-target preflight and level-1 read-verify-write-readback (youtrack.py:469-545), labelled as bounded, not CAS (youtrack.py:475-479)"
         },
         "linear": {
           "status": "gap",
@@ -545,13 +545,19 @@
       "journey": "clôture / bascule de dépôt (PAT-64)",
       "core": true,
       "tracker_abc": [
-        "validate_mutation_project"
+        "create_issue",
+        "update_fields",
+        "set_state",
+        "link",
+        "add_comment",
+        "update_body",
+        "create_adr",
+        "set_adr_status"
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-43",
-          "evidence": "validate_mutation_project is the base no-op (base.py:191-198) and is not overridden. The only tombstone check, validate_legacy_mutation (youtrack.py:263-283), refuses a write when the checkout's own registry binding (basename or PROJECT_REPO) is archived or shares its project with an archived alias, via registry.require_writable_project (registry.py:1429-1450); a write addressed to an archived project by provider identifier alone is not refused"
+          "status": "supported",
+          "evidence": "_issue_target_project and _adr_target_project read project(id,shortName) from the real YouTrack resource before a targeted mutation; _require_writable_target refuses when either exact native id or exact key matches any archived YouTrack binding, without prefix matching (youtrack.py:308-373). Explicit create_issue/create_adr validate the supplied project before milestone setup or creation, and child creation proves its parent first (youtrack.py:400-416, 618-628). update_fields/set_state, both link endpoints, add_comment, issue/ADR update_body and set_adr_status all invoke the preflight before effects (youtrack.py:418-446, 469-545, 630-639). test_youtrack_smoke.py proves exact key-only and id-only refusal plus active cross-project link/parent preservation; test_body_updates.py and test_issue_merge.py retain prewrite/readback, concurrency, AC-proof, merge, pinned-SHA and no-retry assertions with native project GET fixtures"
         },
         "linear": {
           "status": "supported",
@@ -604,7 +610,7 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-64",
-          "evidence": "no faithful-copy import path: create_issue/link/add_comment/set_state are blind POSTs (youtrack.py:333-369) with no source reference, replay key or comparison against the source item"
+          "evidence": "no faithful-copy import path: after their archive-target preflights, create_issue/link/add_comment/set_state still have no source reference, replay key or comparison against the source item (youtrack.py:400-446)"
         },
         "linear": {
           "status": "gap",

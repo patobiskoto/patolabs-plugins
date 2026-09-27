@@ -305,6 +305,73 @@ class YouTrackTracker(Tracker):
         v = {"name": value} if name in _ENUM_VALUE else value
         return {"name": name, "$type": vtype, "value": v}
 
+    @staticmethod
+    def _native_project(raw, resource: str) -> Project:
+        """Decode one provider project coordinate without inferring it from an id.
+
+        Readable issue and ADR identifiers are not project authority: keys can be
+        ambiguous and callers may run from an unrelated (or unregistered) checkout.
+        Every targeted mutation therefore derives its project from YouTrack's native
+        resource coordinate before consulting the archive tombstone.
+        """
+        candidate = raw.get("project") if isinstance(raw, dict) else None
+        if (
+            not isinstance(candidate, dict)
+            or not isinstance(candidate.get("id"), str)
+            or not candidate["id"]
+            or not isinstance(candidate.get("shortName"), str)
+            or not candidate["shortName"]
+        ):
+            raise SystemExit(
+                f"Mutation YouTrack refusée : projet natif absent pour {resource}."
+            )
+        return Project(key=candidate["shortName"], id=candidate["id"])
+
+    @staticmethod
+    def _require_writable_target(target: Project) -> Project:
+        """Apply YouTrack's exact-coordinate archive tombstone.
+
+        A native project can be renamed while retaining its id, and a native id can
+        be replaced while the archived key is still addressed.  For this provider,
+        either exact coordinate is therefore sufficient to make the tombstone
+        opposable.  Keep this at the YouTrack boundary: the shared registry rule
+        deliberately remains stricter for its other callers and providers.
+        """
+        bindings = registry.load().get("youtrack", {})
+        if not isinstance(bindings, dict):
+            raise SystemExit("Mutation YouTrack refusée : registre de binding invalide.")
+        for entry in bindings.values():
+            if not isinstance(entry, dict) or entry.get("archive") is not True:
+                continue
+            if entry.get("key") == target.key or entry.get("id") == target.id:
+                raise SystemExit(
+                    f"Mutation tracker refusée : le projet '{target.key}' est une "
+                    "archive lisible via 'youtrack'."
+                )
+        return target
+
+    def _issue_target_project(
+        self, issue_id: str,
+    ) -> Project:
+        raw = self._req(
+            "GET", f"/issues/{urllib.parse.quote(issue_id, safe='')}",
+            fields="project(id,shortName)",
+        )
+        return self._require_writable_target(
+            self._native_project(raw, f"l'issue '{issue_id}'"),
+        )
+
+    def _adr_target_project(
+        self, ref: str,
+    ) -> Project:
+        raw = self._req(
+            "GET", f"/articles/{urllib.parse.quote(ref, safe='')}",
+            fields="project(id,shortName)",
+        )
+        return self._require_writable_target(
+            self._native_project(raw, f"l'ADR '{ref}'"),
+        )
+
     def _ensure_milestone(self, value, project: Project | None = None):
         """Milestone is a per-project enum; add unseen values on the fly so `frame`
         can name any milestone without a separate admin step."""
@@ -332,6 +399,12 @@ class YouTrackTracker(Tracker):
 
     def create_issue(self, project: Project, title: str, body: str,
                      fields: dict | None = None, parent: str | None = None) -> Issue:
+        self._require_writable_target(project)
+        if parent:
+            # ``create_issue`` will link the newly-created child afterwards.  Prove
+            # the existing target first so an archived parent cannot leave an
+            # unrelated child behind before the command endpoint is refused.
+            self._issue_target_project(parent)
         self._prewrite(fields, project)  # the given project, NOT the cwd's
         cfs = [self._cf_write(k, v) for k, v in (fields or {}).items() if v is not None]
         raw = self._req("POST", "/issues",
@@ -345,7 +418,8 @@ class YouTrackTracker(Tracker):
     def update_fields(
         self, issue_id: str, fields: dict, project: Project | None = None,
     ) -> Issue:
-        self._prewrite(fields, project)
+        target = self._issue_target_project(issue_id)
+        self._prewrite(fields, target)
         cfs = [self._cf_write(k, v) for k, v in fields.items() if v is not None]
         self._req("POST", f"/issues/{issue_id}", {"customFields": cfs}, "idReadable")
         return self.get_issue(issue_id)
@@ -359,6 +433,8 @@ class YouTrackTracker(Tracker):
         self, src_id: str, link_type: str, dst_id: str,
         project: Project | None = None,
     ) -> None:
+        self._issue_target_project(src_id)
+        self._issue_target_project(dst_id)
         role = _LINK_ROLE.get(link_type, link_type)
         self._req("POST", "/commands",
                   {"query": f"{role} {dst_id}", "issues": [{"idReadable": src_id}]})
@@ -366,6 +442,7 @@ class YouTrackTracker(Tracker):
     def add_comment(
         self, issue_id: str, text: str, project: Project | None = None,
     ) -> None:
+        self._issue_target_project(issue_id)
         self._req("POST", f"/issues/{issue_id}/comments", {"text": text}, "id")
 
     @contextmanager
@@ -407,6 +484,7 @@ class YouTrackTracker(Tracker):
             resource_type, resource_id = "issue", resource.id
             if not resource_id:
                 raise ValueError("issue sans identifiant")
+            self._issue_target_project(resource_id)
 
             def read_body():
                 return self.get_issue(resource_id).body
@@ -418,6 +496,7 @@ class YouTrackTracker(Tracker):
             resource_type, resource_id = "adr", resource.ref or ""
             if not resource_id:
                 raise ValueError(f"ADR {resource.id} sans ref native")
+            self._adr_target_project(resource_id)
 
             def read_body():
                 current = self._req(
@@ -538,6 +617,7 @@ class YouTrackTracker(Tracker):
 
     def create_adr(self, project: Project, title: str, body: str,
                    status: str = "proposed") -> Adr:
+        self._require_writable_target(project)
         existing = self.list_adrs(project)
         num = max((int(a.id.rsplit("-", 1)[1]) for a in existing), default=0) + 1
         adr_id = f"{self._adr_prefix(project)}-{num:04d}"
@@ -552,6 +632,7 @@ class YouTrackTracker(Tracker):
     ) -> None:
         if not adr.ref:
             raise RuntimeError(f"ADR {adr.id} sans ref native — impossible de mettre à jour.")
+        self._adr_target_project(adr.ref)
         cur = self._req("GET", f"/articles/{adr.ref}", fields="content")
         content = re.sub(r"(statut\s*:\s*`?)\w+(`?)", rf"\g<1>{status}\g<2>",
                          cur.get("content") or "", count=1)

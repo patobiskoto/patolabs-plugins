@@ -39,6 +39,8 @@ class ScriptedYouTrack(YouTrackTracker):
 
     def _req(self, method, path, body=None, fields=None, top=None):
         self.calls.append((method, path, body, fields))
+        if method == "GET" and fields == "project(id,shortName)":
+            return {"project": {"id": "0-test", "shortName": "T"}}
         if path == "/articles/A-1" and method == "GET":
             return {"content": self.article_body}
         if method == "POST" and path.startswith("/issues/"):
