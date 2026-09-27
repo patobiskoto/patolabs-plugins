@@ -7,9 +7,13 @@ import pytest
 
 import foundry
 from foundry import query
-from foundry.models import Issue, Project
+from foundry.models import Issue, Link, Project
 from foundry.registry import RepositoryTrackerBinding
-from foundry.trackers.base import IssueUnavailableError
+from foundry.trackers.base import (
+    IssueUnavailableError,
+    TrackerCapabilityUnavailableError,
+    TrackerConflictError,
+)
 from foundry.trackers.ghprojects import GitHubProjectsTracker, GitHubProjectsTrackerError
 
 
@@ -62,6 +66,7 @@ def _page(item_id, number, cursor, more, *, adr=False):
                 "isPrivate": True, "owner": {"__typename": "User", "login": "patobiskoto"},
             },
             "labels": {"nodes": labels, "pageInfo": {"hasNextPage": False, "endCursor": None}},
+            "relatesTo": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}},
         }, "fieldValues": {"nodes": [
             {"__typename": "ProjectV2ItemFieldSingleSelectValue",
              "field": {"id": "state", "name": "Foundry normalized state"},
@@ -147,6 +152,191 @@ def test_get_issue_uses_bound_graphql_coordinates_and_expected_rest_paths():
         "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/dependencies/blocking?per_page=100&page=1",
         "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/sub_issues?per_page=100&page=1",
     ]
+
+
+@pytest.mark.parametrize(
+    ("operation", "args"),
+    [
+        ("create_issue", ("title", "body")),
+        ("update_fields", ("GHQUAL-1", {"Priority": "P1"})),
+        ("update_body", (Issue(id="GHQUAL-1", title="x"), "old", "new")),
+        ("link", ("GHQUAL-1", "depends-on", "GHQUAL-2")),
+        ("add_comment", ("GHQUAL-1", "note")),
+    ],
+)
+def test_pat66_foreign_project_refuses_before_any_transport(operation, args):
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        raise AssertionError("foreign binding must fail before transport")
+
+    foreign = Project(
+        key="GHQUAL", id="PVT_project",
+        extra={"owner": "patobiskoto", "number": "7",
+               "canonical_repo": "github.com/patobiskoto/other-repository"},
+    )
+    method = getattr(GitHubProjectsTracker(runner=runner), operation)
+    with pytest.raises(GitHubProjectsTrackerError, match="foreign_project_binding"):
+        if operation == "create_issue":
+            method(foreign, *args)
+        else:
+            method(*args, project=foreign)
+    assert calls == []
+
+
+def _write_issue(*, priority="P1", body="body", links=()):
+    return Issue(id="GHQUAL-1", title="issue 1", priority=priority, body=body,
+                 links=list(links))
+
+
+def test_pat66_targeted_field_write_rereads_and_preserves_unrelated_values(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    reads = iter([_write_issue(priority="P1"), _write_issue(priority="P1"),
+                  _write_issue(priority="P2")])
+    writes = []
+    monkeypatch.setattr(tracker, "get_issue", lambda issue_id: next(reads))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-1", "node-1"))
+    monkeypatch.setattr(tracker, "_field_catalog", lambda *_: {"priority": type("F", (), {"id": "priority", "data_type": "SINGLE_SELECT", "options": {"P2": "p2"}})()})
+    monkeypatch.setattr(tracker, "_set_project_field", lambda *args: writes.append(args))
+
+    updated = tracker.update_fields("GHQUAL-1", {"Priority": "P2"}, project=PROJECT)
+
+    assert updated.priority == "P2"
+    assert len(writes) == 1
+    assert writes[0][-1] == "P2"
+
+
+def test_pat66_drift_before_field_write_has_no_effect(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    reads = iter([_write_issue(priority="P1"), _write_issue(priority="P2")])
+    writes = []
+    monkeypatch.setattr(tracker, "get_issue", lambda issue_id: next(reads))
+    monkeypatch.setattr(tracker, "_set_project_field", lambda *args: writes.append(args))
+
+    with pytest.raises(TrackerConflictError, match="avant écriture"):
+        tracker.update_fields("GHQUAL-1", {"Priority": "P2"}, project=PROJECT)
+    assert writes == []
+
+
+def test_pat66_comment_response_loss_is_one_post_without_retry(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    writes = []
+    monkeypatch.setattr(tracker, "_native_issue", lambda *_: (1, 1001))
+    def lost(*args):
+        writes.append(args)
+        raise GitHubProjectsTrackerError("issue.comment", "transport_failed")
+    monkeypatch.setattr(tracker, "_rest_write", lost)
+
+    with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+        tracker.add_comment("GHQUAL-1", "non-authoritative note", project=PROJECT)
+    assert len(writes) == 1
+    assert writes[0][0:2] == ("POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/comments")
+
+
+def test_pat66_create_known_partial_attachment_never_reposts_issue(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    writes = []
+    raw = _rest_issue(4)
+    raw["node_id"] = "issue-node-4"
+    def rest_write(*args):
+        writes.append(args)
+        return raw
+    monkeypatch.setattr(tracker, "_rest_write", rest_write)
+    monkeypatch.setattr(tracker, "_add_project_item", lambda *_: (_ for _ in ()).throw(
+        GitHubProjectsTrackerError("project.item_create", "transport_failed")
+    ))
+    monkeypatch.setattr(
+        tracker, "_write_catalog", lambda *_: {
+            "type": type("F", (), {"id": "type", "data_type": "SINGLE_SELECT", "options": {"Task": "type-task"}})(),
+        },
+    )
+
+    with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+        tracker.create_issue(PROJECT, "partial", "body")
+    assert len(writes) == 1
+    assert writes[0][0:2] == ("POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues")
+
+
+def test_pat66_rest_write_preserves_native_relation_json_types():
+    def runner(command, **kwargs):
+        transmitted = {}
+        for index, arg in enumerate(command):
+            if arg in {"-f", "-F"}:
+                key, value = command[index + 1].split("=", 1)
+                transmitted[key] = json.loads(value) if arg == "-F" else value
+        assert type(transmitted["sub_issue_id"]) is int
+        assert type(transmitted["replace_parent"]) is bool
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    GitHubProjectsTracker(runner=runner)._rest_write(
+        "POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/sub_issues",
+        {"sub_issue_id": 123, "replace_parent": True}, "issue.link_write",
+    )
+
+
+def test_pat66_create_refuses_unqualified_priority_before_issue_post(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    writes = []
+    monkeypatch.setattr(tracker, "_rest_write", lambda *args: writes.append(args))
+    monkeypatch.setattr(
+        tracker, "_field_catalog", lambda *_: {
+            "type": type("F", (), {"data_type": "SINGLE_SELECT", "options": {"Task": "type-task"}})(),
+            "priority": type("F", (), {"data_type": "SINGLE_SELECT", "options": {"P1": "priority-p1"}})(),
+        },
+    )
+
+    with pytest.raises(TrackerCapabilityUnavailableError, match="field_option:priority:P3"):
+        tracker.create_issue(PROJECT, "title", "body", {"Priority": "P3"})
+    assert writes == []
+
+
+def test_pat66_comment_readback_requires_bound_issue_and_exact_comment(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    monkeypatch.setattr(tracker, "_native_issue", lambda *_: (1, 1001))
+    monkeypatch.setattr(
+        tracker, "_rest_write", lambda *_: {
+            "id": 44, "body": "note é",
+            "issue_url": "https://api.github.com/repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1",
+        },
+    )
+    monkeypatch.setattr(tracker, "_rows", lambda *_: [{"id": 44, "body": "note é"}])
+
+    tracker.add_comment("GHQUAL-1", "note é", project=PROJECT)
+
+    monkeypatch.setattr(tracker, "_rows", lambda *_: [{"id": 44, "body": "other"}])
+    with pytest.raises(TrackerConflictError, match="commentaire GitHub divergent"):
+        tracker.add_comment("GHQUAL-1", "note é", project=PROJECT)
+
+
+def test_pat66_relates_uses_distinct_issue_node_ids_and_symmetric_readback(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    initial = _write_issue(links=[])
+    observed = _write_issue(links=[Link("relates", "outward", "GHQUAL-2")])
+    reads = iter([initial, _write_issue(links=[]), initial, _write_issue(links=[]), observed])
+    calls = []
+    monkeypatch.setattr(tracker, "_native_issue", lambda issue, *_: (1 if issue.endswith("1") else 2, 1001 if issue.endswith("1") else 1002))
+    monkeypatch.setattr(tracker, "get_issue", lambda issue: next(reads))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda issue, *_: ("item-1" if issue.endswith("1") else "item-2", "node-1" if issue.endswith("1") else "node-2"))
+    monkeypatch.setattr(tracker, "_graphql_mutation", lambda query, variables, operation: calls.append((query, variables, operation)) or {"addRelatesTo": {"issue": {"id": "node-1"}, "relatedIssue": {"id": "node-2"}}})
+
+    tracker.link("GHQUAL-1", "relates", "GHQUAL-2", project=PROJECT)
+
+    assert len(calls) == 1
+    assert calls[0][1] == {"issue": "node-1", "related": "node-2"}
+
+
+@pytest.mark.parametrize("reason", ["authentication_failed", "permission_denied", "rate_limited"])
+def test_pat66_transport_write_failures_remain_explicit_and_unretried(reason):
+    calls = []
+    def runner(command, **kwargs):
+        calls.append(command)
+        status = 429 if reason == "rate_limited" else (401 if reason == "authentication_failed" else 403)
+        return subprocess.CompletedProcess(command, 1, json.dumps({"status": status, "message": reason}), reason)
+    tracker = GitHubProjectsTracker(runner=runner)
+    with pytest.raises(GitHubProjectsTrackerError, match=reason):
+        tracker._rest_write("POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/comments", {"body": "x"}, "issue.comment")
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("labels", ["missing", None, {}, [{}], ["foundry:adr"],

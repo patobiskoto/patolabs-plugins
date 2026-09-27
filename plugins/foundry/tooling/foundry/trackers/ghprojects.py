@@ -16,6 +16,7 @@ from typing import Any
 from foundry import registry
 from foundry.models import Adr, Issue, Link, Project
 from foundry.trackers.base import (
+    TrackerConflictError,
     IssueUnavailableError,
     Tracker,
     TrackerCapabilityUnavailableError,
@@ -68,6 +69,8 @@ class GitHubProjectsTracker(Tracker):
 
     @staticmethod
     def _binding(project: Project) -> _Binding:
+        if not isinstance(project, Project):
+            raise GitHubProjectsTrackerError("binding", "invalid_binding")
         owner, number, repo = (project.extra.get("owner"), project.extra.get("number"),
                                project.extra.get("canonical_repo"))
         if (not isinstance(owner, str) or not owner or not isinstance(number, str)
@@ -132,6 +135,26 @@ class GitHubProjectsTracker(Tracker):
     def _rest(self, path: str, operation: str) -> Any:
         return self._run(["gh", "api", "-X", "GET", path], operation)
 
+    def _rest_write(self, method: str, path: str, payload: dict[str, Any], operation: str) -> Any:
+        """Issue REST has no qualified conditional-write parameter.
+
+        Callers therefore do their fresh targeted read and their readback around
+        this single request.  In particular this helper never retries a failed or
+        ambiguous request: a response loss after POST can have had an effect.
+        """
+        command = ["gh", "api", "-X", method, path]
+        for key, value in payload.items():
+            # ``gh api -f`` always sends a string.  The native hierarchy and
+            # dependency endpoints require JSON numbers and booleans, whereas
+            # issue titles and bodies must remain verbatim UTF-8 strings.
+            typed = isinstance(value, (bool, int, float)) or value is None
+            encoded = "null" if value is None else str(value).lower() if isinstance(value, bool) else str(value)
+            command += ["-F" if typed else "-f", f"{key}={encoded}"]
+        return self._run(command, operation)
+
+    def _graphql_mutation(self, query: str, variables: dict[str, Any], operation: str) -> dict:
+        return self._graphql(query, variables, operation)
+
     def _project_page(self, binding: _Binding, cursor: str | None) -> dict:
         query = """query($login:String!,$number:Int!,$cursor:String){
           user(login:$login){projectV2(number:$number){
@@ -149,7 +172,7 @@ class GitHubProjectsTracker(Tracker):
                 id type
                 content{
                   __typename
-                  ... on Issue{id number title body repository{id nameWithOwner isPrivate owner{__typename login}} labels(first:100){nodes{name} pageInfo{hasNextPage endCursor}}}
+                  ... on Issue{id number title body repository{id nameWithOwner isPrivate owner{__typename login}} labels(first:100){nodes{name} pageInfo{hasNextPage endCursor}} relatesTo(first:100){nodes{id number repository{id nameWithOwner isPrivate owner{__typename login}}} pageInfo{hasNextPage endCursor}}}
                   ... on PullRequest{id number}
                   ... on DraftIssue{id title}
                 }
@@ -384,11 +407,22 @@ class GitHubProjectsTracker(Tracker):
         issue_no = content.get("number")
         if type(issue_no) is not int or issue_no < 1:
             raise GitHubProjectsTrackerError("project.items", "invalid_issue_number")
-        return Issue(id=f"{binding.key}-{issue_no}", title=str(content.get("title", "")), state=state_name,
+        related = content.get("relatesTo")
+        related_nodes = related.get("nodes") if isinstance(related, dict) else None
+        related_page = related.get("pageInfo") if isinstance(related, dict) else None
+        if (not isinstance(related_nodes, list) or not isinstance(related_page, dict)
+                or related_page.get("hasNextPage") is not False):
+            raise GitHubProjectsTrackerError("project.items", "truncated_or_invalid_relates")
+        relates = [f"{binding.key}-{self._issue_number_from_graphql(node, binding)}" for node in related_nodes]
+        if len(relates) != len(set(relates)):
+            raise GitHubProjectsTrackerError("project.items", "duplicate_relates")
+        issue = Issue(id=f"{binding.key}-{issue_no}", title=str(content.get("title", "")), state=state_name,
                      # PAT-67 owns projection/lifecycle semantics.  A Project
                      # field is an observation, never proof of alignment.
                      normalized_state=state_name, native_state=None, projection_status="unknown",
-                     priority=priority_name, estimate=number, type=type_name, labels=labels, body=content.get("body")), content_id, repo_id
+                     priority=priority_name, estimate=number, type=type_name, labels=labels, body=content.get("body"))
+        issue.links = [Link("relates", "outward", target) for target in relates]
+        return issue, content_id, repo_id
 
     def _search_raw(self, project: Project, query: str = "") -> list[Issue]:
         if query:
@@ -558,7 +592,7 @@ class GitHubProjectsTracker(Tracker):
         blocked_by = self._rows(base + "/dependencies/blocked_by", "issue.dependencies")
         blocking = self._rows(base + "/dependencies/blocking", "issue.dependencies")
         children = self._rows(base + "/sub_issues", "issue.children")
-        links = []
+        links = list(issue.links)
         if isinstance(parent, dict):
             links.append(Link("subtask-of", "inward", f"{binding.key}-{self._issue_number_from_rest(parent, binding, 'issue.parent')}"))
         elif parent not in ({}, None):
@@ -579,6 +613,51 @@ class GitHubProjectsTracker(Tracker):
         issue.updated = self._timestamp(raw.get("updated_at"), "issue.read")
         return issue
 
+    def _relates(self, issue_id: str, binding: _Binding) -> list[Link]:
+        """Read the qualified symmetric GraphQL relation without partial pages."""
+        wanted, cursor, seen = self._number(issue_id, binding), None, set()
+        for _ in range(_MAX_PAGES):
+            page = self._project_page(binding, cursor)
+            fields, items = self._field_map(page), page.get("items")
+            if not isinstance(items, dict) or not isinstance(items.get("nodes"), list):
+                raise GitHubProjectsTrackerError("issue.relates", "invalid_response")
+            for row in items["nodes"]:
+                if not isinstance(row, dict) or not isinstance(row.get("id"), str) or row["id"] in seen:
+                    raise GitHubProjectsTrackerError("issue.relates", "pagination_stalled")
+                seen.add(row["id"])
+                issue, _, _ = self._item(row, binding, fields)
+                if issue is None or self._number(issue.id, binding) != wanted:
+                    continue
+                content = row.get("content")
+                related = content.get("relatesTo") if isinstance(content, dict) else None
+                nodes = related.get("nodes") if isinstance(related, dict) else None
+                info = related.get("pageInfo") if isinstance(related, dict) else None
+                if not isinstance(nodes, list) or not isinstance(info, dict) or info.get("hasNextPage") is not False:
+                    raise GitHubProjectsTrackerError("issue.relates", "truncated_or_invalid_relates")
+                out = []
+                for target in nodes:
+                    number = self._issue_number_from_graphql(target, binding)
+                    out.append(Link("relates", "outward", f"{binding.key}-{number}"))
+                if len({link.target for link in out}) != len(out):
+                    raise GitHubProjectsTrackerError("issue.relates", "duplicate_relates")
+                return out
+            info = items.get("pageInfo")
+            if not isinstance(info, dict) or info.get("hasNextPage") is not True:
+                break
+            cursor = info.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise GitHubProjectsTrackerError("issue.relates", "pagination_stalled")
+        raise IssueUnavailableError(issue_id)
+
+    def _issue_number_from_graphql(self, raw: Any, binding: _Binding) -> int:
+        if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not raw["id"]:
+            raise GitHubProjectsTrackerError("issue.relates", "invalid_related_issue")
+        number = raw.get("number")
+        if type(number) is not int or number < 1:
+            raise GitHubProjectsTrackerError("issue.relates", "invalid_related_issue")
+        self._qualified_repository(raw.get("repository"), binding)
+        return number
+
     def get_issue(self, issue_id: str) -> Issue:
         project = self._project()
         binding = self._binding(project)
@@ -596,12 +675,247 @@ class GitHubProjectsTracker(Tracker):
                 raise IssueUnavailableError(issue_id) from None
             raise
 
-    # PAT-66/PAT-58/PAT-67 own all mutation and ADR codec work.
-    def create_issue(self, project, title, body, fields=None, parent=None): raise TrackerCapabilityUnavailableError(self.name, "create_issue")
-    def update_fields(self, issue_id, fields, project=None): raise TrackerCapabilityUnavailableError(self.name, "update_fields")
+    # ---- PAT-66 bounded core writes ------------------------------------
+    # GitHub gives these endpoints neither an ETag precondition nor a ProjectV2
+    # item version.  The checks below are bounded detection (S1--S4), not CAS.
+    def _portable_fields(self, fields: dict | None) -> dict[str, Any]:
+        if fields is None:
+            return {}
+        if not isinstance(fields, dict):
+            raise GitHubProjectsTrackerError("issue.write", "invalid_fields")
+        aliases = {"State": "state", "Type": "type", "Priority": "priority", "Estimate": "estimate"}
+        out = {}
+        for name, value in fields.items():
+            semantic = aliases.get(name)
+            if semantic is None or value is None:
+                raise TrackerCapabilityUnavailableError(self.name, f"field:{name}")
+            if semantic in {"state", "type", "priority"}:
+                if not isinstance(value, str) or value not in _FIELD_OPTIONS[semantic]:
+                    raise GitHubProjectsTrackerError("issue.write", f"invalid_field_value:{semantic}")
+            elif type(value) not in (int, float):
+                raise GitHubProjectsTrackerError("issue.write", "invalid_field_value:estimate")
+            out[semantic] = value
+        return out
+
+    @staticmethod
+    def _snapshot(issue: Issue, fields: dict[str, Any]) -> dict[str, Any]:
+        return {name: getattr(issue, name) for name in fields}
+
+    def _item_coordinate(self, issue_id: str, binding: _Binding) -> tuple[str, str]:
+        """Return distinct Project item and Issue node IDs for one bound issue."""
+        # Reuse PAT-57's exhaustive page and catalog validation before a raw
+        # item ID becomes authority for a mutation.  In particular, do not let
+        # a matching first-page row hide ambiguity on a later page.
+        if not any(issue.id == issue_id for issue in self._search_raw(self._project())):
+            raise IssueUnavailableError(issue_id)
+        number, cursor, seen = self._number(issue_id, binding), None, set()
+        coordinate: tuple[str, str] | None = None
+        for _ in range(_MAX_PAGES):
+            page = self._project_page(binding, cursor)
+            fields = self._field_map(page)
+            items = page.get("items")
+            if not isinstance(items, dict) or not isinstance(items.get("nodes"), list):
+                raise GitHubProjectsTrackerError("project.items", "invalid_response")
+            for row in items["nodes"]:
+                if not isinstance(row, dict) or not isinstance(row.get("id"), str) or row["id"] in seen:
+                    raise GitHubProjectsTrackerError("project.items", "pagination_stalled")
+                seen.add(row["id"])
+                issue, content_id, _ = self._item(row, binding, fields)
+                if issue is not None and issue.id == f"{binding.key}-{number}":
+                    if coordinate is not None:
+                        raise GitHubProjectsTrackerError("project.items", "duplicate_issue_id")
+                    coordinate = (row["id"], content_id)
+            info = items.get("pageInfo")
+            if not isinstance(info, dict) or info.get("hasNextPage") is not True:
+                break
+            cursor = info.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise GitHubProjectsTrackerError("project.items", "pagination_stalled")
+        if coordinate is None:
+            raise IssueUnavailableError(issue_id)
+        return coordinate
+
+    def _field_catalog(self, binding: _Binding) -> dict[str, _FieldBinding]:
+        # A fresh page establishes field and option IDs immediately before a mutation.
+        return self._field_map(self._project_page(binding, None))
+
+    def _set_project_field(self, item_id: str, project_id: str, field: _FieldBinding, value: Any) -> None:
+        if field.data_type == "NUMBER":
+            payload = f'{{number:{float(value)!r}}}'
+        else:
+            option_id = field.options[value]
+            payload = f'{{singleSelectOptionId:"{option_id}"}}'
+        query = f"""mutation($project:ID!,$item:ID!,$field:ID!){{updateProjectV2ItemFieldValue(input:{{projectId:$project,itemId:$item,fieldId:$field,value:{payload}}}){{projectV2Item{{id}}}}}}"""
+        data = self._graphql_mutation(query, {"project": project_id, "item": item_id, "field": field.id}, "project.field_write")
+        result = data.get("updateProjectV2ItemFieldValue")
+        if not isinstance(result, dict) or not isinstance(result.get("projectV2Item"), dict) or result["projectV2Item"].get("id") != item_id:
+            raise GitHubProjectsTrackerError("project.field_write", "ambiguous_mutation_response")
+
+    def _add_project_item(self, binding: _Binding, content_id: str) -> str:
+        query = """mutation($project:ID!,$content:ID!){addProjectV2ItemById(input:{projectId:$project,contentId:$content}){item{id}}}"""
+        data = self._graphql_mutation(query, {"project": binding.project_id, "content": content_id}, "project.item_create")
+        result = data.get("addProjectV2ItemById")
+        item = result.get("item") if isinstance(result, dict) else None
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+            raise GitHubProjectsTrackerError("project.item_create", "ambiguous_mutation_response")
+        return item["id"]
+
+    def _native_issue(self, issue_id: str, binding: _Binding, operation: str) -> tuple[int, int]:
+        number = self._number(issue_id, binding)
+        raw = self._rest(f"repos/{binding.repo}/issues/{number}", operation)
+        if self._issue_number_from_rest(raw, binding, operation) != number:
+            raise GitHubProjectsTrackerError(operation, "foreign_issue_coordinate")
+        return number, raw["id"]
+
+    def _write_catalog(self, binding: _Binding, fields: dict[str, Any]) -> dict[str, _FieldBinding]:
+        """Prove every requested option before the first effectful request."""
+        catalog = self._field_catalog(binding)
+        for semantic, value in fields.items():
+            field = catalog[semantic]
+            if field.data_type == "SINGLE_SELECT" and value not in field.options:
+                raise TrackerCapabilityUnavailableError(
+                    self.name, f"field_option:{semantic}:{value}",
+                )
+        return catalog
+
+    def create_issue(self, project, title, body, fields=None, parent=None):
+        binding = self._authoritative_binding(project)
+        portable = self._portable_fields(fields)
+        if not isinstance(title, str) or not title or not isinstance(body, str):
+            raise GitHubProjectsTrackerError("issue.create", "invalid_issue_payload")
+        parent_native = None
+        if parent is not None:
+            # Prove the target before the first effect; native ID and issue number
+            # stay distinct because the sub-issue endpoint requires the former.
+            parent_number, parent_native = self._native_issue(parent, binding, "issue.parent_prewrite")
+            if parent_number < 1:  # keeps the number coordinate deliberately live
+                raise GitHubProjectsTrackerError("issue.parent_prewrite", "invalid_parent")
+        # ``get_issue`` requires a typed Project item.  Establish its explicit
+        # Type default and validate the complete catalog before creating the
+        # REST issue, so an unsupported option cannot be discovered afterwards.
+        requested = {"type": "Task", **portable}
+        catalog = self._write_catalog(binding, requested)
+        raw = self._rest_write("POST", f"repos/{binding.repo}/issues", {"title": title, "body": body}, "issue.create")
+        number = self._issue_number_from_rest(raw, binding, "issue.create")
+        native_id = raw["id"]
+        content_id = raw.get("node_id")
+        if not isinstance(content_id, str) or not content_id or content_id == binding.project_id:
+            raise GitHubProjectsTrackerError("issue.create", "missing_issue_node_id")
+        issue_id = f"{binding.key}-{number}"
+        # From this point a create is a known partial effect.  Never POST it again.
+        item_id = self._add_project_item(binding, content_id)
+        if requested:
+            for semantic, value in requested.items():
+                self._set_project_field(item_id, binding.project_id, catalog[semantic], value)
+        if parent_native is not None:
+            self._rest_write("POST", f"repos/{binding.repo}/issues/{parent_number}/sub_issues", {"sub_issue_id": native_id, "replace_parent": False}, "issue.parent_create")
+        created = self.get_issue(issue_id)
+        if created.title != title or created.body != body or self._snapshot(created, requested) != requested:
+            raise TrackerConflictError("GitHub issue divergente après création ; aucune seconde tentative")
+        if parent is not None and not self._has_link(created, "subtask-of", parent):
+            raise TrackerConflictError("parent GitHub absent après création ; aucune seconde tentative")
+        return created
+
+    def update_fields(self, issue_id, fields, project=None):
+        active = self._project()
+        binding = self._authoritative_binding(project or active)
+        portable = self._portable_fields(fields)
+        if not portable:
+            return self.get_issue(issue_id)
+        before = self.get_issue(issue_id)
+        expected = self._snapshot(before, portable)
+        fresh = self.get_issue(issue_id)
+        if self._snapshot(fresh, portable) != expected:
+            raise TrackerConflictError("champs GitHub modifiés avant écriture bornée")
+        item_id, _ = self._item_coordinate(issue_id, binding)
+        catalog = self._write_catalog(binding, portable)
+        # Each provider call has a narrow, independently verified target.  A later
+        # field failure leaves a known partial result and is never retried here.
+        for semantic, value in portable.items():
+            self._set_project_field(item_id, binding.project_id, catalog[semantic], value)
+        readback = self.get_issue(issue_id)
+        if self._snapshot(readback, portable) != portable:
+            raise TrackerConflictError("champs GitHub divergents après écriture ; aucune seconde tentative")
+        return readback
+
+    def update_body(self, resource, expected_body, updated_body, project=None):
+        if not isinstance(resource, Issue) or not isinstance(expected_body, str) or not isinstance(updated_body, str):
+            raise TrackerCapabilityUnavailableError(self.name, "issue_body_only")
+        binding = self._authoritative_binding(project or self._project())
+        number = self._number(resource.id, binding)
+        current = self.get_issue(resource.id)
+        if current.body != expected_body:
+            raise TrackerConflictError("corps GitHub modifié avant écriture bornée")
+        if current.body == updated_body:
+            return False
+        self._rest_write("PATCH", f"repos/{binding.repo}/issues/{number}", {"body": updated_body}, "issue.body_write")
+        if self.get_issue(resource.id).body != updated_body:
+            raise TrackerConflictError("corps GitHub divergent après écriture ; aucune seconde tentative")
+        return True
+
     def set_state(self, issue_id, state, context=None, project=None): raise TrackerCapabilityUnavailableError(self.name, "set_state")
-    def link(self, src_id, link_type, dst_id, project=None): raise TrackerCapabilityUnavailableError(self.name, "link")
-    def add_comment(self, issue_id, text, project=None): raise TrackerCapabilityUnavailableError(self.name, "add_comment")
+    @staticmethod
+    def _has_link(issue: Issue, link_type: str, target: str) -> bool:
+        return any(link.type == link_type and link.target == target for link in issue.links)
+
+    def link(self, src_id, link_type, dst_id, project=None):
+        if link_type not in {"subtask-of", "parent-of", "depends-on", "blocks", "relates"}:
+            raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
+        binding = self._authoritative_binding(project or self._project())
+        # Both endpoint GETs prove raw REST URLs and repository ownership before
+        # a mutation; they also supply the distinct integer native IDs required by REST.
+        src_number, src_native = self._native_issue(src_id, binding, "issue.link_prewrite")
+        dst_number, dst_native = self._native_issue(dst_id, binding, "issue.link_prewrite")
+        before_src, before_dst = self.get_issue(src_id), self.get_issue(dst_id)
+        if self._has_link(before_src, link_type, dst_id):
+            return
+        fresh_src, fresh_dst = self.get_issue(src_id), self.get_issue(dst_id)
+        if fresh_src.links != before_src.links or fresh_dst.links != before_dst.links:
+            raise TrackerConflictError("liens GitHub modifiés avant écriture bornée")
+        if link_type == "subtask-of":
+            path, payload = f"repos/{binding.repo}/issues/{dst_number}/sub_issues", {"sub_issue_id": src_native, "replace_parent": True}
+        elif link_type == "parent-of":
+            path, payload = f"repos/{binding.repo}/issues/{src_number}/sub_issues", {"sub_issue_id": dst_native, "replace_parent": True}
+        elif link_type == "depends-on":
+            path, payload = f"repos/{binding.repo}/issues/{src_number}/dependencies/blocked_by", {"issue_id": dst_native}
+        elif link_type == "blocks":
+            path, payload = f"repos/{binding.repo}/issues/{dst_number}/dependencies/blocked_by", {"issue_id": src_native}
+        elif link_type == "relates":
+            _, src_node = self._item_coordinate(src_id, binding)
+            _, dst_node = self._item_coordinate(dst_id, binding)
+            query = """mutation($issue:ID!,$related:ID!){addRelatesTo(input:{issueId:$issue,relatedIssueId:$related}){issue{id} relatedIssue{id}}}"""
+            data = self._graphql_mutation(query, {"issue": src_node, "related": dst_node}, "issue.relates_write")
+            result = data.get("addRelatesTo")
+            if (not isinstance(result, dict) or not isinstance(result.get("issue"), dict)
+                    or not isinstance(result.get("relatedIssue"), dict)
+                    or result["issue"].get("id") != src_node
+                    or result["relatedIssue"].get("id") != dst_node):
+                raise GitHubProjectsTrackerError("issue.relates_write", "ambiguous_mutation_response")
+            path = None
+        else:
+            raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
+        if path is not None:
+            self._rest_write("POST", path, payload, "issue.link_write")
+        if not self._has_link(self.get_issue(src_id), link_type, dst_id):
+            raise TrackerConflictError("lien GitHub divergent après écriture ; aucune seconde tentative")
+
+    def add_comment(self, issue_id, text, project=None):
+        binding = self._authoritative_binding(project or self._project())
+        if not isinstance(text, str) or not text:
+            raise GitHubProjectsTrackerError("issue.comment", "invalid_comment")
+        number, _ = self._native_issue(issue_id, binding, "issue.comment_prewrite")
+        # Free-text progress notes do not carry state.  A lost response may have
+        # created one note; it is deliberately surfaced, never blindly replayed.
+        raw = self._rest_write("POST", f"repos/{binding.repo}/issues/{number}/comments", {"body": text}, "issue.comment")
+        if (not isinstance(raw, dict) or type(raw.get("id")) is not int or raw.get("id", 0) < 1
+                or raw.get("body") != text
+                or raw.get("issue_url") != f"{self._api_repo(binding)}/issues/{number}"):
+            raise GitHubProjectsTrackerError("issue.comment", "ambiguous_mutation_response")
+        observed = self._rows(
+            f"repos/{binding.repo}/issues/{number}/comments", "issue.comment_readback",
+        )
+        if not any(row.get("id") == raw["id"] and row.get("body") == text for row in observed):
+            raise TrackerConflictError("commentaire GitHub divergent après écriture ; aucune seconde tentative")
     def list_adrs(self, project: Project) -> list[Adr]: raise TrackerCapabilityUnavailableError(self.name, "adr_index")
     def create_adr(self, project, title, body, status="proposed"): raise TrackerCapabilityUnavailableError(self.name, "adr_create")
     def set_adr_status(self, adr, status, project=None): raise TrackerCapabilityUnavailableError(self.name, "adr_status")

@@ -215,3 +215,54 @@ documentés. Le forecast est mis à jour ici sans modifier les critères d'accep
 PAT-57 ou PAT-58. Les limites restantes sont explicites : permissions minimales,
 organisation, dépôt public, type d'issue natif, rendu visuel des colonnes/cartes et
 GitHub App.
+
+
+## Complément PAT-66 : relation native `relatesTo`
+
+Le 27 septembre 2026, l'introspection du schéma GitHub authentifié expose
+`addRelatesTo`, `removeRelatesTo` et la connexion paginée `Issue.relatesTo`.
+La qualification PAT-65 ne couvrait pas cette relation ; son absence de ce rapport
+initial ne signifie donc pas que le fournisseur la refuse. La matrice V1 exige
+`link(relates)` comme opération cœur, distincte des dépendances directionnelles.
+
+La sonde PAT-66 utilise le binding actif `GHQUAL`, le même dépôt privé personnel
+`patobiskoto/foundry-v1-ghprojects-sandbox` et le Project 7
+`PVT_kwHOABroCc4Bk0U-`. Après vérification de ces coordonnées, du propriétaire
+`User`, des deux issues canoniques #1/#2 et d'une seconde lecture identique des
+relations attendues, un seul `addRelatesTo` a reçu leurs **node IDs d'Issue** dans
+`issueId` et `relatedIssueId`. Les IDs REST numériques, numéros d'issue et IDs
+Projects/items ne sont pas des substituts à ces coordonnées.
+
+La réponse identifie les deux issues exactes. La relecture de `relatesTo` sur
+chacune montre l'autre issue : la relation observée est symétrique. Les titres,
+corps et labels des deux issues sont identiques aux snapshots précédents. Seule
+cette relation a été ajoutée ; le binding principal reste Linear. Ces observations
+ne prouvent ni CAS, ni exclusion des écritures concurrentes, ni exactly-once.
+La fenêtre résiduelle S1→S2 de PAT-ADR-0006 reste assumée.
+
+Sources locales de qualification : `/tmp/pat66-relates-schema-current.json`,
+`/tmp/pat66-relates-mutation-schema.json`, `/tmp/pat66-relates-issue-schema.json`,
+`/tmp/pat66-relates-preflight.json`, `/tmp/pat66-relates-add-result.json` et
+`/tmp/pat66-relates-add-readback.json`. Ce sont des réponses API et des captures
+de test, pas des reçus ou attestations Foundry. Les sondes ne qualifient pas les
+permissions minimales, un dépôt public, une organisation ou une GitHub App.
+
+## Recette PAT-66 : écritures par le port commun
+
+La recette autorisée a été exécutée avec l’adaptateur source, via le binding
+GHQUAL du dépôt privé et du Project personnel déjà qualifiés. Les issues
+`GHQUAL-4`, `GHQUAL-5` et `GHQUAL-6` ont été créées une seule fois avec leurs
+items, types, priorités, estimations et états explicites. L’enfant 5 a d’abord
+été attaché au parent 4, puis déplacé au parent 6.
+
+La priorité de 5 et son corps UTF-8 ont été modifiés séparément ; une relecture
+a vérifié la conservation des autres propriétés. Un commentaire a été retrouvé
+par son ID exact et son corps. La dépendance 5 → 4 et la relation native
+symétrique 5 ↔ 4 ont été relues ; le rejeu de `relates` a observé le lien existant.
+Le support ADR expérimental 3 et le binding Linear de patolabs-plugins restent
+préservés. Ces observations ne sont pas des receipts d’acceptation Foundry.
+
+Les limites restent celles de PAT-ADR-0006 : détection bornée, fenêtre S1→S2
+résiduelle assumée, aucune transaction globale, CAS, exclusion concurrente ou
+garantie exactly-once. Une création partiellement réalisée n’est pas relancée
+à l’aveugle. Le cycle de vie PR/merge et le codec ADR restent hors PAT-66.

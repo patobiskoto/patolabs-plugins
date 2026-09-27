@@ -152,9 +152,8 @@
           "evidence": "create_issue (linear.py) creates with a client id, then verifies title, body, fields and parent on readback, TrackerConflictError on divergence, no retry"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "create_issue raises TrackerCapabilityUnavailableError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-66 creates a bound private-repository Issue once, attaches its distinct Issue node to the exact ProjectV2, writes only qualified fields, optionally attaches the proven parent, and reads back. Response loss is never retried; a later partial known effect is explicit (ghprojects.py)."
         }
       }
     },
@@ -176,9 +175,8 @@
           "evidence": "PAT-ADR-0006 authorizes bounded in-place grooming: update_fields and issue update_body capture/re-read a targeted snapshot, perform one issueUpdate and verify readback; ambiguous responses recover by read only. edit.set_field converts the host-independent comma-separated Labels CLI argument to the portable list before write.set_field; Linear then uses addedLabelIds/removedLabelIds rather than a complete label replacement."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "update_fields raises TrackerCapabilityUnavailableError (ghprojects.py); update_body is the base refusal"
+          "status": "supported",
+          "evidence": "PAT-66 update_fields and issue update_body fresh-read only targeted portable values/body, issue one bounded write per effect and verify readback. GitHub supplies no qualified CAS: this is bounded detection with the S1-to-S2 residual race, not exclusion (ghprojects.py)."
         }
       }
     },
@@ -199,9 +197,8 @@
           "evidence": "add_comment (linear.py) creates the comment, reads it back and refuses on divergence, no retry; provider-assigned id, so a replay duplicates the note (free-text rule, #4.2)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "add_comment raises TrackerCapabilityUnavailableError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-66 proves the bound REST issue before one comment POST and validates its returned id/body. Free-text comments carry no state and a response loss is surfaced, never blindly retried (ghprojects.py)."
         }
       }
     },
@@ -222,9 +219,8 @@
           "evidence": "create_issue asserts the parent belongs to the binding, sets parentId (linear.py) and verifies the readback parent id (linear.py)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "create_issue raises TrackerCapabilityUnavailableError; PAT-65 qualified one parent/sub-issue relation through the Issues REST API, while the Foundry adapter write mapping remains PAT-66"
+          "status": "supported",
+          "evidence": "PAT-66 creates a child only after proving the exact bound parent REST coordinate, then uses its distinct integer native issue id in the qualified sub_issues endpoint and verifies the normalized parent relation on readback (ghprojects.py)."
         }
       }
     },
@@ -245,9 +241,8 @@
           "evidence": "link(subtask-of|parent-of) validates and snapshots both endpoints, re-reads them before one targeted parentId issueUpdate, then verifies the child parent readback (linear.py)."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "link() raises TrackerCapabilityUnavailableError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-66 proves both same-repository REST endpoints, snapshots/re-reads their relations, sends one targeted replace_parent sub_issues request and verifies normalized readback; it never conflates issue number and native issue id (ghprojects.py)."
         }
       }
     },
@@ -268,9 +263,8 @@
           "evidence": "link() validates and snapshots both endpoints, skips an existing identical relation, and creates depends-on/blocks/relates via issueRelationCreate at a deterministic UUIDv4 derived from canonical project/type/endpoints. For symmetric related only, both the slot identity and native payload sort endpoint IDs, so inverse calls converge on the same exact representation even with hidden projections; blocks/depends-on remain directional. The qualified input schema defines that UUIDv4 as the native identifier and issueRelation(id) as a unique-identifier lookup. Success and ambiguous recovery verify the exact ID/type/endpoints; a replay whose endpoint projections remain absent can request only that same identity, then converges through exact lookup or fails closed without another slot."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "link() raises TrackerCapabilityUnavailableError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-66 proves same-repository endpoints, snapshots/re-reads relations and uses bounded native mutations: blocked_by for depends-on/blocks and qualified addRelatesTo for relates, with distinct Issue node IDs and symmetric GraphQL readback (ghprojects.py; qualification/github-projects-v1.md)."
         }
       }
     },

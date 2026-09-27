@@ -205,8 +205,8 @@ def test_every_operation_maps_to_a_real_tracker_abc_member():
             )
 
 
-def test_ghprojects_cells_match_delivered_reads_and_owned_remaining_work():
-    """PAT-57 delivers reads; each remaining tranche keeps its explicit owner."""
+def test_ghprojects_cells_match_delivered_reads_and_pat66_core_writes():
+    """PAT-57 reads and PAT-66 core writes are delivered; later tranches remain owned."""
     contract = _load_contract()
     for operation in contract["operations"]:
         cell = operation["cells"].get("ghprojects")
@@ -218,6 +218,9 @@ def test_ghprojects_cells_match_delivered_reads_and_owned_remaining_work():
             continue
         if operation["id"] in {
             "identity-and-project-resolution", "repository-bootstrap", "backlog-read",
+            "frame-intake-groom-create", "frame-intake-groom-evolve-existing",
+            "mid-flight-comment", "epics-children-creation",
+            "epics-children-reparent-existing", "dependencies-relates-blocks",
         }:
             assert cell["status"] == "supported"
             continue
@@ -312,20 +315,18 @@ def test_youtrack_has_no_import_adr_override():
     assert "import_adr_batch" not in YouTrackTracker.__dict__
 
 
-def test_ghprojects_read_methods_are_real_and_writes_remain_explicitly_unavailable():
-    """PAT-57 owns read methods; PAT-66/58/67 retain the write boundary."""
+def test_ghprojects_pat66_writes_are_real_and_later_boundaries_remain_refused():
+    """PAT-66 owns core writes; PAT-58/67 retain ADR and lifecycle boundaries."""
     from foundry.trackers.ghprojects import GitHubProjectsTracker
     from foundry.trackers.base import TrackerCapabilityUnavailableError
 
     tracker = GitHubProjectsTracker()
     assert "search" in GitHubProjectsTracker.__dict__
     assert "get_issue" in GitHubProjectsTracker.__dict__
+    for method_name in ("create_issue", "update_fields", "update_body", "link", "add_comment"):
+        assert method_name in GitHubProjectsTracker.__dict__
     calls = {
-        "create_issue": (None, None, None),
-        "update_fields": (None, None),
         "set_state": (None, None),
-        "link": (None, None, None),
-        "add_comment": (None, None),
         "list_adrs": (None,),
         "create_adr": (None, None, None),
         "set_adr_status": (None, None),
