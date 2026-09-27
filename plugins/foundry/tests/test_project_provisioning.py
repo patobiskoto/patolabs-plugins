@@ -376,3 +376,47 @@ def test_setup_publication_refuses_a_slot_created_during_provisioning(
     with pytest.raises(ValueError, match="déjà occupé"):
         setup_project.setup("Second", "SECOND", "same")
     assert registry.load()["youtrack"]["same"]["id"] == "0-1"
+
+
+def test_setup_refuses_wrong_repository_argument_before_config_or_provider(
+    monkeypatch, tmp_path,
+):
+    repo = _repo(tmp_path, "acme", "app")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        foundry.config, "tracker_name",
+        lambda: pytest.fail("wrong repository must refuse before config"),
+    )
+    with pytest.raises(SystemExit, match="incompatible avec le checkout"):
+        setup_project.setup("App", "APP", "wrong-name")
+    assert registry.load() == {}
+
+
+@pytest.mark.parametrize("canonical", [None, "github.com/acme/app"])
+def test_setup_publication_rechecks_other_provider_under_lock(
+    monkeypatch, tmp_path, canonical,
+):
+    repo = _repo(tmp_path, "acme", "app")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setenv("FOUNDRY_TRACKER", "youtrack")
+
+    class Provider:
+        name = "youtrack"
+        project_provisioning_supported = True
+        project_provisioning_requires_repository = False
+
+        def provision_project(self, *_args):
+            registry.register(
+                "ghprojects", "app", "APP", "PVT_1",
+                **({"canonical_repo": canonical} if canonical else {}),
+            )
+            return Project(key="APP", id="0-2")
+
+    monkeypatch.setattr(foundry, "tracker", lambda *_args, **_kwargs: Provider())
+    with pytest.raises(ValueError, match="déjà occupé"):
+        setup_project.setup("App", "APP", "app")
+    assert registry.load()["ghprojects"]["app"]["id"] == "PVT_1"
+    assert registry.load().get("youtrack", {}) == {}
+    assert not (repo / ".foundry/tracker.json").exists()

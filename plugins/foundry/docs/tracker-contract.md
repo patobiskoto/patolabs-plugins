@@ -140,7 +140,7 @@ canonical origin, provider, project coordinates and registry digest
 (`registry.py:397-665`). The default `Tracker.resolve_checkout_project()` consumes that
 selection for YouTrack and `ghprojects` (`base.py:142-172`); Linear keeps its exact
 canonical registry resolution and provider-level team/project assertions
-(`linear.py:1587-1617`, `2353-2363`). `foundry.effective_tracker_name()` is the shared
+(`linear.py:1587-1617`, `2354-2363`). `foundry.effective_tracker_name()` is the shared
 selection used by both the implicit factory and doctor (`foundry/__init__.py:15-43`,
 `doctor.py:214-230`), so a repository V1 binding wins even when the host setting names
 the DevHub pilot. Before using a host-selected DevHub pilot, the factory and doctor
@@ -150,7 +150,7 @@ explicitly as `mode=pilot`, including historical DevHub markers, outside the thr
 V1 trackers; `--require-v1` refuses it.
 A valid marker cannot mask another active canonical or matching legacy provider
 binding: the published binding reader and mapping update refuse that ambiguity
-before effects (`registry.py:354-369`, `486-522`, `1118-1199`). Archived bindings
+before effects (`registry.py:354-369`, `486-522`, `1118-1208`). Archived bindings
 are excluded from the active-provider check. Only a proven unbound checkout or a
 host diagnostic outside Git can use the global
 pilot setting. A V1 canonical registry entry whose marker is absent is an interrupted
@@ -177,7 +177,7 @@ human-readable identifier (YouTrack `idReadable`, Linear `identifier`), of the f
 `<PREFIX>-<NUMBER>`. It is unique within one provider instance but it is not a
 repository identity: historical registry entries use the repository name, homonyms use
 an internal deterministic key, and several aliases may point at one provider project
-(`register_alias`, `registry.py:1488-1547`;
+(`register_alias`, `registry.py:1501-1560`;
 `require_writable_project`, `registry.py:1392-1413`, treats them as one project).
 The key is therefore interpreted only together with the resolved binding. Linear
 enforces the provider project on each hydrated issue (`_assert_issue_project`); YouTrack
@@ -338,7 +338,7 @@ argument. Before the local publication, YouTrack reads the exact native project 
 Linear reads the exact project id, team UUID and team key after validating every UUID
 map; GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
-before the registry or marker changes (`registry.py:1586-1731`, `956-1062`;
+before the registry or marker changes (`registry.py:1599-1744`, `956-1062`;
 `youtrack.py:247-258`; `linear.py:1573-1585`; `ghprojects.py:36-104`). The GitHub query follows GitHub's documented
 organization/user `projectV2(number:)` lookup and `ProjectV2.repositories` connection;
 it is capped at ten 100-repository pages and needs only `read:project` permission
@@ -374,13 +374,15 @@ replay completes an interruption between registry and marker publication. This i
 local compare-and-publish boundary only; it neither mutates provider data nor claims a
 provider CAS. Marker structure, schema version, activation vocabulary and every digest
 are parsed by the same strict reader before either file can be written, including during
-replay (`registry.py:397-483`, `1118-1199`). Archive tombstones and unrelated bindings
+replay (`registry.py:397-483`, `1118-1208`). Archive tombstones and unrelated bindings
 are preserved.
 
 The non-core `full-administrative-provisioning` row records YouTrack's existing
 provisioning as an optional capability and Linear/`ghprojects` as refused. Setup refuses
-an occupied provider/basename slot before constructing the provider, including a foreign
-canonical homonym, and rechecks absence under the publication lock. Use the existing-project
+a repository argument different from the verified checkout and an occupied
+provider/basename slot before constructing the provider, including a foreign canonical
+homonym. It rechecks the complete checkout selection across providers under the
+publication lock, refusing a concurrently added binding or tombstone. Use the existing-project
 bootstrap path for homonyms; administrative setup never replaces their bindings.
 
 **Open workflow point for PAT-65.** GitHub Projects v2 is GraphQL-only (`ghprojects.py`

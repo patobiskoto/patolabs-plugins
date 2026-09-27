@@ -105,6 +105,11 @@ def setup(name, short, repo, adr_dir=None):
             f"{selection['mode']}."
         )
 
+    if repo != selection["repo"]:
+        raise SystemExit(
+            "Setup tracker refusé : nom de dépôt incompatible avec le checkout."
+        )
+
     # Setup is the one boundary that intentionally selects the configured provider:
     # a fresh repository has no binding yet, while normal factory calls stay closed.
     provider = foundry.config.tracker_name()

@@ -1472,6 +1472,19 @@ def register(
             raise ValueError("canonical_repo invalide") from None
     with _cutover_lock():
         data = load()
+        if require_absent:
+            # Provisioning ran outside the registry lock. Re-prove the complete
+            # checkout state here, not just absence in the selected provider slot.
+            try:
+                selection = repository_tracker_selection(allow_unbound=True)
+            except (SystemExit, ValueError) as exc:
+                raise ValueError(
+                    f"binding {tracker}/{repo} déjà occupé ou invalide : {exc}"
+                ) from None
+            if selection["mode"] != "unbound" or selection["repo"] != repo:
+                raise ValueError(
+                    f"binding {tracker}/{repo} déjà occupé ou incompatible avec le checkout"
+                )
         current = data.get(tracker, {}).get(repo)
         if require_absent and repo in data.get(tracker, {}):
             raise ValueError(f"binding {tracker}/{repo} déjà occupé")
