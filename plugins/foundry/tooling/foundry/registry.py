@@ -399,6 +399,10 @@ def _strict_marker_snapshot(
 ) -> dict[str, object] | None:
     """Parse one marker completely without consulting or changing the registry."""
     marker = root / _TRACKER_MARKER_RELATIVE_PATH
+    if marker.parent.is_symlink() or (
+        marker.parent.exists() and not marker.parent.is_dir()
+    ):
+        raise ValueError("répertoire du marqueur tracker invalide")
     try:
         stat = marker.lstat()
     except FileNotFoundError:
@@ -1019,8 +1023,8 @@ def bootstrap_repository_binding(
     with _cutover_lock():
         data = load()
         _require_unique_checkout_provider(data, tracker, repository, repo)
-        marker_path = _marker_path(str(root))
-        if marker_path is not None and marker_path.exists():
+        marker_snapshot = _strict_marker_snapshot(root, missing_ok=True)
+        if marker_snapshot is not None:
             current = repository_tracker_binding(str(root))
             expected_digest = payload["configuration_digest"]
             if current is not None and current.configuration_digest == expected_digest:

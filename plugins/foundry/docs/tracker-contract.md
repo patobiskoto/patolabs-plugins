@@ -83,7 +83,7 @@ cell.
   `registry cutover` performs no provider I/O (`linear-tracker.md`). PAT-64 must provide
   both halves for every pair.
 - **PAT-43** — YouTrack's only tombstone check, `validate_legacy_mutation`
-  (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:1425-1446`),
+  (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:1429-1450`),
   refuses a write only when the checkout's own registry binding is archived or shares
   its project with an archived alias; it must refuse every write addressed to an
   archived project by provider identifier.
@@ -137,7 +137,7 @@ only the compatibility fallback for a legacy entry without `canonical_repo`, so
 **One checkout selection for all three adapters.**
 `repository_tracker_selection()` reads the marker from the Git root and validates its
 canonical origin, provider, project coordinates and registry digest
-(`registry.py:397-665`). The default `Tracker.resolve_checkout_project()` consumes that
+(`registry.py:397-669`). The default `Tracker.resolve_checkout_project()` consumes that
 selection for YouTrack and `ghprojects` (`base.py:142-172`); Linear keeps its exact
 canonical registry resolution and provider-level team/project assertions
 (`linear.py:1587-1609`, `2346-2355`). `foundry.effective_tracker_name()` is the shared
@@ -150,7 +150,7 @@ explicitly as `mode=pilot`, including historical DevHub markers, outside the thr
 V1 trackers; `--require-v1` refuses it.
 A valid marker cannot mask another active canonical or matching legacy provider
 binding: the published binding reader and mapping update refuse that ambiguity
-before effects (`registry.py:354-369`, `486-522`, `1126-1216`). Archived bindings
+before effects (`registry.py:354-369`, `486-522`, `1130-1220`). Archived bindings
 are excluded from the active-provider check. Only a proven unbound checkout or a
 host diagnostic outside Git can use the global
 pilot setting. A V1 canonical registry entry whose marker is absent is an interrupted
@@ -177,8 +177,8 @@ human-readable identifier (YouTrack `idReadable`, Linear `identifier`), of the f
 `<PREFIX>-<NUMBER>`. It is unique within one provider instance but it is not a
 repository identity: historical registry entries use the repository name, homonyms use
 an internal deterministic key, and several aliases may point at one provider project
-(`register_alias`, `registry.py:1536-1595`;
-`require_writable_project`, `registry.py:1425-1446`, treats them as one project).
+(`register_alias`, `registry.py:1540-1599`;
+`require_writable_project`, `registry.py:1429-1450`, treats them as one project).
 The key is therefore interpreted only together with the resolved binding. Linear
 enforces the provider project on each hydrated issue (`_assert_issue_project`); YouTrack
 gets the repository project before each V1 mutation, while its provider-level
@@ -340,7 +340,7 @@ map; YouTrack V1 extras are limited to `canonical_repo` and optional non-empty
 `ms_bundle`. Undeclared keys, including credential keys, refuse before provider readback
 or persistence. GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
-before the registry or marker changes (`registry.py:1634-1784`, `988-1095`;
+before the registry or marker changes (`registry.py:1638-1788`, `992-1099`;
 `youtrack.py:247-258`; `linear.py:1573-1585`; `ghprojects.py:36-104`). The GitHub query follows GitHub's documented
 organization/user `projectV2(number:)` lookup and `ProjectV2.repositories` connection;
 it is capped at ten 100-repository pages and needs only `read:project` permission
@@ -383,7 +383,9 @@ replay completes an interruption between registry and marker publication. This i
 local compare-and-publish boundary only; it neither mutates provider data nor claims a
 provider CAS. Marker structure, schema version, activation vocabulary and every digest
 are parsed by the same strict reader before either file can be written, including during
-replay (`registry.py:397-483`, `1126-1216`). Archive tombstones and unrelated bindings
+replay (`registry.py:397-487`, `1130-1220`). Bootstrap also validates the marker
+path before registry publication: dangling marker symlinks, symlinked `.foundry`
+directories and non-directory parents refuse without replacing existing paths. Archive tombstones and unrelated bindings
 are preserved.
 
 The hook lookup `entry_for()` uses the same strict checkout selection. Multiple active

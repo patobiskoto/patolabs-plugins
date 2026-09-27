@@ -903,3 +903,44 @@ def test_explicit_legacy_environment_alias_outside_git_stays_unique(
     registry.register("ghprojects", "app", "OTHER", "PVT_2")
     with pytest.raises(ValueError, match="ambigu"):
         registry.entry_for(str(isolated))
+
+
+@pytest.mark.parametrize("state", ["dangling_marker", "symlink_parent", "dangling_parent", "file_parent"])
+def test_bootstrap_refuses_invalid_marker_path_before_registry_publication(isolated, state):
+    repo = _repo(isolated, "acme", "app")
+    parent = repo / ".foundry"
+    marker = parent / "tracker.json"
+    target = isolated / "foreign"
+    if state == "dangling_marker":
+        parent.mkdir()
+        marker.symlink_to(target)
+    elif state == "file_parent":
+        parent.write_text("preserve this file")
+    else:
+        if state == "symlink_parent":
+            target.mkdir()
+        parent.symlink_to(target, target_is_directory=True)
+    before = registry.load()
+    with pytest.raises(ValueError, match="marqueur tracker.*invalide"):
+        registry.bootstrap_repository_binding("youtrack", "app", "ONE", "0-1", cwd=str(repo))
+    assert registry.load() == before
+    if state == "dangling_marker":
+        assert marker.is_symlink()
+        assert marker.readlink() == target
+    elif state == "file_parent":
+        assert parent.read_text() == "preserve this file"
+    else:
+        assert parent.is_symlink()
+        assert parent.readlink() == target
+        assert not marker.exists()
+
+
+@pytest.mark.parametrize("state", ["existing", "dangling"])
+def test_common_selection_refuses_symlink_parent_without_marker(isolated, state):
+    repo = _repo(isolated, "acme", "app")
+    target = isolated / "foreign"
+    if state == "existing":
+        target.mkdir()
+    (repo / ".foundry").symlink_to(target, target_is_directory=True)
+    with pytest.raises(ValueError, match="marqueur tracker.*invalide"):
+        registry.repository_tracker_binding(str(repo))
