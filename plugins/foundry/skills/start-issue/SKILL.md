@@ -40,9 +40,10 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 The `adrs` in that payload are an index of constraints — load the full text of the
 ones the issue cites (`query adr <ADR-ID>`), honor them, don't reopen them. If `adrs`
-is instead a `{"status": "conflict", ...}` or `{"status": "adr_unavailable", ...}`
-object, the embedded ADR index itself is in conflict, or refers to an ADR absent from
-it: treat ADR constraints as unknown, not as none, and do not proceed as if the index
+is instead a `{"status": "conflict", ...}`, `{"status": "adr_unavailable", ...}`, or
+`{"status": "adr_issue_unavailable", ...}` object, the embedded ADR index itself is
+in conflict, refers to an ADR absent from it, or has an unavailable declared ADR issue
+relation: treat ADR constraints as unknown, not as none, and do not proceed as if the index
 were empty — do not accept or skip any ADR-gated step on the strength of this
 projection.
 

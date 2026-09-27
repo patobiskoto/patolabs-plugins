@@ -17,6 +17,7 @@ from foundry import query, registry, write
 from foundry.codehosts.github import GitHubCodeHost
 from foundry.models import Adr, Check, Issue, Link, Project, PullRequest
 from foundry.trackers.base import (
+    AdrIssueUnavailableError,
     AdrUnavailableError,
     IssueUnavailableError,
     TrackerCapabilityUnavailableError,
@@ -468,6 +469,29 @@ def test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status(mo
     }
 
 
+def test_issue_projects_unavailable_adr_issue_relation_with_exact_provenance(monkeypatch):
+    # An unavailable issue declared by an ADR is neither an unavailable requested
+    # issue nor an unavailable ADR. Its source ADR and target issue stay explicit.
+    class _UnavailableAdrIssueTracker(_FakeTracker):
+        def list_adrs(self, project):
+            raise AdrIssueUnavailableError("T-ADR-0002", "T-42")
+
+    issues = [Issue(id="A", title="a", state="ready", body="text")]
+    monkeypatch.setattr(
+        foundry, "tracker", lambda name=None: _UnavailableAdrIssueTracker(issues)
+    )
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    out = query.issue("A")
+    assert out["issue"]["id"] == "A"
+    assert out["adrs"] == {
+        "status": "adr_issue_unavailable",
+        "tracker": "fake",
+        "adr_id": "T-ADR-0002",
+        "issue_id": "T-42",
+    }
+
+
 def test_issue_propagates_unexpected_adr_index_error(monkeypatch):
     # Transport, binding and payload failures must still propagate — only the typed
     # capability-unavailable and conflict errors get projected into the payload.
@@ -512,6 +536,22 @@ def test_query_adrs_still_fails_closed_on_unavailable_adr(monkeypatch):
     with pytest.raises(AdrUnavailableError):
         query.adrs()
     with pytest.raises(AdrUnavailableError):
+        query.adr("T-ADR-0001")
+
+
+def test_query_adrs_still_fails_closed_on_unavailable_adr_issue_relation(monkeypatch):
+    class _UnavailableAdrIssueTracker(_FakeTracker):
+        def list_adrs(self, project):
+            raise AdrIssueUnavailableError("T-ADR-0002", "T-42")
+
+    monkeypatch.setattr(
+        foundry, "tracker", lambda name=None: _UnavailableAdrIssueTracker([])
+    )
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+
+    with pytest.raises(AdrIssueUnavailableError):
+        query.adrs()
+    with pytest.raises(AdrIssueUnavailableError):
         query.adr("T-ADR-0001")
 
 

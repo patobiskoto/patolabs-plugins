@@ -44,6 +44,20 @@ class AdrUnavailableError(RuntimeError):
         self.adr_id = adr_id
 
 
+class AdrIssueUnavailableError(RuntimeError):
+    """An ADR's declared issue relation is absent or inaccessible.
+
+    The pair is preserved so the one read-only ``query issue`` projection can
+    report the exact broken relation without treating the requested issue as
+    unavailable.  ADR reads and writes deliberately continue to fail closed.
+    """
+
+    def __init__(self, adr_id: str, issue_id: str):
+        super().__init__(f"ADR issue unavailable: {adr_id} -> {issue_id}")
+        self.adr_id = adr_id
+        self.issue_id = issue_id
+
+
 class AcceptanceSyncUnavailableError(RuntimeError):
     """The active tracker cannot safely synchronize acceptance checkboxes."""
 
