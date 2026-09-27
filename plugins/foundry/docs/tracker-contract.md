@@ -55,7 +55,7 @@ closed vocabulary:
 |---|---|---|---|---|
 | Contexte/backlog: identity and project resolution | `resolve_project`, `resolve_checkout_project`, `validate_mutation_*` | supported | supported | supported (binding only; workflow methods remain with PAT-57/66/67) |
 | Contexte/backlog: repository bootstrap (bind an existing verified project) | `verify_project_identity`, `resolve_checkout_project` | supported | supported | supported (binding only) |
-| Contexte/backlog: read | `search`, `get_issue` | supported | supported (unknown mapping fails closed; `registry update` resumes) | `to_qualify` PAT-57 |
+| Contexte/backlog: read | `search`, `get_issue` | supported | supported (unknown mapping fails closed; `registry update` resumes) | supported (PAT-57, qualified private personal-project read profile) |
 | Frame/intake/groom: create, comment | `create_issue`, `add_comment` | supported | supported | `to_qualify` PAT-66 |
 | Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | `to_qualify` PAT-66 |
 | Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | `to_qualify` PAT-66 |
@@ -137,20 +137,31 @@ before the Milestone enum or issue POST (`youtrack.py`).
 
 **Explicit refusals (non-core):** free native-text `search(query=…)` on Linear
 (`linear.py`, `provider-native-search-query`); full administrative
-provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack and Linear
+provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack, Linear and
+`ghprojects`
 (optional projection used only by DevHub); `supersede_adr`/`link_adr_issue` on YouTrack
 (ADR evolution is served by `set_adr_status`); the typed acceptance-override receipt on
 YouTrack (free-text audit note fallback, `base.py`).
 
-**`to_qualify` (`ghprojects`) after the PAT-65 provider qualification.** PAT-54 supplies
+**GitHub Projects read slice (PAT-57).** PAT-54 supplies
 the canonical checkout binding and read-only existing-project probe. PAT-65 then
 qualified the private, personal-project API shape and selected the ADR representation
 under PAT-ADR-0007; the evidence and its limits are recorded in
-[`qualification/github-projects-v1.md`](qualification/github-projects-v1.md). The ten
-workflow methods `search`, `get_issue`,
-`create_issue`, `update_fields`, `set_state`, `link`,
-`add_comment`, `list_adrs`, `create_adr` and `set_adr_status` still raise
-`NotImplementedError` (`ghprojects.py`). Everything else is inherited
+[`qualification/github-projects-v1.md`](qualification/github-projects-v1.md). The two
+`search` and `get_issue` are delivered for the exact bound private personal-project
+profile: every supplied Project coordinate first matches the active checkout binding;
+GraphQL then pages Project items and rejects a field, label, or item-field-value
+connection that reports an unconsumed page, then REST hydrates the bound Issue,
+comments, parent, sub-issues and both dependency directions. Every REST relation target
+must prove the canonical repository before its number becomes a normalized key. It
+requires a distinct private personal-repository node, Project item ID and Issue node ID,
+exactly one qualified field ID, the qualified state/type catalogs, a bounded priority
+catalog, and coherent field/option value IDs.
+It rejects partial GraphQL responses and unsupported draft/PR/foreign items, and excludes only the reserved
+`foundry:adr` support. Native free-text search is explicitly refused. The write methods `create_issue`, `update_fields`, `set_state`,
+`link`, `add_comment`, `create_adr` and `set_adr_status` remain typed capability
+refusals; `list_adrs` raises the typed `adr_index` refusal until PAT-58 supplies its
+codec. Everything else is inherited
 from `base.py` unchanged: optional ports raise their typed unavailability error
 (`EpicClosureUnavailableError`, `BodyUpdateUnavailableError`,
 `AcceptanceSyncUnavailableError`, `ProjectProvisioningUnavailableError`,
@@ -158,7 +169,7 @@ from `base.py` unchanged: optional ports raise their typed unavailability error
 `validate_*` checks and `preflight_issue_operation` are no-ops. The cells therefore do
 not become `supported` from provider probes alone: each cell's `ticket` names the tranche
 that must deliver and qualify the adapter operation (PAT-57, 58, 59, 64, 66, 67, 69),
-including PAT-57 for native search and the Epic subgraph projection, PAT-58 for ADR
+including the still-unavailable optional Epic subgraph projection under PAT-57, PAT-58 for ADR
 supersession and issue links, and PAT-67 for the acceptance-override receipt. PAT-65
 owns no remaining adapter-delivery cell.
 
@@ -505,7 +516,8 @@ claimed. PAT-ADR-0007 selects one issue per ADR in the canonical private reposit
 version comments checked by digest, and the reserved `foundry:adr` label; PAT-65 also
 proved a persisted GraphQL board view with `-label:foundry:adr`. These are provider
 qualification results, not implemented adapter capabilities, so the PAT-57/58/66/67
-cells remain stubs until their owner tickets deliver and qualify them.
+cells remain unavailable until their owner tickets deliver and qualify them; PAT-57's
+bounded read cell is the delivered exception described above.
 
 This resolution creates no exception to the code-host rule. A repository choosing
 `ghprojects` keeps the REST-only code-host adapter for PRs, CI and merges. GraphQL is
