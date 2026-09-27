@@ -5,7 +5,7 @@ name: ci
 # runners and no repository secret.
 on:
   push:
-    branches: [main, feat/pat-68-tracker-conformance-suite]
+    branches: [main]
   pull_request:
 
 permissions:
