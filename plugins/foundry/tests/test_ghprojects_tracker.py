@@ -5,8 +5,11 @@ from copy import deepcopy
 
 import pytest
 
+import foundry
+from foundry import query
 from foundry.models import Issue, Project
 from foundry.registry import RepositoryTrackerBinding
+from foundry.trackers.base import IssueUnavailableError
 from foundry.trackers.ghprojects import GitHubProjectsTracker, GitHubProjectsTrackerError
 
 
@@ -31,7 +34,7 @@ def _qualified_active_binding(monkeypatch):
     )
     monkeypatch.setattr(
         "foundry.trackers.ghprojects.registry.repository_tracker_selection",
-        lambda: {"tracker": "ghprojects", "mode": "v1", "binding": binding},
+        lambda cwd=None: {"tracker": "ghprojects", "mode": "v1", "binding": binding},
     )
 
 
@@ -251,6 +254,62 @@ def test_search_refuses_missing_or_ambiguous_qualified_field():
 
     with pytest.raises(GitHubProjectsTrackerError, match="missing_or_ambiguous_field:state"):
         GitHubProjectsTracker(runner=runner).search(PROJECT)
+
+
+@pytest.mark.parametrize("coordinate", ["field", "option"])
+def test_search_refuses_empty_authority_ids_even_when_values_match(coordinate):
+    payload = _page("item-1", 1, None, False)
+    project = payload["data"]["user"]["projectV2"]
+    state_field = next(field for field in project["fields"]["nodes"] if field["id"] == "state")
+    state_value = project["items"]["nodes"][0]["fieldValues"]["nodes"][0]
+    if coordinate == "field":
+        state_field["id"] = ""
+        state_value["field"]["id"] = ""
+        reason = "missing_or_ambiguous_field:state"
+    else:
+        next(option for option in state_field["options"] if option["name"] == "ready")["id"] = ""
+        state_value["optionId"] = ""
+        reason = "invalid_field_options:state"
+
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    with pytest.raises(GitHubProjectsTrackerError, match=reason):
+        GitHubProjectsTracker(runner=runner)._search_raw(PROJECT)
+
+
+@pytest.mark.parametrize("semantic", ["state", "priority", "estimate"])
+def test_search_refuses_qualified_optional_field_value_without_id(semantic):
+    payload = _page("item-1", 1, None, False)
+    values = payload["data"]["user"]["projectV2"]["items"]["nodes"][0]["fieldValues"]["nodes"]
+    next(value for value in values if value["field"]["id"] == semantic)["field"].pop("id")
+
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    with pytest.raises(GitHubProjectsTrackerError, match="incoherent_field_value"):
+        GitHubProjectsTracker(runner=runner)._search_raw(PROJECT)
+
+
+@pytest.mark.parametrize("malformation", ["null_node", "null_field", "empty_field_id"])
+def test_search_refuses_malformed_qualified_field_value_coordinates(malformation):
+    payload = _page("item-1", 1, None, False)
+    values = payload["data"]["user"]["projectV2"]["items"]["nodes"][0]["fieldValues"]["nodes"]
+    priority_index = next(
+        index for index, value in enumerate(values) if value["field"]["id"] == "priority"
+    )
+    if malformation == "null_node":
+        values[priority_index] = None
+    elif malformation == "null_field":
+        values[priority_index]["field"] = None
+    else:
+        values[priority_index]["field"]["id"] = ""
+
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    with pytest.raises(GitHubProjectsTrackerError, match="incoherent_field_value"):
+        GitHubProjectsTracker(runner=runner)._search_raw(PROJECT)
 
 
 @pytest.mark.parametrize(
@@ -473,6 +532,138 @@ def test_search_refuses_truncated_authority_connections(connection, reason):
 
     with pytest.raises(GitHubProjectsTrackerError, match=reason):
         GitHubProjectsTracker(runner=runner).search(PROJECT)
+
+
+@pytest.mark.parametrize(
+    ("connection", "malformation", "reason"),
+    [
+        ("fields", "missing", "missing_fields"),
+        ("fields", "page_info", "truncated_fields"),
+        ("labels", "missing", "truncated_or_invalid_labels"),
+        ("labels", "page_info", "truncated_or_invalid_labels"),
+        ("fieldValues", "missing", "invalid_field_values"),
+        ("fieldValues", "page_info", "truncated_field_values"),
+    ],
+)
+def test_search_refuses_missing_or_malformed_authority_connections(
+    connection, malformation, reason,
+):
+    payload = _page("item-1", 1, None, False)
+    project = payload["data"]["user"]["projectV2"]
+    if connection == "fields":
+        parent = project
+    elif connection == "labels":
+        parent = project["items"]["nodes"][0]["content"]
+    else:
+        parent = project["items"]["nodes"][0]
+    if malformation == "missing":
+        parent.pop(connection)
+    else:
+        parent[connection]["pageInfo"] = []
+
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    with pytest.raises(GitHubProjectsTrackerError, match=reason):
+        GitHubProjectsTracker(runner=runner)._search_raw(PROJECT)
+
+
+@pytest.mark.parametrize("unavailable", ["not_in_project", "rest_404"])
+def test_get_issue_raises_typed_unavailable_only_after_target_absence_is_proven(unavailable):
+    payload = _page("item-1", 1, None, False)
+
+    def runner(command, **kwargs):
+        if command[2] == "graphql":
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if unavailable == "rest_404" and command[-1].endswith("/issues/1"):
+            return subprocess.CompletedProcess(
+                command, 1, json.dumps({"message": "Not Found", "status": "404"}),
+                "gh: Not Found (HTTP 404)",
+            )
+        raise AssertionError(command)
+
+    issue_id = "GHQUAL-2" if unavailable == "not_in_project" else "GHQUAL-1"
+    with pytest.raises(IssueUnavailableError) as exc:
+        GitHubProjectsTracker(runner=runner).get_issue(issue_id)
+    assert exc.value.issue_id == issue_id
+    assert str(exc.value) == f"issue unavailable: {issue_id}"
+
+
+def test_get_issue_keeps_ambiguous_permission_failure_visible():
+    payload = _page("item-1", 1, None, False)
+
+    def runner(command, **kwargs):
+        if command[2] == "graphql":
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[-1].endswith("/issues/1"):
+            return subprocess.CompletedProcess(
+                command, 1,
+                json.dumps({"message": "Resource not accessible", "status": "403"}),
+                "gh: Resource not accessible (HTTP 403)",
+            )
+        raise AssertionError(command)
+
+    with pytest.raises(GitHubProjectsTrackerError, match="permission_denied") as exc:
+        GitHubProjectsTracker(runner=runner).get_issue("GHQUAL-1")
+    assert exc.value.operation == "issue.read"
+
+
+def test_query_issue_keeps_unavailable_parent_and_dependency_as_related_errors(monkeypatch):
+    payload = _page("item-2", 2, None, False)
+
+    def runner(command, **kwargs):
+        if command[2] == "graphql":
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        path = command[-1]
+        if path.endswith("/issues/2"):
+            return subprocess.CompletedProcess(command, 0, json.dumps(_rest_issue(2)), "")
+        if path.endswith("/issues/2/parent"):
+            return subprocess.CompletedProcess(command, 0, json.dumps(_rest_issue(1)), "")
+        if "/dependencies/blocked_by" in path:
+            return subprocess.CompletedProcess(command, 0, json.dumps([_rest_issue(3)]), "")
+        if "/comments" in path or "/dependencies/blocking" in path or "/sub_issues" in path:
+            return subprocess.CompletedProcess(command, 0, "[]", "")
+        raise AssertionError(path)
+
+    tracker = GitHubProjectsTracker(runner=runner)
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
+
+    out = query.issue("GHQUAL-2")
+
+    assert {(link["type"], link["target"]) for link in out["issue"]["links"]} == {
+        ("subtask-of", "GHQUAL-1"),
+        ("depends-on", "GHQUAL-3"),
+    }
+    assert out["related"] == {
+        "GHQUAL-1": {"id": "GHQUAL-1", "error": "issue unavailable"},
+        "GHQUAL-3": {"id": "GHQUAL-3", "error": "issue unavailable"},
+    }
+
+
+def test_query_issue_still_refuses_foreign_relation_uri_before_aliasing(monkeypatch):
+    payload = _page("item-2", 2, None, False)
+    foreign_parent = _rest_issue(1)
+    foreign_parent["repository_url"] = "https://api.github.com/repos/patobiskoto/foreign"
+    foreign_parent["url"] = "https://api.github.com/repos/patobiskoto/foreign/issues/1"
+    foreign_parent["html_url"] = "https://github.com/patobiskoto/foreign/issues/1"
+
+    def runner(command, **kwargs):
+        if command[2] == "graphql":
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        path = command[-1]
+        if path.endswith("/issues/2"):
+            return subprocess.CompletedProcess(command, 0, json.dumps(_rest_issue(2)), "")
+        if path.endswith("/issues/2/parent"):
+            return subprocess.CompletedProcess(command, 0, json.dumps(foreign_parent), "")
+        if "/comments" in path or "/dependencies/" in path or "/sub_issues" in path:
+            return subprocess.CompletedProcess(command, 0, "[]", "")
+        raise AssertionError(path)
+
+    tracker = GitHubProjectsTracker(runner=runner)
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
+
+    with pytest.raises(GitHubProjectsTrackerError, match="foreign_issue_coordinate"):
+        query.issue("GHQUAL-2")
 
 
 def test_hydration_refuses_foreign_relation_before_number_aliasing():

@@ -12,9 +12,11 @@ inferred-owner variants are not qualified.
 
 `search(project)` reads bounded GraphQL Project item pages and requires one
 unique ID and qualified data type for each field: `Foundry normalized state`,
-`Foundry type`, `Foundry priority`, and `Foundry estimate`. The single-select
-option IDs/names must also be unique, and each value must carry the expected
-field ID/name and option ID/name pair. The active checkout binding and every
+`Foundry type`, `Foundry priority`, and `Foundry estimate`. Field and
+single-select option IDs must be non-empty and unique, and each qualified value
+must carry the expected field ID/name and option ID/name pair. Missing or
+malformed field, label, field-value, or `pageInfo` connections fail closed. The
+active checkout binding and every
 caller-supplied key, Project ID, owner, number and canonical repository are
 compared before transport. Each Issue then proves distinct Project item, Issue
 node and private repository node IDs; repeated item, content, normalized Issue
@@ -39,10 +41,15 @@ body/comment values are retained and ISO timestamps become epoch milliseconds.
 Only complete per-line Markdown checkboxes in the current REST Issue body count
 toward observed AC progress; comments and split-line fragments do not, and these
 markers are not lifecycle acceptance proof.
-Only the documented 404 payload `No parent issue found` means no parent; all
-other 404s, auth, permission, rate-limit, malformed and pagination failures
-stay explicit. The Project normalized-state field is recorded as an observation
-with `projection_status=unknown`; PAT-67 owns lifecycle/projection proof.
+An issue proven absent from the complete bound Project read, or whose exact
+Issue endpoint then returns 404, raises the portable `IssueUnavailableError`;
+`query issue` can therefore preserve an unavailable related target as a link
+plus an explicit error. This classification is target-specific: global auth or
+permission failures, malformed payloads, foreign relation URIs, transport and
+pagination failures stay explicit. Only the documented parent-endpoint 404
+payload `No parent issue found` means that a present issue has no parent. The
+Project normalized-state field is recorded as an observation with
+`projection_status=unknown`; PAT-67 owns lifecycle/projection proof.
 
 Native free-text search is refused with
 `provider-native-search-query`. ADR index reads are typed `adr_index` refusals

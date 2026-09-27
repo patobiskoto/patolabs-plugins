@@ -15,7 +15,11 @@ from typing import Any
 
 from foundry import registry
 from foundry.models import Adr, Issue, Link, Project
-from foundry.trackers.base import Tracker, TrackerCapabilityUnavailableError
+from foundry.trackers.base import (
+    IssueUnavailableError,
+    Tracker,
+    TrackerCapabilityUnavailableError,
+)
 
 _MAX_PAGES, _TRANSPORT_TIMEOUT_SECONDS, _ADR_LABEL = 100, 30, "foundry:adr"
 _FIELDS = {"state": "Foundry normalized state", "type": "Foundry type",
@@ -218,7 +222,9 @@ class GitHubProjectsTracker(Tracker):
         nodes = connection.get("nodes") if connection else None
         if not isinstance(nodes, list):
             raise GitHubProjectsTrackerError("project.read", "missing_fields")
-        if connection.get("pageInfo", {}).get("hasNextPage") is not False:
+        page_info = connection.get("pageInfo")
+        if (not isinstance(page_info, dict)
+                or page_info.get("hasNextPage") is not False):
             # Field IDs are authority coordinates.  A first-100 projection cannot
             # establish uniqueness when GitHub says more fields exist.
             raise GitHubProjectsTrackerError("project.read", "truncated_fields")
@@ -228,6 +234,7 @@ class GitHubProjectsTracker(Tracker):
         for semantic, name in _FIELDS.items():
             candidates = [x for x in nodes if isinstance(x, dict) and x.get("name") == name]
             if (len(candidates) != 1 or not isinstance(candidates[0].get("id"), str)
+                    or not candidates[0]["id"]
                     or candidates[0].get("dataType") != _FIELD_TYPES[semantic]
                     or candidates[0]["id"] in field_ids
                     or candidates[0]["id"] in option_ids):
@@ -238,6 +245,7 @@ class GitHubProjectsTracker(Tracker):
                 options = candidates[0].get("options")
                 if (not isinstance(options, list) or not options
                         or any(not isinstance(option, dict) or not isinstance(option.get("id"), str)
+                               or not option["id"]
                                or not isinstance(option.get("name"), str) for option in options)
                         or len({option["id"] for option in options}) != len(options)
                         or len({option["name"] for option in options}) != len(options)
@@ -289,10 +297,13 @@ class GitHubProjectsTracker(Tracker):
                 or content.get("body") is not None and not isinstance(content.get("body"), str)):
             raise GitHubProjectsTrackerError("project.items", "invalid_issue_content")
         labels_connection = content.get("labels") if isinstance(content.get("labels"), dict) else None
-        labels = labels_connection.get("nodes", []) if labels_connection else []
-        if not isinstance(labels, list) or labels_connection.get("pageInfo", {}).get("hasNextPage") is not False:
+        labels = labels_connection.get("nodes") if labels_connection else None
+        labels_page = labels_connection.get("pageInfo") if labels_connection else None
+        if (not isinstance(labels, list) or not isinstance(labels_page, dict)
+                or labels_page.get("hasNextPage") is not False):
             raise GitHubProjectsTrackerError("project.items", "truncated_or_invalid_labels")
-        if (not all(isinstance(x, dict) and isinstance(x.get("name"), str) for x in labels)
+        if (not all(isinstance(x, dict) and isinstance(x.get("name"), str)
+                    and x["name"] for x in labels)
                 or len({x["name"] for x in labels}) != len(labels)):
             raise GitHubProjectsTrackerError("project.items", "invalid_labels")
         labels = [x["name"] for x in labels]
@@ -305,19 +316,37 @@ class GitHubProjectsTracker(Tracker):
         values = values_connection.get("nodes") if values_connection else None
         if not isinstance(values, list):
             raise GitHubProjectsTrackerError("project.items", "invalid_field_values")
-        if values_connection.get("pageInfo", {}).get("hasNextPage") is not False:
+        values_page = values_connection.get("pageInfo")
+        if (not isinstance(values_page, dict)
+                or values_page.get("hasNextPage") is not False):
             raise GitHubProjectsTrackerError("project.items", "truncated_field_values")
         by_id: dict[str, list[dict]] = {}
         required_by_name = {field.name: field for field in fields.values()}
-        for value in values:
-            field = value.get("field") if isinstance(value, dict) else None
-            if isinstance(field, dict) and isinstance(field.get("id"), str):
-                expected = next((candidate for candidate in fields.values() if candidate.id == field["id"]), None)
-                if expected is not None and field.get("name") != expected.name:
+        required_by_id = {field.id: field for field in fields.values()}
+        qualified_value_types = {
+            "ProjectV2ItemFieldSingleSelectValue",
+            "ProjectV2ItemFieldNumberValue",
+        }
+        for item_value in values:
+            if not isinstance(item_value, dict):
+                raise GitHubProjectsTrackerError("project.items", "incoherent_field_value")
+            value_field = item_value.get("field")
+            if not isinstance(value_field, dict):
+                # Other Project field-value variants are outside this slice and do
+                # not expose `field` through the qualified fragments.  A supported
+                # variant without its field coordinate is instead a partial payload.
+                if item_value.get("__typename") in qualified_value_types:
                     raise GitHubProjectsTrackerError("project.items", "incoherent_field_value")
-                if expected is None and field.get("name") in required_by_name:
-                    raise GitHubProjectsTrackerError("project.items", "incoherent_field_value")
-                by_id.setdefault(field["id"], []).append(value)
+                continue
+            field_id, field_name = value_field.get("id"), value_field.get("name")
+            if (not isinstance(field_id, str) or not field_id
+                    or not isinstance(field_name, str) or not field_name):
+                raise GitHubProjectsTrackerError("project.items", "incoherent_field_value")
+            expected_by_id = required_by_id.get(field_id)
+            expected_by_name = required_by_name.get(field_name)
+            if expected_by_id is not expected_by_name:
+                raise GitHubProjectsTrackerError("project.items", "incoherent_field_value")
+            by_id.setdefault(field_id, []).append(item_value)
         def value(name: str):
             field = fields[name]
             candidates = by_id.get(field.id, [])
@@ -548,8 +577,16 @@ class GitHubProjectsTracker(Tracker):
         number = self._number(issue_id, binding)
         issue = next((x for x in self._search_raw(project) if x.id == f"{binding.key}-{number}"), None)
         if issue is None:
-            raise GitHubProjectsTrackerError("issue.read", "issue_not_in_bound_project")
-        return self._hydrate_issue(issue, binding)
+            raise IssueUnavailableError(issue_id)
+        try:
+            return self._hydrate_issue(issue, binding)
+        except GitHubProjectsTrackerError as exc:
+            # A complete bound-Project read followed by an exact target 404 proves
+            # only this issue unavailable.  Auth, malformed data, relation failures,
+            # transport and pagination errors remain visible to the caller.
+            if exc.operation == "issue.read" and exc.reason == "not_found":
+                raise IssueUnavailableError(issue_id) from None
+            raise
 
     # PAT-66/PAT-58/PAT-67 own all mutation and ADR codec work.
     def create_issue(self, project, title, body, fields=None, parent=None): raise TrackerCapabilityUnavailableError(self.name, "create_issue")
