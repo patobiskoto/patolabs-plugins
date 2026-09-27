@@ -287,7 +287,13 @@ never **excludes** them, and no text in Foundry may say otherwise.
   through the S1-S5 bounded `issueUpdate` path; an exact, valid surviving receipt can
   repair only its missing native State effect when it remains the latest relevant
   lifecycle receipt. A late start receipt or an older review generation never projects
-  a weaker native state after a durable done. `project_acceptance_proof` appends a comment
+  a weaker native state after a durable done. Validation keeps each immutable historical
+  `native_state_id` observation separate from the operation's authenticated logical
+  target. In particular, an `acceptance` or `acceptance-override` receipt targets the
+  exact `review` generation to which its proof coordinates bind even when an older writer
+  observed native `in-progress`; both observation history and logical targets must remain
+  monotone, and an incompatible integrity-valid marker stays `unknown`.
+  `project_acceptance_proof` appends a comment
   whose id derives from the SHA-256 of
   `(schema, operation, issue[, generation])` (`_lifecycle_marker`,
   `linear.py`); `_project_lifecycle` (`linear.py`) reads, appends
@@ -333,7 +339,7 @@ machine.
 |---|---|---|
 | Grooming: fields, body, parent of an existing issue | S1-S4 on every portable write; targeted fields and both parent endpoints are read again before one write | S1-S4 in-place replacement under PAT-ADR-0006; only targeted inputs are sent and labels use deltas |
 | AC state | S1-S4 on the checkbox body (met, level 1) | PAT-ADR-0006 declares the proof-bound append-only projection the V1 authority (S5/S6); native checkbox replacement remains refused |
-| Status projection | S1-S5: the public operation supplies its original predecessor coordinate, `set_state` re-reads it before one native State write, and an exact retry at the target converges; another state or a missing predecessor fails closed | `in-progress`/`review`/`done`: one targeted native State projection under S1-S5 plus its append-only receipt; only the latest relevant receipt may repair a missing projection, disagreement is observable, and a bare native terminal state is never positive proof |
+| Status projection | S1-S5: the public operation supplies its original predecessor coordinate, `set_state` retains it through the effective S1 transport read before one native State write, and an exact retry at the target converges; another state or a missing predecessor fails closed | `in-progress`/`review`/`done`: one targeted native State projection under S1-S5 plus its append-only receipt; historical native observations and proof-bound logical targets are validated separately, only the latest relevant receipt may repair a missing projection, disagreement is observable, and a bare native terminal state is never positive proof |
 | Resume | S5 on every replayable transition through the predecessor coordinate; free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | exact native/receipt recovery completes only the missing effect; `add_comment` (`linear.py`) follows the free-text rule |
 | Epic closure | Fresh read of the full parent/children graph and AC proofs, one write, append-only receipt at a deterministic id bound to the exact set of terminal children and carrying the FOUNDRY-ADR-0017 human verdict, readback, fail closed on any divergence — authorized by PAT-ADR-0006, implementation PAT-69 | same — authorized by PAT-ADR-0006, implementation PAT-69 |
 
@@ -342,7 +348,10 @@ bounded native transitions: `edit transition <ISSUE-ID> <target> <expected-state
 Mechanical lifecycle commands carry their stable coordinates themselves
 (`in-progress → review`, `review → done`). `issue start` refuses a resumed existing
 branch when the original predecessor was not durably retained; it does not infer a new
-coordinate from the current native State.
+coordinate from the current native State. For a bounded native tracker, `issue merge`
+also authenticates the ticket's linked PR URL and the requested PR's exact
+number/head/base/state coordinates before any merge, tracker transition, branch cleanup,
+or execution-receipt effect, whether the PR is open or already merged.
 
 Issue creation and free-text comments are outside S5: YouTrack and Linear issue creates
 use provider-assigned or fresh client ids, and ambiguous free-text comment replay can

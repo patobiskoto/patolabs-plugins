@@ -2990,6 +2990,151 @@ def _append_lifecycle_row(instance, wire, issue_id, operation, payload):
     )
 
 
+def _historical_done_shape(
+    instance,
+    wire,
+    *,
+    review_observations=("ready",),
+    acceptance_observation="in-progress",
+    done_observation="in-progress",
+):
+    """Build the authentic pre-PAT-56 observation-coordinate receipt shape."""
+    instance._activate(PROJECT)
+    issue_id = "LIN-2"
+    body = wire.issues[issue_id]["description"]
+    pr_url = "https://github.com/acme/widgets/pull/17"
+    base_sha = "b" * 40
+    _append_lifecycle_row(
+        instance,
+        wire,
+        issue_id,
+        "state-in-progress",
+        {"state": "in-progress", "native_state_id": STATE_IDS["ready"]},
+    )
+    previous_review_body = None
+    latest = None
+    for generation, observation in enumerate(review_observations, start=1):
+        digit = str(generation)
+        latest = {
+            "state": "review",
+            "native_state_id": STATE_IDS[observation],
+            "pr_url": pr_url,
+            "head_sha": digit * 40,
+            "base_sha": base_sha,
+            "review_digest": digit * 64,
+            "generation": generation,
+            "previous_projection_digest": (
+                hashlib.sha256(previous_review_body.encode()).hexdigest()
+                if previous_review_body is not None
+                else None
+            ),
+        }
+        _marker, previous_review_body, _comment_id = instance._lifecycle_marker(
+            "state-review", issue_id, latest,
+        )
+        _append_lifecycle_row(
+            instance, wire, issue_id, "state-review", latest,
+        )
+    assert latest is not None
+    acceptance_proof = proof(
+        issue_id,
+        body,
+        head=latest["head_sha"],
+        base=latest["base_sha"],
+        diff_hash=latest["review_digest"],
+    )
+    _append_lifecycle_row(
+        instance,
+        wire,
+        issue_id,
+        "acceptance",
+        {
+            "native_state_id": STATE_IDS[acceptance_observation],
+            "body_digest": hashlib.sha256(body.encode()).hexdigest(),
+            "checked": 1,
+            "proof": acceptance_proof,
+            "review_generation": latest["generation"],
+        },
+    )
+    _append_lifecycle_row(
+        instance,
+        wire,
+        issue_id,
+        "state-done",
+        {
+            "state": "done",
+            "native_state_id": STATE_IDS[done_observation],
+            "pr_url": pr_url,
+            "head_sha": latest["head_sha"],
+            "base_sha": latest["base_sha"],
+            "review_digest": latest["review_digest"],
+            "review_generation": latest["generation"],
+            "merge_sha": "e" * 40,
+        },
+    )
+    wire.issues[issue_id]["state"]["id"] = STATE_IDS["in-progress"]
+    return pr_url
+
+
+@pytest.mark.parametrize("review_observations", [("ready",), ("ready", "in-progress")])
+def test_linear_historical_done_shape_keeps_acceptance_bound_to_review(
+    tracker,
+    review_observations,
+):
+    """PAT-20/PAT-52..55 receipts remain done proof under native start drift."""
+    instance, wire = tracker
+    pr_url = _historical_done_shape(
+        instance,
+        wire,
+        review_observations=review_observations,
+    )
+
+    with pytest.raises(TrackerConflictError, match="native state changed"):
+        instance.get_issue("LIN-2")
+    observed = instance.observe_issue("LIN-2")
+
+    assert observed.state == "done"
+    assert observed.normalized_state == "done"
+    assert observed.native_state == "in-progress"
+    assert observed.projection_status == "disagreement"
+    assert (observed.ac_done, observed.ac_total) == (1, 1)
+    assert observed.pr_url == pr_url
+
+
+@pytest.mark.parametrize(
+    ("review_observations", "acceptance_observation", "done_observation"),
+    [
+        (("ready",), "done", "done"),
+        (("in-progress",), "ready", "in-progress"),
+    ],
+    ids=["acceptance-beyond-bound-review", "historical-observation-regression"],
+)
+def test_linear_historical_semantic_forgery_stays_unknown(
+    tracker,
+    review_observations,
+    acceptance_observation,
+    done_observation,
+):
+    """Integrity-valid markers cannot hide incompatible native observations."""
+    instance, wire = tracker
+    _historical_done_shape(
+        instance,
+        wire,
+        review_observations=review_observations,
+        acceptance_observation=acceptance_observation,
+        done_observation=done_observation,
+    )
+
+    observed = instance.observe_issue("LIN-2")
+
+    assert observed.state is None
+    assert observed.normalized_state is None
+    assert observed.native_state == "in-progress"
+    assert observed.projection_status == "unknown"
+    assert (observed.ac_done, observed.ac_total) == (0, 1)
+    assert observed.pr_url is None
+
+
 def _pat10_shape(instance, wire, monkeypatch):
     """Two review generations, the legacy prose audit, then done without AC proof."""
     monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)

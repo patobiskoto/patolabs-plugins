@@ -135,6 +135,7 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     tracker = object.__new__(provider_class)
     tracker.get_issue = lambda _issue_id: events.append("tracker:get-issue") or SimpleNamespace(
         id="DEMO-7", state="review", body="", ac_done=0, ac_total=0,
+        pr_url="https://github.com/acme/demo/pull/12",
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12",
@@ -275,29 +276,66 @@ def test_issue_start_retry_resumes_after_partial_tracker_transition(monkeypatch)
     assert tracker.state == "in-progress"
 
 
+def _youtrack_transport(
+    monkeypatch,
+    native,
+    *,
+    pr_url: str | None = None,
+    lose_first_response: bool = False,
+):
+    """Return a real YouTrack adapter over one stateful in-memory HTTP transport."""
+    tracker = object.__new__(YouTrackTracker)
+    posts = []
+    lose_response = lose_first_response
+
+    def raw_issue():
+        custom_fields = [
+            {"name": "State", "value": {"name": native["state"]}},
+            {"name": "Type", "value": {"name": "Feature"}},
+        ]
+        if pr_url is not None:
+            custom_fields.append({"name": "GitHub PR", "value": pr_url})
+        return {
+            "idReadable": "DEMO-7",
+            "summary": "Pilot",
+            "description": "",
+            "project": {"id": "0-demo", "shortName": "DEMO"},
+            "customFields": custom_fields,
+            "links": [],
+            "comments": [],
+        }
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal lose_response
+        assert path == "/issues/DEMO-7"
+        if method == "GET":
+            return raw_issue()
+        assert method == "POST"
+        posts.append((path, body, fields, top))
+        state_field = next(
+            field for field in body["customFields"] if field["name"] == "State"
+        )
+        native["state"] = state_field["value"]["name"]
+        if lose_response:
+            lose_response = False
+            raise RuntimeError("tracker response lost")
+        return {"idReadable": "DEMO-7"}
+
+    tracker._req = request
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+    return tracker, posts
+
+
 def test_youtrack_issue_start_retry_refuses_a_new_third_state(monkeypatch):
     """A fresh start invocation cannot adopt the state observed after interruption."""
-    tracker = object.__new__(YouTrackTracker)
     native = {"state": "backlog"}
-    updates = []
-    lose_first_response = True
-    tracker.get_issue = lambda issue_id: SimpleNamespace(
-        id=issue_id,
-        title="Pilot",
-        type="Feature",
-        state=native["state"],
+    tracker, posts = _youtrack_transport(
+        monkeypatch,
+        native,
+        lose_first_response=True,
     )
-
-    def update_fields(issue_id, fields, project=None):
-        nonlocal lose_first_response
-        updates.append((issue_id, fields, project))
-        native["state"] = fields["State"]
-        if lose_first_response:
-            lose_first_response = False
-            raise RuntimeError("tracker response lost")
-        return tracker.get_issue(issue_id)
-
-    tracker.update_fields = update_fields
     branch_modes = iter(("linked-worktree", "existing"))
     monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
     monkeypatch.setattr(issue, "_sh", lambda *_args, **_kwargs: "")
@@ -307,13 +345,13 @@ def test_youtrack_issue_start_retry_refuses_a_new_third_state(monkeypatch):
     with pytest.raises(SystemExit, match=r"relance exactement `issue start DEMO-7`"):
         issue.start("DEMO-7")
     assert native["state"] == "in-progress"
-    assert len(updates) == 1
+    assert len(posts) == 1
 
     native["state"] = "blocked"
     with pytest.raises(SystemExit, match="prédécesseur de l'opération d'origine"):
         issue.start("DEMO-7")
     assert native["state"] == "blocked"
-    assert len(updates) == 1
+    assert len(posts) == 1
 
 
 def test_issue_start_already_in_progress_reuses_branch_without_transition(monkeypatch):
@@ -511,33 +549,14 @@ def test_youtrack_public_merge_resume_uses_original_review_predecessor(
 ):
     """A fresh CLI invocation never re-merges or adopts a third native state."""
     native = {"state": "review"}
-    updates = []
     events = []
-    lose_response = True
     pr_url = "https://github.com/acme/demo/pull/12"
-    tracker = object.__new__(YouTrackTracker)
-
-    def get_issue(_issue_id):
-        return SimpleNamespace(
-            id="DEMO-7",
-            state=native["state"],
-            pr_url=pr_url,
-            body="",
-            ac_done=0,
-            ac_total=0,
-        )
-
-    def update_fields(issue_id, fields, project=None):
-        nonlocal lose_response
-        updates.append((issue_id, fields, project))
-        native["state"] = fields["State"]
-        if lose_response:
-            lose_response = False
-            raise RuntimeError("tracker response lost")
-        return get_issue(issue_id)
-
-    tracker.get_issue = get_issue
-    tracker.update_fields = update_fields
+    tracker, posts = _youtrack_transport(
+        monkeypatch,
+        native,
+        pr_url=pr_url,
+        lose_first_response=True,
+    )
     pr = SimpleNamespace(
         number=12,
         url=pr_url,
@@ -577,7 +596,7 @@ def test_youtrack_public_merge_resume_uses_original_review_predecessor(
         issue.merge("DEMO-7", "12")
     assert native["state"] == "done"
     assert events == []
-    assert len(updates) == 1
+    assert len(posts) == 1
 
     if intervening_state is not None:
         native["state"] = intervening_state
@@ -585,12 +604,62 @@ def test_youtrack_public_merge_resume_uses_original_review_predecessor(
             issue.merge("DEMO-7", "12")
         assert native["state"] == intervening_state
         assert events == []
-        assert len(updates) == 1
+        assert len(posts) == 1
     else:
         issue.merge("DEMO-7", "12")
         assert native["state"] == "done"
         assert events == ["delete"]
-        assert len(updates) == 1
+        assert len(posts) == 1
+
+
+@pytest.mark.parametrize("merged", [False, True], ids=["open", "already-merged"])
+def test_youtrack_public_merge_refuses_wrong_linked_pr_before_any_effect(
+    monkeypatch, merged,
+):
+    native = {"state": "review"}
+    tracker, posts = _youtrack_transport(
+        monkeypatch,
+        native,
+        pr_url="https://github.com/acme/demo/pull/11",
+    )
+    pr = SimpleNamespace(
+        number=12,
+        url="https://github.com/acme/demo/pull/12",
+        sha="a" * 40,
+        base_sha="c" * 40,
+        head="feat/demo-7",
+        base="main",
+        merged=merged,
+        merge_sha="b" * 40 if merged else None,
+    )
+    effects = []
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: "acme/demo",
+        get_pr=lambda *_args: pr,
+        merge_pr=lambda *_args, **_kwargs: effects.append("merge"),
+        delete_branch=lambda *_args: effects.append("delete"),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(
+        issue,
+        "_observe_receipt",
+        lambda *_args: effects.append("receipt"),
+    )
+    monkeypatch.setattr(
+        write,
+        "ci_gate",
+        lambda *_args, **_kwargs: effects.append("ci"),
+    )
+
+    with pytest.raises(SystemExit, match="PR liée au ticket"):
+        issue.merge("DEMO-7", "12")
+
+    assert effects == []
+    assert posts == []
+    assert native["state"] == "review"
 
 
 def test_already_done_exact_pr_retry_only_finishes_cleanup(monkeypatch, capsys):
@@ -1195,7 +1264,13 @@ def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
                               body="- [ ] current contract\n"):
     """Install deterministic local fakes; no network or tracker writes are possible."""
     events = []
-    current = SimpleNamespace(id="DEMO-7", body=body, ac_done=0, ac_total=1)
+    current = SimpleNamespace(
+        id="DEMO-7",
+        body=body,
+        ac_done=0,
+        ac_total=1,
+        pr_url="https://github.com/acme/demo/pull/12",
+    )
 
     def add_comment(issue_id, text):
         events.append(("comment", issue_id, text))
@@ -1218,7 +1293,7 @@ def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
         sync_acceptance_body=sync_acceptance_body,
     )
     head = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
         merged=False, url="https://github.com/acme/demo/pull/12",
     )
     landed = SimpleNamespace(sha="b" * 40, head=head.head, merged=True)
@@ -1288,6 +1363,13 @@ def test_youtrack_merge_checks_proven_criteria_before_codehost_merge(
     tracker = object.__new__(YouTrackTracker)
     current = tracker._to_issue({
         "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
+        "customFields": [
+            {"name": "State", "value": {"name": "review"}},
+            {
+                "name": "GitHub PR",
+                "value": "https://github.com/acme/demo/pull/12",
+            },
+        ],
     })
     assert (current.ac_done, current.ac_total) == (0, 1)
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
@@ -1327,6 +1409,13 @@ def test_youtrack_merge_multiline_pseudo_checkbox_cannot_hide_unchecked_ac(
     tracker = object.__new__(YouTrackTracker)
     current = tracker._to_issue({
         "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
+        "customFields": [
+            {"name": "State", "value": {"name": "review"}},
+            {
+                "name": "GitHub PR",
+                "value": "https://github.com/acme/demo/pull/12",
+            },
+        ],
     })
     assert (current.ac_done, current.ac_total) == (0, 1)
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
@@ -1436,6 +1525,13 @@ def test_youtrack_human_ac_override_keeps_prose_audit_without_typed_receipt(
     tracker = object.__new__(YouTrackTracker)
     current = tracker._to_issue({
         "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
+        "customFields": [
+            {"name": "State", "value": {"name": "review"}},
+            {
+                "name": "GitHub PR",
+                "value": "https://github.com/acme/demo/pull/12",
+            },
+        ],
     })
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
 

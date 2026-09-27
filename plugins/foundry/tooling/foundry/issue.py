@@ -130,6 +130,32 @@ def _require_unchanged_pr_coordinates(ch, repo, pr_number, original, base_sha) -
         )
 
 
+def _require_linked_pr_coordinates(current, pr, pr_number: int) -> str:
+    """Authenticate the issue-linked PR before a bounded tracker lifecycle effect."""
+    exact = (
+        getattr(pr, "number", None) == pr_number
+        and getattr(current, "pr_url", None) == getattr(pr, "url", None)
+        and isinstance(getattr(pr, "head", None), str)
+        and bool(pr.head)
+        and isinstance(getattr(pr, "base", None), str)
+        and bool(pr.base)
+        and re.fullmatch(r"[0-9a-f]{40}", str(getattr(pr, "sha", None)))
+        is not None
+        and isinstance(getattr(pr, "merged", None), bool)
+        and (
+            not pr.merged
+            or re.fullmatch(r"[0-9a-f]{40}", str(getattr(pr, "merge_sha", None)))
+            is not None
+        )
+    )
+    if not exact:
+        raise SystemExit(
+            "⛔ Merge refusé — la PR liée au ticket ou ses coordonnées exactes "
+            "(numéro/URL/head/base/état) diffèrent de la PR demandée."
+        )
+    return _require_pr_base_sha(pr)
+
+
 def _reuse_or_open_pr(ch, repo: str, branch: str, base: str,
                       title: str, body: str, *, update_body: bool = True):
     """Reuse the one valid open PR for this branch, or create it exactly once."""
@@ -343,12 +369,17 @@ def merge(issue_id, pr_number, flags=()):
     write.preflight_issue_operation(tr, "merge")
     repo = ch.resolve_repo()
     pr = ch.get_pr(repo, int(pr_number))
-    _observe_receipt(
-        issue_id, "pr",
-        lambda: execution_receipts.pr_receipt(
-            ch.name, repo, pr, operation="codehost.get_pr",
-        ),
-    )
+    bounded_state_transitions = getattr(tr, "bounded_state_transitions", False)
+    if not bounded_state_transitions:
+        # Preserve the established receipt order for proof-bound and legacy
+        # providers. Native bounded transitions delay this local effect until the
+        # ticket-linked PR coordinates have been authenticated below.
+        _observe_receipt(
+            issue_id, "pr",
+            lambda: execution_receipts.pr_receipt(
+                ch.name, repo, pr, operation="codehost.get_pr",
+            ),
+        )
     override_recovered = False
     try:
         current = tr.get_issue(issue_id)
@@ -407,23 +438,14 @@ def merge(issue_id, pr_number, flags=()):
                     f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
                 ) from None
             current = tr.get_issue(issue_id)
-    if getattr(tr, "bounded_state_transitions", False) and pr.merged:
-        exact_merged_pr = (
-            getattr(pr, "number", None) == int(pr_number)
-            and getattr(current, "pr_url", None) == pr.url
-            and isinstance(getattr(pr, "head", None), str)
-            and bool(pr.head)
-            and isinstance(getattr(pr, "base", None), str)
-            and bool(pr.base)
-            and re.fullmatch(r"[0-9a-f]{40}", str(pr.sha)) is not None
-            and re.fullmatch(r"[0-9a-f]{40}", str(pr.merge_sha)) is not None
+    if bounded_state_transitions:
+        _require_linked_pr_coordinates(current, pr, int(pr_number))
+        _observe_receipt(
+            issue_id, "pr",
+            lambda: execution_receipts.pr_receipt(
+                ch.name, repo, pr, operation="codehost.get_pr",
+            ),
         )
-        if not exact_merged_pr:
-            raise SystemExit(
-                "⛔ Reprise tracker refusée — coordonnées exactes de la PR "
-                "fusionnée indisponibles ou différentes du tracker."
-            )
-        _require_pr_base_sha(pr)
     transition_context = None
     review_diff = None
     pr_base_sha = None

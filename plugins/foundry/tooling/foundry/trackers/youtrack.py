@@ -508,6 +508,16 @@ class YouTrackTracker(Tracker):
     def update_fields(
         self, issue_id: str, fields: dict, project: Project | None = None,
     ) -> Issue:
+        return self._update_fields_bounded(issue_id, fields, project=project)
+
+    def _update_fields_bounded(
+        self,
+        issue_id: str,
+        fields: dict,
+        *,
+        project: Project | None,
+        expected_snapshot: dict | None = None,
+    ) -> Issue:
         null_fields = sorted(name for name, value in fields.items() if value is None)
         if null_fields:
             raise TrackerCapabilityUnavailableError(
@@ -540,13 +550,20 @@ class YouTrackTracker(Tracker):
             if fields.get("Milestone")
             else target
         )
-        # Capture only fields this operation owns and re-read before the first
-        # possible effect.  This is bounded detection, not CAS or exclusion.
-        before = self.get_issue(issue_id)
-        expected = self._field_snapshot(before, fields)
         desired = self._field_snapshot_from_values(fields)
-        if expected == desired:
-            return before
+        if expected_snapshot is None:
+            # Generic field writes own their predecessor snapshot.  Lifecycle
+            # transitions instead pass the caller-owned predecessor below so a
+            # third-party edit cannot be adopted between the two public reads.
+            before = self.get_issue(issue_id)
+            expected = self._field_snapshot(before, fields)
+            if expected == desired:
+                return before
+        else:
+            expected = expected_snapshot
+        # This fresh transport read is S1.  Only a write landing after this point
+        # falls in the named S1 -> S2 residual window; an earlier divergence is
+        # refused before POST.
         fresh = self.get_issue(issue_id)
         if self._field_snapshot(fresh, fields) != expected:
             raise TrackerConflictError(
@@ -616,11 +633,15 @@ class YouTrackTracker(Tracker):
             raise TrackerConflictError(
                 "état YouTrack modifié avant transition bornée"
             )
-        # update_fields owns the targeted S1/S2/S3/S4 field mutation.  Its
-        # expected snapshot is intentionally refreshed after the predecessor
-        # check; a foreign S1→S2 write remains the documented no-CAS residual
-        # risk, never a claimed exclusion.
-        readback = self.update_fields(issue_id, {"State": state}, project=project)
+        # Preserve the operation's original predecessor through the effective S1
+        # transport read.  Only an edit after that read remains the documented
+        # no-CAS S1 -> S2 residual risk.
+        readback = self._update_fields_bounded(
+            issue_id,
+            {"State": state},
+            project=project,
+            expected_snapshot={"State": expected},
+        )
         if readback.state != state:
             raise TrackerConflictError(
                 "état YouTrack divergent après transition ; aucune seconde tentative"

@@ -176,23 +176,59 @@ def test_youtrack_update_body_refuses_stale_snapshot_even_when_desired_is_curren
     assert _writes(tracker) == []
 
 
+def _stateful_youtrack_transition_transport(
+    monkeypatch,
+    native,
+    *,
+    lose_first_response=False,
+):
+    """Exercise lifecycle writes through the real adapter over an in-memory wire."""
+    tracker = object.__new__(YouTrackTracker)
+    posts = []
+    lose_response = lose_first_response
+
+    def raw_issue():
+        return {
+            "idReadable": "T-1",
+            "summary": "issue",
+            "description": "",
+            "project": {"id": "0-test", "shortName": "T"},
+            "customFields": [
+                {"name": "State", "value": {"name": native["state"]}},
+            ],
+            "links": [],
+            "comments": [],
+        }
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal lose_response
+        assert path == "/issues/T-1"
+        if method == "GET":
+            return raw_issue()
+        assert method == "POST"
+        posts.append((path, body, fields, top))
+        state_field = next(
+            field for field in body["customFields"] if field["name"] == "State"
+        )
+        native["state"] = state_field["value"]["name"]
+        if lose_response:
+            lose_response = False
+            raise RuntimeError("response lost")
+        return {"idReadable": "T-1"}
+
+    tracker._req = request
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+    return tracker, posts
+
+
 def test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordinate(
     monkeypatch,
 ):
     """Distinct public invocations retain the original predecessor coordinate."""
-    tracker = object.__new__(YouTrackTracker)
     native = {"state": "in-progress"}
-    writes = []
-    tracker.get_issue = lambda issue_id: Issue(
-        id=issue_id, title="issue", state=native["state"],
-    )
-
-    def update_fields(issue_id, fields, project=None):
-        writes.append((issue_id, fields, project))
-        native["state"] = fields["State"]
-        return tracker.get_issue(issue_id)
-
-    tracker.update_fields = update_fields
+    tracker, posts = _stateful_youtrack_transition_transport(monkeypatch, native)
     monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
 
     write.transition(
@@ -201,7 +237,8 @@ def test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordi
         "review",
         context=TransitionContext(expected_state="in-progress"),
     )
-    assert writes == [("T-1", {"State": "review"}, None)]
+    assert len(posts) == 1
+    assert native["state"] == "review"
 
     # A new invocation reconstructs the operation from durable lifecycle
     # coordinates, not by retaining an in-memory context object.
@@ -211,7 +248,7 @@ def test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordi
         "review",
         context=TransitionContext(expected_state="in-progress"),
     )
-    assert len(writes) == 1
+    assert len(posts) == 1
 
     native["state"] = "blocked"
     with pytest.raises(TrackerConflictError, match="modifié avant transition"):
@@ -221,30 +258,18 @@ def test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordi
             "review",
             context=TransitionContext(expected_state="in-progress"),
         )
-    assert len(writes) == 1
+    assert len(posts) == 1
 
 
 def test_public_youtrack_retry_after_lost_response_refuses_third_state_without_effect(
     monkeypatch,
 ):
-    tracker = object.__new__(YouTrackTracker)
     native = {"state": "in-progress"}
-    writes = []
-    lose_first_response = True
-    tracker.get_issue = lambda issue_id: Issue(
-        id=issue_id, title="issue", state=native["state"],
+    tracker, posts = _stateful_youtrack_transition_transport(
+        monkeypatch,
+        native,
+        lose_first_response=True,
     )
-
-    def update_fields(issue_id, fields, project=None):
-        nonlocal lose_first_response
-        writes.append((issue_id, fields, project))
-        native["state"] = fields["State"]
-        if lose_first_response:
-            lose_first_response = False
-            raise RuntimeError("response lost")
-        return tracker.get_issue(issue_id)
-
-    tracker.update_fields = update_fields
     monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
 
     with pytest.raises(RuntimeError, match="response lost"):
@@ -255,7 +280,7 @@ def test_public_youtrack_retry_after_lost_response_refuses_third_state_without_e
             context=TransitionContext(expected_state="in-progress"),
         )
     assert native["state"] == "review"
-    assert len(writes) == 1
+    assert len(posts) == 1
 
     native["state"] = "blocked"
     with pytest.raises(TrackerConflictError, match="modifié avant transition"):
@@ -266,7 +291,7 @@ def test_public_youtrack_retry_after_lost_response_refuses_third_state_without_e
             context=TransitionContext(expected_state="in-progress"),
         )
     assert native["state"] == "blocked"
-    assert len(writes) == 1
+    assert len(posts) == 1
 
 
 def test_youtrack_acceptance_sync_handles_body_without_markers_as_noop():
