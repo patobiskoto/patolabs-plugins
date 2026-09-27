@@ -16,6 +16,7 @@ from foundry.trackers.base import (
     TrackerConflictError,
 )
 from foundry.trackers.ghprojects import (
+    GitHubProjectsPartialCreateConflict,
     GitHubProjectsPartialCreateError,
     GitHubProjectsTracker,
     GitHubProjectsTrackerError,
@@ -639,6 +640,12 @@ def _install_create_harness(monkeypatch, tracker, provider, *, failing_phase=Non
         lambda *_: [candidate] if provider.get("issue") else [],
     )
     monkeypatch.setattr(tracker, "_create_parent", lambda *_: 1)
+    def parent_snapshot(*_):
+        provider.setdefault("parent_observations", []).append(provider["field_posts"])
+        links = [Link("parent-of", "outward", "GHQUAL-4")] if provider.get("parent") else []
+        return 1, Issue(id="GHQUAL-1", title="parent", type="Epic", links=links)
+
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", parent_snapshot)
 
     def rest_write(method, path, payload, operation):
         if path.endswith("/issues"):
@@ -1838,3 +1845,122 @@ def test_pat66_relates_requires_both_projections_after_mutation(
         tracker.link("GHQUAL-1", "relates", "GHQUAL-2", project=PROJECT)
     assert transport.writes == 1
     assert "read" in transport.events[transport.events.index("write") + 1:]
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+@pytest.mark.parametrize("missing_side", ["child", "parent"])
+def test_pat66_create_parent_refuses_one_sided_write_and_replay(
+    monkeypatch, tmp_path, lost_response, missing_side,
+):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+    original_write = tracker._rest_write
+    original_child = tracker._created_issue_readback
+    original_parent = tracker._create_parent_snapshot
+
+    def write(*args):
+        result = original_write(*args)
+        if args[1].endswith("/sub_issues") and lost_response:
+            raise GitHubProjectsTrackerError("issue.parent_create", "transport_failed")
+        return result
+
+    def child(*args):
+        result = original_child(*args)
+        if missing_side == "child":
+            result.links = []
+        return result
+
+    def parent(*args):
+        number, result = original_parent(*args)
+        if missing_side == "parent":
+            result.links = []
+        return number, result
+
+    monkeypatch.setattr(tracker, "_rest_write", write)
+    monkeypatch.setattr(tracker, "_created_issue_readback", child)
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", parent)
+    for _ in range(2):
+        with pytest.raises(GitHubProjectsPartialCreateConflict, match="asymétrique"):
+            tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    assert provider["parent_posts"] == 1
+    stored = json.loads(next((tmp_path / "ghprojects-create-intents").glob("*.json")).read_text())
+    assert stored["state"] != "complete"
+
+
+def test_pat66_create_parent_requalified_after_fields_before_attachment(monkeypatch, tmp_path):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+
+    def parent(*_):
+        assert provider["field_posts"] == 1
+        raise GitHubProjectsTrackerError("issue.parent_prewrite", "incomplete_project_parent")
+
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", parent)
+    with pytest.raises(GitHubProjectsPartialCreateError, match="incomplete_project_parent"):
+        tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    assert provider["issue_posts"] == provider["field_posts"] == 1
+    assert provider["parent_posts"] == 0
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+def test_pat66_create_parent_preserves_properties_and_reconciles_lost_response(
+    monkeypatch, tmp_path, lost_response,
+):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+    original = tracker._rest_write
+
+    def write(*args):
+        result = original(*args)
+        if args[1].endswith("/sub_issues") and lost_response:
+            raise GitHubProjectsTrackerError("issue.parent_create", "transport_failed")
+        return result
+
+    monkeypatch.setattr(tracker, "_rest_write", write)
+    assert tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1").id == "GHQUAL-4"
+    assert tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1").id == "GHQUAL-4"
+    assert provider["parent_posts"] == 1
+    assert all(value == 1 for value in provider["parent_observations"])
+
+
+def test_pat66_completed_creation_refuses_missing_reciprocal_parent(monkeypatch, tmp_path):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+    tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", lambda *_: (
+        1, Issue(id="GHQUAL-1", title="parent", type="Epic"),
+    ))
+    with pytest.raises(GitHubProjectsPartialCreateError, match="completed_create_drift"):
+        tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    assert provider["parent_posts"] == 1
+
+
+@pytest.mark.parametrize("endpoint", ["child", "parent"])
+def test_pat66_create_parent_detects_unrelated_property_write(monkeypatch, tmp_path, endpoint):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+    original_child = tracker._created_issue_readback
+    original_parent = tracker._create_parent_snapshot
+
+    def child(*args):
+        result = original_child(*args)
+        if provider["parent"] and endpoint == "child":
+            result.priority = "P1"
+        return result
+
+    def parent(*args):
+        number, result = original_parent(*args)
+        if provider["parent"] and endpoint == "parent":
+            result.priority = "P1"
+        return number, result
+
+    monkeypatch.setattr(tracker, "_created_issue_readback", child)
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", parent)
+    with pytest.raises(GitHubProjectsPartialCreateConflict, match="propriétés non visées"):
+        tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    assert provider["parent_posts"] == 1

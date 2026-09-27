@@ -1166,6 +1166,9 @@ class GitHubProjectsTracker(Tracker):
         return number, raw["id"]
 
     def _create_parent(self, issue_id: str, binding: _Binding) -> int:
+        return self._create_parent_snapshot(issue_id, binding)[0]
+
+    def _create_parent_snapshot(self, issue_id: str, binding: _Binding) -> tuple[int, Issue]:
         """Prove a complete delivery parent without relaxing ordinary strict reads."""
         number = self._number(issue_id, binding)
         raw = self._rest(
@@ -1192,8 +1195,7 @@ class GitHubProjectsTracker(Tracker):
             raise GitHubProjectsTrackerError(
                 "issue.parent_prewrite", "incomplete_project_parent",
             )
-        self._hydrate_issue(observed[1], binding)
-        return number
+        return number, self._hydrate_issue(observed[1], binding)
 
     def _write_catalog(self, binding: _Binding, fields: dict[str, Any]) -> dict[str, _FieldBinding]:
         """Prove every requested option before the first effectful request."""
@@ -1266,6 +1268,21 @@ class GitHubProjectsTracker(Tracker):
             )
         return candidate
 
+    @staticmethod
+    def _created_parent_pair(child: Issue, parent: Issue) -> bool:
+        parents = [link.target for link in child.links if link.type == "subtask-of"]
+        children = [link.target for link in parent.links if link.type == "parent-of"]
+        return parents == [parent.id] and children.count(child.id) == 1
+
+    @staticmethod
+    def _parent_unaffected(issue: Issue, link_type: str, target: str) -> dict[str, Any]:
+        snapshot = {k: v for k, v in issue.to_dict().items() if k not in {"links", "updated"}}
+        snapshot["links"] = sorted(
+            (link.type, link.direction, link.target) for link in issue.links
+            if not (link.type == link_type and link.target == target)
+        )
+        return snapshot
+
     def _resume_created_issue(
         self,
         binding: _Binding,
@@ -1286,7 +1303,9 @@ class GitHubProjectsTracker(Tracker):
                 or (completed.body or "") != body
                 or self._snapshot(completed, requested) != requested
                 or parent is not None
-                and not self._has_link(completed, "subtask-of", parent)
+                and not self._created_parent_pair(
+                    completed, self._create_parent_snapshot(parent, binding)[1],
+                )
             ):
                 raise GitHubProjectsTrackerError(
                     "issue.create_reconcile", "completed_create_drift",
@@ -1369,50 +1388,46 @@ class GitHubProjectsTracker(Tracker):
         created = self._created_issue_readback(binding, candidate)
         if parent is not None:
             step = "parent"
+            fresh_number, before_parent = self._create_parent_snapshot(parent, binding)
+            if fresh_number != parent_number:
+                raise TrackerConflictError("coordonnée parent modifiée avant attachement")
             observed_parents = [
                 link.target for link in created.links if link.type == "subtask-of"
             ]
-            if observed_parents == [parent]:
+            reciprocal = self._has_link(before_parent, "parent-of", candidate.issue_id)
+            if self._created_parent_pair(created, before_parent):
                 if record["step"] == step:
-                    record = self._complete_create_step(
-                        fingerprint, record, step, candidate,
-                    )
-            elif observed_parents:
-                raise GitHubProjectsTrackerError(
-                    "issue.create_reconcile", "partial_parent_conflict",
-                )
+                    record = self._complete_create_step(fingerprint, record, step, candidate)
+            elif observed_parents or reciprocal:
+                raise TrackerConflictError("parent GitHub divergent ou asymétrique ; aucune réparation automatique")
             else:
-                if parent_number is None:
-                    raise GitHubProjectsTrackerError(
-                        "issue.create_reconcile", "missing_parent_coordinate",
-                    )
-                record = self._begin_create_step(
-                    fingerprint, record, step, candidate,
-                )
+                record = self._begin_create_step(fingerprint, record, step, candidate)
+                write_error: GitHubProjectsTrackerError | None = None
                 try:
                     self._rest_write(
                         "POST",
-                        f"repos/{binding.repo}/issues/{parent_number}/sub_issues",
+                        f"repos/{binding.repo}/issues/{fresh_number}/sub_issues",
                         {"sub_issue_id": candidate.native_id, "replace_parent": False},
                         "issue.parent_create",
                     )
                 except GitHubProjectsTrackerError as exc:
-                    refreshed = self._created_issue_readback(binding, candidate)
-                    if not self._has_link(refreshed, "subtask-of", parent):
-                        raise GitHubProjectsPartialCreateError(step, candidate) from exc
-                    created = refreshed
-                    record = self._complete_create_step(
-                        fingerprint, record, step, candidate,
-                    )
-                else:
-                    created = self._created_issue_readback(binding, candidate)
-                    if not self._has_link(created, "subtask-of", parent):
-                        raise GitHubProjectsPartialCreateError(
-                            "parent_readback", candidate,
-                        )
-                    record = self._complete_create_step(
-                        fingerprint, record, step, candidate,
-                    )
+                    write_error = exc
+                refreshed = self._created_issue_readback(binding, candidate)
+                after_parent = self._create_parent_snapshot(parent, binding)[1]
+                if not self._created_parent_pair(refreshed, after_parent):
+                    if (write_error is not None and refreshed.to_dict() == created.to_dict()
+                            and after_parent.to_dict() == before_parent.to_dict()):
+                        raise GitHubProjectsPartialCreateError(step, candidate) from write_error
+                    raise TrackerConflictError("parent GitHub absent ou asymétrique après attachement") from write_error
+                if (
+                    self._parent_unaffected(created, "subtask-of", parent)
+                    != self._parent_unaffected(refreshed, "subtask-of", parent)
+                    or self._parent_unaffected(before_parent, "parent-of", candidate.issue_id)
+                    != self._parent_unaffected(after_parent, "parent-of", candidate.issue_id)
+                ):
+                    raise TrackerConflictError("propriétés non visées modifiées après attachement parent")
+                created = refreshed
+                record = self._complete_create_step(fingerprint, record, step, candidate)
 
         created = self._created_issue_readback(binding, candidate)
         if (
@@ -1423,7 +1438,9 @@ class GitHubProjectsTracker(Tracker):
             raise TrackerConflictError(
                 "GitHub issue divergente après création ; aucune seconde tentative",
             )
-        if parent is not None and not self._has_link(created, "subtask-of", parent):
+        if parent is not None and not self._created_parent_pair(
+            created, self._create_parent_snapshot(parent, binding)[1],
+        ):
             raise TrackerConflictError(
                 "parent GitHub absent après création ; aucune seconde tentative",
             )

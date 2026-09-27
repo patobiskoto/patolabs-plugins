@@ -149,3 +149,13 @@ a normal response against the exact bound Issue URL and requires an exact
 comment-ID/body readback. It cannot safely replay a lost response without duplicating
 the note. REST integer IDs and booleans retain their JSON types; UTF-8 text remains
 literal.
+
+Lors de `create_issue(parent=...)`, le parent est requalifié dans le Project lié
+après les écritures de champs, immédiatement avant l'unique attachement natif.
+La reprise partielle et la reprise d'une création terminée vérifient les deux
+projections : le parent unique de l'enfant et l'enfant dans les sous-issues du
+parent. Une projection asymétrique ferme la reprise sans réparation automatique.
+Après un attachement, même si sa réponse est perdue, les deux ressources sont
+relues et leurs propriétés et relations non visées doivent être préservées.
+Cette détection reste bornée : le risque S1→S2 demeure, sans CAS ni exclusion des
+écritures concurrentes.
