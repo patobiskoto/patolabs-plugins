@@ -22,6 +22,7 @@ import sys
 import foundry
 from foundry import registry
 from foundry.trackers.base import (
+    AdrIssueUnavailableError,
     AdrUnavailableError,
     IssueUnavailableError,
     TrackerCapabilityUnavailableError,
@@ -393,16 +394,17 @@ def _adr_index(tr, p):
 
 def _adr_index_or_capability(tr, p):
     """Keep an issue readable when its tracker has no ADR knowledge base, when the
-    embedded ADR index itself is in conflict, or when the embedded ADR index refers to
-    an ADR (e.g. a supersession target) that is absent from it.
+    embedded ADR index itself is in conflict, when the embedded ADR index refers to an
+    ADR (e.g. a supersession target) that is absent from it, or when a declared ADR
+    issue relation is absent or inaccessible.
 
-    Only the provider's typed capability, conflict and unavailable-ADR errors are
-    projected — each as its own explicit, distinct status, never as an empty list and
-    never conflated with each other. Transport, binding and payload failures still
-    propagate rather than being mistaken for any of them. `query adr`, `query adrs`,
-    `frame` and ADR writes stay fail-closed on the same conflict or unavailable ADR —
-    this projection only keeps the issue payload readable; it does not repair or
-    normalize either integrity error.
+    Only the provider's typed capability, conflict, unavailable-ADR and unavailable
+    ADR-issue-relation errors are projected — each as its own explicit, distinct
+    status, never as an empty list and never conflated with each other. Transport,
+    binding and payload failures still propagate rather than being mistaken for any of
+    them. `query adr`, `query adrs`, `frame` and ADR writes stay fail-closed on the
+    same integrity errors — this projection only keeps the issue payload readable; it
+    does not repair or normalize either integrity error.
     """
     try:
         return _adr_index(tr, p)
@@ -423,6 +425,13 @@ def _adr_index_or_capability(tr, p):
             "status": "adr_unavailable",
             "tracker": tr.name,
             "reason": str(exc),
+        }
+    except AdrIssueUnavailableError as exc:
+        return {
+            "status": "adr_issue_unavailable",
+            "tracker": tr.name,
+            "adr_id": exc.adr_id,
+            "issue_id": exc.issue_id,
         }
 
 
@@ -449,7 +458,10 @@ def issue(issue_id: str):
                     "status ({\"status\": \"conflict\", ...}), or — if the index "
                     "refers to an ADR absent from it (e.g. a missing supersession "
                     "target) — a typed unavailable-ADR status "
-                    "({\"status\": \"adr_unavailable\", ...}). Neither clears on "
+                    "({\"status\": \"adr_unavailable\", ...}), or — if a declared "
+                    "ADR issue relation is unavailable — a typed unavailable-ADR-issue "
+                    "status ({\"status\": \"adr_issue_unavailable\", ...}). Neither "
+                    "clears on "
                     "read: `query adr`, `query adrs`, `frame` and ADR writes stay "
                     "fail-closed on it. Treat ADR constraints as UNKNOWN (never as "
                     "none) while either status holds, and do not accept or skip an "

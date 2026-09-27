@@ -30,6 +30,7 @@ from foundry.models import (
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
+    AdrIssueUnavailableError,
     AdrUnavailableError,
     BodyUpdateUnavailableError,
     IssueUnavailableError,
@@ -912,6 +913,93 @@ def test_query_issue_projects_real_transport_missing_witness_as_conflict(
     }
     assert result["issue"]["id"] == "LIN-2"
     assert result["project"] == PROJECT.key
+
+
+def test_query_issue_projects_real_unavailable_adr_issue_with_provenance(
+    tracker, monkeypatch,
+):
+    # Exercise the actual Linear document and issue reads: an ADR's declared issue
+    # disappears after its witnessed reciprocal link exists. Only `query issue`
+    # projects that precise relation; the requested issue remains readable.
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Linked issue disappears", "decision body")
+    instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    del wire.issues["LIN-2"]
+
+    _bind_query_registry(monkeypatch, instance)
+
+    result = query.issue("LIN-1")
+
+    assert result["issue"]["id"] == "LIN-1"
+    assert result["adrs"] == {
+        "status": "adr_issue_unavailable",
+        "tracker": "linear",
+        "adr_id": created.id,
+        "issue_id": "LIN-2",
+    }
+
+
+@pytest.mark.parametrize(
+    ("failure", "error_type", "code"),
+    [
+        ("transport", LinearTrackerError, "transport_error"),
+        ("binding", LinearBindingError, "issue_outside_binding"),
+        ("payload", LinearTrackerError, "invalid_response"),
+    ],
+)
+def test_query_issue_propagates_real_adr_issue_nonabsence_failures(
+    tracker, monkeypatch, failure, error_type, code,
+):
+    # The projection has one narrow meaning: a null Linear issue relation. A
+    # transport, binding, or payload failure while resolving that same relation
+    # must stay fail-closed instead of looking like an unavailable relation.
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Linked issue failure", "decision body")
+    instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+
+    if failure == "transport":
+        original = wire.__call__
+
+        def interrupted(document, variables):
+            if "FoundryLinearIssue(" in document and variables["id"] == "LIN-2":
+                raise OSError("connection reset")
+            return original(document, variables)
+
+        instance._transport = interrupted
+    elif failure == "binding":
+        wire.issues["LIN-2"]["project"]["id"] = "wrong-project"
+    else:
+        wire.issues["LIN-2"]["id"] = None
+
+    _bind_query_registry(monkeypatch, instance)
+
+    with pytest.raises(error_type) as raised:
+        query.issue("LIN-1")
+    assert raised.value.code == code
+
+
+def test_query_adr_paths_stay_fail_closed_on_real_unavailable_adr_issue(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Linked issue disappears", "decision body")
+    instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    del wire.issues["LIN-2"]
+
+    _bind_query_registry(monkeypatch, instance)
+    calls_before = len(wire.calls)
+
+    with pytest.raises(AdrIssueUnavailableError, match="LIN-2"):
+        query.adrs()
+    with pytest.raises(AdrIssueUnavailableError, match="LIN-2"):
+        query.adr(created.id)
+    with pytest.raises(AdrIssueUnavailableError, match="LIN-2"):
+        frame.materialize({"adrs": [], "issues": []})
+
+    assert not any(
+        "DocumentCreate" in document or "CommentCreate" in document
+        for document, _ in wire.calls[calls_before:]
+    )
 
 
 def test_query_adrs_adr_and_frame_stay_fail_closed_on_real_missing_witness(
@@ -6393,3 +6481,24 @@ def test_linear_adr_read_refuses_collection_collision_and_bad_page_info(tracker)
     instance._transport = malformed_cursor
     with pytest.raises(LinearTrackerError):
         instance._read_adr_document(created.ref)
+
+
+@pytest.mark.parametrize("operation", ["create", "status", "body", "link", "supersede"])
+def test_adr_writes_refuse_unavailable_declared_issue_before_mutation(tracker, operation):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "Linked issue disappears", "decision body")
+    instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    del wire.issues["LIN-2"]
+    calls_before = len(wire.calls)
+    actions = {
+        "create": lambda: instance.create_adr(PROJECT, "Other decision", "other body"),
+        "status": lambda: instance.set_adr_status(created, "accepted", project=PROJECT),
+        "body": lambda: instance.update_body(created, "decision body", "updated body", project=PROJECT),
+        "link": lambda: instance.link_adr_issue(created, "LIN-1", project=PROJECT),
+        "supersede": lambda: instance.supersede_adr(created, "LIN-ADR-0002", project=PROJECT),
+    }
+    with pytest.raises(AdrIssueUnavailableError) as raised:
+        actions[operation]()
+    assert raised.value.adr_id == created.id
+    assert raised.value.issue_id == "LIN-2"
+    assert not any("mutation " in document for document, _ in wire.calls[calls_before:])

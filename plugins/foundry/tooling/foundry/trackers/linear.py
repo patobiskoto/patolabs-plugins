@@ -30,6 +30,7 @@ from foundry.models import Adr, Issue, Link, Project, TransitionContext
 from foundry.trackers.base import (
     _UNSPECIFIED_ADR_RELATION,
     AcceptanceSyncUnavailableError,
+    AdrIssueUnavailableError,
     AdrUnavailableError,
     BodyUpdateUnavailableError,
     IssueUnavailableError,
@@ -3346,9 +3347,12 @@ class LinearTracker(Tracker):
                     )
             observed_native_ids = set()
             for issue_id in relations["issues"]:
-                canonical_id, native_id = self._resolve_adr_issue_reference(
-                    issue_id, binding
-                )
+                try:
+                    canonical_id, native_id = self._resolve_adr_issue_reference(
+                        issue_id, binding
+                    )
+                except IssueUnavailableError:
+                    raise AdrIssueUnavailableError(adr_id, issue_id) from None
                 if canonical_id != issue_id:
                     raise TrackerConflictError(
                         "Linear ADR issue relation identifier is not canonical"
