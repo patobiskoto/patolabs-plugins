@@ -644,19 +644,31 @@ record the exact source snapshot, migrated IDs, readback digests and cutover bin
 
 ## Repository-scoped activation and atomic cutover
 
-`FOUNDRY_TRACKER` remains the compatibility default for repositories without a
-versioned binding. A repository that has completed a provider cutover carries
-`.foundry/tracker.json`; that marker takes precedence over the host-global default for
-every normal Foundry lifecycle command. Supplying a different provider explicitly from
-that checkout is refused rather than becoming an archive-write escape hatch.
+For YouTrack, Linear and GitHub Projects, an absent marker permits only one exact
+historical basename entry in explicit `legacy` mode. It never turns an unregistered
+repository into a `FOUNDRY_TRACKER`-selected repository. A repository with a V1 binding
+carries `.foundry/tracker.json`; supplying a different provider explicitly from that
+checkout is refused rather than becoming an archive-write escape hatch. DevHub remains
+the separate host-selected pilot outside this three-provider rule.
 
 The marker is resolved from the Git root, including when a command starts in a nested
-directory. Its v1 schema is closed and contains the canonical remote identity, provider,
-project key/UUID, SHA-256 of the complete credential-free registry binding, SHA-256 of
-the selective migration manifest, and a canonical configuration SHA-256 over those
-fields. It contains no token or endpoint. Symlinks, files above 16 KiB, malformed JSON,
+directory. Schema 1 remains readable for the historical Linear cutover. Current schema
+2 is closed and contains the canonical remote identity, provider, project key/native
+id, SHA-256 of the complete credential-free registry binding, an `activation` object,
+and a canonical configuration SHA-256 over those fields. `activation.kind` is
+`bootstrap`, `upgrade`, or `migration`; only `migration` carries a required
+`manifest_digest`. A new repository therefore never fabricates a migration manifest.
+The marker contains no token or endpoint. Symlinks, files above 16 KiB, malformed JSON,
 unknown fields, unsupported providers, moved origins, stale registry data and digest
 divergence fail closed.
+
+For the three V1 providers, bind or upgrade an existing project through the bounded
+registry commands documented in [`tracker-contract.md`](tracker-contract.md#5-optional--excluded-scope-and-the-open-graphqlrest-point).
+They perform an exact provider read before local publication and never provision a
+provider project. `registry update` is the only supported mapping-recovery command: it
+requires the complete replacement binding and expected marker configuration digest,
+preserves tombstones, and republishes the registry entry and marker under one local
+lock. Do not edit `registry.json` or `.foundry/tracker.json` by hand.
 
 Activation is available through:
 
@@ -682,20 +694,20 @@ pas le marqueur et ne sélectionnez pas un autre provider pour le contourner. Le
 de `registry register` n'annonce pas de rollback : cette commande ne réactive jamais un
 tombstone et ne peut pas prouver qu'une nouvelle entrée est celle approuvée au cutover.
 
-La reprise est une restauration locale séparément revue de **l'état exact approuvé
-connu** : conservez le marqueur et le registre divergents comme éléments de diagnostic,
-retrouvez la copie approuvée du binding complet et du marqueur, vérifiez leur identité de
-dépôt, leurs coordonnées et leurs trois digests, puis restaurez ces octets sous le même
-verrou opérationnel. Relancez `foundry:doctor` depuis le checkout; il doit relire le
-marqueur et le binding attendu avant toute commande de cycle de vie. Si cette copie
-approuvée exacte n'est pas disponible, le workflow reste suspendu. Cette version ne
-fournit volontairement pas de commande générique de réparation, de suppression de
-marqueur ni de réactivation d'archive.
+La reprise d'un changement de mappings séparément revu passe par `registry update`. La
+commande exige le binding de remplacement complet et le `configuration_digest` attendu
+du marqueur. Sous le verrou du registre, elle compare le marqueur, l'ancien digest et le
+candidat, refuse un gagnant concurrent, puis publie l'entrée et le marqueur cohérents.
+Le replay exact termine une interruption entre les deux publications. Relancez
+`foundry:doctor` depuis le checkout; il doit relire le marqueur et le binding attendu
+avant toute commande de cycle de vie. Une archive reste un tombstone et ne peut jamais
+être réactivée par cette commande.
 
 Cette procédure ne crée aucun write provider et ne change jamais le tombstone source.
-Une interruption pendant la publication initiale est le seul cas rejouable par
-`registry cutover`, avec les mêmes coordonnées et le même digest de manifeste; une
-divergence postérieure n'autorise ni ce replay ni un nouveau cutover.
+Une interruption pendant la publication initiale reste rejouable par `registry
+cutover`, avec les mêmes coordonnées et le même digest de manifeste. Une divergence
+postérieure ne peut passer que par l'entrée complète attendue de `registry update`; ni
+ce chemin ni le replay de cutover ne prétendent disposer d'un CAS provider.
 
 The complete local publication transaction is serialized by a process-shared registry
 lock. Marker absence, target binding, source archival, marker replacement and exact

@@ -44,7 +44,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/ghprojects.py",
       "class": "GitHubProjectsTracker",
       "v1_core": true,
-      "note": "stub adapter. It overrides resolve_project (a registry.resolve() basename lookup, ghprojects.py:30-32) and the ten abstract methods search, get_issue, create_issue, update_fields, set_state, link, add_comment, list_adrs, create_adr, set_adr_status, each raising NotImplementedError (ghprojects.py:19-24, 34-62). Every other Tracker member is inherited from base.py: optional ports raise their typed unavailability errors, validate_* and preflight_issue_operation are no-ops, resolve_checkout_project falls back to the basename lookup (base.py:135-152). PAT-65 qualifies; PAT-54/57/58/59/64/66/67 implement."
+      "note": "workflow stub. PAT-54 implements canonical checkout selection and a bounded read-only existing-project identity probe; search, get_issue, create_issue, update_fields, set_state, link, add_comment, list_adrs, create_adr and set_adr_status still raise NotImplementedError. PAT-65 qualifies the live GraphQL workflow and PAT-57/58/59/64/66/67 implement their tranches."
     },
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
@@ -66,18 +66,16 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-54",
-          "evidence": "resolve_project is registry.resolve('youtrack', repo) (youtrack.py:260-261). Without a marker, registry.resolve() (registry.py:725-773) looks the entry up by the name it is given, taken from registry.repo_basename() (registry.py:653-664: PROJECT_REPO or the remote's last path segment); with a marker, registry._matching_registry_bindings() (registry.py:298-311) falls back to the basename entry when no canonical_repo matches. YouTrack mutations resolve no binding: write.mutation_project returns None after validate_legacy_mutation (write.py:50-56), and validate_mutation_repository/validate_mutation_project/validate_issue_binding are the base no-ops (base.py:164-184). Two repositories sharing a basename are not distinguished"
+          "status": "supported",
+          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo; base.resolve_checkout_project returns that same selected project and write.mutation_project requires it for a V1 YouTrack checkout (registry.py; base.py; write.py). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
         },
         "linear": {
           "status": "supported",
           "evidence": "resolve_project discards its repo argument (linear.py:1250-1256); resolve_checkout_project and validate_mutation_repository (linear.py:1258-1280) use registry.resolve_canonical_repository (registry.py:800-830), which matches only canonical_repo and fails closed on ambiguity; every issue read or written is asserted to belong to the bound team and project UUIDs (_assert_issue_project, linear.py:2016-2026)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-54",
-          "evidence": "resolve_project delegates to registry.resolve('ghprojects', repo) (ghprojects.py:30-32), the same basename-keyed lookup as YouTrack; the repository-identity-scoped normalized key a Project v2 issue needs is PAT-65's qualification"
+          "status": "supported",
+          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker and ghprojects.verify_project_identity checks the exact ProjectV2 node id, owner/number and linked canonical repository through bounded read-only GraphQL pages. Issue wire-format and workflow operations remain owned by PAT-65/PAT-57/PAT-66/PAT-67"
         }
       }
     },
@@ -91,19 +89,16 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-54",
-          "evidence": "the only bootstrap path is setup_project.setup (setup_project.py:94-122) -> provision_project (youtrack.py:115-120) -> provision_youtrack_project (youtrack_provisioning.py:90-182), which is full administrative provisioning: it recovers an existing project by shortName alone (youtrack_provisioning.py:55-61), adds values to instance-global State/Priority/Type bundles (youtrack_provisioning.py:29-52, 104-120) and creates global custom fields. provision_project does not forward canonical_repository (youtrack.py:115-120) and setup registers the binding under the operator-supplied repository name (setup_project.py:118). No minimal create-or-recover bound to canonical identity exists"
+          "status": "supported",
+          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock; it performs no administrative provisioning"
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-54",
-          "evidence": "no provision_project override: the base raises ProjectProvisioningUnavailableError (base.py:114-128) and setup refuses (setup_project.py:96-101); the binding is registered by hand (docs/linear-tracker.md 'Required binding')"
+          "status": "supported",
+          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding, then Linear.verify_project_identity reads the exact project id, team id and team key before the registry and marker publication; no project is provisioned"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-54",
-          "evidence": "no provision_project override (base refusal, base.py:114-128); what a GitHub Projects v2 create-or-recover can bind to is unqualified (PAT-65)"
+          "status": "supported",
+          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs only bounded GraphQL reads and verifies the linked canonical repository before local publication. This qualifies an existing binding only; workflow/API conformance remains PAT-65"
         }
       }
     },
@@ -121,9 +116,8 @@
           "evidence": "search() pages the project's issues and get_issue hydrates links and AC (youtrack.py:285-301)"
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-54",
-          "evidence": "search() (linear.py:2251-2289) normalizes every page node through _to_issue (linear.py:2278-2279), which raises on any state, label or projectMilestone absent from the binding (linear.py:2141-2142, 2156-2157, 2204-2205): one unmapped value fails the whole-project read. Adding a mapping changes the registry binding digest pinned by .foundry/tracker.json (registry.py:412-413), so keeping the binding complete needs the coherent binding update of PAT-44/PAT-54"
+          "status": "supported",
+          "evidence": "search remains fail-closed on an unknown provider id; registry update supplies the bounded recovery path for a reviewed complete mapping: provider coordinate readback, expected configuration digest, exact registry/marker lock, concurrent-change refusal and readback. No issue mutation or provider CAS is claimed"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -641,7 +635,7 @@
         "linear": {
           "status": "gap",
           "ticket": "PAT-59",
-          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py:2204-2205, milestone_id_unmapped), and adding a mapping changes the registry binding digest pinned by .foundry/tracker.json (registry.py:412-413), so it needs the coherent binding update of PAT-44/PAT-54 first"
+          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py:2204-2205, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock; PAT-59 still owns the release-scope semantics and provider qualification"
         },
         "ghprojects": {
           "status": "to_qualify",

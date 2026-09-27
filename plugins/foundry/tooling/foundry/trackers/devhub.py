@@ -755,6 +755,16 @@ class DevHubTracker(Tracker):
             raise SystemExit(f"Binding DevHub contradictoire pour '{repo}' ; mutation refusée.")
         return remote
 
+    def resolve_checkout_project(
+        self,
+        cwd: str | None = None,
+        *,
+        checkout_identity: str | None = None,
+    ) -> Project:
+        """Keep the internal pilot's historical registry resolution outside V1."""
+        del cwd, checkout_identity
+        return self.resolve_project(registry.repo_basename())
+
     def search(self, project: Project, query: str = "") -> list[Issue]:
         items, cursor, seen = [], 0, set()
         self._require_project(project)

@@ -236,24 +236,25 @@ def test_ghprojects_stub_cells_are_to_qualify_not_guessed():
             # Explicitly out-of-core-scope capability: refused, not merely unqualified.
             assert cell["status"] == "refused"
             continue
+        if operation["id"] in {
+            "identity-and-project-resolution", "repository-bootstrap",
+        }:
+            assert cell["status"] == "supported"
+            continue
         assert cell["status"] == "to_qualify", (
             f"{operation['id']}.ghprojects must stay to_qualify (PAT-65) until qualified, "
             f"got {cell['status']!r}"
         )
 
 
-def test_youtrack_identity_resolution_is_a_pat54_gap():
-    """YouTrack's project resolution is basename/PROJECT_REPO-keyed, not
-    canonical-identity based; it must not be pinned 'supported'."""
+def test_pat54_identity_resolution_is_supported_for_all_three_providers():
     contract = _load_contract()
     op = next(
         o for o in contract["operations"]
         if o["id"] == "identity-and-project-resolution"
     )
     assert op["core"] is True
-    assert op["cells"]["youtrack"]["status"] == "gap"
-    assert op["cells"]["youtrack"]["ticket"] == "PAT-54"
-    assert op["cells"]["linear"]["status"] == "supported"
+    assert {cell["status"] for cell in op["cells"].values()} == {"supported"}
 
 
 def test_repository_bootstrap_is_core_and_full_provisioning_is_not():
@@ -263,10 +264,7 @@ def test_repository_bootstrap_is_core_and_full_provisioning_is_not():
     by_id = {o["id"]: o for o in contract["operations"]}
     bootstrap = by_id["repository-bootstrap"]
     assert bootstrap["core"] is True
-    assert {p: c["status"] for p, c in bootstrap["cells"].items()} == {
-        "youtrack": "gap", "linear": "gap", "ghprojects": "to_qualify",
-    }
-    assert {c["ticket"] for c in bootstrap["cells"].values()} == {"PAT-54"}
+    assert {c["status"] for c in bootstrap["cells"].values()} == {"supported"}
     provisioning = by_id["full-administrative-provisioning"]
     assert provisioning["core"] is False
     assert provisioning["cells"]["linear"]["status"] == "refused"
@@ -275,8 +273,7 @@ def test_repository_bootstrap_is_core_and_full_provisioning_is_not():
 
 
 def test_youtrack_provisioning_ignores_canonical_repository():
-    """Grounds the youtrack repository-bootstrap gap: provisioning is not bound to
-    canonical identity, and Linear inherits the base refusal."""
+    """Full administrative provisioning remains separate from PAT-54 bootstrap."""
     from foundry.trackers.base import Tracker
     from foundry.trackers.linear import LinearTracker
     from foundry.trackers.youtrack import YouTrackTracker
@@ -357,7 +354,7 @@ def test_ghprojects_core_methods_are_unimplemented_stubs():
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-54", "PAT-55", "PAT-56", "PAT-69", "PAT-64", "PAT-43", "PAT-47", "PAT-59"],
+    ["PAT-55", "PAT-56", "PAT-69", "PAT-64", "PAT-43", "PAT-47", "PAT-59"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

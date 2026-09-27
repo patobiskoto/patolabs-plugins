@@ -132,6 +132,12 @@ query FoundryLinearIssue($id: String!) {{
 }}
 """
 
+_PROJECT_BINDING_QUERY = """
+query FoundryLinearProjectBinding($id: String!) {
+  project(id: $id) { id team { id key } }
+}
+"""
+
 _ISSUES_QUERY = f"""
 query FoundryLinearIssues($teamId: ID!, $projectId: ID!, $after: String) {{
   issues(
@@ -1563,6 +1569,20 @@ class LinearTracker(Tracker):
             raise LinearBindingError("project_not_resolved")
         self._binding(self._active_project)
         return self._active_project
+
+    def verify_project_identity(self, project: Project) -> bool:
+        binding = self._binding(project)
+        data = self._graphql(
+            _PROJECT_BINDING_QUERY, {"id": project.id}, "project-binding-read",
+        )
+        raw = data.get("project")
+        team = raw.get("team") if isinstance(raw, dict) else None
+        return bool(
+            isinstance(team, dict)
+            and raw.get("id") == project.id
+            and team.get("id") == binding["team_id"]
+            and team.get("key") == project.key
+        )
 
     def resolve_project(self, repo: str) -> Project:
         # The provider-neutral port historically passes a repository basename here.

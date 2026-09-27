@@ -409,15 +409,15 @@ docs/model-routing-pilot-*.md   frozen manual measurement protocol + results she
 
 ## Providers (pluggable)
 
-Active tracker/code-host are **parameters** (`FOUNDRY_TRACKER` / `FOUNDRY_CODEHOST`), not
-constants; a repository's `.foundry/tracker.json` marker, when present, takes precedence
-over `FOUNDRY_TRACKER` for every Foundry command started from that checkout, including a
-nested directory. A present marker that is malformed, moved, ambiguous in the registry,
-or whose binding digest drifted refuses the command; it never falls back to
-`FOUNDRY_TRACKER`. Only an absent marker uses the host-global default. A repository may
-have one active binding: multiple active provider bindings for its canonical remote are
-refused. `trackers/base.py` and `codehosts/base.py` are the ports. YouTrack, Linear, and
-DevHubTracker v1 are real adapters; `trackers/ghprojects.py` remains a deliberate stub.
+The code host remains a host parameter (`FOUNDRY_CODEHOST`). A repository selects
+YouTrack, Linear or GitHub Projects through its versioned `.foundry/tracker.json`, from
+the Git root even when a command starts in a nested directory. Without a marker, only
+one already-registered historical basename binding can run in explicit `legacy` mode;
+an unregistered repository never falls through to `FOUNDRY_TRACKER`. A malformed,
+moved, ambiguous or stale binding refuses the command. DevHub remains the separate
+host-selected internal pilot. `trackers/base.py` and `codehosts/base.py` are the ports.
+YouTrack, Linear, and DevHubTracker v1 are real adapters; `trackers/ghprojects.py`
+supports the V1 binding probe while its issue and ADR workflow methods remain stubs.
 See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the Linear adapter, marker,
 and bounded recovery procedure, and
 [`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated DevHub pilot cutover.
@@ -426,6 +426,23 @@ model, mutation-guarantee levels without a provider CAS, and the capability matr
 grounding every `gap`/`refused`/`to_qualify` cell in adapter code — is
 [`docs/tracker-contract.md`](docs/tracker-contract.md) and its machine-readable
 [`docs/tracker-contract.v1.json`](docs/tracker-contract.v1.json) (PAT-53).
+
+Bind an existing provider project or upgrade an exact historical binding without
+administrative provisioning:
+
+```text
+python3 tooling/foundry_cli.py registry bootstrap <tracker> <repo> <KEY> <project-id> [k=v …]
+python3 tooling/foundry_cli.py registry upgrade <tracker> <legacy-repo>
+python3 tooling/foundry_cli.py registry selection [--require-v1]
+python3 tooling/foundry_cli.py registry update <tracker> <repo> <KEY> <project-id> \
+  <expected-configuration-sha256> [complete k=v …]
+```
+
+The provider coordinates are read back before the registry and marker are published.
+Credentials stay in host configuration; the committed marker contains only canonical
+repository identity, project coordinates and binding digests. See
+[`docs/tracker-contract.md`](docs/tracker-contract.md) for the exact provider fields and
+upgrade/recovery rules.
 
 Every Tracker implements the common normalized issue and ADR read/write surface.
 Capabilities that are not universal stay explicit and default-off on the port. Project

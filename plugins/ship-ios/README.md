@@ -125,6 +125,12 @@ templates/metadata_example/  the per-locale metadata layout (illustrative)
 scripts/changelog_bridge.py  thin: pulls Foundry's changelog facts (optional)
 ```
 
+The bridge asks Foundry for the repository selection before querying changelog facts,
+so both commands use the same checkout binding. Pass `--require-v1-binding` for the
+release flow: a missing, moved, stale, ambiguous, or legacy binding then fails before
+the changelog query. The bridge imports no tracker adapter and reads no provider
+credential itself.
+
 ## Status
 
 v0.2.0 — dual Claude Code/Codex packaging over the live-tested Model A flow (Xcode

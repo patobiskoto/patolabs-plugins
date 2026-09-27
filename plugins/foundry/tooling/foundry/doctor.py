@@ -10,7 +10,7 @@ import socket
 import subprocess
 
 import foundry
-from foundry import config, local_scout, registry, write
+from foundry import config, local_scout, registry
 from foundry.escalation import EscalationStore
 from foundry.routing import (
     HOSTS,
@@ -213,7 +213,16 @@ def _print_local_scout(payload):
 
 def _provider_transport_preflight() -> tuple[str, str | None]:
     """Resolve only public provider coordinates before any broad config read."""
-    tracker_name = registry.tracker_name_for_checkout()
+    configured = config.tracker_name()
+    if configured == "devhub":
+        tracker_name = configured
+    else:
+        try:
+            tracker_name = registry.tracker_name_for_checkout()
+        except SystemExit as exc:
+            if "checkout Git introuvable" not in str(exc):
+                raise
+            tracker_name = configured
     if tracker_name == "devhub":
         from foundry.trackers.devhub import validate_base_url
 
@@ -423,6 +432,18 @@ def main(argv=None):
         codex_profile["model_reasoning_effort"] = True
     _print_routing(routing_diagnostics(issue=args.issue, codex_profile=codex_profile))
 
+    try:
+        if tracker_name == "devhub":
+            tracker_selection = {"mode": "pilot"}
+        else:
+            tracker_selection = registry.repository_tracker_selection()
+    except SystemExit as exc:
+        if "checkout Git introuvable" in str(exc):
+            tracker_selection = {"mode": "host"}
+        else:
+            check("Config", False, str(exc))
+            return
+
     # provider-specific config, selected without exposing credential values
     try:
         if tracker_name == "youtrack":
@@ -445,7 +466,11 @@ def main(argv=None):
             )
         else:
             raise SystemExit(f"Tracker inconnu : {tracker_name}")
-        check("Config", True, f"tracker={tracker_name} codehost={config.codehost_name()} · {endpoint}")
+        check(
+            "Config", True,
+            f"tracker={tracker_name} mode={tracker_selection['mode']} "
+            f"codehost={config.codehost_name()} · {endpoint}",
+        )
     except (SystemExit, ValueError) as e:
         check("Config", False, str(e))
         return
@@ -471,7 +496,7 @@ def main(argv=None):
                 check(f"  {key} ({repos})", True, f"{n} issues")
             except Exception as ex:
                 check(f"  {key} ({repos})", False, str(ex)[:70])
-    except Exception as e:
+    except (SystemExit, Exception) as e:
         check("Tracker", False, str(e)[:80])
 
     # code-host
@@ -485,10 +510,8 @@ def main(argv=None):
     # current repo → tracker project
     try:
         tr = foundry.tracker()
-        base = registry.repo_basename()
-        p = write.mutation_project(tr) if getattr(
-            tr, "requires_mutation_binding", False
-        ) else tr.resolve_project(base)
+        base = registry.repo_basename(use_env=False)
+        p = tr.resolve_checkout_project()
         check("Repo courant → projet", True, f"{base} → {p.key}")
     except (SystemExit, Exception) as e:
         check("Repo courant → projet", False, str(e)[:90])

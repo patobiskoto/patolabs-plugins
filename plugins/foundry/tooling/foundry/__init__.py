@@ -20,7 +20,14 @@ def tracker(name: str | None = None, cwd: str | None = None) -> Tracker:
     except ValueError as exc:
         raise SystemExit(f"Binding tracker du dépôt invalide : {exc}") from None
     if name is None:
-        name = binding.tracker if binding is not None else config.tracker_name()
+        if binding is not None:
+            name = binding.tracker
+        elif config.tracker_name() == "devhub":
+            # DevHub is the pre-V1 internal pilot.  Keep its host-selected mode
+            # outside the three repository-binding providers.
+            name = "devhub"
+        else:
+            name = registry.tracker_name_for_checkout(cwd)
     elif binding is not None and name != binding.tracker:
         raise SystemExit(
             f"Binding tracker refusé : '{binding.repository}' est actif sur "
@@ -28,10 +35,16 @@ def tracker(name: str | None = None, cwd: str | None = None) -> Tracker:
         )
     if name == "youtrack":
         from foundry.trackers.youtrack import YouTrackTracker
-        return YouTrackTracker()
+        instance = YouTrackTracker()
+        if binding is not None:
+            instance.requires_mutation_binding = True
+        return instance
     if name == "ghprojects":
         from foundry.trackers.ghprojects import GitHubProjectsTracker
-        return GitHubProjectsTracker()
+        instance = GitHubProjectsTracker()
+        if binding is not None:
+            instance.requires_mutation_binding = True
+        return instance
     if name == "devhub":
         from foundry.trackers.devhub import DevHubTracker
         return DevHubTracker()

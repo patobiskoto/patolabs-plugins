@@ -26,7 +26,7 @@ first if `fastlane/Fastfile` isn't in the repo.
 ## 1. Assemble the changelog (facts)
 Prefer Foundry when it's wired for this repo; fall back to a file otherwise:
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<ship-ios-root>")/scripts/changelog_bridge.py" "<milestone>"   # exit 3 → no Foundry, use a file
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<ship-ios-root>")/scripts/changelog_bridge.py" "<milestone>" --require-v1-binding   # exit 3 → no Foundry, use a file
 ```
 These are FACTS (id/title/type/labels), not notes.
 

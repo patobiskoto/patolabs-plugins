@@ -127,6 +127,13 @@ class Tracker(ABC):
             f"provisionnement de projet indisponible pour le tracker {self.name}"
         )
 
+    def verify_project_identity(self, project: Project) -> bool:
+        """Read back an existing provider project before publishing a local binding."""
+        del project
+        raise ProjectProvisioningUnavailableError(
+            f"vérification de projet indisponible pour le tracker {self.name}"
+        )
+
     # --- resolution -------------------------------------------------------
     @abstractmethod
     def resolve_project(self, repo: str) -> Project:
@@ -145,11 +152,24 @@ class Tracker(ABC):
         use ``checkout_identity`` (or derive it from ``cwd``) without trusting an
         inherited environment alias.
         """
-        del checkout_identity
         from foundry import registry
-
-        repo = registry.repo_basename() if cwd is None else registry.repo_basename(cwd)
-        return self.resolve_project(repo)
+        selection = registry.repository_tracker_selection(cwd)
+        if selection["tracker"] != self.name:
+            raise SystemExit(
+                f"Binding tracker refusé : dépôt actif sur '{selection['tracker']}', "
+                f"pas '{self.name}'."
+            )
+        if selection["mode"] == "v1":
+            binding = selection["binding"]
+            assert binding is not None
+            if checkout_identity is not None:
+                observed = registry.canonical_repository_identity(checkout_identity)
+                if observed != binding.repository:
+                    raise SystemExit("Binding tracker incompatible avec le checkout.")
+            return binding.project
+        project = selection["project"]
+        assert isinstance(project, Project)
+        return project
 
     def preflight_issue_operation(self, operation: str) -> None:
         """Refuse an issue lifecycle operation before any code-host effect.
