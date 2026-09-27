@@ -349,19 +349,19 @@ def _registry_project_for_marker(
     return project, first, digest
 
 
-def repository_tracker_binding(cwd: str | None = None) -> RepositoryTrackerBinding | None:
-    """Load one strict repository marker and bind it to the full registry entry.
-
-    The marker is executable configuration. A malformed, moved or stale marker is
-    refused; it never silently falls back to the host-global tracker.
-    """
-    marker = _marker_path(cwd)
-    if marker is None:
-        return None
+def _strict_marker_snapshot(
+    root: Path, *, missing_ok: bool = False,
+) -> dict[str, object] | None:
+    """Parse one marker completely without consulting or changing the registry."""
+    marker = root / _TRACKER_MARKER_RELATIVE_PATH
     try:
         stat = marker.lstat()
     except FileNotFoundError:
-        return None
+        if missing_ok:
+            return None
+        raise ValueError("marqueur tracker de dépôt invalide") from None
+    except OSError:
+        raise ValueError("marqueur tracker de dépôt invalide") from None
     if (
         marker.parent.is_symlink()
         or marker.is_symlink()
@@ -435,6 +435,25 @@ def repository_tracker_binding(cwd: str | None = None) -> RepositoryTrackerBindi
     }
     if data["configuration_digest"] != _json_digest(configuration):
         raise ValueError("digest du marqueur tracker invalide")
+    return {**data, "activation": activation}
+
+
+def repository_tracker_binding(cwd: str | None = None) -> RepositoryTrackerBinding | None:
+    """Load one strict repository marker and bind it to the full registry entry.
+
+    The marker is executable configuration. A malformed, moved or stale marker is
+    refused; it never silently falls back to the host-global tracker.
+    """
+    marker = _marker_path(cwd)
+    if marker is None:
+        return None
+    root = marker.parents[1]
+    data = _strict_marker_snapshot(root, missing_ok=True)
+    if data is None:
+        return None
+    project_coordinate = data["project"]
+    activation = data["activation"]
+    repository = data["repository"]
     project, _entry, registry_digest = _registry_project_for_marker(
         load(), tracker=data["tracker"], repository=repository,
         repo_name=repo_basename(str(root), use_env=False),
@@ -939,35 +958,9 @@ def upgrade_legacy_binding(
 
 
 def _marker_update_snapshot(root: Path) -> dict[str, object]:
-    marker = root / _TRACKER_MARKER_RELATIVE_PATH
-    try:
-        stat = marker.lstat()
-    except OSError:
-        raise ValueError("marqueur tracker de dépôt invalide") from None
-    if (
-        marker.parent.is_symlink()
-        or marker.is_symlink()
-        or not marker.is_file()
-        or stat.st_size > _TRACKER_MARKER_MAX_BYTES
-    ):
-        raise ValueError("marqueur tracker de dépôt invalide")
-    try:
-        data = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        raise ValueError("marqueur tracker de dépôt invalide") from None
-    version = data.get("version") if isinstance(data, dict) else None
-    keys = _TRACKER_MARKER_V1_KEYS if version == 1 else _TRACKER_MARKER_V2_KEYS
-    if not isinstance(data, dict) or set(data) != keys:
-        raise ValueError("marqueur tracker de dépôt invalide")
-    base = {name: data[name] for name in keys if name != "configuration_digest"}
-    if data.get("configuration_digest") != _json_digest(base):
-        raise ValueError("digest du marqueur tracker invalide")
-    if checkout_repository_identity(str(root)) != data.get("repository"):
-        raise ValueError("marqueur tracker incompatible avec le dépôt courant")
-    activation = data.get("activation") if version == 2 else {
-        "kind": "migration", "manifest_digest": data.get("migration_manifest_digest"),
-    }
-    return {**data, "activation": activation}
+    snapshot = _strict_marker_snapshot(root)
+    assert snapshot is not None
+    return snapshot
 
 
 def update_repository_binding(

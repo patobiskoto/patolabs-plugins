@@ -92,7 +92,9 @@ def import_adrs(tracker, project, adr_dir):
 
 
 def setup(name, short, repo, adr_dir=None):
-    tracker = foundry.tracker()
+    # Setup is the one boundary that intentionally selects the configured provider:
+    # a fresh repository has no binding yet, while normal factory calls stay closed.
+    tracker = foundry.tracker(foundry.config.tracker_name())
     if not tracker.project_provisioning_supported:
         raise SystemExit(
             f"Le tracker '{tracker.name}' ne prend pas en charge le provisionnement "

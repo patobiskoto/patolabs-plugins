@@ -9,7 +9,7 @@ explicit setup and historical tooling; it never substitutes for a repository bin
 
 Every claim below is grounded in the current adapter code, cited by file and line. The
 machine-readable capability matrix is [`tracker-contract.v1.json`](tracker-contract.v1.json)
-(`contract: "foundry.tracker-contract.v1"`, `version: 1`);
+(`contract: "foundry.tracker-contract.v1"`, `version: 2`);
 [`test_tracker_contract.py`](../tests/test_tracker_contract.py) pins its schema and
 cross-checks it against the `Tracker` ABC and the adapter modules. This contract records
 capabilities and requirements; it changes no adapter behaviour.
@@ -128,12 +128,18 @@ binding under that identity.
 
 **One checkout selection for all three adapters.**
 `repository_tracker_selection()` reads the marker from the Git root and validates its
-canonical origin, provider, project coordinates and registry digest. The default
-`Tracker.resolve_checkout_project()` consumes that selection for YouTrack and
-`ghprojects`; Linear keeps its exact canonical registry resolution and provider-level
-team/project assertions. A V1 canonical registry entry whose marker is absent is an
-interrupted or moved publication and fails before provider access. `PROJECT_REPO` and
-`FOUNDRY_TRACKER` cannot change that result.
+canonical origin, provider, project coordinates and registry digest
+(`registry.py:352-537`). The default `Tracker.resolve_checkout_project()` consumes that
+selection for YouTrack and `ghprojects` (`base.py:142-172`); Linear keeps its exact
+canonical registry resolution and provider-level team/project assertions
+(`linear.py:1587-1617`, `2353-2363`). `foundry.effective_tracker_name()` is the shared
+selection used by both the implicit factory and doctor (`foundry/__init__.py:14-39`,
+`doctor.py:214-230`), so a repository V1 binding wins even when the host setting names
+the DevHub pilot. A V1 canonical registry entry whose marker is absent is an interrupted
+or moved publication and fails before provider access. `PROJECT_REPO` and
+`FOUNDRY_TRACKER` cannot change that result. The administrative setup boundary alone
+passes the configured provider explicitly so a new repository can be provisioned before
+it has a binding (`setup_project.py:94-97`); normal implicit factory calls stay closed.
 
 **Legacy is explicit and bounded.** With no marker and no canonical V1 entry, Foundry
 accepts legacy mode only when the actual remote basename has exactly one historical
@@ -309,7 +315,8 @@ argument. Before the local publication, YouTrack reads the exact native project 
 Linear reads the exact project id, team UUID and team key after validating every UUID
 map; GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
-before the registry or marker changes. The GitHub query follows GitHub's documented
+before the registry or marker changes (`registry.py:1035-1069`, `864-935`;
+`youtrack.py:247-258`; `linear.py:1573-1585`; `ghprojects.py:36-104`). The GitHub query follows GitHub's documented
 organization/user `projectV2(number:)` lookup and `ProjectV2.repositories` connection;
 it is capped at ten 100-repository pages and needs only `read:project` permission
 ([GitHub Projects API guide](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-api-to-manage-projects),
@@ -331,7 +338,10 @@ compares the marker, old registry digest and complete candidate, refuses a concu
 winner, writes the registry, publishes the matching marker and reads both back. Exact
 replay completes an interruption between registry and marker publication. This is a
 local compare-and-publish boundary only; it neither mutates provider data nor claims a
-provider CAS. Archive tombstones and unrelated bindings are preserved.
+provider CAS. Marker structure, schema version, activation vocabulary and every digest
+are parsed by the same strict reader before either file can be written, including during
+replay (`registry.py:352-438`, `960-1032`). Archive tombstones and unrelated bindings
+are preserved.
 
 The non-core `full-administrative-provisioning` row records YouTrack's existing
 provisioning as an optional capability and Linear/`ghprojects` as refused.
@@ -359,6 +369,6 @@ use GraphQL for tracker operations only as PAT-65 and the owner tickets qualify 
 
 ## Document status
 
-This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 1`. A change to
+This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 2`. A change to
 any status cell, the operation list or the closed status vocabulary bumps the JSON
 `version` and this heading together.

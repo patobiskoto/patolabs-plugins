@@ -1,5 +1,6 @@
 import json
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -319,6 +320,21 @@ def test_doctor_rejects_unsafe_devhub_url_before_any_secret_accessor(
     assert "HTTPS hors loopback" in captured.out
     assert "secret-must-not-be-read" not in captured.out
     assert "secret-must-not-be-read" not in captured.err
+
+
+def test_doctor_prefers_repository_v1_binding_over_global_devhub(monkeypatch):
+    binding = SimpleNamespace(tracker="linear")
+    monkeypatch.setattr(
+        doctor.registry, "repository_tracker_binding", lambda *_args, **_kwargs: binding,
+    )
+    monkeypatch.setattr(doctor.config, "tracker_name", lambda: "devhub")
+    monkeypatch.setattr(
+        doctor.config,
+        "require_public",
+        lambda _key: pytest.fail("repository binding must prevent DevHub preflight"),
+    )
+
+    assert doctor._provider_transport_preflight() == ("linear", None)
 
 
 def test_doctor_file_fallback_validates_transport_before_bulk_or_secret_read(

@@ -40,6 +40,14 @@ def test_new_checkout_never_becomes_legacy_from_global_provider(isolated):
         registry.repository_tracker_selection(str(repo))
 
 
+def test_normal_factory_stays_closed_for_new_unbound_repository(isolated, monkeypatch):
+    repo = _repo(isolated, "first", "same")
+    monkeypatch.chdir(repo)
+
+    with pytest.raises(SystemExit, match="Binding tracker absent"):
+        foundry.tracker()
+
+
 def test_legacy_binding_is_observable_and_explicit_v1_refuses(isolated):
     repo = _repo(isolated, "first", "same")
     registry.register("youtrack", "same", "ONE", "0-1")
@@ -215,6 +223,57 @@ def test_mapping_update_replay_completes_interrupted_marker_publication(
     assert recovered.project.extra["ms_bundle"] == "new"
 
 
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("version", 3),
+        ("activation", {"kind": "unknown"}),
+        ("registry_binding_digest", "sha256:invalid"),
+        (
+            "activation",
+            {"kind": "migration", "manifest_digest": "sha256:invalid"},
+        ),
+    ],
+)
+def test_mapping_update_replay_refuses_invalid_marker_before_any_write(
+    isolated, field, invalid,
+):
+    repo = _repo(isolated, "acme", "app")
+    initial = registry.bootstrap_repository_binding(
+        "youtrack", "app", "APP", "0-1", cwd=str(repo), ms_bundle="old",
+    )
+
+    # Reproduce the only valid replay window: the registry has the complete winner,
+    # while the marker still describes the old binding. The malformed marker must be
+    # rejected before either file is touched.
+    data = registry.load()
+    data["youtrack"]["app"]["ms_bundle"] = "new"
+    registry._save(data)
+    marker_path = repo / ".foundry/tracker.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker[field] = invalid
+    if field != "configuration_digest":
+        marker["configuration_digest"] = registry._json_digest({
+            name: value for name, value in marker.items()
+            if name != "configuration_digest"
+        })
+    marker_path.write_text(
+        json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8",
+    )
+    registry_before = (isolated / "state" / "registry.json").read_bytes()
+    marker_before = marker_path.read_bytes()
+
+    with pytest.raises(ValueError, match="marqueur tracker.*invalide"):
+        registry.update_repository_binding(
+            "youtrack", "app", "APP", "0-1",
+            expected_configuration_digest=initial.configuration_digest,
+            cwd=str(repo), ms_bundle="new",
+        )
+
+    assert (isolated / "state" / "registry.json").read_bytes() == registry_before
+    assert marker_path.read_bytes() == marker_before
+
+
 @pytest.mark.parametrize("adapter", [YouTrackTracker, GitHubProjectsTracker])
 def test_adapters_use_the_same_checkout_binding_resolution(isolated, adapter):
     repo = _repo(isolated, "acme", "app")
@@ -236,7 +295,7 @@ def test_factory_activates_v1_write_binding_for_marker_adapter(isolated, monkeyp
         owner="acme", number="7",
     ).project
     monkeypatch.chdir(repo)
-    monkeypatch.setenv("FOUNDRY_TRACKER", "youtrack")
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
 
     adapter = foundry.tracker()
 

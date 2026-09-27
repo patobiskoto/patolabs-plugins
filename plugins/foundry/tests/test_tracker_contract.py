@@ -36,14 +36,14 @@ def _load_contract():
 def test_contract_json_is_versioned_and_names_its_doc():
     contract = _load_contract()
     assert contract["contract"] == "foundry.tracker-contract.v1"
-    assert contract["version"] == 1
+    assert contract["version"] == 2
     assert contract["doc"] == "plugins/foundry/docs/tracker-contract.md"
 
 
 def test_doc_references_the_same_contract_version():
     doc = DOC_PATH.read_text(encoding="utf-8")
     assert "tracker-contract.v1.json" in doc
-    assert "version: 1" in doc
+    assert "version: 2" in doc
     assert "contract **v1**" in doc
 
 

@@ -213,16 +213,12 @@ def _print_local_scout(payload):
 
 def _provider_transport_preflight() -> tuple[str, str | None]:
     """Resolve only public provider coordinates before any broad config read."""
-    configured = config.tracker_name()
-    if configured == "devhub":
-        tracker_name = configured
-    else:
-        try:
-            tracker_name = registry.tracker_name_for_checkout()
-        except SystemExit as exc:
-            if "checkout Git introuvable" not in str(exc):
-                raise
-            tracker_name = configured
+    try:
+        tracker_name = foundry.effective_tracker_name()
+    except SystemExit as exc:
+        if "checkout Git introuvable" not in str(exc):
+            raise
+        tracker_name = config.tracker_name()
     if tracker_name == "devhub":
         from foundry.trackers.devhub import validate_base_url
 

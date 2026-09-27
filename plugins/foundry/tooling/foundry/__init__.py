@@ -11,24 +11,40 @@ from foundry.codehosts.base import CodeHost
 from foundry.trackers.base import Tracker
 
 
-def tracker(name: str | None = None, cwd: str | None = None) -> Tracker:
-    """Return the explicitly active tracker for the current repository."""
+def _effective_tracker_selection(cwd: str | None = None):
+    """Return the implicit provider name and any strict repository binding."""
     from foundry import registry
 
     try:
         binding = registry.repository_tracker_binding(cwd)
     except ValueError as exc:
         raise SystemExit(f"Binding tracker du dépôt invalide : {exc}") from None
+    if binding is not None:
+        return binding.tracker, binding
+    if config.tracker_name() == "devhub":
+        # DevHub is the pre-V1 internal pilot.  Keep its host-selected mode
+        # outside the three repository-binding providers.
+        return "devhub", None
+    return registry.tracker_name_for_checkout(cwd), None
+
+
+def effective_tracker_name(cwd: str | None = None) -> str:
+    """Resolve the provider exactly as the implicit tracker factory does."""
+    return _effective_tracker_selection(cwd)[0]
+
+
+def tracker(name: str | None = None, cwd: str | None = None) -> Tracker:
+    """Return the explicitly active tracker for the current repository."""
     if name is None:
-        if binding is not None:
-            name = binding.tracker
-        elif config.tracker_name() == "devhub":
-            # DevHub is the pre-V1 internal pilot.  Keep its host-selected mode
-            # outside the three repository-binding providers.
-            name = "devhub"
-        else:
-            name = registry.tracker_name_for_checkout(cwd)
-    elif binding is not None and name != binding.tracker:
+        name, binding = _effective_tracker_selection(cwd)
+    else:
+        from foundry import registry
+
+        try:
+            binding = registry.repository_tracker_binding(cwd)
+        except ValueError as exc:
+            raise SystemExit(f"Binding tracker du dépôt invalide : {exc}") from None
+    if binding is not None and name != binding.tracker:
         raise SystemExit(
             f"Binding tracker refusé : '{binding.repository}' est actif sur "
             f"'{binding.tracker}', pas '{name}'."

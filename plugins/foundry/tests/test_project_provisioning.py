@@ -1,4 +1,5 @@
 import inspect
+import subprocess
 
 import pytest
 
@@ -170,6 +171,45 @@ def test_devhub_capability_refuses_an_unconfirmed_repository_binding():
     assert [call[0] for call in tracker.calls] == ["GET"]
 
 
+def test_setup_uses_configured_youtrack_before_a_new_repository_has_a_binding(
+    monkeypatch, tmp_path,
+):
+    repo = tmp_path / "demo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "remote", "add", "origin",
+            "https://github.com/acme/demo.git",
+        ],
+        check=True,
+    )
+    provider_calls = []
+
+    def provision(_tracker, name, short, canonical_repository):
+        provider_calls.append((name, short, canonical_repository))
+        return Project(key=short, id="0-42", extra={"ms_bundle": "bundle-42"})
+
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setenv("FOUNDRY_TRACKER", "youtrack")
+    monkeypatch.setenv("YOUTRACK_URL", "https://youtrack.example.invalid")
+    monkeypatch.setenv("YOUTRACK_TOKEN", "test-token-never-sent")
+    monkeypatch.setattr(YouTrackTracker, "provision_project", provision)
+
+    setup_project.setup("Demo", "DEMO", "demo")
+
+    assert provider_calls == [("Demo", "DEMO", None)]
+    assert registry.load() == {
+        "youtrack": {
+            "demo": {
+                "key": "DEMO", "id": "0-42", "ms_bundle": "bundle-42",
+            },
+        },
+    }
+    assert not (repo / ".foundry/tracker.json").exists()
+
+
 def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_binding(
     monkeypatch, tmp_path,
 ):
@@ -177,7 +217,12 @@ def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_b
         "GET", "/projects/resolve", 404, "project_not_found",
     )
     tracker = ScriptedDevHubTracker([missing, PROJECT_RAW, PROJECT_RAW, PROJECT_RAW])
-    monkeypatch.setattr(foundry, "tracker", lambda: tracker)
+    selected_providers = []
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+    monkeypatch.setattr(
+        foundry, "tracker",
+        lambda name=None: selected_providers.append(name) or tracker,
+    )
     monkeypatch.setattr(
         setup_project.registry, "checkout_repository_identity",
         lambda: CANONICAL_REPOSITORY,
@@ -202,6 +247,7 @@ def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_b
     setup_project.setup("Trame", "TRAME", "trame")
 
     assert [call[0] for call in tracker.calls].count("POST") == 1
+    assert selected_providers == ["devhub", "devhub"]
     assert registry.load() == {
         "devhub": {
             "trame": {
@@ -217,7 +263,8 @@ def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch)
     with pytest.raises(ProjectProvisioningUnavailableError, match="ghprojects"):
         tracker.provision_project("Demo", "DEMO")
 
-    monkeypatch.setattr(foundry, "tracker", lambda: tracker)
+    monkeypatch.setenv("FOUNDRY_TRACKER", "ghprojects")
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
     monkeypatch.setattr(
         setup_project.registry, "checkout_repository_identity",
         lambda: pytest.fail("unsupported provider must fail during capability preflight"),
