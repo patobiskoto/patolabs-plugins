@@ -271,13 +271,13 @@ def project_acceptance_override(tracker, issue_id: str, reason: str, context) ->
 
 
 def recover_acceptance_override(
-    tracker, issue_id: str, reason: str, *, pr_url: str, head_sha: str, merge_sha: str,
+    tracker, issue_id: str, reason: str, *, pr_url: str, head_sha: str, base_sha: str, merge_sha: str,
 ) -> bool:
     """Append only the missing override receipt of an issue already merged under it."""
     binding = issue_binding(tracker, issue_id)
     kwargs = {"project": binding} if binding is not None else {}
     return tracker.recover_acceptance_override(
-        issue_id, reason, pr_url=pr_url, head_sha=head_sha, merge_sha=merge_sha, **kwargs,
+        issue_id, reason, pr_url=pr_url, head_sha=head_sha, base_sha=base_sha, merge_sha=merge_sha, **kwargs,
     )
 
 

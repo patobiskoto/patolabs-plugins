@@ -130,11 +130,10 @@ def _require_unchanged_pr_coordinates(ch, repo, pr_number, original, base_sha) -
         )
 
 
-def _require_linked_pr_coordinates(current, pr, pr_number: int) -> str:
-    """Authenticate the issue-linked PR before a bounded tracker lifecycle effect."""
+def _require_pr_coordinates(pr, pr_number: int) -> str:
+    """Validate the exact code-host readback before any bounded recovery effect."""
     exact = (
         getattr(pr, "number", None) == pr_number
-        and getattr(current, "pr_url", None) == getattr(pr, "url", None)
         and isinstance(getattr(pr, "head", None), str)
         and bool(pr.head)
         and isinstance(getattr(pr, "base", None), str)
@@ -154,6 +153,14 @@ def _require_linked_pr_coordinates(current, pr, pr_number: int) -> str:
             "(numéro/URL/head/base/état) diffèrent de la PR demandée."
         )
     return _require_pr_base_sha(pr)
+
+
+def _require_linked_pr_coordinates(current, pr, pr_number: int) -> str:
+    """Authenticate the issue-linked PR before a bounded tracker lifecycle effect."""
+    base_sha = _require_pr_coordinates(pr, pr_number)
+    if getattr(current, "pr_url", None) != getattr(pr, "url", None):
+        raise SystemExit("⛔ Merge refusé — la PR liée au ticket diffère de la PR demandée.")
+    return base_sha
 
 
 def _reuse_or_open_pr(ch, repo: str, branch: str, base: str,
@@ -390,6 +397,8 @@ def merge(issue_id, pr_number, flags=()):
                 ch.name, repo, pr, operation="codehost.get_pr",
             ),
         )
+    if bounded_lifecycle:
+        _require_pr_coordinates(pr, int(pr_number))
     override_recovered = False
     try:
         current = tr.get_issue(issue_id)
@@ -412,7 +421,7 @@ def merge(issue_id, pr_number, flags=()):
             and observed.projection_status == "disagreement"
             and observed.pr_url == pr.url
         ):
-            base_sha = _require_pr_base_sha(pr)
+            base_sha = _require_linked_pr_coordinates(observed, pr, int(pr_number))
             if tr.recover_done_projection(
                 issue_id,
                 pr_url=pr.url,
@@ -440,7 +449,8 @@ def merge(issue_id, pr_number, flags=()):
             try:
                 override_recovered = write.recover_acceptance_override(
                     tr, issue_id, reason,
-                    pr_url=pr.url, head_sha=pr.sha, merge_sha=pr.merge_sha,
+                    pr_url=pr.url, head_sha=pr.sha, base_sha=_require_pr_base_sha(pr),
+                    merge_sha=pr.merge_sha,
                 )
             except TrackerConflictError as exc:
                 raise SystemExit(
@@ -450,6 +460,16 @@ def merge(issue_id, pr_number, flags=()):
             current = tr.get_issue(issue_id)
     if bounded_lifecycle:
         _require_linked_pr_coordinates(current, pr, int(pr_number))
+        if (getattr(current, "state", None) == "done"
+                and getattr(tr, "append_only_lifecycle_supported", False)):
+            if not pr.merged or not tr.recover_done_projection(
+                issue_id, pr_url=pr.url, head_sha=pr.sha,
+                base_sha=_require_pr_base_sha(pr), merge_sha=pr.merge_sha,
+                project=binding,
+            ):
+                raise SystemExit(
+                    "⛔ Reprise tracker refusée — coordonnées du reçu done exact divergentes."
+                )
         _observe_receipt(
             issue_id, "pr",
             lambda: execution_receipts.pr_receipt(

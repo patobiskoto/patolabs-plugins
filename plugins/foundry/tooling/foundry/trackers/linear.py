@@ -2999,8 +2999,6 @@ class LinearTracker(Tracker):
         self._assert_issue_project(raw, binding)
         target_state_id = binding["state_ids"]["done"]
         native = raw.get("state")
-        if isinstance(native, dict) and native.get("id") == target_state_id:
-            return False
         receipts = []
         for row in _connection(raw.get("comments"), "lifecycle.recover"):
             decoded = self._decode_lifecycle_comment(issue_id, row.get("body"))
@@ -3023,6 +3021,9 @@ class LinearTracker(Tracker):
         self._lifecycle_projection(
             issue_id, {**raw, "state": {**native, "id": target_state_id}},
         )
+        if isinstance(native, dict) and native.get("id") == target_state_id:
+            self._lifecycle_projection(issue_id, raw)
+            return True
         self.set_state(
             issue_id,
             "done",
@@ -3546,6 +3547,7 @@ class LinearTracker(Tracker):
         *,
         pr_url: str,
         head_sha: str,
+        base_sha: str,
         merge_sha: str,
         project: Project | None = None,
     ) -> bool:
@@ -3576,6 +3578,7 @@ class LinearTracker(Tracker):
             done is None
             or done["pr_url"] != pr_url
             or done["head_sha"] != head_sha
+            or done["base_sha"] != base_sha
             or done["merge_sha"] != merge_sha
             or native_state_id != done["native_state_id"]
         ):

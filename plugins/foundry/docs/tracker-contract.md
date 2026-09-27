@@ -309,7 +309,11 @@ never **excludes** them, and no text in Foundry may say otherwise.
   PR coordinates for review; it cannot authenticate a new PR or generation by
   returning early. Opening a PR requires an active `in-progress` or `review`
   issue before any push or code-host operation. Bounded lifecycle merge paths
-  authenticate the issue-linked PR number and URL before tracker effects.
+  authenticate the issue-linked PR number and URL before tracker effects. Already
+  merged Linear recovery also compares head/base/merge SHAs to the authentic done
+  receipt before override recovery, native repair, local receipts or branch cleanup.
+  The override recovery port therefore requires `base_sha` explicitly. An already
+  aligned native State does not skip receipt authentication.
 
   Query observations, including next-issue and roadmap profiles, expose
   `normalized_state`, `native_state`, and

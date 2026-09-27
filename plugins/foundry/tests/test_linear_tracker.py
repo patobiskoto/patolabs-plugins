@@ -7885,3 +7885,56 @@ def test_linear_public_openpr_refuses_done_before_push_or_codehost(tracker, monk
         issue.openpr("LIN-2")
     assert wire.issues["LIN-2"] == before
     assert all("mutation" not in doc.lower() for doc, _ in wire.calls[offset:])
+
+
+@pytest.mark.parametrize("recovery", ["missing-override", "native-disagreement", "already-done"])
+@pytest.mark.parametrize(
+    "pr_changes",
+    [
+        {"base_sha": "9" * 40},
+        {"sha": "9" * 40},
+        {"merge_sha": "9" * 40},
+        {"number": 18},
+        {"head": ""},
+        {"base": ""},
+        {"url": "https://github.com/acme/widgets/pull/18"},
+    ],
+)
+def test_linear_merged_recovery_authenticates_all_coordinates_before_effects(
+    tracker, monkeypatch, recovery, pr_changes,
+):
+    instance, wire = tracker
+    if recovery == "missing-override":
+        latest = _pat10_shape(instance, wire, monkeypatch)
+        flags = OVERRIDE_FLAGS
+    else:
+        _historical_done_shape(instance, wire)
+        latest = TransitionContext(head_sha="1" * 40)
+        flags = ()
+        if recovery == "already-done":
+            wire.issues["LIN-2"]["state"] = {
+                "id": STATE_IDS["done"], "name": "Done", "type": "completed",
+            }
+    pr = PullRequest(**{
+        "number": 17, "url": OVERRIDE_PR_URL, "head": "feat/lin-2", "base": "main",
+        "base_sha": "b" * 40, "sha": latest.head_sha, "merged": True,
+        "merge_sha": "f" * 40, **pr_changes,
+    })
+    before = copy.deepcopy(wire.issues["LIN-2"])
+    events = _override_merge_harness(
+        monkeypatch, instance, pr,
+        lambda *_args, **_kwargs: pytest.fail("no remerge"),
+    )
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: events.append("receipt"))
+    call_offset = len(wire.calls)
+
+    with pytest.raises((SystemExit, TrackerConflictError)):
+        issue.merge("LIN-2", "17", flags=flags)
+
+    assert wire.issues["LIN-2"] == before
+    assert events == []
+    assert not any(
+        "FoundryLinearIssueUpdate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )

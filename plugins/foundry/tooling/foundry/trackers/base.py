@@ -285,11 +285,12 @@ class Tracker(ABC):
         *,
         pr_url: str,
         head_sha: str,
+        base_sha: str,
         merge_sha: str,
         project: Project | None = None,
     ) -> bool:
         """Append only the missing override receipt of an already-merged issue."""
-        del issue_id, reason, pr_url, head_sha, merge_sha, project
+        del issue_id, reason, pr_url, head_sha, base_sha, merge_sha, project
         raise TrackerCapabilityUnavailableError(self.name, "acceptance-override-recovery")
 
     def update_body(
