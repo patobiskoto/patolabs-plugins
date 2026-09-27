@@ -1030,7 +1030,10 @@ def test_pat66_relates_uses_distinct_issue_node_ids_and_symmetric_readback(monke
     tracker = GitHubProjectsTracker()
     initial = _write_issue(links=[])
     observed = _write_issue(links=[Link("relates", "outward", "GHQUAL-2")])
-    reads = iter([initial, _write_issue(links=[]), initial, _write_issue(links=[]), observed, _write_issue(links=[])])
+    destination = Issue(id="GHQUAL-2", title="issue 2", priority="P1", body="body")
+    observed_destination = deepcopy(destination)
+    observed_destination.links = [Link("relates", "outward", "GHQUAL-1")]
+    reads = iter([initial, destination, initial, destination, observed, observed_destination])
     calls = []
     monkeypatch.setattr(tracker, "_native_issue", lambda issue, *_: (1 if issue.endswith("1") else 2, 1001 if issue.endswith("1") else 1002))
     monkeypatch.setattr(tracker, "get_issue", lambda issue: next(reads))
@@ -1782,5 +1785,56 @@ def test_pat66_body_and_links_observe_ambiguous_write_once(operation, outcome):
     else:
         with pytest.raises(TrackerConflictError, match="divergent après écriture"):
             call()
+    assert transport.writes == 1
+    assert "read" in transport.events[transport.events.index("write") + 1:]
+
+
+class _AsymmetricRelatesTransport(_BodyRelationTransport):
+    def __init__(self, present_on, *, existing=False, normal_response=False):
+        super().__init__("graphql-link", "applied")
+        self.present_on = present_on
+        self.related = existing
+        self.normal_response = normal_response
+
+    def _project_payload(self):
+        payload = super()._project_payload()
+        nodes = payload["data"]["user"]["projectV2"]["items"]["nodes"]
+        if self.related:
+            absent = nodes[1] if self.present_on == "source" else nodes[0]
+            absent["content"]["relatesTo"]["nodes"] = []
+        return payload
+
+    def __call__(self, command, **kwargs):
+        response = super().__call__(command, **kwargs)
+        if self.normal_response and command[2] == "graphql" and any(
+            arg.startswith("query=mutation") for arg in command
+        ):
+            return subprocess.CompletedProcess(command, 0, json.dumps({"data": {
+                "addRelatesTo": {"issue": {"id": "issue-node-1"},
+                                 "relatedIssue": {"id": "issue-node-2"}},
+            }}), "")
+        return response
+
+
+@pytest.mark.parametrize("present_on", ["source", "destination"])
+def test_pat66_asymmetric_relates_replay_refuses_before_mutation(present_on):
+    transport = _AsymmetricRelatesTransport(present_on, existing=True)
+    tracker = GitHubProjectsTracker(runner=transport)
+    with pytest.raises(TrackerConflictError, match="asymétrique avant écriture"):
+        tracker.link("GHQUAL-1", "relates", "GHQUAL-2", project=PROJECT)
+    assert transport.writes == 0
+
+
+@pytest.mark.parametrize("present_on", ["source", "destination"])
+@pytest.mark.parametrize("normal_response", [True, False])
+def test_pat66_relates_requires_both_projections_after_mutation(
+    present_on, normal_response,
+):
+    transport = _AsymmetricRelatesTransport(
+        present_on, normal_response=normal_response,
+    )
+    tracker = GitHubProjectsTracker(runner=transport)
+    with pytest.raises(TrackerConflictError, match="divergent après écriture"):
+        tracker.link("GHQUAL-1", "relates", "GHQUAL-2", project=PROJECT)
     assert transport.writes == 1
     assert "read" in transport.events[transport.events.index("write") + 1:]

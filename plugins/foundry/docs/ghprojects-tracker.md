@@ -135,7 +135,10 @@ qualified symmetric `addRelatesTo` GraphQL mutation over the two distinct Issue 
 IDs, then reads the complete `relatesTo` connection from the Project item; a truncated,
 foreign, duplicate or malformed relation fails closed. Both REST and GraphQL link
 mutations reread the two endpoints even after an ambiguous response, without a
-second mutation. The requested link must be observed and the endpoints' unrelated
+second mutation. Both the requested link and its reciprocal endpoint projection
+must be observed, including before an already-applied replay can return without
+writing. A one-sided relation fails closed and is never automatically repaired.
+The endpoints' unrelated
 properties preserved; an unchanged result keeps the original transport error and
 a divergent result is an explicit conflict. An unavailable readback remains an
 unknown effect, without an automatic retry. `add_comment` first proves one

@@ -1628,8 +1628,15 @@ class GitHubProjectsTracker(Tracker):
         src_number, src_native = self._native_issue(src_id, binding, "issue.link_prewrite")
         dst_number, dst_native = self._native_issue(dst_id, binding, "issue.link_prewrite")
         before_src, before_dst = self.get_issue(src_id), self.get_issue(dst_id)
-        if self._has_link(before_src, link_type, dst_id):
+        reciprocal = {"subtask-of": "parent-of", "parent-of": "subtask-of",
+                      "depends-on": "blocks", "blocks": "depends-on", "relates": "relates"}
+        reverse_type = reciprocal[link_type]
+        source_has = self._has_link(before_src, link_type, dst_id)
+        destination_has = self._has_link(before_dst, reverse_type, src_id)
+        if source_has and destination_has:
             return
+        if source_has != destination_has:
+            raise TrackerConflictError("lien GitHub asymétrique avant écriture ; aucune réparation automatique")
         fresh_src, fresh_dst = self.get_issue(src_id), self.get_issue(dst_id)
         if fresh_src.links != before_src.links or fresh_dst.links != before_dst.links:
             raise TrackerConflictError("liens GitHub modifiés avant écriture bornée")
@@ -1667,9 +1674,7 @@ class GitHubProjectsTracker(Tracker):
         # they must not change either endpoint's other observable properties.
         def unrelated(issue, is_source):
             snapshot = {k: v for k, v in issue.to_dict().items() if k not in {"links", "updated"}}
-            reverse = {"subtask-of": "parent-of", "parent-of": "subtask-of",
-                       "depends-on": "blocks", "blocks": "depends-on", "relates": "relates"}
-            affected_type = link_type if is_source else reverse[link_type]
+            affected_type = link_type if is_source else reverse_type
             affected_target = dst_id if is_source else src_id
             # Reparenting replaces the child's single parent; other relations,
             # including other children of either Epic, are not this operation.
@@ -1683,6 +1688,7 @@ class GitHubProjectsTracker(Tracker):
             )
             return snapshot
         if (self._has_link(read_src, link_type, dst_id)
+                and self._has_link(read_dst, reverse_type, src_id)
                 and unrelated(read_src, True) == unrelated(fresh_src, True)
                 and unrelated(read_dst, False) == unrelated(fresh_dst, False)):
             return
