@@ -5,9 +5,10 @@ resolution via the registry) and raises a clear, actionable error for the rest.
 Its existence is the proof that adding a provider is a localized job: fill these
 methods in against the GitHub Projects v2 API and the pipeline/skills are unchanged.
 
-Note: GitHub Projects v2 is GraphQL-only, which is exactly why the original setup
-moved off it (rate limits). It stays a stub on purpose; once these methods are
-implemented, activate it through the repository's verified tracker binding.
+PAT-65 observed a REST read for one private personal Project v2 and used the Issues REST
+API for issue relations; the Projects mutations it qualified used GraphQL. This module
+remains a stub until the owner tickets implement and qualify those bounded operations.
+Once they do, activate it through the repository's verified tracker binding.
 """
 from __future__ import annotations
 
@@ -23,7 +24,9 @@ def _todo(method: str):
     raise NotImplementedError(
         f"ghprojects.{method} n'est pas implémenté (adaptateur stub). "
         f"Le seam Tracker est prouvé par ce fichier : implémente les méthodes "
-        f"contre l'API GitHub Projects v2 (GraphQL) pour l'activer. "
+        f"contre l'API qualifiée par opération : Issues REST pour issues, "
+        f"commentaires, labels et relations ; Projects REST en lecture ou "
+        f"GraphQL selon la capacité Projects qualifiée, avant activation. "
         f"Aucune autre partie du pipeline ne change.")
 
 
