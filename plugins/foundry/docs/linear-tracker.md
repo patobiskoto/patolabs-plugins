@@ -491,10 +491,12 @@ separate bounded comments for the projected `in-progress`, `review`, reviewed-AC
 digest. The AC receipt embeds the complete canonical all-pass review proof and binds it
 to the byte-exact unchanged description. The done receipt repeats the review coordinates
 and adds the exact merge SHA. Foundry queries validate these comments before deriving the
-effective lifecycle state, PR URL or AC completion; Linear's native state, description,
-priority, labels and parent are never replaced by Foundry. Native checked boxes are
-deliberately not counted as proven completion: without the matching append-only review
-receipt, Foundry reports them incomplete and requires the structured proof before merge.
+effective lifecycle state, PR URL or AC completion. These lifecycle operations do not
+replace Linear's native state, description, priority, labels or parent; separate grooming
+operations may replace targeted fields, description and parent only through the bounded
+PAT-ADR-0006 path documented above. Native checked boxes are deliberately not counted as
+proven completion: without the matching append-only review receipt, Foundry reports them
+incomplete and requires the structured proof before merge.
 
 ### Typed human AC override receipt (PAT-49)
 
@@ -615,9 +617,14 @@ or replaces Foundry's review, test and CI gates.
 - Foundry concurrency guarantee: one canonical receipt per issue and singleton operation,
   and one chained canonical receipt per review generation; replay is idempotent and any
   competing projection at the same generation fails closed.
-- Unsupported provider capability: replacement of native state, priority, description,
-  checkbox, labels, parent or PR field, plus atomic audited Epic closure. These remain
-  typed refusals rather than best-effort read/write sequences.
+- Separate grooming capability: PAT-ADR-0006 permits targeted native state, priority,
+  estimate, milestone, type, labels, description and parent replacement under bounded
+  detection. Untargeted properties are omitted and provider label deltas preserve
+  unrelated labels where Linear permits it; an external S1→S2 write can still be
+  overwritten, so this is neither CAS nor exclusion.
+- Unsupported provider capability: replacement of native acceptance checkboxes or a PR
+  field, plus atomic audited Epic closure. Native AC completion instead comes from the
+  proof-bound append-only projection; the unsupported writes remain typed refusals.
 
 ## GitHub merge automation interlock
 
