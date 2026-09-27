@@ -3,7 +3,7 @@
 The existing pre-push hook now checks the author email, committer email and full
 message (including co-author trailers) of commits newly published to the destination.
 It rejects the two retired maintainer identities declared in
-`hooks/privacy_pre_push.py`. Other identities, including GitHub and Anthropic no-reply
+`.githooks/pre-push`. Other identities, including GitHub and Anthropic no-reply
 addresses, remain allowed. Diagnostics identify the commit and field without printing
 the private email or message.
 

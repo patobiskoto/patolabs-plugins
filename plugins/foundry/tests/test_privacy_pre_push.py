@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import subprocess
+import shutil
 
 import pytest
 
@@ -23,8 +24,8 @@ def commit(repo, *, author=SAFE, committer=SAFE, message="fixture"):
     return git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
-@pytest.fixture
-def repositories(tmp_path):
+@pytest.fixture(params=["monorepo", "consumer"])
+def repositories(tmp_path, request):
     remote = tmp_path / "remote.git"
     local = tmp_path / "local"
     git(tmp_path, "init", "--bare", str(remote))
@@ -37,7 +38,12 @@ def repositories(tmp_path):
     # Historical leak already published, deliberately retained as evidence.
     commit(local, author=BAD[0])
     git(local, "push", "origin", "feature:main")
-    git(local, "config", "core.hooksPath", str(PLUGIN / ".githooks"))
+    hooks = PLUGIN / ".githooks"
+    if request.param == "consumer":
+        hooks = local / ".githooks"
+        hooks.mkdir()
+        shutil.copy2(PLUGIN / ".githooks/pre-push", hooks / "pre-push")
+    git(local, "config", "core.hooksPath", str(hooks))
     return local, remote
 
 
@@ -65,10 +71,12 @@ def test_allows_legitimate_identity_and_retained_history(repositories, email):
 
 def test_update_scans_intermediate_commits_and_force_push(repositories):
     local, _ = repositories
-    commit(local)
+    old_tip = commit(local, message="published feature tip")
     git(local, "push", "origin", "feature")
-    commit(local, committer=BAD[1])
-    commit(local)
+    git(local, "reset", "--hard", "origin/main")
+    commit(local, committer=BAD[1], message="divergent leaked identity")
+    new_tip = commit(local, message="clean divergent tip")
+    assert git(local, "merge-base", "--is-ancestor", old_tip, new_tip, check=False).returncode == 1
     assert git(local, "push", "--force", "origin", "feature", check=False).returncode != 0
 
 
@@ -128,7 +136,7 @@ def test_new_remote_requires_scanning_ancestry(repositories, tmp_path):
 
 def test_inspection_error_and_malformed_input_fail_closed(repositories):
     local, _ = repositories
-    hook = PLUGIN / ".githooks" / "pre-push"
+    hook = Path(git(local, "config", "core.hooksPath").stdout.strip()) / "pre-push"
     result = subprocess.run([str(hook), "origin", "/nonexistent/privacy-remote"],
                             cwd=local, input="invalid\n", capture_output=True, text=True)
     assert result.returncode == 1
