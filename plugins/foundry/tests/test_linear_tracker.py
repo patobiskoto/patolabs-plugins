@@ -285,7 +285,12 @@ class LinearWire:
             return {
                 "data": {
                     "issues": connection(
-                        [copy.deepcopy(v) for v in self.issues.values()]
+                        [
+                            copy.deepcopy(value)
+                            for value in self.issues.values()
+                            if value["team"]["id"] == variables["teamId"]
+                            and value["project"]["id"] == variables["projectId"]
+                        ]
                     )
                 }
             }
@@ -712,6 +717,65 @@ def test_binding_requires_explicit_repository_team_project_and_all_state_ids(tra
     overlapping_labels.extra["label_ids"]["pilot"] = "label-feature"
     with pytest.raises(LinearBindingError, match="label_ids_overlap"):
         instance.search(overlapping_labels)
+
+
+def test_linear_same_team_projects_are_isolated_by_stable_project_ids(tracker):
+    """A shared Linear team never widens a checkout's product authority."""
+    instance, wire = tracker
+    sibling = Project(
+        key=PROJECT.key,
+        id="project-near-uuid",
+        extra={
+            **copy.deepcopy(PROJECT.extra),
+            "canonical_repo": "github.com/acme/widgets-near",
+        },
+    )
+    wire.issues["LIN-3"] = raw_issue(
+        "LIN-3",
+        "00000000-0000-4000-8000-000000000003",
+        title="Existing binding review",
+    )
+    wire.issues["LIN-3"]["project"] = {"id": sibling.id}
+
+    # The fake honours the real query's team-and-project filter.  Similar titles
+    # and a shared team make a name- or prefix-based accidental success impossible.
+    backlog = instance.search(PROJECT)
+    assert [item.id for item in backlog] == ["LIN-1", "LIN-2"]
+    search_call = next(call for call in reversed(wire.calls) if "FoundryLinearIssues" in call[0])
+    assert search_call[1]["teamId"] == PROJECT.extra["team_id"]
+    assert search_call[1]["projectId"] == PROJECT.id
+
+    calls_before = len(wire.calls)
+    with pytest.raises(LinearBindingError, match="issue_outside_binding"):
+        instance.update_fields("LIN-3", {"Priority": "P0"}, project=PROJECT)
+    assert not any(
+        "FoundryLinearIssueUpdate" in document
+        for document, _ in wire.calls[calls_before:]
+    )
+
+    local_adr = instance.create_adr(PROJECT, "Existing binding decision A", "A body")
+    foreign_adr = instance.create_adr(sibling, "Existing binding decision B", "B body")
+    assert local_adr.id == foreign_adr.id == "LIN-ADR-0001"
+    assert local_adr.ref != foreign_adr.ref
+    assert [
+        (adr.id, adr.ref, adr.title, adr.body)
+        for adr in instance.list_adrs(PROJECT)
+    ] == [
+        (
+            local_adr.id,
+            local_adr.ref,
+            "Existing binding decision A",
+            local_adr.body,
+        ),
+    ]
+    assert local_adr.body.endswith("\n\nA body")
+    calls_before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="snapshot is stale"):
+        instance.set_adr_status(foreign_adr, "accepted", project=PROJECT)
+    assert not any(
+        "FoundryLinearAdrDocumentCreate" in document
+        for document, _ in wire.calls[calls_before:]
+    )
 
 
 def test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_reader(
