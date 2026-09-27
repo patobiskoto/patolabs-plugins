@@ -31,9 +31,17 @@ the suite does not call a real YouTrack, Linear or GitHub resource.
   a PAT owner ticket.
 
 A blocking cell is therefore not silently skipped and is never represented as a
-passing conformance case. When PAT-58, PAT-59, PAT-64, PAT-67 or PAT-69 turns one of
-those cells into `supported`, the conformance manifest must gain executable coverage
-for that provider/operation pair or the public suite fails.
+passing conformance case. When PAT-58, PAT-59, PAT-64, PAT-66, PAT-67 or PAT-69 turns
+one of those cells into `supported`, the conformance manifest must have executable
+coverage for that provider/operation pair or the public suite fails.
+
+Parallel owner tickets may pre-register a case with `pending_ticket`. Such a selector
+does not count as passing coverage while its contract cell is still blocking, and its
+test is allowed to be absent from the current branch. As soon as the owner ticket flips
+that cell to `supported`, the selector becomes mandatory: the test must exist and is
+collected into the same `tracker_conformance` suite. PAT-66 uses this seam so its
+GitHub Projects write tests can land independently of PAT-68 without a merge-order
+window that weakens CI.
 
 The manifest also pins coverage of the failure classes required by PAT-68:
 capabilities, explicit refusals, pagination, permissions, conflicts, ambiguous
