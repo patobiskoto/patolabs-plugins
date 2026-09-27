@@ -31,7 +31,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/ghprojects.py",
       "class": "GitHubProjectsTracker",
       "v1_core": true,
-      "note": "PAT-57 implements the bounded read slice: canonical binding identity, search and get_issue. PAT-66 implements bounded core issue/item creation and grooming writes, comments and relations. Lifecycle projection and ADR reads/writes remain typed capability refusals pending PAT-67 and PAT-58. PAT-65 qualified the private personal-project API shape and PAT-ADR-0007 selected the reserved foundry:adr support label."
+      "note": "PAT-57 implements the bounded read slice, PAT-66 core issue writes, and PAT-58 the qualified ADR issue/comment codec. PAT-67 retains lifecycle projection. PAT-65 qualified the private personal-project API shape and PAT-ADR-0007 selected the reserved foundry:adr support label."
     },
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
@@ -332,9 +332,8 @@
           "evidence": "list_adrs (linear.py) rebuilds Adr models from the Document/witness chains (_adr_documents, linear.py; _adr_chain)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-58",
-          "evidence": "list_adrs raises TrackerCapabilityUnavailableError(ghprojects, adr_index); PAT-ADR-0007 accepted issue bodies plus version comments with a reserved foundry:adr label for private canonical repositories, and PAT-58 owns the strict codec and adapter implementation"
+          "status": "supported",
+          "evidence": "list_adrs exhaustively pages only the exact bound private Project, isolates foreign ADR namespaces, reads each reserved foundry:adr Issue and all version comments, then verifies source digest, sequence, predecessor coordinates and whole-version digest, native coordinates and reciprocal supersession before returning the normalized index (ghprojects.py)"
         }
       }
     },
@@ -355,9 +354,8 @@
           "evidence": "create_adr calls _create_adr_document directly (linear.py), which creates the version-0 Document and its witness at deterministic ids with byte-exact readback (linear.py; PAT-ADR-0002)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-58",
-          "evidence": "create_adr raises TrackerCapabilityUnavailableError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "create_adr reserves the next coordinate under a machine-local corpus lock after a fresh qualified snapshot, creates a reserved foundry:adr Issue in the exact private repository, adds it to the exact Project without a delivery Type default, appends its UTF-8 version-zero comment and verifies the full readback; durable stage markers prevent blind replay of an unknown provider effect without claiming distributed exclusion (ghprojects.py)"
         }
       }
     },
@@ -378,9 +376,8 @@
           "evidence": "set_adr_status appends a successor version through _next_adr_metadata and _append_adr_version (linear.py). Batch-qualified migration chains may use the exact source-digest and rendered-body-digest profile for FOUNDRY-ADR-0001 (linear.py); native ADRs, unqualified migrations, changed bodies and unknown readbacks remain on the strict closed model. Typed accept, supersede, issue-link and edit successors, predecessor/witness corruption, native/coordinated edits, interruption recovery and exact replay are covered by test_linear_tracker.py (PAT-47)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-58",
-          "evidence": "set_adr_status raises TrackerCapabilityUnavailableError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "set_adr_status verifies the caller's complete expected ADR snapshot against a fresh strict read, appends one linked version comment, and verifies exact desired metadata, source, status, relations and native comment ID; it is bounded detection without CAS or blind retry (ghprojects.py)"
         }
       }
     },
@@ -402,9 +399,8 @@
           "evidence": "adr_issue_link_supported = True (linear.py); link_adr_issue (linear.py) and supersede_adr (linear.py) append versions to the Document/witness chain"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "evidence": "not overridden; the base default applies",
-          "ticket": "PAT-58"
+          "status": "supported",
+          "evidence": "link_adr_issue and supersede_adr append verified ADR versions, respectively retaining canonical delivery Issue references and reciprocal supersession coordinates (ghprojects.py)"
         }
       },
       "note": "ADR evolution in criterion 1 is served by set_adr_status on every V1 provider; these methods are an optional reciprocal-linking enhancement."

@@ -8,7 +8,7 @@ import pytest
 
 import foundry
 from foundry import query
-from foundry.models import Issue, Link, Project
+from foundry.models import Adr, Issue, Link, Project
 from foundry.registry import RepositoryTrackerBinding
 from foundry.trackers.base import (
     IssueUnavailableError,
@@ -742,7 +742,7 @@ def test_pat66_lost_issue_response_replays_in_second_instance_without_duplicate(
     journal = next((tmp_path / "ghprojects-create-intents").glob("*.json"))
     stored = json.loads(journal.read_text(encoding="utf-8"))
     assert set(stored) == {
-        "attempt", "content_id", "fingerprint", "issue_id", "native_id",
+        "adr_id", "attempt", "content_id", "fingerprint", "issue_id", "native_id",
         "schema", "state", "step",
     }
     assert "partial" not in journal.read_text(encoding="utf-8")
@@ -1111,6 +1111,365 @@ def test_rest_adr_discrimination_remains_explicit_after_graphql_read():
 
     with pytest.raises(TrackerCapabilityUnavailableError, match="adr_issue_read"):
         GitHubProjectsTracker(runner=runner).get_issue("GHQUAL-1")
+
+
+def _adr_metadata(*, sequence=0, previous_comment_id=None, previous_sha256=None):
+    import hashlib
+    body = "source UTF-8 é"
+    return {
+        "schema": "foundry-ghprojects-adr.v1", "project_id": PROJECT.id,
+        "repository": "patobiskoto/foundry-v1-ghprojects-sandbox",
+        "id": "GHQUAL-ADR-0001", "title": "Décision", "status": "proposed",
+        "sequence": sequence, "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "previous_comment_id": previous_comment_id, "previous_sha256": previous_sha256,
+        "relations": {"issues": [], "supersedes": [], "superseded_by": None},
+    }, body
+
+
+def test_pat58_snapshot_verifies_current_utf8_source_and_complete_chain(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    metadata, body = _adr_metadata()
+    comment = {"id": 123, "body": tracker._adr_comment(metadata, body)}
+    issue = _rest_issue(1)
+    issue.update({"title": "[GHQUAL-ADR-0001] Décision", "body": body,
+                  "labels": [{"name": "foundry:adr"}]})
+    monkeypatch.setattr(tracker, "_adr_supports", lambda project: [("GHQUAL-ADR-0001", "Décision", 1)])
+    monkeypatch.setattr(tracker, "_rows", lambda path, operation: [comment])
+    monkeypatch.setattr(tracker, "_rest", lambda path, operation: issue)
+
+    assert tracker.list_adrs(PROJECT) == [
+        Adr("GHQUAL-ADR-0001", "Décision", "proposed", body, "1")
+    ]
+
+
+@pytest.mark.parametrize("tamper", ["source", "digest", "missing-comment"])
+def test_pat58_snapshot_refuses_tampered_or_missing_history(monkeypatch, tamper):
+    tracker = GitHubProjectsTracker()
+    metadata, body = _adr_metadata()
+    if tamper == "digest":
+        metadata["body_sha256"] = "0" * 64
+    comment = {"id": 123, "body": tracker._adr_comment(metadata, body)}
+    issue = _rest_issue(1)
+    issue.update({"title": "[GHQUAL-ADR-0001] Décision", "body": "changed" if tamper == "source" else body,
+                  "labels": [{"name": "foundry:adr"}]})
+    monkeypatch.setattr(tracker, "_adr_supports", lambda project: [("GHQUAL-ADR-0001", "Décision", 1)])
+    monkeypatch.setattr(tracker, "_rows", lambda path, operation: [] if tamper == "missing-comment" else [comment])
+    monkeypatch.setattr(tracker, "_rest", lambda path, operation: issue)
+
+    with pytest.raises(TrackerConflictError):
+        tracker.list_adrs(PROJECT)
+
+
+class _AdrCycleTransport:
+    """A raw gh transport for the public ADR lifecycle and its replay boundary."""
+
+    repo = "patobiskoto/foundry-v1-ghprojects-sandbox"
+
+    def __init__(self):
+        self.issues = {1: {**_rest_issue(1), "title": "delivery", "node_id": "node-1"}}
+        self.comments, self.project_numbers, self.next_number, self.next_comment = {}, {1}, 2, 100
+        self.patches = []
+
+    def _issue(self, number):
+        return deepcopy(self.issues[number])
+
+    def _project(self):
+        page = _page("item-1", 1, None, False)
+        nodes = []
+        for number in sorted(self.project_numbers):
+            issue = self.issues[number]
+            row = deepcopy(page["data"]["user"]["projectV2"]["items"]["nodes"][0])
+            row["id"] = f"item-{number}"
+            content = row["content"]
+            content.update({"id": issue["node_id"], "number": number,
+                            "title": issue["title"], "body": issue["body"],
+                            "labels": {"nodes": deepcopy(issue["labels"]),
+                                       "pageInfo": {"hasNextPage": False, "endCursor": None}}})
+            nodes.append(row)
+        page["data"]["user"]["projectV2"]["items"]["nodes"] = nodes
+        return page
+
+    def __call__(self, command, **kwargs):
+        if command[2] == "graphql":
+            query = next(value for value in command if value.startswith("query="))
+            if "repositories(first:100" in query:
+                payload = {"data": {"user": {"projectV2": {
+                    "id": PROJECT.id, "number": 7, "public": False,
+                    "repositories": {"nodes": [{"id": "repo-node", "nameWithOwner": self.repo,
+                        "isPrivate": True, "owner": {"__typename": "User", "login": "patobiskoto"}}],
+                        "pageInfo": {"hasNextPage": False, "endCursor": None}},
+                }}}}
+            elif "addProjectV2ItemById" in query:
+                content = next(value.removeprefix("content=") for value in command if value.startswith("content="))
+                number = next(number for number, issue in self.issues.items() if issue["node_id"] == content)
+                self.project_numbers.add(number)
+                payload = {"data": {"addProjectV2ItemById": {"item": {"id": f"item-{number}"}}}}
+            else:
+                payload = self._project()
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        method, path = command[command.index("-X") + 1], command[command.index("-X") + 2]
+        if method == "POST" and path.endswith("/issues"):
+            title = next(value.removeprefix("title=") for value in command if value.startswith("title="))
+            body = next(value.removeprefix("body=") for value in command if value.startswith("body="))
+            number = self.next_number
+            self.next_number += 1
+            issue = {**_rest_issue(number), "title": title, "body": body,
+                     "node_id": f"node-{number}"}
+            self.issues[number] = issue
+            return subprocess.CompletedProcess(command, 0, json.dumps(issue), "")
+        if method == "POST" and path.endswith("/labels"):
+            number = int(path.split("/")[-2])
+            self.issues[number]["labels"].append({"name": "foundry:adr"})
+            return subprocess.CompletedProcess(command, 0, json.dumps(self.issues[number]["labels"]), "")
+        if method == "PATCH" and "/issues/" in path:
+            number = int(path.split("/")[-1])
+            self.issues[number]["body"] = next(value.removeprefix("body=") for value in command if value.startswith("body="))
+            self.patches.append(number)
+            return subprocess.CompletedProcess(command, 0, json.dumps(self._issue(number)), "")
+        if method == "POST" and path.endswith("/comments"):
+            number = int(path.split("/")[-2])
+            body = next(value.removeprefix("body=") for value in command if value.startswith("body="))
+            self.next_comment += 1
+            comment = {"id": self.next_comment, "body": body}
+            self.comments.setdefault(number, []).append(comment)
+            return subprocess.CompletedProcess(command, 0, json.dumps(comment), "")
+        if "/comments" in path:
+            number = int(path.split("/issues/")[1].split("/")[0])
+            return subprocess.CompletedProcess(command, 0, json.dumps(self.comments.get(number, [])), "")
+        if "issues?state=all" in path:
+            return subprocess.CompletedProcess(command, 0, json.dumps([self._issue(n) for n in self.issues]), "")
+        if path.endswith("/parent"):
+            return subprocess.CompletedProcess(command, 1, json.dumps({"message": "No parent issue found", "status": "404"}), "404")
+        if "/issues/" in path:
+            number = int(path.split("/issues/")[1].split("?")[0].split("/")[0])
+            return subprocess.CompletedProcess(command, 0, json.dumps(self._issue(number)), "")
+        return subprocess.CompletedProcess(command, 0, "[]", "")
+
+
+def test_pat58_public_raw_transport_full_cycle_and_completed_replay(tmp_path):
+    provider = _AdrCycleTransport()
+    first = GitHubProjectsTracker(runner=provider, state_dir=tmp_path)
+    first_adr = first.create_adr(PROJECT, "Décision", "source UTF-8 é")
+    # A fresh process reuses only its durable coordinate and must add no support.
+    replay = GitHubProjectsTracker(runner=provider, state_dir=tmp_path)
+    assert replay.create_adr(PROJECT, "Décision", "source UTF-8 é") == first_adr
+    second_adr = replay.create_adr(PROJECT, "Remplacement", "second source")
+    replay.set_adr_status(first_adr, "accepted", PROJECT)
+    accepted_first = replay.adr_for_mutation(PROJECT, first_adr.id)
+    assert accepted_first is not None
+    assert replay.update_body(accepted_first, "source UTF-8 é", "source v2 UTF-8 é", PROJECT)
+    edited_first = replay.adr_for_mutation(PROJECT, first_adr.id)
+    assert edited_first is not None
+    replay.link_adr_issue(edited_first, "GHQUAL-1", PROJECT)
+    replay.set_adr_status(second_adr, "accepted", PROJECT)
+    replay.supersede_adr(replay.adr_for_mutation(PROJECT, first_adr.id), second_adr.id, PROJECT)
+    current_second = replay.adr_for_mutation(PROJECT, second_adr.id)
+    assert current_second is not None
+    replay.set_adr_status(current_second, "deprecated", PROJECT)
+    adrs = {adr.id: adr for adr in replay.list_adrs(PROJECT)}
+    assert adrs[first_adr.id].status == "superseded"
+    assert adrs[second_adr.id].status == "deprecated"
+    # Only the source edit patches an Issue body; statuses and relations append history.
+    assert provider.patches == [int(first_adr.ref)]
+
+
+def test_pat58_unobserved_create_effect_is_never_posted_twice(tmp_path):
+    provider = _AdrCycleTransport()
+    posts = 0
+
+    def runner(command, **kwargs):
+        nonlocal posts
+        if command[2] != "graphql":
+            method, path = command[command.index("-X") + 1:command.index("-X") + 3]
+            if method == "POST" and path.endswith("/issues"):
+                posts += 1
+                return subprocess.CompletedProcess(command, 1, "", "transport failed")
+        return provider(command, **kwargs)
+
+    for _ in range(2):
+        with pytest.raises(GitHubProjectsTrackerError, match="create_effect_unknown"):
+            GitHubProjectsTracker(runner=runner, state_dir=tmp_path).create_adr(
+                PROJECT, "Perdue", "source",
+            )
+    assert posts == 1
+
+
+@pytest.mark.parametrize("copies", [1, 2])
+def test_pat58_lost_create_response_reconciles_only_one_exact_candidate(
+    tmp_path, copies,
+):
+    provider = _AdrCycleTransport()
+    posts = 0
+
+    def runner(command, **kwargs):
+        nonlocal posts
+        if command[2] != "graphql":
+            method, path = command[command.index("-X") + 1:command.index("-X") + 3]
+            if method == "POST" and path.endswith("/issues"):
+                posts += 1
+                for _ in range(copies):
+                    provider(command, **kwargs)
+                return subprocess.CompletedProcess(command, 1, "", "transport failed")
+        return provider(command, **kwargs)
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    if copies == 1:
+        assert tracker.create_adr(PROJECT, "Perdue", "source").id == "GHQUAL-ADR-0001"
+    else:
+        with pytest.raises(TrackerConflictError, match="ambiguous"):
+            tracker.create_adr(PROJECT, "Perdue", "source")
+    assert posts == 1
+
+
+def test_pat58_old_pat66_intent_without_adr_id_remains_readable(tmp_path):
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    fingerprint = "a" * 64
+    old = tracker._intent_record(fingerprint, "pending")
+    old.pop("adr_id")
+    tracker._create_intent_dir.mkdir(parents=True)
+    tracker._intent_path(fingerprint).write_text(json.dumps(old), encoding="utf-8")
+
+    assert tracker._read_create_intent(fingerprint) == old
+
+
+def test_pat58_initial_version_lost_response_resumes_by_observation_only(tmp_path):
+    provider = _AdrCycleTransport()
+    comment_posts = 0
+    interrupt_readback = False
+
+    def runner(command, **kwargs):
+        nonlocal comment_posts, interrupt_readback
+        if command[2] != "graphql":
+            method, path = command[command.index("-X") + 1:command.index("-X") + 3]
+            if method == "POST" and path.endswith("/comments"):
+                comment_posts += 1
+                provider(command, **kwargs)
+                interrupt_readback = True
+                return subprocess.CompletedProcess(command, 1, "", "transport failed")
+            if method == "GET" and "/comments" in path and interrupt_readback:
+                interrupt_readback = False
+                return subprocess.CompletedProcess(command, 1, "", "transport failed")
+        return provider(command, **kwargs)
+
+    first = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+        first.create_adr(PROJECT, "Interrompue", "source")
+    replay = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    assert replay.create_adr(PROJECT, "Interrompue", "source").id == "GHQUAL-ADR-0001"
+    assert comment_posts == 1
+    assert len(provider.comments[2]) == 1
+
+
+def test_pat58_unobserved_initial_version_is_not_reposted(tmp_path):
+    provider = _AdrCycleTransport()
+    comment_posts = 0
+
+    def runner(command, **kwargs):
+        nonlocal comment_posts
+        if command[2] != "graphql":
+            method, path = command[command.index("-X") + 1:command.index("-X") + 3]
+            if method == "POST" and path.endswith("/comments"):
+                comment_posts += 1
+                return subprocess.CompletedProcess(command, 1, "", "transport failed")
+        return provider(command, **kwargs)
+
+    for _ in range(2):
+        with pytest.raises(GitHubProjectsTrackerError, match="adr:version_effect_unknown"):
+            GitHubProjectsTracker(runner=runner, state_dir=tmp_path).create_adr(
+                PROJECT, "Interrompue", "source",
+            )
+    assert comment_posts == 1
+
+
+def test_pat58_status_write_refuses_stale_source_snapshot_before_comment(tmp_path):
+    provider = _AdrCycleTransport()
+    tracker = GitHubProjectsTracker(runner=provider, state_dir=tmp_path)
+    stale = tracker.create_adr(PROJECT, "Décision", "source")
+    tracker.set_adr_status(stale, "accepted", PROJECT)
+    accepted = tracker.adr_for_mutation(PROJECT, stale.id)
+    assert accepted is not None
+    tracker.update_body(accepted, "source", "source v2", PROJECT)
+    before = provider.next_comment
+
+    with pytest.raises(TrackerConflictError, match="stale"):
+        tracker.set_adr_status(stale, "deprecated", PROJECT)
+    assert provider.next_comment == before
+
+
+@pytest.mark.parametrize("effect", ["none", "one", "two"])
+def test_pat58_lost_status_comment_never_creates_a_second_version(tmp_path, effect):
+    provider = _AdrCycleTransport()
+    tracker = GitHubProjectsTracker(runner=provider, state_dir=tmp_path)
+    adr = tracker.create_adr(PROJECT, "Décision", "source")
+    posts = 0
+
+    def runner(command, **kwargs):
+        nonlocal posts
+        if command[2] != "graphql":
+            method, path = command[command.index("-X") + 1:command.index("-X") + 3]
+            if method == "POST" and path.endswith("/comments"):
+                posts += 1
+                for _ in range({"none": 0, "one": 1, "two": 2}[effect]):
+                    provider(command, **kwargs)
+                return subprocess.CompletedProcess(command, 1, "", "transport failed")
+        return provider(command, **kwargs)
+
+    interrupted = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    if effect == "one":
+        interrupted.set_adr_status(adr, "accepted", PROJECT)
+        assert interrupted.adr_for_mutation(PROJECT, adr.id).status == "accepted"
+    else:
+        with pytest.raises((GitHubProjectsTrackerError, TrackerConflictError)):
+            interrupted.set_adr_status(adr, "accepted", PROJECT)
+        with pytest.raises((GitHubProjectsTrackerError, TrackerConflictError)):
+            GitHubProjectsTracker(runner=runner, state_dir=tmp_path).set_adr_status(
+                adr, "accepted", PROJECT,
+            )
+    assert posts == 1
+
+
+def test_pat58_chain_digest_detects_predecessor_metadata_tamper(tmp_path):
+    provider = _AdrCycleTransport()
+    tracker = GitHubProjectsTracker(runner=provider, state_dir=tmp_path)
+    adr = tracker.create_adr(PROJECT, "Décision", "source UTF-8 é")
+    tracker.set_adr_status(adr, "accepted", PROJECT)
+    first = provider.comments[int(adr.ref)][0]
+    encoded, source = first["body"][len("<!-- foundry-ghprojects-adr.v1\n"):].split(
+        "\n-->\n\n", 1,
+    )
+    metadata = json.loads(encoded)
+    metadata["relations"]["issues"] = ["GHQUAL-1"]
+    first["body"] = tracker._adr_comment(metadata, source)
+
+    with pytest.raises(TrackerConflictError, match="predecessor"):
+        tracker.list_adrs(PROJECT)
+
+
+def test_pat58_distinct_concurrent_requests_allocate_distinct_ids(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    provider = _AdrCycleTransport()
+
+    def create(index):
+        return GitHubProjectsTracker(runner=provider, state_dir=tmp_path).create_adr(
+            PROJECT, f"Décision {index}", f"source {index}",
+        ).id
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ids = set(pool.map(create, (1, 2)))
+    assert ids == {"GHQUAL-ADR-0001", "GHQUAL-ADR-0002"}
+
+
+def test_pat58_completed_replay_rejects_native_coordinate_drift(tmp_path):
+    provider = _AdrCycleTransport()
+    tracker = GitHubProjectsTracker(runner=provider, state_dir=tmp_path)
+    adr = tracker.create_adr(PROJECT, "Décision", "source")
+    provider.issues[int(adr.ref)]["node_id"] = "foreign-node"
+
+    with pytest.raises((GitHubProjectsTrackerError, TrackerConflictError)):
+        GitHubProjectsTracker(runner=provider, state_dir=tmp_path).create_adr(
+            PROJECT, "Décision", "source",
+        )
 
 
 @pytest.mark.parametrize("value", ["2026-09-27", "2026-09-27T12:00:00",

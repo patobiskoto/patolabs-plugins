@@ -205,8 +205,8 @@ def test_every_operation_maps_to_a_real_tracker_abc_member():
             )
 
 
-def test_ghprojects_cells_match_delivered_reads_and_pat66_core_writes():
-    """PAT-57 reads and PAT-66 core writes are delivered; later tranches remain owned."""
+def test_ghprojects_cells_match_delivered_reads_writes_and_pat58_adrs():
+    """PAT-57/66/58 are delivered; lifecycle and other later tranches remain owned."""
     contract = _load_contract()
     for operation in contract["operations"]:
         cell = operation["cells"].get("ghprojects")
@@ -219,8 +219,10 @@ def test_ghprojects_cells_match_delivered_reads_and_pat66_core_writes():
         if operation["id"] in {
             "identity-and-project-resolution", "repository-bootstrap", "backlog-read",
             "frame-intake-groom-create", "frame-intake-groom-evolve-existing",
-            "mid-flight-comment", "epics-children-creation",
-            "epics-children-reparent-existing", "dependencies-relates-blocks",
+                "mid-flight-comment", "epics-children-creation",
+                "epics-children-reparent-existing", "dependencies-relates-blocks",
+                "adr-read", "adr-create", "adr-status-evolution",
+                "adr-supersession-and-issue-linking",
         }:
             assert cell["status"] == "supported"
             continue
@@ -315,8 +317,8 @@ def test_youtrack_has_no_import_adr_override():
     assert "import_adr_batch" not in YouTrackTracker.__dict__
 
 
-def test_ghprojects_pat66_writes_are_real_and_later_boundaries_remain_refused():
-    """PAT-66 owns core writes; PAT-58/67 retain ADR and lifecycle boundaries."""
+def test_ghprojects_pat66_and_pat58_writes_are_real_and_lifecycle_remains_refused():
+    """PAT-66 owns issues, PAT-58 ADRs; PAT-67 retains lifecycle projection."""
     from foundry.trackers.ghprojects import GitHubProjectsTracker
     from foundry.trackers.base import TrackerCapabilityUnavailableError
 
@@ -327,9 +329,6 @@ def test_ghprojects_pat66_writes_are_real_and_later_boundaries_remain_refused():
         assert method_name in GitHubProjectsTracker.__dict__
     calls = {
         "set_state": (None, None),
-        "list_adrs": (None,),
-        "create_adr": (None, None, None),
-        "set_adr_status": (None, None),
     }
     for method_name, args in calls.items():
         method = getattr(tracker, method_name)

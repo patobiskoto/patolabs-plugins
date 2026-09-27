@@ -311,3 +311,45 @@ Contrairement à la création, les champs existants n’ont pas de journal durab
 d’intention : une relecture indisponible laisse un effet inconnu et aucun retry
 automatique. Une invocation ultérieure explicite repart d’une lecture fraîche.
 La fenêtre S1→S2 résiduelle de PAT-ADR-0006 reste assumée.
+
+### Recette PAT-58 : cycle ADR natif et source exacte
+
+La recette privée du 27 septembre 2026 utilise le port `Tracker` et les opérations
+communes `write`, avec le binding sandbox `GHQUAL`. Trois supports synthétiques
+non décisionnels ont été créés : `GHQUAL-ADR-0001` (issue 8),
+`GHQUAL-ADR-0002` (issue 9), `GHQUAL-ADR-0003` (issue 10). Le cycle observé est :
+
+- issue 8 : proposed → accepted, édition versionnée UTF-8 exacte, lien vers
+  `GHQUAL-5`, puis superseded par l'ADR de l'issue 9 ;
+- issue 9 : proposed → accepted, avec relation réciproque `supersedes` ;
+- issue 10 : proposed → accepted → deprecated.
+
+Le port relit la source, le statut et la chaîne complète des versions. Le GET
+natif GitHub au format `application/vnd.github.full+json` fournit la source
+`body` exacte et le rendu `body_html` : titre, emphase, code inline, tableau,
+lien et code clôturé sont effectivement rendus. Les caractères `é`, `œ`, `漢字`
+et les chevrons littéraux du code restent présents. Il n'y a ni réécriture de
+source pour compenser l'affichage, ni qualification générale de tout Markdown
+possible à partir de cette seule recette.
+
+Lors de chaque création, l'ajout au Project a été momentanément invisible dans
+la lecture suivante. Foundry a explicitement refusé `adr:item_effect_unknown`.
+Une nouvelle invocation n'a repris que le candidat natif exact et unique déjà
+observé, au moyen du journal d'intention conservé : aucune seconde issue n'a
+été créée. Il s'agit d'un retard de visibilité observé, pas d'une panne GitHub
+ni d'une perte de réponse artificiellement présentée comme réelle. Les tests
+de transport couvrent séparément les pertes de réponse, zéro/un/deux candidats,
+les préconditions périmées et les altérations.
+
+Les trois supports sont absents du backlog de livraison renvoyé par le port.
+La relecture native de la vue `PAT-65 qualification — delivery Kanban` confirme
+`BOARD_LAYOUT` et le filtre `-label:foundry:adr` ; elle qualifie la configuration,
+pas une inspection visuelle des cartes. L'issue expérimentale 3 conserve
+exactement son titre, son corps, ses labels et les IDs/corps de ses commentaires.
+Le marqueur tracker Linear de patolabs-plugins reste byte-identique.
+
+Ces observations de recette ne sont pas des receipts Foundry. La sérialisation
+d'intention est locale à une machine ; la supersession utilise deux commentaires
+et n'est pas atomique. Le risque résiduel S1→S2 est assumé conformément à
+PAT-ADR-0006, sans CAS ni exclusion des écritures concurrentes. Les propriétés
+non concernées sont conservées lorsque l'API permet des écritures ciblées.
