@@ -420,3 +420,46 @@ def test_setup_publication_rechecks_other_provider_under_lock(
     assert registry.load()["ghprojects"]["app"]["id"] == "PVT_1"
     assert registry.load().get("youtrack", {}) == {}
     assert not (repo / ".foundry/tracker.json").exists()
+
+
+@pytest.mark.parametrize("during_provisioning", [False, True])
+def test_setup_preserves_foreign_homonym_on_another_provider(
+    monkeypatch, tmp_path, during_provisioning,
+):
+    first = _repo(tmp_path, "first", "same")
+    second = _repo(tmp_path, "second", "same")
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setenv("FOUNDRY_TRACKER", "youtrack")
+    first_binding = None
+
+    def publish_first():
+        nonlocal first_binding
+        first_binding = registry.bootstrap_repository_binding(
+            "ghprojects", "same", "FIRST", "PVT_1", cwd=str(first),
+            owner="first", number="1",
+        )
+
+    if not during_provisioning:
+        publish_first()
+    monkeypatch.chdir(second)
+
+    class Provider:
+        name = "youtrack"
+        project_provisioning_supported = True
+        project_provisioning_requires_repository = False
+
+        def provision_project(self, *_args):
+            publish_first()
+            return Project(key="SECOND", id="0-2")
+
+    def factory(*_args, **_kwargs):
+        if not during_provisioning:
+            pytest.fail("existing homonym must refuse before provider construction")
+        return Provider()
+
+    monkeypatch.setattr(foundry, "tracker", factory)
+    with pytest.raises((SystemExit, ValueError), match="occupé"):
+        setup_project.setup("Second", "SECOND", "same")
+    assert registry.load().get("youtrack", {}) == {}
+    assert registry.repository_tracker_binding(str(first)) == first_binding
+    assert not (second / ".foundry/tracker.json").exists()

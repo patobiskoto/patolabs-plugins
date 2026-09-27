@@ -115,7 +115,10 @@ def setup(name, short, repo, adr_dir=None):
     provider = foundry.config.tracker_name()
     # The administrative setup publishes a legacy basename entry. It must never
     # replace a foreign canonical slot that the unbound preflight correctly ignored.
-    if repo in registry.load().get(provider, {}):
+    if any(
+        repo in entries for entries in registry.load().values()
+        if isinstance(entries, dict)
+    ):
         raise SystemExit(
             f"Setup tracker refusé : clé '{provider}/{repo}' déjà occupée. "
             "Utilisez registry bootstrap pour lier un projet existant."

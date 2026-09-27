@@ -1011,6 +1011,7 @@ def bootstrap_repository_binding(
     )
     with _cutover_lock():
         data = load()
+        _require_unique_checkout_provider(data, tracker, repository, repo)
         marker_path = _marker_path(str(root))
         if marker_path is not None and marker_path.exists():
             current = repository_tracker_binding(str(root))
@@ -1486,7 +1487,9 @@ def register(
                     f"binding {tracker}/{repo} déjà occupé ou incompatible avec le checkout"
                 )
         current = data.get(tracker, {}).get(repo)
-        if require_absent and repo in data.get(tracker, {}):
+        if require_absent and any(
+            repo in entries for entries in data.values() if isinstance(entries, dict)
+        ):
             raise ValueError(f"binding {tracker}/{repo} déjà occupé")
         if isinstance(current, dict) and current.get("archive") is True:
             raise ValueError(
@@ -1683,11 +1686,16 @@ def main(argv=None) -> None:
         if not isinstance(entry, dict):
             raise SystemExit("binding legacy source absent")
         try:
-            verify_existing_project(
+            verified = verify_existing_project(
                 tracker, repo, entry.get("key"), entry.get("id"),
                 **{name: value for name, value in entry.items() if name not in {"key", "id"}},
             )
-            binding = upgrade_legacy_binding(tracker, repo)
+            # Publish only the snapshot verified above. Bootstrap compares that
+            # exact candidate with the current legacy entry under its own lock.
+            binding = bootstrap_repository_binding(
+                tracker, repo, verified.key, verified.id,
+                activation_kind="upgrade", **verified.extra,
+            )
         except ValueError as exc:
             raise SystemExit(str(exc)) from None
         print(json.dumps({

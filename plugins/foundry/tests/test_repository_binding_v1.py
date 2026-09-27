@@ -703,3 +703,71 @@ def test_public_update_cli_replays_interrupted_marker_after_exact_preflight(
     registry.main(command)
     assert len(calls) == 2
     assert registry.repository_tracker_binding().project.extra["ms_bundle"] == "new"
+
+
+def test_public_upgrade_refuses_entry_changed_after_provider_verification(
+    isolated, monkeypatch,
+):
+    repo = _repo(isolated, "acme", "app")
+    monkeypatch.chdir(repo)
+    registry.register("youtrack", "app", "APP", "0-1", ms_bundle="old")
+    checked = []
+
+    def verify(_tracker, _repo, key, project_id, **extra):
+        checked.append((key, project_id, extra))
+        registry.register("youtrack", "app", "OTHER", "0-2", ms_bundle="new")
+        return Project(
+            key=key, id=project_id,
+            extra={**extra, "canonical_repo": "github.com/acme/app"},
+        )
+
+    monkeypatch.setattr(registry, "verify_existing_project", verify)
+    with pytest.raises(SystemExit, match="binding legacy modifié"):
+        registry.main(["upgrade", "youtrack", "app"])
+    assert len(checked) == 1
+    assert registry.load()["youtrack"]["app"] == {
+        "key": "OTHER", "id": "0-2", "ms_bundle": "new",
+    }
+    assert not (repo / ".foundry/tracker.json").exists()
+
+
+def test_public_upgrade_publishes_only_the_verified_snapshot(isolated, monkeypatch):
+    repo = _repo(isolated, "acme", "app")
+    monkeypatch.chdir(repo)
+    registry.register("youtrack", "app", "APP", "0-1", ms_bundle="old")
+    monkeypatch.setattr(
+        registry, "verify_existing_project",
+        lambda *_args, **_kwargs: Project(
+            key="APP", id="0-1",
+            extra={"ms_bundle": "old", "canonical_repo": "github.com/acme/app"},
+        ),
+    )
+    registry.main(["upgrade", "youtrack", "app"])
+    binding = registry.repository_tracker_binding()
+    assert binding.project.id == "0-1"
+    assert binding.project.extra["ms_bundle"] == "old"
+    assert binding.activation_kind == "upgrade"
+
+
+def test_bootstrap_replay_refuses_competing_legacy_provider_before_marker(
+    isolated, monkeypatch,
+):
+    repo = _repo(isolated, "acme", "app")
+    real_publish = registry._publish_marker
+    monkeypatch.setattr(
+        registry, "_publish_marker",
+        lambda *_args: (_ for _ in ()).throw(OSError("marker interrupted")),
+    )
+    with pytest.raises(OSError, match="marker interrupted"):
+        registry.bootstrap_repository_binding(
+            "youtrack", "app", "APP", "0-1", cwd=str(repo),
+        )
+    registry.register("ghprojects", "app", "OTHER", "PVT_2")
+    before = registry.load()
+    monkeypatch.setattr(registry, "_publish_marker", real_publish)
+    with pytest.raises(ValueError, match="ambigu entre providers"):
+        registry.bootstrap_repository_binding(
+            "youtrack", "app", "APP", "0-1", cwd=str(repo),
+        )
+    assert registry.load() == before
+    assert not (repo / ".foundry/tracker.json").exists()
