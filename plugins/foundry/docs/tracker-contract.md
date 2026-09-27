@@ -94,7 +94,7 @@ cell.
   `linear.py`; `Issue.ac_done` derives from that projection).
 - **PAT-69** — Neither YouTrack nor Linear implements `close_epic`/`get_epic_closure`;
   `write.close_epic` refuses before any provider call (`write.py`). Only the non-V1
-  DevHub adapter implements the port (`devhub.py`, `825`).
+  DevHub adapter implements the port (`devhub.py`).
 - **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
   target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR
   import target. No adapter copies live work faithfully: Linear's `create_issue` sends a
@@ -115,7 +115,7 @@ either exact native id or exact project key matches an archived YouTrack binding
 before milestone setup or creation; child creation also proves its existing parent first
 (`youtrack.py`). Field/state writes, both sides of a link, comments,
 body writes and ADR status changes all pass through that preflight
-(`youtrack.py`, `784-805`). Matching is exact, never prefix-based;
+(`youtrack.py`). Matching is exact, never prefix-based;
 active cross-project links and parents keep each native coordinate independent, and an
 unregistered checkout can still write to an active project. For a repository with a V1
 marker, the factory enables the shared mutation binding and `validate_issue_binding`
@@ -144,7 +144,7 @@ YouTrack (free-text audit note fallback, `base.py`).
 read-only existing-project probe. The ten workflow methods `search`, `get_issue`,
 `create_issue`, `update_fields`, `set_state`, `link`,
 `add_comment`, `list_adrs`, `create_adr` and `set_adr_status`, each raising
-`NotImplementedError` (`ghprojects.py`, `110-138`). Everything else is inherited
+`NotImplementedError` (`ghprojects.py`). Everything else is inherited
 from `base.py` unchanged: optional ports raise their typed unavailability error
 (`EpicClosureUnavailableError`, `BodyUpdateUnavailableError`,
 `AcceptanceSyncUnavailableError`, `ProjectProvisioningUnavailableError`,
@@ -178,7 +178,7 @@ canonical origin, provider, project coordinates and registry digest
 (`registry.py`). The default `Tracker.resolve_checkout_project()` consumes that
 selection for YouTrack and `ghprojects` (`base.py`); Linear delegates to that
 same selection before activation (`linear.py`) and keeps provider-level
-team/project assertions (`linear.py`, `2453-2462`). `foundry.effective_tracker_name()` is the shared
+team/project assertions (`linear.py`). `foundry.effective_tracker_name()` is the shared
 selection used by both the implicit factory and doctor (`foundry/__init__.py`,
 `doctor.py`), so a repository V1 binding wins even when the host setting names
 the DevHub pilot. Before using a host-selected DevHub pilot, the factory and doctor
@@ -188,7 +188,7 @@ explicitly as `mode=pilot`, including historical DevHub markers, outside the thr
 V1 trackers; `--require-v1` refuses it.
 A valid marker cannot mask another active canonical or matching legacy provider
 binding: the published binding reader and mapping update refuse that ambiguity
-before effects (`registry.py`, `486-522`, `1130-1220`). Archived bindings
+before effects (`registry.py`). Archived bindings
 are excluded from the active-provider check. Only a proven unbound checkout or a
 host diagnostic outside Git can use the global
 pilot setting. A V1 canonical registry entry whose marker is absent is an interrupted
@@ -289,7 +289,7 @@ never **excludes** them, and no text in Foundry may say otherwise.
   (`linear.py`). A generation enters the slot only for `state-review`,
   `acceptance` and `acceptance-override`; for `state-in-progress`, `state-done` and
   `cockpit-evidence` a different payload maps to the same id and is refused
-  (`linear.py`, `2381-2388`), so each issue records one start and one done
+  (`linear.py`), so each issue records one start and one done
   marker. A different writer appending between Foundry's read and append is detected by
   the readback (`linear.py`), not excluded.
 - **Level 3 — provider transaction plus receipt.** Only DevHub's `close_epic`
@@ -377,7 +377,7 @@ map; YouTrack V1 extras are limited to `canonical_repo` and optional non-empty
 `ms_bundle`. Undeclared keys, including credential keys, refuse before provider readback
 or persistence. GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
-before the registry or marker changes (`registry.py`, `992-1099`;
+before the registry or marker changes (`registry.py`;
 `youtrack.py`; `linear.py`; `ghprojects.py`). The GitHub query follows GitHub's documented
 organization/user `projectV2(number:)` lookup and `ProjectV2.repositories` connection;
 it is capped at ten 100-repository pages and needs only `read:project` permission
@@ -420,7 +420,7 @@ replay completes an interruption between registry and marker publication. This i
 local compare-and-publish boundary only; it neither mutates provider data nor claims a
 provider CAS. Marker structure, schema version, activation vocabulary and every digest
 are parsed by the same strict reader before either file can be written, including during
-replay (`registry.py`, `1130-1220`). Bootstrap also validates the marker
+replay (`registry.py`). Bootstrap also validates the marker
 path before registry publication: dangling marker symlinks, symlinked `.foundry`
 directories and non-directory parents refuse without replacing existing paths. Archive tombstones and unrelated bindings
 are preserved.
