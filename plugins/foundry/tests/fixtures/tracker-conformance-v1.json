@@ -121,8 +121,6 @@
       "id": "homonymous-repositories",
       "test": "test_repository_binding_v1.py::test_same_basename_repositories_have_independent_canonical_bindings",
       "providers": [
-        "youtrack",
-        "linear",
         "ghprojects"
       ],
       "categories": [
@@ -486,9 +484,6 @@
       ],
       "operations": [
         "backlog-read"
-      ],
-      "adversarial": [
-        "missing-credentials"
       ]
     },
     {
@@ -580,6 +575,23 @@
       ],
       "operations": [
         "adr-read"
+      ]
+    },
+    {
+      "id": "ghprojects-authentication-failure",
+      "test": "test_ghprojects_tracker.py::test_search_classifies_bounded_transport_failures",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "permissions",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "backlog-read"
+      ],
+      "adversarial": [
+        "missing-credentials"
       ]
     }
   ]
