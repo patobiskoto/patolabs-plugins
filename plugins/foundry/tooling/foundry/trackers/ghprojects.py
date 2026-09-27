@@ -1489,6 +1489,8 @@ class GitHubProjectsTracker(Tracker):
         # REST issue, so an unsupported option cannot be discovered afterwards.
         requested = {"type": "Task", **portable}
         catalog = self._write_catalog(binding, requested)
+        if not self.verify_project_identity(project):
+            raise GitHubProjectsTrackerError("issue.create_prewrite", "unqualified_repository_project")
         fingerprint = self._create_fingerprint(
             binding, title, body, requested, parent,
         )

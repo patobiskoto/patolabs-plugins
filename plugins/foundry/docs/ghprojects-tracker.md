@@ -159,3 +159,8 @@ Après un attachement, même si sa réponse est perdue, les deux ressources sont
 relues et leurs propriétés et relations non visées doivent être préservées.
 Cette détection reste bornée : le risque S1→S2 demeure, sans CAS ni exclusion des
 écritures concurrentes.
+La création d'une issue, même sans parent, relit également l'identité privée du
+Project personnel et son dépôt canonique privé lié avant le journal d'intention
+et le premier POST. Un dépôt public, détaché, étranger ou une identité indisponible
+refuse la création avant tout effet; un binding local ancien ne vaut pas cette
+requalification live.

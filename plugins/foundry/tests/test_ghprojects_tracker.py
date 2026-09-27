@@ -446,6 +446,7 @@ def test_pat66_create_known_partial_attachment_never_reposts_issue(monkeypatch, 
     monkeypatch.setattr(tracker, "_add_project_item", lambda *_: (_ for _ in ()).throw(
         GitHubProjectsTrackerError("project.item_create", "transport_failed")
     ))
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
     monkeypatch.setattr(
         tracker, "_write_catalog", lambda *_: {
             "type": type("F", (), {"id": "type", "data_type": "SINGLE_SELECT", "options": {"Task": "type-task"}})(),
@@ -634,6 +635,7 @@ def _install_create_harness(monkeypatch, tracker, provider, *, failing_phase=Non
         )(),
     }
 
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
     monkeypatch.setattr(tracker, "_write_catalog", lambda *_: catalog)
     monkeypatch.setattr(
         tracker, "_create_candidates",
@@ -753,6 +755,7 @@ def test_pat66_unknown_zero_candidate_stays_fail_closed_across_instances(
     provider = _create_provider_state()
 
     def install(tracker):
+        monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
         monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
             "type": type("F", (), {
                 "id": "type", "data_type": "SINGLE_SELECT",
@@ -801,6 +804,7 @@ def test_pat66_stderr_permission_hint_does_not_clear_pending_create(
         )
 
     def install(tracker):
+        monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
         monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
             "type": type("F", (), {
                 "id": "type", "data_type": "SINGLE_SELECT",
@@ -832,6 +836,7 @@ def test_pat66_multiple_reconciliation_candidates_never_repost(monkeypatch, tmp_
     observations = 0
 
     def install(tracker):
+        monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
         monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
             "type": type("F", (), {
                 "id": "type", "data_type": "SINGLE_SELECT",
@@ -912,6 +917,7 @@ def test_pat66_unowned_unique_candidate_is_ambiguous_without_write(monkeypatch, 
     writes = []
     monkeypatch.setattr(tracker, "_create_candidates", lambda *_: [candidate])
     monkeypatch.setattr(tracker, "_rest_write", lambda *args: writes.append(args))
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
     monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
         "type": type("F", (), {
             "id": "type", "data_type": "SINGLE_SELECT",
@@ -935,6 +941,7 @@ def test_pat66_corrupt_or_unavailable_intent_store_refuses_before_post(
     tracker._intent_path(fingerprint).write_text("not-json", encoding="utf-8")
     writes = []
     monkeypatch.setattr(tracker, "_rest_write", lambda *args: writes.append(args))
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
     monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
         "type": type("F", (), {
             "id": "type", "data_type": "SINGLE_SELECT",
@@ -949,6 +956,7 @@ def test_pat66_corrupt_or_unavailable_intent_store_refuses_before_post(
     blocked.write_text("file", encoding="utf-8")
     unavailable = GitHubProjectsTracker(state_dir=blocked)
     monkeypatch.setattr(unavailable, "_rest_write", lambda *args: writes.append(args))
+    monkeypatch.setattr(unavailable, "verify_project_identity", lambda *_: True)
     monkeypatch.setattr(unavailable, "_write_catalog", lambda *_: {
         "type": type("F", (), {
             "id": "type", "data_type": "SINGLE_SELECT",
@@ -1964,3 +1972,73 @@ def test_pat66_create_parent_detects_unrelated_property_write(monkeypatch, tmp_p
     with pytest.raises(GitHubProjectsPartialCreateConflict, match="propriétés non visées"):
         tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
     assert provider["parent_posts"] == 1
+
+
+@pytest.mark.parametrize("drift", [
+    "public_repository", "unlinked_repository", "foreign_owner", "public_project",
+    "deleted_project", "malformed_identity", "permission", "rate_limit",
+])
+def test_pat66_create_live_repository_scope_refuses_before_journal_and_post(tmp_path, drift):
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        assert command[1:3] == ["api", "graphql"]
+        query = command[command.index("-f") + 1]
+        page = _page("item-1", 1, None, False)
+        if "repositories(first:" in query:
+            if drift in {"permission", "rate_limit"}:
+                return subprocess.CompletedProcess(command, 1, "", "403 permission" if drift == "permission" else "429 rate limit")
+            raw = page["data"]["user"]["projectV2"]
+            repository = deepcopy(raw["items"]["nodes"][0]["content"]["repository"])
+            raw["repositories"] = {"nodes": [repository], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+            if drift == "public_repository":
+                repository["isPrivate"] = False
+            elif drift == "unlinked_repository":
+                raw["repositories"]["nodes"] = []
+            elif drift == "foreign_owner":
+                repository["owner"]["__typename"] = "Organization"
+            elif drift == "public_project":
+                raw["public"] = True
+            elif drift == "deleted_project":
+                page["data"]["user"]["projectV2"] = None
+            elif drift == "malformed_identity":
+                raw["repositories"] = {"nodes": None}
+        return subprocess.CompletedProcess(command, 0, json.dumps(page), "")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError):
+        tracker.create_issue(PROJECT, "partial", "body")
+    assert len(calls) == 2
+    assert not (tmp_path / "ghprojects-create-intents").exists()
+    assert not any("-X" in command for command in calls)
+
+
+def test_pat66_create_qualified_live_scope_precedes_first_issue_write(monkeypatch, tmp_path):
+    events = []
+
+    def runner(command, **kwargs):
+        events.append("live_scope")
+        page = _page("item-1", 1, None, False)
+        raw = page["data"]["user"]["projectV2"]
+        raw["repositories"] = {
+            "nodes": [deepcopy(raw["items"]["nodes"][0]["content"]["repository"])],
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(page), "")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    provider = _create_provider_state()
+    _install_create_harness(monkeypatch, tracker, provider)
+    monkeypatch.setattr(tracker, "verify_project_identity", GitHubProjectsTracker.verify_project_identity.__get__(tracker))
+    original = tracker._rest_write
+
+    def write(*args):
+        events.append("write")
+        assert events[0] == "live_scope"
+        return original(*args)
+
+    monkeypatch.setattr(tracker, "_rest_write", write)
+    assert tracker.create_issue(PROJECT, "partial", "body").id == "GHQUAL-4"
+    assert provider["issue_posts"] == 1
+    assert events == ["live_scope", "write"]
