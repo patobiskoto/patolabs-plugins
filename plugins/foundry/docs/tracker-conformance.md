@@ -39,9 +39,9 @@ Parallel owner tickets may pre-register a case with `pending_ticket`. Such a sel
 does not count as passing coverage while its contract cell is still blocking, and its
 test is allowed to be absent from the current branch. As soon as the owner ticket flips
 that cell to `supported`, the selector becomes mandatory: the test must exist and is
-collected into the same `tracker_conformance` suite. PAT-66 uses this seam so its
-GitHub Projects write tests can land independently of PAT-68 without a merge-order
-window that weakens CI.
+collected into the same `tracker_conformance` suite. This seam is available to owner tickets such as PAT-66 when their provider tests
+exist on a parallel branch; until those tests are on the merged provider surface, the
+manifest keeps only executable coverage from the current branch.
 
 The manifest also pins coverage of the failure classes required by PAT-68:
 capabilities, explicit refusals, pagination, permissions, conflicts, ambiguous
