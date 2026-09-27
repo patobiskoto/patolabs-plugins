@@ -650,6 +650,20 @@ def test_repository_cutover_selects_complete_linear_binding_from_nested_checkout
         registry.resolve("youtrack", "public", cwd=str(nested))
 
 
+def test_resolve_types_only_a_missing_legacy_alias_as_not_registered(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+
+    with pytest.raises(registry.ProjectNotRegisteredError) as error:
+        registry.resolve("youtrack", "missing", cwd=str(tmp_path))
+
+    assert isinstance(error.value, SystemExit)
+    assert str(error.value).startswith(
+        "Repo 'missing' non enregistré pour le tracker 'youtrack'."
+    )
+
+
 @pytest.mark.parametrize("payload", [
     b"{",
     b'{"version":1,"repository":"github.com/acme/public","tracker":"linear"}',

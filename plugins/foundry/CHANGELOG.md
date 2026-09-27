@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+- YouTrack now proves a targeted issue or ADR's native project coordinate before every
+  write and rejects it when any alias tombstones that provider project (PAT-43). The
+  guard runs before milestone setup, command links, body writes, comments, and
+  project-explicit issue or ADR creation, so an unrelated or unregistered checkout
+  cannot write to the readable archive.
+
 ## 0.9.0 — 2026-09-26
 
 ### Added

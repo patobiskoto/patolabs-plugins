@@ -354,7 +354,7 @@ def test_ghprojects_core_methods_are_unimplemented_stubs():
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-55", "PAT-56", "PAT-69", "PAT-64", "PAT-43", "PAT-47", "PAT-59"],
+    ["PAT-55", "PAT-56", "PAT-69", "PAT-64", "PAT-47", "PAT-59"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()
@@ -365,6 +365,17 @@ def test_expected_gap_tickets_are_actually_cited(ticket):
         if cell.get("status") == "gap"
     }
     assert ticket in cited
+
+
+def test_youtrack_archived_target_tombstone_is_supported_with_native_preflight_evidence():
+    rows = {operation["id"]: operation for operation in _load_contract()["operations"]}
+    cell = rows["tombstone-archived-source-after-switch"]["cells"]["youtrack"]
+
+    assert cell["status"] == "supported"
+    assert "ticket" not in cell
+    assert "project(id,shortName)" in cell["evidence"]
+    assert "exact native id or exact key" in cell["evidence"]
+    assert "test_youtrack_smoke.py" in cell["evidence"]
 
 
 def test_non_core_to_qualify_cells_name_an_owner_and_must_resolve_before_v1():

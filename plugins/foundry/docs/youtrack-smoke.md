@@ -47,6 +47,21 @@ registry. The production key `FOUNDRY` is refused before the tracker is construc
 For exceptional, deliberate disaster-recovery testing only, a second guard exists:
 `FOUNDRY_YOUTRACK_SMOKE_ALLOW_FOUNDRY=1`.
 
+## Archived-project write guard
+
+Every ordinary YouTrack mutation independently reads the target issue or article's
+native `project(id,shortName)` coordinate before its first provider effect. A tombstone
+matches when either the exact native id or the exact project key matches; it never uses
+a prefix or other fuzzy match. This YouTrack-specific check keeps the coordinates of
+active cross-project links and parents independent. This covers field changes,
+body edits, comments, links and their command endpoint, as well as project-explicit
+issue/ADR creation and milestone enum setup. A readable key or the current checkout
+does not authorize a write. Active projects retain their legacy behavior, including
+from an unregistered checkout. After this native proof, `update_fields` may restore a
+Milestone bundle only from an explicit project or the historical checkout resolution
+whose native id and key both match the target. Foreign mappings are ignored and
+conflicting matching mappings refuse before the enum or issue write.
+
 Without opt-in, pytest reports one integration skip with the activation variable in
 the reason. A missing URL, token, project key/id, or confirmation also produces a
 clear skip, even after opt-in. Present but invalid safety values still fail closed:
