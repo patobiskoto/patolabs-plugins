@@ -421,6 +421,22 @@ _FOUNDRY_ADR_0012_SOURCE_SHA256 = (
 _FOUNDRY_ADR_0012_READBACK_SHA256 = (
     "3bbab7c31d737bb97320ea74644f8acd6201cf7ec0a8cb7e1a09cd554c49246c"
 )
+# PAT-72 records one surviving native version whose provider readback collapsed
+# precisely one extra blank line. These digests deliberately name the whole
+# source and rendered bodies; this is not a Markdown whitespace normalization.
+_PAT_72_SOURCE_SHA256 = (
+    "17aafead50bd87f6578dbb78dba4eba12502360f7acad50ba3bc78164a289e0b"
+)
+_PAT_72_READBACK_SHA256 = (
+    "7d1ad9357556881edb5ffd8de3e16cd4189313d963b7fbcdea4c785e30c33aaa"
+)
+_PAT_72_BLANK_LINE_FRAGMENT = (
+    "append-only à identifiant déterministe, il est préféré à un remplacement en place.\n"
+    "\n"
+    "\n"
+    "**Portée des propriétés.**"
+)
+_PAT_72_RENDERED_FRAGMENT = _PAT_72_BLANK_LINE_FRAGMENT.replace("\n\n\n", "\n\n")
 # This historical slot predates witnesses. Its source is deliberately not
 # represented here: the digests qualify the exact private source and bytes already
 # held by Linear. Version 0 remains recovery-only; the separately pinned body delta
@@ -578,6 +594,28 @@ def _linear_foundry_adr_0012_v1_readback(body: str) -> str | None:
         raise ValueError(
             f"{_FOUNDRY_ADR_0012_READBACK_PROFILE} rendering is invalid"
         )
+    return rendered
+
+
+def _linear_pat_72_readback(body: str, rendered: str) -> str | None:
+    """Return the sole PAT-72 blank-line serialization observed from Linear.
+
+    The source digest and resulting digest bind this to one native source body.
+    Fences, other whitespace runs, and every neighbouring source stay on the
+    strict general model.
+    """
+    if hashlib.sha256(body.encode("utf-8")).hexdigest() != _PAT_72_SOURCE_SHA256:
+        return None
+    if (
+        body.count(_PAT_72_BLANK_LINE_FRAGMENT) != 1
+        or rendered.count(_PAT_72_BLANK_LINE_FRAGMENT) != 1
+    ):
+        raise ValueError("pat-72 rendering source is invalid")
+    rendered = rendered.replace(
+        _PAT_72_BLANK_LINE_FRAGMENT, _PAT_72_RENDERED_FRAGMENT, 1
+    )
+    if hashlib.sha256(rendered.encode("utf-8")).hexdigest() != _PAT_72_READBACK_SHA256:
+        raise ValueError("pat-72 rendering is invalid")
     return rendered
 
 
@@ -930,7 +968,9 @@ def _linear_markdown_readback_body(
                 source_line = f"* {source_line[2:]}"
         nonfenced.append(source_line)
     flush_nonfenced()
-    return "".join(rendered)
+    rendered_body = "".join(rendered)
+    qualified = _linear_pat_72_readback(body, rendered_body)
+    return rendered_body if qualified is None else qualified
 
 
 def _preflight_adr_body_readback(

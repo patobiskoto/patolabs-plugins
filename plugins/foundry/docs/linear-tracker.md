@@ -156,6 +156,15 @@ complete supported serialization for a known source candidate. It never treats `
 equivalent source bytes: the witness-retained source and its digest distinguish them even when
 their readable Markdown is identical. It does not apply a reverse rewrite to provider content
 or normalize any other Markdown variant.
+PAT-72 adds one further closed profile for the interrupted native `PAT-ADR-0006`
+version-1 source body. Its exact source-body SHA-256 is
+`17aafead50bd87f6578dbb78dba4eba12502360f7acad50ba3bc78164a289e0b`; the only
+accepted rendered body SHA-256 is
+`7d1ad9357556881edb5ffd8de3e16cd4189313d963b7fbcdea4c785e30c33aaa`. That profile
+removes exactly one of the two consecutive blank lines between the recorded S6 list
+item and the following `**Portée des propriétés.**` paragraph. It is a forward model
+only: the witness keeps the source UTF-8 bytes, fenced code and all other whitespace
+runs remain byte-exact, and any source-byte or rendered-byte variation is refused.
 `FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
 SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
 and its existing Linear Document content SHA-256
