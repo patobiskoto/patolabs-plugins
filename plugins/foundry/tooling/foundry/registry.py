@@ -548,6 +548,18 @@ def repository_tracker_selection(
         ) else "sans marqueur"
         raise SystemExit(f"Binding tracker V1 {detail} pour le dépôt courant.")
     repo = repo_basename(str(root), use_env=False)
+    tombstones = [
+        entry
+        for entries in data.values() if isinstance(entries, dict)
+        for name, entry in entries.items()
+        if isinstance(entry, dict) and entry.get("archive") is True
+        and (
+            entry.get("canonical_repo") == repository
+            or (name == repo and "canonical_repo" not in entry)
+        )
+    ]
+    if tombstones:
+        raise SystemExit("Binding tracker archivé pour le dépôt courant ; sélection refusée.")
     legacy = [
         (provider, entry)
         for provider, entries in data.items()
@@ -558,6 +570,28 @@ def repository_tracker_selection(
         and entry.get("archive") is not True
         and "canonical_repo" not in entry
     ]
+    pilot = [
+        entry for entry in data.get("devhub", {}).values()
+        if isinstance(entry, dict)
+        and entry.get("archive") is not True
+        and entry.get("canonical_repo") == repository
+    ] if isinstance(data.get("devhub", {}), dict) else []
+    if pilot:
+        if any(entry != pilot[0] for entry in pilot[1:]) or any(
+            provider != "devhub" or entry != pilot[0] for provider, entry in legacy
+        ):
+            raise SystemExit("Binding tracker pilote ambigu pour le dépôt courant.")
+        if require_v1:
+            raise SystemExit("Binding tracker V1 requis : le dépôt utilise le pilote DevHub.")
+        entry = pilot[0]
+        return {
+            "mode": "pilot", "tracker": "devhub", "repository": repository,
+            "repo": repo, "binding": None,
+            "project": Project(
+                key=entry["key"], id=entry["id"],
+                extra={k: v for k, v in entry.items() if k not in {"key", "id", "archive"}},
+            ),
+        }
     if not legacy:
         if allow_unbound:
             # Administrative setup is allowed to select a configured provider only

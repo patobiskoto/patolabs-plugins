@@ -83,7 +83,7 @@ cell.
   `registry cutover` performs no provider I/O (`linear-tracker.md`). PAT-64 must provide
   both halves for every pair.
 - **PAT-43** — YouTrack's only tombstone check, `validate_legacy_mutation`
-  (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:776-797`),
+  (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:1343-1364`),
   refuses a write only when the checkout's own registry binding is archived or shares
   its project with an archived alias; it must refuse every write addressed to an
   archived project by provider identifier.
@@ -137,13 +137,18 @@ only the compatibility fallback for a legacy entry without `canonical_repo`, so
 **One checkout selection for all three adapters.**
 `repository_tracker_selection()` reads the marker from the Git root and validates its
 canonical origin, provider, project coordinates and registry digest
-(`registry.py:352-537`). The default `Tracker.resolve_checkout_project()` consumes that
+(`registry.py:379-640`). The default `Tracker.resolve_checkout_project()` consumes that
 selection for YouTrack and `ghprojects` (`base.py:142-172`); Linear keeps its exact
 canonical registry resolution and provider-level team/project assertions
 (`linear.py:1587-1617`, `2353-2363`). `foundry.effective_tracker_name()` is the shared
-selection used by both the implicit factory and doctor (`foundry/__init__.py:14-39`,
+selection used by both the implicit factory and doctor (`foundry/__init__.py:15-43`,
 `doctor.py:214-230`), so a repository V1 binding wins even when the host setting names
-the DevHub pilot. A V1 canonical registry entry whose marker is absent is an interrupted
+the DevHub pilot. Before using a host-selected DevHub pilot, the factory and doctor
+validate the local selection: an existing legacy binding wins, and ambiguous,
+interrupted or archived bindings refuse. The canonical DevHub pilot is represented
+explicitly as `mode=pilot`, outside the three V1 trackers; `--require-v1` refuses it.
+Only a proven unbound checkout or a host diagnostic outside Git can use the global
+pilot setting. A V1 canonical registry entry whose marker is absent is an interrupted
 or moved publication and fails before provider access. `PROJECT_REPO` and
 `FOUNDRY_TRACKER` cannot change that result. The administrative setup boundary alone
 passes the configured provider explicitly, but only after
@@ -167,8 +172,8 @@ human-readable identifier (YouTrack `idReadable`, Linear `identifier`), of the f
 `<PREFIX>-<NUMBER>`. It is unique within one provider instance but it is not a
 repository identity: historical registry entries use the repository name, homonyms use
 an internal deterministic key, and several aliases may point at one provider project
-(`register_alias`, `registry.py:865-922`;
-`require_writable_project`, `registry.py:776-797`, treats them as one project).
+(`register_alias`, `registry.py:1434-1493`;
+`require_writable_project`, `registry.py:1343-1364`, treats them as one project).
 The key is therefore interpreted only together with the resolved binding. Linear
 enforces the provider project on each hydrated issue (`_assert_issue_project`); YouTrack
 gets the repository project before each V1 mutation, while its provider-level
@@ -328,7 +333,7 @@ argument. Before the local publication, YouTrack reads the exact native project 
 Linear reads the exact project id, team UUID and team key after validating every UUID
 map; GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
-before the registry or marker changes (`registry.py:1035-1069`, `864-935`;
+before the registry or marker changes (`registry.py:1532-1679`, `956-1062`;
 `youtrack.py:247-258`; `linear.py:1573-1585`; `ghprojects.py:36-104`). The GitHub query follows GitHub's documented
 organization/user `projectV2(number:)` lookup and `ProjectV2.repositories` connection;
 it is capped at ten 100-repository pages and needs only `read:project` permission
@@ -339,8 +344,9 @@ an offline-tested binding probe, not PAT-65's live workflow qualification.
 If the provider's basename slot already belongs to a different canonical repository,
 bootstrap publishes the new entry under its deterministic disambiguated storage key.
 Exact replay finds that entry by `canonical_repo`; it does not overwrite the older
-binding or any alias/tombstone. Marker schemas 1 and 2 keep the same wire format because
-the storage key is registry-internal.
+binding or any alias/tombstone. The storage key is registry-internal and changes neither marker schema.
+Schema 1 and schema 2 have distinct wire formats but preserve the same canonical
+repository-to-tracker binding semantics.
 
 `upgrade` starts only from the checkout basename's exact active historical entry,
 performs the same provider readback, adds `canonical_repo`, and publishes a marker. It
@@ -360,7 +366,7 @@ replay completes an interruption between registry and marker publication. This i
 local compare-and-publish boundary only; it neither mutates provider data nor claims a
 provider CAS. Marker structure, schema version, activation vocabulary and every digest
 are parsed by the same strict reader before either file can be written, including during
-replay (`registry.py:352-438`, `960-1032`). Archive tombstones and unrelated bindings
+replay (`registry.py:379-465`, `1093-1173`). Archive tombstones and unrelated bindings
 are preserved.
 
 The non-core `full-administrative-provisioning` row records YouTrack's existing

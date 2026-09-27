@@ -468,12 +468,17 @@ tombstone. Existing state is recovered with `registry upgrade`, `registry update
 original cutover path; it is never shadowed by a global provider setting. Retrying a
 genuinely new setup after an interruption recovers the same provider project and
 replaces the same single registry entry rather than creating duplicates.
-If an existing project moves to a repo with a different basename, preserve the old
-binding and add the new name without provisioning another tracker project:
+For a legacy basename binding without `canonical_repo`, an additional local alias
+can reuse the existing project without provisioning another tracker project:
 
 ```
 python3 tooling/foundry_cli.py registry alias youtrack <old-repo> <new-repo>
 ```
+
+`registry alias` copies the existing entry; it never changes `canonical_repo` or
+repairs a V1 marker after a canonical remote rename. If the canonical remote changes,
+suspend and reconcile the approved binding and marker through the repository recovery
+procedure before resuming. An alias alone cannot authorize that new identity.
 
 ADR bootstrap import is keyed by the required `<KEY>-ADR-NNNN` ID in each filename,
 not its mutable title, and refuses an unnumbered file or numbering gap before writing

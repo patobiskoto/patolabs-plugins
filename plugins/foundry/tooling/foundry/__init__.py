@@ -1,8 +1,9 @@
 """Foundry tooling package.
 
 Provider factories: the pipeline asks for `tracker()` / `codehost()` and gets the
-one selected by config — it never imports a concrete adapter. Switching provider
-is a config change (FOUNDRY_TRACKER / FOUNDRY_CODEHOST), not a code change.
+one selected by the repository binding — it never imports a concrete adapter.
+Host configuration selects the code host and the unbound historical DevHub pilot;
+it never replaces an existing repository tracker selection.
 """
 from __future__ import annotations
 
@@ -21,9 +22,18 @@ def _effective_tracker_selection(cwd: str | None = None):
         raise SystemExit(f"Binding tracker du dépôt invalide : {exc}") from None
     if binding is not None:
         return binding.tracker, binding
+    try:
+        selection = registry.repository_tracker_selection(cwd, allow_unbound=True)
+    except SystemExit as exc:
+        # The historical pilot also has host diagnostics outside a Git checkout.
+        # No repository state exists there to be replaced by a global provider.
+        if "checkout Git introuvable" in str(exc) and config.tracker_name() == "devhub":
+            return "devhub", None
+        raise
+    if selection["mode"] != "unbound":
+        return selection["tracker"], selection["binding"]
     if config.tracker_name() == "devhub":
-        # DevHub is the pre-V1 internal pilot.  Keep its host-selected mode
-        # outside the three repository-binding providers.
+        # Only a proven unbound checkout can use the host-selected pilot.
         return "devhub", None
     return registry.tracker_name_for_checkout(cwd), None
 

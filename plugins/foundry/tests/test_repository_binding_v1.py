@@ -59,6 +59,65 @@ def test_legacy_binding_is_observable_and_explicit_v1_refuses(isolated):
         registry.repository_tracker_selection(str(repo), require_v1=True)
 
 
+@pytest.mark.parametrize("state", ["interrupted", "ambiguous", "tombstone"])
+def test_factory_and_doctor_refuse_existing_state_before_global_devhub(
+    isolated, monkeypatch, state,
+):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+    registry.register(
+        "youtrack", "same", "ONE", "0-1",
+        canonical_repo="github.com/acme/same",
+    )
+    if state == "ambiguous":
+        registry.register(
+            "ghprojects", "same", "TWO", "PVT_2",
+            canonical_repo="github.com/acme/same", owner="acme", number="2",
+        )
+    elif state == "tombstone":
+        data = registry.load()
+        data["youtrack"]["same"]["archive"] = True
+        registry._save(data)
+    monkeypatch.setattr(
+        foundry.config, "tracker_name",
+        lambda: pytest.fail("existing local state must be checked before global config"),
+    )
+    monkeypatch.setattr(
+        foundry.config, "require_public",
+        lambda _key: pytest.fail("no provider construction or preflight allowed"),
+    )
+    for call in (foundry.tracker, doctor._provider_transport_preflight):
+        with pytest.raises(SystemExit, match="Binding tracker"):
+            call()
+
+
+def test_legacy_selection_beats_global_devhub_in_factory_and_doctor(isolated, monkeypatch):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    registry.register("ghprojects", "same", "ONE", "PVT_1")
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+    assert foundry.tracker().name == "ghprojects"
+    assert doctor._provider_transport_preflight() == ("ghprojects", None)
+
+
+def test_devhub_pilot_requires_unbound_or_its_own_unambiguous_binding(isolated, monkeypatch):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+    assert foundry.effective_tracker_name() == "devhub"
+    registry.register(
+        "devhub", "same", "PILOT", "42", canonical_repo="github.com/acme/same",
+    )
+    assert foundry.effective_tracker_name() == "devhub"
+    assert registry.repository_tracker_selection()["mode"] == "pilot"
+    with pytest.raises(SystemExit, match="V1 requis"):
+        registry.repository_tracker_selection(require_v1=True)
+    registry.register("youtrack", "same", "OTHER", "0-1")
+    with pytest.raises(SystemExit, match="ambigu"):
+        foundry.effective_tracker_name()
+
+
 def test_upgrade_binds_exact_remote_and_ignores_adverse_environment(isolated, monkeypatch):
     first = _repo(isolated, "first", "same")
     second = _repo(isolated, "second", "same")

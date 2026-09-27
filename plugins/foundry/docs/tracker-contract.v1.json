@@ -67,7 +67,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py:441-579); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py:142-172) and write.mutation_project requires it for a V1 YouTrack checkout (write.py:50-68). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py:14-39; doctor.py:214-230). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
+          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py:379-640); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py:142-172) and write.mutation_project requires it for a V1 YouTrack checkout (write.py:50-68). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py:15-43; doctor.py:214-230). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
         },
         "linear": {
           "status": "supported",
@@ -75,7 +75,7 @@
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py:142-172; registry.py:482-537), and ghprojects.verify_project_identity checks the exact ProjectV2 node id, owner/number and linked canonical repository through at most ten read-only GraphQL pages (ghprojects.py:36-104). Issue wire-format and workflow operations remain owned by PAT-65/PAT-57/PAT-66/PAT-67"
+          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py:142-172; registry.py:468-640), and ghprojects.verify_project_identity checks the exact ProjectV2 node id, owner/number and linked canonical repository through at most ten read-only GraphQL pages (ghprojects.py:36-104). Issue wire-format and workflow operations remain owned by PAT-65/PAT-57/PAT-66/PAT-67"
         }
       }
     },
@@ -84,21 +84,21 @@
       "journey": "contexte/backlog (create-or-recover the repository's own project and binding)",
       "core": true,
       "tracker_abc": [
-        "provision_project",
+        "verify_project_identity",
         "resolve_checkout_project"
       ],
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock; a same-basename collision receives a deterministic internal storage key and exact replay remains canonical_repo-scoped. It performs no administrative provisioning"
+          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock; a same-basename collision receives a deterministic internal storage key and exact replay remains canonical_repo-scoped. It performs no administrative provisioning (registry.py:956-1062, 1532-1679; youtrack.py:247-258)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding, then Linear.verify_project_identity reads the exact project id, team id and team key before bootstrap_repository_binding publishes the canonical-scoped registry entry and marker; a same-basename collision cannot replace the older entry. No project is provisioned"
+          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding, then Linear.verify_project_identity reads the exact project id, team id and team key before bootstrap_repository_binding publishes the canonical-scoped registry entry and marker; a same-basename collision cannot replace the older entry. No project is provisioned (registry.py:956-1062, 1532-1679; linear.py:1573-1585)"
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; workflow/API conformance remains PAT-65"
+          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; workflow/API conformance remains PAT-65 (registry.py:956-1062, 1532-1679; ghprojects.py:36-104)"
         }
       }
     },
@@ -117,7 +117,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "search normalizes every page through _to_issue and remains fail-closed on unknown state, label or milestone ids (linear.py:2474-2542, 2588-2625); registry update supplies the bounded recovery path for a reviewed complete mapping: strict marker parsing before effects, expected configuration digest, one registry lock, concurrent-change refusal, publication and readback (registry.py:352-438, 960-1032, 1492-1516). No issue mutation or provider CAS is claimed"
+          "evidence": "search normalizes every page through _to_issue and remains fail-closed on unknown state, label or milestone ids (linear.py:2474-2542, 2588-2625); registry update supplies the bounded recovery path for a reviewed complete mapping: strict marker parsing before effects, expected configuration digest, one registry lock, concurrent-change refusal, publication and readback (registry.py:379-465, 1093-1173, 1532-1679). No issue mutation or provider CAS is claimed"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -551,7 +551,7 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-43",
-          "evidence": "validate_mutation_project is the base no-op (base.py:177-184) and is not overridden. The only tombstone check, validate_legacy_mutation (youtrack.py:263-283), refuses a write when the checkout's own registry binding (basename or PROJECT_REPO) is archived or shares its project with an archived alias, via registry.require_writable_project (registry.py:776-797); a write addressed to an archived project by provider identifier alone is not refused"
+          "evidence": "validate_mutation_project is the base no-op (base.py:177-184) and is not overridden. The only tombstone check, validate_legacy_mutation (youtrack.py:263-283), refuses a write when the checkout's own registry binding (basename or PROJECT_REPO) is archived or shares its project with an archived alias, via registry.require_writable_project (registry.py:1343-1364); a write addressed to an archived project by provider identifier alone is not refused"
         },
         "linear": {
           "status": "supported",
@@ -635,7 +635,7 @@
         "linear": {
           "status": "gap",
           "ticket": "PAT-59",
-          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py:2536-2542, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock after strict marker validation (registry.py:960-1032); PAT-59 still owns the release-scope semantics and provider qualification"
+          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py:2536-2542, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock after strict marker validation (registry.py:1093-1173); PAT-59 still owns the release-scope semantics and provider qualification"
         },
         "ghprojects": {
           "status": "to_qualify",
