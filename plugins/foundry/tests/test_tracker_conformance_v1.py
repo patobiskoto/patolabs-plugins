@@ -49,6 +49,25 @@ def _function_decorators(path: Path) -> dict[str, set[str]]:
     return out
 
 
+def _case_active(case: dict, contract: dict) -> bool:
+    """Activate pre-registered coverage only after its contract cells are supported."""
+    pending = case.get("pending_ticket")
+    if pending is None:
+        return True
+    operations = {row["id"]: row for row in contract["operations"]}
+    active = True
+    for provider in case["providers"]:
+        for operation_id in case.get("operations", []):
+            cell = operations[operation_id]["cells"][provider]
+            if cell["status"] != "supported":
+                assert cell["status"] in _BLOCKING
+                assert cell.get("ticket") == pending, (
+                    case["id"], provider, operation_id, cell
+                )
+                active = False
+    return active
+
+
 def test_conformance_manifest_is_versioned_and_unique():
     manifest = _load(MANIFEST_PATH)
 
@@ -62,13 +81,19 @@ def test_conformance_manifest_is_versioned_and_unique():
 
 def test_conformance_manifest_references_existing_unit_tests_only():
     manifest = _load(MANIFEST_PATH)
+    contract = _load(CONTRACT_PATH)
 
     for case in manifest["cases"]:
         file_name, function_name = case["test"].split("::", 1)
         path = TESTS_ROOT / file_name
         assert path.is_file(), case["test"]
         functions = _function_decorators(path)
-        assert function_name in functions, case["test"]
+        active = _case_active(case, contract)
+        if function_name not in functions:
+            assert not active, (
+                f"{case['test']} is required by a supported contract cell but is absent"
+            )
+            continue
         decorators = functions[function_name]
         assert not any(
             marker.startswith("pytest.mark.integration")
@@ -102,6 +127,7 @@ def _core_coverage_state(manifest: dict, contract: dict):
     covered = {
         (provider, operation)
         for case in manifest["cases"]
+        if _case_active(case, contract)
         for provider in case["providers"]
         for operation in case.get("operations", [])
     }
@@ -190,7 +216,7 @@ def test_each_v1_provider_exercises_every_required_failure_category():
         categories = {
             category
             for case in manifest["cases"]
-            if provider in case["providers"]
+            if provider in case["providers"] and _case_active(case, contract)
             for category in case.get("categories", [])
         }
         assert required <= categories, (
