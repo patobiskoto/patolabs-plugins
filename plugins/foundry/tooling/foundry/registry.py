@@ -351,6 +351,24 @@ def _disambiguated_registry_key(repo: str, repository: str) -> str:
     return f"{repo}@{digest}"
 
 
+def _require_unique_checkout_provider(
+    data: dict, tracker: str, repository: str, repo_name: str,
+) -> None:
+    providers = {
+        provider
+        for provider, entries in data.items()
+        if provider in _SUPPORTED_MARKER_TRACKERS and isinstance(entries, dict)
+        for name, entry in entries.items()
+        if isinstance(entry, dict) and entry.get("archive") is not True
+        and (
+            entry.get("canonical_repo") == repository
+            or (name == repo_name and "canonical_repo" not in entry)
+        )
+    }
+    if providers - {tracker}:
+        raise ValueError("binding tracker du dépôt ambigu entre providers actifs")
+
+
 def _registry_project_for_marker(
     data: dict, *, tracker: str, repository: str, repo_name: str,
     key: str, project_id: str,
@@ -481,9 +499,12 @@ def repository_tracker_binding(cwd: str | None = None) -> RepositoryTrackerBindi
     project_coordinate = data["project"]
     activation = data["activation"]
     repository = data["repository"]
+    registry_data = load()
+    repo_name = repo_basename(str(root), use_env=False)
+    _require_unique_checkout_provider(registry_data, data["tracker"], repository, repo_name)
     project, _entry, registry_digest = _registry_project_for_marker(
-        load(), tracker=data["tracker"], repository=repository,
-        repo_name=repo_basename(str(root), use_env=False),
+        registry_data, tracker=data["tracker"], repository=repository,
+        repo_name=repo_name,
         key=project_coordinate["key"], project_id=project_coordinate["id"],
     )
     if data["registry_binding_digest"] != registry_digest:
@@ -512,7 +533,8 @@ def repository_tracker_selection(
 ) -> dict[str, object]:
     """Resolve the checkout mode without trusting a global provider or env alias.
 
-    A marker is V1. An exact canonical registry entry without its marker is an
+    A marker is V1 for the three V1 trackers; a historical DevHub marker is pilot.
+    An exact canonical registry entry without its marker is an
     interrupted or moved V1 publication and therefore fails closed. Legacy mode is
     limited to one already-registered basename binding; an unregistered checkout is
     never silently promoted to legacy mode. ``allow_unbound`` is reserved for the
@@ -521,7 +543,10 @@ def repository_tracker_selection(
     """
     binding = repository_tracker_binding(cwd)
     if binding is not None:
-        return {"mode": "v1", "tracker": binding.tracker, "binding": binding}
+        mode = "v1" if binding.tracker in _V1_TRACKERS else "pilot"
+        if require_v1 and mode != "v1":
+            raise SystemExit("Binding tracker V1 requis : le dépôt utilise le pilote DevHub.")
+        return {"mode": mode, "tracker": binding.tracker, "binding": binding}
     root = _checkout_root(cwd)
     if root is None:
         raise SystemExit("Binding tracker absent : checkout Git introuvable.")
@@ -1128,6 +1153,7 @@ def update_repository_binding(
         ):
             raise ValueError("reprise tracker refusée : coordonnées contradictoires")
         data = load()
+        _require_unique_checkout_provider(data, tracker, repository, repo)
         entries = data.get(tracker, {})
         if not isinstance(entries, dict):
             raise ValueError("reprise tracker refusée : registre invalide")

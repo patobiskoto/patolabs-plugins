@@ -118,6 +118,70 @@ def test_devhub_pilot_requires_unbound_or_its_own_unambiguous_binding(isolated, 
         foundry.effective_tracker_name()
 
 
+@pytest.mark.parametrize("foreign_mode", ["canonical", "legacy"])
+def test_marker_does_not_hide_another_active_provider_and_update_has_no_effect(
+    isolated, monkeypatch, foreign_mode,
+):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    binding = registry.bootstrap_repository_binding(
+        "ghprojects", "same", "ONE", "PVT_1", owner="acme", number="1",
+    )
+    extra = {"canonical_repo": "github.com/acme/same"} if foreign_mode == "canonical" else {}
+    registry.register("youtrack", "same", "OTHER", "0-1", **extra)
+    registry_path = isolated / "state" / "registry.json"
+    marker_path = repo / ".foundry/tracker.json"
+    before = (registry_path.read_bytes(), marker_path.read_bytes())
+    with pytest.raises(ValueError, match="ambigu"):
+        registry.repository_tracker_selection()
+    for call in (foundry.tracker, doctor._provider_transport_preflight):
+        with pytest.raises(SystemExit, match="ambigu"):
+            call()
+    with pytest.raises(ValueError, match="ambigu"):
+        registry.update_repository_binding(
+            "ghprojects", "same", "ONE", "PVT_1",
+            expected_configuration_digest=binding.configuration_digest,
+            owner="acme", number="2",
+        )
+    assert (registry_path.read_bytes(), marker_path.read_bytes()) == before
+
+
+def test_archived_foreign_provider_does_not_conflict_with_active_marker(isolated, monkeypatch):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    binding = registry.bootstrap_repository_binding(
+        "ghprojects", "same", "ONE", "PVT_1", owner="acme", number="1",
+    )
+    registry.register(
+        "youtrack", "same", "OLD", "0-1", canonical_repo="github.com/acme/same",
+    )
+    data = registry.load()
+    data["youtrack"]["same"]["archive"] = True
+    registry._save(data)
+    assert registry.repository_tracker_binding() == binding
+
+
+def test_historical_devhub_marker_is_pilot_and_never_satisfies_v1(
+    isolated, monkeypatch, capsys,
+):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    registry.register(
+        "devhub", "same", "PILOT", "42", canonical_repo="github.com/acme/same",
+    )
+    binding = registry.cutover_repository_tracker(
+        "devhub", "PILOT", "42", migration_manifest_digest="sha256:" + "a" * 64,
+    )
+    assert registry.repository_tracker_binding() == binding
+    assert registry.repository_tracker_selection()["mode"] == "pilot"
+    with pytest.raises(SystemExit, match="V1 requis"):
+        registry.repository_tracker_selection(require_v1=True)
+    registry.main(["selection"])
+    assert json.loads(capsys.readouterr().out)["mode"] == "pilot"
+    with pytest.raises(SystemExit, match="V1 requis"):
+        registry.main(["selection", "--require-v1"])
+
+
 def test_upgrade_binds_exact_remote_and_ignores_adverse_environment(isolated, monkeypatch):
     first = _repo(isolated, "first", "same")
     second = _repo(isolated, "second", "same")

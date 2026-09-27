@@ -112,7 +112,8 @@ def setup(name, short, repo, adr_dir=None):
         raise SystemExit(
             f"Le tracker '{tracker.name}' ne prend pas en charge le provisionnement "
             "de projet. Crée le projet avec l'outil du provider, puis utilise "
-            "'registry register', ou configure un tracker compatible."
+            "'registry bootstrap' avec son binding complet vérifié, ou configure "
+            "un tracker compatible."
         )
 
     canonical_repository = None

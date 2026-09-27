@@ -285,7 +285,7 @@ def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch,
         lambda *_args, **_kwargs: pytest.fail("unsupported provider must not register"),
     )
 
-    with pytest.raises(SystemExit, match="ne prend pas en charge.*registry register"):
+    with pytest.raises(SystemExit, match="ne prend pas en charge.*registry bootstrap"):
         setup_project.setup("Demo", "DEMO", "demo")
 
 
