@@ -65,9 +65,14 @@ reads are typed `adr_index` refusals until PAT-58 and lifecycle projection throu
 Issue node ID to attach it once to the exact bound Project, then writes only the
 qualified `State`, `Type`, `Priority`, and `Estimate` fields. The complete catalog
 and each requested option are checked before creation; an omitted Type is explicitly
-set to `Task`, while an unqualified option is refused before the first POST. An optional parent
-is proved through its exact bound REST URL before the child is made and is attached
-with the parent's issue number and the child's distinct integer native issue ID.
+set to `Task`, while an unqualified option is refused before the first POST. `Estimate`
+accepts an exact signed base-10 integer: booleans, fractional floats and non-finite
+floats are refused before an effect, while a negative integer is not given an extra
+provider-specific restriction. An optional parent must be the unique complete,
+non-ADR delivery item in this exact Project as well as an Issue at the exact bound REST
+URL before the child is made. A canonical-repository Issue outside the Project and a
+`foundry:adr` support are both refused before the first write. The parent is attached
+with its Issue number and the child's distinct integer native Issue ID.
 `update_fields` and issue-only `update_body` reread their targeted snapshot just
 before one narrow mutation and reread it afterwards.  Unrelated fields are never
 sent in a Project-field mutation or an Issue-body PATCH.
@@ -76,10 +81,39 @@ GitHub's qualified endpoints expose no expected-version/CAS parameter. These are
 therefore bounded detection, never CAS or exclusion: a third-party change between
 the fresh read and the write can still be overwritten. Authentication/permission,
 rate-limit, deleted-field, malformed/ambiguous response and transport errors remain
-explicit. The adapter never retries a create, field write, relation or comment after
-a response loss. Once a create succeeded but a later attachment, field, or relation
-step fails, that known partial effect is reported for operator recovery rather than
-creating another Issue.
+explicit.
+
+Issue creation uses a private local intent/observation journal under Foundry's data
+directory. Its fingerprint covers the exact binding, title, body, portable fields and
+parent; it stores no body or title. The intent is atomically durable before the REST
+Issue POST and is serialized by a local `flock`, shared by Claude Code, Codex and
+worktrees on the same machine. Every invocation still revalidates GitHub: without an
+existing intent only zero exact native candidates permits the initial POST; a pending
+intent plus zero candidates is an unknown effect and refuses; one exact canonical,
+non-ADR candidate resumes; multiple candidates, or one candidate without a matching
+local intent, fail closed. A lost successful Issue response therefore exposes the
+known Foundry/native Issue IDs and a later invocation resumes that Issue without a
+second Issue POST. Because the public create port has no caller-supplied operation ID,
+two intentional creates with the same exact binding and spec on this machine are
+indistinguishable from a replay and converge on the same retained intent.
+
+Project attachment, each requested field, and the parent relation are observed
+separately. An already-applied target converges without a write; a conflicting present
+value refuses; an absent target permits at most one recorded resume attempt. Errors
+after the Issue identity is known carry its Foundry ID and integer native Issue ID.
+The private recovery scan can observe delivery rows whose create-time Type is
+still missing, including another incomplete row; only the exact known candidate
+can authorize its creation steps, and a parent must be complete. Ordinary PAT-57
+reads retain their strict complete-item contract.
+
+This journal is recovery state, not a provider receipt or authority. It grants no
+effect without fresh provider validation, does not coordinate another machine, and
+does not make GitHub exactly-once. A third-party identical creation between the
+initial zero-candidate read and the Issue POST remains the named S1-to-S2 race; a later
+multiple-candidate observation refuses but cannot undo that duplicate. A corrupt or
+unavailable journal refuses before the Issue POST. Field writes, relations and comments
+retain their own bounded observation rules; free-text comments still cannot safely
+replay a lost response without duplicating the note.
 
 `link` proves both endpoints belong to the same canonical repository before it
 snapshots/rechecks relations and performs one `sub_issues` (including reparent) or

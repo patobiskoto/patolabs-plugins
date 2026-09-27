@@ -266,3 +266,25 @@ Les limites restent celles de PAT-ADR-0006 : détection bornée, fenêtre S1→S
 résiduelle assumée, aucune transaction globale, CAS, exclusion concurrente ou
 garantie exactly-once. Une création partiellement réalisée n’est pas relancée
 à l’aveugle. Le cycle de vie PR/merge et le codec ADR restent hors PAT-66.
+
+### Recette de reprise PAT-66 après interruption
+
+Une création synthétique supplémentaire, `GHQUAL-7`, a été effectuée par le
+port commun. Le transport de qualification a volontairement rendu sa réponse
+indisponible et masqué temporairement le candidat à la relecture : le premier
+processus a effectué un seul POST Issue puis refusé l’effet inconnu, en conservant
+son intention locale. Cette perte de réponse est une injection de qualification,
+pas une panne GitHub présentée comme réelle.
+
+Un autre processus a retrouvé cette même Issue et ajouté son item. Sa relecture
+immédiate n’a pas confirmé l’ajout ; l’adaptateur a signalé le résultat partiel
+avec les IDs connus. Après observation fraîche de l’item unique, la reprise a
+terminé les champs et le parent sans aucun second POST Issue. Un troisième
+processus a relu le résultat complet sans aucune mutation fournisseur.
+
+Le journal privé est une observation de reprise locale, pas un receipt ni une
+preuve d’acceptation. Il coordonne les deux hôtes et worktrees qui partagent
+le même répertoire de données Foundry sur une machine ; aucune coordination
+entre machines ni garantie exactly-once globale n’est revendiquée. Zéro candidat
+pour un effet encore inconnu reste un refus ; une création externe identique
+dans la fenêtre initiale zéro → POST reste un risque résiduel explicite.

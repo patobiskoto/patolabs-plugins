@@ -31,7 +31,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/ghprojects.py",
       "class": "GitHubProjectsTracker",
       "v1_core": true,
-      "note": "PAT-57 implements the bounded read slice: canonical binding identity, search and get_issue. Mutations and ADR reads remain typed capability refusals pending their owner tickets. PAT-65 qualified the private personal-project API shape and PAT-ADR-0007 selected the reserved foundry:adr support label."
+      "note": "PAT-57 implements the bounded read slice: canonical binding identity, search and get_issue. PAT-66 implements bounded core issue/item creation and grooming writes, comments and relations. Lifecycle projection and ADR reads/writes remain typed capability refusals pending PAT-67 and PAT-58. PAT-65 qualified the private personal-project API shape and PAT-ADR-0007 selected the reserved foundry:adr support label."
     },
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
@@ -153,7 +153,7 @@
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "PAT-66 creates a bound private-repository Issue once, attaches its distinct Issue node to the exact ProjectV2, writes only qualified fields, optionally attaches the proven parent, and reads back. Response loss is never retried; a later partial known effect is explicit (ghprojects.py)."
+          "evidence": "PAT-66 persists a private local intent keyed by the exact binding and creation spec before the sole initial private-repository Issue POST. Fresh bounded observation makes zero/one/multiple candidates explicit: pending zero and multiple or unowned candidates refuse, while one exact canonical non-ADR candidate resumes without a second Issue POST. Project attachment, qualified fields and optional parent each converge by readback or get at most one recorded resume; known partial failures expose the Foundry/native Issue IDs. The journal is machine-local recovery state, not provider authority, CAS or a cross-machine exactly-once claim (ghprojects.py)."
         }
       }
     },
@@ -220,7 +220,7 @@
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "PAT-66 creates a child only after proving the exact bound parent REST coordinate, then uses its distinct integer native issue id in the qualified sub_issues endpoint and verifies the normalized parent relation on readback (ghprojects.py)."
+          "evidence": "PAT-66 creates a child only after proving the parent is one unique complete non-ADR delivery item in the exact bound Project as well as the exact bound REST Issue; a canonical-repository Issue outside that Project and an ADR support refuse before any write. It then uses the child's distinct integer native Issue ID in the qualified sub_issues endpoint and verifies or boundedly resumes the normalized parent relation (ghprojects.py)."
         }
       }
     },
