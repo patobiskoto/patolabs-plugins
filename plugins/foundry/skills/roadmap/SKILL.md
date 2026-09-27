@@ -47,6 +47,6 @@ otherwise restart retrieval from page 1 before reasoning.
 ## 4. Offer to apply
 Propose promoting the chosen slice (human-confirmed), then apply each:
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" edit transition <ID> ready
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" edit transition <ID> ready backlog
 ```
 Never promote without confirmation.

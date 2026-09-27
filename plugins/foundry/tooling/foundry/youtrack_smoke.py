@@ -11,7 +11,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
-from foundry.models import Adr, Project
+from foundry.models import Adr, Project, TransitionContext
 from foundry.trackers.youtrack import YouTrackTracker, _YouTrackHTTPError
 
 
@@ -356,7 +356,11 @@ def run_smoke(
             raise RuntimeError("issue link was not visible on read-back")
 
         stage = "transition"
-        tracker.set_state(child_id, "in-progress")
+        tracker.set_state(
+            child_id,
+            "in-progress",
+            context=TransitionContext(expected_state="backlog"),
+        )
         if tracker.get_issue(child_id).state != "in-progress":
             raise RuntimeError("issue transition was not visible on read-back")
 

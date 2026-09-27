@@ -94,6 +94,7 @@ class EpicSubgraphUnavailableError(RuntimeError):
 class Tracker(ABC):
     name: str = "abstract"
     bounded_transition_proofs: bool = False
+    bounded_state_transitions: bool = False
     requires_mutation_binding: bool = False
     acceptance_sync_supported: bool = False
     epic_closure_supported: bool = False
@@ -152,6 +153,22 @@ class Tracker(ABC):
     @abstractmethod
     def resolve_project(self, repo: str) -> Project:
         """Map a repo basename to its tracker project (raises if unknown)."""
+
+    def observe_issue(self, issue_id: str) -> Issue:
+        """Return the portable lifecycle observation used by query and resume.
+
+        Providers with append-only proofs may override this to expose a native /
+        normalized disagreement without treating it as a successful transition.
+        """
+        return self.get_issue(issue_id)
+
+    def recover_done_projection(
+        self, issue_id: str, *, pr_url: str, head_sha: str, base_sha: str,
+        merge_sha: str, project: Project | None = None,
+    ) -> bool:
+        """Repair only a native done projection backed by an exact receipt."""
+        del issue_id, pr_url, head_sha, base_sha, merge_sha, project
+        return False
 
     def resolve_checkout_project(
         self,
@@ -268,11 +285,12 @@ class Tracker(ABC):
         *,
         pr_url: str,
         head_sha: str,
+        base_sha: str,
         merge_sha: str,
         project: Project | None = None,
     ) -> bool:
         """Append only the missing override receipt of an already-merged issue."""
-        del issue_id, reason, pr_url, head_sha, merge_sha, project
+        del issue_id, reason, pr_url, head_sha, base_sha, merge_sha, project
         raise TrackerCapabilityUnavailableError(self.name, "acceptance-override-recovery")
 
     def update_body(

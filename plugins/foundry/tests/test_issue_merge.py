@@ -62,7 +62,7 @@ def test_existing_real_provider_openpr_path_is_unchanged_by_noop_preflight(
     events = []
     tracker = object.__new__(provider_class)
     tracker.get_issue = lambda _issue_id: events.append("tracker:get-issue") or SimpleNamespace(
-        title="Pilot", type="Feature",
+        title="Pilot", type="Feature", state="in-progress",
     )
     branch = "feat/demo-7-pilot"
     pull_request = SimpleNamespace(
@@ -135,11 +135,12 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     tracker = object.__new__(provider_class)
     tracker.get_issue = lambda _issue_id: events.append("tracker:get-issue") or SimpleNamespace(
         id="DEMO-7", state="review", body="", ac_done=0, ac_total=0,
+        pr_url="https://github.com/acme/demo/pull/12",
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12",
         sha="a" * 40, base_sha="c" * 40, head="feat/demo-7-pilot",
-        base="main", merged=False,
+        base="main", state="open", merged=False,
     )
     landed = SimpleNamespace(
         sha="b" * 40, head=pull_request.head, merged=True,
@@ -196,7 +197,7 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     assert events.index("tracker:preflight-merge-effect") < events.index(
         "codehost:merge"
     )
-    if tracker.bounded_transition_proofs:
+    if tracker.bounded_transition_proofs or tracker.bounded_state_transitions:
         assert events.index("tracker:transition:done") < events.index(
             "codehost:delete-branch"
         )
@@ -273,6 +274,84 @@ def test_issue_start_retry_resumes_after_partial_tracker_transition(monkeypatch)
 
     assert events == ["ready", "in-progress", "in-progress"]
     assert tracker.state == "in-progress"
+
+
+def _youtrack_transport(
+    monkeypatch,
+    native,
+    *,
+    pr_url: str | None = None,
+    lose_first_response: bool = False,
+):
+    """Return a real YouTrack adapter over one stateful in-memory HTTP transport."""
+    tracker = object.__new__(YouTrackTracker)
+    posts = []
+    lose_response = lose_first_response
+
+    def raw_issue():
+        custom_fields = [
+            {"name": "State", "value": {"name": native["state"]}},
+            {"name": "Type", "value": {"name": "Feature"}},
+        ]
+        if pr_url is not None:
+            custom_fields.append({"name": "GitHub PR", "value": pr_url})
+        return {
+            "idReadable": "DEMO-7",
+            "summary": "Pilot",
+            "description": "",
+            "project": {"id": "0-demo", "shortName": "DEMO"},
+            "customFields": custom_fields,
+            "links": [],
+            "comments": [],
+        }
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal lose_response
+        assert path == "/issues/DEMO-7"
+        if method == "GET":
+            return raw_issue()
+        assert method == "POST"
+        posts.append((path, body, fields, top))
+        state_field = next(
+            field for field in body["customFields"] if field["name"] == "State"
+        )
+        native["state"] = state_field["value"]["name"]
+        if lose_response:
+            lose_response = False
+            raise RuntimeError("tracker response lost")
+        return {"idReadable": "DEMO-7"}
+
+    tracker._req = request
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+    return tracker, posts
+
+
+def test_youtrack_issue_start_retry_refuses_a_new_third_state(monkeypatch):
+    """A fresh start invocation cannot adopt the state observed after interruption."""
+    native = {"state": "backlog"}
+    tracker, posts = _youtrack_transport(
+        monkeypatch,
+        native,
+        lose_first_response=True,
+    )
+    branch_modes = iter(("linked-worktree", "existing"))
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue, "_sh", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(issue, "_prepare_branch", lambda _branch: next(branch_modes))
+
+    with pytest.raises(SystemExit, match=r"relance exactement `issue start DEMO-7`"):
+        issue.start("DEMO-7")
+    assert native["state"] == "in-progress"
+    assert len(posts) == 1
+
+    native["state"] = "blocked"
+    with pytest.raises(SystemExit, match="prédécesseur de l'opération d'origine"):
+        issue.start("DEMO-7")
+    assert native["state"] == "blocked"
+    assert len(posts) == 1
 
 
 def test_issue_start_already_in_progress_reuses_branch_without_transition(monkeypatch):
@@ -379,11 +458,11 @@ def test_proof_bound_tracker_persists_done_receipt_before_branch_delete(monkeypa
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
         get_issue=lambda _id: SimpleNamespace(
-            id="DEMO-7", state="review", body="", ac_done=0, ac_total=0,
+            id="DEMO-7", state="review", pr_url="https://github.com/acme/demo/pull/12", body="", ac_done=0, ac_total=0,
         ),
     )
     head = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="release", merged=False,
+        number=12, sha="a" * 40, head="feat/demo-7", base="release", state="open", merged=False,
         base_sha="c" * 40,
         url="https://github.com/acme/demo/pull/12",
     )
@@ -429,11 +508,11 @@ def test_proof_bound_retry_uses_existing_merge_receipt_without_merging_twice(mon
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
         get_issue=lambda _id: SimpleNamespace(
-            id="DEMO-7", state="review", body="", ac_done=0, ac_total=0,
+            id="DEMO-7", state="review", pr_url="https://github.com/acme/demo/pull/12", body="", ac_done=0, ac_total=0,
         ),
     )
     pr = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", merged=True,
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", state="closed", merged=True,
         base_sha="c" * 40,
         merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
     )
@@ -464,6 +543,176 @@ def test_proof_bound_retry_uses_existing_merge_receipt_without_merging_twice(mon
     assert events[-1] == ("delete",)
 
 
+@pytest.mark.parametrize("intervening_state", [None, "blocked"])
+def test_youtrack_public_merge_resume_uses_original_review_predecessor(
+    monkeypatch, intervening_state,
+):
+    """A fresh CLI invocation never re-merges or adopts a third native state."""
+    native = {"state": "review"}
+    events = []
+    pr_url = "https://github.com/acme/demo/pull/12"
+    tracker, posts = _youtrack_transport(
+        monkeypatch,
+        native,
+        pr_url=pr_url,
+        lose_first_response=True,
+    )
+    pr = SimpleNamespace(
+        number=12,
+        url=pr_url,
+        sha="a" * 40,
+        base_sha="c" * 40,
+        head="feat/demo-7",
+        base="main",
+        state="closed", merged=True,
+        merge_sha="b" * 40,
+    )
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: "acme/demo",
+        get_pr=lambda *_args: pr,
+        merge_pr=lambda *_args, **_kwargs: events.append("merge")
+        or (_ for _ in ()).throw(AssertionError("already merged")),
+        delete_branch=lambda *_args: events.append("delete"),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(
+        write,
+        "ci_gate",
+        lambda *_args, **_kwargs: {
+            "passed": True,
+            "waived": False,
+            "total": 1,
+            "pending": [],
+            "failing": [],
+        },
+    )
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+
+    with pytest.raises(RuntimeError, match="response lost"):
+        issue.merge("DEMO-7", "12")
+    assert native["state"] == "done"
+    assert events == []
+    assert len(posts) == 1
+
+    if intervening_state is not None:
+        native["state"] = intervening_state
+        with pytest.raises(TrackerConflictError, match="modifié avant transition"):
+            issue.merge("DEMO-7", "12")
+        assert native["state"] == intervening_state
+        assert events == []
+        assert len(posts) == 1
+    else:
+        issue.merge("DEMO-7", "12")
+        assert native["state"] == "done"
+        assert events == ["delete"]
+        assert len(posts) == 1
+
+
+@pytest.mark.parametrize("change", [{"base": "release"}, {"base_sha": "d" * 40}, None])
+@pytest.mark.parametrize("read_number", [2, 3], ids=["after-ci", "final-before-merge"])
+def test_youtrack_public_merge_checks_final_base_coordinates(monkeypatch, change, read_number):
+    native = {"state": "review"}
+    events = []
+    pr_url = "https://github.com/acme/demo/pull/12"
+    tracker, posts = _youtrack_transport(monkeypatch, native, pr_url=pr_url)
+    original = SimpleNamespace(
+        number=12, url=pr_url, sha="a" * 40, base_sha="c" * 40,
+        head="feat/demo-7", base="main", state="open", merged=False, merge_sha=None,
+    )
+    reads = 0
+
+    def get_pr(*_args):
+        nonlocal reads
+        reads += 1
+        events.append("read")
+        if change and reads >= read_number:
+            return SimpleNamespace(**{**vars(original), **change})
+        return original
+
+    def merge_pr(*_args, **kwargs):
+        assert events[-1] == "read"
+        assert kwargs["sha"] == original.sha
+        events.append("merge")
+        return SimpleNamespace(merged=True, sha="b" * 40, head=original.head)
+
+    codehost = SimpleNamespace(
+        name="github", resolve_repo=lambda: "acme/demo", get_pr=get_pr,
+        merge_pr=merge_pr, delete_branch=lambda *_args: events.append("delete"),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(write, "preflight_merge_effect", lambda *_args: events.append("guard"))
+    monkeypatch.setattr(write, "ci_gate", lambda *_args, **_kwargs: {
+        "passed": True, "waived": False, "total": 1, "pending": [], "failing": [],
+    })
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+    if change:
+        with pytest.raises(SystemExit, match="coordonnées GitHub.*changé"):
+            issue.merge("DEMO-7", "12")
+        assert "merge" not in events and "delete" not in events
+        assert posts == [] and native["state"] == "review"
+    else:
+        issue.merge("DEMO-7", "12")
+        assert reads == 3 and native["state"] == "done"
+        assert len(posts) == 1 and events[-1] == "delete"
+
+
+@pytest.mark.parametrize("merged", [False, True], ids=["open", "already-merged"])
+def test_youtrack_public_merge_refuses_wrong_linked_pr_before_any_effect(
+    monkeypatch, merged,
+):
+    native = {"state": "review"}
+    tracker, posts = _youtrack_transport(
+        monkeypatch,
+        native,
+        pr_url="https://github.com/acme/demo/pull/11",
+    )
+    pr = SimpleNamespace(
+        number=12,
+        url="https://github.com/acme/demo/pull/12",
+        sha="a" * 40,
+        base_sha="c" * 40,
+        head="feat/demo-7",
+        base="main",
+        state="closed" if merged else "open", merged=merged,
+        merge_sha="b" * 40 if merged else None,
+    )
+    effects = []
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: "acme/demo",
+        get_pr=lambda *_args: pr,
+        merge_pr=lambda *_args, **_kwargs: effects.append("merge"),
+        delete_branch=lambda *_args: effects.append("delete"),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(
+        issue,
+        "_observe_receipt",
+        lambda *_args: effects.append("receipt"),
+    )
+    monkeypatch.setattr(
+        write,
+        "ci_gate",
+        lambda *_args, **_kwargs: effects.append("ci"),
+    )
+
+    with pytest.raises(SystemExit, match="PR liée au ticket"):
+        issue.merge("DEMO-7", "12")
+
+    assert effects == []
+    assert posts == []
+    assert native["state"] == "review"
+
+
 def test_already_done_exact_pr_retry_only_finishes_cleanup(monkeypatch, capsys):
     events = []
     pr_url = "https://github.com/acme/demo/pull/12"
@@ -474,7 +723,7 @@ def test_already_done_exact_pr_retry_only_finishes_cleanup(monkeypatch, capsys):
         ),
     )
     pr = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", merged=True,
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", state="closed", merged=True,
         base_sha="c" * 40,
         merge_sha="b" * 40, url=pr_url,
     )
@@ -507,7 +756,7 @@ def test_already_done_retry_refuses_mismatched_pr_receipt(monkeypatch):
         ),
     )
     pr = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", merged=True,
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", state="closed", merged=True,
         base_sha="c" * 40,
         merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
     )
@@ -519,7 +768,7 @@ def test_already_done_retry_refuses_mismatched_pr_receipt(monkeypatch):
     monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
     monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
 
-    with pytest.raises(SystemExit, match="reçu exact"):
+    with pytest.raises(SystemExit, match="PR liée au ticket"):
         issue.merge("DEMO-7", "12")
     assert events == []
 
@@ -529,7 +778,7 @@ def test_proof_bound_openpr_records_pr_before_review_with_exact_coordinates(monk
     diff_bases = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
-        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature"),
+        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12", sha="a" * 40,
@@ -580,7 +829,7 @@ def test_proof_bound_openpr_rejects_invalid_api_base_before_tracker_write(
     events = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
-        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature"),
+        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12",
@@ -621,7 +870,7 @@ def test_openpr_reuses_existing_pr_and_preserves_required_body_markers(
     events = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=False,
-        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature"),
+        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12", sha="a" * 40,
@@ -672,7 +921,7 @@ def test_openpr_reuse_without_supplied_summary_preserves_existing_body(monkeypat
     events = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=False,
-        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature"),
+        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12", sha="a" * 40,
@@ -715,7 +964,7 @@ def test_proof_bound_openpr_reuse_refreshes_current_review_coordinates(monkeypat
     events = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
-        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature"),
+        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12", sha="a" * 40,
@@ -808,7 +1057,7 @@ def test_openpr_reuse_is_retryable_after_tracker_interruption(monkeypatch):
     events = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
-        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature"),
+        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12", sha="a" * 40,
@@ -858,12 +1107,12 @@ def test_proof_bound_merge_rejects_invalid_api_base_before_gates_or_effects(
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
         get_issue=lambda _id: SimpleNamespace(
-            id="DEMO-7", state="review", body="", ac_done=0, ac_total=0,
+            id="DEMO-7", state="review", pr_url="https://github.com/acme/demo/pull/12", body="", ac_done=0, ac_total=0,
         ),
     )
     pull_request = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", base_sha=base_sha,
-        merged=False, url="https://github.com/acme/demo/pull/12",
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha=base_sha,
+        state="open", merged=False, url="https://github.com/acme/demo/pull/12",
     )
     codehost = SimpleNamespace(
         resolve_repo=lambda: "acme/demo", get_pr=lambda *_args: pull_request,
@@ -894,12 +1143,12 @@ def test_proof_bound_merge_refuses_a_base_that_moves_after_validation(monkeypatc
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
         get_issue=lambda _id: SimpleNamespace(
-            id="DEMO-7", state="review", body="", ac_done=0, ac_total=0,
+            id="DEMO-7", state="review", pr_url="https://github.com/acme/demo/pull/12", body="", ac_done=0, ac_total=0,
         ),
     )
     original = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
-        merged=False, url="https://github.com/acme/demo/pull/12",
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
+        state="open", merged=False, url="https://github.com/acme/demo/pull/12",
     )
     stale = SimpleNamespace(**{**vars(original), "base_sha": "d" * 40})
     reads = iter((original, stale))
@@ -931,12 +1180,12 @@ def test_proof_bound_coordinate_reread_is_last_network_call_before_merge(monkeyp
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
         get_issue=lambda _id: network.append("tracker:get-issue") or SimpleNamespace(
-            id="DEMO-7", state="review", body="- [ ] pilot", ac_done=0, ac_total=1,
+            id="DEMO-7", state="review", pr_url="https://github.com/acme/demo/pull/12", body="- [ ] pilot", ac_done=0, ac_total=1,
         ),
     )
     pr = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
-        merged=False, url="https://github.com/acme/demo/pull/12",
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
+        state="open", merged=False, url="https://github.com/acme/demo/pull/12",
     )
     landed = SimpleNamespace(sha="b" * 40, head=pr.head, merged=True)
     pr_reads = 0
@@ -1066,7 +1315,13 @@ def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
                               body="- [ ] current contract\n"):
     """Install deterministic local fakes; no network or tracker writes are possible."""
     events = []
-    current = SimpleNamespace(id="DEMO-7", body=body, ac_done=0, ac_total=1)
+    current = SimpleNamespace(
+        id="DEMO-7",
+        body=body,
+        ac_done=0,
+        ac_total=1,
+        pr_url="https://github.com/acme/demo/pull/12",
+    )
 
     def add_comment(issue_id, text):
         events.append(("comment", issue_id, text))
@@ -1089,8 +1344,8 @@ def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
         sync_acceptance_body=sync_acceptance_body,
     )
     head = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
-        merged=False, url="https://github.com/acme/demo/pull/12",
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
+        state="open", merged=False, url="https://github.com/acme/demo/pull/12",
     )
     landed = SimpleNamespace(sha="b" * 40, head=head.head, merged=True)
 
@@ -1108,7 +1363,11 @@ def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "main-checkout")
     monkeypatch.setattr(write, "ci_gate", lambda *_args, **_kwargs: {
         "passed": True, "waived": False, "total": 1, "pending": 0, "failing": 0})
-    monkeypatch.setattr(write, "transition", lambda *_args: events.append(("done",)))
+    monkeypatch.setattr(
+        write,
+        "transition",
+        lambda *_args, **_kwargs: events.append(("done",)),
+    )
 
     class Store:
         def __init__(self, _repository):
@@ -1155,6 +1414,13 @@ def test_youtrack_merge_checks_proven_criteria_before_codehost_merge(
     tracker = object.__new__(YouTrackTracker)
     current = tracker._to_issue({
         "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
+        "customFields": [
+            {"name": "State", "value": {"name": "review"}},
+            {
+                "name": "GitHub PR",
+                "value": "https://github.com/acme/demo/pull/12",
+            },
+        ],
     })
     assert (current.ac_done, current.ac_total) == (0, 1)
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
@@ -1179,7 +1445,7 @@ def test_youtrack_merge_checks_proven_criteria_before_codehost_merge(
 
     assert current.body == f"  {marker} [x] current contract\r\n"
     assert [event[0] for event in events] == [
-        "proof", "body-write", "comment", "merge", "delete", "done",
+        "proof", "body-write", "comment", "merge", "done", "delete",
     ]
 
 
@@ -1194,6 +1460,13 @@ def test_youtrack_merge_multiline_pseudo_checkbox_cannot_hide_unchecked_ac(
     tracker = object.__new__(YouTrackTracker)
     current = tracker._to_issue({
         "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
+        "customFields": [
+            {"name": "State", "value": {"name": "review"}},
+            {
+                "name": "GitHub PR",
+                "value": "https://github.com/acme/demo/pull/12",
+            },
+        ],
     })
     assert (current.ac_done, current.ac_total) == (0, 1)
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
@@ -1218,7 +1491,7 @@ def test_youtrack_merge_multiline_pseudo_checkbox_cannot_hide_unchecked_ac(
 
     assert current.body == "* [x]\n- [x] current contract\n"
     assert [event[0] for event in events] == [
-        "proof", "body-write", "comment", "merge", "delete", "done",
+        "proof", "body-write", "comment", "merge", "done", "delete",
     ]
 
 
@@ -1303,6 +1576,13 @@ def test_youtrack_human_ac_override_keeps_prose_audit_without_typed_receipt(
     tracker = object.__new__(YouTrackTracker)
     current = tracker._to_issue({
         "idReadable": "DEMO-7", "summary": "Current contract", "description": body,
+        "customFields": [
+            {"name": "State", "value": {"name": "review"}},
+            {
+                "name": "GitHub PR",
+                "value": "https://github.com/acme/demo/pull/12",
+            },
+        ],
     })
     monkeypatch.setattr(tracker, "get_issue", lambda _id: current)
 
@@ -1325,7 +1605,7 @@ def test_youtrack_human_ac_override_keeps_prose_audit_without_typed_receipt(
     )
 
     assert [event[0] for event in events] == [
-        "proof", "comment", "merge", "delete", "done",
+        "proof", "comment", "merge", "done", "delete",
     ]
     assert events[1][1] == (
         "Audit merge: override humain explicite des AC incomplètes (human_confirmed)."
@@ -1406,8 +1686,8 @@ def test_unreadable_issue_is_not_recovered_without_override_port(monkeypatch):
     tracker.get_issue = unreadable
     codehost = issue.foundry.codehost()
     merged = SimpleNamespace(
-        sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
-        merged=True, merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", base_sha="c" * 40,
+        state="closed", merged=True, merge_sha="b" * 40, url="https://github.com/acme/demo/pull/12",
     )
     codehost.get_pr = lambda *_: merged
 

@@ -38,6 +38,12 @@ class Issue:
     created: Optional[int] = None       # epoch ms
     updated: Optional[int] = None       # epoch ms
     version: Optional[int] = None       # provider concurrency coordinate, when exposed
+    # A lifecycle observation deliberately keeps proof-derived and provider-native
+    # coordinates distinct.  ``state`` remains the backwards-compatible display
+    # value; callers that need to decide or resume must inspect this triplet.
+    normalized_state: Optional[str] = None
+    native_state: Optional[str] = None
+    projection_status: Optional[str] = None  # aligned | native-only | disagreement | unknown
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -76,6 +82,11 @@ class TransitionContext:
     base_sha: Optional[str] = None
     review_digest: Optional[str] = None
     merge_sha: Optional[str] = None
+    # The native state observed by the shared write tier immediately before a
+    # bounded provider transition.  This is deliberately a coordinate, not a
+    # lifecycle proof: adapters still own their native read/write/readback and
+    # receipt semantics.
+    expected_state: Optional[str] = None
 
 
 @dataclass(frozen=True)

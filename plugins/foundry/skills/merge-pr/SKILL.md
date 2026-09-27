@@ -191,13 +191,15 @@ alone). Zero checks right after a push means the CI is queued — WAIT and retry
 override; the gate refuses `--allow-no-ci` while a fresh check-suite is queued.
 `--allow-no-ci` is only for a repo that genuinely has no CI at all, and only after
 asking the human. It squash-merges (REST, pinned to the CI-gated sha — if the head
-moved since the verdict, it refuses and you re-run the gate), deletes the branch, sets
-the issue `done`, and cleans up local.
+moved since the verdict, it refuses and you re-run the gate), sets the issue `done`,
+then deletes the branch and cleans up local. If GitHub already reports the exact PR
+merged, it repairs only the missing tracker transition and never calls the merge endpoint
+again.
 
 ### If a gate blocks
 🔴 review finding or failed human test → put the issue back in the loop, fix, retry:
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" edit transition <ISSUE-ID> in-progress
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" edit transition <ISSUE-ID> in-progress review
 ```
 Record the blocking verdict for the role that must correct it (normally implementer)
 with `routing escalation failure ... --kind review_blocking --idempotency-key <STABLE-REVIEW-EFFECT-ID>`.

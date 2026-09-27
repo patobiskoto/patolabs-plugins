@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from foundry import edit, registry, write
-from foundry.models import Adr, Issue, Link, Project
+from foundry.models import Adr, Issue, Link, Project, TransitionContext
 from foundry.trackers.base import (
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
@@ -113,8 +113,8 @@ class FakeTracker:
             Link(type=link_type, direction="outward", target=dst_id)
         )
 
-    def set_state(self, issue_id, state):
-        self._record("set_state", issue_id, state)
+    def set_state(self, issue_id, state, context=None):
+        self._record("set_state", issue_id, state, context)
         self._issues[issue_id].state = state
 
     def add_comment(self, issue_id, text):
@@ -984,6 +984,54 @@ def test_update_fields_ambiguous_effect_replay_is_noop(monkeypatch):
         tracker.update_fields("ACTIVE-1", {"Priority": "P0"})
     assert tracker.update_fields("ACTIVE-1", {"Priority": "P0"}).priority == "P0"
     assert post_attempts == 1
+
+
+def test_set_state_keeps_original_predecessor_until_effective_s1(monkeypatch):
+    """A third-party edit between lifecycle reads is refused before the State POST."""
+    tracker = object.__new__(YouTrackTracker)
+    native_state = "review"
+    calls = []
+
+    def issue_raw():
+        return {
+            "idReadable": "ACTIVE-1",
+            "summary": "issue",
+            "description": "",
+            "project": {"id": "0-active", "shortName": "ACTIVE"},
+            "customFields": [
+                {"name": "State", "value": {"name": native_state}},
+            ],
+            "links": [],
+            "comments": [],
+        }
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal native_state
+        calls.append((method, path, body, fields))
+        assert path == "/issues/ACTIVE-1"
+        if method == "GET" and fields == "project(id,shortName)":
+            response = issue_raw()
+            native_state = "blocked"
+            return response
+        if method == "GET":
+            return issue_raw()
+        raise AssertionError("State POST must not run after predecessor drift")
+
+    tracker._req = request
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+
+    with pytest.raises(TrackerConflictError, match="avant écriture bornée"):
+        tracker.set_state(
+            "ACTIVE-1",
+            "done",
+            context=TransitionContext(expected_state="review"),
+        )
+
+    assert native_state == "blocked"
+    assert [call[0] for call in calls] == ["GET", "GET", "GET"]
+    assert not any(call[0] == "POST" for call in calls)
 
 
 def test_update_fields_preserves_github_pr_projection(monkeypatch):

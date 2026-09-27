@@ -272,3 +272,17 @@ def test_oversized_component_is_whole_and_union_covers_every_active_issue(monkey
     assert pages[0]["sections"]["issues"]["limit_exceeded"] is True
     assert all(result["limit_exceeded"] is True for result in pages)
     assert all(result["truncated"] is False for result in pages)
+
+
+@pytest.mark.parametrize("profile", ["next-issue", "roadmap"])
+def test_profile_retains_proof_native_disagreement(monkeypatch, profile):
+    tracker = _Tracker([Issue("T-1", "active", state="review",
+                             normalized_state="review", native_state="in-progress",
+                             projection_status="disagreement")])
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "fixture")
+    result = query.profile(profile)
+    row = next(row for row in result["issues"] if row["id"] == "T-1")
+    assert row["state"] == row["normalized_state"] == "review"
+    assert row["native_state"] == "in-progress"
+    assert row["projection_status"] == "disagreement"

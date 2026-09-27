@@ -122,12 +122,49 @@ def _require_unchanged_pr_coordinates(ch, repo, pr_number, original, base_sha) -
     """Fail closed when the code-host no longer exposes the reviewed PR coordinates."""
     fresh = ch.get_pr(repo, int(pr_number))
     fresh_base_sha = _require_pr_base_sha(fresh)
-    if (fresh.sha != original.sha or fresh_base_sha != base_sha
-            or fresh.url != original.url or fresh.merged != original.merged):
+    if (fresh_base_sha != base_sha or any(
+        getattr(fresh, key, None) != getattr(original, key, None)
+        for key in ("number", "url", "sha", "head", "base", "state", "merged", "merge_sha")
+    )):
         raise SystemExit(
             "⛔ Merge refusé — les coordonnées GitHub de la PR ont changé "
             "depuis la preuve (head/base/état). Relance les gates sur la PR courante."
         )
+
+
+def _require_pr_coordinates(pr, pr_number: int) -> str:
+    """Validate the exact code-host readback before any bounded recovery effect."""
+    exact = (
+        getattr(pr, "number", None) == pr_number
+        and isinstance(getattr(pr, "head", None), str)
+        and bool(pr.head)
+        and isinstance(getattr(pr, "base", None), str)
+        and bool(pr.base)
+        and re.fullmatch(r"[0-9a-f]{40}", str(getattr(pr, "sha", None)))
+        is not None
+        and isinstance(getattr(pr, "merged", None), bool)
+        and getattr(pr, "state", None) in {"open", "closed"}
+        and (pr.merged or pr.state == "open")
+        and (
+            not pr.merged
+            or re.fullmatch(r"[0-9a-f]{40}", str(getattr(pr, "merge_sha", None)))
+            is not None
+        )
+    )
+    if not exact:
+        raise SystemExit(
+            "⛔ Merge refusé — la PR liée au ticket ou ses coordonnées exactes "
+            "(numéro/URL/head/base/état) diffèrent de la PR demandée."
+        )
+    return _require_pr_base_sha(pr)
+
+
+def _require_linked_pr_coordinates(current, pr, pr_number: int) -> str:
+    """Authenticate the issue-linked PR before a bounded tracker lifecycle effect."""
+    base_sha = _require_pr_coordinates(pr, pr_number)
+    if getattr(current, "pr_url", None) != getattr(pr, "url", None):
+        raise SystemExit("⛔ Merge refusé — la PR liée au ticket diffère de la PR demandée.")
+    return base_sha
 
 
 def _reuse_or_open_pr(ch, repo: str, branch: str, base: str,
@@ -207,9 +244,29 @@ def start(issue_id, flags=()):
     branch = f"{btype}/{issue_id.lower()}-{_slug(it.title)}"
     transition_path = _start_transition_path(tr, it.state)
     branch_mode = _prepare_branch(branch)
+    if (
+        branch_mode == "existing"
+        and transition_path
+        and getattr(tr, "bounded_state_transitions", False)
+    ):
+        raise SystemExit(
+            "⛔ Reprise tracker refusée — la branche existe mais l'état "
+            "prédécesseur de l'opération d'origine n'est pas disponible ; "
+            "aucune transition n'a été tentée."
+        )
     try:
+        predecessor = it.state
         for state in transition_path:
-            write.transition(tr, issue_id, state)
+            context = (
+                TransitionContext(expected_state=predecessor)
+                if getattr(tr, "bounded_state_transitions", False)
+                else None
+            )
+            if context is None:
+                write.transition(tr, issue_id, state)
+            else:
+                write.transition(tr, issue_id, state, context=context)
+            predecessor = state
     except (Exception, SystemExit):
         raise SystemExit(
             f"⛔ Démarrage tracker interrompu ; la branche '{branch}' est conservée. "
@@ -237,7 +294,26 @@ def openpr(issue_id=None, base=None, flags=()):
         issue_id = m.group(1).upper()
     write.issue_binding(tr, issue_id)
     write.preflight_issue_operation(tr, "openpr")
-    it = tr.get_issue(issue_id)
+    try:
+        it = tr.get_issue(issue_id)
+    except TrackerConflictError:
+        observer = getattr(tr, "observe_issue", None)
+        if not callable(observer):
+            raise
+        it = observer(issue_id)
+        if not (
+            it.normalized_state == "review"
+            and it.projection_status == "disagreement"
+        ):
+            raise
+    if (
+        getattr(tr, "bounded_transition_proofs", False)
+        or getattr(tr, "bounded_state_transitions", False)
+    ) and getattr(it, "state", None) not in {"in-progress", "review"}:
+        raise SystemExit(
+            "⛔ Ouverture PR refusée — l'issue doit être in-progress ou review ; "
+            "aucun push ni effet code-host n'a été tenté."
+        )
     repo = ch.resolve_repo()
     base = base or _default_branch()
     summary = f"## Summary\n- {it.title}"
@@ -284,8 +360,13 @@ def openpr(issue_id=None, base=None, flags=()):
             write.set_field(tr, issue_id, "GitHub PR", pr.url)
         write.transition(tr, issue_id, "review", context=context)
     else:
+        if getattr(tr, "bounded_state_transitions", False):
+            context = TransitionContext(expected_state="in-progress")
         # Preserve the established provider call order for adapters without proofs.
-        write.transition(tr, issue_id, "review")
+        if context is None:
+            write.transition(tr, issue_id, "review")
+        else:
+            write.transition(tr, issue_id, "review", context=context)
         write.set_field(tr, issue_id, "GitHub PR", pr.url)
     action = "réutilisée" if reused else "ouverte"
     print(f"🔗 PR #{pr.number} {action} : {pr.url}\n   {issue_id} → review")
@@ -303,42 +384,105 @@ def _ac_override_reason(flags) -> str:
 def merge(issue_id, pr_number, flags=()):
     allow_no_ci = "--allow-no-ci" in flags
     tr, ch = foundry.tracker(), foundry.codehost()
-    write.issue_binding(tr, issue_id)
+    binding = write.issue_binding(tr, issue_id)
     write.preflight_issue_operation(tr, "merge")
     repo = ch.resolve_repo()
     pr = ch.get_pr(repo, int(pr_number))
-    _observe_receipt(
-        issue_id, "pr",
-        lambda: execution_receipts.pr_receipt(
-            ch.name, repo, pr, operation="codehost.get_pr",
-        ),
+    bounded_state_transitions = getattr(tr, "bounded_state_transitions", False)
+    bounded_lifecycle = bounded_state_transitions or getattr(
+        tr, "bounded_transition_proofs", False,
     )
+    if not bounded_lifecycle:
+        # Preserve legacy receipt ordering. Bounded lifecycle providers delay
+        # this local effect until ticket-linked PR coordinates are authenticated.
+        _observe_receipt(
+            issue_id, "pr",
+            lambda: execution_receipts.pr_receipt(
+                ch.name, repo, pr, operation="codehost.get_pr",
+            ),
+        )
+    if bounded_lifecycle:
+        _require_pr_coordinates(pr, int(pr_number))
     override_recovered = False
     try:
         current = tr.get_issue(issue_id)
     except TrackerConflictError:
+        # A confirmed GitHub merge can outlive only the native Linear State
+        # projection.  Ask the adapter to authenticate its existing receipt and
+        # repair exactly that effect before considering any override recovery.
+        observer = getattr(tr, "observe_issue", None)
+        if not callable(observer):
+            # Providers that have not opted into the shared observation/recovery
+            # port keep their original typed refusal.  Do not turn that boundary
+            # into an AttributeError or manufacture an observation from native
+            # state alone.
+            raise
+        observed = observer(issue_id)
+        if (
+            pr.merged
+            and pr.merge_sha
+            and observed.normalized_state == "done"
+            and observed.projection_status == "disagreement"
+            and observed.pr_url == pr.url
+        ):
+            base_sha = _require_linked_pr_coordinates(observed, pr, int(pr_number))
+            if tr.recover_done_projection(
+                issue_id,
+                pr_url=pr.url,
+                head_sha=pr.sha,
+                base_sha=base_sha,
+                merge_sha=pr.merge_sha,
+                project=binding,
+            ):
+                current = tr.get_issue(issue_id)
+            else:
+                raise
+        else:
+            current = None
         # Bounded recovery of an issue merged under the human AC override before the
         # typed receipt existed: only the exact replay of that override on the
         # already-merged PR may append the missing receipt; ordinary reads stay strict.
-        if not ("--allow-incomplete-ac" in flags
+        if current is not None:
+            pass
+        elif not ("--allow-incomplete-ac" in flags
                 and getattr(tr, "acceptance_override_projection_supported", False)
                 and pr.merged and pr.merge_sha):
             raise
-        reason = _ac_override_reason(flags)
-        try:
-            override_recovered = write.recover_acceptance_override(
-                tr, issue_id, reason,
-                pr_url=pr.url, head_sha=pr.sha, merge_sha=pr.merge_sha,
-            )
-        except TrackerConflictError as exc:
-            raise SystemExit(
-                "⛔ Reprise override AC refusée — aucun reçu done exact de cette PR "
-                f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
-            ) from None
-        current = tr.get_issue(issue_id)
+        if current is None:
+            reason = _ac_override_reason(flags)
+            try:
+                override_recovered = write.recover_acceptance_override(
+                    tr, issue_id, reason,
+                    pr_url=pr.url, head_sha=pr.sha, base_sha=_require_pr_base_sha(pr),
+                    merge_sha=pr.merge_sha,
+                )
+            except TrackerConflictError as exc:
+                raise SystemExit(
+                    "⛔ Reprise override AC refusée — aucun reçu done exact de cette PR "
+                    f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
+                ) from None
+            current = tr.get_issue(issue_id)
+    if bounded_lifecycle:
+        _require_linked_pr_coordinates(current, pr, int(pr_number))
+        if (getattr(current, "state", None) == "done"
+                and getattr(tr, "append_only_lifecycle_supported", False)):
+            if not pr.merged or not tr.recover_done_projection(
+                issue_id, pr_url=pr.url, head_sha=pr.sha,
+                base_sha=_require_pr_base_sha(pr), merge_sha=pr.merge_sha,
+                project=binding,
+            ):
+                raise SystemExit(
+                    "⛔ Reprise tracker refusée — coordonnées du reçu done exact divergentes."
+                )
+        _observe_receipt(
+            issue_id, "pr",
+            lambda: execution_receipts.pr_receipt(
+                ch.name, repo, pr, operation="codehost.get_pr",
+            ),
+        )
     transition_context = None
     review_diff = None
-    pr_base_sha = None
+    pr_base_sha = _require_pr_base_sha(pr) if bounded_lifecycle else None
     acceptance_sync = {"status": "already-complete", "checked": 0}
     proof = None
     if getattr(tr, "bounded_transition_proofs", False):
@@ -382,7 +526,6 @@ def merge(issue_id, pr_number, flags=()):
             # Publish the exact current PR generation before deciding whether its
             # AC are complete. A previous head's acceptance receipt must never
             # suppress review-proof validation for this head.
-            write.transition(tr, issue_id, "in-progress")
             write.transition(tr, issue_id, "review", context=transition_context)
             current = tr.get_issue(issue_id)
 
@@ -517,7 +660,7 @@ def merge(issue_id, pr_number, flags=()):
         write.transition(tr, issue_id, "review", context=transition_context)
 
     branch = pr.head
-    if transition_context is not None and pr.merged:
+    if pr.merged:
         if not pr.merge_sha:
             raise SystemExit("⛔ Reprise tracker refusée — SHA de merge GitHub indisponible.")
         merged_sha = pr.merge_sha
@@ -579,6 +722,22 @@ def merge(issue_id, pr_number, flags=()):
             review_digest=transition_context.review_digest,
             merge_sha=merged_sha,
         )
+    elif getattr(tr, "bounded_state_transitions", False):
+        if not (
+            re.fullmatch(r"[0-9a-f]{40}", str(pr.sha))
+            and re.fullmatch(r"[0-9a-f]{40}", str(merged_sha))
+        ):
+            raise SystemExit(
+                "⛔ Reprise tracker refusée — coordonnées exactes de la PR "
+                "fusionnée indisponibles ou différentes du tracker."
+            )
+        _require_pr_base_sha(pr)
+        if pr.merged and getattr(current, "pr_url", None) != pr.url:
+            raise SystemExit(
+                "⛔ Reprise tracker refusée — coordonnées exactes de la PR "
+                "fusionnée indisponibles ou différentes du tracker."
+            )
+        done_context = TransitionContext(expected_state="review")
     if done_context is not None:
         # Preserve the remote branch until the proof-bound tracker receipt is durable.
         # If the tracker is unavailable after the irreversible merge, a retry still

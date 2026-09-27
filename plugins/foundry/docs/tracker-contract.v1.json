@@ -427,13 +427,12 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-56",
-          "evidence": "set_state delegates to bounded update_fields(State=...) (youtrack.py), but its public transition contract carries no caller-supplied expected predecessor proof. PAT-56 owns that stronger S1-S5 transition requirement and replay semantics."
+          "status": "supported",
+          "evidence": "bounded_state_transitions = True; each public lifecycle operation supplies its original predecessor in TransitionContext and write.transition refuses to reconstruct a missing coordinate from the current native state. YouTrackTracker.set_state retains that predecessor through the effective S1 transport read before its one targeted State projection. An exact retry at the target converges; a third state or unavailable predecessor fails closed before POST. issue.merge authenticates the ticket-linked PR URL plus exact number/head/base/state coordinates before every open or already-merged path, repairs State before branch cleanup, and never calls merge_pr again for an already-merged PR. This is S1-S5 bounded detection, never CAS or exclusion (issue.py; write.py; youtrack.py)."
         },
         "linear": {
           "status": "supported",
-          "evidence": "set_state accepts only in-progress/review/done (linear.py); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done; linear.py); each transition is an append-only deterministic-id lifecycle marker written by _project_lifecycle (linear.py): identical replay converges, divergence fails closed. Other states belong to frame-intake-groom-evolve-existing"
+          "evidence": "set_state accepts only in-progress/review/done (linear.py); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done). It appends the deterministic lifecycle receipt before projecting only the target native State under S1-S5; an exact, valid latest relevant receipt can repair only the missing native effect. Validation keeps immutable historical native observations separate from proof-bound logical targets: acceptance and override target their authenticated review generation even when an older receipt observed in-progress, while incompatible or regressing observations remain unknown. A late start or older review receipt cannot regress a durable done. Identical replay converges, authenticated disagreement is observable in get/observe/search, unknown chains expose no normalized state, and a bare native terminal State is never positive proof. Other states belong to frame-intake-groom-evolve-existing."
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -455,9 +454,8 @@
           "evidence": "acceptance_sync_supported = True (youtrack.py); sync_acceptance_body validates the proof then reuses update_body's archived-target preflight and bounded read-verify-write-readback (youtrack.py), labelled as bounded, not CAS"
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-56",
-          "evidence": "PAT-ADR-0006 selects the existing proof-bound append-only projection as Linear's V1 AC authority. acceptance_sync_supported remains False and sync_acceptance_body keeps the typed refusal (linear.py); project_acceptance_proof provides the non-replacing authority (linear.py). PAT-56 owns closing this contract cell without native checkbox replacement."
+          "status": "supported",
+          "evidence": "PAT-ADR-0006 selects the proof-bound append-only projection as Linear's V1 AC authority. write.sync_acceptance dispatches to project_acceptance_proof when acceptance_proof_projection_supported = True; Issue.ac_done derives from that receipt while native checkbox replacement remains refused (write.py; linear.py)."
         },
         "ghprojects": {
           "status": "to_qualify",

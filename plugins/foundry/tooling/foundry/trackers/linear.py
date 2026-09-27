@@ -2079,12 +2079,13 @@ class LinearTracker(Tracker):
     def _validate_native_state_history(
         self,
         rows: dict[str, list[tuple[dict, str]]],
-        ordered: list[dict],
+        ordered: list[tuple[str, dict]],
         native_state_id: str,
         *,
         pending_operation: str | None,
         acceptance_complete: bool,
         done: dict | None,
+        allow_current_disagreement: bool,
     ) -> None:
         state_ids = self._binding(self._project())["state_ids"]
         state_by_id = {identifier: name for name, identifier in state_ids.items()}
@@ -2099,30 +2100,80 @@ class LinearTracker(Tracker):
         ):
             raise TrackerConflictError("Linear lifecycle native state proof malformed")
 
-        ordered_ids = [payload["native_state_id"] for payload in ordered]
+        # ``native_state_id`` is an immutable observation coordinate.  Older
+        # lifecycle receipts recorded the State observed *before* Foundry's
+        # projection; current receipts record the target.  Validate those
+        # observations as one history, separately from the authenticated logical
+        # targets.  Mixing the two manufactures a false review -> in-progress
+        # regression when a historical acceptance receipt observed in-progress.
+        def logical_target(operation: str, payload: dict) -> str:
+            if operation.startswith("state-"):
+                target = payload.get("state")
+            elif operation in {"acceptance", "acceptance-override"}:
+                # These receipts reached this point only after their generation and
+                # exact review coordinates were authenticated above.  They describe
+                # acceptance at that review, regardless of the native State observed
+                # by the historical writer.
+                target = "review"
+            else:
+                raise TrackerConflictError(
+                    "Linear lifecycle native state proof malformed"
+                )
+            observed = state_by_id[payload["native_state_id"]]
+            if target not in state_ids or not self._native_state_can_advance(
+                observed, target,
+            ):
+                raise TrackerConflictError(
+                    "Linear lifecycle native state proof malformed"
+                )
+            return target
+
+        observed_names = [
+            state_by_id[payload["native_state_id"]]
+            for _operation, payload in ordered
+        ]
+        if any(
+            not self._native_state_can_advance(previous, current)
+            for previous, current in zip(observed_names, observed_names[1:])
+        ):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+        logical_names = [
+            logical_target(operation, payload) for operation, payload in ordered
+        ]
+        ordered_ids = [state_ids[name] for name in logical_names]
         cockpit_ids = [
             payload["native_state_id"]
             for payload, _body in rows.get("cockpit-evidence", [])
         ]
         if not ordered_ids:
             ordered_ids = cockpit_ids
-        elif any(identifier not in set(ordered_ids) for identifier in cockpit_ids):
+            logical_names = [state_by_id[identifier] for identifier in ordered_ids]
+        elif any(
+            identifier not in (
+                {state_ids[name] for name in observed_names} | set(ordered_ids)
+            )
+            for identifier in cockpit_ids
+        ):
+            # Advisory cockpit receipts record native observations too. A valid
+            # historic observation must not be mistaken for a logical target.
+            # Neither set gives cockpit evidence lifecycle or acceptance authority.
             raise TrackerConflictError("Linear native state changed outside lifecycle")
         if not ordered_ids:
             raise TrackerConflictError("Linear lifecycle native state proof malformed")
 
-        names = [state_by_id[identifier] for identifier in ordered_ids]
         if any(
             not self._native_state_can_advance(previous, current)
-            for previous, current in zip(names, names[1:])
+            for previous, current in zip(logical_names, logical_names[1:])
         ):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
 
         current_name = state_by_id.get(native_state_id)
         if current_name is None:
             raise TrackerConflictError("Linear lifecycle native state unavailable")
-        latest_name = names[-1]
+        latest_name = logical_names[-1]
         current_is_durable = native_state_id == ordered_ids[-1]
+        if allow_current_disagreement:
+            return
         # Linear's GitHub integration can asynchronously apply its native ``start``
         # automation after Foundry has already durably projected a PR review.  This
         # is observation-only: it neither changes the lifecycle projection nor
@@ -2147,12 +2198,41 @@ class LinearTracker(Tracker):
             and acceptance_complete
             and self._native_state_can_advance(latest_name, current_name)
         )
-        if not (current_is_durable or reviewed_start_drift or pending_forward or pending_done):
+        # A pre-PAT-56 done receipt records the native State observed before its
+        # projection.  Its only supported incomplete replay is the typed AC
+        # override recovery; it may read that exact coordinate long enough to
+        # append the missing override, then projects State through the normal
+        # receipt-authenticated path below.  This is not a native success claim.
+        pending_legacy_done_override = (
+            pending_operation == "acceptance-override"
+            and done is not None
+            and done.get("native_state_id") == native_state_id
+            and done.get("native_state_id") != state_ids["done"]
+        )
+        # The append-only receipt is written before its human-facing native State
+        # projection.  Between those two effects it is durable evidence of the
+        # intended transition, while the older native state remains an observable
+        # disagreement.  Only the writer/recovery path may read this interval;
+        # ordinary reads have ``pending_operation=None`` and fail closed.
+        pending_receipt_projection = (
+            pending_operation in {"state-in-progress", "state-review", "state-done"}
+            and rows.get(pending_operation, [])
+            and current_name != "done"
+            and self._native_state_can_advance(current_name, latest_name)
+        )
+        if not (
+            current_is_durable
+            or reviewed_start_drift
+            or pending_forward
+            or pending_done
+            or pending_legacy_done_override
+            or pending_receipt_projection
+        ):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
         if (
             current_name == "done"
             and not pending_done
-            and (done is None or done.get("native_state_id") != native_state_id)
+            and (done is None or state_ids["done"] != native_state_id)
         ):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
 
@@ -2162,6 +2242,7 @@ class LinearTracker(Tracker):
         raw: dict,
         *,
         pending_operation: str | None = None,
+        allow_current_disagreement: bool = False,
     ) -> dict:
         comments = _connection(raw.get("comments"), "lifecycle.comments")
         rows: dict[str, list[tuple[dict, str]]] = {}
@@ -2339,27 +2420,33 @@ class LinearTracker(Tracker):
         }
         ordered = []
         if in_progress is not None:
-            ordered.append(in_progress)
+            ordered.append(("state-in-progress", in_progress))
         for review_payload, _review_body in reviews:
-            ordered.append(review_payload)
+            ordered.append(("state-review", review_payload))
             bound = [
-                receipt
-                for receipt in (
-                    acceptance_by_generation.get(review_payload["generation"]),
-                    override_by_generation.get(review_payload["generation"]),
+                (operation, receipt)
+                for operation, receipt in (
+                    (
+                        "acceptance",
+                        acceptance_by_generation.get(review_payload["generation"]),
+                    ),
+                    (
+                        "acceptance-override",
+                        override_by_generation.get(review_payload["generation"]),
+                    ),
                 )
                 if receipt is not None
             ]
             # Both receipts of one generation sit between its review and the next
             # causal receipt; their mutual order is only the native-state order.
             if len(bound) == 2 and not self._native_state_can_advance(
-                str(state_by_id.get(bound[0].get("native_state_id"))),
-                str(state_by_id.get(bound[1].get("native_state_id"))),
+                str(state_by_id.get(bound[0][1].get("native_state_id"))),
+                str(state_by_id.get(bound[1][1].get("native_state_id"))),
             ):
                 bound.reverse()
             ordered.extend(bound)
         if done is not None:
-            ordered.append(done)
+            ordered.append(("state-done", done))
         self._validate_native_state_history(
             rows,
             ordered,
@@ -2367,6 +2454,7 @@ class LinearTracker(Tracker):
             pending_operation=pending_operation,
             acceptance_complete=acceptance_complete or acceptance_override is not None,
             done=done,
+            allow_current_disagreement=allow_current_disagreement,
         )
         return {
             "state": projected_state,
@@ -2390,6 +2478,8 @@ class LinearTracker(Tracker):
         operation: str,
         payload: dict,
         project: Project,
+        *,
+        native_state_id: str | None = None,
     ) -> bool:
         raw = self._read_raw(issue_id)
         binding = self._activate(project)
@@ -2400,8 +2490,8 @@ class LinearTracker(Tracker):
             pending_operation=operation,
         )
         state = raw.get("state")
-        native_state_id = state.get("id") if isinstance(state, dict) else None
-        if not isinstance(native_state_id, str):
+        observed_native_state_id = state.get("id") if isinstance(state, dict) else None
+        if not isinstance(observed_native_state_id, str):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
         if operation == "state-in-progress" and projection["state"] == "review":
             # merge() replays this step before the current exact review/CI gates.
@@ -2410,7 +2500,12 @@ class LinearTracker(Tracker):
             # append-only chain. The review is already stronger evidence; never
             # append or rewrite an in-progress receipt in this state.
             return False
-        bounded_payload = {**payload, "native_state_id": native_state_id}
+        bounded_payload = {
+            **payload,
+            "native_state_id": native_state_id or observed_native_state_id,
+        }
+        if not isinstance(bounded_payload["native_state_id"], str):
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
         if operation == "state-in-progress" and projection["in_progress"] is not None:
             bounded_payload["native_state_id"] = projection["in_progress"][
                 "native_state_id"
@@ -2551,7 +2646,11 @@ class LinearTracker(Tracker):
                 observed.append((item.get("id"), decoded[2]))
         if (comment_id, body) not in observed:
             raise TrackerConflictError("Linear lifecycle divergent after comment")
-        self._lifecycle_projection(issue_id, fresh)
+        self._lifecycle_projection(
+            issue_id,
+            fresh,
+            pending_operation=operation,
+        )
         return created_now
 
     def validate_issue_binding(self, project: Project, *issue_ids: str) -> None:
@@ -2677,7 +2776,13 @@ class LinearTracker(Tracker):
         done = sum(mark in {"x", "X"} for mark in marks)
         return done, len(marks)
 
-    def _to_issue(self, raw: dict, project: Project | None = None) -> Issue:
+    def _to_issue(
+        self,
+        raw: dict,
+        project: Project | None = None,
+        *,
+        observe_lifecycle: bool = False,
+    ) -> Issue:
         project = project or self._project()
         binding = self._binding(project)
         self._assert_issue_project(raw, binding)
@@ -2764,7 +2869,30 @@ class LinearTracker(Tracker):
         # Native checkbox state is not a Linear lifecycle authority: only the
         # proof-bound append-only projection may make AC complete.
         done = 0
-        lifecycle = self._lifecycle_projection(raw["identifier"], raw)
+        native_state = state_by_id[state["id"]]
+        try:
+            lifecycle = self._lifecycle_projection(
+                raw["identifier"],
+                raw,
+                allow_current_disagreement=observe_lifecycle,
+            )
+            projection_status = (
+                "native-only" if lifecycle["state"] is None
+                else "aligned" if lifecycle["state"] == native_state
+                else "disagreement"
+            )
+        except TrackerConflictError:
+            if not observe_lifecycle:
+                raise
+            # Observation relaxes only the current human-facing State comparison.
+            # Any malformed marker, incompatible historical observation or invalid
+            # review/acceptance binding remains unknown and supplies no authority.
+            lifecycle = {
+                "state": None,
+                "acceptance_complete": False,
+                "pr_url": None,
+            }
+            projection_status = "unknown"
         if lifecycle["acceptance_complete"]:
             done = total
         priority = raw.get("priority", 0)
@@ -2784,7 +2912,11 @@ class LinearTracker(Tracker):
         return Issue(
             id=raw["identifier"],
             title=raw["title"],
-            state=lifecycle["state"] or state_by_id[state["id"]],
+            state=(
+                lifecycle["state"] if lifecycle["state"] is not None
+                else native_state if projection_status == "native-only"
+                else None
+            ),
             priority=_LINEAR_TO_PRIORITY[priority],
             estimate=raw.get("estimate"),
             milestone=milestone,
@@ -2798,6 +2930,9 @@ class LinearTracker(Tracker):
             comments=comments,
             created=_epoch_ms(raw.get("createdAt")),
             updated=_epoch_ms(raw.get("updatedAt")),
+            normalized_state=lifecycle["state"],
+            native_state=native_state,
+            projection_status=projection_status,
         )
 
     def search(self, project: Project, query: str = "") -> list[Issue]:
@@ -2828,7 +2963,11 @@ class LinearTracker(Tracker):
             if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
                 raise LinearTrackerError("issue.search", None, "invalid_response")
             for raw in connection["nodes"]:
-                issue = self._to_issue(raw, project)
+                # Backlog/graph queries must surface an authenticated lifecycle
+                # disagreement instead of making the whole project unreadable.
+                # Unknown or malformed proof chains remain explicit with
+                # ``state=None`` and never become terminal authority.
+                issue = self._to_issue(raw, project, observe_lifecycle=True)
                 if issue.id in seen:
                     raise LinearTrackerError("issue.search", None, "pagination_stalled")
                 seen.add(issue.id)
@@ -2843,6 +2982,66 @@ class LinearTracker(Tracker):
     def get_issue(self, issue_id: str) -> Issue:
         project = self._project()
         return self._to_issue(self._read_raw(issue_id), project)
+
+    def observe_issue(self, issue_id: str) -> Issue:
+        project = self._project()
+        return self._to_issue(
+            self._read_raw(issue_id), project, observe_lifecycle=True,
+        )
+
+    def recover_done_projection(
+        self,
+        issue_id: str,
+        *,
+        pr_url: str,
+        head_sha: str,
+        base_sha: str,
+        merge_sha: str,
+        project: Project | None = None,
+    ) -> bool:
+        """Use one authentic done receipt to repair only its missing State."""
+        if project is None:
+            return False
+        raw = self._read_raw(issue_id)
+        binding = self._activate(project)
+        self._assert_issue_project(raw, binding)
+        target_state_id = binding["state_ids"]["done"]
+        native = raw.get("state")
+        receipts = []
+        for row in _connection(raw.get("comments"), "lifecycle.recover"):
+            decoded = self._decode_lifecycle_comment(issue_id, row.get("body"))
+            if decoded is None or decoded[0] != "state-done":
+                continue
+            payload = decoded[1]
+            if (
+                payload.get("state") == "done"
+                and payload.get("pr_url") == pr_url
+                and payload.get("head_sha") == head_sha
+                and payload.get("base_sha") == base_sha
+                and payload.get("merge_sha") == merge_sha
+            ):
+                receipts.append(payload)
+        if len(receipts) != 1:
+            return False
+        payload = receipts[0]
+        # This validates the full chain and every receipt coordinate before the
+        # private review digest can authorize the targeted native projection.
+        self._lifecycle_projection(
+            issue_id, {**raw, "state": {**native, "id": target_state_id}},
+        )
+        if isinstance(native, dict) and native.get("id") == target_state_id:
+            self._lifecycle_projection(issue_id, raw)
+            return True
+        self.set_state(
+            issue_id,
+            "done",
+            context=TransitionContext(
+                pr_url=pr_url, head_sha=head_sha, base_sha=base_sha,
+                review_digest=payload["review_digest"], merge_sha=merge_sha,
+            ),
+            project=project,
+        )
+        return True
 
     # ---- writes with provider-demonstrable no-overwrite semantics --
     @staticmethod
@@ -3108,6 +3307,25 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear issue divergent after bounded write")
         return readback
 
+    def _project_native_state(
+        self, issue_id: str, state: str, project: Project, binding: dict,
+    ) -> dict:
+        """Project only State through S1-S5 after its durable receipt exists."""
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, binding)
+        values, expected = self._desired_update(raw, project, {"State": state})
+        if self._raw_matches(raw, expected):
+            return raw
+        snapshot = self._field_snapshot(raw, {"State": state})
+        fresh = self._read_raw(issue_id)
+        self._assert_issue_project(fresh, binding)
+        if not self._raw_matches(fresh, snapshot):
+            raise TrackerConflictError("Linear issue changed before bounded write")
+        return self._bounded_issue_update(
+            issue_id, fresh, binding, values, expected,
+            "issue.update.lifecycle-state",
+        )
+
     def set_state(
         self,
         issue_id: str,
@@ -3144,7 +3362,85 @@ class LinearTracker(Tracker):
                 if not context.merge_sha:
                     raise TrackerCapabilityUnavailableError(self.name, "merge-proof")
                 payload["merge_sha"] = context.merge_sha
-        self._project_lifecycle(issue_id, "state-" + state, payload, project)
+        # The typed lifecycle receipt is Foundry's authority, while the native
+        # Linear State remains the human-visible projection.  Write the receipt
+        # first so a native transport failure cannot erase delivery evidence.
+        # The intentional receipt/native interval is observable as disagreement
+        # and the exact receipt authorizes recovery of only that missing State
+        # effect.  This deliberately leaves a named residual S1->S2 race: it is
+        # bounded detection, not CAS.
+        #
+        # Read the receipt graph first.  In particular, never replay a late
+        # in-progress projection after a durable review: that historical retry
+        # is a no-op and must not regress the native state.
+        binding = self._activate(project)
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, binding)
+        projection = self._lifecycle_projection(
+            issue_id, raw, pending_operation="state-" + state,
+        )
+        ranks = {"in-progress": 1, "review": 2, "done": 3}
+        # Recovery also handles the inverse interruption order used by historic
+        # lifecycle writers: an exact, integrity-checked Foundry receipt exists
+        # but its matching native State projection did not.  The receipt remains
+        # append-only; we apply only that missing native effect.  A bare native
+        # terminal state never enters this branch and remains fail-closed below.
+        target_state_id = binding["state_ids"][state]
+        native = raw.get("state")
+        native_state_id = native.get("id") if isinstance(native, dict) else None
+        exact_receipts = []
+        for row in _connection(raw.get("comments"), "lifecycle.comments"):
+            decoded = self._decode_lifecycle_comment(issue_id, row.get("body"))
+            if decoded is None or decoded[0] != "state-" + state:
+                continue
+            receipt = decoded[1]
+            if all(receipt.get(key) == value for key, value in payload.items()):
+                exact_receipts.append(receipt)
+        if len(exact_receipts) > 1:
+            raise TrackerConflictError("Linear lifecycle duplicate projection")
+        if (
+            projection["state"] in ranks
+            and ranks[projection["state"]] > ranks[state]
+        ):
+            if len(exact_receipts) != 1:
+                raise TrackerConflictError(
+                    "Linear weaker transition lacks an exact historical receipt"
+                )
+            # Only an authenticated replay of this exact operation can converge
+            # below a stronger durable state. New coordinates are a conflicting
+            # intention, never a successful no-op or authority to regress State.
+            return
+        if native_state_id != target_state_id and len(exact_receipts) == 1:
+            # Authenticate the durable receipt, including its review/merge and
+            # generation bindings, before it authorizes recovery of the native
+            # projection.  A marker with a valid hash but invalid lifecycle
+            # content is still not positive proof.
+            latest_for_state = {
+                "in-progress": projection["in_progress"],
+                "review": projection["latest_review"],
+                "done": projection["done"],
+            }[state]
+            if exact_receipts[0] != latest_for_state:
+                # The requested receipt is authentic but historical (for
+                # example an older review generation).  It cannot project a
+                # weaker native state; preserve both provider surfaces.
+                return
+            self._project_native_state(issue_id, state, project, binding)
+            repaired = self._read_raw(issue_id)
+            self._assert_issue_project(repaired, binding)
+            self._lifecycle_projection(issue_id, repaired)
+            return
+        self._project_lifecycle(
+            issue_id,
+            "state-" + state,
+            payload,
+            project,
+            native_state_id=target_state_id,
+        )
+        self._project_native_state(issue_id, state, project, binding)
+        repaired = self._read_raw(issue_id)
+        self._assert_issue_project(repaired, binding)
+        self._lifecycle_projection(issue_id, repaired)
 
     def project_acceptance_proof(
         self,
@@ -3259,6 +3555,7 @@ class LinearTracker(Tracker):
         *,
         pr_url: str,
         head_sha: str,
+        base_sha: str,
         merge_sha: str,
         project: Project | None = None,
     ) -> bool:
@@ -3289,6 +3586,7 @@ class LinearTracker(Tracker):
             done is None
             or done["pr_url"] != pr_url
             or done["head_sha"] != head_sha
+            or done["base_sha"] != base_sha
             or done["merge_sha"] != merge_sha
             or native_state_id != done["native_state_id"]
         ):
@@ -3304,7 +3602,23 @@ class LinearTracker(Tracker):
             "reason": reason,
             **{key: done[key] for key in _AC_OVERRIDE_BOUND_KEYS},
         }
-        return self._project_lifecycle(issue_id, "acceptance-override", payload, project)
+        created = self._project_lifecycle(
+            issue_id, "acceptance-override", payload, project,
+        )
+        # A historic done receipt can have recorded the preceding native review
+        # coordinate.  Once its missing override is durable, use that exact
+        # receipt to repair only State; no lifecycle row is rewritten or added.
+        self.set_state(
+            issue_id,
+            "done",
+            context=TransitionContext(
+                pr_url=done["pr_url"], head_sha=done["head_sha"],
+                base_sha=done["base_sha"], review_digest=done["review_digest"],
+                merge_sha=done["merge_sha"],
+            ),
+            project=project,
+        )
+        return created
 
     def project_cockpit_evidence(
         self,

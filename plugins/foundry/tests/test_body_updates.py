@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from foundry import edit, registry, write
-from foundry.models import Adr, Issue
+from foundry.models import Adr, Issue, TransitionContext
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     BodyUpdateUnavailableError,
@@ -174,6 +174,124 @@ def test_youtrack_update_body_refuses_stale_snapshot_even_when_desired_is_curren
     with pytest.raises(TrackerConflictError, match="modifié"):
         tracker.update_body(Issue(id="T-1", title="issue"), "stale", "current")
     assert _writes(tracker) == []
+
+
+def _stateful_youtrack_transition_transport(
+    monkeypatch,
+    native,
+    *,
+    lose_first_response=False,
+):
+    """Exercise lifecycle writes through the real adapter over an in-memory wire."""
+    tracker = object.__new__(YouTrackTracker)
+    posts = []
+    lose_response = lose_first_response
+
+    def raw_issue():
+        return {
+            "idReadable": "T-1",
+            "summary": "issue",
+            "description": "",
+            "project": {"id": "0-test", "shortName": "T"},
+            "customFields": [
+                {"name": "State", "value": {"name": native["state"]}},
+            ],
+            "links": [],
+            "comments": [],
+        }
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal lose_response
+        assert path == "/issues/T-1"
+        if method == "GET":
+            return raw_issue()
+        assert method == "POST"
+        posts.append((path, body, fields, top))
+        state_field = next(
+            field for field in body["customFields"] if field["name"] == "State"
+        )
+        native["state"] = state_field["value"]["name"]
+        if lose_response:
+            lose_response = False
+            raise RuntimeError("response lost")
+        return {"idReadable": "T-1"}
+
+    tracker._req = request
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+    return tracker, posts
+
+
+def test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordinate(
+    monkeypatch,
+):
+    """Distinct public invocations retain the original predecessor coordinate."""
+    native = {"state": "in-progress"}
+    tracker, posts = _stateful_youtrack_transition_transport(monkeypatch, native)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+
+    write.transition(
+        tracker,
+        "T-1",
+        "review",
+        context=TransitionContext(expected_state="in-progress"),
+    )
+    assert len(posts) == 1
+    assert native["state"] == "review"
+
+    # A new invocation reconstructs the operation from durable lifecycle
+    # coordinates, not by retaining an in-memory context object.
+    write.transition(
+        tracker,
+        "T-1",
+        "review",
+        context=TransitionContext(expected_state="in-progress"),
+    )
+    assert len(posts) == 1
+
+    native["state"] = "blocked"
+    with pytest.raises(TrackerConflictError, match="modifié avant transition"):
+        write.transition(
+            tracker,
+            "T-1",
+            "review",
+            context=TransitionContext(expected_state="in-progress"),
+        )
+    assert len(posts) == 1
+
+
+def test_public_youtrack_retry_after_lost_response_refuses_third_state_without_effect(
+    monkeypatch,
+):
+    native = {"state": "in-progress"}
+    tracker, posts = _stateful_youtrack_transition_transport(
+        monkeypatch,
+        native,
+        lose_first_response=True,
+    )
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+
+    with pytest.raises(RuntimeError, match="response lost"):
+        write.transition(
+            tracker,
+            "T-1",
+            "review",
+            context=TransitionContext(expected_state="in-progress"),
+        )
+    assert native["state"] == "review"
+    assert len(posts) == 1
+
+    native["state"] = "blocked"
+    with pytest.raises(TrackerConflictError, match="modifié avant transition"):
+        write.transition(
+            tracker,
+            "T-1",
+            "review",
+            context=TransitionContext(expected_state="in-progress"),
+        )
+    assert native["state"] == "blocked"
+    assert len(posts) == 1
 
 
 def test_youtrack_acceptance_sync_handles_body_without_markers_as_noop():

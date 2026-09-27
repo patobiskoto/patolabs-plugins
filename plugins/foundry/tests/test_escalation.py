@@ -2538,6 +2538,7 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     tracker = SimpleNamespace(
         resolve_checkout_project=lambda _root: None,
         get_issue=lambda _issue: SimpleNamespace(id=issue, body=body),
+        observe_issue=lambda _issue: SimpleNamespace(id=issue, body=body),
     )
     monkeypatch.setattr(foundry, "tracker", lambda **_kwargs: tracker)
 
@@ -4597,7 +4598,7 @@ def test_pat22_generation_four_requires_human_strategy_before_one_credit_retry(
     pr = SimpleNamespace(
         number=17, url="https://github.com/patobiskoto/patolabs-plugins/pull/17",
         sha=head_sha, base_sha=base_sha, head="feat/pat-22", base="main",
-        merged=False,
+        merged=False, state="open",
     )
     merged = SimpleNamespace(sha="f" * 40, head=pr.head, merged=True)
     effects = []

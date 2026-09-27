@@ -61,8 +61,8 @@ closed vocabulary:
 | Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | `to_qualify` PAT-66 |
 | Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | `to_qualify` PAT-66 |
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | `to_qualify` PAT-58 |
-| Start/resume/review/merge | `set_state` | **gap** PAT-56 (blind, not replay-safe) | supported (`in-progress`/`review`/`done`) | `to_qualify` PAT-67 |
-| État et AC | `sync_acceptance_body` | supported (level 1, §4) | **gap** PAT-56, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-67 |
+| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 |
+| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-69 (after PAT-65) |
 | Périmètre de release/changelog | `search` via `query.py changelog()` | supported | **gap** PAT-59 | `to_qualify` PAT-59 |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
@@ -86,12 +86,14 @@ cell.
   direct-adapter custom-field escape hatch remains available without that bounded
   guarantee and is outside the core contract's deliberately non-universal editor.
   GitHub Projects remains PAT-66.
-- **PAT-56** — States and AC. YouTrack `set_state` is `update_fields` under another name,
-  but the transition port carries no caller-supplied expected predecessor proof; PAT-56
-  owns that stronger S1-S5 transition contract. Linear `sync_acceptance_body` refuses
-  unconditionally; Linear already projects AC
-  completeness through a proof-bound append-only marker (`project_acceptance_proof`,
-  `linear.py`; `Issue.ac_done` derives from that projection).
+- **PAT-56** — States and AC. YouTrack receives the explicit predecessor owned by the
+  public lifecycle operation and re-reads it before one targeted native projection.
+  `write.transition` never replaces that coordinate with the native state seen on a
+  retry: an exact replay at the target converges, while a third state or an unavailable
+  original predecessor fails closed. This is bounded detection, not CAS. Linear keeps native checkbox
+  replacement refused, while `write.sync_acceptance` uses its proof-bound append-only
+  projection (`project_acceptance_proof`, `linear.py`) as the V1 AC authority; native
+  checkboxes and external state automation never count as positive acceptance evidence.
 - **PAT-69** — Neither YouTrack nor Linear implements `close_epic`/`get_epic_closure`;
   `write.close_epic` refuses before any provider call (`write.py`). Only the non-V1
   DevHub adapter implements the port (`devhub.py`).
@@ -259,8 +261,7 @@ never **excludes** them, and no text in Foundry may say otherwise.
 
 - **Level 0 — refused.** Linear native acceptance-checkbox replacement and atomic Epic
   closure on YouTrack/Linear remain typed refusals. The append-only Linear acceptance
-  projection is the V1 authority selected by PAT-ADR-0006; PAT-56 owns its final contract
-  cell and transition work.
+  projection is the V1 authority selected by PAT-ADR-0006.
 - **Level 1 — bounded read-verify-write-readback, no retry.** YouTrack portable field, body and
   relation mutations and Linear field/body/parent replacement capture only the targeted
   expected properties, read again before one write, and compare readback. YouTrack
@@ -281,8 +282,19 @@ never **excludes** them, and no text in Foundry may say otherwise.
   witness carries the SHA-256 of the canonical UTF-8 body (PAT-ADR-0002). Two writers of
   the same slot with different content are detected by the exact readback, relying on
   the provider refusing a second create with an existing id.
-- **Level 2.5 — append-only lifecycle markers.** Linear `set_state` and
-  `project_acceptance_proof` append a comment whose id derives from the SHA-256 of
+- **Level 2.5 — append-only lifecycle markers plus native State.** Linear `set_state`
+  first appends its deterministic receipt, then projects only the target native State
+  through the S1-S5 bounded `issueUpdate` path; an exact, valid surviving receipt can
+  repair only its missing native State effect when it remains the latest relevant
+  lifecycle receipt. A late start receipt or an older review generation never projects
+  a weaker native state after a durable done. Validation keeps each immutable historical
+  `native_state_id` observation separate from the operation's authenticated logical
+  target. In particular, an `acceptance` or `acceptance-override` receipt targets the
+  exact `review` generation to which its proof coordinates bind even when an older writer
+  observed native `in-progress`; both observation history and logical targets must remain
+  monotone, and an incompatible integrity-valid marker stays `unknown`.
+  `project_acceptance_proof` appends a comment
+  whose id derives from the SHA-256 of
   `(schema, operation, issue[, generation])` (`_lifecycle_marker`,
   `linear.py`); `_project_lifecycle` (`linear.py`) reads, appends
   once, and reads back. An identical replay converges on the existing comment
@@ -292,6 +304,28 @@ never **excludes** them, and no text in Foundry may say otherwise.
   (`linear.py`), so each issue records one start and one done
   marker. A different writer appending between Foundry's read and append is detected by
   the readback (`linear.py`), not excluded.
+
+  A weaker lifecycle replay requires an exact historical receipt, including all
+  PR coordinates for review; it cannot authenticate a new PR or generation by
+  returning early. Opening a PR requires an active `in-progress` or `review`
+  issue before any push or code-host operation. Bounded lifecycle merge paths
+  authenticate the issue-linked PR number and URL before tracker effects. Already
+  merged Linear recovery also compares head/base/merge SHAs to the authentic done
+  receipt before override recovery, native repair, local receipts or branch cleanup.
+  Closed, unmerged PRs are refused before effects. The final pre-merge relecture
+  compares number, URL, head/base branch names, head/base/merge SHAs and state/merged
+  against the initially validated readback. Explicitly selected bases remain valid;
+  retargeting is refused even when both branches point at the same commit.
+  The override recovery port therefore requires `base_sha` explicitly. An already
+  aligned native State does not skip receipt authentication. Historical advisory
+  cockpit observations are checked against the validated native observation history
+  as well as logical targets; they never grant lifecycle or acceptance authority.
+
+  Query observations, including next-issue and roadmap profiles, expose
+  `normalized_state`, `native_state`, and
+  `projection_status`. A valid receipt with a divergent native State remains
+  readable as `disagreement`; an invalid or incomplete receipt chain is `unknown`
+  and has no normalized state, including when the native State says `done`.
 - **Level 3 — provider transaction plus receipt.** Only DevHub's `close_epic`
   (`devhub.py`), outside V1.
 
@@ -321,10 +355,23 @@ machine.
 | Journey family | YouTrack (V1 minimum) | Linear (V1 minimum) |
 |---|---|---|
 | Grooming: fields, body, parent of an existing issue | S1-S4 on every portable write; targeted fields and both parent endpoints are read again before one write | S1-S4 in-place replacement under PAT-ADR-0006; only targeted inputs are sent and labels use deltas |
-| AC state | S1-S4 on the checkbox body (met, level 1) | PAT-ADR-0006 declares the existing proof-bound append-only projection the V1 authority (S5/S6); native checkbox replacement remains refused and PAT-56 owns the contract cell |
-| Status projection | S1-S5 with the expected predecessor state re-read before `set_state` (not met — PAT-56) | `in-progress`/`review`/`done`: met (level 2.5); other states belong to grooming (PAT-55) |
-| Resume | S5 on every replayable write (the caller-supplied predecessor contract remains PAT-56); free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | met for lifecycle markers; `add_comment` (`linear.py`) follows the free-text rule |
+| AC state | S1-S4 on the checkbox body (met, level 1) | PAT-ADR-0006 declares the proof-bound append-only projection the V1 authority (S5/S6); native checkbox replacement remains refused |
+| Status projection | S1-S5: the public operation supplies its original predecessor coordinate, `set_state` retains it through the effective S1 transport read before one native State write, and an exact retry at the target converges; another state or a missing predecessor fails closed | `in-progress`/`review`/`done`: one targeted native State projection under S1-S5 plus its append-only receipt; historical native observations and proof-bound logical targets are validated separately, only the latest relevant receipt may repair a missing projection, disagreement is observable, and a bare native terminal state is never positive proof |
+| Resume | S5 on every replayable transition through the predecessor coordinate; free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | exact native/receipt recovery completes only the missing effect; `add_comment` (`linear.py`) follows the free-text rule |
 | Epic closure | Fresh read of the full parent/children graph and AC proofs, one write, append-only receipt at a deterministic id bound to the exact set of terminal children and carrying the FOUNDRY-ADR-0017 human verdict, readback, fail closed on any divergence — authorized by PAT-ADR-0006, implementation PAT-69 | same — authorized by PAT-ADR-0006, implementation PAT-69 |
+
+The low-level CLI makes the predecessor explicit when the active adapter requires
+bounded native transitions: `edit transition <ISSUE-ID> <target> <expected-state>`.
+Mechanical lifecycle commands carry their stable coordinates themselves
+(`in-progress → review`, `review → done`). `issue start` refuses a resumed existing
+branch when the original predecessor was not durably retained; it does not infer a new
+coordinate from the current native State. For a bounded native tracker, `issue merge`
+also authenticates the ticket's linked PR URL and the requested PR's exact
+number/head/base/state coordinates before any merge, tracker transition, branch cleanup,
+or execution-receipt effect, whether the PR is open or already merged. For both native
+state-bound and proof-bound trackers, an open PR is reread after CI and immediately
+before merge; a changed base ref or SHA is refused. This remains bounded detection,
+not a CAS: GitHub provides no expected-base parameter for the merge endpoint.
 
 Issue creation and free-text comments are outside S5: YouTrack and Linear issue creates
 use provider-assigned or fresh client ids, and ambiguous free-text comment replay can
