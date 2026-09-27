@@ -125,7 +125,11 @@ Les écritures de labels ont utilisé uniquement l'endpoint d'ajout ciblé
 appelé. Après avoir posé `foundry:adr`, la sonde a ajouté le contrôle non sémantique
 `pat65:preserve`; la relecture conserve les deux labels et le corps/titre de #3 est
 identique. Le SHA-256 du corps relu est toujours
-`62c5f80006e8645bc8d830d4e40e0c864f530be5508de9f43bc4ac297a832b01`.
+`3e24cdf4e2d5dbc15cf71ba69c2a399ed5ae99dcc8d4490d56e2f5cda10e4dbc`.
+Il est calculé sur la valeur JSON exacte `body`, encodée en UTF-8, sans ajouter de
+terminaison de ligne (`sha256(json.loads(...)["body"].encode("utf-8"))`). Le digest
+précédemment rapporté provenait d'un outil qui avait haché ce corps avec un LF final
+supplémentaire ; il ne décrit donc pas les octets relus par l'API.
 Ce contrôle prouve la préservation d'un label préexistant pour cette API, pas une
 garantie contre une écriture concurrente.
 
