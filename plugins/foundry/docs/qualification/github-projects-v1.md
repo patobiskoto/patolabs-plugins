@@ -215,3 +215,99 @@ documentés. Le forecast est mis à jour ici sans modifier les critères d'accep
 PAT-57 ou PAT-58. Les limites restantes sont explicites : permissions minimales,
 organisation, dépôt public, type d'issue natif, rendu visuel des colonnes/cartes et
 GitHub App.
+
+
+## Complément PAT-66 : relation native `relatesTo`
+
+Le 27 septembre 2026, l'introspection du schéma GitHub authentifié expose
+`addRelatesTo`, `removeRelatesTo` et la connexion paginée `Issue.relatesTo`.
+La qualification PAT-65 ne couvrait pas cette relation ; son absence de ce rapport
+initial ne signifie donc pas que le fournisseur la refuse. La matrice V1 exige
+`link(relates)` comme opération cœur, distincte des dépendances directionnelles.
+
+La sonde PAT-66 utilise le binding actif `GHQUAL`, le même dépôt privé personnel
+`patobiskoto/foundry-v1-ghprojects-sandbox` et le Project 7
+`PVT_kwHOABroCc4Bk0U-`. Après vérification de ces coordonnées, du propriétaire
+`User`, des deux issues canoniques #1/#2 et d'une seconde lecture identique des
+relations attendues, un seul `addRelatesTo` a reçu leurs **node IDs d'Issue** dans
+`issueId` et `relatedIssueId`. Les IDs REST numériques, numéros d'issue et IDs
+Projects/items ne sont pas des substituts à ces coordonnées.
+
+La réponse identifie les deux issues exactes. La relecture de `relatesTo` sur
+chacune montre l'autre issue : la relation observée est symétrique. Les titres,
+corps et labels des deux issues sont identiques aux snapshots précédents. Seule
+cette relation a été ajoutée ; le binding principal reste Linear. Ces observations
+ne prouvent ni CAS, ni exclusion des écritures concurrentes, ni exactly-once.
+La fenêtre résiduelle S1→S2 de PAT-ADR-0006 reste assumée.
+
+Sources locales de qualification : `/tmp/pat66-relates-schema-current.json`,
+`/tmp/pat66-relates-mutation-schema.json`, `/tmp/pat66-relates-issue-schema.json`,
+`/tmp/pat66-relates-preflight.json`, `/tmp/pat66-relates-add-result.json` et
+`/tmp/pat66-relates-add-readback.json`. Ce sont des réponses API et des captures
+de test, pas des reçus ou attestations Foundry. Les sondes ne qualifient pas les
+permissions minimales, un dépôt public, une organisation ou une GitHub App.
+
+## Recette PAT-66 : écritures par le port commun
+
+La recette autorisée a été exécutée avec l’adaptateur source, via le binding
+GHQUAL du dépôt privé et du Project personnel déjà qualifiés. Les issues
+`GHQUAL-4`, `GHQUAL-5` et `GHQUAL-6` ont été créées une seule fois avec leurs
+items, types, priorités, estimations et états explicites. L’enfant 5 a d’abord
+été attaché au parent 4, puis déplacé au parent 6.
+
+La priorité de 5 et son corps UTF-8 ont été modifiés séparément ; une relecture
+a vérifié la conservation des autres propriétés. Un commentaire a été retrouvé
+par son ID exact et son corps. La dépendance 5 → 4 et la relation native
+symétrique 5 ↔ 4 ont été relues ; le rejeu de `relates` a observé le lien existant.
+Le support ADR expérimental 3 et le binding Linear de patolabs-plugins restent
+préservés. Ces observations ne sont pas des receipts d’acceptation Foundry.
+
+Les limites restent celles de PAT-ADR-0006 : détection bornée, fenêtre S1→S2
+résiduelle assumée, aucune transaction globale, CAS, exclusion concurrente ou
+garantie exactly-once. Une création partiellement réalisée n’est pas relancée
+à l’aveugle. Le cycle de vie PR/merge et le codec ADR restent hors PAT-66.
+
+### Recette de reprise PAT-66 après interruption
+
+Une création synthétique supplémentaire, `GHQUAL-7`, a été effectuée par le
+port commun. Le transport de qualification a volontairement rendu sa réponse
+indisponible et masqué temporairement le candidat à la relecture : le premier
+processus a effectué un seul POST Issue puis refusé l’effet inconnu, en conservant
+son intention locale. Cette perte de réponse est une injection de qualification,
+pas une panne GitHub présentée comme réelle.
+
+Un autre processus a retrouvé cette même Issue et ajouté son item. Sa relecture
+immédiate n’a pas confirmé l’ajout ; l’adaptateur a signalé le résultat partiel
+avec les IDs connus. Après observation fraîche de l’item unique, la reprise a
+terminé les champs et le parent sans aucun second POST Issue. Un troisième
+processus a relu le résultat complet sans aucune mutation fournisseur.
+
+Le journal privé est une observation de reprise locale, pas un receipt ni une
+preuve d’acceptation. Il coordonne les deux hôtes et worktrees qui partagent
+le même répertoire de données Foundry sur une machine ; aucune coordination
+entre machines ni garantie exactly-once globale n’est revendiquée. Zéro candidat
+pour un effet encore inconnu reste un refus ; une création externe identique
+dans la fenêtre initiale zéro → POST reste un risque résiduel explicite.
+
+### Recette PAT-66 : champs et exclusion des supports ADR
+
+Une nouvelle invocation a demandé la priorité et l’estimation déjà présentes
+sur `GHQUAL-5` : aucune mutation de champ n’a été envoyée. La priorité a ensuite
+été réellement modifiée de P1 vers P2 ; le transport de qualification a injecté
+une perte de réponse après cette unique mutation. La relecture autoritative a
+confirmé P2 et la conservation des propriétés non visées. Un nouveau rejeu vers
+P2 n’a envoyé aucune mutation. Cette perte de réponse est une injection explicite,
+pas une panne GitHub revendiquée.
+
+Une tentative de commentaire de livraison sur le support ADR expérimental
+`GHQUAL-3` a été refusée après les lectures de qualification et avant tout POST.
+Le support et ses versions sont restés intacts. Les tests de transport couvrent
+également une issue du dépôt absente du Project, le résultat partiel de plusieurs
+champs, l’effet non observé et une divergence de propriété non visée.
+
+Chaque champ possède une borne de lecture/écriture/relecture indépendante ;
+aucune transaction entre champs ni exclusion concurrente n’est revendiquée.
+Contrairement à la création, les champs existants n’ont pas de journal durable
+d’intention : une relecture indisponible laisse un effet inconnu et aucun retry
+automatique. Une invocation ultérieure explicite repart d’une lecture fraîche.
+La fenêtre S1→S2 résiduelle de PAT-ADR-0006 reste assumée.

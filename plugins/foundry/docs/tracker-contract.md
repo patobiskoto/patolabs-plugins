@@ -56,10 +56,10 @@ closed vocabulary:
 | Contexte/backlog: identity and project resolution | `resolve_project`, `resolve_checkout_project`, `validate_mutation_*` | supported | supported | supported (binding only; workflow methods remain with PAT-57/66/67) |
 | Contexte/backlog: repository bootstrap (bind an existing verified project) | `verify_project_identity`, `resolve_checkout_project` | supported | supported | supported (binding only) |
 | Contexte/backlog: read | `search`, `get_issue` | supported | supported (unknown mapping fails closed; `registry update` resumes) | supported (PAT-57, qualified private personal-project read profile) |
-| Frame/intake/groom: create, comment | `create_issue`, `add_comment` | supported | supported | `to_qualify` PAT-66 |
-| Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | `to_qualify` PAT-66 |
-| Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | `to_qualify` PAT-66 |
-| Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | `to_qualify` PAT-66 |
+| Frame/intake/groom: create, comment | `create_issue`, `add_comment` | supported | supported | supported (PAT-66) |
+| Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
+| Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) |
+| Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | `to_qualify` PAT-58 |
 | Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 |
@@ -85,7 +85,8 @@ cell.
   native custom field rather than reporting a false snapshot/readback. The historical
   direct-adapter custom-field escape hatch remains available without that bounded
   guarantee and is outside the core contract's deliberately non-universal editor.
-  GitHub Projects remains PAT-66.
+  GitHub Projects delivers its narrower qualified portable vocabulary through PAT-66;
+  its lifecycle projection remains PAT-67.
 - **PAT-56** — States and AC. YouTrack receives the explicit predecessor owned by the
   public lifecycle operation and re-reads it before one targeted native projection.
   `write.transition` never replaces that coordinate with the native state seen on a
@@ -393,19 +394,32 @@ state-bound and proof-bound trackers, an open PR is reread after CI and immediat
 before merge; a changed base ref or SHA is refused. This remains bounded detection,
 not a CAS: GitHub provides no expected-base parameter for the merge endpoint.
 
-Issue creation and free-text comments are outside S5: YouTrack and Linear issue creates
-use provider-assigned or fresh client ids, and ambiguous free-text comment replay can
-duplicate a non-authoritative note. Linear issue relations now use a deterministic UUID
+YouTrack and Linear issue creation remain outside S5: they use provider-assigned or
+fresh client ids. GitHub Projects issue creation meets S5 within one Foundry data
+directory through a private, atomically written intent keyed by the exact binding and
+creation spec. The adapter writes the intent before its only initial Issue POST, then
+requires zero candidates for that initial effect; a replay with zero candidates remains
+unknown and refuses, one exact canonical non-ADR candidate resumes, and multiple or
+unowned candidates refuse. Each partial Project attachment, field or parent step is
+freshly observed and gets at most one recorded resume attempt. The local lock coordinates
+Claude Code, Codex and worktrees on one machine, but is neither a provider receipt nor
+cross-machine authority and supplies no CAS or general exactly-once guarantee. An
+external identical create in the initial zero-read-to-POST window remains the explicit
+S1-to-S2 race. With no caller-supplied operation ID, an intentional second create with
+the exact same binding and spec is indistinguishable from a replay on that machine and
+converges on the retained intent.
+
+Free-text comments remain outside S5: an ambiguous replay can duplicate a
+non-authoritative note. Linear issue relations now use a deterministic UUID
 derived from their canonical project/type/endpoints. Linear's qualified schema defines
 the supplied UUIDv4 as the native relation identifier and `issueRelation(id)` as a lookup
 by its unique identifier. Success and ambiguous recovery verify that exact ID, type and
 both endpoints. A replay with endpoint projections still absent may send another create
 request only at that same identity; an existing slot converges by exact lookup, while an
 unavailable, missing, permission-denied, malformed or mismatched lookup fails closed.
-This proves S5 for the relation port without claiming general idempotence or CAS. For
-GitHub Projects, PAT-65 and PAT-ADR-0007 select this floor for the future adapter and
-explicitly retain the S1→S2 race; the qualification does not supply a stronger provider
-precondition.
+This proves S5 for the relation port without claiming general idempotence or CAS.
+GitHub's qualification still supplies no provider precondition; the local intent only
+prevents an unknown local replay from becoming another blind POST.
 
 ### 4.3 Accepted durable-invariant decision
 
