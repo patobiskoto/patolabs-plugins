@@ -159,31 +159,11 @@ def test_blocked_by_adr_references_a_declared_pending_adr():
             )
 
 
-@pytest.mark.parametrize(
-    ("operation_id", "provider", "ticket"),
-    [
-        ("frame-intake-groom-evolve-existing", "linear", "PAT-55"),
-        ("epics-children-reparent-existing", "linear", "PAT-55"),
-        ("acceptance-criteria-sync", "linear", "PAT-56"),
-        ("epic-closure", "youtrack", "PAT-69"),
-        ("epic-closure", "linear", "PAT-69"),
-    ],
-)
-def test_durable_invariant_gaps_are_blocked_by_the_no_cas_adr(
-    operation_id, provider, ticket,
-):
-    """Criterion 3: closing these gaps reverses linear.py's no-replacement invariant or
-    the atomic epic-closure invariant, so each is gated on the one consolidated ADR."""
-    contract = _load_contract()
-    operation = next(o for o in contract["operations"] if o["id"] == operation_id)
-    cell = operation["cells"][provider]
-    assert cell["status"] == "gap"
-    assert cell["ticket"] == ticket
-    assert cell["blocked_by_adr"] == "no-cas-write-guarantees-v1"
+def test_no_pending_adr_remains_after_pat_adr_0006_acceptance():
+    assert _load_contract()["pending_adrs"] == []
 
 
-def test_doc_does_not_point_at_an_untracked_adr_draft():
-    """The pending ADR is referenced by title only, never by an out-of-repo path."""
+def test_doc_records_the_accepted_adr_without_a_local_draft_path():
     doc = DOC_PATH.read_text(encoding="utf-8")
     assert "Garanties d'écriture sans CAS pour les trackers V1" in " ".join(doc.split())
     assert "pat53-adr-draft" not in doc
@@ -354,7 +334,7 @@ def test_ghprojects_core_methods_are_unimplemented_stubs():
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-55", "PAT-56", "PAT-69", "PAT-64", "PAT-59"],
+    ["PAT-56", "PAT-69", "PAT-64", "PAT-59"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

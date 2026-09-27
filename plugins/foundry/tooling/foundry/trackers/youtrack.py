@@ -20,7 +20,12 @@ import urllib.request
 from foundry import config, registry
 from foundry.routing import RoutingConfigError, synchronize_acceptance_body
 from foundry.models import Adr, Issue, Link, Project
-from foundry.trackers.base import IssueUnavailableError, Tracker, TrackerConflictError
+from foundry.trackers.base import (
+    IssueUnavailableError,
+    Tracker,
+    TrackerCapabilityUnavailableError,
+    TrackerConflictError,
+)
 
 # normalized field name -> the YouTrack customField $type to send on writes
 _FIELD_TYPES = {
@@ -31,6 +36,9 @@ _FIELD_TYPES = {
     "Estimate": "SimpleIssueCustomField",
 }
 _ENUM_VALUE = {"State", "Priority", "Type", "Milestone"}  # value = {"name": x}, else raw
+_PORTABLE_FIELD_NAMES = frozenset({
+    "State", "Priority", "Type", "Milestone", "Estimate", "Labels", "GitHub PR",
+})
 
 # link_type -> YouTrack command role phrase (applied to the source issue)
 _LINK_ROLE = {
@@ -361,6 +369,23 @@ class YouTrackTracker(Tracker):
             self._native_project(raw, f"l'issue '{issue_id}'"),
         )
 
+    def validate_issue_binding(self, project: Project, *issue_ids: str) -> None:
+        """Bind common write-tier issue operations to the repository project.
+
+        A V1 repository marker makes the factory enable ``requires_mutation_binding``;
+        the shared write tier then calls this hook before invoking the mutation.  Direct
+        adapter calls outside that bound path retain YouTrack's historical native
+        cross-project relation capability.
+        """
+        for issue_id in issue_ids:
+            target = self._issue_target_project(issue_id)
+            if not self._same_native_project(target, project):
+                raise SystemExit(
+                    "Mutation YouTrack refusée : "
+                    f"l'issue '{issue_id}' appartient au projet natif "
+                    f"'{target.key}', pas au projet canonique '{project.key}'."
+                )
+
     def _adr_target_project(
         self, ref: str,
     ) -> Project:
@@ -461,16 +486,94 @@ class YouTrackTracker(Tracker):
     def update_fields(
         self, issue_id: str, fields: dict, project: Project | None = None,
     ) -> Issue:
+        null_fields = sorted(name for name, value in fields.items() if value is None)
+        if null_fields:
+            raise TrackerCapabilityUnavailableError(
+                self.name, f"portable-field-clear:{null_fields[0]}"
+            )
+        unknown = sorted(set(fields) - _PORTABLE_FIELD_NAMES)
+        if unknown:
+            if project is not None and self.requires_mutation_binding:
+                raise TrackerCapabilityUnavailableError(
+                    self.name, f"portable-field:{unknown[0]}"
+                )
+            # Preserve the pre-V1 native custom-field escape hatch.  The normalized
+            # Issue model cannot observe an arbitrary field, so this legacy path does
+            # not claim the bounded snapshot/readback guarantee below.
+            target = self._issue_target_project(issue_id)
+            milestone_target = (
+                self._milestone_target_project(target, project)
+                if fields.get("Milestone")
+                else target
+            )
+            self._prewrite(fields, milestone_target)
+            cfs = [self._cf_write(name, value) for name, value in fields.items()]
+            self._req(
+                "POST", f"/issues/{issue_id}", {"customFields": cfs}, "idReadable"
+            )
+            return self.get_issue(issue_id)
         target = self._issue_target_project(issue_id)
         milestone_target = (
             self._milestone_target_project(target, project)
             if fields.get("Milestone")
             else target
         )
+        # Capture only fields this operation owns and re-read before the first
+        # possible effect.  This is bounded detection, not CAS or exclusion.
+        before = self.get_issue(issue_id)
+        expected = self._field_snapshot(before, fields)
+        desired = self._field_snapshot_from_values(fields)
+        if expected == desired:
+            return before
+        fresh = self.get_issue(issue_id)
+        if self._field_snapshot(fresh, fields) != expected:
+            raise TrackerConflictError(
+                "champs YouTrack modifiés avant écriture bornée"
+            )
+        # A missing Milestone enum value is an existing, separate provider create.
+        # Preserve it only after S1, then re-read the issue before its own POST.
         self._prewrite(fields, milestone_target)
+        if fields.get("Milestone"):
+            fresh = self.get_issue(issue_id)
+            if self._field_snapshot(fresh, fields) != expected:
+                raise TrackerConflictError(
+                    "champs YouTrack modifiés pendant la préparation bornée"
+                )
         cfs = [self._cf_write(k, v) for k, v in fields.items() if v is not None]
         self._req("POST", f"/issues/{issue_id}", {"customFields": cfs}, "idReadable")
-        return self.get_issue(issue_id)
+        readback = self.get_issue(issue_id)
+        if self._field_snapshot(readback, fields) != desired:
+            raise TrackerConflictError(
+                "champs YouTrack divergents après écriture ; aucune seconde tentative"
+            )
+        return readback
+
+    @staticmethod
+    def _field_snapshot(issue: Issue, fields: dict) -> dict:
+        names = {
+            "State": "state", "Priority": "priority", "Estimate": "estimate",
+            "Milestone": "milestone", "Type": "type", "Labels": "labels",
+            "GitHub PR": "pr_url",
+        }
+        snapshot = {name: getattr(issue, attribute)
+                    for name, attribute in names.items() if name in fields}
+        if "Labels" in snapshot:
+            snapshot["Labels"] = tuple(sorted(snapshot["Labels"] or []))
+        return snapshot
+
+    @staticmethod
+    def _field_snapshot_from_values(fields: dict) -> dict:
+        desired = {name: value for name, value in fields.items() if name in {
+            "State", "Priority", "Estimate", "Milestone", "Type", "Labels",
+            "GitHub PR",
+        }}
+        if isinstance(desired.get("Labels"), str):
+            desired["Labels"] = [
+                label.strip() for label in desired["Labels"].split(",") if label.strip()
+            ]
+        if "Labels" in desired:
+            desired["Labels"] = tuple(sorted(desired["Labels"] or []))
+        return desired
 
     def set_state(
         self, issue_id: str, state: str, context=None, project: Project | None = None,
@@ -483,9 +586,30 @@ class YouTrackTracker(Tracker):
     ) -> None:
         self._issue_target_project(src_id)
         self._issue_target_project(dst_id)
+        before_source = self.get_issue(src_id)
+        before_target = self.get_issue(dst_id)
+        if self._has_link(before_source, link_type, dst_id):
+            return
+        fresh_source = self.get_issue(src_id)
+        fresh_target = self.get_issue(dst_id)
+        if (
+            self._has_link(fresh_source, link_type, dst_id)
+            or fresh_source.links != before_source.links
+            or fresh_target.links != before_target.links
+        ):
+            raise TrackerConflictError("liens YouTrack modifiés avant écriture bornée")
         role = _LINK_ROLE.get(link_type, link_type)
         self._req("POST", "/commands",
                   {"query": f"{role} {dst_id}", "issues": [{"idReadable": src_id}]})
+        readback = self.get_issue(src_id)
+        if not self._has_link(readback, link_type, dst_id):
+            raise TrackerConflictError(
+                "lien YouTrack divergent après écriture ; aucune seconde tentative"
+            )
+
+    @staticmethod
+    def _has_link(issue: Issue, link_type: str, target: str) -> bool:
+        return any(link.type == link_type and link.target == target for link in issue.links)
 
     def add_comment(
         self, issue_id: str, text: str, project: Project | None = None,

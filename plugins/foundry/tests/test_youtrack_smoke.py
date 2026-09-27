@@ -7,8 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from foundry import registry
+from foundry import registry, write
 from foundry.models import Adr, Issue, Link, Project
+from foundry.trackers.base import (
+    TrackerCapabilityUnavailableError,
+    TrackerConflictError,
+)
 from foundry.youtrack_smoke import (
     SmokeConfigurationError,
     SmokeDisabled,
@@ -698,19 +702,24 @@ def test_archived_target_refuses_before_milestone_or_issue_write(monkeypatch):
 def test_update_fields_creates_milestone_from_explicit_native_project_bundle(monkeypatch):
     tracker = object.__new__(YouTrackTracker)
     calls = []
+    milestone = None
 
     def request(method, path, body=None, fields=None, top=None):
+        nonlocal milestone
         calls.append((method, path, body, fields))
         if method == "GET" and path == "/issues/ACTIVE-1":
             return {"project": {"id": "0-active", "shortName": "ACTIVE"}}
         if method == "POST" and path.endswith("/bundle-active/values"):
             return {"name": body["name"]}
         if method == "POST" and path == "/issues/ACTIVE-1":
+            milestone = "M2"
             return {"idReadable": "ACTIVE-1"}
         raise AssertionError(f"unexpected provider request: {method} {path}")
 
     tracker._req = request
-    tracker.get_issue = lambda issue_id: Issue(id=issue_id, title="updated")
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="updated", milestone=milestone,
+    )
     monkeypatch.setattr(
         "foundry.trackers.youtrack.registry.load",
         lambda: {"youtrack": {}},
@@ -757,19 +766,24 @@ def test_update_fields_creates_milestone_from_explicit_native_project_bundle(mon
 def test_update_fields_creates_milestone_from_corroborated_historical_bundle(monkeypatch):
     tracker = object.__new__(YouTrackTracker)
     calls = []
+    milestone = None
 
     def request(method, path, body=None, fields=None, top=None):
+        nonlocal milestone
         calls.append((method, path, body, fields))
         if method == "GET" and path == "/issues/LEGACY-1":
             return {"project": {"id": "0-legacy", "shortName": "LEGACY"}}
         if method == "POST" and path.endswith("/bundle-legacy/values"):
             return {"name": body["name"]}
         if method == "POST" and path == "/issues/LEGACY-1":
+            milestone = "M3"
             return {"idReadable": "LEGACY-1"}
         raise AssertionError(f"unexpected provider request: {method} {path}")
 
     tracker._req = request
-    tracker.get_issue = lambda issue_id: Issue(id=issue_id, title="updated")
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="updated", milestone=milestone,
+    )
     monkeypatch.setattr(
         "foundry.trackers.youtrack.registry.load",
         lambda: {"youtrack": {
@@ -796,17 +810,22 @@ def test_update_fields_creates_milestone_from_corroborated_historical_bundle(mon
 def test_update_fields_does_not_consume_foreign_milestone_mapping(monkeypatch):
     tracker = object.__new__(YouTrackTracker)
     calls = []
+    milestone = None
 
     def request(method, path, body=None, fields=None, top=None):
+        nonlocal milestone
         calls.append((method, path, body, fields))
         if method == "GET":
             return {"project": {"id": "0-target", "shortName": "TARGET"}}
         if path == "/issues/TARGET-1":
+            milestone = "M4"
             return {"idReadable": "TARGET-1"}
         raise AssertionError(f"unexpected provider request: {method} {path}")
 
     tracker._req = request
-    tracker.get_issue = lambda issue_id: Issue(id=issue_id, title="updated")
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="updated", milestone=milestone,
+    )
     monkeypatch.setattr(
         "foundry.trackers.youtrack.registry.load",
         lambda: {"youtrack": {}},
@@ -902,6 +921,289 @@ def test_update_fields_preserves_historical_resolution_refusals_before_post(
         )
 
     assert calls == [("GET", "/issues/ACTIVE-1", None, "project(id,shortName)")]
+
+
+def test_update_fields_refuses_drift_before_milestone_or_issue_post(monkeypatch):
+    tracker = object.__new__(YouTrackTracker)
+    calls = []
+    reads = iter(("M1", "concurrent"))
+
+    def request(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body, fields))
+        if method == "GET" and path == "/issues/ACTIVE-1":
+            return {"project": {"id": "0-active", "shortName": "ACTIVE"}}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="issue", milestone=next(reads),
+    )
+    monkeypatch.setattr("foundry.trackers.youtrack.registry.load",
+                        lambda: {"youtrack": {}})
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.resolve",
+        lambda *_args: (_ for _ in ()).throw(
+            registry.ProjectNotRegisteredError("unregistered")
+        ),
+    )
+
+    with pytest.raises(TrackerConflictError, match="avant écriture"):
+        tracker.update_fields(
+            "ACTIVE-1", {"Milestone": "M2"},
+            project=Project(
+                key="ACTIVE", id="0-active", extra={"ms_bundle": "bundle-active"},
+            ),
+        )
+    assert calls == [("GET", "/issues/ACTIVE-1", None, "project(id,shortName)")]
+
+
+def test_update_fields_ambiguous_effect_replay_is_noop(monkeypatch):
+    tracker = object.__new__(YouTrackTracker)
+    priority = "P1"
+    post_attempts = 0
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal post_attempts, priority
+        if method == "GET" and path == "/issues/ACTIVE-1":
+            return {"project": {"id": "0-active", "shortName": "ACTIVE"}}
+        if method == "POST" and path == "/issues/ACTIVE-1":
+            post_attempts += 1
+            priority = "P0"
+            raise RuntimeError("response lost after provider effect")
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="issue", priority=priority,
+    )
+    monkeypatch.setattr("foundry.trackers.youtrack.registry.load",
+                        lambda: {"youtrack": {}})
+
+    with pytest.raises(RuntimeError, match="response lost"):
+        tracker.update_fields("ACTIVE-1", {"Priority": "P0"})
+    assert tracker.update_fields("ACTIVE-1", {"Priority": "P0"}).priority == "P0"
+    assert post_attempts == 1
+
+
+def test_update_fields_preserves_github_pr_projection(monkeypatch):
+    tracker = object.__new__(YouTrackTracker)
+    pr_url = None
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal pr_url
+        if method == "GET" and path == "/issues/ACTIVE-1":
+            return {"project": {"id": "0-active", "shortName": "ACTIVE"}}
+        if method == "POST" and path == "/issues/ACTIVE-1":
+            pr_url = body["customFields"][0]["value"]
+            return {"idReadable": "ACTIVE-1"}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="issue", pr_url=pr_url,
+    )
+    monkeypatch.setattr("foundry.trackers.youtrack.registry.load",
+                        lambda: {"youtrack": {}})
+
+    result = tracker.update_fields(
+        "ACTIVE-1", {"GitHub PR": "https://github.com/acme/repo/pull/1"},
+    )
+    assert result.pr_url == "https://github.com/acme/repo/pull/1"
+
+
+def test_portable_update_refuses_unknown_field_and_null_clear_without_provider_call():
+    tracker = object.__new__(YouTrackTracker)
+    tracker.requires_mutation_binding = True
+    calls = []
+    tracker._req = lambda *args, **kwargs: calls.append((args, kwargs))
+    project = Project(key="ACTIVE", id="0-active")
+
+    with pytest.raises(
+        TrackerCapabilityUnavailableError, match=r"youtrack\.portable-field:Native Rank"
+    ):
+        tracker.update_fields("ACTIVE-1", {"Native Rank": "A"}, project=project)
+    with pytest.raises(
+        TrackerCapabilityUnavailableError,
+        match=r"youtrack\.portable-field-clear:Milestone",
+    ):
+        tracker.update_fields("ACTIVE-1", {"Milestone": None}, project=project)
+
+    assert calls == []
+
+
+def test_legacy_native_custom_field_write_preserves_milestone_preparation(monkeypatch):
+    tracker = object.__new__(YouTrackTracker)
+    calls = []
+
+    def request(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body, fields))
+        if method == "GET":
+            return {"project": {"id": "0-active", "shortName": "ACTIVE"}}
+        if method == "POST" and path.endswith("/bundle-active/values"):
+            return {"name": body["name"]}
+        if method == "POST":
+            return {"idReadable": "ACTIVE-1"}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker.get_issue = lambda issue_id: Issue(id=issue_id, title="legacy native field")
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.resolve",
+        lambda *_args: (_ for _ in ()).throw(
+            registry.ProjectNotRegisteredError("unregistered")
+        ),
+    )
+
+    result = tracker.update_fields(
+        "ACTIVE-1",
+        {"Native Rank": "A", "Milestone": "M2"},
+        project=Project(
+            key="ACTIVE", id="0-active", extra={"ms_bundle": "bundle-active"},
+        ),
+    )
+
+    assert result.id == "ACTIVE-1"
+    assert calls == [
+        ("GET", "/issues/ACTIVE-1", None, "project(id,shortName)"),
+        (
+            "POST",
+            "/admin/customFieldSettings/bundles/enum/bundle-active/values",
+            {"name": "M2"},
+            "name",
+        ),
+        (
+            "POST",
+            "/issues/ACTIVE-1",
+            {"customFields": [
+                {
+                    "name": "Native Rank",
+                    "$type": "SimpleIssueCustomField",
+                    "value": "A",
+                },
+                {
+                    "name": "Milestone",
+                    "$type": "SingleEnumIssueCustomField",
+                    "value": {"name": "M2"},
+                },
+            ]},
+            "idReadable",
+        ),
+    ]
+
+
+def test_bound_write_port_refuses_foreign_issue_and_link_endpoint_before_effect(
+    monkeypatch,
+):
+    tracker = object.__new__(YouTrackTracker)
+    tracker.requires_mutation_binding = True
+    calls = []
+
+    def request(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body, fields))
+        projects = {
+            "/issues/ACTIVE-1": {"id": "0-active", "shortName": "ACTIVE"},
+            "/issues/FOREIGN-1": {"id": "0-foreign", "shortName": "FOREIGN"},
+        }
+        if method == "GET" and path in projects:
+            return {"project": projects[path]}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.load", lambda: {"youtrack": {}}
+    )
+    project = Project(key="ACTIVE", id="0-active")
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+
+    with pytest.raises(SystemExit, match="pas au projet canonique 'ACTIVE'"):
+        write.set_field(tracker, "FOREIGN-1", "Priority", "P0")
+    assert calls == [
+        ("GET", "/issues/FOREIGN-1", None, "project(id,shortName)"),
+    ]
+
+    calls.clear()
+    with pytest.raises(SystemExit, match="pas au projet canonique 'ACTIVE'"):
+        write.link(tracker, "ACTIVE-1", "depends-on", "FOREIGN-1")
+    assert calls == [
+        ("GET", "/issues/ACTIVE-1", None, "project(id,shortName)"),
+        ("GET", "/issues/FOREIGN-1", None, "project(id,shortName)"),
+    ]
+
+
+def test_update_fields_permission_and_missing_resource_never_retry(monkeypatch):
+    tracker = object.__new__(YouTrackTracker)
+    post_attempts = 0
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal post_attempts
+        if method == "GET" and path == "/issues/MISSING-1":
+            raise _YouTrackHTTPError(method, path, 404, "missing")
+        if method == "GET" and path == "/issues/ACTIVE-1":
+            return {"project": {"id": "0-active", "shortName": "ACTIVE"}}
+        if method == "POST" and path == "/issues/ACTIVE-1":
+            post_attempts += 1
+            raise _YouTrackHTTPError(method, path, 403, "forbidden")
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="issue", priority="P1",
+    )
+    monkeypatch.setattr("foundry.trackers.youtrack.registry.load",
+                        lambda: {"youtrack": {}})
+
+    with pytest.raises(_YouTrackHTTPError, match="HTTP 404"):
+        tracker.update_fields("MISSING-1", {"Priority": "P0"})
+    with pytest.raises(_YouTrackHTTPError, match="HTTP 403"):
+        tracker.update_fields("ACTIVE-1", {"Priority": "P0"})
+    assert post_attempts == 1
+
+
+def test_link_detects_endpoint_drift_and_ambiguous_replay(monkeypatch):
+    tracker = object.__new__(YouTrackTracker)
+    calls = []
+    linked = False
+    drift = True
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal linked
+        calls.append((method, path, body, fields))
+        if method == "GET" and path in {"/issues/SOURCE-1", "/issues/TARGET-1"}:
+            return {"project": {"id": "0-active", "shortName": "ACTIVE"}}
+        if method == "POST" and path == "/commands":
+            linked = True
+            raise RuntimeError("response lost after provider effect")
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    reads = {"SOURCE-1": 0, "TARGET-1": 0}
+
+    def get_issue(issue_id):
+        reads[issue_id] += 1
+        links = []
+        if linked and issue_id == "SOURCE-1":
+            links = [Link("depends-on", "outward", "TARGET-1")]
+        elif drift and issue_id == "TARGET-1" and reads[issue_id] == 2:
+            links = [Link("relates", "outward", "OTHER-1")]
+        return Issue(id=issue_id, title="issue", links=links)
+
+    tracker._req = request
+    tracker.get_issue = get_issue
+    monkeypatch.setattr("foundry.trackers.youtrack.registry.load",
+                        lambda: {"youtrack": {}})
+
+    with pytest.raises(TrackerConflictError, match="liens YouTrack modifiés"):
+        tracker.link("SOURCE-1", "depends-on", "TARGET-1")
+    assert not any(call[0] == "POST" for call in calls)
+
+    drift = False
+    reads = {"SOURCE-1": 0, "TARGET-1": 0}
+    with pytest.raises(RuntimeError, match="response lost"):
+        tracker.link("SOURCE-1", "depends-on", "TARGET-1")
+    tracker.link("SOURCE-1", "depends-on", "TARGET-1")
+    assert len([call for call in calls if call[0] == "POST"]) == 1
 
 
 def test_archived_issue_or_adr_target_refuses_before_command_or_body_write(monkeypatch):
@@ -1366,18 +1668,28 @@ def test_explicit_create_cannot_escape_archive_by_changing_one_coordinate(monkey
 def test_active_cross_project_link_keeps_native_coordinates_independent(monkeypatch):
     tracker = object.__new__(YouTrackTracker)
     calls = []
+    linked = False
 
     def request(method, path, body=None, fields=None, top=None):
+        nonlocal linked
         calls.append((method, path, body, fields))
         if method == "GET" and path == "/issues/SOURCE-1":
             return {"project": {"id": "0-source", "shortName": "SOURCE"}}
         if method == "GET" and path == "/issues/DESTINATION-1":
             return {"project": {"id": "0-destination", "shortName": "DESTINATION"}}
         if method == "POST" and path == "/commands":
+            linked = True
             return {}
         raise AssertionError(f"unexpected provider request: {method} {path}")
 
     tracker._req = request
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="issue",
+        links=(
+            [Link("relates", "outward", "DESTINATION-1")]
+            if issue_id == "SOURCE-1" and linked else []
+        ),
+    )
     monkeypatch.setattr("foundry.trackers.youtrack.registry.load", lambda: {
         "youtrack": {"archive": {"key": "ARCHIVE", "id": "0-archive", "archive": True}},
     })
@@ -1397,8 +1709,10 @@ def test_active_cross_project_link_keeps_native_coordinates_independent(monkeypa
 def test_active_cross_project_parent_does_not_block_child_creation(monkeypatch):
     tracker = object.__new__(YouTrackTracker)
     calls = []
+    linked = False
 
     def request(method, path, body=None, fields=None, top=None):
+        nonlocal linked
         calls.append((method, path, body, fields))
         if method == "GET" and path == "/issues/PARENT-1":
             return {"project": {"id": "0-parent", "shortName": "PARENT"}}
@@ -1407,12 +1721,19 @@ def test_active_cross_project_parent_does_not_block_child_creation(monkeypatch):
         if method == "GET" and path == "/issues/CHILD-1":
             return {"project": {"id": "0-child", "shortName": "CHILD"}}
         if method == "POST" and path == "/commands":
+            linked = True
             return {}
         raise AssertionError(f"unexpected provider request: {method} {path}")
 
     tracker._req = request
     tracker._prewrite = lambda fields, project: None
-    tracker.get_issue = lambda issue_id: Issue(id=issue_id, title="child")
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="child",
+        links=(
+            [Link("subtask-of", "inward", "PARENT-1")]
+            if issue_id == "CHILD-1" and linked else []
+        ),
+    )
     monkeypatch.setattr("foundry.trackers.youtrack.registry.load", lambda: {
         "youtrack": {"archive": {"key": "ARCHIVE", "id": "0-archive", "archive": True}},
     })

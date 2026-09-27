@@ -79,27 +79,46 @@ Linear parent as `subtask-of/inward` and each child as `parent-of/outward`. For 
 through a sanitized Linear provider error instead of returning partial issue data.
 
 Supported writes are issue creation (with initial priority, estimate, state, mapped
-milestone/type/labels, and optional parent), non-replacing blocking/dependency/related
-relations, and comments. These supported writes round-trip only through the normalized
-relations above; duplicate/similar writes are not exposed.
+milestone/type/labels, and optional parent), bounded grooming of an existing issue
+(fields, description and parent), non-replacing blocking/dependency/related relations,
+and comments. These supported writes round-trip only through the normalized relations
+above; duplicate/similar writes are not exposed.
 
 These writes have deliberately narrow delivery semantics. Creation sends one
 `issueCreate` with a fresh client UUID and then reads the returned issue; retrying the
-command creates a new request and can duplicate the issue. A relation call first observes
-whether the relation exists, then sends at most one `issueRelationCreate` and reads back;
-concurrent or ambiguous callers can still duplicate a relation. A comment call sends one
-`commentCreate` and reads back that returned comment ID; retry after an ambiguous outcome
-can duplicate the comment. None of these operations is advertised as exactly-once.
+command creates a new request and can duplicate the issue. A relation call validates and
+snapshots both endpoints, then sends one `issueRelationCreate` at a deterministic UUIDv4
+derived from the canonical project, relation kind, source and target. Linear's qualified
+schema defines that optional UUIDv4 as the relation identifier and exposes
+`issueRelation(id)` as a lookup by its unique identifier. Foundry therefore verifies the
+exact ID, kind and endpoint IDs after success and after an ambiguous response. One
+invocation sends at most one create. An invocation that already observes the normalized
+relation is a no-op. A later invocation whose endpoint projections do not expose the
+relation can send another request, but only at the same unique native identity; a
+duplicate response converges through the exact-ID lookup, so it cannot create a second
+relation identity. If that lookup errors (including not-found or permission failures),
+is malformed, or returns another relation shape, Foundry fails closed and never treats
+it as permission to write a different slot. This is S5 replay convergence for this
+relation port, not general provider idempotence, CAS, or exclusion; the residual S1→S2
+race still exists. A comment call sends one `commentCreate` and reads back that returned
+comment ID; retry after an ambiguous outcome can duplicate the comment. None of these
+operations is advertised as generally exactly-once.
 
-Linear exposes no compare-and-swap precondition for an existing issue. Field and state
-replacement, changing the parent of an existing issue, issue-body replacement, and
-acceptance-checkbox synchronization are therefore explicitly unavailable. A local lock,
-pre-write read, or post-write readback cannot prevent an external writer from being
-overwritten, so none is presented as an anti-overwrite guarantee.
+Linear exposes no compare-and-swap precondition for an existing issue. Under
+PAT-ADR-0006, grooming field, description and parent replacements use bounded detection:
+capture the targeted expected snapshot, re-read it immediately before one `issueUpdate`,
+then verify readback. An ambiguous response is recovered only by a read that observes the
+exact desired result; Foundry never retries that mutation. This detects divergence before
+S1 and after S2, but cannot exclude an external write in the S1→S2 window. It is not CAS
+and no local lock is represented as a distributed lock. Each `issueUpdate` contains only
+the targeted properties; Type/Labels use `addedLabelIds`/`removedLabelIds`, not `labelIds`,
+so unrelated labels are preserved where Linear permits it. Native acceptance-checkbox
+synchronization remains explicitly unavailable; V1 AC authority is the append-only proof
+projection. Lifecycle `in-progress`/`review`/`done` also remains append-only.
 
-Unsupported capabilities fail explicitly with typed errors: existing-issue replacement,
-atomic audited non-code Epic closure, project provisioning, and free-form provider-native
-search queries. ADRs are stored as project-scoped Linear Documents, never substituted by
+Unsupported capabilities fail explicitly with typed errors: native acceptance-checkbox
+replacement, atomic audited non-code Epic closure, project provisioning, and free-form
+provider-native search queries. ADRs are stored as project-scoped Linear Documents, never substituted by
 a Git catalogue or YouTrack read. A document has a deterministic UUIDv4 client ID for its
 `(project, ADR, version)` slot, a closed metadata header and body/content digests. Every
 version also has a second deterministic UUIDv4 project Document: its witness binds the version
@@ -779,7 +798,10 @@ either exact coordinate matches an archived binding. Explicit issue/ADR creation
 the supplied native project before milestone setup or creation; links and parent creation
 check each existing endpoint independently. Matching is exact, never prefix-based, so
 active cross-project relations keep working and an unregistered checkout can still write
-to an active project. Queries through historical aliases remain readable. The public
+to an active project through the historical direct/marker-free path. With a V1 repository
+marker, the tracker factory enables the shared mutation binding and YouTrack validates
+every issue endpoint against the marker's canonical native project before the common
+write port mutates it. Queries through historical aliases remain readable. The public
 checkout independently rejects an explicit YouTrack override through its Linear marker.
 
 This is the protection shipped after PAT-43; it does not rewrite or retroactively prove

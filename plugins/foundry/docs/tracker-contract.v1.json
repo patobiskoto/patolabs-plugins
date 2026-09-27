@@ -13,22 +13,9 @@
     "status": "one value of status_vocabulary",
     "evidence": "code citation grounding the status",
     "ticket": "owner ticket (PAT-<n>); required on every core 'gap' and 'to_qualify' cell and on every non-core 'to_qualify' cell",
-    "blocked_by_adr": "id of an entry in pending_adrs; present when closing the cell changes a durable invariant, so no code may land before that ADR is explicitly accepted"
+    "blocked_by_adr": "id of an entry in pending_adrs; present only while an unaccepted ADR prevents code from landing"
   },
-  "pending_adrs": [
-    {
-      "id": "no-cas-write-guarantees-v1",
-      "title": "Garanties d'écriture sans CAS pour les trackers V1",
-      "status": "to_create_and_accept",
-      "proposed_in": "PAT-53",
-      "doc_section": "tracker-contract.md #4.3",
-      "invariants_changed": [
-        "linear.py:8-11 — existing-issue replacement is unavailable without a provider CAS (PAT-55, PAT-56 on Linear)",
-        "base.py:276-290 and write.py:371-376 — epic closure is an atomic provider graph operation persisted in one transaction (PAT-69 on YouTrack and Linear)"
-      ],
-      "creation_owner": "maintainer, through foundry:adr (created as proposed, then explicitly accepted) before any code of PAT-55, PAT-56 or PAT-69 starts"
-    }
-  ],
+  "pending_adrs": [],
   "providers": {
     "youtrack": {
       "module": "plugins/foundry/tooling/foundry/trackers/youtrack.py",
@@ -67,7 +54,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py:397-669); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py:156-186) and write.mutation_project requires it for a V1 YouTrack checkout (write.py:50-68). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py:15-43; doctor.py:214-230). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
+          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py:397-669); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py:156-186); for a V1 YouTrack marker the factory enables requires_mutation_binding (foundry/__init__.py:46-67), write.mutation_project resolves the exact checkout project and write.issue_binding invokes the adapter endpoint check (write.py:50-99). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py:15-43; doctor.py:214-230). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
         },
         "linear": {
           "status": "supported",
@@ -90,7 +77,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock; a same-basename collision receives a deterministic internal storage key and exact replay remains canonical_repo-scoped. It performs no administrative provisioning (registry.py:992-1099, 1634-1784; youtrack.py:247-258)"
+          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock; a same-basename collision receives a deterministic internal storage key and exact replay remains canonical_repo-scoped. It performs no administrative provisioning (registry.py:992-1099, 1634-1784; youtrack.py:255-266)"
         },
         "linear": {
           "status": "supported",
@@ -113,7 +100,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "search() pages the project's issues and get_issue hydrates links and AC (youtrack.py:285-301)"
+          "evidence": "search() pages the project's issues and get_issue hydrates links and AC (youtrack.py:293-309)"
         },
         "linear": {
           "status": "supported",
@@ -136,7 +123,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "search() appends the caller's query string to its 'project: KEY' filter (youtrack.py:287)"
+          "evidence": "search() appends the caller's query string to its 'project: KEY' filter (youtrack.py:293-296)"
         },
         "linear": {
           "status": "refused",
@@ -160,7 +147,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_issue checks the supplied native project against the exact-coordinate archive tombstone, proves an existing parent before the create effect, posts the issue with its custom fields, reads it back, then links the parent if any (youtrack.py:443-459); creation is outside the #4.2 replay floor and meets S2/S4 (one create POST, errors raised)"
+          "evidence": "create_issue checks the supplied native project against the exact-coordinate archive tombstone, proves an existing parent before the create effect, posts the issue with its custom fields, reads it back, then links the parent if any (youtrack.py:468-484); creation is outside the #4.2 replay floor and meets S2/S4 (one create POST, errors raised)"
         },
         "linear": {
           "status": "supported",
@@ -183,15 +170,12 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-55",
-          "evidence": "update_body meets the #4.2 floor at level 1 (youtrack.py:517-575), but after its archived-target preflight update_fields posts customFields with no expected-value check and no compared readback (youtrack.py:461-473): level -1, below the grooming target S1-S4"
+          "status": "supported",
+          "evidence": "For the marker-bound portable vocabulary, update_fields refuses null clears and unknown native fields, captures only its targeted field snapshot and re-reads it before the first possible effect; a Milestone enum create retains the existing provider capability and is followed by another issue snapshot check before the one customFields POST, then exact targeted readback (youtrack.py:486-576). The historical arbitrary custom-field escape hatch remains outside that guarantee. update_body uses the bounded expected_body path (youtrack.py:641-699). This is bounded detection, not CAS."
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-55",
-          "blocked_by_adr": "no-cas-write-guarantees-v1",
-          "evidence": "update_fields raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-field-replacement') unconditionally (linear.py:2904-2919); update_body raises BodyUpdateUnavailableError for an Issue (linear.py:3305-3317); set_state refuses every state except in-progress/review/done (linear.py:2930-2933). Enabling in-place replacement reverses the module invariant linear.py:8-11"
+          "status": "supported",
+          "evidence": "PAT-ADR-0006 authorizes bounded in-place grooming: update_fields and issue update_body capture/re-read a targeted snapshot, perform one issueUpdate and verify readback; ambiguous responses recover by read only (linear.py:3002-3064, 3497-3526). Label/type writes use addedLabelIds/removedLabelIds rather than a complete label replacement."
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -210,7 +194,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "add_comment first proves the issue's native project is writable, then sends one POST to /issues/{id}/comments (youtrack.py:490-494), never retried; not replay-idempotent, which the #4.2 free-text rule tolerates because a note carries no state"
+          "evidence": "add_comment first proves the issue's native project is writable, then sends one POST to /issues/{id}/comments (youtrack.py:614-618), never retried; not replay-idempotent, which the #4.2 free-text rule tolerates because a note carries no state"
         },
         "linear": {
           "status": "supported",
@@ -233,7 +217,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_issue proves an existing parent's native project before creating the child, then links the created issue as subtask-of that parent (youtrack.py:443-459)"
+          "evidence": "create_issue proves an existing parent's native project before creating the child, then links the created issue as subtask-of that parent (youtrack.py:468-484)"
         },
         "linear": {
           "status": "supported",
@@ -255,15 +239,12 @@
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-55",
-          "evidence": "link() proves both native target projects are writable, then posts a YouTrack command for any link_type (youtrack.py:480-488) without reading the current parent relation or comparing a readback: level -1, below the grooming target S1-S4"
+          "status": "supported",
+          "evidence": "For the common V1 write port, validate_issue_binding checks both endpoints against the repository project before link captures and re-reads both endpoint link snapshots, performs one command POST, and verifies the requested normalized relation on readback (youtrack.py:372-387, 577-606). The direct legacy adapter path retains historical cross-project relations."
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-55",
-          "blocked_by_adr": "no-cas-write-guarantees-v1",
-          "evidence": "link() raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-parent-replacement') for subtask-of/parent-of (linear.py:3219-3223), under the invariant linear.py:8-11"
+          "status": "supported",
+          "evidence": "link(subtask-of|parent-of) validates and snapshots both endpoints, re-reads them before one targeted parentId issueUpdate, then verifies the child parent readback (linear.py:3346-3393)."
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -282,11 +263,11 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "link() maps depends-on/blocks/relates through _LINK_ROLE and preserves the two active projects' independently read native coordinates before one command POST (youtrack.py:36-42, 480-488); an additive relation, outside the #4.2 replay floor, meeting S2/S4 (one POST, errors raised)"
+          "evidence": "For the common V1 write port, validate_issue_binding checks both endpoints against the repository project before link() maps depends-on/blocks/relates through _LINK_ROLE, captures and re-reads both endpoint link snapshots, performs one command POST and verifies normalized readback (youtrack.py:43-50, 372-387, 577-606). An exact replay observes the existing link and emits no second POST; the direct legacy adapter path retains historical cross-project relations"
         },
         "linear": {
           "status": "supported",
-          "evidence": "link() skips an existing identical relation, creates depends-on/blocks/relates via issueRelationCreate and verifies it on readback (linear.py:3224-3268)"
+          "evidence": "link() validates and snapshots both endpoints, skips an existing identical relation, and creates depends-on/blocks/relates via issueRelationCreate at a deterministic UUIDv4 derived from canonical project/type/endpoints. The qualified input schema defines that UUIDv4 as the native identifier and issueRelation(id) as a unique-identifier lookup. Success and ambiguous recovery verify the exact ID/type/endpoints; a replay whose endpoint projections remain absent can request only that same identity, then converges through exact lookup or fails closed without another slot (linear.py:3389-3519)."
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -329,7 +310,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "project_provisioning_supported = True (youtrack.py:113); provision_youtrack_project creates or recovers the project, fills instance-global State/Priority/Type bundles and creates global custom fields (youtrack_provisioning.py:90-182)"
+          "evidence": "project_provisioning_supported = True (youtrack.py:121); provision_youtrack_project creates or recovers the project, fills instance-global State/Priority/Type bundles and creates global custom fields (youtrack_provisioning.py:90-182)"
         },
         "linear": {
           "status": "refused",
@@ -352,7 +333,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "list_adrs pages the project-scoped articles and keeps anchored-prefix matches (youtrack.py:646-664)"
+          "evidence": "list_adrs pages the project-scoped articles and keeps anchored-prefix matches (youtrack.py:770-788)"
         },
         "linear": {
           "status": "supported",
@@ -375,7 +356,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_adr checks the supplied native project against the exact-coordinate archive tombstone, numbers the ADR as max+1 over a fresh list_adrs and posts a Knowledge Base article with a statut header (youtrack.py:666-676); there is no uniqueness precondition, so two concurrent creators can mint the same ADR id (creation is outside the #4.2 replay floor; S2/S4 met)"
+          "evidence": "create_adr checks the supplied native project against the exact-coordinate archive tombstone, numbers the ADR as max+1 over a fresh list_adrs and posts a Knowledge Base article with a statut header (youtrack.py:790-800); there is no uniqueness precondition, so two concurrent creators can mint the same ADR id (creation is outside the #4.2 replay floor; S2/S4 met)"
         },
         "linear": {
           "status": "supported",
@@ -398,7 +379,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "set_adr_status proves the article's native project is writable, reads it and rewrites its statut header through update_body's level-1 path (youtrack.py:678-687)"
+          "evidence": "set_adr_status proves the article's native project is writable, reads it and rewrites its statut header through update_body's level-1 path (youtrack.py:802-811)"
         },
         "linear": {
           "status": "supported",
@@ -448,7 +429,7 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-56",
-          "evidence": "set_state is update_fields(State=...) (youtrack.py:475-478): after the archived-target preflight it POSTs with no expected predecessor state and no compared readback, so a RESUME replay can overwrite a concurrent state change (level -1, below the #4.2 status/resume target S1-S5)"
+          "evidence": "set_state delegates to bounded update_fields(State=...) (youtrack.py:578-581), but its public transition contract carries no caller-supplied expected predecessor proof. PAT-56 owns that stronger S1-S5 transition requirement and replay semantics."
         },
         "linear": {
           "status": "supported",
@@ -471,13 +452,12 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "acceptance_sync_supported = True (youtrack.py:112); sync_acceptance_body validates the proof then reuses update_body's archived-target preflight and level-1 read-verify-write-readback (youtrack.py:517-593), labelled as bounded, not CAS (youtrack.py:523-527)"
+          "evidence": "acceptance_sync_supported = True (youtrack.py:120); sync_acceptance_body validates the proof then reuses update_body's archived-target preflight and bounded read-verify-write-readback (youtrack.py:641-717), labelled as bounded, not CAS"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-56",
-          "blocked_by_adr": "no-cas-write-guarantees-v1",
-          "evidence": "acceptance_sync_supported = False (linear.py:1557); sync_acceptance_body raises AcceptanceSyncUnavailableError unconditionally (linear.py:3319-3331), under the invariant linear.py:8-11. Linear already projects AC completeness through a proof-bound append-only marker: acceptance_proof_projection_supported = True (linear.py:1560), project_acceptance_proof (linear.py:2959-3011), Issue.ac_done derived from that projection, never from native checkbox text (linear.py:2660-2666). The pending ADR decides whether that projection is the V1 AC authority (no in-place write) or in-place sync is required"
+          "evidence": "PAT-ADR-0006 selects the existing proof-bound append-only projection as Linear's V1 AC authority. acceptance_sync_supported remains False and sync_acceptance_body keeps the typed refusal (linear.py:1557-1561, 3528); project_acceptance_proof provides the non-replacing authority (linear.py:3104). PAT-56 owns closing this contract cell without native checkbox replacement."
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -522,13 +502,11 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-69",
-          "blocked_by_adr": "no-cas-write-guarantees-v1",
-          "evidence": "epic_closure_supported = False with the comment 'YouTrack exposes neither an atomic parent+children compare-and-transition nor a provider-verified receipt store. A read-then-command emulation would race' (youtrack.py:106-108); no close_epic/get_epic_closure override, so the base raises EpicClosureUnavailableError (base.py:276-300). A no-CAS closure replaces the atomic invariant of base.py:276-290 and write.py:371-376"
+          "evidence": "epic_closure_supported = False with the comment 'YouTrack exposes neither an atomic parent+children compare-and-transition nor a provider-verified receipt store. A read-then-command emulation would race' (youtrack.py:114-116); no close_epic/get_epic_closure override, so the base raises EpicClosureUnavailableError (base.py:276-300). A no-CAS closure replaces the atomic invariant of base.py:276-290 and write.py:371-376"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-69",
-          "blocked_by_adr": "no-cas-write-guarantees-v1",
           "evidence": "no epic_closure_supported override (base default False) and no close_epic/get_epic_closure override; write.close_epic raises before any provider call (write.py:377). A no-CAS closure replaces the atomic invariant of base.py:276-290 and write.py:371-376"
         },
         "ghprojects": {
@@ -556,7 +534,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "_issue_target_project and _adr_target_project read project(id,shortName) from the real YouTrack resource before a targeted mutation; _require_writable_target refuses when either exact native id or exact key matches any archived YouTrack binding, without prefix matching (youtrack.py:308-373). Explicit create_issue/create_adr validate the supplied project before milestone setup or creation, and child creation proves its parent first (youtrack.py:443-459, 666-676). update_fields/set_state, both link endpoints, add_comment, issue/ADR update_body and set_adr_status all invoke the preflight before effects (youtrack.py:461-494, 517-593, 678-687). A Milestone update restores ms_bundle only from an explicit or historical project whose exact native key and id match the target; a foreign mapping is ignored, conflicting mappings and every historical resolution refusal other than the typed unregistered legacy alias stop before POST (youtrack.py:396-473). test_youtrack_smoke.py proves exact key-only and id-only refusal, Milestone bundle creation, fail-closed resolution, and active cross-project link/parent preservation; test_body_updates.py and test_issue_merge.py retain prewrite/readback, concurrency, AC-proof, merge, pinned-SHA and no-retry assertions with native project GET fixtures"
+          "evidence": "_issue_target_project and _adr_target_project read project(id,shortName) from the real YouTrack resource before a targeted mutation; _require_writable_target refuses when either exact native id or exact key matches any archived YouTrack binding, without prefix matching (youtrack.py:316-398). A V1 marker enables the shared mutation binding and validate_issue_binding rejects any issue/link endpoint outside the canonical native project before the adapter mutation (foundry/__init__.py:46-67; write.py:94-99; youtrack.py:372-387), while marker-free/direct legacy keeps active cross-project behavior. Explicit create_issue/create_adr validate the supplied project before milestone setup or creation, and child creation proves its parent first. update_fields/set_state, both link endpoints, add_comment, issue/ADR update_body and set_adr_status all invoke the provider preflight before effects (youtrack.py:468-711, 784-805). A Milestone update restores ms_bundle only from an explicit or historical project whose exact native key and id match the target; a foreign mapping is ignored, contradictory mappings and every historical resolution refusal other than the typed unregistered legacy alias stop before POST. test_youtrack_smoke.py proves tombstone/binding refusal, pre-first-effect drift, Milestone preservation, ambiguous replay, permissions/missing resources, and active cross-project legacy link/parent preservation"
         },
         "linear": {
           "status": "supported",
@@ -609,7 +587,7 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-64",
-          "evidence": "no faithful-copy import path: after their archive-target preflights, create_issue/link/add_comment/set_state still have no source reference, replay key or comparison against the source item (youtrack.py:443-494)"
+          "evidence": "no faithful-copy import path: after their archive-target preflights, create_issue/link/add_comment/set_state still have no source reference, replay key or comparison against the source item (youtrack.py:468-618)"
         },
         "linear": {
           "status": "gap",
@@ -635,7 +613,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "query.py changelog() (query.py:490-518) and milestones() (query.py:380-385) derive release scope from Issue.milestone/state returned by search(); YouTrack reads Milestone as a custom field (youtrack.py:239)"
+          "evidence": "query.py changelog() (query.py:490-518) and milestones() (query.py:380-385) derive release scope from Issue.milestone/state returned by search(); YouTrack reads Milestone as a custom field (youtrack.py:240-252)"
         },
         "linear": {
           "status": "gap",
