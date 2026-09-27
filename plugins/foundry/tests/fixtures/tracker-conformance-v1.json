@@ -24,7 +24,7 @@
   "cases": [
     {
       "id": "contract-core-capabilities",
-      "test": "test_tracker_contract.py::test_no_core_operation_cell_is_refused",
+      "test": "test_tracker_conformance_v1.py::test_provider_core_capability_refusals_are_typed_and_side_effect_free",
       "providers": [
         "youtrack",
         "linear",
@@ -39,14 +39,8 @@
     {
       "id": "contract-port-members",
       "test": "test_tracker_contract.py::test_every_operation_maps_to_a_real_tracker_abc_member",
-      "providers": [
-        "youtrack",
-        "linear",
-        "ghprojects"
-      ],
-      "categories": [
-        "core-operations"
-      ],
+      "providers": [],
+      "categories": [],
       "operations": []
     },
     {
@@ -61,16 +55,15 @@
         "core-operations"
       ],
       "operations": [
-        "identity-and-project-resolution"
+        "identity-and-project-resolution",
+        "repository-bootstrap"
       ]
     },
     {
       "id": "repository-bootstrap-publication",
       "test": "test_repository_binding_v1.py::test_mapping_update_publishes_binding_and_marker_together_and_refuses_stale_writer",
       "providers": [
-        "youtrack",
-        "linear",
-        "ghprojects"
+        "youtrack"
       ],
       "categories": [
         "core-operations",
@@ -87,9 +80,7 @@
       "id": "repository-bootstrap-replay",
       "test": "test_repository_binding_v1.py::test_mapping_update_replay_completes_interrupted_marker_publication",
       "providers": [
-        "youtrack",
-        "linear",
-        "ghprojects"
+        "youtrack"
       ],
       "categories": [
         "replay"
@@ -101,17 +92,11 @@
     {
       "id": "repository-switch-authority",
       "test": "test_repository_binding_v1.py::test_marker_does_not_hide_another_active_provider_and_update_has_no_effect",
-      "providers": [
-        "youtrack",
-        "linear",
-        "ghprojects"
-      ],
+      "providers": [],
       "categories": [
         "conflicts"
       ],
-      "operations": [
-        "identity-and-project-resolution"
-      ],
+      "operations": [],
       "adversarial": [
         "repository-switch",
         "contradictory-global-provider"
@@ -144,7 +129,19 @@
         "pagination"
       ],
       "operations": [
-        "backlog-read",
+        "backlog-read"
+      ]
+    },
+    {
+      "id": "youtrack-release-changelog",
+      "test": "test_tracker_conformance_v1.py::test_youtrack_changelog_conformance_uses_normalized_provider_fields",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
         "release-and-changelog-scope"
       ]
     },
@@ -229,7 +226,19 @@
         "core-operations"
       ],
       "operations": [
-        "adr-create",
+        "adr-create"
+      ]
+    },
+    {
+      "id": "youtrack-adr-status-transition",
+      "test": "test_tracker_conformance_v1.py::test_youtrack_adr_status_conformance_performs_real_bounded_transition",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
         "adr-status-evolution"
       ]
     },
@@ -500,6 +509,94 @@
       ]
     },
     {
+      "id": "ghprojects-create-replay",
+      "test": "test_ghprojects_tracker.py::test_pat66_lost_issue_response_replays_in_second_instance_without_duplicate",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "frame-intake-groom-create"
+      ]
+    },
+    {
+      "id": "ghprojects-evolve-bounded",
+      "test": "test_ghprojects_tracker.py::test_pat66_ambiguous_field_write_is_observed_once_without_rewrite",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "ghprojects-comment-readback",
+      "test": "test_ghprojects_tracker.py::test_pat66_comment_readback_requires_bound_issue_and_exact_comment",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "conflicts"
+      ],
+      "operations": [
+        "mid-flight-comment"
+      ]
+    },
+    {
+      "id": "ghprojects-child-create",
+      "test": "test_ghprojects_tracker.py::test_pat66_create_parent_preserves_properties_and_reconciles_lost_response",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "epics-children-creation"
+      ]
+    },
+    {
+      "id": "ghprojects-reparent-readback",
+      "test": "test_tracker_conformance_v1.py::test_ghprojects_reparent_conformance_uses_reciprocal_readback",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "conflicts"
+      ],
+      "operations": [
+        "epics-children-reparent-existing"
+      ]
+    },
+    {
+      "id": "ghprojects-dependencies-replay",
+      "test": "test_ghprojects_tracker.py::test_pat66_body_and_links_observe_ambiguous_write_once",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "dependencies-relates-blocks"
+      ]
+    },
+    {
       "id": "registry-drift-revalidation",
       "test": "test_repository_binding_v1.py::test_existing_adapter_revalidates_marker_before_consuming_interrupted_update",
       "providers": [
@@ -520,7 +617,7 @@
     },
     {
       "id": "shared-archived-binding-refusal",
-      "test": "test_repository_binding_v1.py::test_factory_and_doctor_refuse_existing_state_before_global_devhub",
+      "test": "test_tracker_conformance_v1.py::test_archived_binding_refusal_is_shared_by_bound_providers",
       "providers": [
         "youtrack",
         "linear"

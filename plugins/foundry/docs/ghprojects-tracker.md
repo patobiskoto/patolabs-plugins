@@ -1,4 +1,4 @@
-# GitHub Projects tracker — PAT-57 reads
+# GitHub Projects tracker — PAT-57 reads, PAT-66 core writes
 
 PAT-57 supports only an explicitly bound **private personal** Project V2 and
 its linked canonical repository.  The binding contains `owner`, Project
@@ -55,6 +55,112 @@ payload `No parent issue found` means that a present issue has no parent. The
 Project normalized-state field is recorded as an observation with
 `projection_status=unknown`; PAT-67 owns lifecycle/projection proof.
 
-Native free-text search is refused with
-`provider-native-search-query`. ADR index reads are typed `adr_index` refusals
-until PAT-58; all writes remain typed capability refusals owned by PAT-66/PAT-67.
+Native free-text search is refused with `provider-native-search-query`. ADR index
+reads are typed `adr_index` refusals until PAT-58 and lifecycle projection through
+`set_state` remains a PAT-67 refusal.
+
+## Bounded PAT-66 writes
+
+`create_issue` posts one private-repository Issue, requires its distinct GraphQL
+Issue node ID to attach it once to the exact bound Project, then writes only the
+qualified `State`, `Type`, `Priority`, and `Estimate` fields. The complete catalog
+and each requested option are checked before creation; an omitted Type is explicitly
+set to `Task`, while an unqualified option is refused before the first POST. `Estimate`
+accepts an exact signed base-10 integer: booleans, fractional floats and non-finite
+floats are refused before an effect, while a negative integer is not given an extra
+provider-specific restriction. An optional parent must be the unique complete,
+non-ADR delivery item in this exact Project as well as an Issue at the exact bound REST
+URL before the child is made. A canonical-repository Issue outside the Project and a
+`foundry:adr` support are both refused before the first write. The parent is attached
+with its Issue number and the child's distinct integer native Issue ID.
+`update_fields` first returns without mutation when every requested field is already
+at its target. Otherwise, each field has its own fresh read, one narrow mutation and
+immediate authoritative readback before the next field may start. The readback also
+compares every other property exposed by the normalized Issue read. A lost mutation
+response converges only when that read proves the target and preserves those unrelated
+properties; an observed unchanged target keeps the original error, and any other
+divergence is a conflict. A partially completed multi-field call therefore leaves only
+independently observed effects. A later explicit invocation freshly observes them and
+skips targets already applied; there is no automatic rewrite of an ambiguous effect and
+no durable field-write intent across invocations. Issue-only `update_body` also rereads after an ambiguous PATCH response, converges
+only on the exact requested body with other observable properties preserved, and
+skips an already applied body on explicit replay. The native update timestamp and
+body-derived checkbox counters are allowed to follow the PATCH. Unrelated fields are never sent in a Project-field
+mutation or an Issue-body PATCH.
+
+GitHub's qualified endpoints expose no expected-version/CAS parameter. These are
+therefore bounded detection, never CAS or exclusion: a third-party change between
+the fresh read and the write can still be overwritten. Authentication/permission,
+rate-limit, deleted-field, malformed/ambiguous response and transport errors remain
+explicit.
+
+Issue creation uses a private local intent/observation journal under Foundry's data
+directory. Its fingerprint covers the exact binding, title, body, portable fields and
+parent; it stores no body or title. The intent is atomically durable before the REST
+Issue POST and is serialized by a local `flock`, shared by Claude Code, Codex and
+worktrees on the same machine. Every invocation still revalidates GitHub: without an
+existing intent only zero exact native candidates permits the initial POST; a pending
+intent plus zero candidates is an unknown effect and refuses; one exact canonical,
+non-ADR candidate resumes; multiple candidates, or one candidate without a matching
+local intent, fail closed. A lost successful Issue response therefore exposes the
+known Foundry/native Issue IDs and a later invocation resumes that Issue without a
+second Issue POST. Because the public create port has no caller-supplied operation ID,
+two intentional creates with the same exact binding and spec on this machine are
+indistinguishable from a replay and converge on the same retained intent.
+
+Project attachment, each requested field, and the parent relation are observed
+separately. An already-applied target converges without a write; a conflicting present
+value refuses; an absent target permits at most one recorded resume attempt. Errors
+after the Issue identity is known carry its Foundry ID and integer native Issue ID.
+The private recovery scan can observe delivery rows whose create-time Type is
+still missing, including another incomplete row; only the exact known candidate
+can authorize its creation steps, and a parent must be complete. Ordinary PAT-57
+reads retain their strict complete-item contract.
+
+This journal is recovery state, not a provider receipt or authority. It grants no
+effect without fresh provider validation, does not coordinate another machine, and
+does not make GitHub exactly-once. A third-party identical creation between the
+initial zero-candidate read and the Issue POST remains the named S1-to-S2 race; a later
+multiple-candidate observation refuses but cannot undo that duplicate. A corrupt or
+unavailable journal refuses before the Issue POST. Field writes, relations and comments
+retain their own bounded observation rules; free-text comments still cannot safely
+replay a lost response without duplicating the note.
+
+`link` proves both endpoints belong to the same canonical repository before it
+snapshots/rechecks relations and performs one `sub_issues` (including reparent) or
+`dependencies/blocked_by` POST. GitHub requires the integer native Issue ID in these
+payloads, which is deliberately kept distinct from the Foundry issue key, Issue
+number, Project item ID, Project ID, field ID and select-option ID. `relates` uses the
+qualified symmetric `addRelatesTo` GraphQL mutation over the two distinct Issue node
+IDs, then reads the complete `relatesTo` connection from the Project item; a truncated,
+foreign, duplicate or malformed relation fails closed. Both REST and GraphQL link
+mutations reread the two endpoints even after an ambiguous response, without a
+second mutation. Both the requested link and its reciprocal endpoint projection
+must be observed, including before an already-applied replay can return without
+writing. A one-sided relation fails closed and is never automatically repaired.
+The endpoints' unrelated
+properties preserved; an unchanged result keeps the original transport error and
+a divergent result is an explicit conflict. An unavailable readback remains an
+unknown effect, without an automatic retry. `add_comment` first proves one
+unique, complete, non-ADR delivery item in the active Project as well as the exact bound
+REST Issue. A canonical-repository Issue outside that Project and a `foundry:adr`
+support are refused before the POST. The one non-authoritative free-text POST validates
+a normal response against the exact bound Issue URL and requires an exact
+comment-ID/body readback. It cannot safely replay a lost response without duplicating
+the note. REST integer IDs and booleans retain their JSON types; UTF-8 text remains
+literal.
+
+Lors de `create_issue(parent=...)`, le parent est requalifié dans le Project lié
+après les écritures de champs, immédiatement avant l'unique attachement natif.
+La reprise partielle et la reprise d'une création terminée vérifient les deux
+projections : le parent unique de l'enfant et l'enfant dans les sous-issues du
+parent. Une projection asymétrique ferme la reprise sans réparation automatique.
+Après un attachement, même si sa réponse est perdue, les deux ressources sont
+relues et leurs propriétés et relations non visées doivent être préservées.
+Cette détection reste bornée : le risque S1→S2 demeure, sans CAS ni exclusion des
+écritures concurrentes.
+La création d'une issue, même sans parent, relit également l'identité privée du
+Project personnel et son dépôt canonique privé lié avant le journal d'intention
+et le premier POST. Un dépôt public, détaché, étranger ou une identité indisponible
+refuse la création avant tout effet; un binding local ancien ne vaut pas cette
+requalification live.

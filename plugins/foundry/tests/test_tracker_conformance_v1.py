@@ -14,12 +14,18 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from foundry import config, registry
-from foundry.models import Project
+import foundry
+from foundry import config, query, registry
+from foundry.models import Adr, EpicClosureChild, EpicClosureReceipt, Issue, Link, Project
+from foundry.trackers.base import EpicClosureUnavailableError
+from foundry.trackers.ghprojects import GitHubProjectsTracker
 from foundry.trackers.linear import LinearTracker
 from foundry.trackers.youtrack import YouTrackTracker
 
@@ -33,6 +39,13 @@ CONTRACT_PATH = REPO_ROOT / "plugins" / "foundry" / "docs" / "tracker-contract.v
 CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 _BLOCKING = {"gap", "to_qualify"}
+_SHARED_PROVIDER_CASES = {
+    "test_repository_binding_v1.py::test_adapters_use_the_same_checkout_binding_resolution",
+    "test_repository_binding_v1.py::test_existing_adapter_revalidates_marker_before_consuming_interrupted_update",
+    "test_tracker_conformance_v1.py::test_provider_core_capability_refusals_are_typed_and_side_effect_free",
+    "test_tracker_conformance_v1.py::test_archived_binding_refusal_is_shared_by_bound_providers",
+    "test_tracker_conformance_v1.py::test_missing_secret_backed_tracker_credentials_fail_before_transport",
+}
 
 
 def _load(path: Path) -> dict:
@@ -49,25 +62,6 @@ def _function_decorators(path: Path) -> dict[str, set[str]]:
     return out
 
 
-def _case_active(case: dict, contract: dict) -> bool:
-    """Activate pre-registered coverage only after its contract cells are supported."""
-    pending = case.get("pending_ticket")
-    if pending is None:
-        return True
-    operations = {row["id"]: row for row in contract["operations"]}
-    active = True
-    for provider in case["providers"]:
-        for operation_id in case.get("operations", []):
-            cell = operations[operation_id]["cells"][provider]
-            if cell["status"] != "supported":
-                assert cell["status"] in _BLOCKING
-                assert cell.get("ticket") == pending, (
-                    case["id"], provider, operation_id, cell
-                )
-                active = False
-    return active
-
-
 def test_conformance_manifest_is_versioned_and_unique():
     manifest = _load(MANIFEST_PATH)
 
@@ -77,23 +71,38 @@ def test_conformance_manifest_is_versioned_and_unique():
     selectors = [case["test"] for case in manifest["cases"]]
     assert len(ids) == len(set(ids))
     assert len(selectors) == len(set(selectors))
+    assert all("pending_ticket" not in case for case in manifest["cases"]), (
+        "future provider work must be absent until its executable test is merged; "
+        "dormant selectors are not conformance evidence"
+    )
+
+
+def test_multi_provider_labels_name_only_tests_that_execute_each_provider():
+    manifest = _load(MANIFEST_PATH)
+
+    for case in manifest["cases"]:
+        if len(case["providers"]) > 1:
+            assert case["test"] in _SHARED_PROVIDER_CASES, (
+                f"{case['id']} labels several providers but does not execute a "
+                "reviewed shared provider scenario"
+            )
+        if case["test"].startswith("test_tracker_contract.py::"):
+            assert case["providers"] == [], (
+                f"{case['id']} is contract metadata, not provider behavior"
+            )
 
 
 def test_conformance_manifest_references_existing_unit_tests_only():
     manifest = _load(MANIFEST_PATH)
-    contract = _load(CONTRACT_PATH)
 
     for case in manifest["cases"]:
         file_name, function_name = case["test"].split("::", 1)
         path = TESTS_ROOT / file_name
         assert path.is_file(), case["test"]
         functions = _function_decorators(path)
-        active = _case_active(case, contract)
-        if function_name not in functions:
-            assert not active, (
-                f"{case['test']} is required by a supported contract cell but is absent"
-            )
-            continue
+        assert function_name in functions, (
+            f"{case['test']} is listed as conformance evidence but is absent"
+        )
         decorators = functions[function_name]
         assert not any(
             marker.startswith("pytest.mark.integration")
@@ -127,7 +136,6 @@ def _core_coverage_state(manifest: dict, contract: dict):
     covered = {
         (provider, operation)
         for case in manifest["cases"]
-        if _case_active(case, contract)
         for provider in case["providers"]
         for operation in case.get("operations", [])
     }
@@ -149,6 +157,35 @@ def _core_coverage_state(manifest: dict, contract: dict):
                 ), pair
                 blockers.add(pair)
     return supported, blockers, covered
+
+
+def _core_gate_failures(manifest: dict, contract: dict) -> list[str]:
+    supported, blockers, covered = _core_coverage_state(manifest, contract)
+    failures = []
+    missing = supported - covered
+    misleading = covered & blockers
+    if missing:
+        failures.append(
+            "supported cells without executable provider behavior: "
+            + ", ".join(f"{p}:{o}" for p, o in sorted(missing))
+        )
+    if misleading:
+        failures.append(
+            "blocking cells misrepresented as passing coverage: "
+            + ", ".join(f"{p}:{o}" for p, o in sorted(misleading))
+        )
+    if blockers:
+        rows = {row["id"]: row for row in contract["operations"]}
+        failures.append(
+            "core capabilities remain unavailable: "
+            + ", ".join(
+                f"{provider}:{operation}="
+                f"{rows[operation]['cells'][provider]['status']}"
+                f"({rows[operation]['cells'][provider]['ticket']})"
+                for provider, operation in sorted(blockers)
+            )
+        )
+    return failures
 
 
 def test_supported_core_cells_have_executable_provider_cases():
@@ -175,7 +212,6 @@ def test_supported_core_cells_have_executable_provider_cases():
 def test_missing_supported_core_case_is_detected_not_skipped():
     manifest = _load(MANIFEST_PATH)
     contract = _load(CONTRACT_PATH)
-    target = ("youtrack", "backlog-read")
 
     stripped = {
         **manifest,
@@ -194,10 +230,39 @@ def test_missing_supported_core_case_is_detected_not_skipped():
             for case in manifest["cases"]
         ],
     }
-    supported, _blockers, covered = _core_coverage_state(stripped, contract)
+    failures = _core_gate_failures(stripped, contract)
 
-    assert target in supported
-    assert target not in covered
+    assert any(
+        "supported cells without executable provider behavior" in failure
+        and "youtrack:backlog-read" in failure
+        for failure in failures
+    )
+
+
+def test_blocking_core_cell_cannot_be_mapped_as_passing_coverage():
+    manifest = _load(MANIFEST_PATH)
+    contract = _load(CONTRACT_PATH)
+    misleading = {
+        **manifest,
+        "cases": [
+            *manifest["cases"],
+            {
+                "id": "misleading-future-adr-read",
+                "test": "test_ghprojects_tracker.py::test_search_pages_graphql_and_excludes_only_reserved_adr_support",
+                "providers": ["ghprojects"],
+                "categories": ["core-operations"],
+                "operations": ["adr-read"],
+            },
+        ],
+    }
+
+    failures = _core_gate_failures(misleading, contract)
+
+    assert any(
+        "blocking cells misrepresented as passing coverage" in failure
+        and "ghprojects:adr-read" in failure
+        for failure in failures
+    )
 
 
 def test_each_v1_provider_exercises_every_required_failure_category():
@@ -207,16 +272,13 @@ def test_each_v1_provider_exercises_every_required_failure_category():
         name for name, provider in contract["providers"].items()
         if provider.get("v1_core") is True
     }
-    required = {
-        "core-operations", "explicit-refusals", "pagination",
-        "permissions", "conflicts",
-    }
+    required = set(manifest["required_categories"])
 
     for provider in providers:
         categories = {
             category
             for case in manifest["cases"]
-            if provider in case["providers"] and _case_active(case, contract)
+            if provider in case["providers"]
             for category in case.get("categories", [])
         }
         assert required <= categories, (
@@ -225,9 +287,54 @@ def test_each_v1_provider_exercises_every_required_failure_category():
         )
 
 
+def test_all_core_provider_cells_are_supported_and_covered():
+    """The CI gate stays red until every core cell has provider behavior."""
+    failures = _core_gate_failures(_load(MANIFEST_PATH), _load(CONTRACT_PATH))
+    assert failures == [], "Tracker V1 conformance gate failed:\n- " + "\n- ".join(
+        failures
+    )
+
+
 def test_public_ci_runs_the_named_conformance_suite():
     workflow = CI_PATH.read_text(encoding="utf-8")
     assert "pytest -q -m tracker_conformance tests" in workflow
+
+
+def _tracker_with_failing_transport(provider: str):
+    def unexpected_transport(*_args, **_kwargs):
+        pytest.fail(f"{provider} refusal reached transport")
+
+    if provider == "youtrack":
+        tracker = object.__new__(YouTrackTracker)
+        tracker._req = unexpected_transport
+        return tracker
+    if provider == "linear":
+        return LinearTracker(
+            token="synthetic-token-never-sent",
+            transport=unexpected_transport,
+        )
+    return GitHubProjectsTracker(runner=unexpected_transport)
+
+
+@pytest.mark.parametrize("provider", ["youtrack", "linear", "ghprojects"])
+def test_provider_core_capability_refusals_are_typed_and_side_effect_free(provider):
+    tracker = _tracker_with_failing_transport(provider)
+    receipt = EpicClosureReceipt(
+        project_key="T",
+        project_id="project-1",
+        parent_id="T-1",
+        parent_version=1,
+        parent_type="Epic",
+        parent_ac_done=0,
+        parent_ac_total=0,
+        children=(EpicClosureChild(id="T-2", version=1, state="done"),),
+        issued_at=1,
+        nonce="nonce_1234567890abcdef",
+    )
+
+    assert tracker.epic_closure_supported is False
+    with pytest.raises(EpicClosureUnavailableError, match=provider):
+        tracker.close_epic(Project(key="T", id="project-1"), receipt)
 
 
 def test_missing_secret_backed_tracker_credentials_fail_before_transport(
@@ -242,6 +349,53 @@ def test_missing_secret_backed_tracker_credentials_fail_before_transport(
         YouTrackTracker()
     with pytest.raises(SystemExit, match="LINEAR_API_TOKEN"):
         LinearTracker()
+
+
+@pytest.mark.parametrize("provider", ["youtrack", "linear"])
+def test_archived_binding_refusal_is_shared_by_bound_providers(
+    provider: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    state = tmp_path / "state"
+    checkout = tmp_path / "acme" / "widgets"
+    checkout.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ],
+        check=True,
+    )
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    extra = {"canonical_repo": "github.com/acme/widgets"}
+    project_id = "0-1"
+    if provider == "linear":
+        project_id = "00000000-0000-4000-8000-000000000001"
+        extra.update(
+            team_id="00000000-0000-4000-8000-000000000002",
+            state_ids={
+                name: f"00000000-0000-4000-8000-{index:012d}"
+                for index, name in enumerate(registry._LINEAR_STATE_KEYS, start=10)
+            },
+            type_label_ids={
+                name: f"00000000-0000-4000-8000-{index:012d}"
+                for index, name in enumerate(registry._LINEAR_TYPE_KEYS, start=30)
+            },
+        )
+    registry.register(provider, "widgets", "WID", project_id, **extra)
+    data = registry.load()
+    data[provider]["widgets"]["archive"] = True
+    registry._save(data)
+
+    with pytest.raises(SystemExit, match="archiv"):
+        registry.repository_tracker_selection(str(checkout))
 
 
 def test_youtrack_comment_conformance_uses_bound_target_then_single_post(
@@ -270,4 +424,136 @@ def test_youtrack_comment_conformance_uses_bound_target_then_single_post(
     assert calls == [
         ("GET", "/issues/T-1", None, "project(id,shortName)", None),
         ("POST", "/issues/T-1/comments", {"text": "bounded progress"}, "id", None),
+    ]
+
+
+def test_youtrack_changelog_conformance_uses_normalized_provider_fields(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tracker = object.__new__(YouTrackTracker)
+    calls = []
+
+    def raw(issue_id, *, state, milestone):
+        return {
+            "idReadable": issue_id,
+            "summary": f"title {issue_id}",
+            "description": "body",
+            "customFields": [
+                {"name": "State", "value": {"name": state}},
+                {"name": "Milestone", "value": {"name": milestone}},
+                {"name": "Type", "value": {"name": "Feature"}},
+                {"name": "Labels", "value": "public"},
+            ],
+            "links": [],
+        }
+
+    def request(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body, fields, top))
+        assert method == "GET" and path.startswith("/issues?")
+        return [
+            raw("T-1", state="done", milestone="v1.2"),
+            raw("T-2", state="in-progress", milestone="v1.2"),
+            raw("T-3", state="done", milestone="v1.1"),
+        ]
+
+    tracker._req = request
+    tracker.resolve_checkout_project = lambda *_args, **_kwargs: Project(
+        key="T", id="0-1"
+    )
+    monkeypatch.setattr(foundry, "tracker", lambda *_args, **_kwargs: tracker)
+
+    result = query.changelog("v1.2")
+
+    assert result["count"] == 1
+    assert result["groups"] == {
+        "Feature": [{"id": "T-1", "title": "title T-1", "labels": ["public"]}]
+    }
+    assert len(calls) == 1
+
+
+def test_youtrack_adr_status_conformance_performs_real_bounded_transition(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tracker = object.__new__(YouTrackTracker)
+    content = "> **ADR** · statut : `proposed`\n\nDecision"
+    calls: list[tuple] = []
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal content
+        calls.append((method, path, body, fields, top))
+        if method == "GET" and fields == "project(id,shortName)":
+            return {"project": {"id": "0-1", "shortName": "T"}}
+        if method == "GET" and fields == "content":
+            return {"content": content}
+        if method == "POST" and path == "/articles/A-1":
+            content = body["content"]
+            return {}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+    tracker._req = request
+    tracker._body_lock = lambda *_args: nullcontext()
+    monkeypatch.setattr(registry, "load", lambda: {"youtrack": {}})
+
+    tracker.set_adr_status(
+        Adr(id="T-ADR-0001", title="Decision", status="proposed", ref="A-1"),
+        "accepted",
+        project=Project(key="T", id="0-1"),
+    )
+
+    posts = [call for call in calls if call[0] == "POST"]
+    assert len(posts) == 1
+    assert "statut : `accepted`" in posts[0][2]["content"]
+    assert content == posts[0][2]["content"]
+
+
+def test_ghprojects_reparent_conformance_uses_reciprocal_readback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tracker = GitHubProjectsTracker()
+    child = Issue(id="GH-1", title="child")
+    parent = Issue(id="GH-2", title="parent", type="Epic")
+    child_after = Issue(
+        id="GH-1",
+        title="child",
+        links=[Link("subtask-of", "inward", "GH-2")],
+    )
+    parent_after = Issue(
+        id="GH-2",
+        title="parent",
+        type="Epic",
+        links=[Link("parent-of", "outward", "GH-1")],
+    )
+    reads = iter([child, parent, child, parent, child_after, parent_after])
+    writes = []
+    monkeypatch.setattr(
+        tracker,
+        "_authoritative_binding",
+        lambda _project: SimpleNamespace(repo="acme/widgets"),
+    )
+    monkeypatch.setattr(
+        tracker,
+        "_native_issue",
+        lambda issue_id, *_args: (1, 1001) if issue_id == "GH-1" else (2, 1002),
+    )
+    monkeypatch.setattr(tracker, "get_issue", lambda _issue_id: next(reads))
+    monkeypatch.setattr(
+        tracker,
+        "_rest_write",
+        lambda *args: writes.append(args) or {},
+    )
+
+    tracker.link(
+        "GH-1",
+        "subtask-of",
+        "GH-2",
+        project=Project(key="GH", id="PVT-1"),
+    )
+
+    assert writes == [
+        (
+            "POST",
+            "repos/acme/widgets/issues/2/sub_issues",
+            {"sub_issue_id": 1001, "replace_parent": True},
+            "issue.link_write",
+        )
     ]

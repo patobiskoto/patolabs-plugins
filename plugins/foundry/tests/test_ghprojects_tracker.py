@@ -1,16 +1,27 @@
 """Transport-bound regression tests for PAT-57's GitHub Projects read slice."""
 import json
 import subprocess
+import threading
 from copy import deepcopy
 
 import pytest
 
 import foundry
 from foundry import query
-from foundry.models import Issue, Project
+from foundry.models import Issue, Link, Project
 from foundry.registry import RepositoryTrackerBinding
-from foundry.trackers.base import IssueUnavailableError
-from foundry.trackers.ghprojects import GitHubProjectsTracker, GitHubProjectsTrackerError
+from foundry.trackers.base import (
+    IssueUnavailableError,
+    TrackerCapabilityUnavailableError,
+    TrackerConflictError,
+)
+from foundry.trackers.ghprojects import (
+    GitHubProjectsPartialCreateConflict,
+    GitHubProjectsPartialCreateError,
+    GitHubProjectsTracker,
+    GitHubProjectsTrackerError,
+    _CreateCandidate,
+)
 
 
 PROJECT = Project(
@@ -62,6 +73,7 @@ def _page(item_id, number, cursor, more, *, adr=False):
                 "isPrivate": True, "owner": {"__typename": "User", "login": "patobiskoto"},
             },
             "labels": {"nodes": labels, "pageInfo": {"hasNextPage": False, "endCursor": None}},
+            "relatesTo": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}},
         }, "fieldValues": {"nodes": [
             {"__typename": "ProjectV2ItemFieldSingleSelectValue",
              "field": {"id": "state", "name": "Foundry normalized state"},
@@ -147,6 +159,919 @@ def test_get_issue_uses_bound_graphql_coordinates_and_expected_rest_paths():
         "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/dependencies/blocking?per_page=100&page=1",
         "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/sub_issues?per_page=100&page=1",
     ]
+
+
+@pytest.mark.parametrize(
+    ("operation", "args"),
+    [
+        ("create_issue", ("title", "body")),
+        ("update_fields", ("GHQUAL-1", {"Priority": "P1"})),
+        ("update_body", (Issue(id="GHQUAL-1", title="x"), "old", "new")),
+        ("link", ("GHQUAL-1", "depends-on", "GHQUAL-2")),
+        ("add_comment", ("GHQUAL-1", "note")),
+    ],
+)
+def test_pat66_foreign_project_refuses_before_any_transport(operation, args):
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        raise AssertionError("foreign binding must fail before transport")
+
+    foreign = Project(
+        key="GHQUAL", id="PVT_project",
+        extra={"owner": "patobiskoto", "number": "7",
+               "canonical_repo": "github.com/patobiskoto/other-repository"},
+    )
+    method = getattr(GitHubProjectsTracker(runner=runner), operation)
+    with pytest.raises(GitHubProjectsTrackerError, match="foreign_project_binding"):
+        if operation == "create_issue":
+            method(foreign, *args)
+        else:
+            method(*args, project=foreign)
+    assert calls == []
+
+
+def _write_issue(*, priority="P1", estimate=None, body="body", links=()):
+    return Issue(
+        id="GHQUAL-1", title="issue 1", priority=priority, estimate=estimate,
+        body=body, links=list(links),
+    )
+
+
+class _FieldWriteTransport:
+    """Stateful GitHub transport for per-field S1/S2/S3 adverse paths."""
+
+    def __init__(
+        self, *, priority="P1", estimate=3, lost_response_applies=None,
+        drift_after_priority=False,
+    ):
+        self.priority = priority
+        self.estimate = estimate
+        self.body = "UTF-8 é"
+        self.lost_response_applies = lost_response_applies
+        self.drift_after_priority = drift_after_priority
+        self.failure_sent = False
+        self.events = []
+        self.mutation_fields = []
+
+    def _project_payload(self):
+        payload = _page("item-1", 1, None, False)
+        values = payload["data"]["user"]["projectV2"]["items"]["nodes"][0][
+            "fieldValues"
+        ]["nodes"]
+        priority = next(row for row in values if row["field"]["id"] == "priority")
+        priority["name"] = self.priority
+        priority["optionId"] = f"priority-{self.priority.casefold()}"
+        estimate = next(row for row in values if row["field"]["id"] == "estimate")
+        estimate["number"] = self.estimate
+        return payload
+
+    def _apply(self, field):
+        if field == "priority":
+            self.priority = "P2"
+            if self.drift_after_priority:
+                self.body = "third-party body"
+        elif field == "estimate":
+            self.estimate = 5
+        else:
+            pytest.fail(f"unexpected field mutation: {field}")
+
+    def __call__(self, command, **kwargs):
+        if command[2] == "graphql":
+            query = next(arg for arg in command if arg.startswith("query="))
+            if "updateProjectV2ItemFieldValue" in query:
+                field = next(
+                    arg.removeprefix("field=")
+                    for arg in command if arg.startswith("field=")
+                )
+                self.events.append(f"write:{field}")
+                self.mutation_fields.append(field)
+                if self.lost_response_applies is not None and not self.failure_sent:
+                    self.failure_sent = True
+                    if self.lost_response_applies:
+                        self._apply(field)
+                    return subprocess.CompletedProcess(
+                        command, 1, "", "synthetic transport failure",
+                    )
+                self._apply(field)
+                payload = {
+                    "data": {
+                        "updateProjectV2ItemFieldValue": {
+                            "projectV2Item": {"id": "item-1"},
+                        },
+                    },
+                }
+            else:
+                self.events.append("read:project")
+                payload = self._project_payload()
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        path = command[-1]
+        if path == "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1":
+            payload = _rest_issue(1)
+            payload["body"] = self.body
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if path.endswith("/parent"):
+            return subprocess.CompletedProcess(
+                command, 1,
+                json.dumps({"message": "No parent issue found", "status": "404"}),
+                "gh: No parent issue found (HTTP 404)",
+            )
+        return subprocess.CompletedProcess(command, 0, "[]", "")
+
+
+def test_pat66_targeted_field_write_rereads_and_preserves_unrelated_values(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    reads = iter([_write_issue(priority="P1"), _write_issue(priority="P1"),
+                  _write_issue(priority="P2")])
+    writes = []
+    monkeypatch.setattr(tracker, "get_issue", lambda issue_id: next(reads))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-1", "node-1"))
+    monkeypatch.setattr(tracker, "_field_catalog", lambda *_: {"priority": type("F", (), {"id": "priority", "data_type": "SINGLE_SELECT", "options": {"P2": "p2"}})()})
+    monkeypatch.setattr(tracker, "_set_project_field", lambda *args: writes.append(args))
+
+    updated = tracker.update_fields("GHQUAL-1", {"Priority": "P2"}, project=PROJECT)
+
+    assert updated.priority == "P2"
+    assert len(writes) == 1
+    assert writes[0][-1] == "P2"
+
+
+def test_pat66_drift_before_field_write_has_no_effect(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    reads = iter([_write_issue(priority="P1"), _write_issue(priority="P2")])
+    writes = []
+    monkeypatch.setattr(tracker, "get_issue", lambda issue_id: next(reads))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-1", "node-1"))
+    monkeypatch.setattr(
+        tracker, "_field_catalog",
+        lambda *_: {
+            "priority": type(
+                "F", (), {
+                    "id": "priority", "data_type": "SINGLE_SELECT",
+                    "options": {"P2": "p2"},
+                },
+            )(),
+        },
+    )
+    monkeypatch.setattr(tracker, "_set_project_field", lambda *args: writes.append(args))
+
+    with pytest.raises(TrackerConflictError, match="avant écriture"):
+        tracker.update_fields("GHQUAL-1", {"Priority": "P2"}, project=PROJECT)
+    assert writes == []
+
+
+def test_pat66_field_already_at_target_has_no_mutation():
+    transport = _FieldWriteTransport(priority="P2")
+    tracker = GitHubProjectsTracker(runner=transport)
+
+    updated = tracker.update_fields(
+        "GHQUAL-1", {"Priority": "P2"}, project=PROJECT,
+    )
+
+    assert updated.priority == "P2"
+    assert transport.mutation_fields == []
+
+
+@pytest.mark.parametrize("applied", [True, False])
+def test_pat66_ambiguous_field_write_is_observed_once_without_rewrite(
+    applied,
+):
+    transport = _FieldWriteTransport(lost_response_applies=applied)
+    tracker = GitHubProjectsTracker(runner=transport)
+
+    if applied:
+        updated = tracker.update_fields(
+            "GHQUAL-1", {"Priority": "P2"}, project=PROJECT,
+        )
+        assert updated.priority == "P2"
+    else:
+        with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+            tracker.update_fields(
+                "GHQUAL-1", {"Priority": "P2"}, project=PROJECT,
+            )
+    assert transport.mutation_fields == ["priority"]
+    mutation = transport.events.index("write:priority")
+    assert "read:project" in transport.events[mutation + 1:]
+
+
+def test_pat66_multi_field_write_observes_each_effect_before_the_next():
+    transport = _FieldWriteTransport()
+    tracker = GitHubProjectsTracker(runner=transport)
+
+    updated = tracker.update_fields(
+        "GHQUAL-1", {"Priority": "P2", "Estimate": 5}, project=PROJECT,
+    )
+
+    assert (updated.priority, updated.estimate) == ("P2", 5)
+    assert transport.mutation_fields == ["priority", "estimate"]
+    priority_write = transport.events.index("write:priority")
+    estimate_write = transport.events.index("write:estimate")
+    assert "read:project" in transport.events[priority_write + 1:estimate_write]
+    assert "read:project" in transport.events[estimate_write + 1:]
+
+
+def test_pat66_unrelated_drift_after_one_field_stops_multi_field_write():
+    transport = _FieldWriteTransport(drift_after_priority=True)
+    tracker = GitHubProjectsTracker(runner=transport)
+
+    with pytest.raises(TrackerConflictError, match="divergent après écriture"):
+        tracker.update_fields(
+            "GHQUAL-1", {"Priority": "P2", "Estimate": 5}, project=PROJECT,
+        )
+
+    assert transport.mutation_fields == ["priority"]
+
+
+def test_pat66_comment_response_loss_is_one_post_without_retry(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    writes = []
+    monkeypatch.setattr(tracker, "_native_issue", lambda *_: (1, 1001))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-1", "node-1"))
+    def lost(*args):
+        writes.append(args)
+        raise GitHubProjectsTrackerError("issue.comment", "transport_failed")
+    monkeypatch.setattr(tracker, "_rest_write", lost)
+
+    with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+        tracker.add_comment("GHQUAL-1", "non-authoritative note", project=PROJECT)
+    assert len(writes) == 1
+    assert writes[0][0:2] == ("POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/comments")
+
+
+@pytest.mark.parametrize(
+    ("project_item_number", "adr"),
+    [(2, False), (1, True)],
+    ids=["outside-project", "adr-support"],
+)
+def test_pat66_comment_requires_active_project_delivery_item_before_post(
+    project_item_number, adr,
+):
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        if command[2] == "graphql":
+            payload = _page(
+                f"item-{project_item_number}", project_item_number, None, False,
+                adr=adr,
+            )
+        else:
+            assert command[-1].endswith("/issues/1")
+            payload = _rest_issue(1)
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    with pytest.raises(IssueUnavailableError):
+        GitHubProjectsTracker(runner=runner).add_comment(
+            "GHQUAL-1", "must stay absent", project=PROJECT,
+        )
+
+    assert not any(
+        "-X" in command and command[command.index("-X") + 1] == "POST"
+        for command in calls
+    )
+
+
+def test_pat66_create_known_partial_attachment_never_reposts_issue(monkeypatch, tmp_path):
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    writes = []
+    raw = _rest_issue(4)
+    raw.update({"node_id": "issue-node-4", "title": "partial", "body": "body"})
+    def rest_write(*args):
+        writes.append(args)
+        return raw
+    monkeypatch.setattr(tracker, "_rest_write", rest_write)
+    monkeypatch.setattr(tracker, "_create_candidates", lambda *_: [])
+    monkeypatch.setattr(tracker, "_partial_project_issue", lambda *_: None)
+    monkeypatch.setattr(tracker, "_add_project_item", lambda *_: (_ for _ in ()).throw(
+        GitHubProjectsTrackerError("project.item_create", "transport_failed")
+    ))
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+    monkeypatch.setattr(
+        tracker, "_write_catalog", lambda *_: {
+            "type": type("F", (), {"id": "type", "data_type": "SINGLE_SELECT", "options": {"Task": "type-task"}})(),
+        },
+    )
+
+    with pytest.raises(GitHubProjectsTrackerError, match="partial_create:item") as exc:
+        tracker.create_issue(PROJECT, "partial", "body")
+    assert exc.value.partial_issue_id == "GHQUAL-4"
+    assert exc.value.partial_native_issue_id == 1004
+    assert len(writes) == 1
+    assert writes[0][0:2] == ("POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues")
+
+
+def test_pat66_rest_write_preserves_native_relation_json_types():
+    def runner(command, **kwargs):
+        transmitted = {}
+        for index, arg in enumerate(command):
+            if arg in {"-f", "-F"}:
+                key, value = command[index + 1].split("=", 1)
+                transmitted[key] = json.loads(value) if arg == "-F" else value
+        assert type(transmitted["sub_issue_id"]) is int
+        assert type(transmitted["replace_parent"]) is bool
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    GitHubProjectsTracker(runner=runner)._rest_write(
+        "POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/sub_issues",
+        {"sub_issue_id": 123, "replace_parent": True}, "issue.link_write",
+    )
+
+
+def test_pat66_create_refuses_unqualified_priority_before_issue_post(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    writes = []
+    monkeypatch.setattr(tracker, "_rest_write", lambda *args: writes.append(args))
+    monkeypatch.setattr(
+        tracker, "_field_catalog", lambda *_: {
+            "type": type("F", (), {"data_type": "SINGLE_SELECT", "options": {"Task": "type-task"}})(),
+            "priority": type("F", (), {"data_type": "SINGLE_SELECT", "options": {"P1": "priority-p1"}})(),
+        },
+    )
+
+    with pytest.raises(TrackerCapabilityUnavailableError, match="field_option:priority:P3"):
+        tracker.create_issue(PROJECT, "title", "body", {"Priority": "P3"})
+    assert writes == []
+
+
+@pytest.mark.parametrize("value", [True, 1.5, float("nan"), float("inf"), float("-inf")])
+def test_pat66_create_refuses_non_exact_integer_estimate_before_effect(value, tmp_path):
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        raise AssertionError("invalid estimate reached transport")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError, match="invalid_field_value:estimate"):
+        tracker.create_issue(PROJECT, "title", "body", {"Estimate": value})
+    assert calls == []
+
+
+def test_pat66_estimate_keeps_exact_negative_integer_and_graphql_integer(monkeypatch, tmp_path):
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    assert tracker._portable_fields({"Estimate": -3}) == {"estimate": -3}
+    calls = []
+    monkeypatch.setattr(
+        tracker, "_graphql_mutation",
+        lambda query, variables, operation: calls.append((query, variables, operation))
+        or {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "item-1"}}},
+    )
+    field = type("F", (), {"id": "estimate", "data_type": "NUMBER", "options": {}})()
+    tracker._set_project_field("item-1", PROJECT.id, field, -3)
+    assert "{number:-3}" in calls[0][0]
+    assert "-3.0" not in calls[0][0]
+
+
+@pytest.mark.parametrize("value", [3.5, float("nan"), float("inf")])
+def test_pat66_read_refuses_non_integer_project_estimate(value):
+    payload = _page("item-1", 1, None, False)
+    values = payload["data"]["user"]["projectV2"]["items"]["nodes"][0]["fieldValues"]["nodes"]
+    next(row for row in values if row["field"]["id"] == "estimate")["number"] = value
+
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    with pytest.raises(GitHubProjectsTrackerError, match="invalid_estimate"):
+        GitHubProjectsTracker(runner=runner).search(PROJECT)
+
+
+def test_pat66_create_candidate_scan_is_bounded_canonical_and_excludes_adr():
+    calls = []
+    delivery = _rest_issue(4)
+    delivery.update({"node_id": "issue-node-4", "title": "same", "body": "body"})
+    adr = _rest_issue(5)
+    adr.update({
+        "node_id": "issue-node-5", "title": "same", "body": "body",
+        "labels": [{"name": "foundry:adr"}],
+    })
+    other = _rest_issue(6)
+    other.update({"node_id": "issue-node-6", "title": "other", "body": "body"})
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command, 0, json.dumps([delivery, adr, other]), "",
+        )
+
+    tracker = GitHubProjectsTracker(runner=runner)
+    candidates = tracker._create_candidates(tracker._binding(PROJECT), "same", "body")
+    assert candidates == [_CreateCandidate("GHQUAL-4", 4, 1004, "issue-node-4")]
+    assert calls[0][-1].endswith("issues?state=all&per_page=100&page=1")
+
+
+@pytest.mark.parametrize("parent_shape", ["absent", "adr"])
+def test_pat66_create_parent_must_be_delivery_item_before_any_write(
+    parent_shape, tmp_path,
+):
+    calls = []
+    raw = _rest_issue(9)
+    raw["node_id"] = "issue-node-9"
+    page = _page("item-9", 9, None, False, adr=parent_shape == "adr")
+    if parent_shape == "absent":
+        page["data"]["user"]["projectV2"]["items"]["nodes"] = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        if command[2] == "graphql":
+            payload = page
+        elif command[-1].endswith("/issues/9"):
+            payload = raw
+        else:
+            raise AssertionError(command)
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    expected = "candidate_is_adr_support" if parent_shape == "adr" else "issue unavailable"
+    with pytest.raises((GitHubProjectsTrackerError, IssueUnavailableError), match=expected):
+        tracker.create_issue(PROJECT, "child", "body", parent="GHQUAL-9")
+    assert not any("POST" in command for command in calls)
+
+
+def test_pat66_parent_preflight_tolerates_unrelated_partial_item_without_weakening_reads():
+    page = _page("item-1", 1, None, False)
+    project = page["data"]["user"]["projectV2"]
+    partial = deepcopy(project["items"]["nodes"][0])
+    partial["id"] = "item-4"
+    partial["content"]["id"] = "issue-node-4"
+    partial["content"]["number"] = 4
+    partial["content"]["title"] = "partial"
+    partial["fieldValues"]["nodes"] = [
+        value for value in partial["fieldValues"]["nodes"]
+        if value["field"]["id"] != "type"
+    ]
+    project["items"]["nodes"].append(partial)
+    raw = _rest_issue(1)
+    raw["node_id"] = "issue-node-1"
+
+    def runner(command, **kwargs):
+        if command[2] == "graphql":
+            return subprocess.CompletedProcess(command, 0, json.dumps(page), "")
+        path = command[-1]
+        if path.endswith("/issues/1"):
+            return subprocess.CompletedProcess(command, 0, json.dumps(raw), "")
+        if path.endswith("/parent"):
+            return subprocess.CompletedProcess(
+                command, 1,
+                json.dumps({"message": "No parent issue found", "status": "404"}),
+                "gh: No parent issue found (HTTP 404)",
+            )
+        return subprocess.CompletedProcess(command, 0, "[]", "")
+
+    tracker = GitHubProjectsTracker(runner=runner)
+    assert tracker._create_parent("GHQUAL-1", tracker._binding(PROJECT)) == 1
+    with pytest.raises(GitHubProjectsTrackerError, match="invalid_type"):
+        tracker.search(PROJECT)
+
+
+def _install_create_harness(monkeypatch, tracker, provider, *, failing_phase=None):
+    candidate = _CreateCandidate("GHQUAL-4", 4, 1004, "issue-node-4")
+    catalog = {
+        "type": type(
+            "F", (), {
+                "id": "type", "data_type": "SINGLE_SELECT",
+                "options": {"Task": "type-task"},
+            },
+        )(),
+    }
+
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+    monkeypatch.setattr(tracker, "_write_catalog", lambda *_: catalog)
+    monkeypatch.setattr(
+        tracker, "_create_candidates",
+        lambda *_: [candidate] if provider.get("issue") else [],
+    )
+    monkeypatch.setattr(tracker, "_create_parent", lambda *_: 1)
+    def parent_snapshot(*_):
+        provider.setdefault("parent_observations", []).append(provider["field_posts"])
+        links = [Link("parent-of", "outward", "GHQUAL-4")] if provider.get("parent") else []
+        return 1, Issue(id="GHQUAL-1", title="parent", type="Epic", links=links)
+
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", parent_snapshot)
+
+    def rest_write(method, path, payload, operation):
+        if path.endswith("/issues"):
+            provider["issue_posts"] += 1
+            provider["issue"] = True
+            if provider.pop("lose_issue_response", False):
+                raise GitHubProjectsTrackerError("issue.create", "transport_failed")
+            raw = _rest_issue(4)
+            raw.update({
+                "node_id": candidate.content_id,
+                "title": "partial",
+                "body": "body",
+            })
+            return raw
+        if path.endswith("/sub_issues"):
+            provider["parent_posts"] += 1
+            if failing_phase == "parent" and provider["parent_posts"] == 1:
+                raise GitHubProjectsTrackerError("issue.parent_create", "transport_failed")
+            provider["parent"] = True
+            return {}
+        raise AssertionError((method, path, payload, operation))
+
+    def partial_project(*_):
+        if not provider.get("item"):
+            return None
+        issue = Issue(
+            id=candidate.issue_id,
+            title="partial",
+            body="body",
+            type=provider["fields"].get("type"),
+        )
+        return "item-4", issue
+
+    def add_item(*_):
+        provider["item_posts"] += 1
+        if failing_phase == "item" and provider["item_posts"] == 1:
+            raise GitHubProjectsTrackerError("project.item_create", "transport_failed")
+        provider["item"] = True
+        return "item-4"
+
+    def set_field(item_id, project_id, field, value):
+        provider["field_posts"] += 1
+        if failing_phase == "field" and provider["field_posts"] == 1:
+            raise GitHubProjectsTrackerError("project.field_write", "transport_failed")
+        provider["fields"][field.id] = value
+
+    def readback(_binding, observed_candidate):
+        assert provider.get("item") and provider["fields"].get("type") == "Task"
+        links = [Link("subtask-of", "inward", "GHQUAL-1")] if provider.get("parent") else []
+        return Issue(
+            id=observed_candidate.issue_id, title="partial", body="body",
+            type="Task", links=links,
+        )
+
+    monkeypatch.setattr(tracker, "_rest_write", rest_write)
+    monkeypatch.setattr(tracker, "_partial_project_issue", partial_project)
+    monkeypatch.setattr(tracker, "_add_project_item", add_item)
+    monkeypatch.setattr(tracker, "_set_project_field", set_field)
+    monkeypatch.setattr(tracker, "_created_issue_readback", readback)
+
+
+def _create_provider_state(**extra):
+    return {
+        "issue": False,
+        "issue_posts": 0,
+        "item": False,
+        "item_posts": 0,
+        "field_posts": 0,
+        "parent_posts": 0,
+        "parent": False,
+        "fields": {},
+        **extra,
+    }
+
+
+def test_pat66_lost_issue_response_replays_in_second_instance_without_duplicate(
+    monkeypatch, tmp_path,
+):
+    provider = _create_provider_state(lose_issue_response=True)
+    first = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, first, provider)
+
+    with pytest.raises(GitHubProjectsPartialCreateError, match="issue_response_lost"):
+        first.create_issue(PROJECT, "partial", "body")
+
+    second = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, second, provider)
+    created = second.create_issue(PROJECT, "partial", "body")
+
+    assert created.id == "GHQUAL-4"
+    assert provider["issue_posts"] == 1
+    journal = next((tmp_path / "ghprojects-create-intents").glob("*.json"))
+    stored = json.loads(journal.read_text(encoding="utf-8"))
+    assert set(stored) == {
+        "attempt", "content_id", "fingerprint", "issue_id", "native_id",
+        "schema", "state", "step",
+    }
+    assert "partial" not in journal.read_text(encoding="utf-8")
+    assert "body" not in journal.read_text(encoding="utf-8")
+
+
+def test_pat66_unknown_zero_candidate_stays_fail_closed_across_instances(
+    monkeypatch, tmp_path,
+):
+    provider = _create_provider_state()
+
+    def install(tracker):
+        monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+        monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
+            "type": type("F", (), {
+                "id": "type", "data_type": "SINGLE_SELECT",
+                "options": {"Task": "type-task"},
+            })(),
+        })
+        monkeypatch.setattr(tracker, "_create_candidates", lambda *_: [])
+        def lost(*_):
+            provider["issue_posts"] += 1
+            raise GitHubProjectsTrackerError("issue.create", "transport_failed")
+        monkeypatch.setattr(tracker, "_rest_write", lost)
+
+    first = GitHubProjectsTracker(state_dir=tmp_path)
+    install(first)
+    with pytest.raises(GitHubProjectsTrackerError, match="create_effect_unknown"):
+        first.create_issue(PROJECT, "partial", "body")
+    second = GitHubProjectsTracker(state_dir=tmp_path)
+    install(second)
+    with pytest.raises(GitHubProjectsTrackerError, match="create_effect_unknown"):
+        second.create_issue(PROJECT, "partial", "body")
+    assert provider["issue_posts"] == 1
+
+
+def test_pat66_stderr_permission_hint_does_not_clear_pending_create(
+    monkeypatch, tmp_path,
+):
+    posts = []
+    raw = {
+        **_rest_issue(4),
+        "node_id": "issue-node-4",
+        "title": "partial",
+        "body": "body",
+    }
+
+    def runner(command, **kwargs):
+        assert command[:5] == [
+            "gh", "api", "-X", "POST",
+            "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues",
+        ]
+        posts.append(command)
+        # A non-zero gh exit can carry an Issue-shaped stdout after the server
+        # applied the POST.  The incidental digits in stderr do not prove that
+        # the provider rejected the request before any effect.
+        return subprocess.CompletedProcess(
+            command, 1, json.dumps(raw), "transport closed after 403 bytes",
+        )
+
+    def install(tracker):
+        monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+        monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
+            "type": type("F", (), {
+                "id": "type", "data_type": "SINGLE_SELECT",
+                "options": {"Task": "type-task"},
+            })(),
+        })
+        monkeypatch.setattr(tracker, "_create_candidates", lambda *_: [])
+
+    first = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    install(first)
+    with pytest.raises(GitHubProjectsTrackerError, match="create_effect_unknown"):
+        first.create_issue(PROJECT, "partial", "body")
+
+    journal = next((tmp_path / "ghprojects-create-intents").glob("*.json"))
+    assert json.loads(journal.read_text(encoding="utf-8"))["state"] == "pending"
+
+    second = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    install(second)
+    with pytest.raises(GitHubProjectsTrackerError, match="create_effect_unknown"):
+        second.create_issue(PROJECT, "partial", "body")
+
+    assert len(posts) == 1
+
+
+def test_pat66_multiple_reconciliation_candidates_never_repost(monkeypatch, tmp_path):
+    provider = _create_provider_state()
+    one = _CreateCandidate("GHQUAL-4", 4, 1004, "issue-node-4")
+    two = _CreateCandidate("GHQUAL-5", 5, 1005, "issue-node-5")
+    observations = 0
+
+    def install(tracker):
+        monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+        monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
+            "type": type("F", (), {
+                "id": "type", "data_type": "SINGLE_SELECT",
+                "options": {"Task": "type-task"},
+            })(),
+        })
+        def candidates(*_):
+            nonlocal observations
+            observations += 1
+            return [] if observations == 1 else [one, two]
+        monkeypatch.setattr(tracker, "_create_candidates", candidates)
+        def lost(*_):
+            provider["issue_posts"] += 1
+            raise GitHubProjectsTrackerError("issue.create", "transport_failed")
+        monkeypatch.setattr(tracker, "_rest_write", lost)
+
+    first = GitHubProjectsTracker(state_dir=tmp_path)
+    install(first)
+    with pytest.raises(GitHubProjectsTrackerError, match="multiple_create_candidates"):
+        first.create_issue(PROJECT, "partial", "body")
+    second = GitHubProjectsTracker(state_dir=tmp_path)
+    install(second)
+    with pytest.raises(GitHubProjectsTrackerError, match="multiple_create_candidates"):
+        second.create_issue(PROJECT, "partial", "body")
+    assert provider["issue_posts"] == 1
+
+
+@pytest.mark.parametrize("phase", ["item", "field", "parent"])
+def test_pat66_known_partial_step_has_one_bounded_resume(
+    phase, monkeypatch, tmp_path,
+):
+    provider = _create_provider_state()
+    first = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, first, provider, failing_phase=phase)
+    parent = "GHQUAL-1" if phase == "parent" else None
+    with pytest.raises(GitHubProjectsPartialCreateError) as exc:
+        first.create_issue(PROJECT, "partial", "body", parent=parent)
+    assert exc.value.partial_issue_id == "GHQUAL-4"
+    assert exc.value.partial_native_issue_id == 1004
+
+    second = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, second, provider, failing_phase=phase)
+    created = second.create_issue(PROJECT, "partial", "body", parent=parent)
+    assert created.id == "GHQUAL-4"
+    assert provider["issue_posts"] == 1
+    assert provider[f"{phase}_posts"] == 2
+
+
+def test_pat66_partial_retry_exhaustion_stops_third_effect(monkeypatch, tmp_path):
+    provider = _create_provider_state()
+
+    def install(tracker):
+        _install_create_harness(monkeypatch, tracker, provider)
+        def always_lost(*_):
+            provider["item_posts"] += 1
+            raise GitHubProjectsTrackerError("project.item_create", "transport_failed")
+        monkeypatch.setattr(tracker, "_add_project_item", always_lost)
+
+    first = GitHubProjectsTracker(state_dir=tmp_path)
+    install(first)
+    with pytest.raises(GitHubProjectsPartialCreateError, match="partial_create:item"):
+        first.create_issue(PROJECT, "partial", "body")
+    second = GitHubProjectsTracker(state_dir=tmp_path)
+    install(second)
+    with pytest.raises(GitHubProjectsPartialCreateError, match="partial_create:item"):
+        second.create_issue(PROJECT, "partial", "body")
+    third = GitHubProjectsTracker(state_dir=tmp_path)
+    install(third)
+    with pytest.raises(GitHubProjectsTrackerError, match="partial_retry_exhausted:item"):
+        third.create_issue(PROJECT, "partial", "body")
+    assert provider["issue_posts"] == 1
+    assert provider["item_posts"] == 2
+
+
+def test_pat66_unowned_unique_candidate_is_ambiguous_without_write(monkeypatch, tmp_path):
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    candidate = _CreateCandidate("GHQUAL-4", 4, 1004, "issue-node-4")
+    writes = []
+    monkeypatch.setattr(tracker, "_create_candidates", lambda *_: [candidate])
+    monkeypatch.setattr(tracker, "_rest_write", lambda *args: writes.append(args))
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+    monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
+        "type": type("F", (), {
+            "id": "type", "data_type": "SINGLE_SELECT",
+            "options": {"Task": "type-task"},
+        })(),
+    })
+    with pytest.raises(GitHubProjectsTrackerError, match="unowned_create_candidate"):
+        tracker.create_issue(PROJECT, "partial", "body")
+    assert writes == []
+
+
+def test_pat66_corrupt_or_unavailable_intent_store_refuses_before_post(
+    monkeypatch, tmp_path,
+):
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    binding = tracker._binding(PROJECT)
+    fingerprint = tracker._create_fingerprint(
+        binding, "partial", "body", {"type": "Task"}, None,
+    )
+    tracker._create_intent_dir.mkdir(parents=True)
+    tracker._intent_path(fingerprint).write_text("not-json", encoding="utf-8")
+    writes = []
+    monkeypatch.setattr(tracker, "_rest_write", lambda *args: writes.append(args))
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+    monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
+        "type": type("F", (), {
+            "id": "type", "data_type": "SINGLE_SELECT",
+            "options": {"Task": "type-task"},
+        })(),
+    })
+    with pytest.raises(GitHubProjectsTrackerError, match="invalid_local_intent"):
+        tracker.create_issue(PROJECT, "partial", "body")
+    assert writes == []
+
+    blocked = tmp_path / "blocked-state"
+    blocked.write_text("file", encoding="utf-8")
+    unavailable = GitHubProjectsTracker(state_dir=blocked)
+    monkeypatch.setattr(unavailable, "_rest_write", lambda *args: writes.append(args))
+    monkeypatch.setattr(unavailable, "verify_project_identity", lambda *_: True)
+    monkeypatch.setattr(unavailable, "_write_catalog", lambda *_: {
+        "type": type("F", (), {
+            "id": "type", "data_type": "SINGLE_SELECT",
+            "options": {"Task": "type-task"},
+        })(),
+    })
+    with pytest.raises(GitHubProjectsTrackerError, match="local_intent_unavailable"):
+        unavailable.create_issue(PROJECT, "partial", "body")
+    assert writes == []
+
+
+def test_pat66_create_intent_lock_serializes_instances(tmp_path):
+    fingerprint = "a" * 64
+    first = GitHubProjectsTracker(state_dir=tmp_path)
+    second = GitHubProjectsTracker(state_dir=tmp_path)
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+
+    def hold_first():
+        with first._create_intent_lock(fingerprint):
+            first_entered.set()
+            assert release_first.wait(timeout=2)
+
+    def enter_second():
+        assert first_entered.wait(timeout=2)
+        with second._create_intent_lock(fingerprint):
+            second_entered.set()
+
+    first_thread = threading.Thread(target=hold_first)
+    second_thread = threading.Thread(target=enter_second)
+    first_thread.start()
+    second_thread.start()
+    assert first_entered.wait(timeout=2)
+    assert not second_entered.wait(timeout=0.05)
+    release_first.set()
+    first_thread.join(timeout=2)
+    second_thread.join(timeout=2)
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert second_entered.is_set()
+
+
+def test_pat66_completed_replay_refuses_drift_without_rewriting(monkeypatch, tmp_path):
+    provider = _create_provider_state()
+    first = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, first, provider)
+    first.create_issue(PROJECT, "partial", "body")
+    writes = (provider["item_posts"], provider["field_posts"], provider["parent_posts"])
+
+    replay = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, replay, provider)
+    monkeypatch.setattr(
+        replay, "_created_issue_readback",
+        lambda _binding, candidate: Issue(
+            id=candidate.issue_id, title="partial", body="body", type="Bug",
+        ),
+    )
+    with pytest.raises(GitHubProjectsTrackerError, match="completed_create_drift"):
+        replay.create_issue(PROJECT, "partial", "body")
+    assert writes == (
+        provider["item_posts"], provider["field_posts"], provider["parent_posts"],
+    )
+
+
+def test_pat66_comment_readback_requires_bound_issue_and_exact_comment(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    monkeypatch.setattr(tracker, "_native_issue", lambda *_: (1, 1001))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-1", "node-1"))
+    monkeypatch.setattr(
+        tracker, "_rest_write", lambda *_: {
+            "id": 44, "body": "note é",
+            "issue_url": "https://api.github.com/repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1",
+        },
+    )
+    monkeypatch.setattr(tracker, "_rows", lambda *_: [{"id": 44, "body": "note é"}])
+
+    tracker.add_comment("GHQUAL-1", "note é", project=PROJECT)
+
+    monkeypatch.setattr(tracker, "_rows", lambda *_: [{"id": 44, "body": "other"}])
+    with pytest.raises(TrackerConflictError, match="commentaire GitHub divergent"):
+        tracker.add_comment("GHQUAL-1", "note é", project=PROJECT)
+
+
+def test_pat66_relates_uses_distinct_issue_node_ids_and_symmetric_readback(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    initial = _write_issue(links=[])
+    observed = _write_issue(links=[Link("relates", "outward", "GHQUAL-2")])
+    destination = Issue(id="GHQUAL-2", title="issue 2", priority="P1", body="body")
+    observed_destination = deepcopy(destination)
+    observed_destination.links = [Link("relates", "outward", "GHQUAL-1")]
+    reads = iter([initial, destination, initial, destination, observed, observed_destination])
+    calls = []
+    monkeypatch.setattr(tracker, "_native_issue", lambda issue, *_: (1 if issue.endswith("1") else 2, 1001 if issue.endswith("1") else 1002))
+    monkeypatch.setattr(tracker, "get_issue", lambda issue: next(reads))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda issue, *_: ("item-1" if issue.endswith("1") else "item-2", "node-1" if issue.endswith("1") else "node-2"))
+    monkeypatch.setattr(tracker, "_graphql_mutation", lambda query, variables, operation: calls.append((query, variables, operation)) or {"addRelatesTo": {"issue": {"id": "node-1"}, "relatedIssue": {"id": "node-2"}}})
+
+    tracker.link("GHQUAL-1", "relates", "GHQUAL-2", project=PROJECT)
+
+    assert len(calls) == 1
+    assert calls[0][1] == {"issue": "node-1", "related": "node-2"}
+
+
+@pytest.mark.parametrize("reason", ["authentication_failed", "permission_denied", "rate_limited"])
+def test_pat66_transport_write_failures_remain_explicit_and_unretried(reason):
+    calls = []
+    def runner(command, **kwargs):
+        calls.append(command)
+        status = 429 if reason == "rate_limited" else (401 if reason == "authentication_failed" else 403)
+        return subprocess.CompletedProcess(command, 1, json.dumps({"status": status, "message": reason}), reason)
+    tracker = GitHubProjectsTracker(runner=runner)
+    with pytest.raises(GitHubProjectsTrackerError, match=reason):
+        tracker._rest_write("POST", "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/comments", {"body": "x"}, "issue.comment")
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("labels", ["missing", None, {}, [{}], ["foundry:adr"],
@@ -768,3 +1693,352 @@ def test_hydration_reads_complete_native_hierarchy_and_dependency_directions():
     assert issue.comments == [{"text": "commentaire é", "created": 1790510520000}]
     assert issue.created == 1790510400000
     assert issue.updated == 1790510460000
+
+
+class _BodyRelationTransport:
+    """Real adapter transport boundaries, with an explicitly injected lost reply."""
+
+    def __init__(self, operation, outcome):
+        self.operation, self.outcome = operation, outcome
+        self.body = "UTF-8 é"
+        self.priority = "P1"
+        self.related = False
+        self.external_link = False
+        self.writes = 0
+        self.events = []
+
+    def _project_payload(self):
+        page = _page("item-1", 1, None, False)
+        nodes = page["data"]["user"]["projectV2"]["items"]["nodes"]
+        other = _page("item-2", 2, None, False)["data"]["user"]["projectV2"]["items"]["nodes"][0]
+        nodes.append(other)
+        priority = next(v for v in nodes[0]["fieldValues"]["nodes"] if v["field"]["id"] == "priority")
+        priority.update(name=self.priority, optionId=f"priority-{self.priority.lower()}")
+        if self.related and self.operation == "graphql-link":
+            for source, target in ((nodes[0], nodes[1]), (nodes[1], nodes[0])):
+                content = target["content"]
+                source["content"]["relatesTo"]["nodes"] = [{
+                    "id": content["id"], "number": content["number"],
+                    "repository": content["repository"],
+                }]
+        return page
+
+    def __call__(self, command, **kwargs):
+        graphql = command[2] == "graphql"
+        query = next((v for v in command if v.startswith("query=")), "")
+        mutation = (graphql and "query=mutation" in query) or (
+            not graphql and command[3] != "GET"
+        )
+        if mutation:
+            self.writes += 1
+            self.events.append("write")
+            if self.outcome in {"applied", "unrelated", "unrelated_links", "read_unavailable"}:
+                if self.operation == "body":
+                    self.body = next(v.removeprefix("body=") for v in command if v.startswith("body="))
+                else:
+                    self.related = True
+            if self.outcome == "divergent":
+                if self.operation == "body":
+                    self.body = "external body"
+                else:
+                    self.priority = "P2"
+            if self.outcome == "unrelated":
+                self.priority = "P2"
+            if self.outcome == "unrelated_links":
+                self.external_link = True
+            return subprocess.CompletedProcess(command, 1, "", "synthetic lost response")
+        self.events.append("read")
+        if self.writes and self.outcome == "read_unavailable":
+            return subprocess.CompletedProcess(command, 1, "", "synthetic read unavailable")
+        if graphql:
+            payload = self._project_payload()
+        else:
+            path = command[-1]
+            if path.endswith("/parent"):
+                return subprocess.CompletedProcess(
+                    command, 1,
+                    json.dumps({"message": "No parent issue found", "status": "404"}),
+                    "gh: No parent issue found (HTTP 404)",
+                )
+            number = 2 if "/issues/2" in path else 1
+            if path.endswith(f"/issues/{number}"):
+                payload = _rest_issue(number)
+                if number == 1:
+                    payload["body"] = self.body
+            elif number == 1 and "/dependencies/blocking" in path and self.external_link:
+                payload = [_rest_issue(3)]
+            elif "/dependencies/" in path and self.related and self.operation == "rest-link":
+                reverse = number == 2 and "/blocking" in path
+                forward = number == 1 and "/blocked_by" in path
+                payload = [_rest_issue(1 if reverse else 2)] if reverse or forward else []
+            else:
+                payload = []
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+
+@pytest.mark.parametrize("operation", ["body", "rest-link", "graphql-link"])
+@pytest.mark.parametrize("outcome", ["applied", "unchanged", "divergent", "unrelated", "unrelated_links", "read_unavailable"])
+def test_pat66_body_and_links_observe_ambiguous_write_once(operation, outcome):
+    transport = _BodyRelationTransport(operation, outcome)
+    tracker = GitHubProjectsTracker(runner=transport)
+    initial = tracker.get_issue("GHQUAL-1")
+
+    def call():
+        if operation == "body":
+            return tracker.update_body(initial, initial.body, "desired é", project=PROJECT)
+        return tracker.link(
+            "GHQUAL-1", "depends-on" if operation == "rest-link" else "relates",
+            "GHQUAL-2", project=PROJECT,
+        )
+
+    if outcome == "applied":
+        call()
+        call()  # An explicit completed replay observes the target, never writes.
+    elif outcome in {"unchanged", "read_unavailable"}:
+        with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+            call()
+    else:
+        with pytest.raises(TrackerConflictError, match="divergent après écriture"):
+            call()
+    assert transport.writes == 1
+    assert "read" in transport.events[transport.events.index("write") + 1:]
+
+
+class _AsymmetricRelatesTransport(_BodyRelationTransport):
+    def __init__(self, present_on, *, existing=False, normal_response=False):
+        super().__init__("graphql-link", "applied")
+        self.present_on = present_on
+        self.related = existing
+        self.normal_response = normal_response
+
+    def _project_payload(self):
+        payload = super()._project_payload()
+        nodes = payload["data"]["user"]["projectV2"]["items"]["nodes"]
+        if self.related:
+            absent = nodes[1] if self.present_on == "source" else nodes[0]
+            absent["content"]["relatesTo"]["nodes"] = []
+        return payload
+
+    def __call__(self, command, **kwargs):
+        response = super().__call__(command, **kwargs)
+        if self.normal_response and command[2] == "graphql" and any(
+            arg.startswith("query=mutation") for arg in command
+        ):
+            return subprocess.CompletedProcess(command, 0, json.dumps({"data": {
+                "addRelatesTo": {"issue": {"id": "issue-node-1"},
+                                 "relatedIssue": {"id": "issue-node-2"}},
+            }}), "")
+        return response
+
+
+@pytest.mark.parametrize("present_on", ["source", "destination"])
+def test_pat66_asymmetric_relates_replay_refuses_before_mutation(present_on):
+    transport = _AsymmetricRelatesTransport(present_on, existing=True)
+    tracker = GitHubProjectsTracker(runner=transport)
+    with pytest.raises(TrackerConflictError, match="asymétrique avant écriture"):
+        tracker.link("GHQUAL-1", "relates", "GHQUAL-2", project=PROJECT)
+    assert transport.writes == 0
+
+
+@pytest.mark.parametrize("present_on", ["source", "destination"])
+@pytest.mark.parametrize("normal_response", [True, False])
+def test_pat66_relates_requires_both_projections_after_mutation(
+    present_on, normal_response,
+):
+    transport = _AsymmetricRelatesTransport(
+        present_on, normal_response=normal_response,
+    )
+    tracker = GitHubProjectsTracker(runner=transport)
+    with pytest.raises(TrackerConflictError, match="divergent après écriture"):
+        tracker.link("GHQUAL-1", "relates", "GHQUAL-2", project=PROJECT)
+    assert transport.writes == 1
+    assert "read" in transport.events[transport.events.index("write") + 1:]
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+@pytest.mark.parametrize("missing_side", ["child", "parent"])
+def test_pat66_create_parent_refuses_one_sided_write_and_replay(
+    monkeypatch, tmp_path, lost_response, missing_side,
+):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+    original_write = tracker._rest_write
+    original_child = tracker._created_issue_readback
+    original_parent = tracker._create_parent_snapshot
+
+    def write(*args):
+        result = original_write(*args)
+        if args[1].endswith("/sub_issues") and lost_response:
+            raise GitHubProjectsTrackerError("issue.parent_create", "transport_failed")
+        return result
+
+    def child(*args):
+        result = original_child(*args)
+        if missing_side == "child":
+            result.links = []
+        return result
+
+    def parent(*args):
+        number, result = original_parent(*args)
+        if missing_side == "parent":
+            result.links = []
+        return number, result
+
+    monkeypatch.setattr(tracker, "_rest_write", write)
+    monkeypatch.setattr(tracker, "_created_issue_readback", child)
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", parent)
+    for _ in range(2):
+        with pytest.raises(GitHubProjectsPartialCreateConflict, match="asymétrique"):
+            tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    assert provider["parent_posts"] == 1
+    stored = json.loads(next((tmp_path / "ghprojects-create-intents").glob("*.json")).read_text())
+    assert stored["state"] != "complete"
+
+
+def test_pat66_create_parent_requalified_after_fields_before_attachment(monkeypatch, tmp_path):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+
+    def parent(*_):
+        assert provider["field_posts"] == 1
+        raise GitHubProjectsTrackerError("issue.parent_prewrite", "incomplete_project_parent")
+
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", parent)
+    with pytest.raises(GitHubProjectsPartialCreateError, match="incomplete_project_parent"):
+        tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    assert provider["issue_posts"] == provider["field_posts"] == 1
+    assert provider["parent_posts"] == 0
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+def test_pat66_create_parent_preserves_properties_and_reconciles_lost_response(
+    monkeypatch, tmp_path, lost_response,
+):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+    original = tracker._rest_write
+
+    def write(*args):
+        result = original(*args)
+        if args[1].endswith("/sub_issues") and lost_response:
+            raise GitHubProjectsTrackerError("issue.parent_create", "transport_failed")
+        return result
+
+    monkeypatch.setattr(tracker, "_rest_write", write)
+    assert tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1").id == "GHQUAL-4"
+    assert tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1").id == "GHQUAL-4"
+    assert provider["parent_posts"] == 1
+    assert all(value == 1 for value in provider["parent_observations"])
+
+
+def test_pat66_completed_creation_refuses_missing_reciprocal_parent(monkeypatch, tmp_path):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+    tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", lambda *_: (
+        1, Issue(id="GHQUAL-1", title="parent", type="Epic"),
+    ))
+    with pytest.raises(GitHubProjectsPartialCreateError, match="completed_create_drift"):
+        tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    assert provider["parent_posts"] == 1
+
+
+@pytest.mark.parametrize("endpoint", ["child", "parent"])
+def test_pat66_create_parent_detects_unrelated_property_write(monkeypatch, tmp_path, endpoint):
+    provider = _create_provider_state()
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    _install_create_harness(monkeypatch, tracker, provider)
+    original_child = tracker._created_issue_readback
+    original_parent = tracker._create_parent_snapshot
+
+    def child(*args):
+        result = original_child(*args)
+        if provider["parent"] and endpoint == "child":
+            result.priority = "P1"
+        return result
+
+    def parent(*args):
+        number, result = original_parent(*args)
+        if provider["parent"] and endpoint == "parent":
+            result.priority = "P1"
+        return number, result
+
+    monkeypatch.setattr(tracker, "_created_issue_readback", child)
+    monkeypatch.setattr(tracker, "_create_parent_snapshot", parent)
+    with pytest.raises(GitHubProjectsPartialCreateConflict, match="propriétés non visées"):
+        tracker.create_issue(PROJECT, "partial", "body", parent="GHQUAL-1")
+    assert provider["parent_posts"] == 1
+
+
+@pytest.mark.parametrize("drift", [
+    "public_repository", "unlinked_repository", "foreign_owner", "public_project",
+    "deleted_project", "malformed_identity", "permission", "rate_limit",
+])
+def test_pat66_create_live_repository_scope_refuses_before_journal_and_post(tmp_path, drift):
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        assert command[1:3] == ["api", "graphql"]
+        query = command[command.index("-f") + 1]
+        page = _page("item-1", 1, None, False)
+        if "repositories(first:" in query:
+            if drift in {"permission", "rate_limit"}:
+                return subprocess.CompletedProcess(command, 1, "", "403 permission" if drift == "permission" else "429 rate limit")
+            raw = page["data"]["user"]["projectV2"]
+            repository = deepcopy(raw["items"]["nodes"][0]["content"]["repository"])
+            raw["repositories"] = {"nodes": [repository], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+            if drift == "public_repository":
+                repository["isPrivate"] = False
+            elif drift == "unlinked_repository":
+                raw["repositories"]["nodes"] = []
+            elif drift == "foreign_owner":
+                repository["owner"]["__typename"] = "Organization"
+            elif drift == "public_project":
+                raw["public"] = True
+            elif drift == "deleted_project":
+                page["data"]["user"]["projectV2"] = None
+            elif drift == "malformed_identity":
+                raw["repositories"] = {"nodes": None}
+        return subprocess.CompletedProcess(command, 0, json.dumps(page), "")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError):
+        tracker.create_issue(PROJECT, "partial", "body")
+    assert len(calls) == 2
+    assert not (tmp_path / "ghprojects-create-intents").exists()
+    assert not any("-X" in command for command in calls)
+
+
+def test_pat66_create_qualified_live_scope_precedes_first_issue_write(monkeypatch, tmp_path):
+    events = []
+
+    def runner(command, **kwargs):
+        events.append("live_scope")
+        page = _page("item-1", 1, None, False)
+        raw = page["data"]["user"]["projectV2"]
+        raw["repositories"] = {
+            "nodes": [deepcopy(raw["items"]["nodes"][0]["content"]["repository"])],
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(page), "")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    provider = _create_provider_state()
+    _install_create_harness(monkeypatch, tracker, provider)
+    monkeypatch.setattr(tracker, "verify_project_identity", GitHubProjectsTracker.verify_project_identity.__get__(tracker))
+    original = tracker._rest_write
+
+    def write(*args):
+        events.append("write")
+        assert events[0] == "live_scope"
+        return original(*args)
+
+    monkeypatch.setattr(tracker, "_rest_write", write)
+    assert tracker.create_issue(PROJECT, "partial", "body").id == "GHQUAL-4"
+    assert provider["issue_posts"] == 1
+    assert events == ["live_scope", "write"]
