@@ -94,9 +94,7 @@ def test_conformance_categories_and_adversarial_matrix_are_complete():
     assert adversarial == set(manifest["required_adversarial"])
 
 
-def test_supported_core_cells_have_executable_provider_cases():
-    manifest = _load(MANIFEST_PATH)
-    contract = _load(CONTRACT_PATH)
+def _core_coverage_state(manifest: dict, contract: dict):
     v1_providers = {
         name for name, provider in contract["providers"].items()
         if provider.get("v1_core") is True
@@ -124,6 +122,13 @@ def test_supported_core_cells_have_executable_provider_cases():
                     "PAT-"
                 ), pair
                 blockers.add(pair)
+    return supported, blockers, covered
+
+
+def test_supported_core_cells_have_executable_provider_cases():
+    manifest = _load(MANIFEST_PATH)
+    contract = _load(CONTRACT_PATH)
+    supported, blockers, covered = _core_coverage_state(manifest, contract)
 
     assert supported <= covered, (
         "supported V1 core cells without conformance case: "
@@ -139,6 +144,34 @@ def test_supported_core_cells_have_executable_provider_cases():
             for provider, operation in sorted(covered & blockers)
         )
     )
+
+
+def test_missing_supported_core_case_is_detected_not_skipped():
+    manifest = _load(MANIFEST_PATH)
+    contract = _load(CONTRACT_PATH)
+    target = ("youtrack", "backlog-read")
+
+    stripped = {
+        **manifest,
+        "cases": [
+            {
+                **case,
+                "operations": [
+                    operation
+                    for operation in case.get("operations", [])
+                    if not (
+                        "youtrack" in case["providers"]
+                        and operation == "backlog-read"
+                    )
+                ],
+            }
+            for case in manifest["cases"]
+        ],
+    }
+    supported, _blockers, covered = _core_coverage_state(stripped, contract)
+
+    assert target in supported
+    assert target not in covered
 
 
 def test_each_v1_provider_exercises_every_required_failure_category():
