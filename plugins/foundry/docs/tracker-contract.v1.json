@@ -7,7 +7,7 @@
     "supported": "the operation is implemented against the real provider API, exercised by tests today, and meets the tracker-contract.md #4.2 target guarantee for its journey family",
     "gap": "the operation is required by a core journey (operations[].core == true) but is unimplemented, explicitly refused by the adapter, or below the #4.2 target guarantee; blocks V1 exit for that provider until the owner ticket closes it. A non-core operation is never a gap: an unimplemented non-core capability is 'refused' instead",
     "refused": "the adapter's refusal is deliberate and never blocks V1 exit. Valid ONLY on a non-core operation (operations[].core == false): criterion 1 requires every core operation to reach 'supported', so an unsupported core operation is always 'gap' or 'to_qualify', both of which block V1 exit for that provider",
-    "to_qualify": "the operation's real behaviour against the live provider is not qualified; PAT-65 must qualify it on authorized test resources before any other status can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap'; only the reason differs (unqualified transport vs. known-missing implementation). On a non-core operation 'to_qualify' is temporary: before V1 exit it must resolve to 'supported' or to 'refused' with a typed refusal (never a bare NotImplementedError), and it names its owner ticket (PAT-65 unless stated)"
+    "to_qualify": "the operation's real behaviour against the live provider is not qualified; its owner ticket must qualify it on authorized test resources before any other status can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap'; only the reason differs (unqualified transport vs. known-missing implementation). On a non-core operation 'to_qualify' is temporary: before V1 exit it must resolve to 'supported' or to 'refused' with a typed refusal (never a bare NotImplementedError), and it names its owner ticket"
   },
   "cell_fields": {
     "status": "one value of status_vocabulary",
@@ -31,7 +31,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/ghprojects.py",
       "class": "GitHubProjectsTracker",
       "v1_core": true,
-      "note": "workflow stub. PAT-54 implements canonical checkout selection and a bounded read-only existing-project identity probe; search, get_issue, create_issue, update_fields, set_state, link, add_comment, list_adrs, create_adr and set_adr_status still raise NotImplementedError. PAT-65 qualifies the live GraphQL workflow and PAT-57/58/59/64/66/67 implement their tranches."
+      "note": "workflow stub. PAT-54 implements canonical checkout selection and a bounded read-only existing-project identity probe; search, get_issue, create_issue, update_fields, set_state, link, add_comment, list_adrs, create_adr and set_adr_status still raise NotImplementedError. PAT-65 qualified the private personal-project API shape: REST project reading and Issues operations, GraphQL Projects mutations, and the PAT-ADR-0007 issue/comment ADR representation with reserved foundry:adr label. PAT-57/58/59/64/66/67 still own delivery and qualification of their adapter tranches."
     },
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
@@ -62,7 +62,7 @@
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py; registry.py), and ghprojects.verify_project_identity checks the exact ProjectV2 node id, owner/number and linked canonical repository through at most ten read-only GraphQL pages (ghprojects.py). Issue wire-format and workflow operations remain owned by PAT-65/PAT-57/PAT-66/PAT-67"
+          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py; registry.py), and ghprojects.verify_project_identity checks the exact ProjectV2 node id, owner/number and linked canonical repository through at most ten read-only GraphQL pages (ghprojects.py). PAT-65 qualified exact provider coordinates in the private personal-project scope; workflow adapter operations remain owned by PAT-57/PAT-66/PAT-67"
         }
       }
     },
@@ -85,7 +85,7 @@
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; workflow/API conformance remains PAT-65 (registry.py; ghprojects.py)"
+          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; PAT-65 qualified the broader private personal-project API shape, while workflow adapter conformance remains with its owner tickets (registry.py; ghprojects.py)"
         }
       }
     },
@@ -131,7 +131,7 @@
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "search() raises NotImplementedError; GitHub's item filters are unqualified (PAT-65)",
+          "evidence": "search() raises NotImplementedError; PAT-65 qualified reserved-label exclusion in one private personal project's persisted GraphQL board view, not general native free-text search",
           "ticket": "PAT-65"
         }
       },
@@ -226,7 +226,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-66",
-          "evidence": "create_issue raises NotImplementedError; whether Project v2 sub-issues map onto Foundry's parent/child model is unqualified (PAT-65)"
+          "evidence": "create_issue raises NotImplementedError; PAT-65 qualified one parent/sub-issue relation through the Issues REST API, while the Foundry adapter mapping remains PAT-66"
         }
       }
     },
@@ -294,7 +294,7 @@
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; the base default applies and feasibility is unqualified",
+          "evidence": "no override; the base default applies. PAT-65 qualified individual parent/sub-issue and dependency relations, not this aggregate projection",
           "ticket": "PAT-65"
         }
       },
@@ -342,7 +342,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-58",
-          "evidence": "list_adrs raises NotImplementedError (ghprojects.py); ADR storage is PAT-65's open question"
+          "evidence": "list_adrs raises NotImplementedError (ghprojects.py); PAT-ADR-0007 accepted issue bodies plus version comments with a reserved foundry:adr label for private canonical repositories, and PAT-58 owns the strict codec and adapter implementation"
         }
       }
     },
@@ -510,7 +510,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-69",
-          "evidence": "no override; the base default applies. Whether GitHub Projects v2 offers any parent/child precondition is unqualified (PAT-65); the capability itself is owned by PAT-69 (epic closure in the active tracker)."
+          "evidence": "no override; the base default applies. PAT-65 qualified individual parent/sub-issue reads and writes but no atomic graph precondition; the capability itself is owned by PAT-69 (epic closure in the active tracker)."
         }
       },
       "note": "DevHub (non-V1) is the only adapter with epic_closure_supported = True (devhub.py; close_epic at devhub.py)."
@@ -566,7 +566,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-64",
-          "evidence": "not overridden; GitHub ADR storage (PAT-65/PAT-58) must exist before an import target can"
+          "evidence": "not overridden; PAT-ADR-0007 selected the qualified GitHub ADR shape, but PAT-58 must deliver it before ghprojects can become an import target"
         }
       },
       "note": "ADR half of the switch only. The live-work half is the next row."
@@ -621,16 +621,11 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-59",
-          "evidence": "depends on backlog-read (PAT-57) and on how Project v2 represents milestones (PAT-65)"
+          "evidence": "depends on backlog-read (PAT-57). PAT-65 observed the native Project Milestone field, but did not qualify Foundry release-scope semantics; PAT-59 owns that work"
         }
       },
       "note": "Ship-iOS (plugins/ship-ios/scripts/changelog_bridge.py) consumes only the 'query changelog' JSON of foundry_cli.py; it imports no Tracker adapter and holds no provider credential."
     }
   ],
-  "open_points_not_decided_here": [
-    {
-      "id": "ghprojects-graphql-vs-rest-only-codehost-rule",
-      "description": "GitHub Projects v2 is GraphQL-only. Foundry's code-host rule is 'Never GraphQL ... REST only — the adapter enforces it' (skills/merge-pr/SKILL.md:226). A repository choosing ghprojects keeps the REST-only GitHub code-host adapter for PRs/merges, but its tracker adapter would need GraphQL. PAT-65 resolves this tension; PAT-53 does not."
-    }
-  ]
+  "open_points_not_decided_here": []
 }
