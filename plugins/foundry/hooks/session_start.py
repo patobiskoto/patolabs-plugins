@@ -53,6 +53,11 @@ def main():
             "hookEventName": "SessionStart",
             "additionalContext": ctx,
         }}, ensure_ascii=False))
+    except ValueError as exc:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": f"Foundry : binding tracker invalide — {exc}",
+        }}, ensure_ascii=False))
     except Exception:
         return  # never break a session start
 

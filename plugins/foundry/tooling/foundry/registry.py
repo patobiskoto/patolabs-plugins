@@ -1282,9 +1282,11 @@ def repo_basename(cwd: str | None = None, use_env: bool = True) -> str:
 
 
 def entry_for(cwd: str | None = None, use_env: bool = True):
-    """(tracker, repo, entry) for the repo at cwd, searched across ALL trackers
-    (preferring the configured one) — or None if unregistered. This is THE lookup
-    the hooks use: a repo registered under any tracker is a Foundry repo."""
+    """Return the unique checkout binding for hooks, or None if unregistered.
+
+    A legacy environment alias remains explicit outside V1; a global provider never
+    arbitrates competing active bindings.
+    """
     binding = repository_tracker_binding(cwd)
     repo = repo_basename(cwd, use_env=False if binding is not None else use_env)
     if not repo:
@@ -1314,14 +1316,37 @@ def entry_for(cwd: str | None = None, use_env: bool = True):
         providers = {provider for provider, _entry in canonical_matches}
         if len(providers) > 1:
             raise ValueError("bindings tracker actifs ambigus pour le dépôt courant")
-        if canonical_matches:
+        if canonical_matches and repo != repo_basename(cwd, use_env=False):
             raise ValueError("binding tracker V1 sans marqueur pour le dépôt courant")
-    from foundry import config
-    preferred = config.tracker_name()
-    for tracker in [preferred, *sorted(k for k in data if k != preferred)]:
-        e = data.get(tracker, {}).get(repo)
-        if e and e.get("archive") is not True:
-            return tracker, repo, e
+    if not use_env or (
+        repository is not None and repo == repo_basename(cwd, use_env=False)
+    ):
+        try:
+            selection = repository_tracker_selection(cwd, allow_unbound=True)
+        except SystemExit as exc:
+            raise ValueError(str(exc)) from None
+        except (KeyError, TypeError):
+            raise ValueError("binding tracker legacy invalide") from None
+        if selection["mode"] == "unbound":
+            return None
+        project = selection["project"]
+        assert isinstance(project, Project)
+        return selection["tracker"], selection["repo"], {
+            "key": project.key, "id": project.id, **project.extra,
+        }
+    legacy = [
+        (tracker, entry)
+        for tracker, entries in data.items()
+        if isinstance(entries, dict)
+        for name, entry in entries.items()
+        if name == repo and isinstance(entry, dict)
+        and entry.get("archive") is not True and "canonical_repo" not in entry
+    ]
+    if len(legacy) > 1:
+        raise ValueError("bindings tracker legacy actifs ambigus pour le dépôt courant")
+    if legacy:
+        tracker, entry = legacy[0]
+        return tracker, repo, entry
     return None
 
 

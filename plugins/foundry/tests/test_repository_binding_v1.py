@@ -840,3 +840,66 @@ def test_youtrack_v1_refuses_undeclared_extras_before_provider_or_publication(
         registry.main(["bootstrap", "youtrack", "app", "APP", "0-1", f"{key}=synthetic"])
     assert registry.load() == {}
     assert not (repo / ".foundry/tracker.json").exists()
+
+
+@pytest.mark.parametrize("global_provider", ["youtrack", "ghprojects"])
+def test_legacy_ambiguity_reaches_both_hooks_without_global_selection(
+    isolated, monkeypatch, global_provider,
+):
+    import os
+    from pathlib import Path
+
+    repo = _repo(isolated, "acme", "app")
+    registry.register("youtrack", "app", "ONE", "0-1")
+    registry.register("ghprojects", "app", "TWO", "PVT_2")
+    monkeypatch.setenv("FOUNDRY_TRACKER", global_provider)
+    monkeypatch.setenv("PROJECT_REPO", "decoy")
+    with pytest.raises(ValueError, match="ambigu"):
+        registry.entry_for(str(repo), use_env=False)
+    hooks = Path(__file__).resolve().parents[1] / "hooks"
+
+    def run(name, payload):
+        result = subprocess.run(
+            ["python3", str(hooks / name)], input=json.dumps(payload),
+            capture_output=True, text=True, check=True, env=dict(os.environ),
+        )
+        return json.loads(result.stdout)["hookSpecificOutput"]
+
+    context = run("session_start.py", {"cwd": str(repo)})["additionalContext"]
+    assert "ambigu" in context
+    assert "ONE" not in context and "TWO" not in context
+    for command in ("gh pr create", "gh pr merge 1", "git push origin main"):
+        decision = run(
+            "guard_bash.py", {"cwd": str(repo), "tool_input": {"command": command}},
+        )
+        assert decision["permissionDecision"] == "deny"
+        assert "ambigu" in decision["permissionDecisionReason"]
+
+
+def test_hook_lookup_never_inherits_a_foreign_canonical_homonym(isolated):
+    first = _repo(isolated, "first", "same")
+    second = _repo(isolated, "second", "same")
+    registry.bootstrap_repository_binding(
+        "youtrack", "same", "ONE", "0-1", cwd=str(first),
+    )
+    assert registry.entry_for(str(second), use_env=False) is None
+
+
+def test_hook_lookup_refuses_invalid_origin_for_registered_legacy_checkout(isolated):
+    repo = _repo(isolated, "acme", "app", remote="https://github.com/acme/../app.git")
+    registry.register("youtrack", "app", "APP", "0-1")
+    with pytest.raises(ValueError, match="identité canonique"):
+        registry.entry_for(str(repo), use_env=False)
+
+
+def test_explicit_legacy_environment_alias_outside_git_stays_unique(
+    isolated, monkeypatch,
+):
+    registry.register("youtrack", "app", "APP", "0-1")
+    monkeypatch.setenv("PROJECT_REPO", "app")
+    assert registry.entry_for(str(isolated)) == (
+        "youtrack", "app", {"key": "APP", "id": "0-1"},
+    )
+    registry.register("ghprojects", "app", "OTHER", "PVT_2")
+    with pytest.raises(ValueError, match="ambigu"):
+        registry.entry_for(str(isolated))

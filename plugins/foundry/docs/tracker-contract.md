@@ -83,7 +83,7 @@ cell.
   `registry cutover` performs no provider I/O (`linear-tracker.md`). PAT-64 must provide
   both halves for every pair.
 - **PAT-43** — YouTrack's only tombstone check, `validate_legacy_mutation`
-  (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:1400-1421`),
+  (`youtrack.py:263-283`, via `registry.require_writable_project`, `registry.py:1425-1446`),
   refuses a write only when the checkout's own registry binding is archived or shares
   its project with an archived alias; it must refuse every write addressed to an
   archived project by provider identifier.
@@ -177,8 +177,8 @@ human-readable identifier (YouTrack `idReadable`, Linear `identifier`), of the f
 `<PREFIX>-<NUMBER>`. It is unique within one provider instance but it is not a
 repository identity: historical registry entries use the repository name, homonyms use
 an internal deterministic key, and several aliases may point at one provider project
-(`register_alias`, `registry.py:1511-1570`;
-`require_writable_project`, `registry.py:1400-1421`, treats them as one project).
+(`register_alias`, `registry.py:1536-1595`;
+`require_writable_project`, `registry.py:1425-1446`, treats them as one project).
 The key is therefore interpreted only together with the resolved binding. Linear
 enforces the provider project on each hydrated issue (`_assert_issue_project`); YouTrack
 gets the repository project before each V1 mutation, while its provider-level
@@ -340,7 +340,7 @@ map; YouTrack V1 extras are limited to `canonical_repo` and optional non-empty
 `ms_bundle`. Undeclared keys, including credential keys, refuse before provider readback
 or persistence. GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
-before the registry or marker changes (`registry.py:1609-1759`, `988-1095`;
+before the registry or marker changes (`registry.py:1634-1784`, `988-1095`;
 `youtrack.py:247-258`; `linear.py:1573-1585`; `ghprojects.py:36-104`). The GitHub query follows GitHub's documented
 organization/user `projectV2(number:)` lookup and `ProjectV2.repositories` connection;
 it is capped at ten 100-repository pages and needs only `read:project` permission
@@ -385,6 +385,12 @@ provider CAS. Marker structure, schema version, activation vocabulary and every 
 are parsed by the same strict reader before either file can be written, including during
 replay (`registry.py:397-483`, `1126-1216`). Archive tombstones and unrelated bindings
 are preserved.
+
+The hook lookup `entry_for()` uses the same strict checkout selection. Multiple active
+legacy bindings are refused instead of selecting `FOUNDRY_TRACKER`; SessionStart reports
+the invalid binding and the Bash guard denies R1 commands. A foreign canonical homonym
+does not inherit another repository’s Foundry context. Explicit legacy aliases outside
+V1 remain usable only when their active binding is unique.
 
 The non-core `full-administrative-provisioning` row records YouTrack's existing
 provisioning as an optional capability and Linear/`ghprojects` as refused. Setup refuses
