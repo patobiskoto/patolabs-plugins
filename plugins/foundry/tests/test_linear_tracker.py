@@ -3632,6 +3632,16 @@ def _recovery_only_profile_record():
     return record
 
 
+def _patch_recovery_only_forward_profile(monkeypatch, body):
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_ID", "LIN-ADR-0001")
+    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_SOURCE_SHA256", digest)
+    monkeypatch.setattr(
+        linear_module, "_FOUNDRY_ADR_0001_BODY_READBACK_SHA256", digest
+    )
+    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_READBACK_EDITS", ())
+
+
 def _unqualified_recovery_profile(record):
     """Well-formed profile fields for tests that must fail before any probe read."""
     return {
@@ -3691,8 +3701,7 @@ def _no_batch_effect(wire, calls_before):
 def test_linear_historical_profile_recovers_only_exact_existing_slot(tracker, monkeypatch):
     instance, wire = tracker
     record = _recovery_only_profile_record()
-    source_digest = hashlib.sha256(record["body"].encode()).hexdigest()
-    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_SOURCE_SHA256", source_digest)
+    _patch_recovery_only_forward_profile(monkeypatch, record["body"])
 
     # The opaque readback digest is the entire provider content, not a body-only
     # normalization. A single byte change must not authorize witness recovery.
@@ -3730,13 +3739,93 @@ def test_linear_historical_profile_recovers_only_exact_existing_slot(tracker, mo
     assert plan[0]["document_content"].endswith(f"\n\n{record['body']}")
 
 
+def test_linear_recovery_only_slot_uses_pinned_profile_for_successor(
+    tracker, monkeypatch
+):
+    """The opaque v0 stays recovery-only; its source has a bounded forward rule."""
+    instance, wire = tracker
+    record = _recovery_only_profile_record()
+    record["historical_status"] = "proposed"
+    _patch_recovery_only_forward_profile(monkeypatch, record["body"])
+    monkeypatch.setitem(
+        LinearWire.__call__.__globals__,
+        "linear_markdown_readback",
+        linear_module._linear_adr_readback_content,
+    )
+    calls_before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "Native body copy", record["body"])
+    assert wire.documents == {}
+    assert _no_batch_effect(wire, calls_before)
+
+    _binding, _metadata, _candidate, observed = _seed_recovery_only_profile_slot(
+        wire, record
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_READBACK_SHA256",
+        hashlib.sha256(observed["content"].encode()).hexdigest(),
+    )
+    (qualified,) = _qualify_batch(instance, wire, (record,))
+    [historical] = instance.import_adr_batch(PROJECT, (qualified,))
+
+    original = instance._transport
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(f"[Foundry ADR witness] {historical.id} / v0001"):
+            raise OSError("successor witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.set_adr_status(historical, "accepted", project=PROJECT)
+    partial = copy.deepcopy(wire.documents)
+    assert len(partial) == 3
+
+    instance._transport = original
+    instance.set_adr_status(historical, "accepted", project=PROJECT)
+    current = instance.list_adrs(PROJECT)[0]
+    assert current.status == "accepted"
+    assert current.body.endswith(record["body"])
+    _, chains = instance._adr_snapshot(PROJECT)
+    assert len(chains[current.id]) == 2
+    assert set(partial).issubset(wire.documents)
+    assert len(wire.documents) == 4
+
+
+def test_linear_historical_forward_profile_is_digest_pinned(monkeypatch):
+    source = "private synthetic source"
+    rendered = "private **synthetic source"
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_SOURCE_SHA256",
+        hashlib.sha256(source.encode()).hexdigest(),
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_FOUNDRY_ADR_0001_BODY_READBACK_SHA256",
+        hashlib.sha256(rendered.encode()).hexdigest(),
+    )
+    monkeypatch.setattr(
+        linear_module, "_FOUNDRY_ADR_0001_READBACK_EDITS", ((8, 8, "**"),)
+    )
+
+    assert linear_module._linear_foundry_adr_0001_v1_readback(source) == rendered
+    assert linear_module._linear_foundry_adr_0001_v1_readback(source + "!") is None
+    monkeypatch.setattr(
+        linear_module, "_FOUNDRY_ADR_0001_BODY_READBACK_SHA256", "0" * 64
+    )
+    with pytest.raises(ValueError, match="rendering is invalid"):
+        linear_module._linear_foundry_adr_0001_v1_readback(source)
+
+
 def test_linear_historical_profile_refuses_absent_or_colliding_slot_before_write(
     tracker, monkeypatch
 ):
     instance, wire = tracker
     record = _unqualified_recovery_profile(_recovery_only_profile_record())
-    source_digest = hashlib.sha256(record["body"].encode()).hexdigest()
-    monkeypatch.setattr(linear_module, "_FOUNDRY_ADR_0001_SOURCE_SHA256", source_digest)
+    _patch_recovery_only_forward_profile(monkeypatch, record["body"])
     before_calls = len(wire.calls)
     with pytest.raises(TrackerConflictError, match="requires existing exact slot"):
         instance.import_adr_batch(PROJECT, (record,))
@@ -3764,11 +3853,7 @@ def test_linear_historical_profile_refuses_absent_or_colliding_slot_before_write
 def test_linear_historical_profile_requires_qualified_witness_probe(tracker, monkeypatch):
     instance, wire = tracker
     base = _recovery_only_profile_record()
-    monkeypatch.setattr(
-        linear_module,
-        "_FOUNDRY_ADR_0001_SOURCE_SHA256",
-        hashlib.sha256(base["body"].encode()).hexdigest(),
-    )
+    _patch_recovery_only_forward_profile(monkeypatch, base["body"])
     _binding, _metadata, _candidate, observed = _seed_recovery_only_profile_slot(
         wire, base
     )
@@ -4332,6 +4417,106 @@ def test_linear_native_adr_readable_body_edit_with_recomputed_witness_fails_clos
     )
     with pytest.raises(LinearTrackerError, match="invalid_response"):
         instance.list_adrs(PROJECT)
+
+
+def test_linear_probe_qualified_historical_adr_can_append_full_lifecycle(tracker):
+    """A qualified historical predecessor stays exact through every typed append."""
+    instance, wire = tracker
+    body = "historical source"
+    record = {
+        "adr_id": "LIN-ADR-0046", "title": "Historical lifecycle", "body": body,
+        "historical_status": "proposed", "source_ref": "YT-A-46",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    (qualified,) = _qualify_batch(instance, wire, (record,))
+    [historical] = instance.import_adr_batch(PROJECT, (qualified,))
+
+    instance.set_adr_status(historical, "accepted", project=PROJECT)
+    historical = instance.link_adr_issue(
+        instance.list_adrs(PROJECT)[0], "LIN-2", project=PROJECT
+    )
+    updated = historical.body + "\n\nupdated historical source"
+    assert instance.update_body(historical, historical.body, updated, project=PROJECT)
+
+    replacement = instance.create_adr(PROJECT, "Native replacement", "replacement")
+    instance.set_adr_status(replacement, "accepted", project=PROJECT)
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    instance.supersede_adr(current[historical.id], replacement.id, project=PROJECT)
+
+    models = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert models[historical.id].status == "superseded"
+    assert models[historical.id].body.endswith("updated historical source")
+    assert models[replacement.id].status == "accepted"
+    _, chains = instance._adr_snapshot(PROJECT)
+    assert len(chains[historical.id]) == 5
+
+
+@pytest.mark.parametrize("damaged", ["predecessor", "witness"])
+def test_linear_probe_qualified_historical_append_refuses_damaged_evidence(
+    tracker, damaged
+):
+    instance, wire = tracker
+    body = "historical source"
+    record = {
+        "adr_id": "LIN-ADR-0047", "title": "Historical evidence", "body": body,
+        "historical_status": "proposed", "source_ref": "YT-A-47",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    (qualified,) = _qualify_batch(instance, wire, (record,))
+    [historical] = instance.import_adr_batch(PROJECT, (qualified,))
+    target = (
+        historical.ref
+        if damaged == "predecessor"
+        else linear_module._adr_witness_id(PROJECT.id, historical.id, 0)
+    )
+    wire.documents[target]["content"] += "tampered"
+    before = copy.deepcopy(wire.documents)
+
+    with pytest.raises((LinearTrackerError, TrackerConflictError)):
+        instance.set_adr_status(historical, "accepted", project=PROJECT)
+
+    assert wire.documents == before
+
+
+def test_linear_probe_qualified_historical_successor_refuses_unknown_readback(
+    tracker,
+):
+    """Probe evidence for v0 never makes a new provider rendering acceptable."""
+    instance, wire = tracker
+    body = "- historical source"
+    record = {
+        "adr_id": "LIN-ADR-0048", "title": "Historical strict successor", "body": body,
+        "historical_status": "proposed", "source_ref": "YT-A-48",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    (qualified,) = _qualify_batch(instance, wire, (record,))
+    [historical] = instance.import_adr_batch(PROJECT, (qualified,))
+    instance.set_adr_status(historical, "accepted", project=PROJECT)
+    current = instance.list_adrs(PROJECT)[0]
+    successor = wire.documents[current.ref]
+    binding = instance._binding(PROJECT)
+    metadata, _body = linear_module._parse_adr_document(
+        successor, binding, source_body=body
+    )
+    successor["content"] = successor["content"].replace(
+        "* historical source", "* unqualified successor"
+    )
+    witness_id = linear_module._adr_witness_id(PROJECT.id, current.id, 1)
+    wire.documents[witness_id] = linear_module._adr_witness_document(
+        binding, metadata, successor, body
+    )
+    before = copy.deepcopy(wire.documents)
+
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance.list_adrs(PROJECT)
+
+    assert wire.documents == before
 
 
 def test_linear_historical_batch_stops_after_write_when_provider_diverges_from_probe(
