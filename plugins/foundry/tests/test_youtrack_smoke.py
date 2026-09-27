@@ -113,8 +113,8 @@ class FakeTracker:
             Link(type=link_type, direction="outward", target=dst_id)
         )
 
-    def set_state(self, issue_id, state):
-        self._record("set_state", issue_id, state)
+    def set_state(self, issue_id, state, context=None):
+        self._record("set_state", issue_id, state, context)
         self._issues[issue_id].state = state
 
     def add_comment(self, issue_id, text):

@@ -23,6 +23,7 @@ from foundry.routing import synchronize_acceptance_body
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     EpicClosureUnavailableError,
+    TrackerConflictError,
 )
 
 ALLOWED_STATES = {
@@ -143,21 +144,19 @@ def transition(tracker, issue_id: str, state: str, context=None) -> None:
             f"Transition {normalized} refusée : utilise le flux mécanique "
             f"{'openpr' if normalized == 'review' else 'merge'} pour produire la preuve bornée."
         )
-    # A provider that has no append-only lifecycle receipt still needs a
-    # caller-owned predecessor coordinate to make a retry distinguishable from
-    # a third state.  Capture it here, in the common mechanical tier, so skills
-    # never reconstruct tracker rules themselves.  The adapter re-reads it at
-    # S1 immediately before its one native write.
+    # A provider without an append-only lifecycle receipt needs a caller-owned
+    # predecessor coordinate.  Never manufacture it from the current native
+    # state here: a retry could otherwise adopt a third-party edit as the new
+    # predecessor and overwrite it.  Public lifecycle paths either carry their
+    # stable predecessor (review <- in-progress, done <- review) or refuse when
+    # the original coordinate is no longer available.
     if (
         getattr(tracker, "bounded_state_transitions", False)
+        and not getattr(context, "expected_state", None)
     ):
-        observed = tracker.get_issue(issue_id).state
-        if context is None:
-            from foundry.models import TransitionContext
-            context = TransitionContext(expected_state=observed)
-        elif getattr(context, "expected_state", None) is None:
-            from dataclasses import replace
-            context = replace(context, expected_state=observed)
+        raise TrackerConflictError(
+            "transition bornée sans état prédécesseur explicite"
+        )
     binding = issue_binding(tracker, issue_id)
     kwargs = {}
     if context is not None:

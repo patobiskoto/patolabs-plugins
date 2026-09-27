@@ -607,11 +607,11 @@ class YouTrackTracker(Tracker):
         expected = context.expected_state
         before = self.get_issue(issue_id)
         if before.state == state:
-            if expected == state:
-                return
-            raise TrackerConflictError(
-                "transition YouTrack déjà cible sans rejeu exact"
-            )
+            # The caller-owned predecessor plus the requested target identify
+            # the operation.  A fresh invocation carrying the same coordinates
+            # therefore converges after an ambiguous response without another
+            # native write.
+            return
         if before.state != expected:
             raise TrackerConflictError(
                 "état YouTrack modifié avant transition bornée"

@@ -207,9 +207,29 @@ def start(issue_id, flags=()):
     branch = f"{btype}/{issue_id.lower()}-{_slug(it.title)}"
     transition_path = _start_transition_path(tr, it.state)
     branch_mode = _prepare_branch(branch)
+    if (
+        branch_mode == "existing"
+        and transition_path
+        and getattr(tr, "bounded_state_transitions", False)
+    ):
+        raise SystemExit(
+            "⛔ Reprise tracker refusée — la branche existe mais l'état "
+            "prédécesseur de l'opération d'origine n'est pas disponible ; "
+            "aucune transition n'a été tentée."
+        )
     try:
+        predecessor = it.state
         for state in transition_path:
-            write.transition(tr, issue_id, state)
+            context = (
+                TransitionContext(expected_state=predecessor)
+                if getattr(tr, "bounded_state_transitions", False)
+                else None
+            )
+            if context is None:
+                write.transition(tr, issue_id, state)
+            else:
+                write.transition(tr, issue_id, state, context=context)
+            predecessor = state
     except (Exception, SystemExit):
         raise SystemExit(
             f"⛔ Démarrage tracker interrompu ; la branche '{branch}' est conservée. "
@@ -237,7 +257,18 @@ def openpr(issue_id=None, base=None, flags=()):
         issue_id = m.group(1).upper()
     write.issue_binding(tr, issue_id)
     write.preflight_issue_operation(tr, "openpr")
-    it = tr.get_issue(issue_id)
+    try:
+        it = tr.get_issue(issue_id)
+    except TrackerConflictError:
+        observer = getattr(tr, "observe_issue", None)
+        if not callable(observer):
+            raise
+        it = observer(issue_id)
+        if not (
+            it.normalized_state == "review"
+            and it.projection_status == "disagreement"
+        ):
+            raise
     repo = ch.resolve_repo()
     base = base or _default_branch()
     summary = f"## Summary\n- {it.title}"
@@ -284,8 +315,13 @@ def openpr(issue_id=None, base=None, flags=()):
             write.set_field(tr, issue_id, "GitHub PR", pr.url)
         write.transition(tr, issue_id, "review", context=context)
     else:
+        if getattr(tr, "bounded_state_transitions", False):
+            context = TransitionContext(expected_state="in-progress")
         # Preserve the established provider call order for adapters without proofs.
-        write.transition(tr, issue_id, "review")
+        if context is None:
+            write.transition(tr, issue_id, "review")
+        else:
+            write.transition(tr, issue_id, "review", context=context)
         write.set_field(tr, issue_id, "GitHub PR", pr.url)
     action = "réutilisée" if reused else "ouverte"
     print(f"🔗 PR #{pr.number} {action} : {pr.url}\n   {issue_id} → review")
@@ -371,6 +407,23 @@ def merge(issue_id, pr_number, flags=()):
                     f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
                 ) from None
             current = tr.get_issue(issue_id)
+    if getattr(tr, "bounded_state_transitions", False) and pr.merged:
+        exact_merged_pr = (
+            getattr(pr, "number", None) == int(pr_number)
+            and getattr(current, "pr_url", None) == pr.url
+            and isinstance(getattr(pr, "head", None), str)
+            and bool(pr.head)
+            and isinstance(getattr(pr, "base", None), str)
+            and bool(pr.base)
+            and re.fullmatch(r"[0-9a-f]{40}", str(pr.sha)) is not None
+            and re.fullmatch(r"[0-9a-f]{40}", str(pr.merge_sha)) is not None
+        )
+        if not exact_merged_pr:
+            raise SystemExit(
+                "⛔ Reprise tracker refusée — coordonnées exactes de la PR "
+                "fusionnée indisponibles ou différentes du tracker."
+            )
+        _require_pr_base_sha(pr)
     transition_context = None
     review_diff = None
     pr_base_sha = None
@@ -552,7 +605,7 @@ def merge(issue_id, pr_number, flags=()):
         write.transition(tr, issue_id, "review", context=transition_context)
 
     branch = pr.head
-    if transition_context is not None and pr.merged:
+    if pr.merged:
         if not pr.merge_sha:
             raise SystemExit("⛔ Reprise tracker refusée — SHA de merge GitHub indisponible.")
         merged_sha = pr.merge_sha
@@ -614,6 +667,22 @@ def merge(issue_id, pr_number, flags=()):
             review_digest=transition_context.review_digest,
             merge_sha=merged_sha,
         )
+    elif getattr(tr, "bounded_state_transitions", False):
+        if not (
+            re.fullmatch(r"[0-9a-f]{40}", str(pr.sha))
+            and re.fullmatch(r"[0-9a-f]{40}", str(merged_sha))
+        ):
+            raise SystemExit(
+                "⛔ Reprise tracker refusée — coordonnées exactes de la PR "
+                "fusionnée indisponibles ou différentes du tracker."
+            )
+        _require_pr_base_sha(pr)
+        if pr.merged and getattr(current, "pr_url", None) != pr.url:
+            raise SystemExit(
+                "⛔ Reprise tracker refusée — coordonnées exactes de la PR "
+                "fusionnée indisponibles ou différentes du tracker."
+            )
+        done_context = TransitionContext(expected_state="review")
     if done_context is not None:
         # Preserve the remote branch until the proof-bound tracker receipt is durable.
         # If the tracker is unavailable after the irreversible merge, a retry still

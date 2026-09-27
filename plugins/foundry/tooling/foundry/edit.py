@@ -6,7 +6,7 @@ judgment skill AND to the human confirming it — never auto-invoked from reason
 CLI:
   python3 -m foundry.edit create-issue '<json:{title,body,fields,parent}>'
   python3 -m foundry.edit set-field <ISSUE-ID> "<Field>" "<value>"
-  python3 -m foundry.edit transition <ISSUE-ID> <state>
+  python3 -m foundry.edit transition <ISSUE-ID> <state> [<expected-state>]
   python3 -m foundry.edit link <SRC-ID> <link-type> <DST-ID>
   python3 -m foundry.edit comment <ISSUE-ID> < note.md   (progress note, body on stdin)
   python3 -m foundry.edit body <ISSUE-ID> <expected-body.md> <updated-body.md>
@@ -19,6 +19,7 @@ from pathlib import Path
 
 import foundry
 from foundry import write
+from foundry.models import TransitionContext
 
 
 def create_issue(spec_json):
@@ -46,8 +47,13 @@ def set_field(issue_id, field, value):
     print(f"✏️  {issue_id} · {field} = {value}")
 
 
-def transition(issue_id, state):
-    write.transition(foundry.tracker(), issue_id, state)
+def transition(issue_id, state, expected_state=None):
+    context = (
+        TransitionContext(expected_state=expected_state)
+        if expected_state is not None
+        else None
+    )
+    write.transition(foundry.tracker(), issue_id, state, context=context)
     print(f"🔀 {issue_id} → {state}")
 
 

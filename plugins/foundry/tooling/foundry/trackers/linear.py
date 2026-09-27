@@ -2955,7 +2955,11 @@ class LinearTracker(Tracker):
             if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
                 raise LinearTrackerError("issue.search", None, "invalid_response")
             for raw in connection["nodes"]:
-                issue = self._to_issue(raw, project)
+                # Backlog/graph queries must surface an authenticated lifecycle
+                # disagreement instead of making the whole project unreadable.
+                # Unknown or malformed proof chains remain explicit with
+                # ``state=None`` and never become terminal authority.
+                issue = self._to_issue(raw, project, observe_lifecycle=True)
                 if issue.id in seen:
                     raise LinearTrackerError("issue.search", None, "pagination_stalled")
                 seen.add(issue.id)
@@ -3363,12 +3367,17 @@ class LinearTracker(Tracker):
         binding = self._activate(project)
         raw = self._read_raw(issue_id)
         self._assert_issue_project(raw, binding)
-        if state == "in-progress":
-            projection = self._lifecycle_projection(
-                issue_id, raw, pending_operation="state-" + state,
-            )
-            if projection["state"] == "review":
-                return
+        projection = self._lifecycle_projection(
+            issue_id, raw, pending_operation="state-" + state,
+        )
+        ranks = {"in-progress": 1, "review": 2, "done": 3}
+        if (
+            projection["state"] in ranks
+            and ranks[projection["state"]] > ranks[state]
+        ):
+            # A historical receipt is not authority to repair its old native
+            # target after a stronger lifecycle state is already durable.
+            return
         # Recovery also handles the inverse interruption order used by historic
         # lifecycle writers: an exact, integrity-checked Foundry receipt exists
         # but its matching native State projection did not.  The receipt remains
@@ -3390,11 +3399,16 @@ class LinearTracker(Tracker):
             # generation bindings, before it authorizes recovery of the native
             # projection.  A marker with a valid hash but invalid lifecycle
             # content is still not positive proof.
-            self._lifecycle_projection(
-                issue_id,
-                raw,
-                pending_operation="state-" + state,
-            )
+            latest_for_state = {
+                "in-progress": projection["in_progress"],
+                "review": projection["latest_review"],
+                "done": projection["done"],
+            }[state]
+            if exact_receipts[0] != latest_for_state:
+                # The requested receipt is authentic but historical (for
+                # example an older review generation).  It cannot project a
+                # weaker native state; preserve both provider surfaces.
+                return
             self._project_native_state(issue_id, state, project, binding)
             repaired = self._read_raw(issue_id)
             self._assert_issue_project(repaired, binding)
@@ -3402,9 +3416,6 @@ class LinearTracker(Tracker):
             return
         if len(exact_receipts) > 1:
             raise TrackerConflictError("Linear lifecycle duplicate projection")
-        self._lifecycle_projection(
-            issue_id, raw, pending_operation="state-" + state,
-        )
         self._project_lifecycle(
             issue_id,
             "state-" + state,

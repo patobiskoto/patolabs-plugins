@@ -2683,7 +2683,11 @@ def main(
             from foundry import tracker
             active_tracker = tracker(cwd=args.root)
             active_tracker.resolve_checkout_project(args.root)
-            current = active_tracker.get_issue(args.issue)
+            # Lifecycle disagreement must not make the issue body unavailable to
+            # the canonical proof engine.  The observation port exposes the
+            # provider-authenticated body while keeping unknown/disagreed state
+            # explicit; no native state is promoted to review authority here.
+            current = active_tracker.observe_issue(args.issue)
             repository = args.repository or repository_identity(args.root)
             result = AcceptanceProofStore(repository).create(
                 issue_id=current.id, issue_body=current.body, reviewer_role="reviewer",

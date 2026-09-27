@@ -196,7 +196,7 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     assert events.index("tracker:preflight-merge-effect") < events.index(
         "codehost:merge"
     )
-    if tracker.bounded_transition_proofs:
+    if tracker.bounded_transition_proofs or tracker.bounded_state_transitions:
         assert events.index("tracker:transition:done") < events.index(
             "codehost:delete-branch"
         )
@@ -273,6 +273,47 @@ def test_issue_start_retry_resumes_after_partial_tracker_transition(monkeypatch)
 
     assert events == ["ready", "in-progress", "in-progress"]
     assert tracker.state == "in-progress"
+
+
+def test_youtrack_issue_start_retry_refuses_a_new_third_state(monkeypatch):
+    """A fresh start invocation cannot adopt the state observed after interruption."""
+    tracker = object.__new__(YouTrackTracker)
+    native = {"state": "backlog"}
+    updates = []
+    lose_first_response = True
+    tracker.get_issue = lambda issue_id: SimpleNamespace(
+        id=issue_id,
+        title="Pilot",
+        type="Feature",
+        state=native["state"],
+    )
+
+    def update_fields(issue_id, fields, project=None):
+        nonlocal lose_first_response
+        updates.append((issue_id, fields, project))
+        native["state"] = fields["State"]
+        if lose_first_response:
+            lose_first_response = False
+            raise RuntimeError("tracker response lost")
+        return tracker.get_issue(issue_id)
+
+    tracker.update_fields = update_fields
+    branch_modes = iter(("linked-worktree", "existing"))
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue, "_sh", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(issue, "_prepare_branch", lambda _branch: next(branch_modes))
+
+    with pytest.raises(SystemExit, match=r"relance exactement `issue start DEMO-7`"):
+        issue.start("DEMO-7")
+    assert native["state"] == "in-progress"
+    assert len(updates) == 1
+
+    native["state"] = "blocked"
+    with pytest.raises(SystemExit, match="prédécesseur de l'opération d'origine"):
+        issue.start("DEMO-7")
+    assert native["state"] == "blocked"
+    assert len(updates) == 1
 
 
 def test_issue_start_already_in_progress_reuses_branch_without_transition(monkeypatch):
@@ -462,6 +503,94 @@ def test_proof_bound_retry_uses_existing_merge_receipt_without_merging_twice(mon
     assert done[2].base_sha == "c" * 40
     assert done[2].merge_sha == "b" * 40
     assert events[-1] == ("delete",)
+
+
+@pytest.mark.parametrize("intervening_state", [None, "blocked"])
+def test_youtrack_public_merge_resume_uses_original_review_predecessor(
+    monkeypatch, intervening_state,
+):
+    """A fresh CLI invocation never re-merges or adopts a third native state."""
+    native = {"state": "review"}
+    updates = []
+    events = []
+    lose_response = True
+    pr_url = "https://github.com/acme/demo/pull/12"
+    tracker = object.__new__(YouTrackTracker)
+
+    def get_issue(_issue_id):
+        return SimpleNamespace(
+            id="DEMO-7",
+            state=native["state"],
+            pr_url=pr_url,
+            body="",
+            ac_done=0,
+            ac_total=0,
+        )
+
+    def update_fields(issue_id, fields, project=None):
+        nonlocal lose_response
+        updates.append((issue_id, fields, project))
+        native["state"] = fields["State"]
+        if lose_response:
+            lose_response = False
+            raise RuntimeError("tracker response lost")
+        return get_issue(issue_id)
+
+    tracker.get_issue = get_issue
+    tracker.update_fields = update_fields
+    pr = SimpleNamespace(
+        number=12,
+        url=pr_url,
+        sha="a" * 40,
+        base_sha="c" * 40,
+        head="feat/demo-7",
+        base="main",
+        merged=True,
+        merge_sha="b" * 40,
+    )
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: "acme/demo",
+        get_pr=lambda *_args: pr,
+        merge_pr=lambda *_args, **_kwargs: events.append("merge")
+        or (_ for _ in ()).throw(AssertionError("already merged")),
+        delete_branch=lambda *_args: events.append("delete"),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(
+        write,
+        "ci_gate",
+        lambda *_args, **_kwargs: {
+            "passed": True,
+            "waived": False,
+            "total": 1,
+            "pending": [],
+            "failing": [],
+        },
+    )
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+
+    with pytest.raises(RuntimeError, match="response lost"):
+        issue.merge("DEMO-7", "12")
+    assert native["state"] == "done"
+    assert events == []
+    assert len(updates) == 1
+
+    if intervening_state is not None:
+        native["state"] = intervening_state
+        with pytest.raises(TrackerConflictError, match="modifié avant transition"):
+            issue.merge("DEMO-7", "12")
+        assert native["state"] == intervening_state
+        assert events == []
+        assert len(updates) == 1
+    else:
+        issue.merge("DEMO-7", "12")
+        assert native["state"] == "done"
+        assert events == ["delete"]
+        assert len(updates) == 1
 
 
 def test_already_done_exact_pr_retry_only_finishes_cleanup(monkeypatch, capsys):
@@ -1108,7 +1237,11 @@ def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "main-checkout")
     monkeypatch.setattr(write, "ci_gate", lambda *_args, **_kwargs: {
         "passed": True, "waived": False, "total": 1, "pending": 0, "failing": 0})
-    monkeypatch.setattr(write, "transition", lambda *_args: events.append(("done",)))
+    monkeypatch.setattr(
+        write,
+        "transition",
+        lambda *_args, **_kwargs: events.append(("done",)),
+    )
 
     class Store:
         def __init__(self, _repository):
@@ -1179,7 +1312,7 @@ def test_youtrack_merge_checks_proven_criteria_before_codehost_merge(
 
     assert current.body == f"  {marker} [x] current contract\r\n"
     assert [event[0] for event in events] == [
-        "proof", "body-write", "comment", "merge", "delete", "done",
+        "proof", "body-write", "comment", "merge", "done", "delete",
     ]
 
 
@@ -1218,7 +1351,7 @@ def test_youtrack_merge_multiline_pseudo_checkbox_cannot_hide_unchecked_ac(
 
     assert current.body == "* [x]\n- [x] current contract\n"
     assert [event[0] for event in events] == [
-        "proof", "body-write", "comment", "merge", "delete", "done",
+        "proof", "body-write", "comment", "merge", "done", "delete",
     ]
 
 
@@ -1325,7 +1458,7 @@ def test_youtrack_human_ac_override_keeps_prose_audit_without_typed_receipt(
     )
 
     assert [event[0] for event in events] == [
-        "proof", "comment", "merge", "delete", "done",
+        "proof", "comment", "merge", "done", "delete",
     ]
     assert events[1][1] == (
         "Audit merge: override humain explicite des AC incomplètes (human_confirmed)."

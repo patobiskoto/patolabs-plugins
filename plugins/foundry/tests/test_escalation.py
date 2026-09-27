@@ -2538,6 +2538,7 @@ def test_pat22_generation_nine_legacy_consumption_is_attested_via_canonical_cli(
     tracker = SimpleNamespace(
         resolve_checkout_project=lambda _root: None,
         get_issue=lambda _issue: SimpleNamespace(id=issue, body=body),
+        observe_issue=lambda _issue: SimpleNamespace(id=issue, body=body),
     )
     monkeypatch.setattr(foundry, "tracker", lambda **_kwargs: tracker)
 

@@ -428,11 +428,11 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "bounded_state_transitions = True; write.transition captures a fresh predecessor state in TransitionContext and YouTrackTracker.set_state re-reads it before its one targeted update_fields(State=...) projection. Only an exact replay from the target converges; a third state fails closed. This is S1-S5 bounded detection, never CAS or exclusion (write.py; youtrack.py)."
+          "evidence": "bounded_state_transitions = True; each public lifecycle operation supplies its original predecessor in TransitionContext and write.transition refuses to reconstruct a missing coordinate from the current native state. YouTrackTracker.set_state re-reads that predecessor before its one targeted update_fields(State=...) projection. An exact retry at the target converges; a third state or unavailable predecessor fails closed. issue.merge confirms exact merged-PR coordinates and repairs State before branch cleanup without calling merge_pr again. This is S1-S5 bounded detection, never CAS or exclusion (issue.py; write.py; youtrack.py)."
         },
         "linear": {
           "status": "supported",
-          "evidence": "set_state accepts only in-progress/review/done (linear.py); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done). It appends the deterministic lifecycle receipt before projecting only the target native State under S1-S5; an exact, valid receipt can repair only the missing native effect. Identical replay converges, disagreement is observable, and a bare native terminal State is never positive proof. Other states belong to frame-intake-groom-evolve-existing."
+          "evidence": "set_state accepts only in-progress/review/done (linear.py); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done). It appends the deterministic lifecycle receipt before projecting only the target native State under S1-S5; an exact, valid latest relevant receipt can repair only the missing native effect. A late start or older review receipt cannot regress a durable done. Identical replay converges, authenticated disagreement is observable in get/observe/search, unknown chains expose no normalized state, and a bare native terminal State is never positive proof. Other states belong to frame-intake-groom-evolve-existing."
         },
         "ghprojects": {
           "status": "to_qualify",

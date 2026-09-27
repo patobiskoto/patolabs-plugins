@@ -179,9 +179,9 @@ def test_youtrack_update_body_refuses_stale_snapshot_even_when_desired_is_curren
 def test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordinate(
     monkeypatch,
 ):
-    """The native State remains a projection; only an exact retry converges."""
+    """Distinct public invocations retain the original predecessor coordinate."""
     tracker = object.__new__(YouTrackTracker)
-    native = {"state": "ready"}
+    native = {"state": "in-progress"}
     writes = []
     tracker.get_issue = lambda issue_id: Issue(
         id=issue_id, title="issue", state=native["state"],
@@ -195,19 +195,77 @@ def test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordi
     tracker.update_fields = update_fields
     monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
 
-    write.transition(tracker, "T-1", "review")
+    write.transition(
+        tracker,
+        "T-1",
+        "review",
+        context=TransitionContext(expected_state="in-progress"),
+    )
     assert writes == [("T-1", {"State": "review"}, None)]
 
-    # The mechanical tier reads the replay predecessor again, so a completed
-    # native projection converges without another mutation.
-    write.transition(tracker, "T-1", "review")
+    # A new invocation reconstructs the operation from durable lifecycle
+    # coordinates, not by retaining an in-memory context object.
+    write.transition(
+        tracker,
+        "T-1",
+        "review",
+        context=TransitionContext(expected_state="in-progress"),
+    )
     assert len(writes) == 1
 
     native["state"] = "blocked"
     with pytest.raises(TrackerConflictError, match="modifié avant transition"):
-        tracker.set_state(
-            "T-1", "done", context=TransitionContext(expected_state="review"),
+        write.transition(
+            tracker,
+            "T-1",
+            "review",
+            context=TransitionContext(expected_state="in-progress"),
         )
+    assert len(writes) == 1
+
+
+def test_public_youtrack_retry_after_lost_response_refuses_third_state_without_effect(
+    monkeypatch,
+):
+    tracker = object.__new__(YouTrackTracker)
+    native = {"state": "in-progress"}
+    writes = []
+    lose_first_response = True
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="issue", state=native["state"],
+    )
+
+    def update_fields(issue_id, fields, project=None):
+        nonlocal lose_first_response
+        writes.append((issue_id, fields, project))
+        native["state"] = fields["State"]
+        if lose_first_response:
+            lose_first_response = False
+            raise RuntimeError("response lost")
+        return tracker.get_issue(issue_id)
+
+    tracker.update_fields = update_fields
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+
+    with pytest.raises(RuntimeError, match="response lost"):
+        write.transition(
+            tracker,
+            "T-1",
+            "review",
+            context=TransitionContext(expected_state="in-progress"),
+        )
+    assert native["state"] == "review"
+    assert len(writes) == 1
+
+    native["state"] = "blocked"
+    with pytest.raises(TrackerConflictError, match="modifié avant transition"):
+        write.transition(
+            tracker,
+            "T-1",
+            "review",
+            context=TransitionContext(expected_state="in-progress"),
+        )
+    assert native["state"] == "blocked"
     assert len(writes) == 1
 
 

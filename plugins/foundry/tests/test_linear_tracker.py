@@ -1293,7 +1293,22 @@ def test_query_issue_resolves_fresh_binding_and_projects_linear_adrs(
     tracker,
     monkeypatch,
 ):
-    _, wire = tracker
+    instance, wire = tracker
+    instance.set_state(
+        "LIN-2",
+        "review",
+        context=TransitionContext(
+            pr_url=OVERRIDE_PR_URL,
+            head_sha="a" * 40,
+            base_sha="b" * 40,
+            review_digest="d" * 64,
+        ),
+        project=PROJECT,
+    )
+    # Model the real PAT-56 interruption: the authentic review receipt exists,
+    # while the native projection is still in-progress. Query materialization
+    # keeps both states explicit and must not promote native state.
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     checkout_reads = []
     decoy = copy.deepcopy(project_entry())
@@ -1516,7 +1531,19 @@ def test_record_review_proof_resolves_fresh_binding_before_issue_read(
     tmp_path,
     capsys,
 ):
-    _, wire = tracker
+    instance, wire = tracker
+    instance.set_state(
+        "LIN-2",
+        "review",
+        context=TransitionContext(
+            pr_url=OVERRIDE_PR_URL,
+            head_sha="a" * 40,
+            base_sha="b" * 40,
+            review_digest="d" * 64,
+        ),
+        project=PROJECT,
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
     fresh = LinearTracker(token="linear-test-secret", transport=wire)
     checkout_reads = []
     tracker_roots = []
@@ -1937,8 +1964,11 @@ def test_linear_zero_receipt_native_done_fails_closed_for_search_and_get_issue(t
 
     with pytest.raises(TrackerConflictError, match="outside lifecycle"):
         instance.get_issue("LIN-2")
-    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
-        instance.search(PROJECT)
+    observed = next(item for item in instance.search(PROJECT) if item.id == "LIN-2")
+    assert observed.state is None
+    assert observed.normalized_state is None
+    assert observed.native_state == "done"
+    assert observed.projection_status == "unknown"
 
 
 def test_linear_zero_receipt_nonterminal_native_state_remains_readable(tracker):
@@ -3003,8 +3033,11 @@ def test_linear_done_without_acceptance_or_override_still_fails_closed(
 
     with pytest.raises(TrackerConflictError, match="lacks matching acceptance"):
         instance.get_issue("LIN-2")
-    with pytest.raises(TrackerConflictError, match="lacks matching acceptance"):
-        instance.search(PROJECT)
+    observed = next(item for item in instance.search(PROJECT) if item.id == "LIN-2")
+    assert observed.state is None
+    assert observed.normalized_state is None
+    assert observed.native_state == "review"
+    assert observed.projection_status == "unknown"
 
 
 def test_linear_override_recovery_after_done_appends_only_missing_receipt(
@@ -3099,6 +3132,59 @@ def test_linear_public_merge_retry_repairs_only_missing_native_done_projection(
     assert wire.issues["LIN-2"]["state"]["id"] == STATE_IDS["done"]
     assert wire.issues["LIN-2"]["comments"]["nodes"] == receipts
     assert events == [("delete",), ("cleanup",)]
+
+
+@pytest.mark.parametrize("replay", ["start", "old-review"])
+def test_linear_historical_lifecycle_replay_cannot_regress_done_native_state(
+    tracker, monkeypatch, replay,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    first = TransitionContext(
+        pr_url=OVERRIDE_PR_URL,
+        head_sha="1" * 40,
+        base_sha="b" * 40,
+        review_digest="2" * 64,
+    )
+    latest = TransitionContext(
+        pr_url=OVERRIDE_PR_URL,
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest=OVERRIDE_DIGEST,
+    )
+    done = TransitionContext(
+        pr_url=latest.pr_url,
+        head_sha=latest.head_sha,
+        base_sha=latest.base_sha,
+        review_digest=latest.review_digest,
+        merge_sha="f" * 40,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=first, project=PROJECT)
+    instance.set_state("LIN-2", "review", context=latest, project=PROJECT)
+    write.sync_acceptance(
+        instance,
+        "LIN-2",
+        "- [ ] acceptance",
+        proof("LIN-2", "- [ ] acceptance", diff_hash=OVERRIDE_DIGEST),
+    )
+    instance.set_state("LIN-2", "done", context=done, project=PROJECT)
+    native_before = copy.deepcopy(wire.issues["LIN-2"]["state"])
+    receipts_before = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+    call_offset = len(wire.calls)
+
+    if replay == "start":
+        instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    else:
+        instance.set_state("LIN-2", "review", context=first, project=PROJECT)
+
+    assert wire.issues["LIN-2"]["state"] == native_before
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == receipts_before
+    assert not any(
+        "FoundryLinearIssueUpdate" in document
+        or "FoundryLinearCommentCreate" in document
+        for document, _variables in wire.calls[call_offset:]
+    )
 
 
 @pytest.mark.parametrize(
