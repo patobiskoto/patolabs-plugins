@@ -38,6 +38,10 @@ non-PR type before its number becomes a Foundry ID; a same-number foreign
 target is therefore an error, never an alias. Child→parent is represented as
 `subtask-of`/`inward`; parent→child is `parent-of`/`outward`. Raw UTF-8
 body/comment values are retained and ISO timestamps become epoch milliseconds.
+REST Issue labels must be a complete list of distinct, non-empty label names;
+missing or malformed labels are refused before ADR discrimination. Timestamps
+must include an explicit timezone offset; dates and local times without an
+offset are refused instead of inheriting the host timezone.
 Only complete per-line Markdown checkboxes in the current REST Issue body count
 toward observed AC progress; comments and split-line fragments do not, and these
 markers are not lifecycle acceptance proof.

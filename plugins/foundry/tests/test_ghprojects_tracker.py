@@ -149,6 +149,59 @@ def test_get_issue_uses_bound_graphql_coordinates_and_expected_rest_paths():
     ]
 
 
+@pytest.mark.parametrize("labels", ["missing", None, {}, [{}], ["foundry:adr"],
+                                   [{"name": ""}], [{"name": "x"}, {"name": "x"}]])
+def test_get_issue_refuses_ambiguous_rest_labels_before_other_reads(labels):
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        if command[2] == "graphql":
+            payload = _page("item-1", 1, None, False)
+        else:
+            assert command[-1].endswith("/issues/1")
+            payload = _rest_issue(1)
+            if labels == "missing":
+                payload.pop("labels")
+            else:
+                payload["labels"] = labels
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    with pytest.raises(GitHubProjectsTrackerError, match="invalid_labels"):
+        GitHubProjectsTracker(runner=runner).get_issue("GHQUAL-1")
+    assert len(calls) == 2
+
+
+def test_rest_adr_discrimination_remains_explicit_after_graphql_read():
+    def runner(command, **kwargs):
+        if command[2] == "graphql":
+            payload = _page("item-1", 1, None, False)
+        else:
+            assert command[-1].endswith("/issues/1")
+            payload = _rest_issue(1)
+            payload["labels"] = [{"name": "foundry:adr"}, {"name": "preserve"}]
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    from foundry.trackers.base import TrackerCapabilityUnavailableError
+
+    with pytest.raises(TrackerCapabilityUnavailableError, match="adr_issue_read"):
+        GitHubProjectsTracker(runner=runner).get_issue("GHQUAL-1")
+
+
+@pytest.mark.parametrize("value", ["2026-09-27", "2026-09-27T12:00:00",
+                                   "2026-09-27 12:00:00"])
+def test_timestamp_refuses_dates_and_times_without_explicit_timezone(value):
+    with pytest.raises(GitHubProjectsTrackerError, match="invalid_timestamp"):
+        GitHubProjectsTracker._timestamp(value, "issue.read")
+
+
+@pytest.mark.parametrize("value", ["2026-09-27T12:00:00Z",
+                                   "2026-09-27T14:00:00+02:00",
+                                   "2026-09-27T07:00:00-05:00"])
+def test_timestamp_normalizes_explicit_offsets_to_same_epoch(value):
+    assert GitHubProjectsTracker._timestamp(value, "issue.read") == 1790510400000
+
+
 @pytest.mark.parametrize("read", ["search", "get_issue"])
 def test_public_reads_count_complete_rest_body_acceptance_checkboxes(read):
     body = (

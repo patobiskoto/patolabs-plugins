@@ -510,7 +510,10 @@ class GitHubProjectsTracker(Tracker):
         if not isinstance(value, str):
             raise GitHubProjectsTrackerError(operation, "invalid_timestamp")
         try:
-            return int(datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc).timestamp() * 1000)
+            observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if observed.tzinfo is None or observed.utcoffset() is None:
+                raise ValueError("timestamp requires an explicit offset")
+            return int(observed.astimezone(timezone.utc).timestamp() * 1000)
         except ValueError as exc:
             raise GitHubProjectsTrackerError(operation, "invalid_timestamp") from exc
 
@@ -538,7 +541,12 @@ class GitHubProjectsTracker(Tracker):
             raise GitHubProjectsTrackerError("issue.read", "invalid_body")
         ac_done, ac_total = self._ac_counts(raw.get("body"))
         raw_labels = raw.get("labels")
-        if isinstance(raw_labels, list) and any(isinstance(label, dict) and label.get("name") == _ADR_LABEL for label in raw_labels):
+        if (not isinstance(raw_labels, list)
+                or not all(isinstance(label, dict) and isinstance(label.get("name"), str)
+                           and label["name"] for label in raw_labels)
+                or len({label["name"] for label in raw_labels}) != len(raw_labels)):
+            raise GitHubProjectsTrackerError("issue.read", "invalid_labels")
+        if any(label["name"] == _ADR_LABEL for label in raw_labels):
             raise TrackerCapabilityUnavailableError(self.name, "adr_issue_read")
         comments = self._rows(base + "/comments", "issue.comments")
         try:
