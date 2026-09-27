@@ -160,14 +160,26 @@ or normalize any other Markdown variant.
 SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
 and its existing Linear Document content SHA-256
 `9d723a7a64225d930531d968f78dba108f940eb7091d7110f8b12c037d29b193` form one
-closed pair. This does not describe a renderer and cannot create a new Document from
-the historical source. It permits only exact-ID readback of that surviving slot and
-creation of its missing witness; a missing slot or any byte difference fails before a
-provider write. Because the pinned readback covers the metadata header, including
+closed pair. That pair cannot create a version-0 Document: it permits only exact-ID
+readback of the surviving slot and creation of its missing witness; a missing slot or
+any byte difference fails before a provider write. Because the pinned readback covers
+the metadata header, including
 `origin.batch_sha256`, this recovery matches only a replay of the byte-identical
-original manifest; any other manifest diverges from the slot before effects. The witness retains the original UTF-8 source bytes, so ordinary ADR
-readers receive the historical Markdown byte-for-byte rather than the provider's
-lossy rendering.
+original manifest; any other manifest diverges from the slot before effects.
+
+Later versions of this one qualified chain use a separate forward profile. It is bound
+to that same source SHA-256, an exact observed serialization delta, and the resulting body
+readback SHA-256
+`aa5fee81139bdc046d6056e95a3a4b5218b8f032821fa4048c8f6c02b5493bc5`.
+The already closed metadata-header serialization is applied independently, so status,
+link, supersession, and unchanged-body edit successors can carry their own sequence and
+predecessor digest. The profile is selected only for `FOUNDRY-ADR-0001`, its exact original source
+digest, and `origin.kind=migration` with a valid `batch_sha256`; a native ADR containing the same source bytes, an unqualified migration,
+or any source-body variation stays on the strict general model. A changed successor
+body likewise needs the general closed model; this profile never guesses an inverse
+transformation. The witness retains the original UTF-8 source bytes, so ordinary ADR
+readers receive the historical Markdown byte-for-byte rather than the provider's lossy
+rendering.
 Every historical batch record must carry a qualification profile of the complete
 provider bytes of both Documents the import will create, observed before import on
 non-authoritative probe Documents in a separate Linear qualification project:
@@ -220,16 +232,20 @@ this repository. Once an ADR's witness exists, ordinary reads use the witness-he
 source body and the bound provider content digest, not the private manifest or probe
 Documents.
 
-This probe-bound readback is accepted at read time only for a batch-imported
-historical version 0 (`origin.kind` `migration` with `origin.batch_sha256`): its witness
-binds the qualified provider bytes and the exact source. Every native ADR and every
-later version keep the closed serialization check below, so a readable-body edit is
-refused even if the witness digest is recomputed to match. For those historical
+This probe-bound readback is accepted at read time only for batch-imported historical
+version 0 (`origin.kind` `migration` with `origin.batch_sha256`): its witness binds the
+qualified provider bytes and the exact source. A typed first successor (accept,
+supersede, link, edit) may derive from that witness-bound predecessor; it records the
+predecessor's exact provider bytes in `previous_sha256` and has its own exact witness.
+Every successor, including that first successor, is then read under the closed local
+serialization check, which includes the source-digest-pinned profile above. This permits a qualified historical decision to evolve without
+treating a migration origin alone as qualification or accepting an unqualified rendering
+of a new version. Every native ADR and every migration without the batch qualification
+keep the closed serialization check below, so a readable-body edit is refused even if
+the witness digest is recomputed to match. For those historical
 Documents the trade-off is explicit: a coordinated external edit of the readable body
 and its witness digest is not detectable by the adapter, as PAT-ADR-0002 already states
-for coordinated edits. A later typed version (accept, supersede, link, edit) of a
-historical ADR whose qualified readback differs from the local serialization model
-currently fails closed: its predecessor is read with the strict model.
+for coordinated edits.
 Exact-slot verification still checks
 the deterministic ID, title, project, archive state, canonical metadata encoding, and
 body digest. Witnesses bind the exact version bytes returned by Linear, including the

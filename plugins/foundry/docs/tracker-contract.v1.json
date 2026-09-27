@@ -71,7 +71,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "resolve_project discards its repo argument and resolve_checkout_project plus validate_mutation_repository resolve the actual canonical checkout (linear.py:1588-1610) through the shared strict repository_tracker_selection port, revalidating the marker and digest before each activation; every issue read or written is asserted to belong to the bound team and project UUIDs (_assert_issue_project, linear.py:2347-2356)"
+          "evidence": "resolve_project discards its repo argument and resolve_checkout_project plus validate_mutation_repository resolve the actual canonical checkout (linear.py:1707-1729) through the shared strict repository_tracker_selection port, revalidating the marker and digest before each activation; every issue read or written is asserted to belong to the bound team and project UUIDs (_assert_issue_project, linear.py:2466-2475)"
         },
         "ghprojects": {
           "status": "supported",
@@ -94,7 +94,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding, then Linear.verify_project_identity reads the exact project id, team id and team key before bootstrap_repository_binding publishes the canonical-scoped registry entry and marker; a same-basename collision cannot replace the older entry. No project is provisioned (registry.py:992-1099, 1634-1784; linear.py:1574-1586)"
+          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding, then Linear.verify_project_identity reads the exact project id, team id and team key before bootstrap_repository_binding publishes the canonical-scoped registry entry and marker; a same-basename collision cannot replace the older entry. No project is provisioned (registry.py:992-1099, 1634-1784; linear.py:1693-1705)"
         },
         "ghprojects": {
           "status": "supported",
@@ -117,7 +117,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "search normalizes every page through _to_issue and remains fail-closed on unknown state, label or milestone ids (linear.py:2458-2579, 2580-2618); registry update supplies the bounded recovery path for a reviewed complete mapping: strict marker parsing before effects, expected configuration digest, one registry lock, concurrent-change refusal, publication and readback (registry.py:397-487, 1126-1216, 1634-1784). No issue mutation or provider CAS is claimed"
+          "evidence": "search normalizes every page through _to_issue and remains fail-closed on unknown state, label or milestone ids (linear.py:2577-2698, 2580-2618); registry update supplies the bounded recovery path for a reviewed complete mapping: strict marker parsing before effects, expected configuration digest, one registry lock, concurrent-change refusal, publication and readback (registry.py:397-487, 1126-1216, 1634-1784). No issue mutation or provider CAS is claimed"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -140,7 +140,7 @@
         },
         "linear": {
           "status": "refused",
-          "evidence": "search() raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query') whenever query is non-empty (linear.py:2582-2585)"
+          "evidence": "search() raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query') whenever query is non-empty (linear.py:2701-2704)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -164,7 +164,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "create_issue (linear.py:2731-2783) creates with a client id, then verifies title, body, fields and parent on readback, TrackerConflictError on divergence, no retry"
+          "evidence": "create_issue (linear.py:2850-2902) creates with a client id, then verifies title, body, fields and parent on readback, TrackerConflictError on divergence, no retry"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -191,7 +191,7 @@
           "status": "gap",
           "ticket": "PAT-55",
           "blocked_by_adr": "no-cas-write-guarantees-v1",
-          "evidence": "update_fields raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-field-replacement') unconditionally (linear.py:2785-2800); update_body raises BodyUpdateUnavailableError for an Issue (linear.py:3186-3198); set_state refuses every state except in-progress/review/done (linear.py:2811-2814). Enabling in-place replacement reverses the module invariant linear.py:8-11"
+          "evidence": "update_fields raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-field-replacement') unconditionally (linear.py:2904-2919); update_body raises BodyUpdateUnavailableError for an Issue (linear.py:3305-3317); set_state refuses every state except in-progress/review/done (linear.py:2930-2933). Enabling in-place replacement reverses the module invariant linear.py:8-11"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -214,7 +214,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "add_comment (linear.py:3151-3184) creates the comment, reads it back and refuses on divergence, no retry; provider-assigned id, so a replay duplicates the note (free-text rule, #4.2)"
+          "evidence": "add_comment (linear.py:3270-3303) creates the comment, reads it back and refuses on divergence, no retry; provider-assigned id, so a replay duplicates the note (free-text rule, #4.2)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -237,7 +237,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "create_issue asserts the parent belongs to the binding, sets parentId (linear.py:2762-2765) and verifies the readback parent id (linear.py:2781-2782)"
+          "evidence": "create_issue asserts the parent belongs to the binding, sets parentId (linear.py:2881-2884) and verifies the readback parent id (linear.py:2900-2901)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -263,7 +263,7 @@
           "status": "gap",
           "ticket": "PAT-55",
           "blocked_by_adr": "no-cas-write-guarantees-v1",
-          "evidence": "link() raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-parent-replacement') for subtask-of/parent-of (linear.py:3100-3104), under the invariant linear.py:8-11"
+          "evidence": "link() raises TrackerCapabilityUnavailableError(self.name, 'existing-issue-parent-replacement') for subtask-of/parent-of (linear.py:3219-3223), under the invariant linear.py:8-11"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -286,7 +286,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "link() skips an existing identical relation, creates depends-on/blocks/relates via issueRelationCreate and verifies it on readback (linear.py:3105-3149)"
+          "evidence": "link() skips an existing identical relation, creates depends-on/blocks/relates via issueRelationCreate and verifies it on readback (linear.py:3224-3268)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -356,7 +356,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "list_adrs (linear.py:3860-3862) rebuilds Adr models from the Document/witness chains (_adr_documents, linear.py:3215; _adr_chain)"
+          "evidence": "list_adrs (linear.py:3992-3994) rebuilds Adr models from the Document/witness chains (_adr_documents, linear.py:3334; _adr_chain)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -379,7 +379,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "create_adr calls _create_adr_document directly (linear.py:3956), which creates the version-0 Document and its witness at deterministic ids with byte-exact readback (linear.py:3441-3533, 3627-3664; PAT-ADR-0002)"
+          "evidence": "create_adr calls _create_adr_document directly (linear.py:4088), which creates the version-0 Document and its witness at deterministic ids with byte-exact readback (linear.py:3560-3659, 3627-3664; PAT-ADR-0002)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -401,9 +401,8 @@
           "evidence": "set_adr_status proves the article's native project is writable, reads it and rewrites its statut header through update_body's level-1 path (youtrack.py:678-687)"
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-47",
-          "evidence": "set_adr_status appends a successor version for native ADRs (linear.py:4853-4854); an imported historical ADR whose qualified Linear rendering differs from the local model cannot receive any successor version (accept, supersede, link, edit): its predecessor is re-read with the strict model and fails closed"
+          "status": "supported",
+          "evidence": "set_adr_status appends a successor version through _next_adr_metadata and _append_adr_version (linear.py:4959-5002). Batch-qualified migration chains may use the exact source-digest and rendered-body-digest profile for FOUNDRY-ADR-0001 (linear.py:424-524, 949-971, 1367-1386); native ADRs, unqualified migrations, changed bodies and unknown readbacks remain on the strict closed model. Typed accept, supersede, issue-link and edit successors, predecessor/witness corruption, native/coordinated edits, interruption recovery and exact replay are covered by test_linear_tracker.py (PAT-47)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -427,7 +426,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "adr_issue_link_supported = True (linear.py:1436); link_adr_issue (linear.py:3962-4005) and supersede_adr (linear.py:4856-4900) append versions to the Document/witness chain"
+          "evidence": "adr_issue_link_supported = True (linear.py:1555); link_adr_issue (linear.py:4094-4140) and supersede_adr (linear.py:5004-5048) append versions to the Document/witness chain"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -453,7 +452,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "set_state accepts only in-progress/review/done (linear.py:2811-2814); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done; linear.py:2816-2837); each transition is an append-only deterministic-id lifecycle marker written by _project_lifecycle (linear.py:2165-2333): identical replay converges, divergence fails closed. Other states belong to frame-intake-groom-evolve-existing"
+          "evidence": "set_state accepts only in-progress/review/done (linear.py:2930-2933); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done; linear.py:2935-2956); each transition is an append-only deterministic-id lifecycle marker written by _project_lifecycle (linear.py:2284-2452): identical replay converges, divergence fails closed. Other states belong to frame-intake-groom-evolve-existing"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -478,7 +477,7 @@
           "status": "gap",
           "ticket": "PAT-56",
           "blocked_by_adr": "no-cas-write-guarantees-v1",
-          "evidence": "acceptance_sync_supported = False (linear.py:1438); sync_acceptance_body raises AcceptanceSyncUnavailableError unconditionally (linear.py:3200-3212), under the invariant linear.py:8-11. Linear already projects AC completeness through a proof-bound append-only marker: acceptance_proof_projection_supported = True (linear.py:1441), project_acceptance_proof (linear.py:2840-2892), Issue.ac_done derived from that projection, never from native checkbox text (linear.py:2541-2547). The pending ADR decides whether that projection is the V1 AC authority (no in-place write) or in-place sync is required"
+          "evidence": "acceptance_sync_supported = False (linear.py:1557); sync_acceptance_body raises AcceptanceSyncUnavailableError unconditionally (linear.py:3319-3331), under the invariant linear.py:8-11. Linear already projects AC completeness through a proof-bound append-only marker: acceptance_proof_projection_supported = True (linear.py:1560), project_acceptance_proof (linear.py:2959-3011), Issue.ac_done derived from that projection, never from native checkbox text (linear.py:2660-2666). The pending ADR decides whether that projection is the V1 AC authority (no in-place write) or in-place sync is required"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -502,7 +501,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "acceptance_override_projection_supported = True (linear.py:1442); project_acceptance_override (linear.py:2900) and recover_acceptance_override (linear.py:2946) append a typed receipt (PAT-49)"
+          "evidence": "acceptance_override_projection_supported = True (linear.py:1561); project_acceptance_override (linear.py:3019) and recover_acceptance_override (linear.py:3065) append a typed receipt (PAT-49)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -561,7 +560,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "resolve_checkout_project (linear.py:1596-1606) uses the shared repository_tracker_selection port (registry.py:490-669), which revalidates the marker/digests and refuses missing, archived or ambiguous bindings; validate_mutation_repository (linear.py:1608-1610) runs it before any mutation"
+          "evidence": "resolve_checkout_project (linear.py:1715-1725) uses the shared repository_tracker_selection port (registry.py:490-669), which revalidates the marker/digests and refuses missing, archived or ambiguous bindings; validate_mutation_repository (linear.py:1727-1729) runs it before any mutation"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -586,7 +585,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "import_adr (linear.py:4490) and import_adr_batch (linear.py:4398) implement bounded, idempotent, provenance-preserving historical ADR import (PAT-ADR-0001..0003), proven by the YouTrack->Linear ADR import of this repository (PAT-23)"
+          "evidence": "import_adr (linear.py:4625) and import_adr_batch (linear.py:4533) implement bounded, idempotent, provenance-preserving historical ADR import (PAT-ADR-0001..0003), proven by the YouTrack->Linear ADR import of this repository (PAT-23)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -615,7 +614,7 @@
         "linear": {
           "status": "gap",
           "ticket": "PAT-64",
-          "evidence": "no adapter import of live work: create_issue sends a random uuid4 client id (linear.py:2755), so a replay duplicates the issue, and nothing copies lifecycle receipts, acceptance proofs or comments. The YouTrack->Linear live-work leg of this repository was a private operator-side selective migration; `registry cutover` does no provider I/O (docs/linear-tracker.md, 'Repository-scoped activation and atomic cutover')"
+          "evidence": "no adapter import of live work: create_issue sends a random uuid4 client id (linear.py:2874), so a replay duplicates the issue, and nothing copies lifecycle receipts, acceptance proofs or comments. The YouTrack->Linear live-work leg of this repository was a private operator-side selective migration; `registry cutover` does no provider I/O (docs/linear-tracker.md, 'Repository-scoped activation and atomic cutover')"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -641,7 +640,7 @@
         "linear": {
           "status": "gap",
           "ticket": "PAT-59",
-          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py:2529-2535, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock after strict marker validation (registry.py:1130-1220); PAT-59 still owns the release-scope semantics and provider qualification"
+          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py:2648-2654, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock after strict marker validation (registry.py:1130-1220); PAT-59 still owns the release-scope semantics and provider qualification"
         },
         "ghprojects": {
           "status": "to_qualify",

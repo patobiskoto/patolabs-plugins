@@ -421,15 +421,87 @@ _FOUNDRY_ADR_0012_SOURCE_SHA256 = (
 _FOUNDRY_ADR_0012_READBACK_SHA256 = (
     "3bbab7c31d737bb97320ea74644f8acd6201cf7ec0a8cb7e1a09cd554c49246c"
 )
-# This historical slot predates witnesses.  Its source is deliberately not
-# represented here: the two digests qualify only the exact bytes already held by
-# Linear.  Unlike ADR-0012's profile, this is recovery-only -- it must never
-# authorize creating a fresh provider Document from a guessed renderer.
+# This historical slot predates witnesses. Its source is deliberately not
+# represented here: the digests qualify the exact private source and bytes already
+# held by Linear. Version 0 remains recovery-only; the separately pinned body delta
+# below is the forward rule for later version Documents.
 _FOUNDRY_ADR_0001_SOURCE_SHA256 = (
     "eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db"
 )
+_FOUNDRY_ADR_0001_ID = "FOUNDRY-ADR-0001"
 _FOUNDRY_ADR_0001_READBACK_SHA256 = (
     "9d723a7a64225d930531d968f78dba108f940eb7091d7110f8b12c037d29b193"
+)
+_FOUNDRY_ADR_0001_BODY_READBACK_SHA256 = (
+    "aa5fee81139bdc046d6056e95a3a4b5218b8f032821fa4048c8f6c02b5493bc5"
+)
+# Exact forward delta observed for the digest-pinned historical source above. The
+# replacements contain only observed Markdown serialization fragments; the private source and rendered
+# body stay outside the repository. Applying the delta to a neighbouring source is
+# impossible because the source digest is checked first, and the result digest is
+# checked before it can authorize a write.
+_FOUNDRY_ADR_0001_READBACK_EDITS = (
+    (31, 32, ""),
+    (1516, 1516, "**"),
+    (1517, 1517, "**"),
+    (1601, 1601, "**"),
+    (1602, 1602, "**"),
+    (2148, 2149, "\n*"),
+    (2445, 2446, "*"),
+    (2684, 2684, "\n"),
+    (3118, 3119, "\n*"),
+    (3126, 3126, "**"),
+    (3134, 3136, ""),
+    (3288, 3288, "**"),
+    (3291, 3291, "**"),
+    (3353, 3354, "*"),
+    (3361, 3361, "**"),
+    (3369, 3371, ""),
+    (3430, 3430, "**"),
+    (3433, 3433, "**"),
+    (3694, 3695, "\n*"),
+    (3848, 3849, "*"),
+    (4098, 4098, "**"),
+    (4101, 4101, "**"),
+    (4289, 4290, "\n*"),
+    (4388, 4389, "*"),
+    (4577, 4578, "*"),
+    (4664, 4665, "*"),
+    (4812, 4812, "\n"),
+    (5492, 5492, " "),
+    (5494, 5495, " "),
+    (5496, 5496, " "),
+    (5498, 5499, " "),
+    (5500, 5500, " "),
+    (5502, 5503, " "),
+    (5504, 5504, " "),
+    (5506, 5507, " "),
+    (5542, 5544, ""),
+    (5560, 5562, ""),
+    (5755, 5757, ""),
+    (5775, 5777, ""),
+    (6103, 6105, ""),
+    (6122, 6124, ""),
+    (7225, 7225, "["),
+    (7231, 7231, "](<http://adr.py>)"),
+    (7505, 7506, "*"),
+    (7824, 7825, "*"),
+    (7850, 7850, "**"),
+    (7863, 7865, ""),
+    (8024, 8025, "*"),
+    (8042, 8042, "**"),
+    (8068, 8070, ""),
+    (8236, 8237, "*"),
+    (8584, 8584, "**"),
+    (8585, 8585, "**"),
+    (8794, 8795, "*"),
+    (8829, 8830, "*"),
+    (8974, 8975, "*"),
+    (8976, 8978, ""),
+    (8985, 8987, ""),
+    (9146, 9147, "*"),
+    (9396, 9397, "*"),
+    (9468, 9469, ""),
 )
 
 
@@ -437,6 +509,20 @@ def _is_recovery_only_historical_source(body: str) -> bool:
     return hashlib.sha256(body.encode("utf-8")).hexdigest() == (
         _FOUNDRY_ADR_0001_SOURCE_SHA256
     )
+
+
+def _linear_foundry_adr_0001_v1_readback(body: str) -> str | None:
+    """Apply the one digest-pinned forward profile observed for ADR-0001."""
+    if not _is_recovery_only_historical_source(body):
+        return None
+    rendered = body
+    for start, end, replacement in reversed(_FOUNDRY_ADR_0001_READBACK_EDITS):
+        rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
+    if hashlib.sha256(rendered.encode("utf-8")).hexdigest() != (
+        _FOUNDRY_ADR_0001_BODY_READBACK_SHA256
+    ):
+        raise ValueError("foundry-adr-0001-v1 rendering is invalid")
+    return rendered
 
 
 def _is_qualified_historical_readback(observed: object, canonical: str) -> bool:
@@ -801,8 +887,14 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     return rendered
 
 
-def _linear_markdown_readback_body(body: str) -> str:
+def _linear_markdown_readback_body(
+    body: str, *, allow_foundry_adr_0001: bool = False
+) -> str:
     """Model only closed, observed Linear Markdown serializations."""
+    if allow_foundry_adr_0001:
+        qualified = _linear_foundry_adr_0001_v1_readback(body)
+        if qualified is not None:
+            return qualified
     qualified = _linear_foundry_adr_0012_v1_readback(body)
     if qualified is not None:
         return qualified
@@ -841,12 +933,14 @@ def _linear_markdown_readback_body(body: str) -> str:
     return "".join(rendered)
 
 
-def _preflight_adr_body_readback(body: str) -> None:
+def _preflight_adr_body_readback(
+    body: str, *, allow_foundry_adr_0001: bool = False
+) -> None:
     """Refuse a body with an unmodelled Linear rendering before any write."""
-    if _is_recovery_only_historical_source(body):
-        return
     try:
-        _linear_markdown_readback_body(body)
+        _linear_markdown_readback_body(
+            body, allow_foundry_adr_0001=allow_foundry_adr_0001
+        )
     except ValueError as exc:
         raise TrackerConflictError(
             "Linear ADR body has unsupported Markdown serialization"
@@ -866,8 +960,15 @@ def _linear_adr_readback_content(content: str) -> str:
         encoded, separator, body = payload.partition("\n-->\n\n")
         if not separator:
             raise ValueError("canonical ADR document delimiter is missing")
+        try:
+            metadata = json.loads(encoded)
+        except json.JSONDecodeError as exc:
+            raise ValueError("canonical ADR metadata is invalid") from exc
         encoded = encoded.replace("[", "\\[").replace("]", "\\]")
-        body = _linear_markdown_readback_body(body)
+        body = _linear_markdown_readback_body(
+            body,
+            allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+        )
         return f"{_ADR_HEADER}{encoded}\n\\-->\n\n{body}"
     if content.startswith(_ADR_WITNESS_HEADER) and content.endswith("\n-->"):
         suffix = "\n-->"
@@ -1265,18 +1366,36 @@ def _parse_adr_document(
 
 
 def _is_probe_qualified_historical_version(metadata: dict) -> bool:
-    """Only a batch-imported historical version 0 may carry opaque probe bytes.
+    """Only batch-qualified historical version 0 may carry probe bytes.
 
     Its readable Document was qualified before creation by a probe of its complete
     provider readback, and its witness binds those bytes plus the exact source.
     Native ADRs and every later version keep the closed serialization check.
     """
+    return metadata.get("sequence") == 0 and (
+        _is_probe_qualified_historical_chain(metadata)
+    )
+
+
+def _is_probe_qualified_historical_chain(metadata: dict) -> bool:
+    """Whether metadata belongs to a batch-qualified migration chain."""
+    origin = metadata.get("origin")
+    batch_sha256 = origin.get("batch_sha256") if isinstance(origin, dict) else None
+    return (
+        isinstance(origin, dict)
+        and origin.get("kind") == "migration"
+        and isinstance(batch_sha256, str)
+        and _DIGEST.fullmatch(batch_sha256) is not None
+    )
+
+
+def _is_foundry_adr_0001_profile_chain(metadata: dict) -> bool:
+    """Whether metadata may use the one private-source forward profile."""
     origin = metadata.get("origin")
     return (
-        metadata.get("sequence") == 0
-        and isinstance(origin, dict)
-        and origin.get("kind") == "migration"
-        and isinstance(origin.get("batch_sha256"), str)
+        _is_probe_qualified_historical_chain(metadata)
+        and metadata.get("id") == _FOUNDRY_ADR_0001_ID
+        and origin.get("source_body_sha256") == _FOUNDRY_ADR_0001_SOURCE_SHA256
     )
 
 
@@ -3443,7 +3562,10 @@ class LinearTracker(Tracker):
         *, readback_content: str | None = None,
         witness_readback: str | None = None,
     ) -> dict:
-        _preflight_adr_body_readback(body)
+        _preflight_adr_body_readback(
+            body,
+            allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+        )
         doc_id = _adr_document_id(
             binding["project_id"], metadata["id"], metadata["sequence"]
         )
@@ -3474,7 +3596,11 @@ class LinearTracker(Tracker):
         # slot before the create path so an absent slot fails before any mutation;
         # a present exact slot may still receive its missing witness below.
         existing = None
-        if _is_recovery_only_historical_source(body):
+        recovery_only = (
+            metadata["sequence"] == 0
+            and _is_recovery_only_historical_source(body)
+        )
+        if recovery_only:
             existing = self._read_adr_document(doc_id)
             if existing is None:
                 raise TrackerConflictError(
@@ -3754,6 +3880,7 @@ class LinearTracker(Tracker):
             raw,
             {"project_id": old["project_id"], "team_id": old["team_id"]},
             source_body=raw.get(_ADR_BOUND_SOURCE_BODY),
+            allow_witness_bound_readback=_is_probe_qualified_historical_version(old),
         )
         new_body = old_body if body is None else body
         metadata = dict(old)
@@ -3837,8 +3964,13 @@ class LinearTracker(Tracker):
         )
 
     def _append_adr_versions(self, project, changes):
-        for _previous, _metadata, body in changes:
-            _preflight_adr_body_readback(body)
+        for _previous, metadata, body in changes:
+            _preflight_adr_body_readback(
+                body,
+                allow_foundry_adr_0001=(
+                    _is_foundry_adr_0001_profile_chain(metadata)
+                ),
+            )
         binding, chains = self._adr_snapshot(project)
         for previous, metadata, _body in changes:
             if (
@@ -3998,7 +4130,10 @@ class LinearTracker(Tracker):
         metadata, body = self._next_adr_metadata(
             versions[-1], issue_id=issue_id
         )
-        _preflight_adr_body_readback(body)
+        _preflight_adr_body_readback(
+            body,
+            allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+        )
         # The comment is a deterministic reciprocal slot. If a process stops after
         # this write but before the version append, the exact call can reuse it.
         self._create_adr_issue_link(binding, adr.id, issue_id, native_id)
@@ -4126,7 +4261,9 @@ class LinearTracker(Tracker):
                 raise ValueError("Linear ADR batch record invalid")
             # Unsupported source Markdown is refused before any probe read or
             # write, exactly as for a native ADR.
-            _preflight_adr_body_readback(body)
+            _preflight_adr_body_readback(
+                body, allow_foundry_adr_0001=adr_id == _FOUNDRY_ADR_0001_ID
+            )
             seen_ids.add(adr_id)
             canonical_refs, native_ids = self._canonicalize_adr_issue_refs(
                 issue_refs, binding
@@ -4786,11 +4923,24 @@ class LinearTracker(Tracker):
                     (related_metadata, related_candidate)
                 )
             self._validate_adr_graph(hypothetical, binding)
-        _preflight_adr_body_readback(body)
+        _preflight_adr_body_readback(
+            body,
+            allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+        )
         if interrupted_pair is not None:
-            _preflight_adr_body_readback(interrupted_pair[1])
-        for _previous, _metadata, related_body in changes:
-            _preflight_adr_body_readback(related_body)
+            _preflight_adr_body_readback(
+                interrupted_pair[1],
+                allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(
+                    interrupted_pair[0]
+                ),
+            )
+        for _previous, related_metadata, related_body in changes:
+            _preflight_adr_body_readback(
+                related_body,
+                allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(
+                    related_metadata
+                ),
+            )
         for issue_id in canonical_issue_refs:
             self._create_adr_issue_link(
                 binding, adr_id, issue_id, issue_native_ids[issue_id]
@@ -5030,9 +5180,19 @@ class LinearTracker(Tracker):
         hypothetical = _adr_chain(hypothetical_documents, binding)
         self._validate_adr_graph(hypothetical, binding)
 
-        _preflight_adr_body_readback(source_body)
+        _preflight_adr_body_readback(
+            source_body,
+            allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(
+                source_metadata
+            ),
+        )
         if dangling_side == "replacement":
-            _preflight_adr_body_readback(replacement_body)
+            _preflight_adr_body_readback(
+                replacement_body,
+                allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(
+                    replacement_metadata
+                ),
+            )
             self._create_adr_document(
                 binding, replacement_metadata, replacement_body
             )
