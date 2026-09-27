@@ -39,6 +39,8 @@ jobs:
         run: ruff check tooling tests hooks
       - name: Validate model-routing invocation contract
         run: pytest -q tests/test_routing_contract.py
+      - name: Run tracker conformance suite
+        run: pytest -q -m tracker_conformance tests
       - name: Run public pure-logic tests
         # Only tests marked historical_fixture require evidence deliberately omitted
         # from the public successor snapshot. Active tests in those modules still run.
