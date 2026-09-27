@@ -700,7 +700,10 @@ La reprise d'un changement de mappings séparément revu passe par `registry upd
 commande exige le binding de remplacement complet et le `configuration_digest` attendu
 du marqueur. Sous le verrou du registre, elle compare le marqueur, l'ancien digest et le
 candidat, refuse un gagnant concurrent, puis publie l'entrée et le marqueur cohérents.
-Le replay exact termine une interruption entre les deux publications. Relancez
+Après ce compare local exact, la CLI relit uniquement l’identité du projet via le port
+provider de lecture, sans passer par la factory normale qui refuse un marqueur divergent.
+Le replay exact termine ainsi une interruption entre les deux publications; les commandes
+normales restent fermées sur cette divergence. Relancez
 `foundry:doctor` depuis le checkout; il doit relire le marqueur et le binding attendu
 avant toute commande de cycle de vie. Une archive reste un tombstone et ne peut jamais
 être réactivée par cette commande.

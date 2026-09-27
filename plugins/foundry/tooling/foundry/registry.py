@@ -1123,6 +1123,7 @@ def update_repository_binding(
     *,
     expected_configuration_digest: str,
     cwd: str | None = None,
+    verify_provider: bool = False,
     **extra: object,
 ) -> RepositoryTrackerBinding:
     """Replace one complete V1 binding and its marker with exact local compare inputs.
@@ -1172,6 +1173,14 @@ def update_repository_binding(
         candidate_digest = _json_digest(candidate)
         if current_digest not in {marker["registry_binding_digest"], candidate_digest}:
             raise ValueError("reprise tracker refusée : binding modifié concurremment")
+        if verify_provider:
+            # Exact local recovery inputs have now been validated under the lock.
+            # Only the read-only identity port may bypass the divergent marker;
+            # normal workflow adapters continue to reject it.
+            verify_existing_project(
+                tracker, repo, key, project_id, cwd=str(root),
+                _recovery_probe=True, **extra,
+            )
         activation = marker["activation"]
         payload = _v2_marker_payload(
             tracker,
@@ -1206,6 +1215,7 @@ def verify_existing_project(
     project_id: str,
     *,
     cwd: str | None = None,
+    _recovery_probe: bool = False,
     **extra: object,
 ) -> Project:
     """Read back exact provider coordinates before any local binding publication."""
@@ -1222,7 +1232,20 @@ def verify_existing_project(
         key=entry["key"], id=entry["id"],
         extra={name: value for name, value in entry.items() if name not in {"key", "id"}},
     )
-    adapter = foundry.tracker(tracker, cwd=str(root))
+    if _recovery_probe:
+        # This private port is reached only after update's exact local preflight.
+        # It has no provisioning or workflow invocation path.
+        from foundry.trackers.youtrack import YouTrackTracker
+        from foundry.trackers.linear import LinearTracker
+        from foundry.trackers.ghprojects import GitHubProjectsTracker
+
+        adapter = {
+            "youtrack": YouTrackTracker,
+            "linear": LinearTracker,
+            "ghprojects": GitHubProjectsTracker,
+        }[tracker]()
+    else:
+        adapter = foundry.tracker(tracker, cwd=str(root))
     try:
         verified = adapter.verify_project_identity(project)
     except Exception:
@@ -1429,7 +1452,10 @@ def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
     )
 
 
-def register(tracker: str, repo: str, key: str, project_id: str, **extra) -> None:
+def register(
+    tracker: str, repo: str, key: str, project_id: str, *,
+    require_absent: bool = False, **extra,
+) -> None:
     extra = dict(extra)
     if "archive" in extra:
         raise ValueError(
@@ -1447,6 +1473,8 @@ def register(tracker: str, repo: str, key: str, project_id: str, **extra) -> Non
     with _cutover_lock():
         data = load()
         current = data.get(tracker, {}).get(repo)
+        if require_absent and repo in data.get(tracker, {}):
+            raise ValueError(f"binding {tracker}/{repo} déjà occupé")
         if isinstance(current, dict) and current.get("archive") is True:
             raise ValueError(
                 f"binding archive '{tracker}/{repo}' immuable : restaurez "
@@ -1662,16 +1690,14 @@ def main(argv=None) -> None:
         _, tracker, repo, key, pid, expected, *rest = args
         extra = _parse_extra_arguments(rest, usage, tracker=tracker)
         try:
-            project = verify_existing_project(
-                tracker, repo, key, pid, **extra,
-            )
             binding = update_repository_binding(
                 tracker,
                 repo,
-                project.key,
-                project.id,
+                key,
+                pid,
                 expected_configuration_digest=expected,
-                **project.extra,
+                verify_provider=True,
+                **extra,
             )
         except ValueError as exc:
             raise SystemExit(str(exc)) from None

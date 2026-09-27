@@ -107,7 +107,15 @@ def setup(name, short, repo, adr_dir=None):
 
     # Setup is the one boundary that intentionally selects the configured provider:
     # a fresh repository has no binding yet, while normal factory calls stay closed.
-    tracker = foundry.tracker(foundry.config.tracker_name())
+    provider = foundry.config.tracker_name()
+    # The administrative setup publishes a legacy basename entry. It must never
+    # replace a foreign canonical slot that the unbound preflight correctly ignored.
+    if repo in registry.load().get(provider, {}):
+        raise SystemExit(
+            f"Setup tracker refusé : clé '{provider}/{repo}' déjà occupée. "
+            "Utilisez registry bootstrap pour lier un projet existant."
+        )
+    tracker = foundry.tracker(provider)
     if not tracker.project_provisioning_supported:
         raise SystemExit(
             f"Le tracker '{tracker.name}' ne prend pas en charge le provisionnement "
@@ -131,7 +139,10 @@ def setup(name, short, repo, adr_dir=None):
         raise RuntimeError(
             f"le tracker {tracker.name} a retourné le projet {project.key}, attendu {short}"
         )
-    registry.register(tracker.name, repo, project.key, project.id, **project.extra)
+    registry.register(
+        tracker.name, repo, project.key, project.id,
+        require_absent=True, **project.extra,
+    )
     print(f"📇 enregistré : {repo} → {project.key} ({project.id}) [{tracker.name}]")
     if adr_dir:
         import_adrs(tracker, project, adr_dir)

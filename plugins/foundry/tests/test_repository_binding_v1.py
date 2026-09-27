@@ -661,3 +661,45 @@ def test_ghprojects_transport_exception_is_unavailable_before_publication(
         )
     assert registry.load().get("ghprojects", {}) == {}
     assert not (repo / ".foundry/tracker.json").exists()
+
+
+def test_public_update_cli_replays_interrupted_marker_after_exact_preflight(
+    isolated, monkeypatch,
+):
+    repo = _repo(isolated, "acme", "app")
+    initial = registry.bootstrap_repository_binding(
+        "youtrack", "app", "APP", "0-1", cwd=str(repo), ms_bundle="old",
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("YOUTRACK_URL", "https://youtrack.example.invalid")
+    monkeypatch.setenv("YOUTRACK_TOKEN", "synthetic-token-never-sent")
+    calls = []
+    monkeypatch.setattr(
+        YouTrackTracker, "verify_project_identity",
+        lambda self, project: calls.append(project) or True,
+    )
+    real_replace = registry.os.replace
+    interrupted = False
+
+    def replace(source, destination):
+        nonlocal interrupted
+        if str(destination).endswith(".foundry/tracker.json") and not interrupted:
+            interrupted = True
+            raise OSError("marker interrupted")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(registry.os, "replace", replace)
+    command = [
+        "update", "youtrack", "app", "APP", "0-1",
+        initial.configuration_digest, "ms_bundle=new",
+    ]
+    with pytest.raises(OSError, match="marker interrupted"):
+        registry.main(command)
+    with pytest.raises(SystemExit, match="modifié depuis le cutover"):
+        foundry.tracker()
+    with pytest.raises(SystemExit, match="modifié concurremment"):
+        registry.main([*command[:-1], "ms_bundle=foreign"])
+    assert len(calls) == 1  # Divergent recovery refuses before provider readback.
+    registry.main(command)
+    assert len(calls) == 2
+    assert registry.repository_tracker_binding().project.extra["ms_bundle"] == "new"

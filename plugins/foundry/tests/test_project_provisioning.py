@@ -325,3 +325,54 @@ def test_setup_refuses_existing_binding_before_provider_selection_or_registry_wr
 
     assert provider_calls == []
     assert registry_writes == []
+
+
+def test_setup_refuses_foreign_homonym_slot_before_provider_construction(
+    monkeypatch, tmp_path,
+):
+    first = _repo(tmp_path, "first", "same")
+    second = _repo(tmp_path, "second", "same")
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setenv("FOUNDRY_TRACKER", "youtrack")
+    initial = registry.bootstrap_repository_binding(
+        "youtrack", "same", "ONE", "0-1", cwd=str(first),
+    )
+    before = registry.load()
+    marker = (first / ".foundry/tracker.json").read_bytes()
+    monkeypatch.chdir(second)
+    monkeypatch.setattr(
+        foundry, "tracker",
+        lambda *_args, **_kwargs: pytest.fail("provider must not be constructed"),
+    )
+    with pytest.raises(SystemExit, match="déjà occupée"):
+        setup_project.setup("Second", "TWO", "same")
+    assert registry.load() == before
+    assert (first / ".foundry/tracker.json").read_bytes() == marker
+    assert registry.repository_tracker_binding(str(first)) == initial
+    assert not (second / ".foundry/tracker.json").exists()
+
+
+def test_setup_publication_refuses_a_slot_created_during_provisioning(
+    monkeypatch, tmp_path,
+):
+    repo = _repo(tmp_path, "second", "same")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setenv("FOUNDRY_TRACKER", "youtrack")
+
+    class Provider:
+        name = "youtrack"
+        project_provisioning_supported = True
+        project_provisioning_requires_repository = False
+
+        def provision_project(self, *_args):
+            registry.register(
+                "youtrack", "same", "FIRST", "0-1",
+                canonical_repo="github.com/first/same",
+            )
+            return Project(key="SECOND", id="0-2")
+
+    monkeypatch.setattr(foundry, "tracker", lambda *_args, **_kwargs: Provider())
+    with pytest.raises(ValueError, match="déjà occupé"):
+        setup_project.setup("Second", "SECOND", "same")
+    assert registry.load()["youtrack"]["same"]["id"] == "0-1"
