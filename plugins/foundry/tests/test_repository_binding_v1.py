@@ -587,14 +587,13 @@ def test_ghprojects_identity_probe_is_read_only_and_exact():
             command, 0,
             stdout=json.dumps({
                 "data": {
-                    "organization": {"projectV2": {
-                        "id": "PVT_1", "number": 7,
-                        "repositories": {
-                            "nodes": [{"nameWithOwner": "Acme/App"}],
-                            "pageInfo": {"hasNextPage": False, "endCursor": None},
-                        },
+                    "user": {"projectV2": {
+                        "id": "PVT_1", "number": 7, "public": False,
+                        "repositories": {"nodes": [{
+                            "id": "R_repo", "nameWithOwner": "Acme/App", "isPrivate": True,
+                            "owner": {"__typename": "User", "login": "acme"},
+                        }], "pageInfo": {"hasNextPage": False, "endCursor": None}},
                     }},
-                    "user": None,
                 }
             }),
             stderr="",
@@ -622,18 +621,19 @@ def test_ghprojects_identity_probe_paginates_repository_membership():
             command, 0,
             stdout=json.dumps({
                 "data": {
-                    "organization": {"projectV2": {
-                        "id": "PVT_1", "number": 7,
+                    "user": {"projectV2": {
+                        "id": "PVT_1", "number": 7, "public": False,
                         "repositories": {
-                            "nodes": [{"nameWithOwner": "Acme/Other"}]
-                            if first_page else [{"nameWithOwner": "Acme/App"}],
-                            "pageInfo": {
-                                "hasNextPage": first_page,
-                                "endCursor": "cursor-1" if first_page else None,
-                            },
+                            "nodes": [{
+                                "id": "R_other", "nameWithOwner": "Acme/Other", "isPrivate": True,
+                                "owner": {"__typename": "User", "login": "acme"},
+                            }] if first_page else [{
+                                "id": "R_repo", "nameWithOwner": "Acme/App", "isPrivate": True,
+                                "owner": {"__typename": "User", "login": "acme"},
+                            }],
+                            "pageInfo": {"hasNextPage": first_page, "endCursor": "cursor-1" if first_page else None},
                         },
                     }},
-                    "user": None,
                 }
             }),
             stderr="",
@@ -648,6 +648,29 @@ def test_ghprojects_identity_probe_paginates_repository_membership():
     assert tracker.verify_project_identity(project) is True
     assert len(calls) == 2
     assert calls[1][0][-2:] == ["-f", "cursor=cursor-1"]
+
+
+def test_ghprojects_identity_probe_refuses_public_repository():
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 0,
+            stdout=json.dumps({"data": {"user": {"projectV2": {
+                "id": "PVT_1", "number": 7, "public": False,
+                "repositories": {"nodes": [{
+                    "id": "R_repo", "nameWithOwner": "Acme/App", "isPrivate": False,
+                    "owner": {"__typename": "User", "login": "acme"},
+                }], "pageInfo": {"hasNextPage": False, "endCursor": None}},
+            }}}}),
+            stderr="",
+        )
+
+    tracker = GitHubProjectsTracker(runner=runner)
+    project = Project(
+        key="APP", id="PVT_1",
+        extra={"canonical_repo": "github.com/acme/app", "owner": "acme", "number": "7"},
+    )
+
+    assert tracker.verify_project_identity(project) is False
 
 
 def test_ghprojects_identity_probe_rejects_graphql_partial_errors():
