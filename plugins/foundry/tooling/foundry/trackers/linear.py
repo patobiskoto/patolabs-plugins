@@ -1598,17 +1598,9 @@ class LinearTracker(Tracker):
         *,
         checkout_identity: str | None = None,
     ) -> Project:
-        try:
-            observed = (
-                registry.checkout_repository_identity(cwd)
-                if checkout_identity is None
-                else registry.canonical_repository_identity(checkout_identity)
-            )
-        except ValueError:
-            raise SystemExit(
-                "Binding Linear refusé : identité canonique du checkout invalide ou absente."
-            ) from None
-        project = registry.resolve_canonical_repository(self.name, observed)
+        project = super().resolve_checkout_project(
+            cwd, checkout_identity=checkout_identity,
+        )
         self._activate(project)
         return project
 

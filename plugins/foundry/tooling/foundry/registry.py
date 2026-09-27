@@ -918,6 +918,13 @@ def _validated_binding_entry(
     candidate["canonical_repo"] = canonical_repo
     if tracker == "linear":
         project_id, candidate = _validate_linear_binding(repo, project_id, candidate)
+    elif tracker == "youtrack":
+        if set(candidate) - {"canonical_repo", "ms_bundle"}:
+            raise ValueError("binding YouTrack V1 invalide : extra non autorisé")
+        if "ms_bundle" in candidate and (
+            not isinstance(candidate["ms_bundle"], str) or not candidate["ms_bundle"]
+        ):
+            raise ValueError("binding YouTrack V1 invalide : ms_bundle invalide")
     elif tracker == "ghprojects":
         allowed = {"canonical_repo", "owner", "number"}
         if set(candidate) != allowed:

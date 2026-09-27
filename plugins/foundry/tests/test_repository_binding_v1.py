@@ -1,5 +1,6 @@
 import json
 import subprocess
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ import foundry
 from foundry import doctor, registry
 from foundry.models import Project
 from foundry.trackers.ghprojects import GitHubProjectsTracker
+from foundry.trackers.linear import LinearTracker
 from foundry.trackers.youtrack import YouTrackTracker
 
 
@@ -512,17 +514,31 @@ def test_mapping_update_replay_refuses_invalid_marker_before_any_write(
     assert marker_path.read_bytes() == marker_before
 
 
-@pytest.mark.parametrize("adapter", [YouTrackTracker, GitHubProjectsTracker])
+def _adapter_binding(adapter):
+    if adapter is YouTrackTracker:
+        return "youtrack", "0-1", {}
+    if adapter is GitHubProjectsTracker:
+        return "ghprojects", "PVT_project_node", {"owner": "acme", "number": "7"}
+    return "linear", str(uuid.uuid4()), {
+        "team_id": str(uuid.uuid4()),
+        "state_ids": {key: str(uuid.uuid4()) for key in registry._LINEAR_STATE_KEYS},
+        "type_label_ids": {key: str(uuid.uuid4()) for key in registry._LINEAR_TYPE_KEYS},
+    }
+
+
+@pytest.mark.parametrize("adapter", [YouTrackTracker, GitHubProjectsTracker, LinearTracker])
 def test_adapters_use_the_same_checkout_binding_resolution(isolated, adapter):
     repo = _repo(isolated, "acme", "app")
-    extra = {} if adapter is YouTrackTracker else {"owner": "acme", "number": "7"}
-    project_id = "0-1" if adapter is YouTrackTracker else "PVT_project_node"
+    name, project_id, extra = _adapter_binding(adapter)
     expected = registry.bootstrap_repository_binding(
-        "youtrack" if adapter is YouTrackTracker else "ghprojects",
-        "app", "APP", project_id, cwd=str(repo), **extra,
+        name, "app", "APP", project_id, cwd=str(repo), **extra,
     ).project
-    instance = object.__new__(adapter) if adapter is YouTrackTracker else adapter()
-
+    if adapter is YouTrackTracker:
+        instance = object.__new__(adapter)
+    elif adapter is LinearTracker:
+        instance = adapter(token="synthetic-token-never-sent")
+    else:
+        instance = adapter()
     assert instance.resolve_checkout_project(str(repo)) == expected
 
 
@@ -770,4 +786,57 @@ def test_bootstrap_replay_refuses_competing_legacy_provider_before_marker(
             "youtrack", "app", "APP", "0-1", cwd=str(repo),
         )
     assert registry.load() == before
+    assert not (repo / ".foundry/tracker.json").exists()
+
+
+@pytest.mark.parametrize("adapter", [YouTrackTracker, GitHubProjectsTracker, LinearTracker])
+def test_existing_adapter_revalidates_marker_before_consuming_interrupted_update(
+    isolated, monkeypatch, adapter,
+):
+    repo = _repo(isolated, "acme", "app")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("YOUTRACK_URL", "https://youtrack.example.invalid")
+    monkeypatch.setenv("YOUTRACK_TOKEN", "synthetic-token-never-sent")
+    monkeypatch.setenv("LINEAR_API_TOKEN", "synthetic-token-never-sent")
+    name, project_id, extra = _adapter_binding(adapter)
+    initial = registry.bootstrap_repository_binding(
+        name, "app", "APP", project_id, **extra,
+    )
+    instance = foundry.tracker()
+    assert instance.resolve_checkout_project() == initial.project
+    monkeypatch.setattr(
+        registry, "_publish_marker",
+        lambda *_args: (_ for _ in ()).throw(OSError("marker interrupted")),
+    )
+    changed = dict(extra)
+    if adapter is YouTrackTracker:
+        changed["ms_bundle"] = "new-bundle"
+    elif adapter is GitHubProjectsTracker:
+        changed["number"] = "8"
+    else:
+        changed["milestone_ids"] = {"M1": str(uuid.uuid4())}
+    with pytest.raises(OSError, match="marker interrupted"):
+        registry.update_repository_binding(
+            name, "app", "APP", project_id,
+            expected_configuration_digest=initial.configuration_digest, **changed,
+        )
+    with pytest.raises(ValueError, match="modifié depuis le cutover"):
+        instance.resolve_checkout_project()
+    if adapter is LinearTracker:
+        assert instance._active_project == initial.project
+
+
+@pytest.mark.parametrize("key", ["token", "api_token", "password", "unknown"])
+def test_youtrack_v1_refuses_undeclared_extras_before_provider_or_publication(
+    isolated, monkeypatch, key,
+):
+    repo = _repo(isolated, "acme", "app")
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(
+        foundry, "tracker",
+        lambda *_args, **_kwargs: pytest.fail("invalid extras refuse before provider"),
+    )
+    with pytest.raises(SystemExit, match="extra non autorisé"):
+        registry.main(["bootstrap", "youtrack", "app", "APP", "0-1", f"{key}=synthetic"])
+    assert registry.load() == {}
     assert not (repo / ".foundry/tracker.json").exists()
