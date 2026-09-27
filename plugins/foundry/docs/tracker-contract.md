@@ -62,13 +62,13 @@ cell.
 **Remaining gaps found in the current adapters:**
 - **PAT-55** — Grooming an existing issue. After proving that their target projects are
   writable, YouTrack `update_fields` and `link` remain unconditional state-changing
-  POSTs (`youtrack.py:418-440`, level −1). Linear refuses: `update_fields`
+  POSTs (`youtrack.py:461-488`, level −1). Linear refuses: `update_fields`
   (`linear.py:2785-2800`), `update_body` for an issue (`linear.py:3186-3198`), `link`
   with `subtask-of`/`parent-of` (`linear.py:3100-3104`), and `set_state` for any state
   other than `in-progress`/`review`/`done` (`linear.py:2811-2814`), all under the module
   invariant `linear.py:8-11`.
 - **PAT-56** — States and AC. YouTrack `set_state` is `update_fields` under another name
-  (`youtrack.py:427-430`): blind and not replay-safe. Linear `sync_acceptance_body`
+  (`youtrack.py:475-478`): blind and not replay-safe. Linear `sync_acceptance_body`
   refuses unconditionally (`linear.py:3200-3212`); Linear already projects AC
   completeness through a proof-bound append-only marker (`project_acceptance_proof`,
   `linear.py:2840-2892`; `Issue.ac_done` derives from it, `linear.py:2541-2547`).
@@ -96,13 +96,17 @@ reads `project(id,shortName)` from the provider before its first effect and refu
 either exact native id or exact project key matches an archived YouTrack binding
 (`youtrack.py:308-373`). Explicit issue/ADR creation checks the supplied native project
 before milestone setup or creation; child creation also proves its existing parent first
-(`youtrack.py:400-416`, `618-628`). Field/state writes, both sides of a link, comments,
+(`youtrack.py:443-459`, `666-676`). Field/state writes, both sides of a link, comments,
 body writes and ADR status changes all pass through that preflight
-(`youtrack.py:418-446`, `469-545`, `630-639`). Matching is exact, never prefix-based;
+(`youtrack.py:461-494`, `517-593`, `678-687`). Matching is exact, never prefix-based;
 active cross-project links and parents keep each native coordinate independent, and an
 unregistered checkout can still write to an active project. This provider-bound guard
 complements the checkout-bound legacy check (`youtrack.py:263-283`); it does not claim a
-shared `validate_mutation_project` override or change the no-CAS guarantees in §4.
+shared `validate_mutation_project` override or change the no-CAS guarantees in §4. A
+Milestone field update preserves `ms_bundle` only from an explicit or historical
+project whose exact native key and id corroborate that preflight target. A foreign
+mapping is not consumed, and contradictory matching mappings refuse before either POST
+(`youtrack.py:396-473`).
 
 **Explicit refusals (non-core):** free native-text `search(query=…)` on Linear
 (`linear.py:2582-2585`, `provider-native-search-query`); full administrative
@@ -225,19 +229,19 @@ never **excludes** them, and no text in Foundry may say otherwise.
 ### 4.1 Levels implemented today
 
 - **Level −1 — blind write.** After their archived-target preflight, YouTrack
-  `update_fields`, `set_state` and `link` (`youtrack.py:418-440`) issue POSTs with no
+  `update_fields`, `set_state` and `link` (`youtrack.py:461-488`) issue POSTs with no
   expected-value check, lock or compared readback. A concurrent state change is silently
-  overwritten. `add_comment` (`youtrack.py:442-446`) is a non-idempotent POST: a replay
+  overwritten. `add_comment` (`youtrack.py:490-494`) is a non-idempotent POST: a replay
   creates a second comment.
 - **Level 0 — refused.** Linear existing-issue replacement (`update_fields`, `update_body`
   for an issue, `sync_acceptance_body`, reparenting `link`, `set_state` outside
   `in-progress`/`review`/`done`; §1 PAT-55/PAT-56).
 - **Level 1 — one read-verify-write-readback, no retry.** YouTrack `update_body`
-  (`youtrack.py:469-527`): a local `flock` (`_body_lock`, `youtrack.py:449-467`)
+  (`youtrack.py:517-575`): a local `flock` (`_body_lock`, `youtrack.py:496-515`)
   serializes Foundry's own processes, then one read refuses a divergence from
   `expected_body`, one write, one readback. A non-Foundry writer landing between the read
-  and the write still wins (`youtrack.py:109-111`, `475-479`). `sync_acceptance_body`
-  (`youtrack.py:529-545`) and `set_adr_status` (`youtrack.py:630-639`) use this path.
+  and the write still wins (`youtrack.py:109-111`, `523-527`). `sync_acceptance_body`
+  (`youtrack.py:577-593`) and `set_adr_status` (`youtrack.py:678-687`) use this path.
 - **Level 2 — append-only versions at deterministic ids.** Foundry never overwrites a Linear ADR
   Document (a human edit in Linear is detected by the witness, not prevented): each version is created at `_adr_document_id(project_id, adr_id,
   sequence)` (`linear.py:345-346`) by `_create_exact_adr_document`

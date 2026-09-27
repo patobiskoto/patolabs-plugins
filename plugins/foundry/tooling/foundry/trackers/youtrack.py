@@ -393,6 +393,49 @@ class YouTrackTracker(Tracker):
             if "unique" not in str(e):
                 raise
 
+    @staticmethod
+    def _same_native_project(left: Project, right: Project) -> bool:
+        return left.key == right.key and left.id == right.id
+
+    def _milestone_target_project(
+        self, target: Project, explicit: Project | None,
+    ) -> Project:
+        """Restore a corroborated Milestone bundle after native target proof.
+
+        ``_issue_target_project`` deliberately trusts only YouTrack's resource
+        coordinates.  Those coordinates carry no registry metadata, so retain the
+        bundle only from an explicit or historical project that names that exact
+        native target.  A foreign checkout must not lend its bundle to the issue.
+        """
+        candidates: list[tuple[str, Project]] = []
+        if explicit is not None and self._same_native_project(explicit, target):
+            candidates.append(("explicite", explicit))
+
+        try:
+            historical = registry.resolve("youtrack", registry.repo_basename())
+        except registry.ProjectNotRegisteredError:
+            historical = None
+        if historical is not None and self._same_native_project(historical, target):
+            candidates.append(("historique", historical))
+
+        bundles = {
+            candidate.extra.get("ms_bundle")
+            for _source, candidate in candidates
+            if candidate.extra.get("ms_bundle")
+        }
+        if len(bundles) > 1:
+            sources = ", ".join(source for source, _candidate in candidates)
+            raise SystemExit(
+                "Mutation YouTrack refusée : mappings Milestone contradictoires "
+                f"pour le projet natif '{target.key}' ({sources})."
+            )
+        bundle = next(iter(bundles), None)
+        return Project(
+            key=target.key,
+            id=target.id,
+            extra={"ms_bundle": bundle} if bundle else {},
+        )
+
     def _prewrite(self, fields, project: Project | None = None):
         if fields and fields.get("Milestone"):
             self._ensure_milestone(fields["Milestone"], project)
@@ -419,7 +462,12 @@ class YouTrackTracker(Tracker):
         self, issue_id: str, fields: dict, project: Project | None = None,
     ) -> Issue:
         target = self._issue_target_project(issue_id)
-        self._prewrite(fields, target)
+        milestone_target = (
+            self._milestone_target_project(target, project)
+            if fields.get("Milestone")
+            else target
+        )
+        self._prewrite(fields, milestone_target)
         cfs = [self._cf_write(k, v) for k, v in fields.items() if v is not None]
         self._req("POST", f"/issues/{issue_id}", {"customFields": cfs}, "idReadable")
         return self.get_issue(issue_id)

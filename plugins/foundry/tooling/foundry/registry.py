@@ -1407,7 +1407,7 @@ def resolve(tracker: str, repo: str, cwd: str | None = None) -> Project:
     data = all_data.get(tracker, {})
     if repo not in data:
         known = ", ".join(data) or "(aucun)"
-        raise SystemExit(
+        raise ProjectNotRegisteredError(
             f"Repo '{repo}' non enregistré pour le tracker '{tracker}'. "
             f"Connus : {known}. Enregistre-le : "
             f"python3 <plugin-root>/tooling/foundry_cli.py registry register "
@@ -1786,6 +1786,10 @@ def main(argv=None) -> None:
         }, indent=2, sort_keys=True))
         return
     raise SystemExit(usage)
+
+
+class ProjectNotRegisteredError(SystemExit):
+    """The requested legacy project alias has no registry entry."""
 
 
 if __name__ == "__main__":
