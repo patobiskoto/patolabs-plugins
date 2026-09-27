@@ -158,7 +158,9 @@ from `base.py` unchanged: optional ports raise their typed unavailability error
 `validate_*` checks and `preflight_issue_operation` are no-ops. The cells therefore do
 not become `supported` from provider probes alone: each cell's `ticket` names the tranche
 that must deliver and qualify the adapter operation (PAT-57, 58, 59, 64, 66, 67, 69),
-while PAT-65-owned optional cells still have no delivered adapter contract.
+including PAT-57 for native search and the Epic subgraph projection, PAT-58 for ADR
+supersession and issue links, and PAT-67 for the acceptance-override receipt. PAT-65
+owns no remaining adapter-delivery cell.
 
 ## 2. Identity model
 

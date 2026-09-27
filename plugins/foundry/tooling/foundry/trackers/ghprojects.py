@@ -24,7 +24,9 @@ def _todo(method: str):
     raise NotImplementedError(
         f"ghprojects.{method} n'est pas implémenté (adaptateur stub). "
         f"Le seam Tracker est prouvé par ce fichier : implémente les méthodes "
-        f"contre l'API GitHub Projects v2 (GraphQL) pour l'activer. "
+        f"contre l'API qualifiée par opération : Issues REST pour issues, "
+        f"commentaires, labels et relations ; Projects REST en lecture ou "
+        f"GraphQL selon la capacité Projects qualifiée, avant activation. "
         f"Aucune autre partie du pipeline ne change.")
 
 

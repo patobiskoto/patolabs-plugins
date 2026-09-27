@@ -132,7 +132,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "evidence": "search() raises NotImplementedError; PAT-65 qualified reserved-label exclusion in one private personal project's persisted GraphQL board view, not general native free-text search",
-          "ticket": "PAT-65"
+          "ticket": "PAT-57"
         }
       },
       "note": "Criterion 4 excludes free native search from V1 core."
@@ -295,7 +295,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "evidence": "no override; the base default applies. PAT-65 qualified individual parent/sub-issue and dependency relations, not this aggregate projection",
-          "ticket": "PAT-65"
+          "ticket": "PAT-57"
         }
       },
       "note": "Optional read-only projection; only DevHub implements it, for its own wave preview. The core journey is served by search(), link() and create_issue(parent=...)."
@@ -412,7 +412,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "evidence": "not overridden; the base default applies",
-          "ticket": "PAT-65"
+          "ticket": "PAT-58"
         }
       },
       "note": "ADR evolution in criterion 1 is served by set_adr_status on every V1 provider; these methods are an optional reciprocal-linking enhancement."
@@ -484,7 +484,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "evidence": "not overridden; the base default applies",
-          "ticket": "PAT-65"
+          "ticket": "PAT-67"
         }
       }
     },
