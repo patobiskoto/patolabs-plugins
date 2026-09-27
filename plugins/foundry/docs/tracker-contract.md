@@ -305,7 +305,14 @@ never **excludes** them, and no text in Foundry may say otherwise.
   marker. A different writer appending between Foundry's read and append is detected by
   the readback (`linear.py`), not excluded.
 
-  Query observations expose `normalized_state`, `native_state`, and
+  A weaker lifecycle replay requires an exact historical receipt, including all
+  PR coordinates for review; it cannot authenticate a new PR or generation by
+  returning early. Opening a PR requires an active `in-progress` or `review`
+  issue before any push or code-host operation. Bounded lifecycle merge paths
+  authenticate the issue-linked PR number and URL before tracker effects.
+
+  Query observations, including next-issue and roadmap profiles, expose
+  `normalized_state`, `native_state`, and
   `projection_status`. A valid receipt with a divergent native State remains
   readable as `disagreement`; an invalid or incomplete receipt chain is `unknown`
   and has no normalized state, including when the native State says `done`.

@@ -3371,13 +3371,6 @@ class LinearTracker(Tracker):
             issue_id, raw, pending_operation="state-" + state,
         )
         ranks = {"in-progress": 1, "review": 2, "done": 3}
-        if (
-            projection["state"] in ranks
-            and ranks[projection["state"]] > ranks[state]
-        ):
-            # A historical receipt is not authority to repair its old native
-            # target after a stronger lifecycle state is already durable.
-            return
         # Recovery also handles the inverse interruption order used by historic
         # lifecycle writers: an exact, integrity-checked Foundry receipt exists
         # but its matching native State projection did not.  The receipt remains
@@ -3394,6 +3387,20 @@ class LinearTracker(Tracker):
             receipt = decoded[1]
             if all(receipt.get(key) == value for key, value in payload.items()):
                 exact_receipts.append(receipt)
+        if len(exact_receipts) > 1:
+            raise TrackerConflictError("Linear lifecycle duplicate projection")
+        if (
+            projection["state"] in ranks
+            and ranks[projection["state"]] > ranks[state]
+        ):
+            if len(exact_receipts) != 1:
+                raise TrackerConflictError(
+                    "Linear weaker transition lacks an exact historical receipt"
+                )
+            # Only an authenticated replay of this exact operation can converge
+            # below a stronger durable state. New coordinates are a conflicting
+            # intention, never a successful no-op or authority to regress State.
+            return
         if native_state_id != target_state_id and len(exact_receipts) == 1:
             # Authenticate the durable receipt, including its review/merge and
             # generation bindings, before it authorizes recovery of the native
@@ -3414,8 +3421,6 @@ class LinearTracker(Tracker):
             self._assert_issue_project(repaired, binding)
             self._lifecycle_projection(issue_id, repaired)
             return
-        if len(exact_receipts) > 1:
-            raise TrackerConflictError("Linear lifecycle duplicate projection")
         self._project_lifecycle(
             issue_id,
             "state-" + state,

@@ -199,7 +199,8 @@ def _profile_issue(d):
     keys = ("id", "title", "state", "priority", "estimate", "milestone", "type",
             "labels", "ac_done", "ac_total", "links", "pr_url", "blocked_by",
             "unblocked", "unlocks", "unlocks_count", "ac_ratio", "rank_index",
-            "created", "updated")
+            "created", "updated", "normalized_state", "native_state",
+            "projection_status")
     return {key: d[key] for key in keys}
 
 

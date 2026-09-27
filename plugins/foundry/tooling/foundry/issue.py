@@ -295,6 +295,14 @@ def openpr(issue_id=None, base=None, flags=()):
             and it.projection_status == "disagreement"
         ):
             raise
+    if (
+        getattr(tr, "bounded_transition_proofs", False)
+        or getattr(tr, "bounded_state_transitions", False)
+    ) and getattr(it, "state", None) not in {"in-progress", "review"}:
+        raise SystemExit(
+            "⛔ Ouverture PR refusée — l'issue doit être in-progress ou review ; "
+            "aucun push ni effet code-host n'a été tenté."
+        )
     repo = ch.resolve_repo()
     base = base or _default_branch()
     summary = f"## Summary\n- {it.title}"
@@ -370,10 +378,12 @@ def merge(issue_id, pr_number, flags=()):
     repo = ch.resolve_repo()
     pr = ch.get_pr(repo, int(pr_number))
     bounded_state_transitions = getattr(tr, "bounded_state_transitions", False)
-    if not bounded_state_transitions:
-        # Preserve the established receipt order for proof-bound and legacy
-        # providers. Native bounded transitions delay this local effect until the
-        # ticket-linked PR coordinates have been authenticated below.
+    bounded_lifecycle = bounded_state_transitions or getattr(
+        tr, "bounded_transition_proofs", False,
+    )
+    if not bounded_lifecycle:
+        # Preserve legacy receipt ordering. Bounded lifecycle providers delay
+        # this local effect until ticket-linked PR coordinates are authenticated.
         _observe_receipt(
             issue_id, "pr",
             lambda: execution_receipts.pr_receipt(
@@ -438,7 +448,7 @@ def merge(issue_id, pr_number, flags=()):
                     f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
                 ) from None
             current = tr.get_issue(issue_id)
-    if bounded_state_transitions:
+    if bounded_lifecycle:
         _require_linked_pr_coordinates(current, pr, int(pr_number))
         _observe_receipt(
             issue_id, "pr",
@@ -492,7 +502,6 @@ def merge(issue_id, pr_number, flags=()):
             # Publish the exact current PR generation before deciding whether its
             # AC are complete. A previous head's acceptance receipt must never
             # suppress review-proof validation for this head.
-            write.transition(tr, issue_id, "in-progress")
             write.transition(tr, issue_id, "review", context=transition_context)
             current = tr.get_issue(issue_id)
 

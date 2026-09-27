@@ -2882,6 +2882,14 @@ def test_linear_override_merge_publishes_typed_receipt_before_codehost_merge(
     tracker, monkeypatch, capsys,
 ):
     instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state(
+        "LIN-2", "review", project=PROJECT,
+        context=TransitionContext(
+            pr_url=OVERRIDE_PR_URL, head_sha="a" * 40,
+            base_sha="b" * 40, review_digest=OVERRIDE_DIGEST,
+        ),
+    )
     pr = PullRequest(
         number=17, url=OVERRIDE_PR_URL, head="feat/lin-2", base="main",
         base_sha="b" * 40, sha="a" * 40,
@@ -2939,6 +2947,14 @@ def test_linear_override_replay_after_interruption_before_merge_completes(
     tracker, monkeypatch,
 ):
     instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state(
+        "LIN-2", "review", project=PROJECT,
+        context=TransitionContext(
+            pr_url=OVERRIDE_PR_URL, head_sha="a" * 40,
+            base_sha="b" * 40, review_digest=OVERRIDE_DIGEST,
+        ),
+    )
     pr = PullRequest(
         number=17, url=OVERRIDE_PR_URL, head="feat/lin-2", base="main",
         base_sha="b" * 40, sha="a" * 40,
@@ -7809,3 +7825,63 @@ def test_adr_writes_refuse_unavailable_declared_issue_before_mutation(tracker, o
     assert raised.value.adr_id == created.id
     assert raised.value.issue_id == "LIN-2"
     assert not any("mutation " in document for document, _ in wire.calls[calls_before:])
+
+
+@pytest.mark.parametrize("coordinate", ["pr_url", "head_sha", "base_sha", "review_digest"])
+def test_linear_weaker_review_requires_exact_historical_coordinates(tracker, coordinate):
+    instance, wire = tracker
+    url = _historical_done_shape(instance, wire)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    values = dict(pr_url=url, head_sha="1" * 40, base_sha="b" * 40,
+                  review_digest="1" * 64)
+    values[coordinate] = ("https://github.com/acme/widgets/pull/18"
+                          if coordinate == "pr_url" else "9" * len(values[coordinate]))
+    before = copy.deepcopy(wire.issues["LIN-2"])
+    offset = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="exact historical receipt"):
+        instance.set_state("LIN-2", "review", context=TransitionContext(**values),
+                           project=PROJECT)
+    assert wire.issues["LIN-2"] == before
+    assert all("mutation" not in doc.lower() for doc, _ in wire.calls[offset:])
+
+
+def test_linear_public_merge_cannot_rebind_to_another_open_pr(tracker, monkeypatch):
+    instance, wire = tracker
+    original = TransitionContext(pr_url=OVERRIDE_PR_URL, head_sha="a" * 40,
+                                 base_sha="b" * 40, review_digest=OVERRIDE_DIGEST)
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=original, project=PROJECT)
+    pr = PullRequest(number=18, url="https://github.com/acme/widgets/pull/18",
+                     head="feat/lin-2", base="main", base_sha=original.base_sha,
+                     sha=original.head_sha, merged=False)
+    events = _override_merge_harness(
+        monkeypatch, instance, pr, lambda *_a, **_k: pytest.fail("wrong PR merge"))
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_a: events.append("receipt"))
+    monkeypatch.setattr(write, "ci_gate", lambda *_a, **_k: pytest.fail("CI"))
+    before = copy.deepcopy(wire.issues["LIN-2"])
+    offset = len(wire.calls)
+    with pytest.raises(SystemExit, match="PR liée au ticket"):
+        issue.merge("LIN-2", "18")
+    assert events == []
+    assert wire.issues["LIN-2"] == before
+    assert all("mutation" not in doc.lower() for doc, _ in wire.calls[offset:])
+
+
+def test_linear_public_openpr_refuses_done_before_push_or_codehost(tracker, monkeypatch):
+    instance, wire = tracker
+    _historical_done_shape(instance, wire)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["done"]
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: PROJECT)
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: SimpleNamespace(
+        resolve_repo=lambda: pytest.fail("codehost")))
+    def command(*args, **kwargs):
+        assert args == ("git", "rev-parse", "--abbrev-ref", "HEAD")
+        return "feat/lin-2"
+    monkeypatch.setattr(issue, "_sh", command)
+    before = copy.deepcopy(wire.issues["LIN-2"])
+    offset = len(wire.calls)
+    with pytest.raises(SystemExit, match="Ouverture PR refusée"):
+        issue.openpr("LIN-2")
+    assert wire.issues["LIN-2"] == before
+    assert all("mutation" not in doc.lower() for doc, _ in wire.calls[offset:])
