@@ -287,10 +287,11 @@ def test_operations_cover_every_criterion_1_core_journey():
         )
 
 
-def test_linear_acceptance_sync_flag_matches_the_gap_cell():
+def test_linear_acceptance_projection_matches_the_supported_cell():
     from foundry.trackers.linear import LinearTracker
 
     assert LinearTracker.acceptance_sync_supported is False
+    assert LinearTracker.acceptance_proof_projection_supported is True
 
 
 def test_youtrack_epic_closure_flag_matches_the_gap_cell():
@@ -334,7 +335,7 @@ def test_ghprojects_core_methods_are_unimplemented_stubs():
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-56", "PAT-69", "PAT-64", "PAT-59"],
+    ["PAT-69", "PAT-64", "PAT-59"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

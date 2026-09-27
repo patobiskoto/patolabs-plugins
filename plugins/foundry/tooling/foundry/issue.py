@@ -303,7 +303,7 @@ def _ac_override_reason(flags) -> str:
 def merge(issue_id, pr_number, flags=()):
     allow_no_ci = "--allow-no-ci" in flags
     tr, ch = foundry.tracker(), foundry.codehost()
-    write.issue_binding(tr, issue_id)
+    binding = write.issue_binding(tr, issue_id)
     write.preflight_issue_operation(tr, "merge")
     repo = ch.resolve_repo()
     pr = ch.get_pr(repo, int(pr_number))
@@ -317,25 +317,60 @@ def merge(issue_id, pr_number, flags=()):
     try:
         current = tr.get_issue(issue_id)
     except TrackerConflictError:
+        # A confirmed GitHub merge can outlive only the native Linear State
+        # projection.  Ask the adapter to authenticate its existing receipt and
+        # repair exactly that effect before considering any override recovery.
+        observer = getattr(tr, "observe_issue", None)
+        if not callable(observer):
+            # Providers that have not opted into the shared observation/recovery
+            # port keep their original typed refusal.  Do not turn that boundary
+            # into an AttributeError or manufacture an observation from native
+            # state alone.
+            raise
+        observed = observer(issue_id)
+        if (
+            pr.merged
+            and pr.merge_sha
+            and observed.normalized_state == "done"
+            and observed.projection_status == "disagreement"
+            and observed.pr_url == pr.url
+        ):
+            base_sha = _require_pr_base_sha(pr)
+            if tr.recover_done_projection(
+                issue_id,
+                pr_url=pr.url,
+                head_sha=pr.sha,
+                base_sha=base_sha,
+                merge_sha=pr.merge_sha,
+                project=binding,
+            ):
+                current = tr.get_issue(issue_id)
+            else:
+                raise
+        else:
+            current = None
         # Bounded recovery of an issue merged under the human AC override before the
         # typed receipt existed: only the exact replay of that override on the
         # already-merged PR may append the missing receipt; ordinary reads stay strict.
-        if not ("--allow-incomplete-ac" in flags
+        if current is not None:
+            pass
+        elif not ("--allow-incomplete-ac" in flags
                 and getattr(tr, "acceptance_override_projection_supported", False)
                 and pr.merged and pr.merge_sha):
             raise
-        reason = _ac_override_reason(flags)
-        try:
-            override_recovered = write.recover_acceptance_override(
-                tr, issue_id, reason,
-                pr_url=pr.url, head_sha=pr.sha, merge_sha=pr.merge_sha,
-            )
-        except TrackerConflictError as exc:
-            raise SystemExit(
-                "⛔ Reprise override AC refusée — aucun reçu done exact de cette PR "
-                f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
-            ) from None
-        current = tr.get_issue(issue_id)
+        if current is None:
+            reason = _ac_override_reason(flags)
+            try:
+                override_recovered = write.recover_acceptance_override(
+                    tr, issue_id, reason,
+                    pr_url=pr.url, head_sha=pr.sha, merge_sha=pr.merge_sha,
+                )
+            except TrackerConflictError as exc:
+                raise SystemExit(
+                    "⛔ Reprise override AC refusée — aucun reçu done exact de cette PR "
+                    f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
+                ) from None
+            current = tr.get_issue(issue_id)
     transition_context = None
     review_diff = None
     pr_base_sha = None

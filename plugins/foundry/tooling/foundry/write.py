@@ -143,6 +143,21 @@ def transition(tracker, issue_id: str, state: str, context=None) -> None:
             f"Transition {normalized} refusée : utilise le flux mécanique "
             f"{'openpr' if normalized == 'review' else 'merge'} pour produire la preuve bornée."
         )
+    # A provider that has no append-only lifecycle receipt still needs a
+    # caller-owned predecessor coordinate to make a retry distinguishable from
+    # a third state.  Capture it here, in the common mechanical tier, so skills
+    # never reconstruct tracker rules themselves.  The adapter re-reads it at
+    # S1 immediately before its one native write.
+    if (
+        getattr(tracker, "bounded_state_transitions", False)
+    ):
+        observed = tracker.get_issue(issue_id).state
+        if context is None:
+            from foundry.models import TransitionContext
+            context = TransitionContext(expected_state=observed)
+        elif getattr(context, "expected_state", None) is None:
+            from dataclasses import replace
+            context = replace(context, expected_state=observed)
     binding = issue_binding(tracker, issue_id)
     kwargs = {}
     if context is not None:

@@ -19,7 +19,7 @@ import urllib.request
 
 from foundry import config, registry
 from foundry.routing import RoutingConfigError, synchronize_acceptance_body
-from foundry.models import Adr, Issue, Link, Project
+from foundry.models import Adr, Issue, Link, Project, TransitionContext
 from foundry.trackers.base import (
     IssueUnavailableError,
     Tracker,
@@ -118,6 +118,10 @@ class YouTrackTracker(Tracker):
     # serializes Foundry writers through a local file lock and uses read-verify-write-readback;
     # another client can still race between those requests.
     acceptance_sync_supported = True
+    # The transition itself is a targeted S1-S5 projection.  It does not turn a
+    # native state into acceptance evidence; review/done still receive their
+    # code-host coordinates through TransitionContext in the shared write tier.
+    bounded_state_transitions = True
     project_provisioning_supported = True
 
     def provision_project(
@@ -241,15 +245,18 @@ class YouTrackTracker(Tracker):
         body = raw.get("description") or ""
         done, total = self._ac_counts(body)
         labels = self._cf(raw, "Labels")
+        native_state = self._cf(raw, "State")
         return Issue(
             id=raw["idReadable"], title=raw.get("summary", ""),
-            state=self._cf(raw, "State"), priority=self._cf(raw, "Priority"),
+            state=native_state, priority=self._cf(raw, "Priority"),
             estimate=self._cf(raw, "Estimate"), milestone=self._cf(raw, "Milestone"),
             type=self._cf(raw, "Type"),
             labels=[x.strip() for x in labels.split(",")] if labels else [],
             ac_done=done, ac_total=total, links=self._links(raw),
             pr_url=self._cf(raw, "GitHub PR"), body=body,
-            created=raw.get("created"), updated=raw.get("updated"))
+            created=raw.get("created"), updated=raw.get("updated"),
+            normalized_state=native_state, native_state=native_state,
+            projection_status="native-only")
 
     # ---- Tracker port ---------------------------------------------------
     def verify_project_identity(self, project: Project) -> bool:
@@ -593,7 +600,31 @@ class YouTrackTracker(Tracker):
     def set_state(
         self, issue_id: str, state: str, context=None, project: Project | None = None,
     ) -> None:
-        self.update_fields(issue_id, {"State": state}, project=project)
+        if not isinstance(context, TransitionContext) or not context.expected_state:
+            raise TrackerConflictError(
+                "transition YouTrack sans état prédécesseur borné"
+            )
+        expected = context.expected_state
+        before = self.get_issue(issue_id)
+        if before.state == state:
+            if expected == state:
+                return
+            raise TrackerConflictError(
+                "transition YouTrack déjà cible sans rejeu exact"
+            )
+        if before.state != expected:
+            raise TrackerConflictError(
+                "état YouTrack modifié avant transition bornée"
+            )
+        # update_fields owns the targeted S1/S2/S3/S4 field mutation.  Its
+        # expected snapshot is intentionally refreshed after the predecessor
+        # check; a foreign S1→S2 write remains the documented no-CAS residual
+        # risk, never a claimed exclusion.
+        readback = self.update_fields(issue_id, {"State": state}, project=project)
+        if readback.state != state:
+            raise TrackerConflictError(
+                "état YouTrack divergent après transition ; aucune seconde tentative"
+            )
 
     def link(
         self, src_id: str, link_type: str, dst_id: str,

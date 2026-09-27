@@ -438,7 +438,7 @@ def _adr_index_or_capability(tr, p):
 def issue(issue_id: str):
     tr = foundry.tracker()
     p = _project(tr)
-    it = tr.get_issue(issue_id)
+    it = tr.observe_issue(issue_id)
     # the requested issue keeps its body + notes; related issues stay lean.
     # Dedupe targets (two links to the same issue = one fetch) and tolerate
     # unavailable ones (deleted / cross-project / forbidden) — backlog tolerates
@@ -448,7 +448,7 @@ def issue(issue_id: str):
         if lk.target in related or lk.target == it.id:
             continue
         try:
-            related[lk.target] = _lean(tr.get_issue(lk.target).to_dict())
+            related[lk.target] = _lean(tr.observe_issue(lk.target).to_dict())
         except IssueUnavailableError:
             related[lk.target] = {"id": lk.target, "error": "issue unavailable"}
     return {"project": p.key, "issue": it.to_dict(), "related": related,

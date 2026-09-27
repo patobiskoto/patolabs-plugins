@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from foundry import edit, registry, write
-from foundry.models import Adr, Issue
+from foundry.models import Adr, Issue, TransitionContext
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import (
     BodyUpdateUnavailableError,
@@ -174,6 +174,41 @@ def test_youtrack_update_body_refuses_stale_snapshot_even_when_desired_is_curren
     with pytest.raises(TrackerConflictError, match="modifié"):
         tracker.update_body(Issue(id="T-1", title="issue"), "stale", "current")
     assert _writes(tracker) == []
+
+
+def test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordinate(
+    monkeypatch,
+):
+    """The native State remains a projection; only an exact retry converges."""
+    tracker = object.__new__(YouTrackTracker)
+    native = {"state": "ready"}
+    writes = []
+    tracker.get_issue = lambda issue_id: Issue(
+        id=issue_id, title="issue", state=native["state"],
+    )
+
+    def update_fields(issue_id, fields, project=None):
+        writes.append((issue_id, fields, project))
+        native["state"] = fields["State"]
+        return tracker.get_issue(issue_id)
+
+    tracker.update_fields = update_fields
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
+
+    write.transition(tracker, "T-1", "review")
+    assert writes == [("T-1", {"State": "review"}, None)]
+
+    # The mechanical tier reads the replay predecessor again, so a completed
+    # native projection converges without another mutation.
+    write.transition(tracker, "T-1", "review")
+    assert len(writes) == 1
+
+    native["state"] = "blocked"
+    with pytest.raises(TrackerConflictError, match="modifié avant transition"):
+        tracker.set_state(
+            "T-1", "done", context=TransitionContext(expected_state="review"),
+        )
+    assert len(writes) == 1
 
 
 def test_youtrack_acceptance_sync_handles_body_without_markers_as_noop():

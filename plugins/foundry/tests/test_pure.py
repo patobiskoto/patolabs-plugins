@@ -62,6 +62,9 @@ class _FakeTracker:
             raise IssueUnavailableError(issue_id)
         return it
 
+    def observe_issue(self, issue_id):
+        return self.get_issue(issue_id)
+
     def list_adrs(self, project):
         return self._adrs
 
