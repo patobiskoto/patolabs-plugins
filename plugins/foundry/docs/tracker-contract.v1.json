@@ -37,7 +37,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
       "class": "DevHubTracker",
       "v1_core": false,
-      "note": "Foundry's internal pilot tracker, not one of the three repository-facing V1 trackers; listed for contrast only: it is the only adapter with epic_closure_supported and epic_subgraph_supported (devhub.py:220-223)."
+      "note": "Foundry's internal pilot tracker, not one of the three repository-facing V1 trackers; listed for contrast only: it is the only adapter with epic_closure_supported and epic_subgraph_supported (devhub.py)."
     }
   },
   "operations": [
@@ -54,15 +54,15 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py:397-669); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py:156-186); for a V1 YouTrack marker the factory enables requires_mutation_binding (foundry/__init__.py:46-67), write.mutation_project resolves the exact checkout project and write.issue_binding invokes the adapter endpoint check (write.py:50-99). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py:15-43; doctor.py:214-230). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
+          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py); for a V1 YouTrack marker the factory enables requires_mutation_binding (foundry/__init__.py), write.mutation_project resolves the exact checkout project and write.issue_binding invokes the adapter endpoint check (write.py). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py; doctor.py). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
         },
         "linear": {
           "status": "supported",
-          "evidence": "resolve_project discards its repo argument and resolve_checkout_project plus validate_mutation_repository resolve the actual canonical checkout (linear.py:1707-1729) through the shared strict repository_tracker_selection port, revalidating the marker and digest before each activation; every issue read or written is asserted to belong to the bound team and project UUIDs (_assert_issue_project, linear.py:2466-2475)"
+          "evidence": "resolve_project discards its repo argument and resolve_checkout_project plus validate_mutation_repository resolve the actual canonical checkout (linear.py) through the shared strict repository_tracker_selection port, revalidating the marker and digest before each activation; every issue read or written is asserted to belong to the bound team and project UUIDs (_assert_issue_project, linear.py)"
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py:156-186; registry.py:490-669), and ghprojects.verify_project_identity checks the exact ProjectV2 node id, owner/number and linked canonical repository through at most ten read-only GraphQL pages (ghprojects.py:36-104). Issue wire-format and workflow operations remain owned by PAT-65/PAT-57/PAT-66/PAT-67"
+          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py; registry.py), and ghprojects.verify_project_identity checks the exact ProjectV2 node id, owner/number and linked canonical repository through at most ten read-only GraphQL pages (ghprojects.py). Issue wire-format and workflow operations remain owned by PAT-65/PAT-57/PAT-66/PAT-67"
         }
       }
     },
@@ -77,15 +77,15 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock; a same-basename collision receives a deterministic internal storage key and exact replay remains canonical_repo-scoped. It performs no administrative provisioning (registry.py:992-1099, 1634-1784; youtrack.py:255-266)"
+          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock; a same-basename collision receives a deterministic internal storage key and exact replay remains canonical_repo-scoped. It performs no administrative provisioning (registry.py; youtrack.py)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding, then Linear.verify_project_identity reads the exact project id, team id and team key before bootstrap_repository_binding publishes the canonical-scoped registry entry and marker; a same-basename collision cannot replace the older entry. No project is provisioned (registry.py:992-1099, 1634-1784; linear.py:1693-1705)"
+          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding, then Linear.verify_project_identity reads the exact project id, team id and team key before bootstrap_repository_binding publishes the canonical-scoped registry entry and marker; a same-basename collision cannot replace the older entry. No project is provisioned (registry.py; linear.py)"
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; workflow/API conformance remains PAT-65 (registry.py:992-1099, 1634-1784; ghprojects.py:36-104)"
+          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; workflow/API conformance remains PAT-65 (registry.py; ghprojects.py)"
         }
       }
     },
@@ -100,16 +100,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "search() pages the project's issues and get_issue hydrates links and AC (youtrack.py:293-309)"
+          "evidence": "search() pages the project's issues and get_issue hydrates links and AC (youtrack.py)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "search normalizes every page through _to_issue and remains fail-closed on unknown state, label or milestone ids (linear.py:2577-2698, 2580-2618); registry update supplies the bounded recovery path for a reviewed complete mapping: strict marker parsing before effects, expected configuration digest, one registry lock, concurrent-change refusal, publication and readback (registry.py:397-487, 1126-1216, 1634-1784). No issue mutation or provider CAS is claimed"
+          "evidence": "search normalizes every page through _to_issue and remains fail-closed on unknown state, label or milestone ids (linear.py); registry update supplies the bounded recovery path for a reviewed complete mapping: strict marker parsing before effects, expected configuration digest, one registry lock, concurrent-change refusal, publication and readback (registry.py). No issue mutation or provider CAS is claimed"
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-57",
-          "evidence": "search/get_issue raise NotImplementedError (ghprojects.py:110-114)"
+          "evidence": "search/get_issue raise NotImplementedError (ghprojects.py)"
         }
       }
     },
@@ -123,11 +123,11 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "search() appends the caller's query string to its 'project: KEY' filter (youtrack.py:293-296)"
+          "evidence": "search() appends the caller's query string to its 'project: KEY' filter (youtrack.py)"
         },
         "linear": {
           "status": "refused",
-          "evidence": "search() raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query') whenever query is non-empty (linear.py:2701-2704)"
+          "evidence": "search() raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query') whenever query is non-empty (linear.py)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -151,12 +151,12 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "create_issue (linear.py:2850-2902) creates with a client id, then verifies title, body, fields and parent on readback, TrackerConflictError on divergence, no retry"
+          "evidence": "create_issue (linear.py) creates with a client id, then verifies title, body, fields and parent on readback, TrackerConflictError on divergence, no retry"
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-66",
-          "evidence": "create_issue raises NotImplementedError (ghprojects.py:116-117)"
+          "evidence": "create_issue raises NotImplementedError (ghprojects.py)"
         }
       }
     },
@@ -180,7 +180,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-66",
-          "evidence": "update_fields raises NotImplementedError (ghprojects.py:119-120); update_body is the base refusal"
+          "evidence": "update_fields raises NotImplementedError (ghprojects.py); update_body is the base refusal"
         }
       }
     },
@@ -194,16 +194,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "add_comment first proves the issue's native project is writable, then sends one POST to /issues/{id}/comments (youtrack.py:614-618), never retried; not replay-idempotent, which the #4.2 free-text rule tolerates because a note carries no state"
+          "evidence": "add_comment first proves the issue's native project is writable, then sends one POST to /issues/{id}/comments (youtrack.py), never retried; not replay-idempotent, which the #4.2 free-text rule tolerates because a note carries no state"
         },
         "linear": {
           "status": "supported",
-          "evidence": "add_comment (linear.py:3270-3303) creates the comment, reads it back and refuses on divergence, no retry; provider-assigned id, so a replay duplicates the note (free-text rule, #4.2)"
+          "evidence": "add_comment (linear.py) creates the comment, reads it back and refuses on divergence, no retry; provider-assigned id, so a replay duplicates the note (free-text rule, #4.2)"
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-66",
-          "evidence": "add_comment raises NotImplementedError (ghprojects.py:128-129)"
+          "evidence": "add_comment raises NotImplementedError (ghprojects.py)"
         }
       }
     },
@@ -221,7 +221,7 @@
         },
         "linear": {
           "status": "supported",
-          "evidence": "create_issue asserts the parent belongs to the binding, sets parentId (linear.py:2881-2884) and verifies the readback parent id (linear.py:2900-2901)"
+          "evidence": "create_issue asserts the parent belongs to the binding, sets parentId (linear.py) and verifies the readback parent id (linear.py)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -240,16 +240,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "For the common V1 write port, validate_issue_binding checks both endpoints against the repository project before link captures and re-reads both endpoint link snapshots, performs one command POST, and verifies the requested normalized relation on readback (youtrack.py:372-387, 577-606). The direct legacy adapter path retains historical cross-project relations."
+          "evidence": "For the common V1 write port, validate_issue_binding checks both endpoints against the repository project before link captures and re-reads both endpoint link snapshots, performs one command POST, and verifies the requested normalized relation on readback (youtrack.py). The direct legacy adapter path retains historical cross-project relations."
         },
         "linear": {
           "status": "supported",
-          "evidence": "link(subtask-of|parent-of) validates and snapshots both endpoints, re-reads them before one targeted parentId issueUpdate, then verifies the child parent readback (linear.py:3346-3393)."
+          "evidence": "link(subtask-of|parent-of) validates and snapshots both endpoints, re-reads them before one targeted parentId issueUpdate, then verifies the child parent readback (linear.py)."
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-66",
-          "evidence": "link() raises NotImplementedError (ghprojects.py:125-126)"
+          "evidence": "link() raises NotImplementedError (ghprojects.py)"
         }
       }
     },
@@ -263,7 +263,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "For the common V1 write port, validate_issue_binding checks both endpoints against the repository project before link() maps depends-on/blocks/relates through _LINK_ROLE, captures and re-reads both endpoint link snapshots, performs one command POST and verifies normalized readback (youtrack.py:43-50, 372-387, 577-606). An exact replay observes the existing link and emits no second POST; the direct legacy adapter path retains historical cross-project relations"
+          "evidence": "For the common V1 write port, validate_issue_binding checks both endpoints against the repository project before link() maps depends-on/blocks/relates through _LINK_ROLE, captures and re-reads both endpoint link snapshots, performs one command POST and verifies normalized readback (youtrack.py). An exact replay observes the existing link and emits no second POST; the direct legacy adapter path retains historical cross-project relations"
         },
         "linear": {
           "status": "supported",
@@ -272,7 +272,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-66",
-          "evidence": "link() raises NotImplementedError (ghprojects.py:125-126)"
+          "evidence": "link() raises NotImplementedError (ghprojects.py)"
         }
       }
     },
@@ -286,11 +286,11 @@
       "cells": {
         "youtrack": {
           "status": "refused",
-          "evidence": "no override; the base raises EpicSubgraphUnavailableError (base.py:110-125)"
+          "evidence": "no override; the base raises EpicSubgraphUnavailableError (base.py)"
         },
         "linear": {
           "status": "refused",
-          "evidence": "no override; the base raises EpicSubgraphUnavailableError (base.py:110-125)"
+          "evidence": "no override; the base raises EpicSubgraphUnavailableError (base.py)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -310,15 +310,15 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "project_provisioning_supported = True (youtrack.py:121); provision_youtrack_project creates or recovers the project, fills instance-global State/Priority/Type bundles and creates global custom fields (youtrack_provisioning.py:90-182)"
+          "evidence": "project_provisioning_supported = True (youtrack.py); provision_youtrack_project creates or recovers the project, fills instance-global State/Priority/Type bundles and creates global custom fields (youtrack_provisioning.py)"
         },
         "linear": {
           "status": "refused",
-          "evidence": "no override; the base raises ProjectProvisioningUnavailableError (base.py:128-142)"
+          "evidence": "no override; the base raises ProjectProvisioningUnavailableError (base.py)"
         },
         "ghprojects": {
           "status": "refused",
-          "evidence": "no override; the base raises ProjectProvisioningUnavailableError (base.py:128-142)"
+          "evidence": "no override; the base raises ProjectProvisioningUnavailableError (base.py)"
         }
       },
       "note": "Distinct from the core repository-bootstrap row: this row is provisioning beyond create-or-recover of the repository's own binding."
@@ -333,16 +333,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "list_adrs pages the project-scoped articles and keeps anchored-prefix matches (youtrack.py:770-788)"
+          "evidence": "list_adrs pages the project-scoped articles and keeps anchored-prefix matches (youtrack.py)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "list_adrs (linear.py:3992-3994) rebuilds Adr models from the Document/witness chains (_adr_documents, linear.py:3334; _adr_chain)"
+          "evidence": "list_adrs (linear.py) rebuilds Adr models from the Document/witness chains (_adr_documents, linear.py; _adr_chain)"
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-58",
-          "evidence": "list_adrs raises NotImplementedError (ghprojects.py:131-132); ADR storage is PAT-65's open question"
+          "evidence": "list_adrs raises NotImplementedError (ghprojects.py); ADR storage is PAT-65's open question"
         }
       }
     },
@@ -356,16 +356,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "create_adr checks the supplied native project against the exact-coordinate archive tombstone, numbers the ADR as max+1 over a fresh list_adrs and posts a Knowledge Base article with a statut header (youtrack.py:790-800); there is no uniqueness precondition, so two concurrent creators can mint the same ADR id (creation is outside the #4.2 replay floor; S2/S4 met)"
+          "evidence": "create_adr checks the supplied native project against the exact-coordinate archive tombstone, numbers the ADR as max+1 over a fresh list_adrs and posts a Knowledge Base article with a statut header (youtrack.py); there is no uniqueness precondition, so two concurrent creators can mint the same ADR id (creation is outside the #4.2 replay floor; S2/S4 met)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "create_adr calls _create_adr_document directly (linear.py:4088), which creates the version-0 Document and its witness at deterministic ids with byte-exact readback (linear.py:3560-3659, 3627-3664; PAT-ADR-0002)"
+          "evidence": "create_adr calls _create_adr_document directly (linear.py), which creates the version-0 Document and its witness at deterministic ids with byte-exact readback (linear.py; PAT-ADR-0002)"
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-58",
-          "evidence": "create_adr raises NotImplementedError (ghprojects.py:134-135)"
+          "evidence": "create_adr raises NotImplementedError (ghprojects.py)"
         }
       }
     },
@@ -379,16 +379,16 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "set_adr_status proves the article's native project is writable, reads it and rewrites its statut header through update_body's level-1 path (youtrack.py:802-811)"
+          "evidence": "set_adr_status proves the article's native project is writable, reads it and rewrites its statut header through update_body's level-1 path (youtrack.py)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "set_adr_status appends a successor version through _next_adr_metadata and _append_adr_version (linear.py:4959-5002). Batch-qualified migration chains may use the exact source-digest and rendered-body-digest profile for FOUNDRY-ADR-0001 (linear.py:424-524, 949-971, 1367-1386); native ADRs, unqualified migrations, changed bodies and unknown readbacks remain on the strict closed model. Typed accept, supersede, issue-link and edit successors, predecessor/witness corruption, native/coordinated edits, interruption recovery and exact replay are covered by test_linear_tracker.py (PAT-47)"
+          "evidence": "set_adr_status appends a successor version through _next_adr_metadata and _append_adr_version (linear.py). Batch-qualified migration chains may use the exact source-digest and rendered-body-digest profile for FOUNDRY-ADR-0001 (linear.py); native ADRs, unqualified migrations, changed bodies and unknown readbacks remain on the strict closed model. Typed accept, supersede, issue-link and edit successors, predecessor/witness corruption, native/coordinated edits, interruption recovery and exact replay are covered by test_linear_tracker.py (PAT-47)"
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-58",
-          "evidence": "set_adr_status raises NotImplementedError (ghprojects.py:137-138)"
+          "evidence": "set_adr_status raises NotImplementedError (ghprojects.py)"
         }
       }
     },
@@ -403,11 +403,11 @@
       "cells": {
         "youtrack": {
           "status": "refused",
-          "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError(self.name, 'adr_supersession'|'adr_issue_link') (base.py:414-424)"
+          "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError(self.name, 'adr_supersession'|'adr_issue_link') (base.py)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "adr_issue_link_supported = True (linear.py:1555); link_adr_issue (linear.py:4094-4140) and supersede_adr (linear.py:5004-5048) append versions to the Document/witness chain"
+          "evidence": "adr_issue_link_supported = True (linear.py); link_adr_issue (linear.py) and supersede_adr (linear.py) append versions to the Document/witness chain"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -429,16 +429,16 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-56",
-          "evidence": "set_state delegates to bounded update_fields(State=...) (youtrack.py:578-581), but its public transition contract carries no caller-supplied expected predecessor proof. PAT-56 owns that stronger S1-S5 transition requirement and replay semantics."
+          "evidence": "set_state delegates to bounded update_fields(State=...) (youtrack.py), but its public transition contract carries no caller-supplied expected predecessor proof. PAT-56 owns that stronger S1-S5 transition requirement and replay semantics."
         },
         "linear": {
           "status": "supported",
-          "evidence": "set_state accepts only in-progress/review/done (linear.py:2930-2933); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done; linear.py:2935-2956); each transition is an append-only deterministic-id lifecycle marker written by _project_lifecycle (linear.py:2284-2452): identical replay converges, divergence fails closed. Other states belong to frame-intake-groom-evolve-existing"
+          "evidence": "set_state accepts only in-progress/review/done (linear.py); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done; linear.py); each transition is an append-only deterministic-id lifecycle marker written by _project_lifecycle (linear.py): identical replay converges, divergence fails closed. Other states belong to frame-intake-groom-evolve-existing"
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-67",
-          "evidence": "set_state raises NotImplementedError (ghprojects.py:122-123)"
+          "evidence": "set_state raises NotImplementedError (ghprojects.py)"
         }
       }
     },
@@ -452,17 +452,17 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "acceptance_sync_supported = True (youtrack.py:120); sync_acceptance_body validates the proof then reuses update_body's archived-target preflight and bounded read-verify-write-readback (youtrack.py:641-717), labelled as bounded, not CAS"
+          "evidence": "acceptance_sync_supported = True (youtrack.py); sync_acceptance_body validates the proof then reuses update_body's archived-target preflight and bounded read-verify-write-readback (youtrack.py), labelled as bounded, not CAS"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-56",
-          "evidence": "PAT-ADR-0006 selects the existing proof-bound append-only projection as Linear's V1 AC authority. acceptance_sync_supported remains False and sync_acceptance_body keeps the typed refusal (linear.py:1557-1561, 3528); project_acceptance_proof provides the non-replacing authority (linear.py:3104). PAT-56 owns closing this contract cell without native checkbox replacement."
+          "evidence": "PAT-ADR-0006 selects the existing proof-bound append-only projection as Linear's V1 AC authority. acceptance_sync_supported remains False and sync_acceptance_body keeps the typed refusal (linear.py); project_acceptance_proof provides the non-replacing authority (linear.py). PAT-56 owns closing this contract cell without native checkbox replacement."
         },
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-67",
-          "evidence": "not overridden; the base raises AcceptanceSyncUnavailableError (base.py:208-225)"
+          "evidence": "not overridden; the base raises AcceptanceSyncUnavailableError (base.py)"
         }
       }
     },
@@ -477,11 +477,11 @@
       "cells": {
         "youtrack": {
           "status": "refused",
-          "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError and documents the free-text audit note fallback (base.py:227-256)"
+          "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError and documents the free-text audit note fallback (base.py)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "acceptance_override_projection_supported = True (linear.py:1561); project_acceptance_override (linear.py:3019) and recover_acceptance_override (linear.py:3065) append a typed receipt (PAT-49)"
+          "evidence": "acceptance_override_projection_supported = True (linear.py); project_acceptance_override (linear.py) and recover_acceptance_override (linear.py) append a typed receipt (PAT-49)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -502,12 +502,12 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-69",
-          "evidence": "epic_closure_supported = False with the comment 'YouTrack exposes neither an atomic parent+children compare-and-transition nor a provider-verified receipt store. A read-then-command emulation would race' (youtrack.py:114-116); no close_epic/get_epic_closure override, so the base raises EpicClosureUnavailableError (base.py:276-300). A no-CAS closure replaces the atomic invariant of base.py:276-290 and write.py:371-376"
+          "evidence": "epic_closure_supported = False with the comment 'YouTrack exposes neither an atomic parent+children compare-and-transition nor a provider-verified receipt store. A read-then-command emulation would race' (youtrack.py); no close_epic/get_epic_closure override, so the base raises EpicClosureUnavailableError (base.py). A no-CAS closure replaces the atomic invariant of base.py and write.py"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-69",
-          "evidence": "no epic_closure_supported override (base default False) and no close_epic/get_epic_closure override; write.close_epic raises before any provider call (write.py:377). A no-CAS closure replaces the atomic invariant of base.py:276-290 and write.py:371-376"
+          "evidence": "no epic_closure_supported override (base default False) and no close_epic/get_epic_closure override; write.close_epic raises before any provider call (write.py). A no-CAS closure replaces the atomic invariant of base.py and write.py"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -515,7 +515,7 @@
           "evidence": "no override; the base default applies. Whether GitHub Projects v2 offers any parent/child precondition is unqualified (PAT-65); the capability itself is owned by PAT-69 (epic closure in the active tracker)."
         }
       },
-      "note": "DevHub (non-V1) is the only adapter with epic_closure_supported = True (devhub.py:220-223; close_epic at devhub.py:825)."
+      "note": "DevHub (non-V1) is the only adapter with epic_closure_supported = True (devhub.py; close_epic at devhub.py)."
     },
     {
       "id": "tombstone-archived-source-after-switch",
@@ -534,11 +534,11 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "_issue_target_project and _adr_target_project read project(id,shortName) from the real YouTrack resource before a targeted mutation; _require_writable_target refuses when either exact native id or exact key matches any archived YouTrack binding, without prefix matching (youtrack.py:316-398). A V1 marker enables the shared mutation binding and validate_issue_binding rejects any issue/link endpoint outside the canonical native project before the adapter mutation (foundry/__init__.py:46-67; write.py:94-99; youtrack.py:372-387), while marker-free/direct legacy keeps active cross-project behavior. Explicit create_issue/create_adr validate the supplied project before milestone setup or creation, and child creation proves its parent first. update_fields/set_state, both link endpoints, add_comment, issue/ADR update_body and set_adr_status all invoke the provider preflight before effects (youtrack.py:468-711, 784-805). A Milestone update restores ms_bundle only from an explicit or historical project whose exact native key and id match the target; a foreign mapping is ignored, contradictory mappings and every historical resolution refusal other than the typed unregistered legacy alias stop before POST. test_youtrack_smoke.py proves tombstone/binding refusal, pre-first-effect drift, Milestone preservation, ambiguous replay, permissions/missing resources, and active cross-project legacy link/parent preservation"
+          "evidence": "_issue_target_project and _adr_target_project read project(id,shortName) from the real YouTrack resource before a targeted mutation; _require_writable_target refuses when either exact native id or exact key matches any archived YouTrack binding, without prefix matching (youtrack.py). A V1 marker enables the shared mutation binding and validate_issue_binding rejects any issue/link endpoint outside the canonical native project before the adapter mutation (foundry/__init__.py; write.py; youtrack.py), while marker-free/direct legacy keeps active cross-project behavior. Explicit create_issue/create_adr validate the supplied project before milestone setup or creation, and child creation proves its parent first. update_fields/set_state, both link endpoints, add_comment, issue/ADR update_body and set_adr_status all invoke the provider preflight before effects (youtrack.py). A Milestone update restores ms_bundle only from an explicit or historical project whose exact native key and id match the target; a foreign mapping is ignored, contradictory mappings and every historical resolution refusal other than the typed unregistered legacy alias stop before POST. test_youtrack_smoke.py proves tombstone/binding refusal, pre-first-effect drift, Milestone preservation, ambiguous replay, permissions/missing resources, and active cross-project legacy link/parent preservation"
         },
         "linear": {
           "status": "supported",
-          "evidence": "resolve_checkout_project (linear.py:1715-1725) uses the shared repository_tracker_selection port (registry.py:490-669), which revalidates the marker/digests and refuses missing, archived or ambiguous bindings; validate_mutation_repository (linear.py:1727-1729) runs it before any mutation"
+          "evidence": "resolve_checkout_project (linear.py) uses the shared repository_tracker_selection port (registry.py), which revalidates the marker/digests and refuses missing, archived or ambiguous bindings; validate_mutation_repository (linear.py) runs it before any mutation"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -559,11 +559,11 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-64",
-          "evidence": "no import_adr/import_adr_batch override; the base raises TrackerCapabilityUnavailableError(self.name, 'adr_historical_import'|'adr_historical_batch_import') (base.py:362-406), so YouTrack cannot be an import target"
+          "evidence": "no import_adr/import_adr_batch override; the base raises TrackerCapabilityUnavailableError(self.name, 'adr_historical_import'|'adr_historical_batch_import') (base.py), so YouTrack cannot be an import target"
         },
         "linear": {
           "status": "supported",
-          "evidence": "import_adr (linear.py:4625) and import_adr_batch (linear.py:4533) implement bounded, idempotent, provenance-preserving historical ADR import (PAT-ADR-0001..0003), proven by the YouTrack->Linear ADR import of this repository (PAT-23)"
+          "evidence": "import_adr (linear.py) and import_adr_batch (linear.py) implement bounded, idempotent, provenance-preserving historical ADR import (PAT-ADR-0001..0003), proven by the YouTrack->Linear ADR import of this repository (PAT-23)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -587,12 +587,12 @@
         "youtrack": {
           "status": "gap",
           "ticket": "PAT-64",
-          "evidence": "no faithful-copy import path: after their archive-target preflights, create_issue/link/add_comment/set_state still have no source reference, replay key or comparison against the source item (youtrack.py:468-618)"
+          "evidence": "no faithful-copy import path: after their archive-target preflights, create_issue/link/add_comment/set_state still have no source reference, replay key or comparison against the source item (youtrack.py)"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-64",
-          "evidence": "no adapter import of live work: create_issue sends a random uuid4 client id (linear.py:2874), so a replay duplicates the issue, and nothing copies lifecycle receipts, acceptance proofs or comments. The YouTrack->Linear live-work leg of this repository was a private operator-side selective migration; `registry cutover` does no provider I/O (docs/linear-tracker.md, 'Repository-scoped activation and atomic cutover')"
+          "evidence": "no adapter import of live work: create_issue sends a random uuid4 client id (linear.py), so a replay duplicates the issue, and nothing copies lifecycle receipts, acceptance proofs or comments. The YouTrack->Linear live-work leg of this repository was a private operator-side selective migration; `registry cutover` does no provider I/O (docs/linear-tracker.md, 'Repository-scoped activation and atomic cutover')"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -613,12 +613,12 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "query.py changelog() (query.py:490-518) and milestones() (query.py:380-385) derive release scope from Issue.milestone/state returned by search(); YouTrack reads Milestone as a custom field (youtrack.py:240-252)"
+          "evidence": "query.py changelog() (query.py) and milestones() (query.py) derive release scope from Issue.milestone/state returned by search(); YouTrack reads Milestone as a custom field (youtrack.py)"
         },
         "linear": {
           "status": "gap",
           "ticket": "PAT-59",
-          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py:2648-2654, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock after strict marker validation (registry.py:1130-1220); PAT-59 still owns the release-scope semantics and provider qualification"
+          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock after strict marker validation (registry.py); PAT-59 still owns the release-scope semantics and provider qualification"
         },
         "ghprojects": {
           "status": "to_qualify",
