@@ -16,7 +16,7 @@ import pytest
 
 import foundry
 from foundry import adr as adr_module
-from foundry import evidence_plane, frame, issue, query, registry, routing, write
+from foundry import edit, evidence_plane, frame, issue, query, registry, routing, write
 from foundry.trackers import linear as linear_module
 from foundry.models import (
     Adr,
@@ -32,7 +32,6 @@ from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     AdrIssueUnavailableError,
     AdrUnavailableError,
-    BodyUpdateUnavailableError,
     IssueUnavailableError,
     Tracker,
     TrackerCapabilityUnavailableError,
@@ -321,15 +320,63 @@ class LinearWire:
                     }
                 }
             }
+        if "FoundryLinearIssueUpdate" in document:
+            issue = self._by_native(variables["id"])
+            self._apply(issue, variables["input"])
+            return {
+                "data": {
+                    "issueUpdate": {
+                        "success": True,
+                        "issue": {
+                            "id": issue["id"], "identifier": issue["identifier"],
+                        },
+                    }
+                }
+            }
+        if "FoundryLinearIssueRelationById" in document:
+            relation_id = variables["id"]
+            for source in self.issues.values():
+                for node in source["relations"]["nodes"]:
+                    if node.get("id") != relation_id:
+                        continue
+                    target = node["relatedIssue"]
+                    return {
+                        "data": {
+                            "issueRelation": {
+                                "id": relation_id,
+                                "type": node["type"],
+                                "issue": {
+                                    "id": source["id"],
+                                    "identifier": source["identifier"],
+                                },
+                                "relatedIssue": copy.deepcopy(target),
+                            }
+                        }
+                    }
+            # The real singular query is non-null and reports unknown UUIDs as a
+            # GraphQL error; callers cannot interpret this as authoritative absence.
+            return {"errors": [{"message": "relation not found"}], "data": {}}
         if "FoundryLinearIssueRelationCreate" in document:
             value = variables["input"]
+            try:
+                valid_uuid = uuid.UUID(value["id"]).version == 4
+            except (KeyError, TypeError, ValueError):
+                valid_uuid = False
+            if not valid_uuid:
+                return {"errors": [{"message": "relation id invalid"}], "data": {}}
+            if any(
+                node.get("id") == value["id"]
+                for issue in self.issues.values()
+                for node in issue["relations"]["nodes"]
+            ):
+                return {"errors": [{"message": "duplicate id"}], "data": {}}
             source, target = (
                 self._by_native(value["issueId"]),
                 self._by_native(value["relatedIssueId"]),
             )
             source["relations"]["nodes"].append(
                 {
-                "type": value["type"],
+                "id": value["id"], "type": value["type"],
                     "relatedIssue": {
                         "id": target["id"],
                         "identifier": target["identifier"],
@@ -343,7 +390,7 @@ class LinearWire:
                 }
             )
             relation = {
-                "id": "relation-1",
+                "id": value["id"],
                 "type": value["type"],
                 "issue": {"id": source["id"], "identifier": source["identifier"]},
                 "relatedIssue": {
@@ -428,6 +475,19 @@ class LinearWire:
             }
             issue["labels"] = connection(
                 [{"id": item, "name": names[item]} for item in values["labelIds"]]
+            )
+        if "addedLabelIds" in values or "removedLabelIds" in values:
+            names = {
+                "label-feature": "Feature display",
+                "label-bug": "Bug display",
+                "label-pilot": "Pilot display",
+                "label-api": "API display",
+            }
+            labels = {item["id"] for item in issue["labels"]["nodes"]}
+            labels.update(values.get("addedLabelIds", []))
+            labels.difference_update(values.get("removedLabelIds", []))
+            issue["labels"] = connection(
+                [{"id": item, "name": names[item]} for item in sorted(labels)]
             )
         if "parentId" in values:
             parent = values["parentId"]
@@ -793,32 +853,26 @@ def test_relation_reads_refuse_unsupported_native_types_without_partial_issue(
     assert raised.value.code == "unsupported_relation_type"
 
 
-def test_existing_issue_replacements_are_unavailable_before_provider_write(tracker):
+def test_existing_issue_grooming_is_bounded_while_native_ac_sync_stays_refused(tracker):
     instance, wire = tracker
-    before = len(wire.calls)
     assert instance.acceptance_sync_supported is False
-    with pytest.raises(
-        TrackerCapabilityUnavailableError,
-        match="existing-issue-field-replacement",
-    ):
-        instance.update_fields("LIN-2", {"Priority": "P0"}, project=PROJECT)
+    assert instance.update_fields(
+        "LIN-2", {"Priority": "P0"}, project=PROJECT,
+    ).priority == "P0"
+    updates = [call for call in wire.calls if "FoundryLinearIssueUpdate" in call[0]]
+    assert len(updates) == 1
+    assert updates[0][1]["input"] == {"priority": 1}
     with pytest.raises(
         TrackerCapabilityUnavailableError,
         match="lifecycle-proof",
     ):
         instance.set_state("LIN-2", "review", project=PROJECT)
-    with pytest.raises(
-        TrackerCapabilityUnavailableError,
-        match="existing-issue-parent-replacement",
-    ):
-        instance.link("LIN-2", "subtask-of", "LIN-1", project=PROJECT)
-    with pytest.raises(BodyUpdateUnavailableError, match="anti-écrasement"):
-        instance.update_body(
-            Issue(id="LIN-2", title="Existing"),
-            "old",
-            "new",
-            project=PROJECT,
-        )
+    instance.link("LIN-2", "subtask-of", "LIN-1", project=PROJECT)
+    assert wire.issues["LIN-2"]["parent"]["id"] == ISSUE_1_ID
+    assert instance.update_body(
+        Issue(id="LIN-2", title="Existing"),
+        "- [ ] acceptance", "new", project=PROJECT,
+    )
     with pytest.raises(AcceptanceSyncUnavailableError, match="anti-écrasement"):
         instance.sync_acceptance_body(
             "LIN-2",
@@ -827,7 +881,323 @@ def test_existing_issue_replacements_are_unavailable_before_provider_write(track
             proof("LIN-2", "- [ ] AC"),
             project=PROJECT,
         )
-    assert len(wire.calls) == before
+
+
+def test_linear_field_write_refuses_prewrite_drift_without_mutation(tracker):
+    instance, wire = tracker
+    original = instance._read_raw
+    reads = 0
+
+    def drifting(issue_id):
+        nonlocal reads
+        reads += 1
+        if issue_id == "LIN-2" and reads == 2:
+            wire.issues["LIN-2"]["priority"] = 3
+        return original(issue_id)
+
+    instance._read_raw = drifting
+    with pytest.raises(TrackerConflictError, match="before bounded write"):
+        instance.update_fields("LIN-2", {"Priority": "P0"}, project=PROJECT)
+    assert not any("FoundryLinearIssueUpdate" in call[0] for call in wire.calls)
+
+
+def test_linear_label_grooming_uses_provider_deltas(tracker):
+    instance, wire = tracker
+    instance.update_fields("LIN-2", {"Labels": ["api"]}, project=PROJECT)
+    update = next(c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0])
+    assert update[1]["input"] == {
+        "addedLabelIds": ["label-api"],
+        "removedLabelIds": ["label-pilot"],
+    }
+    assert "labelIds" not in update[1]["input"]
+
+
+def test_edit_set_field_normalizes_label_cli_value_before_linear_payload(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(edit.foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+
+    edit.set_field("LIN-2", "Labels", " api ")
+
+    update = next(c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0])
+    assert update[1]["input"] == {
+        "addedLabelIds": ["label-api"],
+        "removedLabelIds": ["label-pilot"],
+    }
+
+
+def test_linear_field_write_recovers_ambiguous_effect_and_replay_is_noop(tracker):
+    instance, wire = tracker
+    original = wire.__call__
+
+    def interrupted(document, variables):
+        result = original(document, variables)
+        if "FoundryLinearIssueUpdate" in document:
+            raise RuntimeError("response lost after provider effect")
+        return result
+
+    instance._transport = interrupted
+    assert instance.update_fields(
+        "LIN-2", {"Priority": "P0"}, project=PROJECT,
+    ).priority == "P0"
+    instance.update_fields("LIN-2", {"Priority": "P0"}, project=PROJECT)
+    assert len([c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0]]) == 1
+
+
+def test_linear_field_write_unknown_effect_and_permission_never_retry(tracker):
+    instance, wire = tracker
+    original = wire.__call__
+    attempts = 0
+
+    def interrupted(document, variables):
+        nonlocal attempts
+        if "FoundryLinearIssueUpdate" in document:
+            attempts += 1
+            raise RuntimeError("provider effect unknown")
+        return original(document, variables)
+
+    instance._transport = interrupted
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.update_fields("LIN-2", {"Priority": "P0"}, project=PROJECT)
+    assert attempts == 1
+
+    def forbidden(document, variables):
+        nonlocal attempts
+        if "FoundryLinearIssueUpdate" in document:
+            attempts += 1
+            return {"errors": [{"message": "permission denied"}], "data": {}}
+        return original(document, variables)
+
+    instance._transport = forbidden
+    with pytest.raises(LinearTrackerError, match="graphql_error"):
+        instance.update_fields("LIN-2", {"Priority": "P0"}, project=PROJECT)
+    assert attempts == 2
+
+
+def test_linear_missing_issue_and_stale_body_have_no_effect(tracker):
+    instance, wire = tracker
+    with pytest.raises(IssueUnavailableError, match="LIN-404"):
+        instance.update_fields("LIN-404", {"Priority": "P0"}, project=PROJECT)
+    with pytest.raises(TrackerConflictError, match="body changed"):
+        instance.update_body(
+            Issue(id="LIN-2", title="Existing"),
+            "stale", "new", project=PROJECT,
+        )
+    assert not any("FoundryLinearIssueUpdate" in call[0] for call in wire.calls)
+
+
+def test_linear_parent_refuses_endpoint_drift_before_effect(tracker):
+    instance, wire = tracker
+    original = instance._read_raw
+    parent_reads = 0
+
+    def drifting(issue_id):
+        nonlocal parent_reads
+        raw = original(issue_id)
+        if issue_id == "LIN-1":
+            parent_reads += 1
+            if parent_reads == 2:
+                raw["id"] = "00000000-0000-4000-8000-000000000099"
+        return raw
+
+    instance._read_raw = drifting
+    with pytest.raises(TrackerConflictError, match="parent changed"):
+        instance.link("LIN-2", "subtask-of", "LIN-1", project=PROJECT)
+    assert not any("FoundryLinearIssueUpdate" in call[0] for call in wire.calls)
+
+
+def test_linear_relation_deterministic_id_and_ambiguous_replay_single_effect(tracker):
+    instance, wire = tracker
+    original = wire.__call__
+
+    def interrupted(document, variables):
+        result = original(document, variables)
+        if "FoundryLinearIssueRelationCreate" in document:
+            raise RuntimeError("response lost after provider effect")
+        return result
+
+    instance._transport = interrupted
+    instance.link("LIN-2", "depends-on", "LIN-1", project=PROJECT)
+    instance.link("LIN-2", "depends-on", "LIN-1", project=PROJECT)
+    mutations = [c for c in wire.calls if "FoundryLinearIssueRelationCreate" in c[0]]
+    assert len(mutations) == 1
+    relation_id = mutations[0][1]["input"]["id"]
+    assert uuid.UUID(relation_id).version == 4
+    assert mutations[0][1]["input"] == {
+        "id": relation_id, "issueId": ISSUE_1_ID,
+        "relatedIssueId": ISSUE_2_ID, "type": "blocks",
+    }
+
+
+def test_linear_relation_replay_converges_by_unique_id_when_projection_is_hidden(
+    tracker,
+):
+    instance, wire = tracker
+    original_transport = wire.__call__
+    original_read = instance._read_raw
+    projection_hidden = False
+
+    def interrupted_once(document, variables):
+        nonlocal projection_hidden
+        result = original_transport(document, variables)
+        if "FoundryLinearIssueRelationCreate" in document and not projection_hidden:
+            projection_hidden = True
+            raise RuntimeError("response lost after provider effect")
+        return result
+
+    def hidden_projection(issue_id):
+        raw = original_read(issue_id)
+        if projection_hidden:
+            raw["relations"] = connection([])
+            raw["inverseRelations"] = connection([])
+        return raw
+
+    instance._transport = interrupted_once
+    instance._read_raw = hidden_projection
+
+    instance.link("LIN-2", "depends-on", "LIN-1", project=PROJECT)
+    # The second invocation cannot observe the relation through either endpoint.
+    # It sends the same provider identity; the duplicate response then converges
+    # through the exact unique-id lookup rather than authorizing a different write.
+    instance.link("LIN-2", "depends-on", "LIN-1", project=PROJECT)
+
+    mutations = [
+        call for call in wire.calls
+        if "FoundryLinearIssueRelationCreate" in call[0]
+    ]
+    assert len(mutations) == 2
+    assert mutations[0][1]["input"]["id"] == mutations[1][1]["input"]["id"]
+    stored = [
+        node
+        for issue in wire.issues.values()
+        for node in issue["relations"]["nodes"]
+        if node.get("id") == mutations[0][1]["input"]["id"]
+    ]
+    assert len(stored) == 1
+
+
+def test_linear_inverse_relates_replay_uses_same_hidden_projection_slot(tracker):
+    instance, wire = tracker
+    original_transport = wire.__call__
+    original_read = instance._read_raw
+    projection_hidden = False
+
+    def interrupted_once(document, variables):
+        nonlocal projection_hidden
+        result = original_transport(document, variables)
+        if "FoundryLinearIssueRelationCreate" in document and not projection_hidden:
+            projection_hidden = True
+            raise RuntimeError("response lost after provider effect")
+        return result
+
+    def hidden_projection(issue_id):
+        raw = original_read(issue_id)
+        if projection_hidden:
+            raw["relations"] = connection([])
+            raw["inverseRelations"] = connection([])
+        return raw
+
+    instance._transport = interrupted_once
+    instance._read_raw = hidden_projection
+
+    instance.link("LIN-2", "relates", "LIN-1", project=PROJECT)
+    instance.link("LIN-1", "relates", "LIN-2", project=PROJECT)
+
+    mutations = [
+        call for call in wire.calls
+        if "FoundryLinearIssueRelationCreate" in call[0]
+    ]
+    assert len(mutations) == 2
+    assert mutations[0][1]["input"] == mutations[1][1]["input"]
+    assert mutations[0][1]["input"]["issueId"] == ISSUE_1_ID
+    assert mutations[0][1]["input"]["relatedIssueId"] == ISSUE_2_ID
+    stored = [
+        node
+        for issue in wire.issues.values()
+        for node in issue["relations"]["nodes"]
+        if node.get("id") == mutations[0][1]["input"]["id"]
+    ]
+    assert len(stored) == 1
+
+
+def test_linear_inverse_relates_replay_refuses_conflicting_canonical_slot(tracker):
+    instance, wire = tracker
+    instance.link("LIN-2", "relates", "LIN-1", project=PROJECT)
+    relation = wire.issues["LIN-1"]["relations"]["nodes"][0]
+    relation["relatedIssue"] = {
+        "id": ISSUE_1_ID,
+        "identifier": "LIN-1",
+    }
+    original_read = instance._read_raw
+
+    def hidden_projection(issue_id):
+        raw = original_read(issue_id)
+        raw["relations"] = connection([])
+        raw["inverseRelations"] = connection([])
+        return raw
+
+    instance._read_raw = hidden_projection
+
+    with pytest.raises(TrackerConflictError, match="occupied by another relation"):
+        instance.link("LIN-1", "relates", "LIN-2", project=PROJECT)
+
+    mutations = [
+        call for call in wire.calls
+        if "FoundryLinearIssueRelationCreate" in call[0]
+    ]
+    assert len(mutations) == 2
+    assert mutations[0][1]["input"]["id"] == mutations[1][1]["input"]["id"]
+
+
+@pytest.mark.parametrize("lookup_error", ["relation not found", "permission denied"])
+def test_linear_relation_ambiguous_create_never_treats_lookup_error_as_absence(
+    tracker, lookup_error,
+):
+    instance, wire = tracker
+    original = wire.__call__
+    creates = 0
+
+    def interrupted_before_effect(document, variables):
+        nonlocal creates
+        if "FoundryLinearIssueRelationCreate" in document:
+            creates += 1
+            raise RuntimeError("request result unknown")
+        if "FoundryLinearIssueRelationById" in document:
+            original(document, variables)  # retain the exact fake transport trace
+            return {"errors": [{"message": lookup_error}], "data": {}}
+        return original(document, variables)
+
+    instance._transport = interrupted_before_effect
+    with pytest.raises(LinearTrackerError) as failure:
+        instance.link("LIN-2", "depends-on", "LIN-1", project=PROJECT)
+    assert failure.value.code == "transport_error"
+    assert creates == 1
+    assert not any(
+        node.get("id")
+        for issue in wire.issues.values()
+        for node in issue["relations"]["nodes"]
+    )
+
+
+def test_linear_relation_exact_readback_refuses_mismatched_slot(tracker):
+    instance, wire = tracker
+    original = wire.__call__
+
+    def mismatched_readback(document, variables):
+        result = original(document, variables)
+        if "FoundryLinearIssueRelationById" in document:
+            result["data"]["issueRelation"]["relatedIssue"]["id"] = ISSUE_1_ID
+        return result
+
+    instance._transport = mismatched_readback
+    with pytest.raises(TrackerConflictError, match="occupied by another relation"):
+        instance.link("LIN-2", "depends-on", "LIN-1", project=PROJECT)
+    assert len([
+        call for call in wire.calls
+        if "FoundryLinearIssueRelationCreate" in call[0]
+    ]) == 1
 
 
 def test_normalization_rejects_missing_or_unknown_label_identifiers(tracker):

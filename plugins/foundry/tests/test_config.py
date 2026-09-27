@@ -200,7 +200,9 @@ def test_tracker_factory_honors_repository_binding_and_rejects_explicit_conflict
     monkeypatch.setenv("YOUTRACK_TOKEN", "test-token")
     registry.bootstrap_repository_binding("youtrack", "public", "PAT", "0-1")
 
-    assert foundry.tracker().name == "youtrack"
+    adapter = foundry.tracker()
+    assert adapter.name == "youtrack"
+    assert adapter.requires_mutation_binding is True
     with pytest.raises(SystemExit, match="actif sur 'youtrack'"):
         foundry.tracker("linear")
 

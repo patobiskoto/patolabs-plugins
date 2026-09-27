@@ -6,9 +6,12 @@ state UUID map. Runtime checkout resolution matches the actual canonical Git rem
 it never selects a binding from an environment alias, basename, title, or issue key.
 
 Linear does not expose a compare-and-swap precondition for existing-issue replacement.
-Those writes are therefore unavailable: a local lock or a readback cannot prevent an
-external writer from being overwritten.  The supported writes are atomic creation and
-additive provider mutations which do not replace existing issue values.
+Foundry consequently uses bounded detection for the explicitly targeted grooming
+properties: one fresh read, one targeted write, and one readback.  This detects a
+divergence before the read or after the write, but cannot exclude an external writer in
+the S1→S2 window; it is neither CAS nor a distributed lock.  Untargeted properties are
+not sent to ``issueUpdate`` (labels use provider delta inputs).  Lifecycle and ADR
+writes retain their append-only paths where those are available.
 """
 
 from __future__ import annotations
@@ -32,7 +35,6 @@ from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     AdrIssueUnavailableError,
     AdrUnavailableError,
-    BodyUpdateUnavailableError,
     IssueUnavailableError,
     Tracker,
     TrackerCapabilityUnavailableError,
@@ -158,10 +160,24 @@ mutation FoundryLinearIssueCreate($input: IssueCreateInput!) {
 }
 """
 
+_ISSUE_UPDATE = """
+mutation FoundryLinearIssueUpdate($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) { success issue { id identifier } }
+}
+"""
+
 _RELATION_CREATE = """
 mutation FoundryLinearIssueRelationCreate($input: IssueRelationCreateInput!) {
   issueRelationCreate(input: $input) {
     success issueRelation { id type issue { id identifier } relatedIssue { id identifier } }
+  }
+}
+"""
+
+_RELATION_QUERY = """
+query FoundryLinearIssueRelationById($id: String!) {
+  issueRelation(id: $id) {
+    id type issue { id identifier } relatedIssue { id identifier }
   }
 }
 """
@@ -340,6 +356,18 @@ def _relation_link(relation: dict, *, inverse: bool) -> Link:
 def _adr_client_uuid(slot: str) -> str:
     digest = hashlib.sha256(slot.encode("utf-8")).hexdigest()
     return str(uuid.UUID(digest[:32], version=4))
+
+
+def _issue_relation_id(
+    project_id: str, relation: str, source_id: str, target_id: str,
+) -> str:
+    """Return the provider id for one canonical append-only relation slot."""
+    if relation == "related":
+        source_id, target_id = sorted((source_id, target_id))
+    return _adr_client_uuid(
+        "foundry-linear-issue-relation.v1:"
+        f"{project_id}:{relation}:{source_id}:{target_id}"
+    )
 
 
 def _adr_document_id(project_id: str, adr_id: str, sequence: int) -> str:
@@ -1682,6 +1710,41 @@ class LinearTracker(Tracker):
             raise LinearTrackerError(operation, None, "invalid_response")
         return comments[0] if comments else None
 
+    def _read_issue_relation(self, relation_id: str, operation: str) -> dict:
+        """Read one relation by its provider-declared unique identifier.
+
+        Linear's singular query is non-null: an absent relation and a permission
+        failure both surface as GraphQL errors.  Callers must therefore use this only
+        to verify or recover an expected slot, never to infer that a create is safe.
+        """
+        data = self._graphql(_RELATION_QUERY, {"id": relation_id}, operation)
+        relation = data.get("issueRelation")
+        if not isinstance(relation, dict) or relation.get("id") != relation_id:
+            raise LinearTrackerError(operation, None, "invalid_response")
+        return relation
+
+    @staticmethod
+    def _issue_relation_matches(
+        relation: object,
+        *,
+        relation_id: str,
+        relation_type: str,
+        issue_id: str,
+        related_issue_id: str,
+    ) -> bool:
+        if not isinstance(relation, dict):
+            return False
+        issue = relation.get("issue")
+        related_issue = relation.get("relatedIssue")
+        return (
+            relation.get("id") == relation_id
+            and relation.get("type") == relation_type
+            and isinstance(issue, dict)
+            and issue.get("id") == issue_id
+            and isinstance(related_issue, dict)
+            and related_issue.get("id") == related_issue_id
+        )
+
     # ---- explicit binding -----------------------------------------
     @staticmethod
     def _binding(project: Project) -> dict:
@@ -2859,12 +2922,27 @@ class LinearTracker(Tracker):
             if type_id is not None:
                 desired_ids.add(type_id)
         if "Labels" in fields or "Type" in fields:
-            values["labelIds"] = sorted(desired_ids)
+            # IssueUpdate exposes additive/removal label inputs.  Do not submit a
+            # whole label replacement: labels outside this normalized operation must
+            # survive, including provider-side labels that change after S1.
+            added = desired_ids - current_ids
+            removed = current_ids - desired_ids
+            if added:
+                values["addedLabelIds"] = sorted(added)
+            if removed:
+                values["removedLabelIds"] = sorted(removed)
             expected["label_ids"] = desired_ids
         return values, expected
 
     @staticmethod
     def _raw_matches(raw: dict, expected: dict) -> bool:
+        if "body" in expected and (raw.get("description") or "") != expected["body"]:
+            return False
+        if (
+            "parent_id" in expected
+            and (raw.get("parent") or {}).get("id") != expected["parent_id"]
+        ):
+            return False
         if (
             "state_id" in expected
             and (raw.get("state") or {}).get("id") != expected["state_id"]
@@ -2886,6 +2964,25 @@ class LinearTracker(Tracker):
             if actual_ids != expected["label_ids"]:
                 return False
         return True
+
+    @staticmethod
+    def _field_snapshot(raw: dict, fields: dict) -> dict:
+        """Return only the provider properties a grooming write may change."""
+        snapshot: dict = {}
+        if "State" in fields:
+            snapshot["state_id"] = (raw.get("state") or {}).get("id")
+        if "Priority" in fields:
+            snapshot["priority"] = raw.get("priority")
+        if "Estimate" in fields:
+            snapshot["estimate"] = raw.get("estimate")
+        if "Milestone" in fields:
+            snapshot["milestone_id"] = (raw.get("projectMilestone") or {}).get("id")
+        if "Labels" in fields or "Type" in fields:
+            snapshot["label_ids"] = {
+                node.get("id")
+                for node in _connection(raw.get("labels"), "issue.snapshot.labels")
+            }
+        return snapshot
 
     def create_issue(
         self,
@@ -2910,6 +3007,12 @@ class LinearTracker(Tracker):
         values, expected = (
             self._desired_update(skeleton, project, fields) if fields else ({}, {})
         )
+        # Creation owns the complete new record.  The delta inputs are reserved for
+        # existing issues, where replacing all labels would risk foreign loss.
+        if "label_ids" in expected:
+            values.pop("addedLabelIds", None)
+            values.pop("removedLabelIds", None)
+            values["labelIds"] = sorted(expected["label_ids"])
         input_value = {
             "id": str(uuid.uuid4()),
             "teamId": binding["team_id"],
@@ -2949,14 +3052,61 @@ class LinearTracker(Tracker):
     ) -> Issue:
         if project is None:
             raise LinearBindingError("mutation_project_required")
-        self._activate(project)
+        binding = self._activate(project)
         if isinstance(fields, dict) and "GitHub PR" in fields:
             raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
-        self._field_names(fields)
-        raise TrackerCapabilityUnavailableError(
-            self.name,
-            "existing-issue-field-replacement",
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, binding)
+        values, expected = self._desired_update(raw, project, fields)
+        if self._raw_matches(raw, expected):
+            return self._to_issue(raw, project)
+        expected_snapshot = self._field_snapshot(raw, fields)
+        fresh = self._read_raw(issue_id)
+        self._assert_issue_project(fresh, binding)
+        if not self._raw_matches(fresh, expected_snapshot):
+            raise TrackerConflictError("Linear issue changed before bounded write")
+        updated = self._bounded_issue_update(
+            issue_id, fresh, binding, values, expected, "issue.update.fields"
         )
+        return self._to_issue(updated, project)
+
+    def _bounded_issue_update(
+        self,
+        issue_id: str,
+        raw: dict,
+        binding: dict,
+        values: dict,
+        expected: dict,
+        operation: str,
+    ) -> dict:
+        """Perform the PAT-ADR-0006 S1-S5 path for one existing Linear issue."""
+        if not isinstance(raw.get("id"), str) or not raw["id"]:
+            raise LinearTrackerError(operation, None, "invalid_response")
+        try:
+            data = self._graphql(
+                _ISSUE_UPDATE, {"id": raw["id"], "input": values}, operation,
+            )
+            payload = self._mutation_payload(data, "issueUpdate", operation)
+            issue = payload.get("issue")
+            if (
+                not isinstance(issue, dict)
+                or issue.get("id") != raw["id"]
+                or issue.get("identifier") != issue_id
+            ):
+                raise LinearTrackerError(operation, None, "invalid_response")
+        except LinearTrackerError as error:
+            # A transport loss may have followed a committed provider mutation.
+            # Recovery is observational only and never repeats the mutation.
+            recovered = self._read_raw(issue_id)
+            self._assert_issue_project(recovered, binding)
+            if self._raw_matches(recovered, expected):
+                return recovered
+            raise error
+        readback = self._read_raw(issue_id)
+        self._assert_issue_project(readback, binding)
+        if not self._raw_matches(readback, expected):
+            raise TrackerConflictError("Linear issue divergent after bounded write")
+        return readback
 
     def set_state(
         self,
@@ -3256,14 +3406,36 @@ class LinearTracker(Tracker):
             "relates",
         }:
             raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
-        if link_type in {"subtask-of", "parent-of"}:
-            raise TrackerCapabilityUnavailableError(
-                self.name,
-                "existing-issue-parent-replacement",
-            )
         src_raw, dst_raw = self._read_raw(src_id), self._read_raw(dst_id)
         self._assert_issue_project(src_raw, binding)
         self._assert_issue_project(dst_raw, binding)
+        if link_type in {"subtask-of", "parent-of"}:
+            child, parent = (
+                (src_raw, dst_raw)
+                if link_type == "subtask-of"
+                else (dst_raw, src_raw)
+            )
+            current_parent = (child.get("parent") or {}).get("id")
+            if current_parent == parent["id"]:
+                return
+            fresh_child = self._read_raw(child["identifier"])
+            fresh_parent = self._read_raw(parent["identifier"])
+            self._assert_issue_project(fresh_child, binding)
+            self._assert_issue_project(fresh_parent, binding)
+            if (
+                (fresh_child.get("parent") or {}).get("id") != current_parent
+                or fresh_parent.get("id") != parent["id"]
+            ):
+                raise TrackerConflictError("Linear parent changed before bounded write")
+            self._bounded_issue_update(
+                fresh_child["identifier"],
+                fresh_child,
+                binding,
+                {"parentId": fresh_parent["id"]},
+                {"parent_id": fresh_parent["id"]},
+                "issue.update.parent",
+            )
+            return
         if any(
             link.type == link_type and link.target == dst_id
             for link in self._to_issue(src_raw, project).links
@@ -3274,37 +3446,83 @@ class LinearTracker(Tracker):
             relation = "blocks"
         elif link_type == "depends-on":
             source, target, relation = dst_raw, src_raw, "blocks"
-        data = self._graphql(
-            _RELATION_CREATE,
-            {
-                "input": {
-                    "issueId": source["id"],
-                    "relatedIssueId": target["id"],
-                "type": relation,
-                }
-            },
-            "issue.relation.create",
-        )
-        payload = self._mutation_payload(
-            data,
-            "issueRelationCreate",
-            "issue.relation.create",
-        )
-        created = payload.get("issueRelation")
+        elif source["id"] > target["id"]:
+            # Linear's `related` relation is symmetric.  Bind both its deterministic
+            # identity and native payload to one endpoint order so inverse replays
+            # converge even when endpoint projections are temporarily hidden.
+            source, target = target, source
+        source_links = self._to_issue(source, project).links
+        target_links = self._to_issue(target, project).links
+        fresh_source = self._read_raw(source["identifier"])
+        fresh_target = self._read_raw(target["identifier"])
+        self._assert_issue_project(fresh_source, binding)
+        self._assert_issue_project(fresh_target, binding)
         if (
-            not isinstance(created, dict)
-            or created.get("type") != relation
-                or (created.get("issue") or {}).get("id") != source["id"]
-            or (created.get("relatedIssue") or {}).get("id") != target["id"]
+            self._to_issue(fresh_source, project).links != source_links
+            or self._to_issue(fresh_target, project).links != target_links
         ):
-            raise LinearTrackerError("issue.relation.create", None, "invalid_response")
-        readback = self._read_raw(src_id)
-        if not any(
-            link.type == link_type and link.target == dst_id
-            for link in self._to_issue(readback, project).links
+            raise TrackerConflictError("Linear relations changed before bounded write")
+        relation_id = _issue_relation_id(
+            binding["project_id"], relation, fresh_source["id"], fresh_target["id"],
+        )
+        try:
+            data = self._graphql(
+                _RELATION_CREATE,
+                {"input": {
+                    "id": relation_id,
+                    "issueId": fresh_source["id"],
+                    "relatedIssueId": fresh_target["id"],
+                    "type": relation,
+                }},
+                "issue.relation.create",
+            )
+            payload = self._mutation_payload(
+                data, "issueRelationCreate", "issue.relation.create",
+            )
+            created = payload.get("issueRelation")
+            if not self._issue_relation_matches(
+                created,
+                relation_id=relation_id,
+                relation_type=relation,
+                issue_id=fresh_source["id"],
+                related_issue_id=fresh_target["id"],
+            ):
+                raise LinearTrackerError(
+                    "issue.relation.create", None, "invalid_response",
+                )
+        except LinearTrackerError as error:
+            try:
+                recovered = self._read_issue_relation(
+                    relation_id, "issue.relation.recover",
+                )
+            except LinearTrackerError:
+                # The singular query is non-null, so its GraphQL error cannot prove
+                # absence or authorize another write. Preserve the original failed
+                # create and leave this invocation fail-closed.
+                raise error from None
+            if self._issue_relation_matches(
+                recovered,
+                relation_id=relation_id,
+                relation_type=relation,
+                issue_id=fresh_source["id"],
+                related_issue_id=fresh_target["id"],
+            ):
+                return
+            raise TrackerConflictError(
+                "Linear relation deterministic id is occupied by another relation"
+            )
+        readback = self._read_issue_relation(
+            relation_id, "issue.relation.readback",
+        )
+        if not self._issue_relation_matches(
+            readback,
+            relation_id=relation_id,
+            relation_type=relation,
+            issue_id=fresh_source["id"],
+            related_issue_id=fresh_target["id"],
         ):
             raise TrackerConflictError(
-                "Linear relation divergent after write; no retry"
+                "Linear relation deterministic id is occupied by another relation"
             )
 
     def add_comment(
@@ -3351,10 +3569,27 @@ class LinearTracker(Tracker):
     ) -> bool:
         if isinstance(resource, Adr):
             return self._update_adr_body(resource, expected_body, updated_body, project)
-        raise BodyUpdateUnavailableError(
-            "mise à jour de corps indisponible pour le tracker linear : "
-            "aucune précondition atomique anti-écrasement"
+        if project is None:
+            raise LinearBindingError("mutation_project_required")
+        if not isinstance(expected_body, str) or not isinstance(updated_body, str):
+            raise ValueError("corps attendu et voulu doivent être des chaînes")
+        binding = self._activate(project)
+        raw = self._read_raw(resource.id)
+        self._assert_issue_project(raw, binding)
+        current = raw.get("description") or ""
+        if current != expected_body:
+            raise TrackerConflictError("Linear body changed before bounded write")
+        if current == updated_body:
+            return False
+        self._bounded_issue_update(
+            resource.id,
+            raw,
+            binding,
+            {"description": updated_body},
+            {"body": updated_body},
+            "issue.update.body",
         )
+        return True
 
     def sync_acceptance_body(
         self,

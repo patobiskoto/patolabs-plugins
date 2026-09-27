@@ -933,6 +933,20 @@ def test_port_methods_round_trip_normalized_shapes():
     assert tracker.calls[9][3]["version"] == 3
 
 
+def test_edit_set_field_labels_keeps_devhub_portable_list(monkeypatch):
+    before = issue_raw(labels=["pilot"], version=1)
+    after = issue_raw(labels=["api", "backend"], version=2)
+    tracker = ScriptedTracker([before, after, after])
+    monkeypatch.setattr(edit.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+
+    edit.set_field("TRAME-1", "Labels", " api, backend ,, ")
+
+    assert tracker.calls[1][2] == {
+        "fields": {"labels": ["api", "backend"]},
+    }
+
+
 def test_ambiguous_mutation_retries_once_with_the_same_idempotency_key(monkeypatch):
     requests = []
 

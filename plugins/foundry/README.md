@@ -10,10 +10,12 @@ from a rough idea to shipped work — the same, repeatable, on every project:
 Foundry owns the **outer loop** (what to do, the source of truth, the decision memory,
 the exit gates). The **inner loop** (design → plan → implement) is delegated to Superpowers
 or Plan mode. Its gated PR lifecycle uses YouTrack, DevHubTracker, or a Linear
-append-only proof projection with the GitHub **code-host** adapter. Linear never replaces
-an existing issue field without provider CAS: Foundry derives lifecycle state, PR link
-and reviewed AC from deterministic comments while Linear's native fields stay unchanged.
-Switching to another tracker or code-host later remains an adapter change, not a rewrite.
+append-only proof projection with the GitHub **code-host** adapter. For that lifecycle,
+Foundry derives state, PR link and reviewed AC from deterministic comments without
+replacing Linear's native fields. Separate grooming operations can replace targeted
+fields, body and parent under PAT-ADR-0006's bounded detection guarantee, including its
+residual S1→S2 race and absence of CAS or exclusion. Switching to another tracker or
+code-host later remains an adapter change, not a rewrite.
 
 ## Why
 
