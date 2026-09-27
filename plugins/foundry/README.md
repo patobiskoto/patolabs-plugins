@@ -462,8 +462,12 @@ preserves its Foundry field-vocabulary setup. DevHub discovers the credential-fr
 canonical identity from the current checkout's `origin`, creates the minimal
 repository-bound project, and records that identity without a manual REST step. A
 provider without the optional capability fails with recovery instructions before any
-mutation. Retrying after an interruption recovers the same provider project and replaces
-the same single registry entry rather than creating duplicates.
+mutation. Before it reads the configured provider or credentials, setup proves that the
+current checkout has no marker, canonical binding, legacy basename binding or matching
+tombstone. Existing state is recovered with `registry upgrade`, `registry update` or the
+original cutover path; it is never shadowed by a global provider setting. Retrying a
+genuinely new setup after an interruption recovers the same provider project and
+replaces the same single registry entry rather than creating duplicates.
 If an existing project moves to a repo with a different basename, preserve the old
 binding and add the new name without provisioning another tracker project:
 

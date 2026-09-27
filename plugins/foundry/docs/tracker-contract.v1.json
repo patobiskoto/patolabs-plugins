@@ -67,7 +67,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py:352-537); base.resolve_checkout_project returns that same selected project (base.py:142-172) and write.mutation_project requires it for a V1 YouTrack checkout (write.py:50-68). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py:14-39; doctor.py:214-230). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
+          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py:441-579); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py:142-172) and write.mutation_project requires it for a V1 YouTrack checkout (write.py:50-68). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py:14-39; doctor.py:214-230). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
         },
         "linear": {
           "status": "supported",
@@ -90,15 +90,15 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity (youtrack.py:247-258; registry.py:1035-1069) before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock (registry.py:864-935); it performs no administrative provisioning"
+          "evidence": "registry bootstrap reads back the exact YouTrack native id/key through verify_project_identity before bootstrap_repository_binding publishes the canonical credential-free registry entry and marker under the registry lock; a same-basename collision receives a deterministic internal storage key and exact replay remains canonical_repo-scoped. It performs no administrative provisioning"
         },
         "linear": {
           "status": "supported",
-          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding (registry.py:720-818), then Linear.verify_project_identity reads the exact project id, team id and team key (linear.py:1573-1585) before bootstrap_repository_binding publishes the registry and marker (registry.py:864-935); no project is provisioned"
+          "evidence": "registry bootstrap structurally validates the complete Linear UUID/mapping binding, then Linear.verify_project_identity reads the exact project id, team id and team key before bootstrap_repository_binding publishes the canonical-scoped registry entry and marker; a same-basename collision cannot replace the older entry. No project is provisioned"
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id (registry.py:780-818); ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository (ghprojects.py:36-104) before local publication (registry.py:1035-1069, 864-935). This qualifies an existing binding only; workflow/API conformance remains PAT-65"
+          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; workflow/API conformance remains PAT-65"
         }
       }
     },

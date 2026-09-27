@@ -18,9 +18,10 @@ python3 <plugin-root>/tooling/foundry_cli.py configure set --tracker linear --co
 ```
 
 On non-macOS hosts, supply `LINEAR_API_TOKEN` through a secret manager. Registry entries
-still have a local alias key for storage, but runtime selection ignores that alias and
-matches the checkout's canonical remote. Register the `linear` binding with all of these
-non-secret values:
+still have a local key for storage: the historical basename when free, or a deterministic
+basename-plus-canonical-digest key when two repositories share that name. Runtime
+selection ignores the storage key and matches the checkout's canonical remote. Register
+the `linear` binding with all of these non-secret values:
 
 - `key`: the Foundry/project ticker used in normalized issue identifiers;
 - `id`: the Linear project model UUID;
@@ -667,8 +668,9 @@ registry commands documented in [`tracker-contract.md`](tracker-contract.md#5-op
 They perform an exact provider read before local publication and never provision a
 provider project. `registry update` is the only supported mapping-recovery command: it
 requires the complete replacement binding and expected marker configuration digest,
-preserves tombstones, and republishes the registry entry and marker under one local
-lock. Do not edit `registry.json` or `.foundry/tracker.json` by hand.
+preserves tombstones, updates matching active aliases together, and republishes the
+registry entry and marker under one local lock. Do not edit `registry.json` or
+`.foundry/tracker.json` by hand.
 
 Activation is available through:
 

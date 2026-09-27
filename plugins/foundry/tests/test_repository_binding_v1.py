@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import foundry
-from foundry import registry
+from foundry import doctor, registry
 from foundry.models import Project
 from foundry.trackers.ghprojects import GitHubProjectsTracker
 from foundry.trackers.youtrack import YouTrackTracker
@@ -117,7 +117,7 @@ def test_bootstrap_resolves_a_linked_git_worktree_from_its_own_root(isolated):
     assert registry.repository_tracker_selection(str(worktree))["binding"] == binding
 
 
-def test_same_basename_repositories_never_share_v1_binding(isolated):
+def test_same_basename_unbound_repository_never_inherits_foreign_v1_binding(isolated):
     first = _repo(isolated, "first", "same")
     second = _repo(isolated, "second", "same")
     registry.bootstrap_repository_binding(
@@ -126,6 +126,121 @@ def test_same_basename_repositories_never_share_v1_binding(isolated):
 
     with pytest.raises(SystemExit, match="Binding tracker absent"):
         registry.repository_tracker_selection(str(second))
+
+
+def test_same_basename_repositories_have_independent_canonical_bindings(
+    isolated, monkeypatch,
+):
+    first = _repo(isolated, "first", "same")
+    second = _repo(isolated, "second", "same")
+    first_binding = registry.bootstrap_repository_binding(
+        "ghprojects", "same", "ONE", "PVT_1", cwd=str(first),
+        owner="first", number="1",
+    )
+    second_binding = registry.bootstrap_repository_binding(
+        "ghprojects", "same", "TWO", "PVT_2", cwd=str(second),
+        owner="second", number="2",
+    )
+    entries = registry.load()["ghprojects"]
+
+    assert entries["same"]["canonical_repo"] == "github.com/first/same"
+    disambiguated = [name for name in entries if name != "same"]
+    assert disambiguated == [
+        registry._disambiguated_registry_key("same", "github.com/second/same")
+    ]
+
+    monkeypatch.setenv("PROJECT_REPO", "previous-checkout")
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+    for root, expected in (
+        (first, first_binding.project),
+        (second, second_binding.project),
+    ):
+        monkeypatch.chdir(root)
+        adapter = foundry.tracker()
+        assert adapter.name == "ghprojects"
+        assert adapter.resolve_checkout_project() == expected
+        assert doctor._provider_transport_preflight() == ("ghprojects", None)
+
+    first_updated = registry.update_repository_binding(
+        "ghprojects", "same", "ONE", "PVT_1",
+        expected_configuration_digest=first_binding.configuration_digest,
+        cwd=str(first), owner="first", number="3",
+    )
+    second_updated = registry.update_repository_binding(
+        "ghprojects", "same", "TWO", "PVT_2",
+        expected_configuration_digest=second_binding.configuration_digest,
+        cwd=str(second), owner="second", number="4",
+    )
+
+    assert first_updated.project.extra["number"] == "3"
+    assert second_updated.project.extra["number"] == "4"
+    assert registry.repository_tracker_binding(str(first)) == first_updated
+    assert registry.repository_tracker_binding(str(second)) == second_updated
+
+
+def test_disambiguated_binding_update_replay_completes_marker_publication(
+    isolated, monkeypatch,
+):
+    first = _repo(isolated, "first", "same")
+    second = _repo(isolated, "second", "same")
+    registry.bootstrap_repository_binding(
+        "ghprojects", "same", "ONE", "PVT_1", cwd=str(first),
+        owner="first", number="1",
+    )
+    initial = registry.bootstrap_repository_binding(
+        "ghprojects", "same", "TWO", "PVT_2", cwd=str(second),
+        owner="second", number="2",
+    )
+    real_replace = registry.os.replace
+    interrupted = False
+
+    def replace(source, destination):
+        nonlocal interrupted
+        if str(destination).endswith("second/same/.foundry/tracker.json") and not interrupted:
+            interrupted = True
+            raise OSError("marker interrupted")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(registry.os, "replace", replace)
+    with pytest.raises(OSError, match="marker interrupted"):
+        registry.update_repository_binding(
+            "ghprojects", "same", "TWO", "PVT_2",
+            expected_configuration_digest=initial.configuration_digest,
+            cwd=str(second), owner="second", number="9",
+        )
+
+    recovered = registry.update_repository_binding(
+        "ghprojects", "same", "TWO", "PVT_2",
+        expected_configuration_digest=initial.configuration_digest,
+        cwd=str(second), owner="second", number="9",
+    )
+
+    assert recovered.project.extra["number"] == "9"
+    assert registry.repository_tracker_binding(str(first)).project.key == "ONE"
+
+
+def test_cutover_ignores_foreign_canonical_binding_with_same_basename(isolated):
+    first = _repo(isolated, "first", "same")
+    second = _repo(isolated, "second", "same")
+    registry.register(
+        "youtrack", "same", "ONE", "0-1",
+        canonical_repo=registry.checkout_repository_identity(str(first)),
+    )
+    registry.register(
+        "ghprojects", "second-same", "TWO", "PVT_2",
+        canonical_repo=registry.checkout_repository_identity(str(second)),
+        owner="second", number="2",
+    )
+
+    binding = registry.cutover_repository_tracker(
+        "ghprojects", "TWO", "PVT_2",
+        migration_manifest_digest="sha256:" + "a" * 64,
+        cwd=str(second),
+    )
+
+    assert binding.project.key == "TWO"
+    assert registry.load()["youtrack"]["same"].get("archive") is not True
+    assert registry.repository_tracker_binding(str(second)) == binding
 
 
 def test_provider_readback_refuses_foreign_and_unavailable_coordinates(

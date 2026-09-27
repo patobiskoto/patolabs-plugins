@@ -6,8 +6,8 @@ Its existence is the proof that adding a provider is a localized job: fill these
 methods in against the GitHub Projects v2 API and the pipeline/skills are unchanged.
 
 Note: GitHub Projects v2 is GraphQL-only, which is exactly why the original setup
-moved off it (rate limits). It stays a stub on purpose; swap `FOUNDRY_TRACKER` to
-`ghprojects` only once these methods are implemented.
+moved off it (rate limits). It stays a stub on purpose; once these methods are
+implemented, activate it through the repository's verified tracker binding.
 """
 from __future__ import annotations
 

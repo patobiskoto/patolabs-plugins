@@ -126,6 +126,14 @@ to the checkout's actual `origin`, never to an environment alias. A
 `.foundry/tracker.json` marker (`registry.py:73`) binds a repository to one tracker
 binding under that identity.
 
+The registry keeps the historical basename key when it is available. If another
+repository on the same provider already owns that basename, bootstrap stores the new
+binding under an internal deterministic key composed of the basename and the SHA-256 of
+the canonical identity. This storage key is never selection authority: marker reads,
+factory/doctor resolution and updates match `canonical_repo`. A basename lookup remains
+only the compatibility fallback for a legacy entry without `canonical_repo`, so
+`first/same` and `second/same` can both be active without sharing a binding.
+
 **One checkout selection for all three adapters.**
 `repository_tracker_selection()` reads the marker from the Git root and validates its
 canonical origin, provider, project coordinates and registry digest
@@ -138,8 +146,12 @@ selection used by both the implicit factory and doctor (`foundry/__init__.py:14-
 the DevHub pilot. A V1 canonical registry entry whose marker is absent is an interrupted
 or moved publication and fails before provider access. `PROJECT_REPO` and
 `FOUNDRY_TRACKER` cannot change that result. The administrative setup boundary alone
-passes the configured provider explicitly so a new repository can be provisioned before
-it has a binding (`setup_project.py:94-97`); normal implicit factory calls stay closed.
+passes the configured provider explicitly, but only after
+`repository_tracker_selection(allow_unbound=True)` has proved that the checkout has no
+marker, canonical binding, legacy basename binding or matching tombstone. An existing
+legacy binding or an interrupted V1 publication is refused before provider selection,
+credentials, provisioning or registry writes. A genuinely new repository retains the
+historical explicit provisioning flow; normal implicit factory calls stay closed.
 
 **Legacy is explicit and bounded.** With no marker and no canonical V1 entry, Foundry
 accepts legacy mode only when the actual remote basename has exactly one historical
@@ -153,8 +165,9 @@ matrix.
 **Normalized issue key.** `Issue.id` (`models.py:22-23`) is the provider's
 human-readable identifier (YouTrack `idReadable`, Linear `identifier`), of the form
 `<PREFIX>-<NUMBER>`. It is unique within one provider instance but it is not a
-repository identity: registry entries are keyed by repository name and several aliases
-may point at one provider project (`register_alias`, `registry.py:865-922`;
+repository identity: historical registry entries use the repository name, homonyms use
+an internal deterministic key, and several aliases may point at one provider project
+(`register_alias`, `registry.py:865-922`;
 `require_writable_project`, `registry.py:776-797`, treats them as one project).
 The key is therefore interpreted only together with the resolved binding. Linear
 enforces the provider project on each hydrated issue (`_assert_issue_project`); YouTrack
@@ -323,6 +336,12 @@ it is capped at ten 100-repository pages and needs only `read:project` permissio
 [ProjectV2 reference](https://docs.github.com/en/graphql/reference/projects)). This is
 an offline-tested binding probe, not PAT-65's live workflow qualification.
 
+If the provider's basename slot already belongs to a different canonical repository,
+bootstrap publishes the new entry under its deterministic disambiguated storage key.
+Exact replay finds that entry by `canonical_repo`; it does not overwrite the older
+binding or any alias/tombstone. Marker schemas 1 and 2 keep the same wire format because
+the storage key is registry-internal.
+
 `upgrade` starts only from the checkout basename's exact active historical entry,
 performs the same provider readback, adds `canonical_repo`, and publishes a marker. It
 does not alter another alias or any archive tombstone. New bindings use marker schema 2
@@ -335,7 +354,8 @@ path that requires `activation.manifest_digest`.
 changes. Its input is the complete replacement binding plus the marker's expected
 `configuration_digest`, not a partial cache edit. Under the same local registry lock it
 compares the marker, old registry digest and complete candidate, refuses a concurrent
-winner, writes the registry, publishes the matching marker and reads both back. Exact
+winner, updates every active alias for that canonical checkout together, publishes the
+matching marker and reads both back. Exact
 replay completes an interruption between registry and marker publication. This is a
 local compare-and-publish boundary only; it neither mutates provider data nor claims a
 provider CAS. Marker structure, schema version, activation vocabulary and every digest

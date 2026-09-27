@@ -24,6 +24,20 @@ PROJECT_RAW = {
 }
 
 
+def _repo(tmp_path, owner, name):
+    root = tmp_path / owner / name
+    root.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(root), "remote", "add", "origin",
+            f"https://github.com/{owner}/{name}.git",
+        ],
+        check=True,
+    )
+    return root
+
+
 class ScriptedDevHubTracker(DevHubTracker):
     def __init__(self, responses):
         super().__init__(
@@ -213,6 +227,7 @@ def test_setup_uses_configured_youtrack_before_a_new_repository_has_a_binding(
 def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_binding(
     monkeypatch, tmp_path,
 ):
+    repo = _repo(tmp_path, "acme", "trame")
     missing = DevHubTrackerError(
         "GET", "/projects/resolve", 404, "project_not_found",
     )
@@ -223,10 +238,7 @@ def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_b
         foundry, "tracker",
         lambda name=None: selected_providers.append(name) or tracker,
     )
-    monkeypatch.setattr(
-        setup_project.registry, "checkout_repository_identity",
-        lambda: CANONICAL_REPOSITORY,
-    )
+    monkeypatch.chdir(repo)
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
     real_replace = registry.os.replace
     attempts = 0
@@ -258,17 +270,16 @@ def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_b
     }
 
 
-def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch):
+def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch, tmp_path):
+    repo = _repo(tmp_path, "acme", "demo")
     tracker = GitHubProjectsTracker()
     with pytest.raises(ProjectProvisioningUnavailableError, match="ghprojects"):
         tracker.provision_project("Demo", "DEMO")
 
     monkeypatch.setenv("FOUNDRY_TRACKER", "ghprojects")
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.chdir(repo)
     monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
-    monkeypatch.setattr(
-        setup_project.registry, "checkout_repository_identity",
-        lambda: pytest.fail("unsupported provider must fail during capability preflight"),
-    )
     monkeypatch.setattr(
         setup_project.registry, "register",
         lambda *_args, **_kwargs: pytest.fail("unsupported provider must not register"),
@@ -276,3 +287,41 @@ def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch)
 
     with pytest.raises(SystemExit, match="ne prend pas en charge.*registry register"):
         setup_project.setup("Demo", "DEMO", "demo")
+
+
+@pytest.mark.parametrize("existing_mode", ["legacy", "v1-without-marker"])
+def test_setup_refuses_existing_binding_before_provider_selection_or_registry_write(
+    monkeypatch, tmp_path, existing_mode,
+):
+    repo = _repo(tmp_path, "acme", "demo")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+    extra = (
+        {"canonical_repo": "github.com/acme/demo"}
+        if existing_mode == "v1-without-marker" else {}
+    )
+    registry.register("youtrack", "demo", "DEMO", "0-1", **extra)
+    provider_calls = []
+    registry_writes = []
+    monkeypatch.setattr(
+        foundry.config,
+        "tracker_name",
+        lambda: provider_calls.append("config") or "devhub",
+    )
+    monkeypatch.setattr(
+        foundry,
+        "tracker",
+        lambda *_args, **_kwargs: provider_calls.append("factory"),
+    )
+    monkeypatch.setattr(
+        setup_project.registry,
+        "register",
+        lambda *_args, **_kwargs: registry_writes.append("register"),
+    )
+
+    with pytest.raises(SystemExit, match="Setup tracker refusé"):
+        setup_project.setup("Demo", "DEMO", "demo")
+
+    assert provider_calls == []
+    assert registry_writes == []

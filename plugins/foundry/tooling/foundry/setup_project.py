@@ -92,6 +92,19 @@ def import_adrs(tracker, project, adr_dir):
 
 
 def setup(name, short, repo, adr_dir=None):
+    # Prove locally that this checkout is genuinely new before even selecting or
+    # constructing a provider.  Legacy bindings and interrupted V1 publications must
+    # be upgraded/recovered, never shadowed through an adverse host-global setting.
+    try:
+        selection = registry.repository_tracker_selection(allow_unbound=True)
+    except (SystemExit, ValueError) as exc:
+        raise SystemExit(f"Setup tracker refusé : {exc}") from None
+    if selection["mode"] != "unbound":
+        raise SystemExit(
+            f"Setup tracker refusé : le dépôt possède déjà un binding "
+            f"{selection['mode']}."
+        )
+
     # Setup is the one boundary that intentionally selects the configured provider:
     # a fresh repository has no binding yet, while normal factory calls stay closed.
     tracker = foundry.tracker(foundry.config.tracker_name())

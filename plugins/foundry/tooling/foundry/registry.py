@@ -321,7 +321,34 @@ def _matching_registry_bindings(
     if canonical:
         return canonical
     entry = entries.get(repo_name)
-    return [(repo_name, entry)] if isinstance(entry, dict) else []
+    # A basename is only a compatibility fallback for a historical entry, or for
+    # an older canonical entry that actually names this checkout.  In particular,
+    # never bind ``owner-b/same`` to the basename slot owned by ``owner-a/same``.
+    return [
+        (repo_name, entry)
+    ] if (
+        isinstance(entry, dict)
+        and entry.get("canonical_repo") in {None, repository}
+    ) else []
+
+
+def _canonical_registry_matches(
+    data: dict, repository: str,
+) -> list[tuple[str, str, dict]]:
+    """Return every registry entry that explicitly names one canonical checkout."""
+    return [
+        (provider, name, entry)
+        for provider, entries in data.items()
+        if isinstance(entries, dict)
+        for name, entry in entries.items()
+        if isinstance(entry, dict) and entry.get("canonical_repo") == repository
+    ]
+
+
+def _disambiguated_registry_key(repo: str, repository: str) -> str:
+    """Stable internal slot for repositories that share one remote basename."""
+    digest = hashlib.sha256(repository.encode("utf-8")).hexdigest()
+    return f"{repo}@{digest}"
 
 
 def _registry_project_for_marker(
@@ -481,13 +508,16 @@ def tracker_name_for_checkout(cwd: str | None = None) -> str:
 
 def repository_tracker_selection(
     cwd: str | None = None, *, require_v1: bool = False,
+    allow_unbound: bool = False,
 ) -> dict[str, object]:
     """Resolve the checkout mode without trusting a global provider or env alias.
 
     A marker is V1. An exact canonical registry entry without its marker is an
     interrupted or moved V1 publication and therefore fails closed. Legacy mode is
     limited to one already-registered basename binding; an unregistered checkout is
-    never silently promoted to legacy mode.
+    never silently promoted to legacy mode. ``allow_unbound`` is reserved for the
+    administrative setup preflight and returns that state only after excluding every
+    binding or tombstone that can belong to this checkout.
     """
     binding = repository_tracker_binding(cwd)
     if binding is not None:
@@ -529,6 +559,31 @@ def repository_tracker_selection(
         and "canonical_repo" not in entry
     ]
     if not legacy:
+        if allow_unbound:
+            # Administrative setup is allowed to select a configured provider only
+            # after this local proof.  Active DevHub bindings, archive tombstones and
+            # interrupted V1 entries all count as existing state; a foreign canonical
+            # entry that merely shares the basename does not.
+            existing = [
+                (provider, name, entry)
+                for provider, entries in data.items()
+                if isinstance(entries, dict)
+                for name, entry in entries.items()
+                if isinstance(entry, dict)
+                and (
+                    entry.get("canonical_repo") == repository
+                    or (name == repo and "canonical_repo" not in entry)
+                )
+            ]
+            if existing:
+                raise SystemExit(
+                    "Setup tracker refusé : un binding ou tombstone existe déjà "
+                    "pour le dépôt courant."
+                )
+            return {
+                "mode": "unbound", "tracker": None, "repository": repository,
+                "repo": repo, "project": None, "binding": None,
+            }
         raise SystemExit(
             "Binding tracker absent : initialise le dépôt avec 'registry bootstrap' "
             "ou migre un binding historique avec 'registry upgrade'."
@@ -629,7 +684,10 @@ def cutover_repository_tracker(
                 if (
                     isinstance(entry, dict)
                     and entry.get("archive") is not True
-                    and (entry.get("canonical_repo") == repository or name == repo_name)
+                    and (
+                        entry.get("canonical_repo") == repository
+                        or (name == repo_name and "canonical_repo" not in entry)
+                    )
                 ):
                     source_bindings.append((provider, name, entry))
         if len(source_bindings) > 1:
@@ -901,33 +959,68 @@ def bootstrap_repository_binding(
             if current is not None and current.configuration_digest == expected_digest:
                 return current
             raise ValueError("bootstrap tracker refusé : un binding actif différent existe")
-        conflicts = [
-            (provider, name, entry)
-            for provider, entries in data.items()
-            if provider in _SUPPORTED_MARKER_TRACKERS and isinstance(entries, dict)
-            for name, entry in entries.items()
-            if isinstance(entry, dict)
-            and entry.get("archive") is not True
-            and (
-                entry.get("canonical_repo") == repository
-                or (name == repo and (provider != tracker or name != repo))
+        canonical_matches = _canonical_registry_matches(data, repository)
+        if any(entry.get("archive") is True for _provider, _name, entry in canonical_matches):
+            raise ValueError(
+                "bootstrap tracker refusé : binding archivé pour le dépôt courant"
             )
-            and not (provider == tracker and name == repo and entry == candidate)
+        active_matches = [
+            match for match in canonical_matches if match[2].get("archive") is not True
         ]
-        if conflicts:
-            raise ValueError("bootstrap tracker refusé : binding actif ambigu ou contradictoire")
-        current_entry = data.get(tracker, {}).get(repo)
-        if current_entry is not None and current_entry != candidate:
-            if activation_kind == "bootstrap":
+        if active_matches:
+            if any(
+                provider != tracker or entry != candidate
+                for provider, _name, entry in active_matches
+            ):
                 raise ValueError(
-                    "binding legacy existant : utilisez 'registry upgrade'"
+                    "bootstrap tracker refusé : binding actif ambigu ou contradictoire"
                 )
-            legacy_candidate = dict(current_entry)
-            legacy_candidate["canonical_repo"] = repository
-            if legacy_candidate != candidate:
-                raise ValueError("upgrade tracker refusé : binding legacy modifié")
-        data.setdefault(tracker, {})[repo] = candidate
-        _save(data)
+            # Exact replay after the registry write: keep every existing alias and
+            # finish only the missing marker publication below.
+        else:
+            legacy_matches = [
+                (provider, name, entry)
+                for provider, entries in data.items()
+                if isinstance(entries, dict)
+                for name, entry in entries.items()
+                if name == repo
+                and isinstance(entry, dict)
+                and "canonical_repo" not in entry
+            ]
+            if activation_kind == "upgrade":
+                if (
+                    len(legacy_matches) != 1
+                    or legacy_matches[0][0] != tracker
+                    or legacy_matches[0][2].get("archive") is True
+                ):
+                    raise ValueError(
+                        "upgrade tracker refusé : binding legacy absent ou ambigu"
+                    )
+                storage_key = repo
+                legacy_candidate = dict(legacy_matches[0][2])
+                legacy_candidate["canonical_repo"] = repository
+                if legacy_candidate != candidate:
+                    raise ValueError("upgrade tracker refusé : binding legacy modifié")
+            else:
+                if legacy_matches:
+                    raise ValueError(
+                        "binding legacy existant : utilisez 'registry upgrade'"
+                    )
+                entries = data.setdefault(tracker, {})
+                if not isinstance(entries, dict):
+                    raise ValueError("registre Foundry invalide")
+                if repo in entries and not isinstance(entries[repo], dict):
+                    raise ValueError("registre Foundry invalide")
+                storage_key = (
+                    repo if repo not in entries
+                    else _disambiguated_registry_key(repo, repository)
+                )
+                if storage_key in entries:
+                    raise ValueError(
+                        "bootstrap tracker refusé : clé canonique déjà occupée"
+                    )
+            data.setdefault(tracker, {})[storage_key] = candidate
+            _save(data)
         _publish_marker(root, payload)
         published = repository_tracker_binding(str(root))
         if published is None or published.configuration_digest != payload["configuration_digest"]:
@@ -1001,9 +1094,20 @@ def update_repository_binding(
         ):
             raise ValueError("reprise tracker refusée : coordonnées contradictoires")
         data = load()
-        current = data.get(tracker, {}).get(repo)
-        if not isinstance(current, dict) or current.get("archive") is True:
+        entries = data.get(tracker, {})
+        if not isinstance(entries, dict):
+            raise ValueError("reprise tracker refusée : registre invalide")
+        matches = [
+            (name, entry)
+            for name, entry in entries.items()
+            if isinstance(entry, dict)
+            and entry.get("canonical_repo") == repository
+        ]
+        if not matches or any(entry.get("archive") is True for _name, entry in matches):
             raise ValueError("reprise tracker refusée : binding absent ou archivé")
+        current = matches[0][1]
+        if any(entry != current for _name, entry in matches[1:]):
+            raise ValueError("reprise tracker refusée : binding modifié concurremment")
         current_digest = _json_digest(current)
         candidate_digest = _json_digest(candidate)
         if current_digest not in {marker["registry_binding_digest"], candidate_digest}:
@@ -1023,7 +1127,10 @@ def update_repository_binding(
             assert published is not None
             return published
         if current_digest != candidate_digest:
-            data[tracker][repo] = candidate
+            # Aliases for one canonical checkout must remain byte-identical, otherwise
+            # marker resolution would become ambiguous after a legitimate update.
+            for name, _entry in matches:
+                data[tracker][name] = candidate
             _save(data)
         _publish_marker(root, payload)
         published = repository_tracker_binding(str(root))
