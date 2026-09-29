@@ -353,3 +353,28 @@ d'intention est locale à une machine ; la supersession utilise deux commentaire
 et n'est pas atomique. Le risque résiduel S1→S2 est assumé conformément à
 PAT-ADR-0006, sans CAS ni exclusion des écritures concurrentes. Les propriétés
 non concernées sont conservées lorsque l'API permet des écritures ciblées.
+
+### Qualification de l'engagement de tête après la review PAT-58
+
+Le 30 septembre 2026, la review indépendante a relevé qu'une suppression du
+dernier commentaire laissait une chaîne préfixe valide. Avant correction native,
+les trois supports synthétiques 8, 9 et 10 ont été relus contre les snapshots
+conservés : mêmes IDs et corps de chaque commentaire, séquences contiguës,
+digests prédécesseurs exacts, titres et sources courantes inchangés. Le binding
+privé `GHQUAL` a été vérifié. Une écriture ciblée du seul titre de chaque Issue a
+ensuite engagé sa séquence, l'ID du dernier commentaire et son digest complet.
+La relecture du corpus a retrouvé les trois statuts attendus : `superseded`,
+`accepted`, `deprecated`. Le titre et le corps de l'ancien support expérimental
+3 sont restés inchangés.
+
+Un quatrième support synthétique, `GHQUAL-ADR-0004` (issue 11), a exercé la
+création puis l'acceptation avec ce format. Comme dans la première recette,
+l'ajout de l'item au Project a d'abord été momentanément invisible : l'opération
+a refusé `adr:item_effect_unknown`. Une lecture ultérieure a retrouvé l'unique
+Issue 11 et son item, puis la reprise de la même intention a terminé la version
+initiale sans créer d'autre Issue. Le passage à `accepted` a ajouté un seul
+commentaire et avancé l'engagement de tête ; le port a relu deux commentaires,
+le titre engagé et le statut `accepted`. Les tests de transport vérifient la
+détection d'une tête supprimée ou modifiée et la reprise d'un commentaire dont
+la mise à jour de titre a été interrompue. Ces essais n'attestent pas une
+résistance à une modification coordonnée des commentaires et du titre.

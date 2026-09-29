@@ -25,6 +25,7 @@ from typing import Any, Callable, Iterator
 from foundry import registry
 from foundry.models import Adr, Issue, Link, Project
 from foundry.trackers.base import (
+    AdrIssueUnavailableError,
     TrackerConflictError,
     IssueUnavailableError,
     Tracker,
@@ -34,6 +35,7 @@ from foundry.trackers.base import (
 _MAX_PAGES, _TRANSPORT_TIMEOUT_SECONDS, _ADR_LABEL = 100, 30, "foundry:adr"
 _ADR_SCHEMA = "foundry-ghprojects-adr.v1"
 _ADR_HEADER = "<!-- foundry-ghprojects-adr.v1\n"
+_ADR_HEAD = "foundry-head:v1"
 _ADR_TRANSITIONS = {
     "proposed": {"accepted", "deprecated"},
     "accepted": {"deprecated"},
@@ -55,7 +57,7 @@ _AC_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[(?P<mark>[ xX])\]\s+.+?\s*$")
 _CREATE_INTENT_SCHEMA = "foundry-ghprojects-create-intent.v1"
 _CREATE_STEPS = {
     "item", "parent", *(f"field:{name}" for name in _FIELDS),
-    "adr:label", "adr:item", "adr:version",
+    "adr:label", "adr:item", "adr:version", "adr:head",
 }
 
 
@@ -118,6 +120,7 @@ class _CreateCandidate:
 
 
 class GitHubProjectsTracker(Tracker):
+    adr_issue_link_supported = True
     name = "ghprojects"
 
     def __init__(self, *, runner=subprocess.run, state_dir: Path | str | None = None):
@@ -1797,18 +1800,49 @@ class GitHubProjectsTracker(Tracker):
     def _adr_title(adr_id: str, title: str) -> str:
         return f"[{adr_id}] {title}"
 
+    @classmethod
+    def _adr_head_title(
+        cls,
+        adr_id: str,
+        title: str,
+        metadata: dict[str, Any],
+        body: str,
+        comment_id: int,
+    ) -> str:
+        digest = cls._adr_version_digest(metadata, body)
+        return (
+            f"{cls._adr_title(adr_id, title)} "
+            f"[{_ADR_HEAD}:{metadata['sequence']}:{comment_id}:{digest}]"
+        )
+
+    @staticmethod
+    def _adr_native_title(raw_title: Any) -> tuple[str, str, tuple[int, int, str] | None]:
+        if not isinstance(raw_title, str):
+            raise GitHubProjectsTrackerError("adr.issue_read", "invalid_adr_title")
+        marker = re.fullmatch(
+            r"(\[[A-Za-z][A-Za-z0-9_]*-ADR-\d{4}\] .+) "
+            rf"\[{re.escape(_ADR_HEAD)}:(\d+):(\d+):([0-9a-f]{{64}})\]",
+            raw_title,
+        )
+        base_title = marker.group(1) if marker is not None else raw_title
+        match = re.fullmatch(r"\[([A-Za-z][A-Za-z0-9_]*-ADR-\d{4})\] (.+)", base_title)
+        if match is None or (marker is None and f"[{_ADR_HEAD}:" in raw_title):
+            raise GitHubProjectsTrackerError("adr.issue_read", "invalid_adr_title")
+        head = None if marker is None else (
+            int(marker.group(2)), int(marker.group(3)), marker.group(4),
+        )
+        return match.group(1), match.group(2), head
+
     def _adr_issue(self, raw: Any, binding: _Binding) -> tuple[str, str, int]:
         number = self._issue_number_from_rest(raw, binding, "adr.issue_read")
         title, body, labels = raw.get("title"), raw.get("body"), raw.get("labels")
-        if (not isinstance(title, str) or not isinstance(body, str)
+        if (not isinstance(body, str)
                 or not isinstance(labels, list)
                 or not all(isinstance(x, dict) and isinstance(x.get("name"), str) for x in labels)
                 or _ADR_LABEL not in {x["name"] for x in labels}):
             raise GitHubProjectsTrackerError("adr.issue_read", "invalid_adr_support")
-        match = re.fullmatch(r"\[([A-Za-z][A-Za-z0-9_]*-ADR-\d{4})\] (.+)", title)
-        if match is None:
-            raise GitHubProjectsTrackerError("adr.issue_read", "invalid_adr_title")
-        return match.group(1), match.group(2), number
+        adr_id, display_title, _head = self._adr_native_title(title)
+        return adr_id, display_title, number
 
     @staticmethod
     def _adr_comment(metadata: dict[str, Any], body: str) -> str:
@@ -1924,7 +1958,11 @@ class GitHubProjectsTracker(Tracker):
         raise GitHubProjectsTrackerError("adr.list", "pagination_limit")
 
     def _adr_snapshot(
-        self, project: Project, *, _validate_graph: bool = True,
+        self,
+        project: Project,
+        *,
+        _validate_graph: bool = True,
+        _reconcile_head_for: str | None = None,
     ) -> tuple[_Binding, dict[str, tuple[Adr, dict[str, Any], int]]]:
         binding = self._authoritative_binding(project)
         latest: dict[str, tuple[Adr, dict[str, Any], int]] = {}
@@ -1969,10 +2007,35 @@ class GitHubProjectsTracker(Tracker):
                         and re.fullmatch(rf"{re.escape(binding.key)}-ADR-\d{{4}}", relations["superseded_by"]) is None)
                 ):
                     raise TrackerConflictError("ADR GitHub relation coordinate invalid")
-            metadata, body, comment_id = parsed[-1]
             raw = self._rest(f"repos/{binding.repo}/issues/{number}", "adr.issue_read")
             _id, current_title, _number = self._adr_issue(raw, binding)
-            if current_title != metadata["title"] or raw.get("body") != body:
+            _native_id, _native_title, head = self._adr_native_title(raw.get("title"))
+            if head is None:
+                raise TrackerConflictError(
+                    "ADR GitHub head commitment missing; legacy support requires migration"
+                )
+            head_indexes = [
+                index for index, (candidate_metadata, candidate_body, candidate_id)
+                in enumerate(parsed)
+                if head == (
+                    candidate_metadata["sequence"], candidate_id,
+                    self._adr_version_digest(candidate_metadata, candidate_body),
+                )
+            ]
+            if len(head_indexes) != 1:
+                raise TrackerConflictError("ADR GitHub head commitment divergent")
+            head_index = head_indexes[0]
+            if head_index != len(parsed) - 1:
+                if (
+                    _reconcile_head_for != adr_id
+                    or head_index != len(parsed) - 2
+                ):
+                    raise TrackerConflictError("ADR GitHub head commitment divergent")
+            metadata, body, comment_id = parsed[head_index]
+            observed_bodies = {body}
+            if head_index != len(parsed) - 1:
+                observed_bodies.add(parsed[-1][1])
+            if current_title != metadata["title"] or raw.get("body") not in observed_bodies:
                 raise TrackerConflictError("ADR GitHub current source divergent")
             latest[adr_id] = (Adr(adr_id, current_title, metadata["status"], body, str(number)), metadata, comment_id)
         # Validate graph only after the entire in-scope corpus is present.
@@ -1989,6 +2052,26 @@ class GitHubProjectsTracker(Tracker):
                     or adr_id not in latest[target][1]["relations"]["supersedes"]
                 ):
                     raise TrackerConflictError("ADR GitHub supersession is not reciprocal")
+        linked_by_issue: dict[str, list[str]] = {}
+        for adr_id, (_adr, metadata, _comment) in latest.items():
+            for issue_id in metadata["relations"]["issues"]:
+                linked_by_issue.setdefault(issue_id, []).append(adr_id)
+        if linked_by_issue:
+            project_issue_ids = {issue.id for issue in self._search_raw(project)}
+            for issue_id, adr_ids in sorted(linked_by_issue.items()):
+                adr_id = sorted(adr_ids)[0]
+                if issue_id not in project_issue_ids:
+                    raise AdrIssueUnavailableError(adr_id, issue_id)
+                try:
+                    number, _native_id = self._native_issue(
+                        issue_id, binding, "adr.issue_relation_read",
+                    )
+                except GitHubProjectsTrackerError as exc:
+                    if exc.reason in {"not_found", "permission_denied"}:
+                        raise AdrIssueUnavailableError(adr_id, issue_id) from None
+                    raise
+                if issue_id != f"{binding.key}-{number}":
+                    raise TrackerConflictError("ADR GitHub issue relation coordinate divergent")
         return binding, latest
 
     def list_adrs(self, project: Project) -> list[Adr]:
@@ -1996,7 +2079,9 @@ class GitHubProjectsTracker(Tracker):
         return [latest[key][0] for key in sorted(latest)]
 
     def adr_for_mutation(self, project: Project, adr_id: str) -> Adr | None:
-        _binding, latest = self._adr_snapshot(project)
+        _binding, latest = self._adr_snapshot(
+            project, _reconcile_head_for=adr_id,
+        )
         entry = latest.get(adr_id)
         return entry[0] if entry is not None else None
 
@@ -2017,12 +2102,71 @@ class GitHubProjectsTracker(Tracker):
             if key not in {"body", "updated_at"}
         }
 
+    def _commit_adr_head(
+        self,
+        binding: _Binding,
+        number: int,
+        adr_id: str,
+        title: str,
+        body: str,
+        metadata: dict[str, Any],
+        comment_id: int,
+        expected_native_title: str,
+    ) -> None:
+        desired_title = self._adr_head_title(
+            adr_id, title, metadata, body, comment_id,
+        )
+        raw = self._rest(f"repos/{binding.repo}/issues/{number}", "adr.head_prewrite")
+        native_adr_id, native_title, native_number = self._adr_issue(raw, binding)
+        if (
+            native_adr_id != adr_id
+            or native_title != title
+            or native_number != number
+            or raw.get("body") != body
+        ):
+            raise TrackerConflictError("ADR GitHub support changed before head commitment")
+        if raw.get("title") == desired_title:
+            return
+        if raw.get("title") != expected_native_title:
+            raise TrackerConflictError("ADR GitHub head changed before bounded write")
+        unaffected = {
+            key: value for key, value in raw.items()
+            if key not in {"title", "updated_at"}
+        }
+        write_error: GitHubProjectsTrackerError | None = None
+        try:
+            self._rest_write(
+                "PATCH", f"repos/{binding.repo}/issues/{number}",
+                {"title": desired_title}, "adr.head_write",
+            )
+        except GitHubProjectsTrackerError as exc:
+            write_error = exc
+        observed = self._rest(
+            f"repos/{binding.repo}/issues/{number}", "adr.head_readback",
+        )
+        if observed.get("title") != desired_title:
+            if write_error is not None and observed.get("title") == expected_native_title:
+                raise write_error
+            raise TrackerConflictError(
+                "ADR GitHub head commitment divergent after write"
+            ) from write_error
+        observed_unaffected = {
+            key: value for key, value in observed.items()
+            if key not in {"title", "updated_at"}
+        }
+        if observed_unaffected != unaffected:
+            raise TrackerConflictError(
+                "ADR GitHub untargeted properties changed after head commitment"
+            )
+
     def _append_adr_version(self, project: Project, adr: Adr, *, status: str | None = None,
                             body: str | None = None, relations: dict[str, Any] | None = None,
                             _allow_incomplete_graph: bool = False,
                             _precomment_check: Callable[[], None] | None = None) -> Adr:
         binding, latest = self._adr_snapshot(
-            project, _validate_graph=not _allow_incomplete_graph,
+            project,
+            _validate_graph=not _allow_incomplete_graph,
+            _reconcile_head_for=adr.id,
         )
         entry = latest.get(adr.id)
         if entry is None or not self._same_adr_snapshot(adr, entry[0]):
@@ -2040,6 +2184,9 @@ class GitHubProjectsTracker(Tracker):
             "relations": deepcopy(metadata["relations"] if relations is None else relations),
         }
         number = int(previous.ref or 0)
+        previous_native_title = self._adr_head_title(
+            adr.id, previous.title, metadata, previous.body, previous_comment,
+        )
         # Prove the native support coordinate and all caller-visible predecessor
         # fields before the first effect.  The Issue number alone is not authority.
         raw = self._rest(f"repos/{binding.repo}/issues/{number}", "adr.prewrite")
@@ -2049,6 +2196,7 @@ class GitHubProjectsTracker(Tracker):
             native_adr_id != adr.id
             or native_number != number
             or title != previous.title
+            or raw.get("title") != previous_native_title
             or raw.get("body") != previous.body
             or not isinstance(node_id, str)
             or not node_id
@@ -2085,7 +2233,15 @@ class GitHubProjectsTracker(Tracker):
             exact = [row for row in comments if row.get("body") == version_body]
             if len(exact) > 1:
                 raise TrackerConflictError("ADR GitHub version candidate is ambiguous")
+            if len(comments) > metadata["sequence"] + 1 and not exact:
+                raise TrackerConflictError(
+                    "ADR GitHub uncommitted head does not match requested version"
+                )
             if exact:
+                self._commit_adr_head(
+                    binding, number, adr.id, previous.title, source,
+                    next_metadata, exact[0]["id"], previous_native_title,
+                )
                 if record["state"] != "complete":
                     self._write_create_intent(
                         fingerprint,
@@ -2153,6 +2309,7 @@ class GitHubProjectsTracker(Tracker):
             current_id != adr.id
             or current_title != previous.title
             or current_number != number
+            or current_raw.get("title") != previous_native_title
             or current_raw.get("id") != candidate.native_id
             or current_raw.get("node_id") != candidate.content_id
             or current_raw.get("body") != source
@@ -2193,6 +2350,10 @@ class GitHubProjectsTracker(Tracker):
         exact = [row for row in observed_comments if row.get("body") == version_body]
         if len(exact) != 1 or exact[0].get("id") != raw_comment.get("id"):
             raise TrackerConflictError("ADR GitHub version readback divergent")
+        self._commit_adr_head(
+            binding, number, adr.id, previous.title, source,
+            next_metadata, raw_comment["id"], previous_native_title,
+        )
         with self._create_intent_lock(fingerprint):
             self._write_create_intent(
                 fingerprint,
@@ -2361,8 +2522,12 @@ class GitHubProjectsTracker(Tracker):
                 observed_number = self._issue_number_from_rest(
                     raw, binding, "adr.create_reconcile",
                 )
+                native_adr_id, native_name, _head = self._adr_native_title(
+                    raw.get("title")
+                )
                 if (
-                    raw.get("title") != native_title
+                    native_adr_id != adr_id
+                    or native_name != title
                     or observed_number != candidate.number
                     or raw.get("id") != candidate.native_id
                     or raw.get("node_id") != candidate.content_id
@@ -2482,6 +2647,30 @@ class GitHubProjectsTracker(Tracker):
                         "adr.create_reconcile", "adr:version_effect_unknown",
                     ) from write_error
                 complete_step("adr:version")
+
+            initial_comment_id = exact[0].get("id")
+            if type(initial_comment_id) is not int or initial_comment_id < 1:
+                raise GitHubProjectsTrackerError(
+                    "adr.create_reconcile", "invalid_initial_version_coordinate",
+                )
+            raw = self._rest(
+                f"repos/{binding.repo}/issues/{candidate.number}",
+                "adr.head_prewrite",
+            )
+            desired_head_title = self._adr_head_title(
+                adr_id, title, metadata, body, initial_comment_id,
+            )
+            if raw.get("title") == desired_head_title and record["step"] == "adr:head":
+                complete_step("adr:head")
+            elif raw.get("title") != desired_head_title:
+                if raw.get("title") != native_title:
+                    raise TrackerConflictError("ADR GitHub initial head commitment drift")
+                arm_step("adr:head")
+                self._commit_adr_head(
+                    binding, candidate.number, adr_id, title, body, metadata,
+                    initial_comment_id, native_title,
+                )
+                complete_step("adr:head")
 
             _binding, reread = self._adr_snapshot(project)
             result = reread.get(adr_id)
