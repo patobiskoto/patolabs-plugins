@@ -4185,7 +4185,7 @@ def test_linear_frame_rejects_accepted_incoming_adr_before_first_write(
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
     before_issues = copy.deepcopy(wire.issues)
 
-    with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+    with pytest.raises(ValueError, match="Tracker ADR creation must begin proposed"):
         frame.materialize({
             "adrs": [
                 {"title": "Earlier proposed", "body": "decision"},
@@ -4253,7 +4253,7 @@ def test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write(
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
     before_issues = copy.deepcopy(wire.issues)
 
-    with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+    with pytest.raises(ValueError, match="Tracker ADR creation must begin proposed"):
         frame.materialize({
             "adrs": [{
                 "title": "Inactive decision", "body": "decision", "status": status,

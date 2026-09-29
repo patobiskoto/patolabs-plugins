@@ -159,21 +159,19 @@ requires a distinct private personal-repository node, Project item ID and Issue 
 exactly one qualified field ID, the qualified state/type catalogs, a bounded priority
 catalog, and coherent field/option value IDs.
 It rejects partial GraphQL responses and unsupported draft/PR/foreign items, and excludes only the reserved
-`foundry:adr` support. Native free-text search is explicitly refused. The write methods `create_issue`, `update_fields`, `set_state`,
-`link`, `add_comment`, `create_adr` and `set_adr_status` remain typed capability
-refusals. PAT-58 supplies an exact-project ADR codec: a reserved `foundry:adr` Issue
+`foundry:adr` support. Native free-text search is explicitly refused. PAT-66 supplies
+bounded delivery-Issue creation, field/body updates, links and comments for this
+qualified profile; native `set_state` remains unavailable pending PAT-67. PAT-58
+supplies an exact-project ADR codec: a reserved `foundry:adr` Issue
 is the support, its UTF-8 body is current source, and version comments bind source
 digest, sequence, predecessor, status and relations. Reads exhaust both Project and
 comment pagination and reject duplicate, foreign, incomplete or altered chains. It
 never imports the PAT-65 `EXP-ADR-0001` prototype as authority. Creation and later
 body/status/link/supersession evolution are bounded read-verify-write-readback paths;
 GitHub provides no CAS, immutable history or idempotency key, so an ambiguous comment
-or create response is explicit and not blindly replayed. Everything else is inherited
-from `base.py` unchanged: optional ports raise their typed unavailability error
-(`EpicClosureUnavailableError`, `BodyUpdateUnavailableError`,
-`AcceptanceSyncUnavailableError`, `ProjectProvisioningUnavailableError`,
-`EpicSubgraphUnavailableError`, `TrackerCapabilityUnavailableError`); the
-`validate_*` checks and `preflight_issue_operation` are no-ops. The cells therefore do
+or create response is explicit and not blindly replayed. Optional ports not delivered
+by these slices retain their typed unavailability errors from `base.py`; the exact
+status of each port is the matrix below. The cells therefore do
 not become `supported` from provider probes alone: each cell's `ticket` names the tranche
 that must deliver and qualify the adapter operation (PAT-57, 58, 59, 64, 66, 67, 69),
 including the still-unavailable optional Epic subgraph projection under PAT-57 and

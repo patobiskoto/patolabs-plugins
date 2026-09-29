@@ -79,7 +79,11 @@ and whole-version digest. Deleting the final comment or editing its otherwise le
 metadata therefore leaves a title/head mismatch instead of exposing a valid prefix as
 current authority. A coordinated edit of both the comment chain and this title remains
 outside the guarantee stated by PAT-ADR-0007.
-`list_adrs` exhausts Project and comment pagination, then verifies the complete chain,
+`list_adrs` exhausts both the repository Issue list and Project items, requiring the
+same typed support in both surfaces. A reserved label removed from a still-visible
+support, or an item removed from the bound Project, is an explicit conflict. A foreign
+or ordinary similarly titled Issue is not promoted into the ADR corpus. The reader
+then exhausts comment pagination and verifies the complete chain,
 the current body, head commitment, digests and reciprocal supersession links before it
 returns authority. Each current ADR-to-Issue relation must also resolve once through the
 complete bound Project read and the canonical Issue endpoint. A removed, deleted or
@@ -89,6 +93,9 @@ transport errors rather than being collapsed into unavailability.
 Duplicate supports, a hole, a malformed same-namespace support, missing/deleted comment,
 foreign coordinate, altered source or ambiguous history fail closed. The old PAT-65
 `EXP-ADR-0001` prototype is a foreign namespace and is not imported as GHQUAL authority.
+A complete deletion that leaves no attributable Issue or Project item cannot be
+detected by a fresh read; the native Issue-number allocation below prevents reuse of
+its ADR identifier without claiming to attest that vanished object.
 
 Creation starts proposed, creates the native Issue, applies only the reserved label,
 adds the exact Project item, appends version zero and re-reads the complete chain. Later
@@ -104,11 +111,13 @@ automatically. These are bounded observations with the residual S1-to-S2 race, n
 immutability, exactly-once or a provider receipt.
 
 ADR creation reuses the private local create-intent store already used for Issue creation:
-before its first POST it durably reserves the qualified ADR coordinate and a request
-fingerprint (the store contains neither source nor title in clear text). A machine-local
-corpus lock serializes allocation and reloads the qualified corpus before choosing the
-next ID; it is not a distributed lock or CAS. Stage markers are persisted before the
-native Issue, label, Project-item and version-comment effects, so a fresh process can
+before its first POST it records a request fingerprint, without source or title in clear
+text. The first native Issue has a provisional non-ADR title and no reserved label or
+Project item. Its GitHub-assigned Issue number determines the four-digit ADR ID, so
+deleted supports cannot cause ID reuse; gaps are allowed and an exhausted four-digit
+space fails explicitly. A machine-local corpus lock serializes local creation attempts,
+but is neither a distributed lock nor CAS. Stage markers precede the identity-title,
+label, Project-item and version-comment effects, so a fresh process can
 either observe the exact owned partial/completed support or fail closed without repeating
 an unknown effect. The initial head-title update has its own stage and is reconciled by
 fresh readback. A later version interrupted after its one comment POST but before the
@@ -121,13 +130,13 @@ current Issue body: they append their metadata/source snapshot and advance only 
 Foundry-owned title commitment. `adr_issue_link_supported` is enabled, so `frame`
 materialization records each declared ADR constraint through this same checked relation.
 
-The three synthetic GHQUAL ADR supports created by the earlier PAT-58 qualification do
-not yet have a `foundry-head:v1` title commitment. They are deliberately refused with
-`legacy support requires migration`; the native qualification replay must verify each
-exact body and complete comment chain, then patch only its title to the commitment for
-the observed head before this adapter can read it. Existing PAT-66 local create-intent
-journals remain schema-compatible: their older step vocabulary is still accepted and no
-ADR head is inferred from those local files.
+The three synthetic GHQUAL ADR supports created by the earlier PAT-58 qualification
+were revalidated against their exact bodies and complete comment chains, then migrated
+by a targeted title update. They now carry `foundry-head:v1` and pass the corpus read.
+Any other legacy support without this commitment is refused with
+`legacy support requires migration`; a local journal never supplies the missing native
+head. Existing PAT-66 local create-intent journals remain schema-compatible: their
+older step vocabulary is still accepted.
 
 ## Bounded PAT-66 writes
 

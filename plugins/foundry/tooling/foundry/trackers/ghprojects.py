@@ -57,7 +57,7 @@ _AC_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[(?P<mark>[ xX])\]\s+.+?\s*$")
 _CREATE_INTENT_SCHEMA = "foundry-ghprojects-create-intent.v1"
 _CREATE_STEPS = {
     "item", "parent", *(f"field:{name}" for name in _FIELDS),
-    "adr:label", "adr:item", "adr:version", "adr:head",
+    "adr:identity", "adr:label", "adr:item", "adr:version", "adr:head",
 }
 
 
@@ -1893,69 +1893,346 @@ class GitHubProjectsTracker(Tracker):
             raise TrackerConflictError("ADR GitHub source digest divergent")
         return metadata, body, native_id
 
-    def _adr_supports(self, project: Project) -> list[tuple[str, str, int]]:
-        binding = self._authoritative_binding(project)
-        # Project paging establishes that an ADR support belongs to this exact
-        # Project; REST supplies the source body and complete comment history.
-        cursor, seen, supports = None, set(), []
+    @staticmethod
+    def _rest_label_names(raw: dict[str, Any], operation: str) -> set[str]:
+        labels = raw.get("labels")
+        if (
+            not isinstance(labels, list)
+            or not all(
+                isinstance(label, dict)
+                and isinstance(label.get("name"), str)
+                and bool(label["name"])
+                for label in labels
+            )
+            or len({label["name"] for label in labels}) != len(labels)
+        ):
+            raise GitHubProjectsTrackerError(operation, "invalid_labels")
+        return {label["name"] for label in labels}
+
+    def _repository_issue_inventory(
+        self, binding: _Binding, operation: str,
+    ) -> dict[int, dict[str, Any]]:
+        """Read every visible native Issue/PR coordinate in the bound repository."""
+        inventory: dict[int, dict[str, Any]] = {}
+        for raw in self._rows(
+            f"repos/{binding.repo}/issues?state=all", operation,
+        ):
+            number, native_id = raw.get("number"), raw.get("id")
+            pull_request = raw.get("pull_request") is not None
+            html_kind = "pull" if pull_request else "issues"
+            if (
+                type(number) is not int
+                or number < 1
+                or type(native_id) is not int
+                or native_id < 1
+                or raw.get("repository_url") != self._api_repo(binding)
+                or raw.get("url") != f"{self._api_repo(binding)}/issues/{number}"
+                or raw.get("html_url")
+                != f"https://github.com/{binding.repo}/{html_kind}/{number}"
+                or number in inventory
+            ):
+                raise GitHubProjectsTrackerError(
+                    operation, "foreign_or_ambiguous_repository_issue",
+                )
+            inventory[number] = raw
+        return inventory
+
+    def _project_issue_inventory(
+        self, binding: _Binding,
+    ) -> dict[int, dict[str, Any]]:
+        """Read all observable canonical Issue items from the bound Project."""
+        cursor: str | None = None
+        seen_items: set[str] = set()
+        seen_cursors: set[str] = set()
+        inventory: dict[int, dict[str, Any]] = {}
         for _ in range(_MAX_PAGES):
             page = self._project_page(binding, cursor)
             items = page.get("items")
             if not isinstance(items, dict) or not isinstance(items.get("nodes"), list):
-                raise GitHubProjectsTrackerError("adr.list", "invalid_project_items")
+                raise GitHubProjectsTrackerError(
+                    "adr.list", "invalid_project_items",
+                )
             for item in items["nodes"]:
-                if not isinstance(item, dict) or not isinstance(item.get("id"), str) or item["id"] in seen:
-                    raise GitHubProjectsTrackerError("adr.list", "invalid_project_items")
-                seen.add(item["id"])
+                item_id = item.get("id") if isinstance(item, dict) else None
+                if (
+                    not isinstance(item_id, str)
+                    or not item_id
+                    or item_id in seen_items
+                ):
+                    raise GitHubProjectsTrackerError(
+                        "adr.list", "invalid_project_items",
+                    )
+                seen_items.add(item_id)
                 content = item.get("content")
+                # GitHub can expose non-Issue items (and may expose no content
+                # after deletion).  Without an Issue coordinate or marker they
+                # cannot be attributed to the ADR corpus.
                 if not isinstance(content, dict) or content.get("__typename") != "Issue":
                     continue
                 repository = content.get("repository")
                 if (
-                    not isinstance(content.get("id"), str) or not content["id"]
+                    not isinstance(content.get("id"), str)
+                    or not content["id"]
                     or not isinstance(repository, dict)
-                    or not isinstance(repository.get("id"), str) or not repository["id"]
-                    or repository.get("nameWithOwner", "").casefold() != binding.repo.casefold()
+                    or not isinstance(repository.get("id"), str)
+                    or not repository["id"]
+                    or repository.get("nameWithOwner", "").casefold()
+                    != binding.repo.casefold()
                     or repository.get("isPrivate") is not True
                     or not isinstance(repository.get("owner"), dict)
                     or repository["owner"].get("__typename") != "User"
-                    or repository["owner"].get("login", "").casefold() != binding.owner.casefold()
+                    or repository["owner"].get("login", "").casefold()
+                    != binding.owner.casefold()
                 ):
-                    raise GitHubProjectsTrackerError("adr.list", "foreign_adr_support_coordinate")
+                    raise GitHubProjectsTrackerError(
+                        "adr.list", "foreign_adr_support_coordinate",
+                    )
+                number = content.get("number")
+                title, body = content.get("title"), content.get("body")
                 labels = content.get("labels")
                 nodes = labels.get("nodes") if isinstance(labels, dict) else None
-                info = labels.get("pageInfo") if isinstance(labels, dict) else None
-                if not isinstance(nodes, list) or not isinstance(info, dict) or info.get("hasNextPage") is not False:
-                    raise GitHubProjectsTrackerError("adr.list", "truncated_labels")
-                if _ADR_LABEL not in {x.get("name") for x in nodes if isinstance(x, dict)}:
-                    continue
-                number = content.get("number")
-                if type(number) is not int or number < 1:
-                    raise GitHubProjectsTrackerError("adr.list", "invalid_adr_support")
-                raw = self._rest(f"repos/{binding.repo}/issues/{number}", "adr.issue_read")
-                if raw.get("node_id") != content["id"]:
-                    raise GitHubProjectsTrackerError(
-                        "adr.list", "adr_support_node_coordinate_mismatch",
+                label_page = labels.get("pageInfo") if isinstance(labels, dict) else None
+                if (
+                    type(number) is not int
+                    or number < 1
+                    or not isinstance(title, str)
+                    or not title
+                    or body is not None
+                    and not isinstance(body, str)
+                    or not isinstance(nodes, list)
+                    or not isinstance(label_page, dict)
+                    or label_page.get("hasNextPage") is not False
+                    or not all(
+                        isinstance(label, dict)
+                        and isinstance(label.get("name"), str)
+                        and bool(label["name"])
+                        for label in nodes
                     )
-                raw_title = raw.get("title") if isinstance(raw, dict) else None
-                # PAT-65's EXP prototype shares the reserved label but not this
-                # corpus namespace.  It is not authority for GHQUAL; a malformed
-                # GHQUAL support still fails closed rather than being hidden.
-                if isinstance(raw_title, str) and not raw_title.startswith(f"[{binding.key}-ADR-"):
-                    if (raw_title.startswith("EXP-ADR")
-                            or re.fullmatch(r"\[[A-Za-z][A-Za-z0-9_]*-ADR-\d{4}\] .+", raw_title)):
-                        continue
-                supports.append(self._adr_issue(raw, binding))
-            info = items.get("pageInfo")
-            if not isinstance(info, dict) or type(info.get("hasNextPage")) is not bool:
-                raise GitHubProjectsTrackerError("adr.list", "invalid_pagination")
-            if not info["hasNextPage"]:
-                return supports
-            cursor = info.get("endCursor")
-            if not isinstance(cursor, str) or not cursor or cursor in seen:
-                raise GitHubProjectsTrackerError("adr.list", "pagination_stalled")
-            seen.add(cursor)
+                    or len({label["name"] for label in nodes}) != len(nodes)
+                    or number in inventory
+                ):
+                    raise GitHubProjectsTrackerError(
+                        "adr.list", "invalid_adr_support",
+                    )
+                inventory[number] = content
+            page_info = items.get("pageInfo")
+            if (
+                not isinstance(page_info, dict)
+                or type(page_info.get("hasNextPage")) is not bool
+            ):
+                raise GitHubProjectsTrackerError(
+                    "adr.list", "invalid_pagination",
+                )
+            if not page_info["hasNextPage"]:
+                return inventory
+            cursor = page_info.get("endCursor")
+            if (
+                not isinstance(cursor, str)
+                or not cursor
+                or cursor in seen_cursors
+            ):
+                raise GitHubProjectsTrackerError(
+                    "adr.list", "pagination_stalled",
+                )
+            seen_cursors.add(cursor)
         raise GitHubProjectsTrackerError("adr.list", "pagination_limit")
+
+    def _adr_surface_candidate(
+        self,
+        title: Any,
+        labels: set[str],
+        binding: _Binding,
+    ) -> tuple[str, str] | None:
+        """Recognize an in-scope support without trusting one mutable marker."""
+        labelled = _ADR_LABEL in labels
+        if not isinstance(title, str):
+            if labelled:
+                raise GitHubProjectsTrackerError(
+                    "adr.list", "invalid_adr_title",
+                )
+            return None
+        try:
+            adr_id, display_title, head = self._adr_native_title(title)
+        except GitHubProjectsTrackerError:
+            # PAT-65's EXP probe deliberately shares the reserved label but is
+            # outside the bound corpus namespace.
+            if labelled and not title.startswith("EXP-ADR"):
+                raise GitHubProjectsTrackerError(
+                    "adr.list", "invalid_adr_title",
+                )
+            return None
+        if not adr_id.startswith(f"{binding.key}-ADR-"):
+            return None
+        # A committed head is an independent native footprint.  It lets a
+        # missing label be detected, while an unrelated similarly titled Issue
+        # without the reserved marker or a valid head remains ordinary work.
+        if not labelled and head is None:
+            return None
+        return adr_id, display_title
+
+    def _adr_project_support(
+        self,
+        binding: _Binding,
+        candidate: _CreateCandidate,
+        adr_id: str,
+        title: str,
+    ) -> tuple[str, str, int] | None:
+        """Observe only the create candidate's Project attachment step."""
+        content = self._project_issue_inventory(binding).get(candidate.number)
+        if content is None:
+            return None
+        labels = {
+            label["name"] for label in content["labels"]["nodes"]
+        }
+        if (
+            content.get("id") != candidate.content_id
+            or _ADR_LABEL not in labels
+        ):
+            raise TrackerConflictError(
+                "ADR GitHub support Project coordinate or label divergent",
+            )
+        observed_id, observed_title, _head = self._adr_native_title(
+            content.get("title"),
+        )
+        if observed_id != adr_id or observed_title != title:
+            raise TrackerConflictError("ADR GitHub support Project identity divergent")
+        return observed_id, observed_title, candidate.number
+
+    def _stable_adr_id(
+        self,
+        binding: _Binding,
+        candidate_number: int,
+        latest: dict[str, tuple[Adr, dict[str, Any], int]],
+    ) -> str:
+        """Allocate from the native monotonic Issue coordinate without reuse.
+
+        GitHub never reuses an Issue number.  Keeping that number in the ADR ID
+        makes simultaneous provisional candidates distinct without provider
+        CAS and makes every deleted coordinate a harmless permanent gap.
+        """
+        inventory = self._repository_issue_inventory(
+            binding, "adr.allocate",
+        )
+        raw_candidate = inventory.get(candidate_number)
+        if raw_candidate is None or raw_candidate.get("pull_request") is not None:
+            raise GitHubProjectsTrackerError(
+                "adr.allocate", "create_candidate_not_visible",
+            )
+        support_numbers: set[int] = set()
+        for adr_id, (adr, _metadata, _comment_id) in latest.items():
+            match = re.fullmatch(
+                rf"{re.escape(binding.key)}-ADR-(\d{{4}})", adr_id,
+            )
+            try:
+                support_number = int(adr.ref or "")
+            except ValueError as exc:
+                raise TrackerConflictError(
+                    "ADR GitHub allocation coordinate invalid",
+                ) from exc
+            if (
+                match is None
+                or support_number < 1
+                or support_number in support_numbers
+                or support_number not in inventory
+                or int(match.group(1)) > support_number
+            ):
+                raise TrackerConflictError(
+                    "ADR GitHub allocation coordinate invalid",
+                )
+            support_numbers.add(support_number)
+        allocated = candidate_number
+        if allocated < 1 or allocated > 9999:
+            raise GitHubProjectsTrackerError(
+                "adr.allocate", "adr_id_space_exhausted",
+            )
+        adr_id = f"{binding.key}-ADR-{allocated:04d}"
+        if adr_id in latest:
+            raise TrackerConflictError("ADR GitHub allocation reused a visible ID")
+        return adr_id
+
+    def _adr_supports(self, project: Project) -> list[tuple[str, str, int]]:
+        binding = self._authoritative_binding(project)
+        # Neither the mutable label nor Project membership is sufficient alone.
+        # Exhaust both native surfaces, identify the corpus independently on
+        # each, then require exact agreement before reading history.
+        repository = self._repository_issue_inventory(binding, "adr.list")
+        project_items = self._project_issue_inventory(binding)
+        repository_candidates: dict[int, tuple[str, str]] = {}
+        project_candidates: dict[int, tuple[str, str]] = {}
+        for number, raw in repository.items():
+            if raw.get("pull_request") is not None:
+                continue
+            candidate = self._adr_surface_candidate(
+                raw.get("title"), self._rest_label_names(raw, "adr.list"), binding,
+            )
+            if candidate is not None:
+                repository_candidates[number] = candidate
+        for number, content in project_items.items():
+            labels = {
+                label["name"] for label in content["labels"]["nodes"]
+            }
+            candidate = self._adr_surface_candidate(
+                content.get("title"), labels, binding,
+            )
+            if candidate is not None:
+                project_candidates[number] = candidate
+
+        supports: list[tuple[str, str, int]] = []
+        for number in sorted(repository_candidates.keys() | project_candidates.keys()):
+            repository_candidate = repository_candidates.get(number)
+            project_candidate = project_candidates.get(number)
+            if repository_candidate is None:
+                # Preserve the provider's precise deleted/inaccessible outcome
+                # when the Project still exposes the native support footprint.
+                self._rest(
+                    f"repos/{binding.repo}/issues/{number}", "adr.issue_read",
+                )
+                raise TrackerConflictError(
+                    "ADR GitHub support missing from repository enumeration",
+                )
+            if project_candidate is None:
+                raise TrackerConflictError(
+                    "ADR GitHub support missing from bound Project",
+                )
+            if repository_candidate != project_candidate:
+                raise TrackerConflictError(
+                    "ADR GitHub support identity differs between repository and Project",
+                )
+            repository_raw = repository[number]
+            project_raw = project_items[number]
+            repository_labels = self._rest_label_names(repository_raw, "adr.list")
+            project_labels = {
+                label["name"] for label in project_raw["labels"]["nodes"]
+            }
+            if _ADR_LABEL not in repository_labels or _ADR_LABEL not in project_labels:
+                raise TrackerConflictError(
+                    "ADR GitHub reserved support label missing",
+                )
+            if (
+                repository_raw.get("node_id") != project_raw.get("id")
+                or repository_raw.get("title") != project_raw.get("title")
+                or repository_raw.get("body") != project_raw.get("body")
+            ):
+                raise TrackerConflictError(
+                    "ADR GitHub support differs between repository and Project",
+                )
+            raw = self._rest(
+                f"repos/{binding.repo}/issues/{number}", "adr.issue_read",
+            )
+            if (
+                self._issue_number_from_rest(raw, binding, "adr.issue_read")
+                != number
+                or raw.get("node_id") != project_raw.get("id")
+                or raw.get("title") != repository_raw.get("title")
+                or raw.get("body") != repository_raw.get("body")
+                or self._rest_label_names(raw, "adr.issue_read")
+                != repository_labels
+            ):
+                raise TrackerConflictError(
+                    "ADR GitHub exact support read differs from indexed surfaces",
+                )
+            supports.append(self._adr_issue(raw, binding))
+        return supports
 
     def _adr_snapshot(
         self,
@@ -2395,7 +2672,18 @@ class GitHubProjectsTracker(Tracker):
                     int(key.rsplit("-", 1)[1]) for key in latest
                     if key.startswith(f"{binding.key}-ADR-")
                 ]
-                adr_id = f"{binding.key}-ADR-{max(numbers, default=0) + 1:04d}"
+                native_inventory = self._repository_issue_inventory(
+                    binding, "adr.allocate",
+                )
+                next_visible = max(
+                    max(numbers, default=0) + 1,
+                    max(native_inventory, default=0) + 1,
+                )
+                if next_visible > 9999:
+                    raise GitHubProjectsTrackerError(
+                        "adr.allocate", "adr_id_space_exhausted",
+                    )
+                adr_id = f"{binding.key}-ADR-{next_visible:04d}"
                 record = self._intent_record(fingerprint, "pending", adr_id=adr_id)
                 self._write_create_intent(fingerprint, record)
             else:
@@ -2405,15 +2693,21 @@ class GitHubProjectsTracker(Tracker):
                         "adr.create_reconcile", "invalid_local_intent",
                     )
 
-            metadata = {
-                "schema": _ADR_SCHEMA, "project_id": binding.project_id,
-                "repository": binding.repo, "id": adr_id, "title": title,
-                "status": "proposed", "sequence": 0,
-                "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
-                "previous_comment_id": None, "previous_sha256": None,
-                "relations": {"issues": [], "supersedes": [], "superseded_by": None},
-            }
+            def initial_metadata(identifier: str) -> dict[str, Any]:
+                return {
+                    "schema": _ADR_SCHEMA, "project_id": binding.project_id,
+                    "repository": binding.repo, "id": identifier, "title": title,
+                    "status": "proposed", "sequence": 0,
+                    "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                    "previous_comment_id": None, "previous_sha256": None,
+                    "relations": {
+                        "issues": [], "supersedes": [], "superseded_by": None,
+                    },
+                }
+
+            metadata = initial_metadata(adr_id)
             native_title = self._adr_title(adr_id, title)
+            provisional_title = f"[foundry-adr-create:v1:{fingerprint}]"
 
             if record["state"] == "complete":
                 _binding, latest = self._adr_snapshot(project)
@@ -2449,19 +2743,28 @@ class GitHubProjectsTracker(Tracker):
                     raise TrackerConflictError("ADR GitHub completed create drift")
                 return entry[0]
 
-            def create_candidates() -> list[dict[str, Any]]:
-                same_coordinate, exact = [], []
+            def create_candidates() -> list[tuple[dict[str, Any], bool]]:
+                same_coordinate: list[dict[str, Any]] = []
+                exact: list[tuple[dict[str, Any], bool]] = []
                 for observed in self._rows(
                     f"repos/{binding.repo}/issues?state=all", "adr.create_reconcile",
                 ):
                     observed_title = observed.get("title")
-                    if isinstance(observed_title, str) and observed_title.startswith(f"[{adr_id}] "):
+                    is_provisional = observed_title == provisional_title
+                    is_legacy = (
+                        isinstance(observed_title, str)
+                        and observed_title.startswith(f"[{adr_id}] ")
+                    )
+                    if is_provisional or is_legacy:
                         self._issue_number_from_rest(
                             observed, binding, "adr.create_reconcile",
                         )
                         same_coordinate.append(observed)
-                        if observed_title == native_title and observed.get("body") == body:
-                            exact.append(observed)
+                        if (
+                            observed.get("body") == body
+                            and (is_provisional or observed_title == native_title)
+                        ):
+                            exact.append((observed, is_provisional))
                 if len(same_coordinate) != len(exact):
                     raise TrackerConflictError("ADR GitHub reserved coordinate is occupied")
                 if len(exact) > 1:
@@ -2480,26 +2783,27 @@ class GitHubProjectsTracker(Tracker):
                     try:
                         created = self._rest_write(
                             "POST", f"repos/{binding.repo}/issues",
-                            {"title": native_title, "body": body}, "adr.create",
+                            {"title": provisional_title, "body": body}, "adr.create",
                         )
                         if not isinstance(created, dict):
                             raise GitHubProjectsTrackerError(
                                 "adr.create", "ambiguous_mutation_response",
                             )
                         raw = created
+                        provisional_candidate = True
                     except GitHubProjectsTrackerError as exc:
                         candidates = create_candidates()
                         if len(candidates) != 1:
                             raise GitHubProjectsTrackerError(
                                 "adr.create_reconcile", "create_effect_unknown",
                             ) from exc
-                        raw = candidates[0]
+                        raw, provisional_candidate = candidates[0]
                 else:
                     if len(candidates) != 1:
                         raise GitHubProjectsTrackerError(
                             "adr.create_reconcile", "create_effect_unknown",
                         )
-                    raw = candidates[0]
+                    raw, provisional_candidate = candidates[0]
                 number = self._issue_number_from_rest(raw, binding, "adr.create")
                 content_id = raw.get("node_id")
                 if not isinstance(content_id, str) or not content_id:
@@ -2509,6 +2813,13 @@ class GitHubProjectsTracker(Tracker):
                 candidate = _CreateCandidate(
                     f"{binding.key}-{number}", number, raw["id"], content_id,
                 )
+                if provisional_candidate:
+                    _binding, latest = self._adr_snapshot(project)
+                    adr_id = self._stable_adr_id(
+                        binding, candidate.number, latest,
+                    )
+                    metadata = initial_metadata(adr_id)
+                    native_title = self._adr_title(adr_id, title)
                 record = self._intent_record(
                     fingerprint, "known", candidate, adr_id=adr_id,
                 )
@@ -2522,18 +2833,21 @@ class GitHubProjectsTracker(Tracker):
                 observed_number = self._issue_number_from_rest(
                     raw, binding, "adr.create_reconcile",
                 )
-                native_adr_id, native_name, _head = self._adr_native_title(
-                    raw.get("title")
-                )
                 if (
-                    native_adr_id != adr_id
-                    or native_name != title
-                    or observed_number != candidate.number
+                    observed_number != candidate.number
                     or raw.get("id") != candidate.native_id
                     or raw.get("node_id") != candidate.content_id
                     or raw.get("body") != body
                 ):
                     raise TrackerConflictError("ADR GitHub known create candidate drift")
+                if raw.get("title") != provisional_title:
+                    native_adr_id, native_name, _head = self._adr_native_title(
+                        raw.get("title")
+                    )
+                    if native_adr_id != adr_id or native_name != title:
+                        raise TrackerConflictError(
+                            "ADR GitHub known create candidate drift",
+                        )
 
             def complete_step(step: str) -> None:
                 nonlocal record
@@ -2553,6 +2867,47 @@ class GitHubProjectsTracker(Tracker):
                     adr_id=adr_id,
                 )
                 self._write_create_intent(fingerprint, record)
+
+            if raw.get("title") == native_title:
+                if record["step"] == "adr:identity":
+                    complete_step("adr:identity")
+            elif raw.get("title") == provisional_title:
+                arm_step("adr:identity")
+                unaffected = {
+                    key: value for key, value in raw.items()
+                    if key not in {"title", "updated_at"}
+                }
+                write_error: GitHubProjectsTrackerError | None = None
+                try:
+                    self._rest_write(
+                        "PATCH", f"repos/{binding.repo}/issues/{candidate.number}",
+                        {"title": native_title}, "adr.identity_write",
+                    )
+                except GitHubProjectsTrackerError as exc:
+                    write_error = exc
+                raw = self._rest(
+                    f"repos/{binding.repo}/issues/{candidate.number}",
+                    "adr.identity_readback",
+                )
+                observed_unaffected = {
+                    key: value for key, value in raw.items()
+                    if key not in {"title", "updated_at"}
+                }
+                if raw.get("title") != native_title:
+                    if write_error is not None and raw.get("title") == provisional_title:
+                        raise GitHubProjectsTrackerError(
+                            "adr.create_reconcile", "adr:identity_effect_unknown",
+                        ) from write_error
+                    raise TrackerConflictError(
+                        "ADR GitHub identity divergent after bounded write",
+                    ) from write_error
+                if observed_unaffected != unaffected:
+                    raise TrackerConflictError(
+                        "ADR GitHub untargeted properties changed after identity write",
+                    )
+                complete_step("adr:identity")
+            else:
+                raise TrackerConflictError("ADR GitHub initial identity drift")
 
             labels = raw.get("labels")
             labelled = (
@@ -2583,26 +2938,23 @@ class GitHubProjectsTracker(Tracker):
                     ) from write_error
                 complete_step("adr:label")
 
-            supports = self._adr_supports(project)
-            matching_supports = [row for row in supports if row[0] == adr_id]
-            if len(matching_supports) > 1:
-                raise TrackerConflictError("ADR GitHub duplicate support")
-            attached = matching_supports == [(adr_id, title, candidate.number)]
+            observed_support = self._adr_project_support(
+                binding, candidate, adr_id, title,
+            )
+            attached = observed_support == (adr_id, title, candidate.number)
             if attached and record["step"] == "adr:item":
                 complete_step("adr:item")
             elif not attached:
-                if matching_supports:
-                    raise TrackerConflictError("ADR GitHub support coordinate drift")
                 arm_step("adr:item")
                 write_error = None
                 try:
                     self._add_project_item(binding, candidate.content_id)
                 except GitHubProjectsTrackerError as exc:
                     write_error = exc
-                matching_supports = [
-                    row for row in self._adr_supports(project) if row[0] == adr_id
-                ]
-                if matching_supports != [(adr_id, title, candidate.number)]:
+                observed_support = self._adr_project_support(
+                    binding, candidate, adr_id, title,
+                )
+                if observed_support != (adr_id, title, candidate.number):
                     raise GitHubProjectsTrackerError(
                         "adr.create_reconcile", "adr:item_effect_unknown",
                     ) from write_error

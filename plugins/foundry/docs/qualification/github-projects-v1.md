@@ -378,3 +378,23 @@ le titre engagé et le statut `accepted`. Les tests de transport vérifient la
 détection d'une tête supprimée ou modifiée et la reprise d'un commentaire dont
 la mise à jour de titre a été interrompue. Ces essais n'attestent pas une
 résistance à une modification coordonnée des commentaires et du titre.
+
+La correction de la review suivante a qualifié la corroboration entre l'inventaire
+exhaustif des Issues du dépôt et les items du Project. Sur le support synthétique
+`GHQUAL-ADR-0004`, le retrait ciblé du label `foundry:adr` a fait refuser la
+lecture du corpus avec `reserved support label missing`. Le label a été rétabli
+une seule fois ; le titre engagé, le corps et le statut `accepted` ont été relus
+inchangés. Le retrait d'un item Project, les réponses 403/404 avec empreinte
+restante et les faux titres sans type ADR sont couverts par les tests de transport,
+pas par une mutation native de cette recette.
+
+Un cinquième support synthétique, `GHQUAL-ADR-0012` (issue 12), a qualifié la
+nouvelle allocation : l'ID reprend le numéro natif GitHub, sans réutiliser un ID
+après disparition complète d'un support. L'ajout au Project a encore été
+momentanément invisible ; après observation de l'unique Issue 12 et de son item,
+la même intention a repris sans second POST Issue. Un nouveau processus a rejoué
+la création terminée : même ID, même commentaire initial, même source et même
+engagement de tête. La suppression totale sans Issue ni item attribuable demeure
+indétectable à la lecture ; l'allocation prévient seulement la réutilisation de
+son ID. Les anciens couples `GHQUAL-ADR-0001`/issue 8 à
+`GHQUAL-ADR-0004`/issue 11 restent lisibles.
