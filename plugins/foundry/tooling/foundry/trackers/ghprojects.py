@@ -22,10 +22,11 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from foundry import registry
-from foundry.models import Adr, Issue, Link, Project
+from foundry.models import Adr, Issue, Link, Project, ReleaseIssue, ReleaseScope
 from foundry.trackers.base import (
     TrackerConflictError,
     IssueUnavailableError,
+    ReleaseScopeUnavailableError,
     Tracker,
     TrackerCapabilityUnavailableError,
 )
@@ -463,6 +464,37 @@ class GitHubProjectsTracker(Tracker):
                     and n["owner"].get("login", "").casefold() == binding.owner.casefold()
                     for n in repos["nodes"]
                 ):
+                    mapping = project.extra.get("release_ids", {})
+                    if not isinstance(mapping, dict):
+                        return False
+                    for release, encoded in mapping.items():
+                        if (
+                            not isinstance(encoded, str)
+                            or not encoded.isdigit()
+                            or int(encoded) < 1
+                        ):
+                            return False
+                        number = int(encoded)
+                        milestone = self._rest(
+                            f"repos/{binding.repo}/milestones/{number}",
+                            "release.identity",
+                        )
+                        if (
+                            not isinstance(milestone, dict)
+                            or milestone.get("number") != number
+                            or milestone.get("title") != release
+                            or type(milestone.get("id")) is not int
+                            or milestone["id"] < 1
+                            or not isinstance(milestone.get("node_id"), str)
+                            or not milestone["node_id"]
+                            or milestone.get("url") != (
+                                f"{self._api_repo(binding)}/milestones/{number}"
+                            )
+                            or milestone.get("html_url") != (
+                                f"https://github.com/{binding.repo}/milestone/{number}"
+                            )
+                        ):
+                            return False
                     return True
                 page = repos.get("pageInfo")
                 if not isinstance(page, dict) or page.get("hasNextPage") is not True:
@@ -732,6 +764,114 @@ class GitHubProjectsTracker(Tracker):
         raw = self._search_raw(project, query)
         binding = self._binding(project)
         return [self._hydrate_issue(issue, binding) for issue in raw]
+
+    def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
+        binding = self._authoritative_binding(project)
+        mapping = project.extra.get("release_ids")
+        if not isinstance(mapping, dict) or release not in mapping:
+            raise ReleaseScopeUnavailableError(self.name, release, "unmapped")
+        encoded = mapping[release]
+        if not isinstance(encoded, str) or not encoded.isdigit() or int(encoded) < 1:
+            raise ReleaseScopeUnavailableError(self.name, release, "invalid_mapping")
+        number = int(encoded)
+        try:
+            native = self._rest(
+                f"repos/{binding.repo}/milestones/{number}", "release.read",
+            )
+        except GitHubProjectsTrackerError as exc:
+            if exc.reason in {"not_found", "permission_denied", "authentication_failed"}:
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "inaccessible_or_absent"
+                ) from None
+            raise
+        api_repo = self._api_repo(binding)
+        if (
+            not isinstance(native, dict)
+            or native.get("number") != number
+            or native.get("title") != release
+            or native.get("url") != f"{api_repo}/milestones/{number}"
+            or native.get("html_url") != f"https://github.com/{binding.repo}/milestone/{number}"
+            or type(native.get("id")) is not int
+            or native["id"] < 1
+            or not isinstance(native.get("node_id"), str)
+            or not native["node_id"]
+            or native.get("state") not in {"open", "closed"}
+        ):
+            raise ReleaseScopeUnavailableError(self.name, release, "mapping_mismatch")
+
+        rows = self._rows(
+            f"repos/{binding.repo}/issues?state=all&milestone={number}",
+            "release.issues",
+        )
+        release_rows: dict[int, dict] = {}
+        for row in rows:
+            if row.get("pull_request") is not None:
+                continue
+            issue_number = self._issue_number_from_rest(row, binding, "release.issues")
+            milestone = row.get("milestone")
+            if (
+                not isinstance(milestone, dict)
+                or milestone.get("number") != number
+                or milestone.get("title") != release
+            ):
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "membership_mismatch"
+                )
+            release_rows[issue_number] = row
+
+        project_issues = {
+            self._number(issue.id, binding): issue
+            for issue in self._search_raw(project)
+        }
+        if not set(release_rows).issubset(project_issues):
+            raise ReleaseScopeUnavailableError(
+                self.name, release, "issue_outside_product_project"
+            )
+        issues: list[ReleaseIssue] = []
+        for issue_number in sorted(release_rows):
+            issue = self._hydrate_issue(project_issues[issue_number], binding)
+            terminal = str(issue.state or "").casefold() in {
+                "done", "completed", "fixed", "dropped",
+            }
+            row = release_rows[issue_number]
+            references = {
+                "provider_issue_id": row.get("node_id"),
+                "issue_url": row.get("html_url"),
+            }
+            issues.append(ReleaseIssue(
+                id=issue.id,
+                title=issue.title,
+                type=issue.type,
+                state=issue.state,
+                labels=tuple(issue.labels),
+                # PAT-67 owns proof-bound lifecycle projection. A Project state,
+                # issue closure, or a prerequisite PR mention cannot prove delivery.
+                disposition="unavailable" if terminal else "unfinished",
+                references={key: value for key, value in references.items() if value},
+            ))
+        return ReleaseScope(
+            provider=self.name,
+            project_key=project.key,
+            project_id=project.id,
+            release=release,
+            release_id=encoded,
+            native_state=native["state"],
+            issues=tuple(issues),
+            closure={
+                "mode": "operator",
+                "action": "close-repository-milestone",
+                "native_mutation": True,
+                "preconditions": ["unfinished=0", "unavailable=0"],
+                "verification": "read-release-scope",
+            },
+            coordinates={
+                "project_id": binding.project_id,
+                "repository": binding.repo,
+                "milestone_number": number,
+                "milestone_id": native["id"],
+                "milestone_node_id": native["node_id"],
+            },
+        )
 
     def _project(self) -> Project:
         selection = registry.repository_tracker_selection()

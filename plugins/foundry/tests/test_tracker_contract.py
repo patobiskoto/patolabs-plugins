@@ -219,8 +219,9 @@ def test_ghprojects_cells_match_delivered_reads_and_pat66_core_writes():
         if operation["id"] in {
             "identity-and-project-resolution", "repository-bootstrap", "backlog-read",
             "frame-intake-groom-create", "frame-intake-groom-evolve-existing",
-            "mid-flight-comment", "epics-children-creation",
-            "epics-children-reparent-existing", "dependencies-relates-blocks",
+                "mid-flight-comment", "epics-children-creation",
+                "epics-children-reparent-existing", "dependencies-relates-blocks",
+                "release-and-changelog-scope",
         }:
             assert cell["status"] == "supported"
             continue
@@ -339,7 +340,7 @@ def test_ghprojects_pat66_writes_are_real_and_later_boundaries_remain_refused():
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-69", "PAT-64", "PAT-59"],
+    ["PAT-69", "PAT-64"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

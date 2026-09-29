@@ -10,6 +10,11 @@ node ID, be private, and have the same personal `User` owner as the Project
 binding. Organization-owned repositories, public repositories/projects and
 inferred-owner variants are not qualified.
 
+Repository release Milestones use the optional structured `release_ids` binding map;
+see [`release-scope.md`](release-scope.md). The map stores exact repository Milestone
+numbers, while the product Project remains identified separately by owner, number and
+node id. Identity readback verifies both coordinate families before a binding update.
+
 `search(project)` reads bounded GraphQL Project item pages and requires one
 unique ID and qualified data type for each field: `Foundry normalized state`,
 `Foundry type`, `Foundry priority`, and `Foundry estimate`. Field and

@@ -64,7 +64,7 @@ closed vocabulary:
 | Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-69 |
-| Périmètre de release/changelog | `search` via `query.py changelog()` | supported | **gap** PAT-59 | `to_qualify` PAT-59 |
+| Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; lifecycle proof remains unavailable until PAT-67) |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
 | Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
 | Bascule (PAT-64): archived source refuses writes | mutation ports plus provider target preflight | supported | supported | `to_qualify` PAT-64 |
@@ -268,6 +268,9 @@ skills only see the normalized `Issue`/`Adr`/`Project` models (`models.py`).
   `foundry_cli.py query changelog <MILESTONE>` from the same checkout and consumes only that JSON;
   it imports no tracker module and holds no provider credential, and exits 3 when
   Foundry is absent so the caller falls back to a changelog file.
+  The versioned payload and the stable provider mappings are documented in
+  [`release-scope.md`](release-scope.md). `milestone`, `count` and `groups` remain the
+  bridge-compatible projection; the additive categories make unknown proof explicit.
 
 ## 4. Mutation guarantees without a provider transaction/CAS
 
@@ -455,8 +458,10 @@ foundry_cli.py registry update <tracker> <repo> <KEY> <project-id> \
 `bootstrap` derives the canonical identity from the checkout rather than from an
 argument. Before the local publication, YouTrack reads the exact native project id/key;
 Linear reads the exact project id, team UUID and team key after validating every UUID
-map; YouTrack V1 extras are limited to `canonical_repo` and optional non-empty
-`ms_bundle`. Undeclared keys, including credential keys, refuse before provider readback
+map; YouTrack V1 extras are limited to `canonical_repo`, optional non-empty
+`ms_bundle`, and optional structured `release_ids`. GitHub Projects accepts the same
+structured `release_ids` map beside its required owner/number coordinates. Undeclared
+keys, including credential keys, refuse before provider readback
 or persistence. GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
 before the registry or marker changes (`registry.py`;

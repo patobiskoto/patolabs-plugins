@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- `query changelog <release>` now emits `foundry.release-scope.v1` from exact
+  repository-scoped release mappings on YouTrack, Linear and GitHub Projects. The
+  payload keeps Ship-iOS's `milestone`/`count`/`groups` projection and adds factual
+  accepted, deviated, unfinished and unavailable classes; a native Done or PR mention
+  alone is never delivery proof (PAT-59).
+
 ### Fixed
 - YouTrack now proves a targeted issue or ADR's native project coordinate before every
   write and rejects it when any alias tombstones that provider project (PAT-43). The

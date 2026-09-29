@@ -62,7 +62,13 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
                 ),
                 mock.Mock(
                     returncode=0,
-                    stdout=json.dumps({"milestone": "M1", "count": 0, "groups": {}}),
+                    stdout=json.dumps({
+                        "contract": "foundry.release-scope.v1",
+                        "milestone": "M1", "count": 0, "groups": {},
+                        "scope_count": 1,
+                        "counts": {"accepted": 0, "deviated": 0,
+                                   "unfinished": 0, "unavailable": 1},
+                    }),
                     stderr="",
                 ),
             ]

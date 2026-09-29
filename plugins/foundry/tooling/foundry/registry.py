@@ -45,6 +45,7 @@ _LINEAR_TYPE_KEYS = frozenset({"Epic", "Feature", "Bug", "Task"})
 _LINEAR_STRUCTURED_EXTRA_KEYS = frozenset(
     {"state_ids", "milestone_ids", "type_label_ids", "label_ids"}
 )
+_STRUCTURED_EXTRA_KEYS = _LINEAR_STRUCTURED_EXTRA_KEYS | {"release_ids"}
 _LINEAR_EXTRA_KEYS = frozenset(
     {
         "canonical_repo",
@@ -838,6 +839,24 @@ def _require_uuid_map(
     return normalized
 
 
+def _require_release_id_map(value: object, field: str = "release_ids") -> dict[str, str]:
+    """Validate stable provider release coordinates without assuming one ID syntax."""
+    if not isinstance(value, dict) or any(
+        not isinstance(name, str)
+        or not name
+        or not isinstance(identifier, str)
+        or not identifier
+        or len(name) > 255
+        or len(identifier) > 255
+        for name, identifier in value.items()
+    ):
+        raise ValueError(f"binding invalide : {field} invalide")
+    normalized = dict(value)
+    if len(set(normalized.values())) != len(normalized):
+        raise ValueError(f"binding invalide : {field} contient des identifiants dupliqués")
+    return normalized
+
+
 def _validate_linear_binding(
     repository: object, project_id: object, extra: dict[str, object],
 ) -> tuple[str, dict[str, object]]:
@@ -923,15 +942,17 @@ def _validated_binding_entry(
     if tracker == "linear":
         project_id, candidate = _validate_linear_binding(repo, project_id, candidate)
     elif tracker == "youtrack":
-        if set(candidate) - {"canonical_repo", "ms_bundle"}:
+        if set(candidate) - {"canonical_repo", "ms_bundle", "release_ids"}:
             raise ValueError("binding YouTrack V1 invalide : extra non autorisé")
         if "ms_bundle" in candidate and (
             not isinstance(candidate["ms_bundle"], str) or not candidate["ms_bundle"]
         ):
             raise ValueError("binding YouTrack V1 invalide : ms_bundle invalide")
+        if "release_ids" in candidate:
+            candidate["release_ids"] = _require_release_id_map(candidate["release_ids"])
     elif tracker == "ghprojects":
-        allowed = {"canonical_repo", "owner", "number"}
-        if set(candidate) != allowed:
+        required = {"canonical_repo", "owner", "number"}
+        if not required.issubset(candidate) or set(candidate) - required - {"release_ids"}:
             raise ValueError(
                 "binding ghprojects invalide : canonical_repo, owner et number requis"
             )
@@ -943,6 +964,8 @@ def _validated_binding_entry(
             or int(candidate["number"]) < 1
         ):
             raise ValueError("binding ghprojects invalide : owner/number invalides")
+        if "release_ids" in candidate:
+            candidate["release_ids"] = _require_release_id_map(candidate["release_ids"])
     return {"key": key, "id": project_id, **candidate}
 
 
@@ -1613,12 +1636,9 @@ def _parse_extra_arguments(
             f"{usage}\nles extras doivent utiliser la forme k=v"
         ) from None
 
-    if tracker != "linear":
-        return dict(pairs)
-
     extras: dict[str, object] = {}
     for name, value in pairs:
-        if name in _LINEAR_STRUCTURED_EXTRA_KEYS:
+        if name in _STRUCTURED_EXTRA_KEYS:
             try:
                 structured_value = json.loads(value)
             except (json.JSONDecodeError, TypeError):
