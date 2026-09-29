@@ -1,4 +1,4 @@
-# GitHub Projects tracker — PAT-57 reads, PAT-66 core writes
+# GitHub Projects tracker — PAT-57 reads, PAT-66 core writes, PAT-58 ADRs
 
 PAT-57 supports only an explicitly bound **private personal** Project V2 and
 its linked canonical repository.  The binding contains `owner`, Project
@@ -55,9 +55,88 @@ payload `No parent issue found` means that a present issue has no parent. The
 Project normalized-state field is recorded as an observation with
 `projection_status=unknown`; PAT-67 owns lifecycle/projection proof.
 
-Native free-text search is refused with `provider-native-search-query`. ADR index
-reads are typed `adr_index` refusals until PAT-58 and lifecycle projection through
-`set_state` remains a PAT-67 refusal.
+Native free-text search is refused with `provider-native-search-query`; lifecycle
+projection through `set_state` remains a PAT-67 refusal.
+
+## PAT-58 ADR lifecycle
+
+PAT-ADR-0007 qualifies one deliberately narrow native form: an ADR is one Issue in
+the exact bound private repository and private personal Project, marked by the reserved
+`foundry:adr` label. The label is the explicit support type: it is never treated as a
+delivery Task and delivery reads exclude it. GitHub Projects has no native ADR object;
+the Project is only the scoped index and the source/history live in the native Issue and
+its comments. A repository that has selected `ghprojects` therefore does not fall back
+to Linear, YouTrack, Git or Discussions.
+
+The current source is the UTF-8 Issue body. Each version is a distinct comment using
+`foundry-ghprojects-adr.v1`, with the canonical Project node ID, repository coordinate,
+ADR ID, sequence, source SHA-256, predecessor comment ID and whole-version digest,
+status and relations. The predecessor digest covers both source and metadata, so an
+observable edit to either breaks the next link; this detects observable tampering but
+does not make coordinated edits cryptographically impossible. The Issue title carries
+an independent `foundry-head:v1` commitment to the latest sequence, native comment ID
+and whole-version digest. Deleting the final comment or editing its otherwise legal
+metadata therefore leaves a title/head mismatch instead of exposing a valid prefix as
+current authority. A coordinated edit of both the comment chain and this title remains
+outside the guarantee stated by PAT-ADR-0007.
+`list_adrs` exhausts both the repository Issue list and Project items, requiring the
+same typed support in both surfaces. A reserved label removed from a still-visible
+support, or an item removed from the bound Project, is an explicit conflict. A foreign
+or ordinary similarly titled Issue is not promoted into the ADR corpus. The reader
+then exhausts comment pagination and verifies the complete chain,
+the current body, head commitment, digests and reciprocal supersession links before it
+returns authority. Each current ADR-to-Issue relation must also resolve once through the
+complete bound Project read and the canonical Issue endpoint. A removed, deleted or
+permission-inaccessible delivery Issue raises `AdrIssueUnavailableError` with the exact
+ADR/Issue pair; malformed, foreign and globally ambiguous reads remain conflicts or
+transport errors rather than being collapsed into unavailability.
+Duplicate supports, a hole, a malformed same-namespace support, missing/deleted comment,
+foreign coordinate, altered source or ambiguous history fail closed. The old PAT-65
+`EXP-ADR-0001` prototype is a foreign namespace and is not imported as GHQUAL authority.
+A complete deletion that leaves no attributable Issue or Project item cannot be
+detected by a fresh read; the native Issue-number allocation below prevents reuse of
+its ADR identifier without claiming to attest that vanished object.
+
+Creation starts proposed, creates the native Issue, applies only the reserved label,
+adds the exact Project item, appends version zero and re-reads the complete chain. Later
+acceptance, deprecation, source edits, ADR-to-delivery-Issue links and supersession append
+new comments, then target only the Issue title to advance its head commitment. An update
+first verifies its fresh predecessor, writes the source body once and reads it back before
+the comment POST. GitHub exposes neither CAS nor an idempotency
+key: a lost source response is reconciled only by readback; a lost comment/create response
+converges only when one exact effect is observed, otherwise it stays explicit and never
+causes a blind second POST. Supersession needs two native updates and
+is not atomic; an interrupted non-reciprocal pair is surfaced as a conflict, not repaired
+automatically. These are bounded observations with the residual S1-to-S2 race, not
+immutability, exactly-once or a provider receipt.
+
+ADR creation reuses the private local create-intent store already used for Issue creation:
+before its first POST it records a request fingerprint, without source or title in clear
+text. The first native Issue has a provisional non-ADR title and no reserved label or
+Project item. Its GitHub-assigned Issue number determines the four-digit ADR ID, so
+deleted supports cannot cause ID reuse; gaps are allowed and an exhausted four-digit
+space fails explicitly. A machine-local corpus lock serializes local creation attempts,
+but is neither a distributed lock nor CAS. Stage markers precede the identity-title,
+label, Project-item and version-comment effects, so a fresh process can
+either observe the exact owned partial/completed support or fail closed without repeating
+an unknown effect. The initial head-title update has its own stage and is reconciled by
+fresh readback. A later version interrupted after its one comment POST but before the
+title update can likewise resume only when that one exact trailing version follows the
+still-committed head; any different or additional trailing version remains a conflict.
+Completed replay still reads the private binding, native IDs, Project
+membership, initial version and full comment chain; the local record is neither authority
+nor a provider receipt. Status, issue-link and supersession versions do not PATCH the
+current Issue body: they append their metadata/source snapshot and advance only the
+Foundry-owned title commitment. `adr_issue_link_supported` is enabled, so `frame`
+materialization records each declared ADR constraint through this same checked relation.
+
+The three synthetic GHQUAL ADR supports created by the earlier PAT-58 qualification
+were revalidated against their exact bodies and complete comment chains, then migrated
+by a targeted title update. They now carry `foundry-head:v1` and pass the corpus read.
+Any other legacy support without this commitment is refused with
+`legacy support requires migration`; a local journal never supplies the missing native
+head. Existing PAT-66 local create-intent journals remain schema-compatible: their
+older step vocabulary is still accepted.
 
 ## Bounded PAT-66 writes
 

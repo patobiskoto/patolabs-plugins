@@ -311,3 +311,90 @@ Contrairement à la création, les champs existants n’ont pas de journal durab
 d’intention : une relecture indisponible laisse un effet inconnu et aucun retry
 automatique. Une invocation ultérieure explicite repart d’une lecture fraîche.
 La fenêtre S1→S2 résiduelle de PAT-ADR-0006 reste assumée.
+
+### Recette PAT-58 : cycle ADR natif et source exacte
+
+La recette privée du 27 septembre 2026 utilise le port `Tracker` et les opérations
+communes `write`, avec le binding sandbox `GHQUAL`. Trois supports synthétiques
+non décisionnels ont été créés : `GHQUAL-ADR-0001` (issue 8),
+`GHQUAL-ADR-0002` (issue 9), `GHQUAL-ADR-0003` (issue 10). Le cycle observé est :
+
+- issue 8 : proposed → accepted, édition versionnée UTF-8 exacte, lien vers
+  `GHQUAL-5`, puis superseded par l'ADR de l'issue 9 ;
+- issue 9 : proposed → accepted, avec relation réciproque `supersedes` ;
+- issue 10 : proposed → accepted → deprecated.
+
+Le port relit la source, le statut et la chaîne complète des versions. Le GET
+natif GitHub au format `application/vnd.github.full+json` fournit la source
+`body` exacte et le rendu `body_html` : titre, emphase, code inline, tableau,
+lien et code clôturé sont effectivement rendus. Les caractères `é`, `œ`, `漢字`
+et les chevrons littéraux du code restent présents. Il n'y a ni réécriture de
+source pour compenser l'affichage, ni qualification générale de tout Markdown
+possible à partir de cette seule recette.
+
+Lors de chaque création, l'ajout au Project a été momentanément invisible dans
+la lecture suivante. Foundry a explicitement refusé `adr:item_effect_unknown`.
+Une nouvelle invocation n'a repris que le candidat natif exact et unique déjà
+observé, au moyen du journal d'intention conservé : aucune seconde issue n'a
+été créée. Il s'agit d'un retard de visibilité observé, pas d'une panne GitHub
+ni d'une perte de réponse artificiellement présentée comme réelle. Les tests
+de transport couvrent séparément les pertes de réponse, zéro/un/deux candidats,
+les préconditions périmées et les altérations.
+
+Les trois supports sont absents du backlog de livraison renvoyé par le port.
+La relecture native de la vue `PAT-65 qualification — delivery Kanban` confirme
+`BOARD_LAYOUT` et le filtre `-label:foundry:adr` ; elle qualifie la configuration,
+pas une inspection visuelle des cartes. L'issue expérimentale 3 conserve
+exactement son titre, son corps, ses labels et les IDs/corps de ses commentaires.
+Le marqueur tracker Linear de patolabs-plugins reste byte-identique.
+
+Ces observations de recette ne sont pas des receipts Foundry. La sérialisation
+d'intention est locale à une machine ; la supersession utilise deux commentaires
+et n'est pas atomique. Le risque résiduel S1→S2 est assumé conformément à
+PAT-ADR-0006, sans CAS ni exclusion des écritures concurrentes. Les propriétés
+non concernées sont conservées lorsque l'API permet des écritures ciblées.
+
+### Qualification de l'engagement de tête après la review PAT-58
+
+Le 30 septembre 2026, la review indépendante a relevé qu'une suppression du
+dernier commentaire laissait une chaîne préfixe valide. Avant correction native,
+les trois supports synthétiques 8, 9 et 10 ont été relus contre les snapshots
+conservés : mêmes IDs et corps de chaque commentaire, séquences contiguës,
+digests prédécesseurs exacts, titres et sources courantes inchangés. Le binding
+privé `GHQUAL` a été vérifié. Une écriture ciblée du seul titre de chaque Issue a
+ensuite engagé sa séquence, l'ID du dernier commentaire et son digest complet.
+La relecture du corpus a retrouvé les trois statuts attendus : `superseded`,
+`accepted`, `deprecated`. Le titre et le corps de l'ancien support expérimental
+3 sont restés inchangés.
+
+Un quatrième support synthétique, `GHQUAL-ADR-0004` (issue 11), a exercé la
+création puis l'acceptation avec ce format. Comme dans la première recette,
+l'ajout de l'item au Project a d'abord été momentanément invisible : l'opération
+a refusé `adr:item_effect_unknown`. Une lecture ultérieure a retrouvé l'unique
+Issue 11 et son item, puis la reprise de la même intention a terminé la version
+initiale sans créer d'autre Issue. Le passage à `accepted` a ajouté un seul
+commentaire et avancé l'engagement de tête ; le port a relu deux commentaires,
+le titre engagé et le statut `accepted`. Les tests de transport vérifient la
+détection d'une tête supprimée ou modifiée et la reprise d'un commentaire dont
+la mise à jour de titre a été interrompue. Ces essais n'attestent pas une
+résistance à une modification coordonnée des commentaires et du titre.
+
+La correction de la review suivante a qualifié la corroboration entre l'inventaire
+exhaustif des Issues du dépôt et les items du Project. Sur le support synthétique
+`GHQUAL-ADR-0004`, le retrait ciblé du label `foundry:adr` a fait refuser la
+lecture du corpus avec `reserved support label missing`. Le label a été rétabli
+une seule fois ; le titre engagé, le corps et le statut `accepted` ont été relus
+inchangés. Le retrait d'un item Project, les réponses 403/404 avec empreinte
+restante et les faux titres sans type ADR sont couverts par les tests de transport,
+pas par une mutation native de cette recette.
+
+Un cinquième support synthétique, `GHQUAL-ADR-0012` (issue 12), a qualifié la
+nouvelle allocation : l'ID reprend le numéro natif GitHub, sans réutiliser un ID
+après disparition complète d'un support. L'ajout au Project a encore été
+momentanément invisible ; après observation de l'unique Issue 12 et de son item,
+la même intention a repris sans second POST Issue. Un nouveau processus a rejoué
+la création terminée : même ID, même commentaire initial, même source et même
+engagement de tête. La suppression totale sans Issue ni item attribuable demeure
+indétectable à la lecture ; l'allocation prévient seulement la réutilisation de
+son ID. Les anciens couples `GHQUAL-ADR-0001`/issue 8 à
+`GHQUAL-ADR-0004`/issue 11 restent lisibles.
