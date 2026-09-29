@@ -23,6 +23,15 @@ _HOOKS = os.path.join(os.path.dirname(__file__), "..", "hooks")
 _LINEAR_PROJECT_ID = "00000000-0000-4000-8000-000000000000"
 
 
+def _current_cutover_manifest_digest(marker):
+    """Read the immutable cutover input from either published marker schema."""
+    if marker["version"] == 1:
+        return marker["migration_manifest_digest"]
+    assert marker["version"] == 2
+    assert marker["activation"]["kind"] == "migration"
+    return marker["activation"]["manifest_digest"]
+
+
 def _clear_data_env(monkeypatch):
     for key in ("FOUNDRY_DATA", "PLUGIN_DATA", "CLAUDE_PLUGIN_DATA", "PROJECT_REPO"):
         monkeypatch.delenv(key, raising=False)
@@ -931,7 +940,7 @@ def test_live_cutover_records_linear_adr_authority_without_rewriting_input():
     authority = operations["adr_authority"]
 
     # The ADR clause of the immutable cutover input is superseded, not rewritten.
-    assert marker["migration_manifest_digest"] == (
+    assert _current_cutover_manifest_digest(marker) == (
         operations["attestation"]["cutover_manifest"]["digest"]
     )
     assert {item["decision"] for item in public_manifest["adrs"]} == {"archive-reference"}
@@ -993,7 +1002,7 @@ def test_live_cutover_attestation_separates_private_input_and_public_redaction()
         "digest": "sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77",
         "role": "immutable-cutover-input",
     }
-    assert marker["migration_manifest_digest"] == cutover["digest"]
+    assert _current_cutover_manifest_digest(marker) == cutover["digest"]
     assert public["digest"] == (
         "sha256:" + hashlib.sha256(public_manifest_path.read_bytes()).hexdigest()
     )

@@ -553,7 +553,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-64",
-          "evidence": "not overridden; PAT-ADR-0007 selected the qualified GitHub ADR shape, but PAT-58 must deliver it before ghprojects can become an import target"
+          "evidence": "PAT-58 delivered the qualified GitHub ADR shape under PAT-ADR-0007, but the historical import port is not overridden; PAT-64 owns qualification of GitHub Projects as an import target"
         }
       },
       "note": "ADR half of the switch only. The live-work half is the next row."

@@ -72,10 +72,32 @@ foundry_cli.py query changelog v1.0.0
 For YouTrack or GitHub Projects, replace the last extra with
 `release_ids='{"v1.0.0":"<NATIVE-ID>"}'` while preserving every other required
 binding extra. The final query must return the same project id, release id and name
-before PAT-55 assigns any issue. For the current `patolabs-plugins` Linear binding,
-live preflight found an empty `milestone_ids` map and no native ProjectMilestone; the
-operator must therefore create `v1.0.0` first. No issue assignment is part of this
-preflight.
+before PAT-55 assigns any issue. For `patolabs-plugins`, the native Linear
+ProjectMilestone `v1.0.0` (`fad607be-a833-46e0-a60e-db1f97fece36`) was created
+without assigning tickets. `registry update` published its mapping coherently in
+the PAT worktree; `query changelog v1.0.0` then returned the exact ProjectMilestone
+coordinate and an explicit zero-issue scope. The active tracker remains Linear.
+The supported update promoted the local marker to schema v2: its immutable cutover
+manifest digest remains under `activation.manifest_digest`. The historical cutover
+attestation still cites the v1 field name as its original evidence; no cutover input
+or attestation was rewritten.
+
+## Live read qualification
+
+The PAT-59 recipe also read the existing YouTrack `RE` project (`0-6`) with the
+exact `M1-integrite` enum value (`164-66`) in bundle `163-13`: 20 matching issues
+were returned. All 20 classify as `unavailable` because their native terminal
+state is not an exact Foundry delivery receipt; this is a factual read, not a
+claim that those issues were delivered.
+
+In the private `foundry-v1-ghprojects-sandbox` repository, a synthetic open
+repository Milestone `v1.0.0` (number `1`, native database ID `18182410`) was
+created with no assigned issues. The GitHub Projects adapter verified the native
+Milestone, canonical repository and bound personal Project and returned its exact
+zero-issue scope using an explicit temporary candidate mapping. That mapping was
+not published to the sandbox registry, and the active tracker of
+`patolabs-plugins` was not changed. The sandbox Milestone remains open; no
+production release was closed.
 
 ## Release completion boundary
 
