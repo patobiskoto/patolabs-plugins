@@ -275,6 +275,10 @@ class _LinearPagedRelease(LinearTracker):
     def _release_issue(self, raw, project):
         return _fact(raw["identifier"], "unfinished", state="ready")
 
+    def _complete_release_issue_connections(self, raw, binding, release_id, release):
+        # This fixture isolates outer release membership pagination.
+        return raw
+
 
 def test_linear_release_membership_paginates_to_completion():
     tracker = _LinearPagedRelease()
@@ -283,6 +287,93 @@ def test_linear_release_membership_paginates_to_completion():
     assert [issue.id for issue in scope.issues] == ["APP-1", "APP-2"]
     assert scope.closure["native_capability"] == "unavailable"
     assert scope.closure["native_mutation"] is False
+
+
+def test_linear_native_dropped_without_proof_is_unavailable(monkeypatch):
+    tracker = _LinearPagedRelease()
+    issue = Issue(
+        "APP-1", "abandoned", state="dropped", native_state="dropped",
+        projection_status="native-only",
+    )
+    monkeypatch.setattr(tracker, "_to_issue", lambda *args, **kwargs: issue)
+    monkeypatch.setattr(tracker, "_lifecycle_projection", lambda *args, **kwargs: None)
+
+    fact = LinearTracker._release_issue(tracker, {"id": "issue-1"}, Project("APP", "p"))
+
+    assert fact.disposition == "unavailable"
+    assert fact.state == "dropped"
+
+
+def test_linear_release_exhausts_nested_proof_and_label_pages():
+    class Nested(LinearTracker):
+        def __init__(self):
+            self.calls = []
+
+        def _graphql(self, document, variables, operation):
+            self.calls.append((document, variables, operation))
+            field = operation.removeprefix("release.")
+            assert field in {"labels", "comments"}
+            assert variables == {"id": "issue-1", "after": f"{field}-next"}
+            return {"issue": {
+                "id": "issue-1", "identifier": "APP-1",
+                "project": {"id": "project-app"}, "team": {"id": "team"},
+                "projectMilestone": {"id": "milestone"},
+                field: {
+                    "nodes": ([{"id": "label-101", "name": "extra"}]
+                              if field == "labels" else
+                              [{"id": "comment-101", "body": "receipt", "createdAt": None}]),
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                },
+            }}
+
+    raw = {"id": "issue-1", "identifier": "APP-1"}
+    for field in ("labels", "children", "relations", "inverseRelations", "comments"):
+        raw[field] = {
+            "nodes": (
+                [{"id": f"{field}-{i}"} for i in range(100)]
+                if field in {"labels", "comments"} else []
+            ),
+            "pageInfo": {
+                "hasNextPage": field in {"labels", "comments"},
+                "endCursor": f"{field}-next" if field in {"labels", "comments"} else None,
+            },
+        }
+    tracker = Nested()
+
+    complete = tracker._complete_release_issue_connections(
+        raw, {"project_id": "project-app", "team_id": "team"},
+        "milestone", "v1.0.0",
+    )
+
+    assert len(complete["labels"]["nodes"]) == 101
+    assert len(complete["comments"]["nodes"]) == 101
+    assert all(not complete[field]["pageInfo"]["hasNextPage"] for field in raw if field in {
+        "labels", "children", "relations", "inverseRelations", "comments",
+    })
+    assert [operation for _document, _variables, operation in tracker.calls] == [
+        "release.labels", "release.comments",
+    ]
+
+
+def test_linear_release_nested_cursor_stall_refuses():
+    class NoRequest(LinearTracker):
+        def __init__(self):
+            pass
+
+        def _graphql(self, document, variables, operation):
+            raise AssertionError("cursor validation must precede request")
+
+    raw = {"id": "issue-1", "identifier": "APP-1"}
+    for field in ("labels", "children", "relations", "inverseRelations", "comments"):
+        raw[field] = {
+            "nodes": [],
+            "pageInfo": {"hasNextPage": field == "labels", "endCursor": None},
+        }
+    with pytest.raises(ReleaseScopeUnavailableError, match="pagination_stalled"):
+        NoRequest()._complete_release_issue_connections(
+            raw, {"project_id": "project-app", "team_id": "team"},
+            "milestone", "v1.0.0",
+        )
 
 
 @pytest.mark.parametrize(

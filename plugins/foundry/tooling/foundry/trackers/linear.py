@@ -200,6 +200,14 @@ query FoundryLinearReleaseIssues(
 }}
 """
 
+_RELEASE_NESTED_FIELDS = {
+    "labels": "id name",
+    "children": "id identifier",
+    "relations": "type relatedIssue { id identifier }",
+    "inverseRelations": "type issue { id identifier }",
+    "comments": "id body createdAt",
+}
+
 _ISSUE_CREATE = """
 mutation FoundryLinearIssueCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) { success issue { id identifier } }
@@ -3139,7 +3147,9 @@ class LinearTracker(Tracker):
             disposition = "unfinished"
             if lifecycle.get("pr_url"):
                 references["pr_url"] = lifecycle["pr_url"]
-        elif str(issue.native_state or "").casefold() in {"done", "completed", "fixed"}:
+        elif str(issue.native_state or "").casefold() in {
+            "done", "completed", "fixed", "dropped",
+        }:
             disposition = "unavailable"
         else:
             disposition = "unfinished" if issue.projection_status != "unknown" else "unavailable"
@@ -3152,6 +3162,74 @@ class LinearTracker(Tracker):
             disposition=disposition,
             references={key: value for key, value in references.items() if value is not None},
         )
+
+    def _complete_release_issue_connections(
+        self, raw: dict, binding: dict, release_id: str, release: str,
+    ) -> dict:
+        """Exhaust nested issue facts before classifying a release member."""
+        complete = dict(raw)
+        issue_id = raw.get("id")
+        if not isinstance(issue_id, str) or not issue_id:
+            raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+        for field, fields in _RELEASE_NESTED_FIELDS.items():
+            connection = raw.get(field)
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list,
+            ):
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            nodes = list(connection["nodes"])
+            page = connection.get("pageInfo")
+            cursors: set[str] = set()
+            for _ in range(_MAX_PAGES):
+                if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                if not page["hasNextPage"]:
+                    complete[field] = {
+                        "nodes": nodes,
+                        "pageInfo": {"hasNextPage": False, "endCursor": page.get("endCursor")},
+                    }
+                    break
+                cursor = page.get("endCursor")
+                if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                    raise ReleaseScopeUnavailableError(self.name, release, "pagination_stalled")
+                cursors.add(cursor)
+                query = f"""
+                query FoundryLinearReleaseNested($id: String!, $after: String) {{
+                  issue(id: $id) {{
+                    id identifier project {{ id }} team {{ id }} projectMilestone {{ id }}
+                    {field}(first: 100, after: $after) {{
+                      nodes {{ {fields} }} pageInfo {{ hasNextPage endCursor }}
+                    }}
+                  }}
+                }}
+                """
+                data = self._graphql(
+                    query, {"id": issue_id, "after": cursor},
+                    f"release.{field}",
+                )
+                current = data.get("issue")
+                if not isinstance(current, dict) or current.get("id") != issue_id:
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                if (
+                    current.get("identifier") != raw.get("identifier")
+                    or not isinstance(current.get("project"), dict)
+                    or current["project"].get("id") != binding["project_id"]
+                    or not isinstance(current.get("team"), dict)
+                    or current["team"].get("id") != binding["team_id"]
+                    or not isinstance(current.get("projectMilestone"), dict)
+                    or current["projectMilestone"].get("id") != release_id
+                ):
+                    raise ReleaseScopeUnavailableError(self.name, release, "foreign_membership")
+                connection = current.get(field)
+                if not isinstance(connection, dict) or not isinstance(
+                    connection.get("nodes"), list,
+                ) or any(not isinstance(node, dict) for node in connection["nodes"]):
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                nodes.extend(connection["nodes"])
+                page = connection.get("pageInfo")
+            else:
+                raise ReleaseScopeUnavailableError(self.name, release, "pagination_stalled")
+        return complete
 
     def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
         binding, release_id = self._mapped_release(project, release)
@@ -3194,7 +3272,10 @@ class LinearTracker(Tracker):
                     raise ReleaseScopeUnavailableError(
                         self.name, release, "foreign_membership"
                     )
-                item = self._release_issue(raw, project)
+                complete = self._complete_release_issue_connections(
+                    raw, binding, release_id, release,
+                )
+                item = self._release_issue(complete, project)
                 if item.id in seen:
                     raise ReleaseScopeUnavailableError(
                         self.name, release, "pagination_stalled"
