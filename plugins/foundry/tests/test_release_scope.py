@@ -413,7 +413,7 @@ def test_linear_historical_done_receipt_with_native_reopen_is_unavailable():
     assert fact.references["merge_sha"] == "c" * 40
 
 
-def test_github_repository_milestone_is_exact_and_done_is_not_proof(monkeypatch):
+def _github_release_scope(monkeypatch, *, project_state, native_issue_state):
     project = Project(
         "GH", "PVT_product",
         {
@@ -437,14 +437,23 @@ def test_github_repository_milestone_is_exact_and_done_is_not_proof(monkeypatch)
         "html_url": "https://github.com/acme/app/issues/1",
         "milestone": {"number": 12, "title": "v1.0.0"},
     }
+    if native_issue_state is not None:
+        row["state"] = native_issue_state
     monkeypatch.setattr(tracker, "_rows", lambda path, operation: [row])
     monkeypatch.setattr(
         tracker, "_search_raw",
-        lambda supplied: [Issue(id="GH-1", title="feature", state="done", type="Feature")],
+        lambda supplied: [Issue(
+            id="GH-1", title="feature", state=project_state, type="Feature",
+        )],
     )
     monkeypatch.setattr(tracker, "_hydrate_issue", lambda issue, supplied: issue)
+    return tracker.read_release_scope(project, "v1.0.0")
 
-    scope = tracker.read_release_scope(project, "v1.0.0")
+
+def test_github_repository_milestone_is_exact_and_closed_is_not_proof(monkeypatch):
+    scope = _github_release_scope(
+        monkeypatch, project_state="ready", native_issue_state="closed",
+    )
 
     assert scope.release_id == "12"
     assert scope.coordinates == {
@@ -452,7 +461,43 @@ def test_github_repository_milestone_is_exact_and_done_is_not_proof(monkeypatch)
         "milestone_number": 12, "milestone_id": 1200,
         "milestone_node_id": "MI_node",
     }
+    assert scope.issues[0].state == "ready"
     assert scope.issues[0].disposition == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("project_state", "native_issue_state", "expected"),
+    [
+        ("done", "open", "unavailable"),
+        ("ready", "open", "unfinished"),
+    ],
+)
+def test_github_release_combines_project_and_native_terminal_observations(
+    monkeypatch, project_state, native_issue_state, expected,
+):
+    scope = _github_release_scope(
+        monkeypatch,
+        project_state=project_state,
+        native_issue_state=native_issue_state,
+    )
+
+    assert scope.issues[0].state == project_state
+    assert scope.issues[0].disposition == expected
+
+
+@pytest.mark.parametrize(
+    "native_issue_state",
+    [None, "Closed", "done", {"name": "closed"}],
+)
+def test_github_release_refuses_missing_or_invalid_native_issue_state(
+    monkeypatch, native_issue_state,
+):
+    with pytest.raises(ReleaseScopeUnavailableError, match="invalid_issue_state"):
+        _github_release_scope(
+            monkeypatch,
+            project_state="ready",
+            native_issue_state=native_issue_state,
+        )
 
 
 def test_github_release_permission_failure_is_not_an_empty_scope(monkeypatch):

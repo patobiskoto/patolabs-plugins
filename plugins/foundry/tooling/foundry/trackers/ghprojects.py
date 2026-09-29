@@ -863,6 +863,14 @@ class GitHubProjectsTracker(Tracker):
             if row.get("pull_request") is not None:
                 continue
             issue_number = self._issue_number_from_rest(row, binding, "release.issues")
+            native_issue_state = row.get("state")
+            if (
+                not isinstance(native_issue_state, str)
+                or native_issue_state not in {"open", "closed"}
+            ):
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "invalid_issue_state"
+                )
             milestone = row.get("milestone")
             if (
                 not isinstance(milestone, dict)
@@ -885,10 +893,10 @@ class GitHubProjectsTracker(Tracker):
         issues: list[ReleaseIssue] = []
         for issue_number in sorted(release_rows):
             issue = self._hydrate_issue(project_issues[issue_number], binding)
-            terminal = str(issue.state or "").casefold() in {
+            row = release_rows[issue_number]
+            terminal = row["state"] == "closed" or str(issue.state or "").casefold() in {
                 "done", "completed", "fixed", "dropped",
             }
-            row = release_rows[issue_number]
             references = {
                 "provider_issue_id": row.get("node_id"),
                 "issue_url": row.get("html_url"),
@@ -899,8 +907,8 @@ class GitHubProjectsTracker(Tracker):
                 type=issue.type,
                 state=issue.state,
                 labels=tuple(issue.labels),
-                # PAT-67 owns proof-bound lifecycle projection. A Project state,
-                # issue closure, or a prerequisite PR mention cannot prove delivery.
+                # PAT-67 owns proof-bound lifecycle projection. A terminal Project
+                # state, Issue closure, or prerequisite PR mention cannot prove delivery.
                 disposition="unavailable" if terminal else "unfinished",
                 references={key: value for key, value in references.items() if value},
             ))
