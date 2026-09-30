@@ -102,6 +102,15 @@ class ReleaseSkillFormTests(unittest.TestCase):
         self.assertLess(text.index("foundry:start-issue"), write_notes)
         self.assertLess(text.index("git switch -c"), write_notes)
 
+    def test_foundry_boundary_uses_only_common_capabilities_and_keeps_deployment_human(self):
+        text = SKILL.read_text(encoding="utf-8")
+        self.assertIn("ship-ios.foundry-changelog-bridge.v1", text)
+        self.assertIn("registry selection --require-v1", text)
+        self.assertIn("query changelog", text)
+        self.assertIn("--standalone", text)
+        self.assertIn("cannot trigger, approve, submit, publish, or roll back", text)
+        self.assertNotRegex(text, r"from foundry\.|import foundry\.")
+
 
 if __name__ == "__main__":
     unittest.main()

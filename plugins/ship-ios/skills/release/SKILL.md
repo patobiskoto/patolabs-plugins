@@ -24,11 +24,25 @@ release binary; fastlane owns notes, metadata, screenshots, submit. Run `ship-io
 first if `fastlane/Fastfile` isn't in the repo.
 
 ## 1. Assemble the changelog (facts)
-Prefer Foundry when it's wired for this repo; fall back to a file otherwise:
+Choose the mode explicitly, from the application checkout. Foundry is eligible only when
+the bridge proves its V1 repository binding for this checkout; an installed Foundry
+elsewhere on the machine is not evidence that it governs this app:
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<ship-ios-root>")/scripts/changelog_bridge.py" "<milestone>" --require-v1-binding   # exit 3 → no Foundry, use a file
 ```
-These are FACTS (id/title/type/labels), not notes.
+The compatible public contract is `ship-ios.foundry-changelog-bridge.v1`: it requires
+Foundry's `registry selection --require-v1` and `query changelog` capabilities and
+returns `mode: foundry-v1`, a validated repository selection, and locale-neutral facts.
+It also reports the Foundry package version when adjacent metadata exposes one. It is the
+same command in Claude Code and Codex. Exit **3 only** means no compatible
+Foundry installation was found and permits the file workflow. Exit 2 (invalid binding,
+provider or payload) and exit 4 (not the app Git checkout) are failures to resolve;
+do not silently use a file, fix or explicitly abandon Foundry first.
+
+**Explicit standalone mode:** elect it before the release with
+`changelog_bridge.py "<milestone>" --standalone`, then provide the reviewed changelog
+file. This command performs no Foundry discovery or query. These are FACTS
+(id/title/type/labels), not notes.
 
 ## 2. Create the release branch — BEFORE touching any file
 Branch first: from the second release on, `release_notes.txt` are tracked files, and
@@ -78,12 +92,16 @@ contain it after a squash merge), and never `origin/<default>` blindly (another 
 have landed since):
 ```bash
 git fetch origin
+git rev-parse -q --verify "refs/tags/v<version>"  # if present, compare it to <merged-sha>; stop on mismatch
 git tag "v<version>" <merged-sha>   # `sha mergé` from foundry:merge-pr, or the PR's merge commit
 git push origin "v<version>"        # push ONLY this tag, nothing else
 ```
 The tag push is allowed by the Foundry guard (only default-branch pushes are denied).
 The Xcode Cloud "Release" workflow (tag-triggered) archives, signs (cloud-managed), and
-uploads to TestFlight. Nothing to build locally here.
+uploads to TestFlight. Nothing to build locally here. Record the merged SHA, tag, version,
+approved locale notes, tag-push time, and observed build number together. On an interrupted
+run, read those facts back first: never move an existing tag to another SHA and never repeat
+the submission merely because a build is already ready.
 
 ## 6. Beta gate (mandatory) — poll, then validate on device
 ```bash
@@ -122,9 +140,12 @@ one, never an older internal-only build (Apple rejects those at submission).
 running it.**
 
 ## 9. Hand back to the tracker
-On success: if Foundry drives this repo, tell the user to close the milestone and route
-post-release feedback/crashes through the `foundry:intake` skill. The loop closes on
-the tracker.
+The statuses remain separate: **merged** (Foundry PR result), **build ready** (the exact
+tag's Xcode Cloud/TestFlight observation), **submitted** (the human-approved fastlane or
+ASC action), and **published** (App Store observation). Foundry may receive the merged
+fact and read-only evidence; it cannot trigger, approve, submit, publish, or roll back an
+App Store release. On success, if Foundry drives this repo, tell the user to close the
+milestone and route post-release feedback/crashes through `foundry:intake`.
 
 ## Rules
 - Never submit without an explicit human go (step 8).

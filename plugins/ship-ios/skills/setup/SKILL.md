@@ -23,6 +23,14 @@ not in the plugin. This copies the plugin's templates in and fills the project v
 Run once. Model A: Xcode Cloud builds/signs/uploads; fastlane does metadata/screenshots/
 submit — so there is NO signing/`match` setup here.
 
+If the app will use Foundry for idea→merge, qualify it from the application checkout
+before the first release. `ship-ios:release` accepts only the portable
+`ship-ios.foundry-changelog-bridge.v1` contract: Foundry must provide both
+`registry selection --require-v1` for this repository and `query changelog`. An installed
+plugin, a binding for another checkout, or a legacy binding does not qualify the app.
+Either host can verify this through the same bridge command; choose `--standalone` and a
+reviewed changelog file when this app intentionally has no Foundry authority.
+
 ## 1. Check the toolchain FIRST (don't discover this mid-scaffold)
 ```bash
 ruby -v ; bundle -v ; fastlane -v 2>/dev/null || echo "no fastlane"

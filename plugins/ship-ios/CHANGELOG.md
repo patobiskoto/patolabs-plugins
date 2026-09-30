@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 — 2026-09-30
+
+- Qualified the optional Foundry bridge against the repository-selected V1 contract:
+  both selection and changelog reads run in the application Git checkout, not the
+  plugin checkout. The bridge validates selection and changelog payloads strictly and
+  distinguishes no compatible installation from binding, provider, malformed-payload,
+  and non-checkout failures.
+- Added explicit `--standalone` mode. A machine-level Foundry installation no longer
+  implicitly elects Foundry for an app repository. The Claude Code and Codex skills now
+  document the shared `ship-ios.foundry-changelog-bridge.v1` capability contract.
+- The release procedure now preserves exact-SHA tag idempotence and keeps merged,
+  build-ready, submitted, and published observations separate. Foundry retains no App
+  Store deployment authority.
+
 ## 0.2.1 — 2026-08-20
 
 - `submit` now requires a non-empty `version:` and passes it to deliver as
