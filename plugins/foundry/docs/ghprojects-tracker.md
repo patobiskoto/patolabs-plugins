@@ -85,12 +85,15 @@ receipt and unchanged source. A native `in-progress` with no Foundry receipt is
 refused; it cannot be adopted as an authenticated start. The same exact-receipt
 rule repairs interrupted review and done State writes, including replay of an
 already merged PR, without a second receipt or merge.
+Start rejects review, done and dropped predecessors before branch preparation.
 
 Acceptance receipts accept only the canonical six-field PAT-56 proof shape and bind one
 exact review generation. The criterion identities are recomputed from the current issue
 body, so changing checkbox progress preserves the immutable criterion semantics while
 editing criterion text invalidates the old proof. `checked` must equal the complete
 criterion count; blocked, partial, foreign or malformed proofs never mark AC complete.
+An issue with zero semantic criteria is refused before the code-host merge and
+before any `done` receipt: `0/0` is not acceptance proof.
 Native-state disagreement is observable through `normalized_state`, `native_state` and
 `projection_status`; it does not become acceptance authority.
 

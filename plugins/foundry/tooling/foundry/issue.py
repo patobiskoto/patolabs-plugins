@@ -507,6 +507,14 @@ def merge(issue_id, pr_number, flags=()):
                     f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
                 ) from None
             current = tr.get_issue(issue_id)
+    if (
+        getattr(tr, "append_only_lifecycle_supported", False)
+        and current.ac_total < 1
+    ):
+        raise SystemExit(
+            "⛔ Merge refusé — aucun critère d’acceptation à attester ; "
+            "aucun merge GitHub tenté."
+        )
     if bounded_lifecycle:
         _require_linked_pr_coordinates(current, pr, int(pr_number))
         if (getattr(current, "state", None) == "done"

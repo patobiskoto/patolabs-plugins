@@ -2454,7 +2454,7 @@ class GitHubProjectsTracker(Tracker):
         )
 
     def start_transition_path(self, current_state: str) -> tuple[str, ...]:
-        if current_state not in _FIELD_OPTIONS["state"]:
+        if current_state not in {"backlog", "ready", "blocked", "in-progress"}:
             raise TrackerConflictError("GitHub lifecycle predecessor invalid")
         return () if current_state == "in-progress" else ("in-progress",)
 
@@ -2642,7 +2642,9 @@ class GitHubProjectsTracker(Tracker):
             and not repair_exact
         ):
             raise TrackerConflictError("GitHub lifecycle predecessor unavailable")
-        if state == "done" and observed.ac_done != observed.ac_total:
+        if state == "done" and (
+            observed.ac_total < 1 or observed.ac_done != observed.ac_total
+        ):
             raise TrackerConflictError("GitHub done proof lacks matching acceptance")
         if (
             isinstance(context, TransitionContext)

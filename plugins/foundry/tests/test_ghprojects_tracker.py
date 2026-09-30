@@ -647,6 +647,66 @@ def test_pat67_public_start_refuses_native_only_in_progress(tmp_path, monkeypatc
     assert transport.state_writes == 0
 
 
+@pytest.mark.parametrize("native_state", ["review", "done", "dropped"])
+def test_pat67_public_start_refuses_invalid_predecessor_before_branch(
+    tmp_path, monkeypatch, native_state,
+):
+    transport = _LifecycleTransport()
+    transport.state = native_state
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    branches = []
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue, "_sh", lambda *_args: "")
+    monkeypatch.setattr(
+        issue, "_prepare_branch", lambda branch: branches.append(branch),
+    )
+
+    with pytest.raises((SystemExit, TrackerConflictError)):
+        issue.start("GHQUAL-1")
+
+    assert branches == []
+    assert transport.comment_posts == 0
+    assert transport.state_writes == 0
+
+
+def test_pat67_zero_ac_refuses_before_codehost_merge_or_done_receipt(
+    tmp_path, monkeypatch,
+):
+    transport = _LifecycleTransport()
+    transport.body = "No acceptance criteria"
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    review = _review_context()
+    tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    tracker.set_state("GHQUAL-1", "review", review, PROJECT)
+    receipt_count = transport.comment_posts
+    with pytest.raises(TrackerConflictError, match="matching acceptance"):
+        tracker.set_state("GHQUAL-1", "done", _done_context(review), PROJECT)
+    assert transport.comment_posts == receipt_count
+    pr = PullRequest(
+        number=1, url=review.pr_url, head="feat/ghqual-1", base="main",
+        base_sha=review.base_sha, sha=review.head_sha,
+    )
+    codehost = type("CodeHost", (), {
+        "name": "github",
+        "resolve_repo": staticmethod(
+            lambda: PROJECT.extra["canonical_repo"].removeprefix("github.com/")
+        ),
+        "get_pr": staticmethod(lambda *_args: pr),
+        "merge_pr": staticmethod(lambda *_args: pytest.fail("merge attempted")),
+    })()
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+
+    with pytest.raises(SystemExit, match="aucun critère d’acceptation"):
+        issue.merge("GHQUAL-1", "1")
+
+    assert transport.comment_posts == receipt_count
+    assert transport.state_writes == 2
+
+
 def test_pat67_done_recovery_requires_exact_merged_pr_receipt(tmp_path):
     transport = _StateWriteFailsOnce()
     tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
