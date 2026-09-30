@@ -9,13 +9,14 @@ local state. Pinned here:
 - no push refspec targeting the default branch (main/master/HEAD);
 - no `git commit -a` (misses brand-new files — first-release release_notes.txt);
 - explicit staging is verified (`git diff --cached`) before committing;
-- the single-tag push (`git push origin "v<version>"`) is present.
+- the exact-SHA single-tag helper is present and separately tested.
 """
 import re
 import unittest
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1] / "skills/release/SKILL.md"
+SETUP_SKILL = Path(__file__).resolve().parents[1] / "skills/setup/SKILL.md"
 
 
 def _command_lines():
@@ -76,8 +77,11 @@ class ReleaseSkillFormTests(unittest.TestCase):
             any(ln.startswith("git diff --cached") for ln in _command_lines()),
             "the staged diff must be reviewed before the release commit")
 
-    def test_single_tag_push_present(self):
-        self.assertIn('git push origin "v<version>"', _command_lines())
+    def test_single_tag_helper_present(self):
+        self.assertTrue(any(
+            "/scripts/tag_merged.py" in line and '"<merged-sha>"' in line
+            for line in _command_lines()
+        ))
 
     def test_foundry_path_goes_through_start_issue(self):
         # foundry:open-pr refuses a hand-minted branch: it derives the issue id
@@ -101,6 +105,27 @@ class ReleaseSkillFormTests(unittest.TestCase):
         write_notes = text.index("write each to")
         self.assertLess(text.index("foundry:start-issue"), write_notes)
         self.assertLess(text.index("git switch -c"), write_notes)
+
+    def test_foundry_boundary_uses_only_common_capabilities_and_keeps_deployment_human(self):
+        text = SKILL.read_text(encoding="utf-8")
+        self.assertIn("ship-ios.foundry-changelog-bridge.v1", text)
+        self.assertIn("registry selection --require-v1", text)
+        self.assertIn("query changelog", text)
+        self.assertIn("--standalone", text)
+        self.assertIn("cannot trigger, approve, submit, publish, or roll back", text)
+        self.assertNotRegex(text, r"from foundry\.|import foundry\.")
+        self.assertNotIn("or the tracker", text)
+        self.assertIn("common progress-note operation", text)
+
+    def test_setup_qualifies_same_portable_contract(self):
+        setup = SETUP_SKILL.read_text(encoding="utf-8")
+        self.assertIn("ship-ios.foundry-changelog-bridge.v1", setup)
+        self.assertIn("registry selection --require-v1", setup)
+        self.assertIn("query changelog", setup)
+        self.assertIn("--standalone", setup)
+        self.assertIn("Bash(python3:*)", setup)
+        self.assertIn("/scripts/changelog_bridge.py", setup)
+        self.assertIn("--require-v1-binding", setup)
 
 
 if __name__ == "__main__":

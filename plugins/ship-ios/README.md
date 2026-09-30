@@ -123,17 +123,34 @@ templates/Appfile Snapfile   identity + screenshot matrix
 templates/UITests/…          snapshot UITest scaffold
 templates/metadata_example/  the per-locale metadata layout (illustrative)
 scripts/changelog_bridge.py  thin: pulls Foundry's changelog facts (optional)
+scripts/tag_merged.py       verifies and pushes only the exact merged release tag
 ```
 
-The bridge asks Foundry for the repository selection before querying changelog facts,
-so both commands use the same checkout binding. Pass `--require-v1-binding` for the
-release flow: a missing, moved, stale, ambiguous, or legacy binding then fails before
-the changelog query. The bridge imports no tracker adapter and reads no provider
-credential itself.
+The bridge runs both Foundry reads with the application checkout as its working directory,
+not its own plugin directory. Its portable compatibility contract is
+`ship-ios.foundry-changelog-bridge.v1`: it proves the repository through Foundry's
+`registry selection --require-v1`, then validates the public `query changelog` response
+before emitting facts. This is verifiable with the same command in Claude Code and Codex.
+The output retains the full release scope, category counts and `unavailable` facts;
+`count: 0` alone is never treated as proof that the scope is empty.
+Ship-iOS 0.3.0 records the adjacent Foundry package version when it is exposed, while
+the capability contract remains authoritative for a development checkout or a host-owned
+launcher without package metadata.
+The current qualified pair is Ship-iOS 0.3.0 with Foundry 0.9.0 at the PAT-60
+integration SHA; a later Foundry version is compatible only when its V1 selection and
+`foundry.release-scope.v1` changelog capabilities pass the same runtime checks. Earlier
+versions have no claimed compatibility. Both Claude Code and Codex use this same probe.
+A malformed payload, inaccessible provider, or invalid/stale binding is an error, never an
+empty changelog or an implicit file fallback. Exit 3 alone means no compatible Foundry was
+discovered; elect standalone mode explicitly with `--standalone` and use a reviewed file.
+An explicitly chosen CLI, `FOUNDRY_CLI`, or an installation marker is authoritative:
+if it is broken, the bridge stops. For unconfigured discovery, it can skip an older
+candidate that lacks the V1 selection command and try another installed candidate.
+The bridge imports no tracker adapter and reads no provider credential itself.
 
 ## Status
 
-v0.2.0 — dual Claude Code/Codex packaging over the live-tested Model A flow (Xcode
+v0.3.0 — dual Claude Code/Codex packaging over the live-tested Model A flow (Xcode
 Cloud builds, fastlane submits). Lanes: screenshots / metadata / submit /
 testflight_status; per-locale release notes; export-compliance + clean-tree +
 locale-completeness guards; portable Foundry changelog discovery; screenshot scaffold.
