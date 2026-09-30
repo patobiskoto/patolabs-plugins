@@ -4436,34 +4436,34 @@ class LinearTracker(Tracker):
             elif prior is None or prior.get("body") != body or (prior.get("issue") or {}).get("id") != raw["id"]:
                 raise TrackerConflictError("audit de clôture Linear collision")
             intent.write(audit_id, "complete")
-        # The audit is append-only and carries the deterministic replay identity;
-        # only after it exists can the one targeted parent State projection run.
-        # This remains PAT-ADR-0006 bounded detection, not a transaction.
-        self._project_native_state(receipt.parent_id, "done", project, binding)
-        closed_raw = self._read_raw(receipt.parent_id)
-        self._assert_issue_project(closed_raw, binding)
-        recovered = self._closure_from_raw(closed_raw, project)
-        if recovered is None or recovered.receipt != receipt:
-            raise TrackerConflictError("audit de clôture Linear absent après écriture")
-        try:
-            closed_parent = self._to_issue(
-                closed_raw, project, observe_lifecycle=True,
-            )
-            closed_children, closed_dependencies = bounded_epic_graph_snapshot(
-                self, project, closed_parent,
-            )
-        except (SystemExit, TrackerConflictError) as exc:
-            raise TrackerConflictError(
-                "graphe Epic Linear divergent après écriture"
-            ) from exc
-        if (
-            closed_children != receipt.children
-            or closed_dependencies != receipt.dependencies
-        ):
-            raise TrackerConflictError(
-                "graphe Epic Linear divergent après écriture"
-            )
-        return EpicClosureOutcome(receipt, recovered.closed_parent_version, audit_id)
+            # The audit is append-only and carries the deterministic replay identity;
+            # only after it exists can the one targeted parent State projection run.
+            # This remains PAT-ADR-0006 bounded detection, not a transaction.
+            self._project_native_state(receipt.parent_id, "done", project, binding)
+            closed_raw = self._read_raw(receipt.parent_id)
+            self._assert_issue_project(closed_raw, binding)
+            recovered = self._closure_from_raw(closed_raw, project)
+            if recovered is None or recovered.receipt != receipt:
+                raise TrackerConflictError("audit de clôture Linear absent après écriture")
+            try:
+                closed_parent = self._to_issue(
+                    closed_raw, project, observe_lifecycle=True,
+                )
+                closed_children, closed_dependencies = bounded_epic_graph_snapshot(
+                    self, project, closed_parent,
+                )
+            except (SystemExit, TrackerConflictError) as exc:
+                raise TrackerConflictError(
+                    "graphe Epic Linear divergent après écriture"
+                ) from exc
+            if (
+                closed_children != receipt.children
+                or closed_dependencies != receipt.dependencies
+            ):
+                raise TrackerConflictError(
+                    "graphe Epic Linear divergent après écriture"
+                )
+            return EpicClosureOutcome(receipt, recovered.closed_parent_version, audit_id)
 
     def add_comment(
         self,

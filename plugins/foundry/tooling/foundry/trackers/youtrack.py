@@ -1219,47 +1219,47 @@ class YouTrackTracker(Tracker):
             if current_pending is None or current_pending.receipt != receipt:
                 raise TrackerConflictError("audit de clôture YouTrack divergent")
             self._write_epic_closure_intent(fingerprint, audit_id, "complete")
-        # Read the pending audit before the single parent write.  An ambiguous
-        # audit response is never retried; absence is a closed failure.
-        pending = self._closure_from_issue(
-            self.get_issue(receipt.parent_id), project, require_done=False,
-        )
-        if pending is None or pending.receipt != receipt:
-            raise TrackerConflictError("audit de clôture YouTrack absent avant écriture")
-        try:
-            self.set_state(
-                receipt.parent_id, "done",
-                TransitionContext(expected_state=receipt.parent_state), project,
+            # Read the pending audit before the single parent write.  An ambiguous
+            # audit response is never retried; absence is a closed failure.
+            pending = self._closure_from_issue(
+                self.get_issue(receipt.parent_id), project, require_done=False,
             )
-        except Exception as error:
-            # Same bounded recovery for a response lost after the targeted State
-            # effect: exact done + exact audit is success, anything else fails.
-            recovered_parent = self.get_issue(receipt.parent_id)
-            recovered = self._closure_from_issue(recovered_parent, project)
+            if pending is None or pending.receipt != receipt:
+                raise TrackerConflictError("audit de clôture YouTrack absent avant écriture")
+            try:
+                self.set_state(
+                    receipt.parent_id, "done",
+                    TransitionContext(expected_state=receipt.parent_state), project,
+                )
+            except Exception as error:
+                # Same bounded recovery for a response lost after the targeted State
+                # effect: exact done + exact audit is success, anything else fails.
+                recovered_parent = self.get_issue(receipt.parent_id)
+                recovered = self._closure_from_issue(recovered_parent, project)
+                if recovered is None or recovered.receipt != receipt:
+                    raise error
+            closed = self.get_issue(receipt.parent_id)
+            if closed.state != "done" or closed.version is None or closed.version <= receipt.parent_version:
+                raise TrackerConflictError("Epic YouTrack divergent après écriture")
+            recovered = self._closure_from_issue(closed, project)
             if recovered is None or recovered.receipt != receipt:
-                raise error
-        closed = self.get_issue(receipt.parent_id)
-        if closed.state != "done" or closed.version is None or closed.version <= receipt.parent_version:
-            raise TrackerConflictError("Epic YouTrack divergent après écriture")
-        recovered = self._closure_from_issue(closed, project)
-        if recovered is None or recovered.receipt != receipt:
-            raise TrackerConflictError("audit de clôture YouTrack absent après écriture")
-        try:
-            closed_children, closed_dependencies = bounded_epic_graph_snapshot(
-                self, project, closed,
-            )
-        except (SystemExit, TrackerConflictError) as exc:
-            raise TrackerConflictError(
-                "graphe Epic YouTrack divergent après écriture"
-            ) from exc
-        if (
-            closed_children != receipt.children
-            or closed_dependencies != receipt.dependencies
-        ):
-            raise TrackerConflictError(
-                "graphe Epic YouTrack divergent après écriture"
-            )
-        return EpicClosureOutcome(receipt, closed.version, audit_id)
+                raise TrackerConflictError("audit de clôture YouTrack absent après écriture")
+            try:
+                closed_children, closed_dependencies = bounded_epic_graph_snapshot(
+                    self, project, closed,
+                )
+            except (SystemExit, TrackerConflictError) as exc:
+                raise TrackerConflictError(
+                    "graphe Epic YouTrack divergent après écriture"
+                ) from exc
+            if (
+                closed_children != receipt.children
+                or closed_dependencies != receipt.dependencies
+            ):
+                raise TrackerConflictError(
+                    "graphe Epic YouTrack divergent après écriture"
+                )
+            return EpicClosureOutcome(receipt, closed.version, audit_id)
 
     @contextmanager
     def _body_lock(self, resource_type: str, resource_id: str):

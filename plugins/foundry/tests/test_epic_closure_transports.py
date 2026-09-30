@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 import pytest
 
@@ -261,6 +263,95 @@ def test_youtrack_close_audits_before_targeted_parent_write_and_replays(monkeypa
     effects = [(method, path) for method, path, _body in tracker.calls if method == "POST"]
     assert effects == [("POST", "/issues/YT-1/comments"), ("POST", "/issues/YT-1")]
     assert replay.replayed and closed.audit_id.startswith("foundry-epic-closure.v1:")
+
+
+@pytest.mark.parametrize("provider", ["linear", "youtrack"])
+def test_epic_local_concurrent_replay_sends_one_parent_state_write(monkeypatch, provider):
+    if provider == "linear":
+        tracker, wire, project = _linear_graph()
+        original = wire.__call__
+        parent_native = wire.issues["LIN-1"]["id"]
+        parent_id = "LIN-1"
+
+        def is_state_write(document, variables):
+            return (
+                "FoundryLinearIssueUpdate" in document
+                and variables.get("id") == parent_native
+                and variables.get("input", {}).get("stateId") == STATE_IDS["done"]
+            )
+
+        def install(hook):
+            tracker._transport = lambda document, variables: hook(
+                is_state_write(document, variables),
+                lambda: original(document, variables),
+            )
+    else:
+        tracker = _YouTrackWire()
+        project = Project(key="YT", id="p")
+        original = tracker._req
+        parent_id = "YT-1"
+
+        def install(hook):
+            tracker._req = lambda method, path, body=None, fields=None, top=None: hook(
+                method == "POST" and path == "/issues/YT-1",
+                lambda: original(method, path, body, fields, top),
+            )
+
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    first_at_state = threading.Event()
+    second_at_state = threading.Event()
+    second_pending_seen = threading.Event()
+    release_first = threading.Event()
+    count_lock = threading.Lock()
+    attempts = 0
+    pending_reads = 0
+    original_pending = tracker.get_pending_epic_closure
+
+    def observed_pending(*args):
+        nonlocal pending_reads
+        result = original_pending(*args)
+        with count_lock:
+            pending_reads += 1
+            if pending_reads == 2:
+                second_pending_seen.set()
+        return result
+
+    monkeypatch.setattr(tracker, "get_pending_epic_closure", observed_pending)
+
+    def hold_first_state(is_state, send):
+        nonlocal attempts
+        if is_state:
+            with count_lock:
+                attempts += 1
+                ordinal = attempts
+            if ordinal == 1:
+                first_at_state.set()
+                if not release_first.wait(3):
+                    raise AssertionError("first State write was never released")
+            else:
+                second_at_state.set()
+        return send()
+
+    install(hold_first_state)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            write.close_epic, tracker, parent_id,
+            human_verdict="accepted", issued_at=1_800_000_000_000,
+            nonce="nonce_1234567890abcdef",
+        )
+        assert first_at_state.wait(3)
+        second = executor.submit(
+            write.close_epic, tracker, parent_id, human_verdict="accepted",
+        )
+        try:
+            assert second_pending_seen.wait(3)
+            assert not second_at_state.wait(0.5)
+        finally:
+            release_first.set()
+        closed, replayed = first.result(timeout=3), second.result(timeout=3)
+
+    assert closed.receipt == replayed.receipt
+    assert attempts == 1
 
 
 @pytest.mark.parametrize("explicit_replay", [False, True])
