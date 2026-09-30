@@ -833,7 +833,15 @@ class GitHubProjectsTracker(Tracker):
         """Return backlog candidates with their complete qualified relation graph."""
         raw = self._search_raw(project, query)
         binding = self._binding(project)
-        return [self._hydrate_issue(issue, binding) for issue in raw]
+        return [
+            self._projection(
+                issue.id,
+                self._hydrate_issue(issue, binding),
+                strict=True,
+                binding=binding,
+            )
+            for issue in raw
+        ]
 
     def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
         binding = self._authoritative_binding(project)
@@ -2285,6 +2293,10 @@ class GitHubProjectsTracker(Tracker):
         scope: dict[str, Any] | None = None,
     ) -> Issue:
         binding = binding or self._binding(self._project())
+        # Native checkbox progress is observable input, never V1 AC authority.
+        # Only a valid receipt for the current review generation may make it
+        # positive; keep the semantic criterion count for callers either way.
+        native.ac_done = 0
         has_lifecycle = any(
             isinstance(row.get("text"), str)
             and row["text"].startswith(_LIFECYCLE_HEADER)
@@ -2414,6 +2426,10 @@ class GitHubProjectsTracker(Tracker):
                     )
                 raise TrackerConflictError(
                     "GitHub lifecycle completed receipt missing",
+                )
+            if fresh.state != native.state:
+                raise TrackerConflictError(
+                    "GitHub native state changed before lifecycle append",
                 )
             if self._unrelated_state_snapshot(fresh) != self._unrelated_state_snapshot(native):
                 raise TrackerConflictError(

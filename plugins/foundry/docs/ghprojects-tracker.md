@@ -33,7 +33,10 @@ estimate may be absent. A draft, PR, foreign issue, deleted field, duplicate
 field or partial response fails closed. A Project field, Issue-label, or item
 field-value connection that reports a second page is refused rather than read
 as a silently truncated authority. The reserved `foundry:adr` label excludes
-that ADR support item only from delivery reads.
+that ADR support item only from delivery reads. Every delivery item is then
+hydrated through REST and passed through the same strict receipt projection as
+`get_issue`; a bare native terminal state therefore cannot appear positive in
+backlog, roadmap, grooming or intake reads.
 
 `get_issue(GHQUAL-<number>)` scopes the number to the active binding, then
 reads the exact Issue body, timestamps, comments, parent, paged sub-issues and
@@ -47,9 +50,10 @@ REST Issue labels must be a complete list of distinct, non-empty label names;
 missing or malformed labels are refused before ADR discrimination. Timestamps
 must include an explicit timezone offset; dates and local times without an
 offset are refused instead of inheriting the host timezone.
-Only complete per-line Markdown checkboxes in the current REST Issue body count
-toward observed AC progress; comments and split-line fragments do not, and these
-markers are not lifecycle acceptance proof.
+Only complete per-line Markdown checkboxes in the current REST Issue body define
+the semantic criterion count; comments and split-line fragments do not. Native
+checked markers never increment `ac_done`: only a valid receipt for the current
+review generation can project positive AC progress.
 An issue proven absent from the complete bound Project read, or whose exact
 Issue endpoint then returns 404, raises the portable `IssueUnavailableError`;
 `query issue` can therefore preserve an unavailable related target as a link
@@ -66,13 +70,15 @@ Project item id. Review and done additionally bind the exact canonical PR URL,
 head/base SHA and review digest; done also binds the merge SHA. A native `done` without
 that chain is refused as an unauthorised auto-close.
 
-Before the single comment POST, the adapter persists a local pending intent under the
-digest of the fully bound receipt. A lost response is reconciled only when the complete
-paged history exposes exactly one matching receipt. If a fresh process still observes
-zero candidates, the intent remains pending and the operation fails closed without a
-second POST; multiple candidates also fail closed. The local intent never grants a
-lifecycle state by itself. Exact historical replays converge without regressing newer
-review or done evidence.
+Before the single comment POST, the adapter re-reads both the targeted native State and
+the untargeted business snapshot, then persists a local pending intent under the digest
+of the fully bound receipt. Drift in either snapshot fails closed before append. A lost
+response is reconciled only when the complete paged history exposes exactly one matching
+receipt. If a fresh process still observes zero candidates, the intent remains pending
+and the operation fails closed without a second POST; multiple candidates also fail
+closed. The local intent never grants a lifecycle state by itself. An already present
+exact receipt is accepted before the fresh-state comparison, so exact historical replays
+converge without regressing newer review or done evidence.
 
 Acceptance receipts accept only the canonical six-field PAT-56 proof shape and bind one
 exact review generation. The criterion identities are recomputed from the current issue

@@ -371,6 +371,32 @@ def test_pat67_lifecycle_receipt_precedes_targeted_state_and_exact_replay(
     assert "foundry-ghprojects-lifecycle.v1:state-in-progress:" in state["comments"][0]["text"]
 
 
+def test_pat67_target_state_drift_before_receipt_fails_closed(tmp_path):
+    class TargetDriftTransport(_LifecycleTransport):
+        def __init__(self):
+            super().__init__()
+            self.project_reads = 0
+
+        def __call__(self, command, **kwargs):
+            if (
+                command[2] == "graphql"
+                and not any(value.startswith("query=mutation") for value in command)
+            ):
+                self.project_reads += 1
+                if self.project_reads == 4:
+                    self.state = "in-progress"
+            return super().__call__(command, **kwargs)
+
+    transport = TargetDriftTransport()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+
+    with pytest.raises(TrackerConflictError, match="before lifecycle append"):
+        tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+
+    assert transport.comment_posts == 0
+    assert transport.state_writes == 0
+
+
 def test_pat67_native_done_without_owned_receipt_fails_closed(monkeypatch):
     tracker = GitHubProjectsTracker()
     monkeypatch.setattr(
@@ -509,6 +535,9 @@ def test_pat67_raw_transport_full_lifecycle_and_replays(tmp_path, monkeypatch):
     observed = tracker.get_issue("GHQUAL-1")
     assert (observed.state, observed.ac_done, observed.ac_total) == ("done", 1, 1)
     assert observed.projection_status == "aligned"
+    listed = tracker.search(PROJECT)[0]
+    assert (listed.state, listed.ac_done, listed.ac_total) == ("done", 1, 1)
+    assert listed.projection_status == "aligned"
     assert transport.comment_posts == 4
     assert transport.state_writes == 3
 
@@ -2537,7 +2566,7 @@ def test_timestamp_normalizes_explicit_offsets_to_same_epoch(value):
 
 
 @pytest.mark.parametrize("read", ["search", "get_issue"])
-def test_public_reads_count_complete_rest_body_acceptance_checkboxes(read):
+def test_pat67_public_reads_do_not_trust_native_acceptance_checkboxes(read):
     body = (
         "## Critères d'acceptation\n\n"
         "- [x] lower-case done\n"
@@ -2567,7 +2596,15 @@ def test_public_reads_count_complete_rest_body_acceptance_checkboxes(read):
     issue = tracker.search(PROJECT)[0] if read == "search" else tracker.get_issue("GHQUAL-1")
 
     assert issue.body == body
-    assert (issue.ac_done, issue.ac_total) == (2, 3)
+    assert (issue.ac_done, issue.ac_total) == (0, 3)
+
+
+def test_pat67_search_rejects_native_auto_close_without_owned_receipt(tmp_path):
+    transport = _LifecycleTransport()
+    transport.state = "done"
+
+    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
+        GitHubProjectsTracker(runner=transport, state_dir=tmp_path).search(PROJECT)
 
 
 def test_get_issue_ignores_comments_and_split_line_pseudo_checkboxes():
