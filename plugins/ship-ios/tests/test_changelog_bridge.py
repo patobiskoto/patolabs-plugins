@@ -33,7 +33,11 @@ def _v1_payload(project, *, unavailable=False):
             "provider": "linear", "project_key": project,
             "project_id": "project-id", "release": "M1", "release_id": "release-1",
             "native_state": None, "issues": [fact] if unavailable else [],
-            "closure": {"mode": "operator"}, "coordinates": {},
+            "closure": {"mode": "operator"},
+            "coordinates": {
+                "project_id": "project-id", "team_id": "team-id",
+                "project_milestone_id": "release-1",
+            },
         },
     }
 
@@ -58,6 +62,11 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
             lambda value: value.update(contract="foundry.legacy"),
             lambda value: value.update(scope_count=0),
             lambda value: value["release_scope"].update(provider="ghprojects"),
+            lambda value: value["release_scope"].pop("coordinates"),
+            lambda value: value["release_scope"].pop("native_state"),
+            lambda value: value["release_scope"]["coordinates"].update(
+                project_milestone_id="other-release"
+            ),
             lambda value: value["release_scope"]["issues"].clear(),
             lambda value: value["release_scope"]["issues"].append(
                 value["release_scope"]["issues"][0]
@@ -67,6 +76,38 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
             mutation(value)
             with self.subTest(value=value), self.assertRaises(ValueError):
                 bridge._validate_changelog(value, milestone="M1", selection=selection)
+
+        selection_bad_digest = {
+            "mode": "v1", "tracker": "linear",
+            "project": {"key": "APP", "id": "project-id"},
+            "repository": "github.com/example/app", "configuration_digest": "x",
+        }
+        with self.assertRaises(ValueError):
+            bridge._validate_selection(selection_bad_digest)
+
+    def test_provider_coordinates_are_bound_to_the_selected_release(self):
+        base = {"project": {"key": "APP", "id": "project-id"}}
+        self.assertTrue(bridge._valid_coordinates({
+            "project_id": "project-id", "milestone_bundle_id": "bundle-id",
+            "enum_value_id": "release-1",
+        }, {**base, "tracker": "youtrack"}, "release-1"))
+        github_selection = {
+            **base, "tracker": "ghprojects", "repository": "github.com/example/app",
+        }
+        github_coordinates = {
+            "project_id": "project-id", "repository": "example/app",
+            "milestone_number": 7, "milestone_id": 700,
+            "milestone_node_id": "node-7",
+        }
+        self.assertTrue(bridge._valid_coordinates(
+            github_coordinates, github_selection, "7",
+        ))
+        self.assertFalse(bridge._valid_coordinates(
+            {**github_coordinates, "repository": "other/app"}, github_selection, "7",
+        ))
+        self.assertFalse(bridge._valid_coordinates(
+            github_coordinates, github_selection, "8",
+        ))
 
     def test_explicit_cli_wins(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -85,10 +126,27 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
                 "changelog_bridge.py", "M1", "--foundry-cli", str(Path(tmp) / "absent"),
             ]),
             mock.patch.object(bridge, "_repository_root", return_value=Path(tmp)),
-            mock.patch.object(bridge, "_find_cli") as finder,
+            mock.patch.object(bridge, "_find_cli", side_effect=ValueError(
+                "configured Foundry CLI is unavailable"
+            )) as finder,
         ):
             self.assertEqual(bridge.main(), 2)
-            finder.assert_not_called()
+            finder.assert_called_once_with(str(Path(tmp) / "absent"))
+
+    def test_broken_configured_cli_or_marker_is_not_absence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with (
+                mock.patch.dict(os.environ, {"FOUNDRY_CLI": str(home / "absent")}, clear=True),
+                self.assertRaises(ValueError),
+            ):
+                bridge._find_cli(None, home=home, plugin_root=home)
+            marker = bridge._marker_path(home)
+            marker.parent.mkdir(parents=True)
+            for body in ('{invalid', json.dumps({"foundry_cli": str(home / "absent")})):
+                marker.write_text(body, encoding="utf-8")
+                with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):
+                    bridge._find_cli(None, home=home, plugin_root=home)
 
     def test_install_marker_is_host_neutral(self):
         with tempfile.TemporaryDirectory() as tmp:

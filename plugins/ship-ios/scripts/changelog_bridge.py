@@ -17,6 +17,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,10 +37,15 @@ def _marker_path(home: Path) -> Path:
 def _marked_cli(home: Path) -> str | None:
     marker = _marker_path(home)
     try:
-        value = json.loads(marker.read_text(encoding="utf-8")).get("foundry_cli")
-    except (OSError, ValueError, TypeError):
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return None
-    return value if value and os.path.isfile(value) else None
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError("Foundry installation marker is unreadable") from exc
+    value = payload.get("foundry_cli") if isinstance(payload, dict) else None
+    if not isinstance(value, str) or not value or not os.path.isfile(value):
+        raise ValueError("Foundry installation marker points to no CLI")
+    return value
 
 
 def _find_cli(explicit: str | None, *, home: Path | None = None,
@@ -47,10 +53,16 @@ def _find_cli(explicit: str | None, *, home: Path | None = None,
     """Find Foundry across dev checkout, Claude cache, Codex cache, or PATH."""
     home = home or Path.home()
     plugin_root = plugin_root or Path(__file__).resolve().parents[1]
+    configured = [explicit, os.environ.get("FOUNDRY_CLI")]
+    for path in configured:
+        if path is not None:
+            if not path or not os.path.isfile(path):
+                raise ValueError("configured Foundry CLI is unavailable")
+            return path
+    marked = _marked_cli(home)
+    if marked is not None:
+        return marked
     direct = [
-        explicit,
-        os.environ.get("FOUNDRY_CLI"),
-        _marked_cli(home),
         str(plugin_root.parent / "foundry/tooling/foundry_cli.py"),
         str(home / ".claude/plugins/marketplaces/patolabs/plugins/foundry/tooling/foundry_cli.py"),
         shutil.which("foundry_cli.py"),
@@ -118,7 +130,7 @@ def _validate_selection(value: object) -> dict[str, object]:
         or not isinstance(value.get("repository"), str)
         or not value["repository"]
         or not isinstance(value.get("configuration_digest"), str)
-        or not value["configuration_digest"]
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", value["configuration_digest"]) is None
     ):
         raise ValueError("invalid V1 repository selection")
     return value
@@ -210,6 +222,10 @@ def _validate_changelog(value: object, *, milestone: str,
         or scope.get("release") != milestone
         or not isinstance(scope.get("release_id"), str) or not scope["release_id"]
         or not isinstance(scope.get("closure"), dict)
+        or "native_state" not in scope
+        or scope["native_state"] is not None and not isinstance(scope["native_state"], str)
+        or not isinstance(scope.get("coordinates"), dict)
+        or not _valid_coordinates(scope["coordinates"], selection, scope["release_id"])
         or not isinstance(scope.get("issues"), list)
         or len(scope["issues"]) != scope_count
         or any(
@@ -222,6 +238,36 @@ def _validate_changelog(value: object, *, milestone: str,
     ):
         raise ValueError("payload release scope is inconsistent")
     return value
+
+
+def _valid_coordinates(coordinates: dict, selection: dict, release_id: str) -> bool:
+    """Keep the public provider identity attached to the validated scope."""
+    if coordinates.get("project_id") != selection["project"]["id"]:
+        return False
+    provider = selection["tracker"]
+    if provider == "linear":
+        return (
+            isinstance(coordinates.get("team_id"), str) and bool(coordinates["team_id"])
+            and coordinates.get("project_milestone_id") == release_id
+        )
+    if provider == "youtrack":
+        return (
+            isinstance(coordinates.get("milestone_bundle_id"), str)
+            and bool(coordinates["milestone_bundle_id"])
+            and coordinates.get("enum_value_id") == release_id
+        )
+    return (
+        isinstance(coordinates.get("repository"), str)
+        and f"github.com/{coordinates['repository']}" == selection["repository"]
+        and type(coordinates.get("milestone_number")) is int
+        and coordinates["milestone_number"] > 0
+        and re.fullmatch(r"[0-9]+", release_id) is not None
+        and coordinates["milestone_number"] == int(release_id)
+        and isinstance(coordinates.get("milestone_id"), int)
+        and coordinates["milestone_id"] > 0
+        and isinstance(coordinates.get("milestone_node_id"), str)
+        and bool(coordinates["milestone_node_id"])
+    )
 
 
 def main() -> int:
@@ -250,10 +296,11 @@ def main() -> int:
               "(ou avec --repo).", file=sys.stderr)
         return 4
 
-    if args.foundry_cli and not os.path.isfile(args.foundry_cli):
-        print("Chemin Foundry explicite introuvable.", file=sys.stderr)
+    try:
+        cli = _find_cli(args.foundry_cli)
+    except ValueError as exc:
+        print(f"Configuration Foundry invalide : {exc}.", file=sys.stderr)
         return 2
-    cli = _find_cli(args.foundry_cli)
     if not cli:
         print("Foundry introuvable — passe un fichier changelog au skill à la place.",
               file=sys.stderr)

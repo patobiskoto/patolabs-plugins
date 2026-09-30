@@ -135,6 +135,10 @@ The output retains the full release scope, category counts and `unavailable` fac
 Ship-iOS 0.3.0 records the adjacent Foundry package version when it is exposed, while
 the capability contract remains authoritative for a development checkout or a host-owned
 launcher without package metadata.
+The current qualified pair is Ship-iOS 0.3.0 with Foundry 0.9.0 at the PAT-60
+integration SHA; a later Foundry version is compatible only when its V1 selection and
+`foundry.release-scope.v1` changelog capabilities pass the same runtime checks. Earlier
+versions have no claimed compatibility. Both Claude Code and Codex use this same probe.
 A malformed payload, inaccessible provider, or invalid/stale binding is an error, never an
 empty changelog or an implicit file fallback. Exit 3 alone means no compatible Foundry was
 discovered; elect standalone mode explicitly with `--standalone` and use a reviewed file.

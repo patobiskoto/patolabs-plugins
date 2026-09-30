@@ -52,8 +52,9 @@ dead-end the Foundry path.
 **Foundry drives this repo:** the release change needs a tracker issue, and the branch
 must be minted by Foundry (foundry:open-pr derives the issue id from the
 `<type>/<id>-<slug>` branch shape that only foundry:start-issue creates — it refuses a
-hand-made branch). Create or pick the release chore issue (e.g. "Release v<version>",
-via foundry:intake or the tracker), then run foundry:start-issue <ID>.
+hand-made branch). Create or pick the release chore issue (e.g. "Release v<version>")
+through `foundry:intake` / the common Foundry issue query, then run
+`foundry:start-issue <ID>`.
 
 **No Foundry:** `git switch -c chore/release-v<version>`.
 
@@ -144,8 +145,11 @@ The statuses remain separate: **merged** (Foundry PR result), **build ready** (t
 tag's Xcode Cloud/TestFlight observation), **submitted** (the human-approved fastlane or
 ASC action), and **published** (App Store observation). Foundry may receive the merged
 fact and read-only evidence; it cannot trigger, approve, submit, publish, or roll back an
-App Store release. On success, if Foundry drives this repo, tell the user to close the
-milestone and route post-release feedback/crashes through `foundry:intake`.
+App Store release. On success, if Foundry drives this repo, report release evidence
+to the bound issue through Foundry's common progress-note operation and route
+post-release feedback/crashes through `foundry:intake`. Native release-scope closure
+is a separate operator step governed by Foundry's release-scope contract; Ship-iOS
+does not mutate a provider milestone directly.
 
 ## Rules
 - Never submit without an explicit human go (step 8).

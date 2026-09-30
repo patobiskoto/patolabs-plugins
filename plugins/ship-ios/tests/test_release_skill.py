@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1] / "skills/release/SKILL.md"
+SETUP_SKILL = Path(__file__).resolve().parents[1] / "skills/setup/SKILL.md"
 
 
 def _command_lines():
@@ -110,6 +111,15 @@ class ReleaseSkillFormTests(unittest.TestCase):
         self.assertIn("--standalone", text)
         self.assertIn("cannot trigger, approve, submit, publish, or roll back", text)
         self.assertNotRegex(text, r"from foundry\.|import foundry\.")
+        self.assertNotIn("or the tracker", text)
+        self.assertIn("common progress-note operation", text)
+
+    def test_setup_qualifies_same_portable_contract(self):
+        setup = SETUP_SKILL.read_text(encoding="utf-8")
+        self.assertIn("ship-ios.foundry-changelog-bridge.v1", setup)
+        self.assertIn("registry selection --require-v1", setup)
+        self.assertIn("query changelog", setup)
+        self.assertIn("--standalone", setup)
 
 
 if __name__ == "__main__":
