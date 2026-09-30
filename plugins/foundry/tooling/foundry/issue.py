@@ -339,9 +339,9 @@ def openpr(issue_id=None, base=None, flags=()):
             and it.projection_status == "disagreement"
         ):
             raise
-        if getattr(tr, "append_only_lifecycle_supported", False):
-            repair = getattr(tr, "recover_review_projection", None)
-            if not callable(repair) or not repair(issue_id, project=binding):
+        repair = getattr(tr, "recover_review_projection", None)
+        if getattr(tr, "append_only_lifecycle_supported", False) and callable(repair):
+            if not repair(issue_id, project=binding):
                 raise TrackerConflictError(
                     "review receipt/native State disagreement cannot be repaired"
                 )

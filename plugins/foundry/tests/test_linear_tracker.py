@@ -7885,6 +7885,58 @@ def test_linear_public_openpr_refuses_done_before_push_or_codehost(tracker, monk
     assert all("mutation" not in doc.lower() for doc, _ in wire.calls[offset:])
 
 
+def test_linear_public_openpr_replays_partial_review_without_github_repair_port(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    branch = "feat/lin-2-partial-review"
+    diff = b"linear review diff"
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest=routing.review_diff_hash(diff),
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    with pytest.raises(TrackerConflictError):
+        instance.get_issue("LIN-2")
+    assert instance.observe_issue("LIN-2").projection_status == "disagreement"
+    before = len(_lifecycle_rows(wire, "LIN-2", "state-review"))
+    pr = PullRequest(
+        number=17, url=review.pr_url, head=branch, base="main",
+        base_sha=review.base_sha, sha=review.head_sha,
+    )
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: "acme/widgets",
+        list_prs=lambda *_args: [pr],
+        get_pr=lambda *_args: pr,
+        open_pr=lambda *_args: pytest.fail("duplicate PR"),
+    )
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(issue, "_default_branch", lambda: "main")
+    monkeypatch.setattr(issue, "git_head", lambda: review.head_sha)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: diff)
+
+    def shell(*args, **_kwargs):
+        if args == ("git", "rev-parse", "--abbrev-ref", "HEAD"):
+            return branch
+        if args == ("git", "push", "-u", "origin", branch):
+            return ""
+        raise AssertionError(f"unexpected shell call: {args}")
+
+    monkeypatch.setattr(issue, "_sh", shell)
+    issue.openpr("LIN-2")
+
+    assert instance.get_issue("LIN-2").projection_status == "aligned"
+    assert len(_lifecycle_rows(wire, "LIN-2", "state-review")) == before
+
+
 @pytest.mark.parametrize("recovery", ["missing-override", "native-disagreement", "already-done"])
 @pytest.mark.parametrize(
     "pr_changes",
