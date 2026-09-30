@@ -2518,7 +2518,23 @@ class GitHubProjectsTracker(Tracker):
                     "lifecycle.comment",
                 )
             except GitHubProjectsTrackerError as error:
-                observed = self._native_issue_read(issue_id)
+                try:
+                    observed = self._native_issue_read(issue_id)
+                except GitHubProjectsTrackerError as read_error:
+                    if (
+                        error.reason in {
+                            "authentication_failed", "permission_denied", "not_found",
+                        }
+                        and read_error.reason == error.reason
+                    ):
+                        # Two matching definitive refusals prove that the POST
+                        # was not authorized. A later credential repair may
+                        # retry from a fresh provider read.
+                        self._clear_lifecycle_intent(fingerprint)
+                        raise error from read_error
+                    raise GitHubProjectsTrackerError(
+                        "lifecycle.comment", "effect_unknown",
+                    ) from read_error
                 occurrences = sum(
                     row.get("text") == body for row in observed.comments
                 )
@@ -2557,9 +2573,12 @@ class GitHubProjectsTracker(Tracker):
         payload = self._state_payload(state, context)
         if state == "review":
             prior_reviews = rows.get("state-review", [])
-            same = [row for row in prior_reviews if all(row[0].get(key) == payload.get(key) for key in ("state", "pr_url", "head_sha", "base_sha", "review_digest"))]
-            if same:
-                payload = dict(same[-1][0])
+            latest = prior_reviews[-1] if prior_reviews else None
+            if latest and all(
+                latest[0].get(key) == payload.get(key)
+                for key in ("state", "pr_url", "head_sha", "base_sha", "review_digest")
+            ):
+                payload = dict(latest[0])
             else:
                 payload["generation"] = len(prior_reviews) + 1
                 previous = prior_reviews[-1][1] if prior_reviews else None

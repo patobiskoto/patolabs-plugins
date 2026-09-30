@@ -907,6 +907,78 @@ def test_pat67_raw_transport_new_review_acceptance_generation_after_prior_accept
     assert transport.state_writes == 3
 
 
+def test_pat67_return_to_older_review_sha_requires_new_acceptance(tmp_path):
+    transport = _LifecycleTransport()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    first = _review_context()
+    second = _review_context(generation=2, expected_state="review")
+    tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    for review in (first, second):
+        tracker.set_state("GHQUAL-1", "review", review, PROJECT)
+        tracker.project_acceptance_proof(
+            "GHQUAL-1", transport.body,
+            _canonical_acceptance_proof(
+                transport.body, head=review.head_sha, base=review.base_sha,
+                diff_hash=review.review_digest,
+            ),
+            checked=1, project=PROJECT,
+        )
+    returned = _review_context(expected_state="review")
+    tracker.set_state("GHQUAL-1", "review", returned, PROJECT)
+    observed = tracker.get_issue("GHQUAL-1")
+    assert (observed.ac_done, observed.ac_total) == (0, 1)
+    scope = tracker._current_lifecycle_scope("GHQUAL-1", tracker._binding(PROJECT))
+    rows = tracker._lifecycle_rows(
+        "GHQUAL-1", tracker._native_issue_read("GHQUAL-1"), scope,
+    )
+    assert [payload["generation"] for payload, _ in rows["state-review"]] == [1, 2, 3]
+    with pytest.raises(TrackerConflictError, match="matching acceptance"):
+        tracker.set_state("GHQUAL-1", "done", _done_context(returned), PROJECT)
+    assert transport.state == "review"
+
+
+def test_pat67_definitive_auth_rejection_clears_local_intent_for_retry(tmp_path):
+    class ExpiredCredentialTransport(_LifecycleTransport):
+        def __init__(self):
+            super().__init__()
+            self.fail_next_post = True
+            self.auth_down = False
+            self.posts_attempted = 0
+
+        def __call__(self, command, **kwargs):
+            if command[2:4] == ["-X", "POST"] and command[4].endswith("/comments"):
+                self.posts_attempted += 1
+                if self.fail_next_post:
+                    self.fail_next_post = False
+                    self.auth_down = True
+                    return self._response(
+                        command, {"message": "Bad credentials", "status": "401"},
+                        returncode=1, stderr="gh: HTTP 401",
+                    )
+            if self.auth_down and command[2] == "graphql":
+                return self._response(
+                    command, {"message": "Bad credentials", "status": "401"},
+                    returncode=1, stderr="gh: HTTP 401",
+                )
+            return super().__call__(command, **kwargs)
+
+    transport = ExpiredCredentialTransport()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError) as refused:
+        tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    assert refused.value.reason == "authentication_failed"
+    assert transport.posts_attempted == 1
+    assert transport.comment_posts == 0
+
+    transport.auth_down = False
+    GitHubProjectsTracker(runner=transport, state_dir=tmp_path).set_state(
+        "GHQUAL-1", "in-progress", project=PROJECT,
+    )
+    assert transport.posts_attempted == 2
+    assert transport.comment_posts == 1
+    assert tracker.get_issue("GHQUAL-1").state == "in-progress"
+
+
 def test_pat67_common_openpr_publishes_corrected_head_as_next_review(
     tmp_path,
     monkeypatch,

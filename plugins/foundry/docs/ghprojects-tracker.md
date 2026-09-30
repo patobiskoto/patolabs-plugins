@@ -76,9 +76,12 @@ of the fully bound receipt. Drift in either snapshot fails closed before append.
 response is reconciled only when the complete paged history exposes exactly one matching
 receipt. If a fresh process still observes zero candidates, the intent remains pending
 and the operation fails closed without a second POST; multiple candidates also fail
-closed. The local intent never grants a lifecycle state by itself. An already present
-exact receipt is accepted before the fresh-state comparison, so exact historical replays
-converge without regressing newer review or done evidence.
+closed. A matching definitive authentication, permission or not-found refusal on
+both POST and readback clears the pending intent; ambiguous transport and rate-limit
+failures do not. The local intent never grants a lifecycle state by itself. Only the
+latest exact review receipt is replayed; returning to an older head publishes a new
+review generation and requires fresh acceptance. Exact historical start and done
+replays never regress newer evidence.
 If the State write was interrupted after a `state-in-progress` receipt, replaying
 `issue start` on its existing branch repairs only that State after revalidating the
 receipt and unchanged source. A native `in-progress` with no Foundry receipt is
