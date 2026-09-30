@@ -107,7 +107,9 @@ class Tracker(ABC):
     requires_mutation_binding: bool = False
     acceptance_sync_supported: bool = False
     epic_closure_supported: bool = False
-    epic_closure_supported: bool = False
+    # PAT-ADR-0006's bounded S1-S5 closure.  This is deliberately distinct from
+    # the DevHub provider transaction advertised by ``epic_closure_supported``.
+    bounded_epic_closure_supported: bool = False
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
     epic_subgraph_supported: bool = False
@@ -330,12 +332,12 @@ class Tracker(ABC):
         project: Project,
         receipt: EpicClosureReceipt,
     ) -> EpicClosureOutcome:
-        """Atomically verify ``receipt``, close its parent and audit the result.
+        """Verify ``receipt``, close its parent and audit the result.
 
-        A supporting provider must lock the parent graph, compare the exact parent
-        version/type/AC snapshot and the complete required-child id/version/state set,
-        then persist both ``done`` and a replayable audit receipt in one transaction.
-        It must never delegate to the ordinary code-issue ``done`` transition.
+        DevHub atomically locks the graph and persists state plus audit.  A V1
+        provider may instead implement PAT-ADR-0006's explicitly weaker bounded
+        read/one-parent-write/append-only-audit/readback sequence.  It must expose
+        that capability separately and never claim CAS or a transaction.
         """
         raise EpicClosureUnavailableError(
             f"clôture Epic non-code indisponible pour le tracker {self.name}"
@@ -350,6 +352,19 @@ class Tracker(ABC):
         raise EpicClosureUnavailableError(
             f"clôture Epic non-code indisponible pour le tracker {self.name}"
         )
+
+    def get_pending_epic_closure(
+        self,
+        project: Project,
+        parent_id: str,
+    ) -> EpicClosureReceipt | None:
+        """Return one exact append-only audit awaiting its parent transition.
+
+        Atomic providers never expose this intermediate state.  PAT-ADR-0006
+        adapters use it only to resume the original predecessor coordinates
+        after interruption; it cannot authorize a newly captured receipt.
+        """
+        return None
 
     # --- issues (read) ----------------------------------------------------
     @abstractmethod

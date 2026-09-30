@@ -837,26 +837,38 @@ def merge(issue_id, pr_number, flags=()):
 
 
 def close_epic(issue_id, flags=()):
-    """Close a non-code Epic through the tracker's atomic audited capability."""
+    """Close a non-code Epic through a qualified audited tracker capability."""
     tracker = foundry.tracker()
     try:
-        outcome = write.close_epic(tracker, issue_id)
+        verdicts = [flag.removeprefix("--human-verdict=") for flag in flags
+                    if flag.startswith("--human-verdict=")]
+        if len(verdicts) > 1:
+            raise SystemExit("⛔ Clôture Epic refusée : verdict humain ambigu.")
+        outcome = write.close_epic(
+            tracker, issue_id, human_verdict=verdicts[0] if verdicts else None,
+        )
     except EpicClosureUnavailableError:
         raise SystemExit(
             f"⛔ Clôture Epic indisponible pour le tracker {tracker.name} : "
-            "un endpoint atomique parent+enfants avec audit est requis."
+            "aucune capacité de clôture auditée n'est qualifiée."
         ) from None
     except TrackerConflictError:
         raise SystemExit(
-            "⛔ Clôture Epic refusée : le parent ou son ensemble d'enfants a changé. "
+            "⛔ Clôture Epic refusée : le parent, ses preuves ou son graphe complet a changé. "
             "Recharge le graphe puis relance la commande."
         ) from None
     except SystemExit:
         raise
     except Exception:
+        verdict_flag = (
+            " --human-verdict=accepted"
+            if getattr(tracker, "bounded_epic_closure_supported", False)
+            else ""
+        )
         raise SystemExit(
             f"⛔ Clôture Epic interrompue pour {issue_id}. Relance exactement "
-            f"`issue close-epic {issue_id}` : le reçu provider permettra la reprise."
+            f"`issue close-epic {issue_id}{verdict_flag}` : "
+            "le reçu provider permettra la reprise."
         ) from None
     _observe_receipt(
         issue_id, "epic_closure",
@@ -882,7 +894,11 @@ if __name__ == "__main__":
     cmd, rest = sys.argv[1], sys.argv[2:]
     flags = {a for a in rest if a.startswith("--")}
     reason_flags = {flag for flag in flags if flag.startswith("--ac-override-reason=")}
-    unknown = flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags
+    epic_verdict_flags = (
+        {flag for flag in flags if flag.startswith("--human-verdict=")}
+        if cmd == "close-epic" else set()
+    )
+    unknown = flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags - epic_verdict_flags
     if unknown:  # a misspelled flag must fail loudly, not run as a normal gated call
         raise SystemExit(f"⛔ Flag(s) inconnus pour '{cmd}' : {', '.join(sorted(unknown))}. "
                          f"Autorisés : {', '.join(sorted(_KNOWN_FLAGS.get(cmd, set()))) or '(aucun)'}.")

@@ -2133,11 +2133,18 @@ class EscalationStore:
                 if proof_rearm is not None else technical["review_claimed_at"]
                 if technical is not None else None
             )
-            if (
+            proof_completed_at = _utc_timestamp(proof["completed_at"])
+            human_window_proof = (
                 technical is None
-                or (
-                    technical["review_diff_hash"] != proof["diff_hash"]
-                    and not any(
+                and last_resumed_time is not None
+                and event["halt_generation"] == last_resumed_generation
+                and last_resumed_time < proof_completed_at
+            )
+            technical_proof = (
+                technical is not None
+                and (
+                    technical["review_diff_hash"] == proof["diff_hash"]
+                    or any(
                         rearm.get("previous_diff_hash") == proof["diff_hash"]
                         and rearm.get("terminal_proof_id") == proof["proof_id"]
                         and rearm.get("repair_kind")
@@ -2145,11 +2152,12 @@ class EscalationStore:
                         for rearm in technical["review_rearm_audit"]
                     )
                 )
-                or proof_claimed_at is None
-                or _utc_timestamp(proof_claimed_at)
-                >= _utc_timestamp(proof["completed_at"])
-                or _utc_timestamp(proof["completed_at"])
-                > _utc_timestamp(event["at"])
+                and proof_claimed_at is not None
+                and _utc_timestamp(proof_claimed_at) < proof_completed_at
+            )
+            if (
+                not (technical_proof or human_window_proof)
+                or proof_completed_at > _utc_timestamp(event["at"])
             ):
                 raise _invalid_ledger(issue_id)
 

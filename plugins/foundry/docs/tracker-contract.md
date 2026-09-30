@@ -9,7 +9,7 @@ explicit setup and historical tooling; it never substitutes for a repository bin
 
 Every claim below is grounded in the current adapter code, cited by module and symbol. The
 machine-readable capability matrix is [`tracker-contract.v1.json`](tracker-contract.v1.json)
-(`contract: "foundry.tracker-contract.v1"`, `version: 2`);
+(`contract: "foundry.tracker-contract.v1"`, `version: 3`);
 [`test_tracker_contract.py`](../tests/test_tracker_contract.py) pins its schema and
 cross-checks it against the `Tracker` ABC and the adapter modules. This contract records
 capabilities and requirements; it changes no adapter behaviour.
@@ -63,7 +63,7 @@ closed vocabulary:
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) |
 | Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
-| Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-69 |
+| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) |
 | Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
 | Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
@@ -96,9 +96,15 @@ cell.
   replacement refused, while `write.sync_acceptance` uses its proof-bound append-only
   projection (`project_acceptance_proof`, `linear.py`) as the V1 AC authority; native
   checkboxes and external state automation never count as positive acceptance evidence.
-- **PAT-69** — Neither YouTrack nor Linear implements `close_epic`/`get_epic_closure`;
-  `write.close_epic` refuses before any provider call (`write.py`). Only the non-V1
-  DevHub adapter implements the port (`devhub.py`).
+- **PAT-69** — YouTrack, Linear and GitHub Projects implement
+  `close_epic`/`get_epic_closure` through PAT-ADR-0006's bounded path. The GitHub
+  Projects path was qualified on the exact private personal-Project profile recorded
+  in `qualification/github-projects-v1.md`: one deterministic audit comment, one
+  targeted parent State projection, complete graph readback and fresh-process replay
+  without a second effect. Title, body, labels, unrelated relations and non-State
+  Project fields remain part of the protected snapshot. The path retains the explicit
+  S1→S2 race: it is neither CAS nor an atomic provider graph transaction. The non-V1
+  DevHub adapter keeps the stronger atomic form of the port (`devhub.py`).
 - **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
   target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR
   import target. No adapter copies live work faithfully: Linear's `create_issue` sends a
@@ -389,7 +395,7 @@ machine.
 | AC state | S1-S4 on the checkbox body (met, level 1) | PAT-ADR-0006 declares the proof-bound append-only projection the V1 authority (S5/S6); native checkbox replacement remains refused |
 | Status projection | S1-S5: the public operation supplies its original predecessor coordinate, `set_state` retains it through the effective S1 transport read before one native State write, and an exact retry at the target converges; another state or a missing predecessor fails closed | `in-progress`/`review`/`done`: one targeted native State projection under S1-S5 plus its append-only receipt; historical native observations and proof-bound logical targets are validated separately, only the latest relevant receipt may repair a missing projection, disagreement is observable, and a bare native terminal state is never positive proof |
 | Resume | S5 on every replayable transition through the predecessor coordinate; free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | exact native/receipt recovery completes only the missing effect; `add_comment` (`linear.py`) follows the free-text rule |
-| Epic closure | Fresh read of the full parent/children graph and AC proofs, one write, append-only receipt at a deterministic id bound to the exact set of terminal children and carrying the FOUNDRY-ADR-0017 human verdict, readback, fail closed on any divergence — authorized by PAT-ADR-0006, implementation PAT-69 | same — authorized by PAT-ADR-0006, implementation PAT-69 |
+| Epic closure | Fresh read of the Epic's nonempty validation criteria, exact required children and complete transitive dependency graph; every child/dependency must be `done` with non-empty qualified AC evidence (unknown, zero-criteria, override and dropped remain refusals). The human verdict validates the Epic's own need and procedure; its title/body/AC snapshot digest is bound into the deterministic audit and rechecked on pending and done replay. A machine-local intent, keyed by the Epic's project scope and carrying the exact audit ID, is durable before the one audit POST: an exact audit that becomes visible resumes, while an unresolved or still invisible effect fails closed on every replay, even if the caller generates a new timestamp and nonce. The intent is neither provider CAS nor an exactly-once guarantee. One targeted parent write and full graph readback follow. Divergence fails closed. This is bounded detection with the named S1→S2 overwrite risk, never CAS or an atomic transaction. | same, with Linear's append-only review-bound acceptance proof as authority for child/dependency issues; native Epic checkboxes alone are not code-PR proof and an override receipt remains distinct and blocks closure |
 
 The low-level CLI makes the predecessor explicit when the active adapter requires
 bounded native transitions: `edit transition <ISSUE-ID> <target> <expected-state>`.
@@ -437,8 +443,8 @@ PAT-ADR-0006, **Garanties d'écriture sans CAS pour les trackers V1**, is accept
 explicitly amends Linear's former blanket refusal for PAT-55 grooming fields, body and
 parent under S1-S4 and the named S1→S2 risk. It keeps Linear native checkbox replacement
 refused and selects the existing append-only proof projection as V1 AC authority for
-PAT-56. It also authorizes PAT-69's bounded Epic-closure shape while leaving that
-implementation outside PAT-55. The machine-readable contract therefore has no pending
+PAT-56. It also authorizes PAT-69's bounded Epic-closure shape. The machine-readable
+contract therefore has no pending
 ADR entry or `blocked_by_adr` cell; remaining `gap` cells are implementation work owned
 by their tickets. A future stronger or weaker guarantee still requires another accepted
 ADR before code.
@@ -567,6 +573,6 @@ never used by the code-host path.
 
 ## Document status
 
-This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 2`. A change to
+This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 3`. A change to
 any status cell, the operation list or the closed status vocabulary bumps the JSON
 `version` and this heading together.
