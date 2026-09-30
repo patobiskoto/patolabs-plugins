@@ -205,8 +205,8 @@ def test_every_operation_maps_to_a_real_tracker_abc_member():
             )
 
 
-def test_ghprojects_cells_match_delivered_reads_and_pat66_core_writes():
-    """PAT-57 reads and PAT-66 core writes are delivered; later tranches remain owned."""
+def test_ghprojects_cells_match_delivered_reads_writes_and_pat58_adrs():
+    """PAT-57/66/58 are delivered; lifecycle and other later tranches remain owned."""
     contract = _load_contract()
     for operation in contract["operations"]:
         cell = operation["cells"].get("ghprojects")
@@ -219,8 +219,10 @@ def test_ghprojects_cells_match_delivered_reads_and_pat66_core_writes():
         if operation["id"] in {
             "identity-and-project-resolution", "repository-bootstrap", "backlog-read",
             "frame-intake-groom-create", "frame-intake-groom-evolve-existing",
-            "mid-flight-comment", "epics-children-creation",
-            "epics-children-reparent-existing", "dependencies-relates-blocks",
+                "mid-flight-comment", "epics-children-creation",
+                "epics-children-reparent-existing", "dependencies-relates-blocks",
+                "release-and-changelog-scope", "adr-read", "adr-create",
+                "adr-status-evolution", "adr-supersession-and-issue-linking",
         }:
             assert cell["status"] == "supported"
             continue
@@ -315,36 +317,27 @@ def test_youtrack_has_no_import_adr_override():
     assert "import_adr_batch" not in YouTrackTracker.__dict__
 
 
-def test_ghprojects_pat66_writes_and_pat67_lifecycle_are_real():
-    """Delivered methods are concrete while later ADR boundaries stay typed."""
+def test_ghprojects_pat66_pat58_writes_and_pat67_lifecycle_are_real():
+    """Delivered Issue, ADR and lifecycle ports are concrete."""
     from foundry.trackers.ghprojects import GitHubProjectsTracker
-    from foundry.trackers.base import TrackerCapabilityUnavailableError
 
-    tracker = GitHubProjectsTracker()
     assert "search" in GitHubProjectsTracker.__dict__
     assert "get_issue" in GitHubProjectsTracker.__dict__
     for method_name in ("create_issue", "update_fields", "update_body", "link", "add_comment"):
         assert method_name in GitHubProjectsTracker.__dict__
     assert "set_state" in GitHubProjectsTracker.__dict__
     assert "project_acceptance_proof" in GitHubProjectsTracker.__dict__
+    for method_name in ("list_adrs", "create_adr", "set_adr_status"):
+        assert method_name in GitHubProjectsTracker.__dict__
     assert GitHubProjectsTracker.bounded_transition_proofs is True
     assert GitHubProjectsTracker.bounded_state_transitions is True
     assert GitHubProjectsTracker.append_only_lifecycle_supported is True
     assert GitHubProjectsTracker.acceptance_proof_projection_supported is True
-    calls = {
-        "list_adrs": (None,),
-        "create_adr": (None, None, None),
-        "set_adr_status": (None, None),
-    }
-    for method_name, args in calls.items():
-        method = getattr(tracker, method_name)
-        with pytest.raises(TrackerCapabilityUnavailableError):
-            method(*args)
 
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-69", "PAT-64", "PAT-59"],
+    ["PAT-69", "PAT-64"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

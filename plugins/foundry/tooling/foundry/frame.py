@@ -36,7 +36,7 @@ def _register_adr_alias(aliases: dict[str, tuple[str, int | str]], key: str,
                         target: tuple[str, int | str]) -> None:
     """Register one unique preflight ADR reference key."""
     if key in aliases:
-        raise ValueError(f"Référence ADR ambiguë pour relation Linear : {key}")
+        raise ValueError(f"Référence ADR ambiguë pour relation tracker : {key}")
     aliases[key] = target
 
 
@@ -49,12 +49,12 @@ def materialize(spec: dict) -> dict:
     existing_adrs = {}
     incoming_aliases = {}
     if getattr(tr, "adr_issue_link_supported", False):
-        # Native Linear ADRs are born proposed.  Validate the complete incoming
+        # Native tracker ADRs are born proposed. Validate the complete incoming
         # frame before creating its first ADR: an accepted ADR may be a valid
         # *existing* constraint, but it is not a valid native creation request.
         for incoming in incoming_adrs:
             if incoming.get("status", "proposed") != "proposed":
-                raise ValueError("Linear ADR creation must begin proposed")
+                raise ValueError("Tracker ADR creation must begin proposed")
     if getattr(tr, "adr_issue_link_supported", False):
         # Resolve every reference before the first write. Otherwise a late bad
         # reference, or an alias that names two ADRs, can leave a durable issue
@@ -73,7 +73,7 @@ def materialize(spec: dict) -> dict:
                 key = str(ref)
                 target = incoming_aliases.get(key)
                 if target is None:
-                    raise ValueError(f"ADR inconnue pour relation Linear : {key}")
+                    raise ValueError(f"ADR inconnue pour relation tracker : {key}")
                 if target[0] == "incoming":
                     status = incoming_adrs[target[1]].get("status", "proposed")
                 else:
@@ -82,7 +82,7 @@ def materialize(spec: dict) -> dict:
                     "proposed", "accepted"
                 }:
                     raise ValueError(
-                        f"ADR inactive pour relation Linear : {key} ({status!r})"
+                        f"ADR inactive pour relation tracker : {key} ({status!r})"
                     )
 
     # 1) ADRs first — they are the frame the issues reference.
@@ -120,7 +120,7 @@ def materialize(spec: dict) -> dict:
             for ref in dict.fromkeys(refs):
                 current = adr_by_id.get(ref) or existing_adrs.get(ref)
                 if current is None:
-                    raise ValueError(f"ADR inconnue pour relation Linear : {ref}")
+                    raise ValueError(f"ADR inconnue pour relation tracker : {ref}")
                 adr_by_id[ref] = write.link_adr_issue(tr, current, issue.id)
         created["issues"].append(issue.id)
         print(f"   ✓ {issue.id} — {it['title']}  [{fields.get('Priority','?')} · "

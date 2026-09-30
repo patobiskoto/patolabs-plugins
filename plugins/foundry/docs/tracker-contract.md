@@ -60,11 +60,11 @@ closed vocabulary:
 | Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
 | Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) |
 | Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
-| Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | `to_qualify` PAT-58 |
-| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 (receipt-first transport exists; live recipe pending) |
+| Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) |
+| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 (receipt-first transport exists; live PR/CI recipe pending) |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 (review-bound proof transport exists; live recipe pending) |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-69 |
-| Périmètre de release/changelog | `search` via `query.py changelog()` | supported | **gap** PAT-59 | `to_qualify` PAT-59 |
+| Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; lifecycle proof remains unavailable until PAT-67) |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
 | Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
 | Bascule (PAT-64): archived source refuses writes | mutation ports plus provider target preflight | supported | supported | `to_qualify` PAT-64 |
@@ -144,7 +144,7 @@ provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack, Linear
 (ADR evolution is served by `set_adr_status`); the typed acceptance-override receipt on
 YouTrack (free-text audit note fallback, `base.py`).
 
-**GitHub Projects read slice (PAT-57).** PAT-54 supplies
+**GitHub Projects read and ADR slices (PAT-57/PAT-58).** PAT-54 supplies
 the canonical checkout binding and read-only existing-project probe. PAT-65 then
 qualified the private, personal-project API shape and selected the ADR representation
 under PAT-ADR-0007; the evidence and its limits are recorded in
@@ -159,19 +159,23 @@ requires a distinct private personal-repository node, Project item ID and Issue 
 exactly one qualified field ID, the qualified state/type catalogs, a bounded priority
 catalog, and coherent field/option value IDs.
 It rejects partial GraphQL responses and unsupported draft/PR/foreign items, and excludes only the reserved
-`foundry:adr` support. Native free-text search is explicitly refused. The write methods `create_issue`, `update_fields`, `set_state`,
-`link`, `add_comment`, `create_adr` and `set_adr_status` remain typed capability
-refusals; `list_adrs` raises the typed `adr_index` refusal until PAT-58 supplies its
-codec. Everything else is inherited
-from `base.py` unchanged: optional ports raise their typed unavailability error
-(`EpicClosureUnavailableError`, `BodyUpdateUnavailableError`,
-`AcceptanceSyncUnavailableError`, `ProjectProvisioningUnavailableError`,
-`EpicSubgraphUnavailableError`, `TrackerCapabilityUnavailableError`); the
-`validate_*` checks and `preflight_issue_operation` are no-ops. The cells therefore do
+`foundry:adr` support. Native free-text search is explicitly refused. PAT-66 supplies
+bounded delivery-Issue creation, field/body updates, links and comments for this
+qualified profile; native `set_state` remains unavailable pending PAT-67. PAT-58
+supplies an exact-project ADR codec: a reserved `foundry:adr` Issue
+is the support, its UTF-8 body is current source, and version comments bind source
+digest, sequence, predecessor, status and relations. Reads exhaust both Project and
+comment pagination and reject duplicate, foreign, incomplete or altered chains. It
+never imports the PAT-65 `EXP-ADR-0001` prototype as authority. Creation and later
+body/status/link/supersession evolution are bounded read-verify-write-readback paths;
+GitHub provides no CAS, immutable history or idempotency key, so an ambiguous comment
+or create response is explicit and not blindly replayed. Optional ports not delivered
+by these slices retain their typed unavailability errors from `base.py`; the exact
+status of each port is the matrix below. The cells therefore do
 not become `supported` from provider probes alone: each cell's `ticket` names the tranche
 that must deliver and qualify the adapter operation (PAT-57, 58, 59, 64, 66, 67, 69),
-including the still-unavailable optional Epic subgraph projection under PAT-57, PAT-58 for ADR
-supersession and issue links, and PAT-67 for the acceptance-override receipt. PAT-65
+including the still-unavailable optional Epic subgraph projection under PAT-57 and
+PAT-67 for the acceptance-override receipt. PAT-65
 owns no remaining adapter-delivery cell.
 
 ## 2. Identity model
@@ -268,6 +272,9 @@ skills only see the normalized `Issue`/`Adr`/`Project` models (`models.py`).
   `foundry_cli.py query changelog <MILESTONE>` from the same checkout and consumes only that JSON;
   it imports no tracker module and holds no provider credential, and exits 3 when
   Foundry is absent so the caller falls back to a changelog file.
+  The versioned payload and the stable provider mappings are documented in
+  [`release-scope.md`](release-scope.md). `milestone`, `count` and `groups` remain the
+  bridge-compatible projection; the additive categories make unknown proof explicit.
 
 ## 4. Mutation guarantees without a provider transaction/CAS
 
@@ -455,8 +462,10 @@ foundry_cli.py registry update <tracker> <repo> <KEY> <project-id> \
 `bootstrap` derives the canonical identity from the checkout rather than from an
 argument. Before the local publication, YouTrack reads the exact native project id/key;
 Linear reads the exact project id, team UUID and team key after validating every UUID
-map; YouTrack V1 extras are limited to `canonical_repo` and optional non-empty
-`ms_bundle`. Undeclared keys, including credential keys, refuse before provider readback
+map; YouTrack V1 extras are limited to `canonical_repo`, optional non-empty
+`ms_bundle`, and optional structured `release_ids`. GitHub Projects accepts the same
+structured `release_ids` map beside its required owner/number coordinates. Undeclared
+keys, including credential keys, refuse before provider readback
 or persistence. GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
 before the registry or marker changes (`registry.py`;

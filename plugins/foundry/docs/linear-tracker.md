@@ -47,6 +47,11 @@ never from mutable display names. A create using an unmapped value is refused an
 adapter never searches by name. Keys in the optional maps cannot be URL- or
 credential-shaped, and every map value must be a UUID.
 
+`milestone_ids` is also the release mapping consumed by the portable
+[`foundry.release-scope.v1`](release-scope.md) read. `registry update` verifies every
+mapped ProjectMilestone id and exact name against the bound product before publishing
+the changed marker; `query changelog` filters membership by that native id.
+
 `registry register` receives scalar extras as `k=v`. Pass each required map as a
 shell-quoted JSON object. For Linear, the command rejects before writing unless the
 project ID, team ID, seven exact state IDs, and four exact type-label IDs are UUIDs and

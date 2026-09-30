@@ -501,34 +501,41 @@ def adr(adr_id: str):
 
 
 def changelog(milestone: str):
-    """Shipped issues of a milestone, grouped by type — the SOURCE of release notes.
-
-    ZERO decisions, ZERO prose, and deliberately LOCALE-NEUTRAL: it emits raw facts
-    (id, title, type, labels) only. Turning these into user-facing release notes — in
-    French, English, Spanish, whatever locales you ship — is the release tool's job,
-    never Foundry's. Only `done` counts (a `dropped` issue never shipped). Platform-
-    neutral: any project cutting a version wants "what landed in vX".
-    """
-    # guard the empty/None milestone: without it, milestone=None would match every
-    # done issue whose Milestone field is unset — a silent wrong "release"
+    """Return locale-neutral facts for one exact, provider-mapped release scope."""
     if not milestone:
         raise SystemExit("usage: query changelog <MILESTONE>")
     tr = foundry.tracker()
     p = _project(tr)
-    shipped = [i for i in tr.search(p)
-               if i.state == "done" and i.milestone == milestone]
+    scope = tr.read_release_scope(p, milestone)
+    by_disposition = {
+        name: [] for name in ("accepted", "deviated", "unfinished", "unavailable")
+    }
+    for issue in sorted(scope.issues, key=lambda item: item.id):
+        if issue.disposition not in by_disposition:
+            raise RuntimeError(
+                f"release scope invalid disposition: {issue.disposition}"
+            )
+        by_disposition[issue.disposition].append(issue.to_dict())
+    shipped = [*by_disposition["accepted"], *by_disposition["deviated"]]
     groups: dict[str, list] = {}
-    for i in sorted(shipped, key=lambda x: (x.type or "~", x.id)):
-        groups.setdefault(i.type or "(sans type)", []).append(
-            {"id": i.id, "title": i.title, "labels": i.labels})
-    return {"project": p.key, "milestone": milestone, "count": len(shipped),
-            "note": "Locale-neutral facts: the `done` issues of this milestone, grouped "
-                    "by type (only shipped work — `dropped` is excluded, unlike the "
-                    "`milestones` rollup which counts it as resolved). A release tool "
-                    "rewrites titles into user-facing notes PER target locale and drops "
-                    "internal-only items (chore/test) as needed. count 0 with groups {} "
-                    "= nothing shipped under that exact milestone name (check spelling).",
-            "groups": groups}
+    for issue in sorted(shipped, key=lambda item: (item.get("type") or "~", item["id"])):
+        groups.setdefault(issue.get("type") or "(sans type)", []).append({
+            key: issue[key] for key in (
+                "id", "title", "state", "labels", "disposition", "references"
+            )
+        })
+    counts = {name: len(items) for name, items in by_disposition.items()}
+    return {
+        "contract": "foundry.release-scope.v1",
+        "project": p.key,
+        "milestone": milestone,
+        "count": len(shipped),
+        "groups": groups,
+        "scope_count": len(scope.issues),
+        "counts": counts,
+        "categories": by_disposition,
+        "release_scope": scope.to_dict(),
+    }
 
 
 _CMDS = {"backlog": backlog, "candidates": candidates, "milestones": milestones,
