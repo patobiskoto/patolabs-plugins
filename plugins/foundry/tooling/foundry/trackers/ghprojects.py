@@ -37,6 +37,7 @@ from foundry.trackers.base import (
     Tracker,
     TrackerCapabilityUnavailableError,
 )
+from foundry.trackers.epic_intent import EpicAuditIntent
 
 _MAX_PAGES, _TRANSPORT_TIMEOUT_SECONDS, _ADR_LABEL = 100, 30, "foundry:adr"
 _ADR_SCHEMA = "foundry-ghprojects-adr.v1"
@@ -150,6 +151,7 @@ class GitHubProjectsTracker(Tracker):
         base = Path(state_dir) if state_dir is not None else Path(registry.data_dir())
         self._create_intent_dir = base / "ghprojects-create-intents"
         self._lifecycle_intent_dir = base / "ghprojects-lifecycle-intents"
+        self._epic_intent_base = base
 
     @staticmethod
     def _create_fingerprint(
@@ -3189,15 +3191,22 @@ class GitHubProjectsTracker(Tracker):
         ):
             raise TrackerConflictError("GitHub Epic graph divergent before write")
         audit_id, body = self._epic_closure_audit(receipt)
-        fingerprint = audit_id.removeprefix("github:epic:")
-        with self._lifecycle_intent_lock(fingerprint):
-            intent = self._read_lifecycle_intent(fingerprint)
+        intent = EpicAuditIntent(
+            "ghprojects", project, receipt.parent_id,
+            state_dir=self._epic_intent_base,
+        )
+        with intent.lock():
+            record = intent.read()
+            if record is not None and record["audit_id"] != audit_id:
+                raise TrackerConflictError(
+                    "GitHub Epic audit differs from unresolved local effect; no second POST",
+                )
             current = self._native_issue_read(receipt.parent_id)
             current.ac_done = 0
             current.version = self._epic_source_version(current)
             pending = self._closure_from_issue(current, project, require_done=False)
             if pending is None:
-                if intent is not None:
+                if record is not None:
                     raise TrackerConflictError(
                         "GitHub Epic audit effect unknown or missing; no second POST",
                     )
@@ -3225,7 +3234,7 @@ class GitHubProjectsTracker(Tracker):
                         "epic-closure.comment_prewrite",
                         "unqualified_repository_project",
                     )
-                self._write_lifecycle_intent(fingerprint, "pending")
+                intent.write(audit_id, "pending")
                 try:
                     self._rest_write(
                         "POST", f"repos/{binding.repo}/issues/{number}/comments",
@@ -3247,7 +3256,7 @@ class GitHubProjectsTracker(Tracker):
                     raise TrackerConflictError("GitHub Epic audit append divergent")
             elif pending.receipt != receipt:
                 raise TrackerConflictError("GitHub Epic audit collision")
-            self._write_lifecycle_intent(fingerprint, "complete")
+            intent.write(audit_id, "complete")
             # S1: re-read the full graph immediately before the one targeted State write.
             current = self._native_issue_read(receipt.parent_id)
             current.ac_done = 0

@@ -443,6 +443,15 @@ Un nouveau processus, avec un répertoire d'état vide, a retrouvé ce même re�
 l'a rejoué avec `replayed=true` : toujours un commentaire et aucune seconde
 projection State.
 
+La reprise d'un POST d'audit à réponse perdue est également bornée par une
+intention locale durable, indexée par le Project et l'Epic et portant l'identité
+exacte du premier audit. Si cet audit reste invisible, un rejeu avec un nouveau
+timestamp ou nonce refuse tout second POST. Les tests de transport couvrent ce
+cas ; la sonde live ci-dessus a qualifié le rejeu d'un audit visible, et non
+cette injection de réponse perdue. L'intention locale ne constitue ni un CAS
+fournisseur, ni une garantie d'exactement une écriture entre machines ; le risque
+résiduel S1→S2 de PAT-ADR-0006 reste assumé.
+
 Le parcours d'adaptateur requalifie en outre l'identité live du Project privé et
 du dépôt canonique lié séparément avant chacun des deux effets fournisseur. Les
 tests de transport détachent le dépôt juste avant le commentaire, puis juste avant

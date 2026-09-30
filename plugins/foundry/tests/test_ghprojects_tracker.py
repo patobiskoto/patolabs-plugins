@@ -4403,7 +4403,14 @@ def test_pat69_state_projection_refuses_untargeted_parent_drift(
     assert tracker.comment_posts == tracker.state_writes == 1
 
 
-def test_pat69_ghprojects_unknown_comment_effect_never_reposts(monkeypatch, tmp_path):
+@pytest.mark.parametrize("replay_coordinates", [
+    {"issued_at": 123, "nonce": "synthetic_nonce_123456"},
+    {"issued_at": 124, "nonce": "synthetic_nonce_123457"},
+    {},  # Normal caller replay regenerates timestamp and nonce.
+])
+def test_pat69_ghprojects_unknown_comment_effect_never_reposts(
+    monkeypatch, tmp_path, replay_coordinates,
+):
     tracker = _EpicClosureTracker(tmp_path, comment_loss="hidden")
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
 
@@ -4414,8 +4421,7 @@ def test_pat69_ghprojects_unknown_comment_effect_never_reposts(monkeypatch, tmp_
         )
     with pytest.raises(TrackerConflictError, match="no second POST"):
         write.close_epic(
-            tracker, "GHQUAL-1", issued_at=123,
-            nonce="synthetic_nonce_123456", human_verdict="accepted",
+            tracker, "GHQUAL-1", human_verdict="accepted", **replay_coordinates,
         )
     assert tracker.comment_posts == 1 and tracker.state_writes == 0
 

@@ -53,6 +53,7 @@ from foundry.trackers.base import (
     TrackerConflictError,
     ReleaseScopeUnavailableError,
 )
+from foundry.trackers.epic_intent import EpicAuditIntent
 
 
 LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql"
@@ -4404,21 +4405,37 @@ class LinearTracker(Tracker):
                 or dependencies != receipt.dependencies):
             raise TrackerConflictError("graphe Epic Linear divergent avant écriture")
         audit_id, body, comment_id = self._epic_closure_audit(receipt)
-        raw = self._read_raw(receipt.parent_id)
-        self._assert_issue_project(raw, binding)
-        prior = self._read_comment(comment_id, "epic-closure.comment.read")
-        if observed is None and prior is None:
-            try:
-                data = self._graphql(_COMMENT_CREATE, {"input": {"id": comment_id, "issueId": raw["id"], "body": body}}, "epic-closure.comment.create")
-                created = self._mutation_payload(data, "commentCreate", "epic-closure.comment.create").get("comment")
-                if not isinstance(created, dict) or created.get("id") != comment_id or created.get("body") != body:
-                    raise LinearTrackerError("epic-closure.comment.create", None, "invalid_response")
-            except LinearTrackerError:
-                prior = self._read_comment(comment_id, "epic-closure.comment.recover")
-                if not isinstance(prior, dict) or prior.get("body") != body:
-                    raise
-        elif prior is None or prior.get("body") != body or (prior.get("issue") or {}).get("id") != raw["id"]:
-            raise TrackerConflictError("audit de clôture Linear collision")
+        intent = EpicAuditIntent("linear", project, receipt.parent_id)
+        with intent.lock():
+            record = intent.read()
+            if record is not None and record["audit_id"] != audit_id:
+                raise TrackerConflictError(
+                    "reçu d'audit Epic Linear différent de l'effet local incertain ; "
+                    "no second POST"
+                )
+            raw = self._read_raw(receipt.parent_id)
+            self._assert_issue_project(raw, binding)
+            prior = self._read_comment(comment_id, "epic-closure.comment.read")
+            if observed is None and prior is None:
+                if record is not None:
+                    raise TrackerConflictError(
+                        "effet de l'audit Epic Linear inconnu ou invisible ; no second POST"
+                    )
+                # Persist the exact audit identity before the only append. A new
+                # receipt nonce must not turn an unresolved effect into a new POST.
+                intent.write(audit_id, "pending")
+                try:
+                    data = self._graphql(_COMMENT_CREATE, {"input": {"id": comment_id, "issueId": raw["id"], "body": body}}, "epic-closure.comment.create")
+                    created = self._mutation_payload(data, "commentCreate", "epic-closure.comment.create").get("comment")
+                    if not isinstance(created, dict) or created.get("id") != comment_id or created.get("body") != body:
+                        raise LinearTrackerError("epic-closure.comment.create", None, "invalid_response")
+                except LinearTrackerError:
+                    prior = self._read_comment(comment_id, "epic-closure.comment.recover")
+                    if not isinstance(prior, dict) or prior.get("body") != body:
+                        raise
+            elif prior is None or prior.get("body") != body or (prior.get("issue") or {}).get("id") != raw["id"]:
+                raise TrackerConflictError("audit de clôture Linear collision")
+            intent.write(audit_id, "complete")
         # The audit is append-only and carries the deterministic replay identity;
         # only after it exists can the one targeted parent State projection run.
         # This remains PAT-ADR-0006 bounded detection, not a transaction.

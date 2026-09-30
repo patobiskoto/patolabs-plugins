@@ -9,7 +9,7 @@ import pytest
 from foundry import write
 from foundry.models import Project, TransitionContext
 from foundry.trackers.base import TrackerConflictError
-from foundry.trackers.linear import LinearTracker
+from foundry.trackers.linear import LinearTracker, LinearTrackerError
 from foundry.trackers.youtrack import YouTrackTracker
 
 from test_linear_tracker import LinearWire, PROJECT, STATE_IDS, connection, proof
@@ -19,6 +19,9 @@ from test_linear_tracker import LinearWire, PROJECT, STATE_IDS, connection, proo
 def _isolated_youtrack_epic_closure_intents(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "foundry.trackers.youtrack.registry.data_dir", lambda: str(tmp_path),
+    )
+    monkeypatch.setattr(
+        "foundry.trackers.epic_intent.registry.data_dir", lambda: str(tmp_path),
     )
 
 
@@ -150,6 +153,46 @@ def test_linear_lost_comment_response_recovers_exact_deterministic_audit(monkeyp
     )
     assert closed.audit_id.startswith("linear:epic:")
     assert sum("foundry-epic-closure.v1" in item["body"] for item in wire.comments.values()) == 1
+
+
+@pytest.mark.parametrize("replay_coordinates", [
+    {"issued_at": 1_800_000_000_000, "nonce": "nonce_1234567890abcdef"},
+    {"issued_at": 1_800_000_000_001, "nonce": "nonce_1234567890abcdeg"},
+    {},  # Normal caller replay regenerates timestamp and nonce.
+])
+def test_linear_hidden_audit_effect_never_posts_again(monkeypatch, replay_coordinates):
+    tracker, wire, project = _linear_graph()
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    original = wire.__call__
+
+    def hidden_comment_effect(document, variables):
+        result = original(document, variables)
+        if "FoundryLinearCommentCreate" in document:
+            # Provider accepted the POST, but neither issue projection nor
+            # deterministic-ID lookup can currently show that effect.
+            wire.issues["LIN-1"]["comments"]["nodes"].clear()
+            wire.comments.clear()
+            raise OSError("audit response lost and effect invisible")
+        return result
+
+    tracker._transport = hidden_comment_effect
+    with pytest.raises(LinearTrackerError, match="epic-closure.comment.create.*transport_error"):
+        write.close_epic(
+            tracker, "LIN-1", human_verdict="accepted",
+            issued_at=1_800_000_000_000, nonce="nonce_1234567890abcdef",
+        )
+    replay = LinearTracker(token="test", transport=wire)
+    replay._activate(project)
+    with pytest.raises(TrackerConflictError, match="no second POST"):
+        write.close_epic(
+            replay, "LIN-1", human_verdict="accepted",
+            **replay_coordinates,
+        )
+    assert sum(
+        "FoundryLinearCommentCreate" in doc
+        and "Foundry Epic closure audit" in args["input"]["body"]
+        for doc, args in wire.calls
+    ) == 1
 
 
 @pytest.mark.parametrize("mutation", ("reopened", "version", "added"))
