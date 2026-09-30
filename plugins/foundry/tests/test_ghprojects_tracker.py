@@ -247,6 +247,31 @@ class _LifecycleTransport:
         raise AssertionError(f"unexpected raw transport call: {command}")
 
 
+class _StateWriteFailsOnce(_LifecycleTransport):
+    """Lose one targeted State mutation after its receipt has been persisted."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail_state = None
+
+    def __call__(self, command, **kwargs):
+        if (
+            self.fail_state
+            and command[2] == "graphql"
+            and any(
+                value.startswith("query=mutation")
+                and f'singleSelectOptionId:"state-{self.fail_state}"' in value
+                for value in command
+            )
+        ):
+            self.fail_state = None
+            return self._response(
+                command, {"errors": [{"message": "synthetic State failure"}]},
+                returncode=1, stderr="synthetic State failure",
+            )
+        return super().__call__(command, **kwargs)
+
+
 def test_search_pages_graphql_and_excludes_only_reserved_adr_support():
     replies = [_page("item-1", 1, "next", True), _page("item-adr", 3, None, False, adr=True)]
 
@@ -554,6 +579,132 @@ def test_pat67_raw_transport_full_lifecycle_and_replays(tmp_path, monkeypatch):
     )
     assert transport.comment_posts == 4
     assert transport.state_writes == 3
+
+
+def test_pat67_exact_review_receipt_repairs_only_missing_state(tmp_path):
+    transport = _StateWriteFailsOnce()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    review = _review_context()
+    transport.fail_state = "review"
+
+    with pytest.raises(GitHubProjectsTrackerError):
+        tracker.set_state("GHQUAL-1", "review", review, PROJECT)
+
+    assert transport.state == "in-progress"
+    assert tracker.observe_issue("GHQUAL-1").projection_status == "disagreement"
+    with pytest.raises(TrackerConflictError):
+        tracker.get_issue("GHQUAL-1")
+    receipt_count = transport.comment_posts
+    GitHubProjectsTracker(runner=transport, state_dir=tmp_path).set_state(
+        "GHQUAL-1", "review", review, PROJECT,
+    )
+    assert tracker.get_issue("GHQUAL-1").state == "review"
+    assert transport.comment_posts == receipt_count
+    assert transport.state_writes == 2
+
+
+def test_pat67_done_recovery_requires_exact_merged_pr_receipt(tmp_path):
+    transport = _StateWriteFailsOnce()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    review = _review_context()
+    done = _done_context(review)
+    tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    tracker.set_state("GHQUAL-1", "review", review, PROJECT)
+    tracker.project_acceptance_proof(
+        "GHQUAL-1", transport.body,
+        _canonical_acceptance_proof(
+            transport.body, head=review.head_sha, base=review.base_sha,
+            diff_hash=review.review_digest,
+        ),
+        checked=1, project=PROJECT,
+    )
+    transport.fail_state = "done"
+
+    with pytest.raises(GitHubProjectsTrackerError):
+        tracker.set_state("GHQUAL-1", "done", done, PROJECT)
+
+    assert transport.state == "review"
+    assert tracker.observe_issue("GHQUAL-1").normalized_state == "done"
+    receipt_count = transport.comment_posts
+    assert not tracker.recover_done_projection(
+        "GHQUAL-1", pr_url=done.pr_url, head_sha="0" * 40,
+        base_sha=done.base_sha, merge_sha=done.merge_sha, project=PROJECT,
+    )
+    assert transport.state == "review"
+    assert tracker.recover_done_projection(
+        "GHQUAL-1", pr_url=done.pr_url, head_sha=done.head_sha,
+        base_sha=done.base_sha, merge_sha=done.merge_sha, project=PROJECT,
+    )
+    assert tracker.get_issue("GHQUAL-1").state == "done"
+    assert transport.comment_posts == receipt_count
+    assert transport.state_writes == 3
+
+
+def test_pat67_public_merge_retry_repairs_missing_done_state(tmp_path, monkeypatch):
+    transport = _StateWriteFailsOnce()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    review = _review_context()
+    done = _done_context(review)
+    tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    tracker.set_state("GHQUAL-1", "review", review, PROJECT)
+    tracker.project_acceptance_proof(
+        "GHQUAL-1", transport.body,
+        _canonical_acceptance_proof(
+            transport.body, head=review.head_sha, base=review.base_sha,
+            diff_hash=review.review_digest,
+        ),
+        checked=1, project=PROJECT,
+    )
+    transport.fail_state = "done"
+    with pytest.raises(GitHubProjectsTrackerError):
+        tracker.set_state("GHQUAL-1", "done", done, PROJECT)
+    receipt_count = transport.comment_posts
+    pr = PullRequest(
+        number=1, url=review.pr_url, head="feat/ghqual-1", base="main",
+        base_sha=review.base_sha, sha=review.head_sha, merged=True,
+        merge_sha=done.merge_sha,
+    )
+    events = []
+    codehost = type("CodeHost", (), {
+        "name": "github",
+        "resolve_repo": staticmethod(lambda: PROJECT.extra["canonical_repo"].removeprefix("github.com/")),
+        "get_pr": staticmethod(lambda *_args: pr),
+        "merge_pr": staticmethod(lambda *_args: pytest.fail("duplicate merge")),
+        "delete_branch": staticmethod(lambda *_args: events.append("delete")),
+    })()
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(
+        issue, "_cleanup_branch", lambda *_args: events.append("cleanup") or "linked-worktree",
+    )
+    monkeypatch.setattr(issue, "git_head", lambda: pytest.fail("git on replay"))
+
+    issue.merge("GHQUAL-1", "1")
+
+    assert tracker.get_issue("GHQUAL-1").state == "done"
+    assert transport.comment_posts == receipt_count
+    assert transport.state_writes == 3
+    assert events == ["delete", "cleanup"]
+
+
+def test_pat67_exact_receipt_refuses_changed_source_before_repair(tmp_path):
+    transport = _StateWriteFailsOnce()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    review = _review_context()
+    transport.fail_state = "review"
+    with pytest.raises(GitHubProjectsTrackerError):
+        tracker.set_state("GHQUAL-1", "review", review, PROJECT)
+    receipt_count = transport.comment_posts
+    transport.body += "\nUnrelated edit\n"
+
+    with pytest.raises(TrackerConflictError, match="exact receipt source changed"):
+        tracker.set_state("GHQUAL-1", "review", review, PROJECT)
+    assert transport.state == "in-progress"
+    assert transport.comment_posts == receipt_count
 
 
 def test_pat67_raw_transport_new_review_acceptance_generation_after_prior_acceptance(

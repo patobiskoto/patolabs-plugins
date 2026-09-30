@@ -2374,6 +2374,42 @@ class GitHubProjectsTracker(Tracker):
             issue_id, self._native_issue_read(issue_id), strict=False,
         )
 
+    def recover_done_projection(
+        self, issue_id: str, *, pr_url: str, head_sha: str, base_sha: str,
+        merge_sha: str, project: Project | None = None,
+    ) -> bool:
+        """Complete only the native State write of an exact, valid done receipt."""
+        if project is None:
+            return False
+        binding = self._authoritative_binding(project)
+        native = self._native_issue_read(issue_id)
+        scope = self._current_lifecycle_scope(issue_id, binding)
+        observed = self._projection(
+            issue_id, native, strict=False, binding=binding, scope=scope,
+        )
+        if observed.normalized_state != "done":
+            return False
+        rows = self._lifecycle_rows(issue_id, native, scope)
+        matches = [
+            payload for payload, _body in rows.get("state-done", [])
+            if (payload.get("pr_url"), payload.get("head_sha"),
+                payload.get("base_sha"), payload.get("merge_sha"))
+            == (pr_url, head_sha, base_sha, merge_sha)
+        ]
+        if len(matches) != 1:
+            return False
+        payload = matches[0]
+        self.set_state(
+            issue_id, "done",
+            context=TransitionContext(
+                pr_url=pr_url, head_sha=head_sha, base_sha=base_sha,
+                review_digest=payload["review_digest"], merge_sha=merge_sha,
+                expected_state=payload["source_state"],
+            ),
+            project=project,
+        )
+        return self.get_issue(issue_id).state == "done"
+
     def get_issue(self, issue_id: str) -> Issue:
         return self._projection(
             issue_id, self._native_issue_read(issue_id), strict=True,
@@ -2528,6 +2564,11 @@ class GitHubProjectsTracker(Tracker):
         )
         observed_rank = rank.get(observed.normalized_state or "")
         native_rank = rank.get(native_state)
+        repair_exact = bool(
+            exact and observed.normalized_state == state
+            and observed.projection_status == "disagreement"
+            and native_state != state
+        )
         if exact:
             # Exact historical replays are harmless once a later authenticated
             # receipt exists. They must return before predecessor checks: the
@@ -2538,6 +2579,14 @@ class GitHubProjectsTracker(Tracker):
                 if native_rank == rank[state]:
                     self._projection(issue_id, native, strict=True, binding=binding)
                 return
+        if repair_exact and (
+            native_state != payload.get("source_state")
+            or self._lifecycle_source_digest(source_native)
+            != payload.get("source_digest")
+        ):
+            raise TrackerConflictError(
+                "GitHub lifecycle exact receipt source changed",
+            )
         predecessor = {"review": "in-progress", "done": "review"}.get(state)
         # A new review generation advances evidence at the same logical review
         # state. It is not a second transition and is permitted only while the
@@ -2548,12 +2597,21 @@ class GitHubProjectsTracker(Tracker):
             and native_state == "review"
             and not exact
         )
-        if predecessor is not None and observed.normalized_state != predecessor and not review_generation_advance:
+        if (
+            predecessor is not None
+            and observed.normalized_state != predecessor
+            and not review_generation_advance
+            and not repair_exact
+        ):
             raise TrackerConflictError("GitHub lifecycle predecessor unavailable")
         if state == "done" and observed.ac_done != observed.ac_total:
             raise TrackerConflictError("GitHub done proof lacks matching acceptance")
-        if (isinstance(context, TransitionContext) and context.expected_state is not None
-                and native_state != context.expected_state and not exact):
+        if (
+            isinstance(context, TransitionContext)
+            and context.expected_state is not None
+            and native_state != context.expected_state
+            and not exact
+        ):
             raise TrackerConflictError("GitHub lifecycle predecessor unavailable")
         if observed.normalized_state in rank and rank[observed.normalized_state] > rank[state]:
             if exact:
