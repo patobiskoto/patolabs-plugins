@@ -1,6 +1,6 @@
 {
   "contract": "foundry.tracker-contract.v1",
-  "version": 2,
+  "version": 3,
   "generated_for": "PAT-53",
   "doc": "plugins/foundry/docs/tracker-contract.md",
   "status_vocabulary": {
@@ -31,7 +31,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/ghprojects.py",
       "class": "GitHubProjectsTracker",
       "v1_core": true,
-      "note": "PAT-57 implements the bounded read slice, PAT-66 core issue writes, and PAT-58 the qualified ADR issue/comment codec. PAT-67 retains lifecycle projection. PAT-65 qualified the private personal-project API shape and PAT-ADR-0007 selected the reserved foundry:adr support label."
+      "note": "PAT-57 implements the bounded read slice, PAT-66 core issue writes, PAT-58 the qualified ADR issue/comment codec, PAT-67 lifecycle projection, and PAT-69 bounded Epic closure. PAT-65 qualified the private personal-project API shape and PAT-ADR-0007 selected the reserved foundry:adr support label."
     },
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
@@ -490,12 +490,11 @@
           "evidence": "bounded_epic_closure_supported and close_epic/get_epic_closure bind the original parent predecessor, a digest of the nonempty Epic need/procedure and AC snapshot, exact required children, transitive dependency edges, versions and authenticated review-bound child/dependency acceptance proof coordinates into a deterministic-id audit comment; they project only the parent State and reread the full graph (linear.py). The explicit human verdict validates the Epic's own criteria without a code-PR review receipt; pending/done replay rejects parent-text drift. Unknown, override, dropped and zero-criteria child/dependency nodes fail closed under PAT-ADR-0006's named S1-S2 residual risk."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-69",
-          "evidence": "Local bounded close_epic/get_epic_closure candidate uses an opaque snapshot digest coordinate, a deterministic append-only comment audit, one targeted State update, full graph readback and a local unknown-effect journal. PAT-69 still requires private sandbox transport qualification and independent review before this core cell can be supported; no CAS or atomic provider graph precondition exists."
+          "status": "supported",
+          "evidence": "bounded_epic_closure_supported and close_epic/get_epic_closure use an opaque full-snapshot coordinate, a deterministic append-only comment audit, one targeted State update, full graph readback and a local unknown-effect journal (ghprojects.py). PAT-69 qualified that exact path on private personal Project 7 and canonical private repository patobiskoto/foundry-v1-ghprojects-sandbox: GHQUAL-15 closed over the sole required child GHQUAL-13 with authenticated acceptance proof 53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db, audit github:epic:758ff6bb0f7ecd04c4edea8f743360fa65d818662a39a051048ce7f484dfe23a, one State projection, full post-write graph readback and a fresh-process replay with no second effect. Title, body, labels, unrelated relations and non-State Project fields are preserved and covered by drift refusals. This is PAT-ADR-0006 bounded detection with the explicit S1-to-S2 residual race; no CAS or atomic provider graph precondition exists."
         }
       },
-      "note": "DevHub (non-V1) retains its stronger atomic epic_closure_supported transaction; GitHub Projects has a local bounded candidate pending private sandbox qualification."
+      "note": "DevHub (non-V1) retains its stronger atomic epic_closure_supported transaction; the three V1 providers use the qualified PAT-ADR-0006 bounded shape where no provider transaction is available."
     },
     {
       "id": "tombstone-archived-source-after-switch",

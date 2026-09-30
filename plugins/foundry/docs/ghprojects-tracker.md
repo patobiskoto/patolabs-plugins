@@ -321,7 +321,7 @@ et le premier POST. Un dépôt public, détaché, étranger ou une identité ind
 refuse la création avant tout effet; un binding local ancien ne vaut pas cette
 requalification live.
 
-La clôture d'un Epic sans PR possède maintenant un parcours local borné
+La clôture d'un Epic sans PR possède un parcours borné qualifié
 `close_epic` / `get_epic_closure`. Le reçu lie le verdict humain explicite, le
 texte et les critères de l'Epic, l'ensemble exact des enfants et le graphe
 transitif des dépendances avec leurs preuves d'acceptation. GitHub ne fournit
@@ -333,7 +333,19 @@ premier reste inconnu ; une réponse perdue avec commentaire observé reprend le
 reçu exact. Avant l'unique écriture du champ State, le graphe est relu, puis
 la clôture et les propriétés non visées sont vérifiées après écriture. Le
 risque résiduel S1→S2 de PAT-ADR-0006 subsiste ; ni transaction atomique ni
-exclusion des autres writers n'est revendiquée. La cellule de conformité reste
-`to_qualify` tant que cette tranche n'a pas été recettée sur le sandbox privé.
-La capacité publique `bounded_epic_closure_supported` reste donc désactivée ;
-les tests synthétiques l'activent seulement sur leur instance locale.
+exclusion des autres writers n'est revendiquée.
+
+PAT-69 a qualifié ce parcours sur le Project personnel privé nº 7 et son dépôt
+canonique privé. `GHQUAL-15` a été clos sur son unique enfant requis
+`GHQUAL-13`, dont la preuve d'acceptation authentifiée est
+`53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db`.
+L'audit déterministe
+`github:epic:758ff6bb0f7ecd04c4edea8f743360fa65d818662a39a051048ce7f484dfe23a`
+a produit un seul commentaire et une seule projection `State=done`. La relecture
+complète a retrouvé le même titre, corps, labels, relation enfant, type, priorité
+et estimation ; un nouveau processus a rejoué le reçu sans second effet. Les
+tests refusent en plus toute dérive de ces propriétés, des relations hors cible
+et des autres champs Project. `bounded_epic_closure_supported` est donc activé
+pour ce profil exact. Un autre propriétaire, une organisation, un dépôt public
+ou détaché, un catalogue de champs différent ou une identité non vérifiable
+reste hors de cette qualification et échoue dans les préflights existants.

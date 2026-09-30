@@ -32,12 +32,14 @@ at least one linked required child, and qualified positive AC evidence for every
 and transitive dependency. Zero criteria, an unknown proof, an override, or a dropped
 node never count as acceptance. The receipt binds the original parent predecessor, the
 exact direct-child set, every dependency edge, each node version/state/AC snapshot and
-the provider's acceptance coordinates. DevHub retains its atomic transaction. YouTrack
-and Linear use PAT-ADR-0006's weaker fresh-read, one-parent-write, deterministic
+the provider's acceptance coordinates. DevHub retains its atomic transaction. YouTrack,
+Linear and the qualified private personal-Project GitHub profile use PAT-ADR-0006's
+weaker fresh-read, one-parent-write, deterministic
 append-only audit and readback sequence. A concurrent external write in the S1→S2 window
 can be overwritten and escape detection; this path is neither CAS nor a transaction. A
 concurrent add, reopen, version change, foreign-project node, missing audit, unknown
-verdict, or unsupported provider stops without a success claim.
-
-GitHub Projects remains unqualified and refuses honestly. Re-running after an ambiguous
-response reads the exact durable audit and never adds a second parent transition.
+verdict, or unsupported provider stops without a success claim. GitHub owners,
+organization projects, repositories and field catalogs outside the exact qualified
+binding still refuse through the identity and scope preflights. Re-running after an
+ambiguous response reads the exact durable audit and never adds a second parent
+transition.

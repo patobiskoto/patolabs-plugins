@@ -9,7 +9,7 @@ explicit setup and historical tooling; it never substitutes for a repository bin
 
 Every claim below is grounded in the current adapter code, cited by module and symbol. The
 machine-readable capability matrix is [`tracker-contract.v1.json`](tracker-contract.v1.json)
-(`contract: "foundry.tracker-contract.v1"`, `version: 2`);
+(`contract: "foundry.tracker-contract.v1"`, `version: 3`);
 [`test_tracker_contract.py`](../tests/test_tracker_contract.py) pins its schema and
 cross-checks it against the `Tracker` ABC and the adapter modules. This contract records
 capabilities and requirements; it changes no adapter behaviour.
@@ -63,7 +63,7 @@ closed vocabulary:
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) |
 | Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
-| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | `to_qualify` PAT-69 |
+| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) |
 | Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
 | Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
@@ -96,11 +96,15 @@ cell.
   replacement refused, while `write.sync_acceptance` uses its proof-bound append-only
   projection (`project_acceptance_proof`, `linear.py`) as the V1 AC authority; native
   checkboxes and external state automation never count as positive acceptance evidence.
-- **PAT-69** — YouTrack and Linear implement `close_epic`/`get_epic_closure` through
-  PAT-ADR-0006's bounded path. GitHub Projects has a bounded local candidate that
-  still requires private sandbox qualification before its core cell can be marked
-  supported. The non-V1 DevHub adapter retains the stronger atomic form of the port
-  (`devhub.py`).
+- **PAT-69** — YouTrack, Linear and GitHub Projects implement
+  `close_epic`/`get_epic_closure` through PAT-ADR-0006's bounded path. The GitHub
+  Projects path was qualified on the exact private personal-Project profile recorded
+  in `qualification/github-projects-v1.md`: one deterministic audit comment, one
+  targeted parent State projection, complete graph readback and fresh-process replay
+  without a second effect. Title, body, labels, unrelated relations and non-State
+  Project fields remain part of the protected snapshot. The path retains the explicit
+  S1→S2 race: it is neither CAS nor an atomic provider graph transaction. The non-V1
+  DevHub adapter keeps the stronger atomic form of the port (`devhub.py`).
 - **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
   target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR
   import target. No adapter copies live work faithfully: Linear's `create_issue` sends a
@@ -569,6 +573,6 @@ never used by the code-host path.
 
 ## Document status
 
-This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 2`. A change to
+This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 3`. A change to
 any status cell, the operation list or the closed status vocabulary bumps the JSON
 `version` and this heading together.

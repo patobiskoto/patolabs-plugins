@@ -141,8 +141,9 @@ class GitHubProjectsTracker(Tracker):
     bounded_state_transitions = True
     append_only_lifecycle_supported = True
     acceptance_proof_projection_supported = True
-    # Enable only after PAT-69 qualifies the transport against the private sandbox.
-    bounded_epic_closure_supported = False
+    # PAT-69 qualified this bounded path on the exact private personal-Project
+    # profile documented in docs/qualification/github-projects-v1.md.
+    bounded_epic_closure_supported = True
 
     def __init__(self, *, runner=subprocess.run, state_dir: Path | str | None = None):
         self._runner = runner
@@ -2441,8 +2442,24 @@ class GitHubProjectsTracker(Tracker):
             self._validate_acceptance_payload(issue_id, native.body, payload, bound)
             acceptance_by_generation[generation] = payload
         self._validate_lifecycle_order(issue_id, native, scope)
-        if review is not None and review["generation"] in acceptance_by_generation:
-            native.ac_done = acceptance_by_generation[review["generation"]]["checked"]
+        accepted = (
+            acceptance_by_generation.get(review["generation"])
+            if review is not None else None
+        )
+        if accepted is not None:
+            native.ac_done = accepted["checked"]
+            native.acceptance_status = "accepted"
+            native.acceptance_source = "ghprojects-acceptance-proof"
+            native.acceptance_coordinates = json.dumps(
+                {
+                    "body_digest": accepted.get("body_digest"),
+                    "checked": accepted.get("checked"),
+                    "proof_id": (accepted.get("proof") or {}).get("proof_id"),
+                    "review_generation": accepted.get("review_generation"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         if done_payload is not None and review["generation"] not in acceptance_by_generation:
             raise TrackerConflictError("GitHub done proof lacks matching acceptance")
         if strict and native.projection_status != "aligned":
@@ -2947,7 +2964,16 @@ class GitHubProjectsTracker(Tracker):
         # Native relation endpoints change the graph and may advance timestamps;
         # they must not change either endpoint's other observable properties.
         def unrelated(issue, is_source):
-            snapshot = {k: v for k, v in issue.to_dict().items() if k not in {"links", "updated"}}
+            # An Epic's opaque ``version`` is a digest of its complete snapshot,
+            # including links.  The intended relation therefore changes that
+            # derived coordinate even when every unrelated property is intact.
+            ignored = {"links", "updated"}
+            if isinstance(issue.type, str) and issue.type.casefold() == "epic":
+                ignored.add("version")
+            snapshot = {
+                k: v for k, v in issue.to_dict().items()
+                if k not in ignored
+            }
             affected_type = link_type if is_source else reverse_type
             affected_target = dst_id if is_source else src_id
             # Reparenting replaces the child's single parent; other relations,

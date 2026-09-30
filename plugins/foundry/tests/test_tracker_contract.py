@@ -36,14 +36,14 @@ def _load_contract():
 def test_contract_json_is_versioned_and_names_its_doc():
     contract = _load_contract()
     assert contract["contract"] == "foundry.tracker-contract.v1"
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["doc"] == "plugins/foundry/docs/tracker-contract.md"
 
 
 def test_doc_references_the_same_contract_version():
     doc = DOC_PATH.read_text(encoding="utf-8")
     assert "tracker-contract.v1.json" in doc
-    assert "version: 2" in doc
+    assert "version: 3" in doc
     assert "contract **v1**" in doc
 
 
@@ -219,11 +219,12 @@ def test_ghprojects_cells_match_delivered_reads_writes_adrs_and_lifecycle():
         if operation["id"] in {
             "identity-and-project-resolution", "repository-bootstrap", "backlog-read",
             "frame-intake-groom-create", "frame-intake-groom-evolve-existing",
-                "mid-flight-comment", "epics-children-creation",
-                "epics-children-reparent-existing", "dependencies-relates-blocks",
-                "release-and-changelog-scope", "adr-read", "adr-create",
-                "adr-status-evolution", "adr-supersession-and-issue-linking",
-                "issue-lifecycle-transitions", "acceptance-criteria-sync",
+            "mid-flight-comment", "epics-children-creation",
+            "epics-children-reparent-existing", "dependencies-relates-blocks",
+            "release-and-changelog-scope", "adr-read", "adr-create",
+            "adr-status-evolution", "adr-supersession-and-issue-linking",
+            "issue-lifecycle-transitions", "acceptance-criteria-sync",
+            "epic-closure",
         }:
             assert cell["status"] == "supported"
             continue

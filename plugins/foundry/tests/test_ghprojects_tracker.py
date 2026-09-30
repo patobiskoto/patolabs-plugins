@@ -1253,7 +1253,21 @@ def test_pat67_acceptance_survives_checkbox_progress_but_not_ac_text_edit(tmp_pa
     )
 
     transport.body = transport.body.replace("- [ ]", "- [x]")
-    assert tracker.get_issue("GHQUAL-1").ac_done == 1
+    observed = tracker.get_issue("GHQUAL-1")
+    assert observed.ac_done == 1
+    assert observed.acceptance_status == "accepted"
+    assert observed.acceptance_source == "ghprojects-acceptance-proof"
+    assert json.loads(observed.acceptance_coordinates) == {
+        "body_digest": tracker._acceptance_body_digest(transport.body),
+        "checked": 1,
+        "proof_id": _canonical_acceptance_proof(
+            transport.body,
+            head=review.head_sha,
+            base=review.base_sha,
+            diff_hash=review.review_digest,
+        )["proof_id"],
+        "review_generation": 1,
+    }
     transport.body = transport.body.replace("Exact criterion", "Edited criterion")
     with pytest.raises(TrackerConflictError, match="malformed or stale"):
         tracker.get_issue("GHQUAL-1")
@@ -3795,6 +3809,151 @@ def test_pat66_body_and_links_observe_ambiguous_write_once(operation, outcome):
     assert "read" in transport.events[transport.events.index("write") + 1:]
 
 
+def test_pat69_parent_link_accepts_only_the_derived_epic_version_change(
+    monkeypatch,
+):
+    tracker = GitHubProjectsTracker()
+    binding = tracker._binding(PROJECT)
+    parent = Issue(
+        id="GHQUAL-1", title="Epic", state="ready", type="Epic", version=101,
+        priority="P2", estimate=3, milestone="V1", labels=["preserve"],
+        body="Exact parent body",
+        links=[
+            Link("parent-of", "outward", "GHQUAL-9"),
+            Link("relates", "outward", "GHQUAL-8"),
+        ],
+    )
+    child = Issue(
+        id="GHQUAL-2", title="Delivered", state="done", type="Task", version=202,
+        ac_done=1, ac_total=1,
+        acceptance_status="accepted",
+        acceptance_source="ghprojects-acceptance-proof",
+        acceptance_coordinates='{"proof_id":"accepted"}',
+        links=[Link("depends-on", "outward", "GHQUAL-7")],
+    )
+    linked_parent = deepcopy(parent)
+    linked_parent.version = 303
+    linked_parent.links.append(Link("parent-of", "outward", "GHQUAL-2"))
+    linked_child = deepcopy(child)
+    linked_child.links.append(Link("subtask-of", "inward", "GHQUAL-1"))
+    reads = iter(
+        [parent, child, deepcopy(parent), deepcopy(child), linked_parent, linked_child]
+    )
+    writes = []
+    monkeypatch.setattr(tracker, "_authoritative_binding", lambda _project: binding)
+    monkeypatch.setattr(
+        tracker, "_native_issue",
+        lambda issue_id, _binding, _operation: (
+            (1, 1001) if issue_id == "GHQUAL-1" else (2, 1002)
+        ),
+    )
+    monkeypatch.setattr(tracker, "get_issue", lambda _issue_id: deepcopy(next(reads)))
+    monkeypatch.setattr(
+        tracker, "_rest_write",
+        lambda *args: writes.append(args) or {},
+    )
+
+    tracker.link("GHQUAL-1", "parent-of", "GHQUAL-2", project=PROJECT)
+
+    assert len(writes) == 1
+    assert writes[0][0:2] == (
+        "POST",
+        "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues/1/sub_issues",
+    )
+
+
+@pytest.mark.parametrize(
+    ("attribute", "changed"),
+    [
+        ("title", "Drifted Epic"),
+        ("body", "Drifted body"),
+        ("labels", ["preserve", "foreign"]),
+        ("priority", "P1"),
+        ("estimate", 5),
+        ("milestone", "V2"),
+        ("links", [Link("relates", "outward", "GHQUAL-10")]),
+    ],
+)
+def test_pat69_parent_link_refuses_unrelated_drift_after_derived_version_change(
+    monkeypatch, attribute, changed,
+):
+    tracker = GitHubProjectsTracker()
+    binding = tracker._binding(PROJECT)
+    parent = Issue(
+        id="GHQUAL-1", title="Epic", state="ready", type="Epic", version=101,
+        priority="P2", estimate=3, milestone="V1", labels=["preserve"],
+        body="Exact parent body",
+        links=[Link("relates", "outward", "GHQUAL-8")],
+    )
+    child = Issue(
+        id="GHQUAL-2", title="Delivered", state="done", type="Task", version=202,
+        ac_done=1, ac_total=1,
+        acceptance_status="accepted",
+        acceptance_source="ghprojects-acceptance-proof",
+        acceptance_coordinates='{"proof_id":"accepted"}',
+    )
+    linked_parent = deepcopy(parent)
+    linked_parent.version = 303
+    linked_parent.links.append(Link("parent-of", "outward", "GHQUAL-2"))
+    if attribute == "links":
+        linked_parent.links.extend(changed)
+    else:
+        setattr(linked_parent, attribute, changed)
+    linked_child = deepcopy(child)
+    linked_child.links = [Link("subtask-of", "inward", "GHQUAL-1")]
+    reads = iter(
+        [parent, child, deepcopy(parent), deepcopy(child), linked_parent, linked_child]
+    )
+    monkeypatch.setattr(tracker, "_authoritative_binding", lambda _project: binding)
+    monkeypatch.setattr(
+        tracker, "_native_issue",
+        lambda issue_id, _binding, _operation: (
+            (1, 1001) if issue_id == "GHQUAL-1" else (2, 1002)
+        ),
+    )
+    monkeypatch.setattr(tracker, "get_issue", lambda _issue_id: deepcopy(next(reads)))
+    monkeypatch.setattr(tracker, "_rest_write", lambda *_args: {})
+
+    with pytest.raises(TrackerConflictError, match="lien GitHub divergent"):
+        tracker.link("GHQUAL-1", "parent-of", "GHQUAL-2", project=PROJECT)
+
+
+def test_pat69_parent_link_does_not_ignore_a_non_epic_version_drift(monkeypatch):
+    tracker = GitHubProjectsTracker()
+    binding = tracker._binding(PROJECT)
+    parent = Issue(
+        id="GHQUAL-1", title="Epic", state="ready", type="Epic", version=101,
+    )
+    child = Issue(
+        id="GHQUAL-2", title="Delivered", state="done", type="Task", version=202,
+        ac_done=1, ac_total=1,
+        acceptance_status="accepted",
+        acceptance_source="ghprojects-acceptance-proof",
+        acceptance_coordinates='{"proof_id":"accepted"}',
+    )
+    linked_parent = deepcopy(parent)
+    linked_parent.version = 303
+    linked_parent.links.append(Link("parent-of", "outward", "GHQUAL-2"))
+    linked_child = deepcopy(child)
+    linked_child.version = 404
+    linked_child.links.append(Link("subtask-of", "inward", "GHQUAL-1"))
+    reads = iter(
+        [parent, child, deepcopy(parent), deepcopy(child), linked_parent, linked_child]
+    )
+    monkeypatch.setattr(tracker, "_authoritative_binding", lambda _project: binding)
+    monkeypatch.setattr(
+        tracker, "_native_issue",
+        lambda issue_id, _binding, _operation: (
+            (1, 1001) if issue_id == "GHQUAL-1" else (2, 1002)
+        ),
+    )
+    monkeypatch.setattr(tracker, "get_issue", lambda _issue_id: deepcopy(next(reads)))
+    monkeypatch.setattr(tracker, "_rest_write", lambda *_args: {})
+
+    with pytest.raises(TrackerConflictError, match="lien GitHub divergent"):
+        tracker.link("GHQUAL-1", "parent-of", "GHQUAL-2", project=PROJECT)
+
+
 class _AsymmetricRelatesTransport(_BodyRelationTransport):
     def __init__(self, present_on, *, existing=False, normal_response=False):
         super().__init__("graphql-link", "applied")
@@ -4107,7 +4266,6 @@ def test_pat69_ghprojects_epic_closure_replays_without_second_effect(
         state_loss="applied" if lost == "state" else None,
     )
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
-    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
 
     closed = write.close_epic(
         tracker, "GHQUAL-1", issued_at=123,
@@ -4121,18 +4279,91 @@ def test_pat69_ghprojects_epic_closure_replays_without_second_effect(
     assert tracker.comment_posts == tracker.state_writes == 1
 
 
-def test_pat69_ghprojects_epic_closure_stays_disabled_until_qualified(tmp_path):
+def test_pat69_ghprojects_epic_closure_is_enabled_after_live_qualification(
+    monkeypatch, tmp_path,
+):
     tracker = _EpicClosureTracker(tmp_path)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
 
-    with pytest.raises(write.EpicClosureUnavailableError):
-        write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
-    assert tracker.comment_posts == tracker.state_writes == 0
+    assert tracker.bounded_epic_closure_supported is True
+    outcome = write.close_epic(
+        tracker, "GHQUAL-1", issued_at=123,
+        nonce="synthetic_nonce_123456", human_verdict="accepted",
+    )
+    assert outcome.replayed is False
+    assert tracker.comment_posts == tracker.state_writes == 1
+
+
+def test_pat69_state_projection_preserves_every_untargeted_parent_property(
+    monkeypatch, tmp_path,
+):
+    tracker = _EpicClosureTracker(tmp_path)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    tracker.parent.priority = "P2"
+    tracker.parent.estimate = 3
+    tracker.parent.milestone = "V1"
+    tracker.parent.labels = ["preserve"]
+    tracker.parent.body = "Exact parent body\n\n- [ ] Human validation"
+    tracker.parent.links.append(Link("relates", "outward", "GHQUAL-9"))
+    before = {
+        name: deepcopy(getattr(tracker.parent, name))
+        for name in (
+            "title", "body", "labels", "links", "priority", "estimate",
+            "milestone", "type",
+        )
+    }
+
+    write.close_epic(
+        tracker, "GHQUAL-1", issued_at=123,
+        nonce="synthetic_nonce_123456", human_verdict="accepted",
+    )
+
+    assert {
+        name: getattr(tracker.parent, name) for name in before
+    } == before
+    assert tracker.parent.state == "done"
+
+
+@pytest.mark.parametrize(
+    ("attribute", "changed"),
+    [
+        ("title", "Drifted Epic"),
+        ("body", "Drifted body"),
+        ("labels", ["foreign"]),
+        ("priority", "P1"),
+        ("estimate", 5),
+        ("milestone", "V2"),
+        ("type", "Task"),
+        ("links", Link("relates", "outward", "GHQUAL-9")),
+    ],
+)
+def test_pat69_state_projection_refuses_untargeted_parent_drift(
+    monkeypatch, tmp_path, attribute, changed,
+):
+    tracker = _EpicClosureTracker(tmp_path)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    original = tracker._set_project_field
+
+    def state_write_with_drift(*args):
+        original(*args)
+        if attribute == "links":
+            tracker.parent.links.append(changed)
+        else:
+            setattr(tracker.parent, attribute, changed)
+
+    monkeypatch.setattr(tracker, "_set_project_field", state_write_with_drift)
+
+    with pytest.raises(TrackerConflictError, match="untargeted properties changed"):
+        write.close_epic(
+            tracker, "GHQUAL-1", issued_at=123,
+            nonce="synthetic_nonce_123456", human_verdict="accepted",
+        )
+    assert tracker.comment_posts == tracker.state_writes == 1
 
 
 def test_pat69_ghprojects_unknown_comment_effect_never_reposts(monkeypatch, tmp_path):
     tracker = _EpicClosureTracker(tmp_path, comment_loss="hidden")
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
-    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
 
     with pytest.raises(GitHubProjectsTrackerError, match="lost_response"):
         write.close_epic(
@@ -4152,7 +4383,6 @@ def test_pat69_ghprojects_pending_state_effect_replays_without_new_comment(
 ):
     tracker = _EpicClosureTracker(tmp_path, state_loss="hidden")
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
-    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
 
     with pytest.raises(GitHubProjectsTrackerError, match="lost_response"):
         write.close_epic(
@@ -4167,7 +4397,6 @@ def test_pat69_ghprojects_pending_state_effect_replays_without_new_comment(
 def test_pat69_ghprojects_epic_refuses_unknown_or_changed_child(monkeypatch, tmp_path):
     tracker = _EpicClosureTracker(tmp_path)
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
-    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
     tracker.child.acceptance_status = "override"
     with pytest.raises(SystemExit, match="dérogée"):
         write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
@@ -4190,7 +4419,6 @@ def test_pat69_ghprojects_closed_epic_replay_detects_graph_or_parent_drift(
 ):
     tracker = _EpicClosureTracker(tmp_path)
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
-    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
     write.close_epic(
         tracker, "GHQUAL-1", issued_at=123,
         nonce="synthetic_nonce_123456", human_verdict="accepted",

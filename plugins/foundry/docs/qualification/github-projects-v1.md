@@ -398,3 +398,56 @@ engagement de tête. La suppression totale sans Issue ni item attribuable demeur
 indétectable à la lecture ; l'allocation prévient seulement la réutilisation de
 son ID. Les anciens couples `GHQUAL-ADR-0001`/issue 8 à
 `GHQUAL-ADR-0004`/issue 11 restent lisibles.
+
+## Qualification PAT-69 : clôture Epic bornée
+
+Le 30 septembre 2026, l'identité et le périmètre ont été relus avant tout effet :
+compte `patobiskoto` (id `1763337`), Project personnel privé nº 7
+`PVT_kwHOABroCc4Bk0U-`, dépôt canonique privé
+`patobiskoto/foundry-v1-ghprojects-sandbox` (id `1390303610`, node
+`R_kgDOUt5Zeg`) et catalogue normalisé complet des champs State, Type, Estimate
+et Priority. Le binding `GHQUAL` désigne exactement ces coordonnées.
+
+La création commune a produit une seule Issue parent, `GHQUAL-15` (issue native
+`5644346844`, node `I_kwDOUt5Zes8AAAABUG3l3A`), puis a refusé
+`partial_create:item_readback` pendant le délai de visibilité de son item
+`PVTI_lAHOABroCc4Bk0U-zg9okr0`. La reprise explicite de la même intention
+`8175e1f937a1b8b99b7e30029664693a3f82642940c1b64b44763b9b357343b5`
+a retrouvé l'unique Issue et l'unique item, puis a projeté Ready, Epic, P2 et
+Estimate 1 sans second POST Issue.
+
+Le lien natif parent-enfant vers `GHQUAL-13` a été appliqué une fois. La première
+relecture locale l'a refusé parce que la version opaque de l'Epic, dérivée de son
+snapshot complet, avait changé avec la relation attendue. Aucun second POST de
+relation n'a été envoyé. La correction exclut seulement cette version dérivée de
+la comparaison des propriétés non visées ; elle conserve la vérification native
+réciproque et compare toujours titre, corps, labels, autres relations et champs
+Project. Les tests provoquent séparément une dérive de chacune de ces propriétés
+et vérifient son refus.
+
+Avant clôture, la relecture complète a observé `GHQUAL-15` Ready, Epic, AC 0/1,
+sans PR, version opaque `870381632526250840`, avec pour unique enfant requis
+`GHQUAL-13`. Celui-ci était Done, AC 2/2, version
+`704908415487686180`, et portait la preuve d'acceptation authentifiée
+`53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db`.
+Le graphe de dépendances était vide et le digest de validation parent était
+`f1b22c38d325c02949de6d0b2d1e62f9812b88f64589b0460decec7b936157e8`.
+
+L'appel commun `close_epic` avec verdict humain `accepted` a ajouté l'unique
+commentaire d'audit `5908584673`, projeté une seule fois `State=done`, puis relu
+le graphe complet. Son reçu déterministe est
+`github:epic:758ff6bb0f7ecd04c4edea8f743360fa65d818662a39a051048ce7f484dfe23a`
+et la version parent fermée est `870381632526250841`. Titre, corps, labels,
+relation enfant, Type Epic, Priority P2 et Estimate 1 sont restés inchangés.
+Un nouveau processus, avec un répertoire d'état vide, a retrouvé ce même reçu et
+l'a rejoué avec `replayed=true` : toujours un commentaire et aucune seconde
+projection State.
+
+Cette recette qualifie le parcours borné exact de PAT-ADR-0006, pas une
+transaction GitHub. Le digest de snapshot détecte une dérive observée mais ne
+sert jamais de précondition fournisseur. Une écriture concurrente externe entre
+la dernière lecture S1 et l'écriture ciblée S2 peut encore être écrasée et
+échapper à la détection. Il n'existe ni CAS commun à l'Issue et à l'item Project,
+ni verrou distribué, ni exclusion d'un autre writer. Les autres propriétaires,
+Projects d'organisation, dépôts publics ou détachés et catalogues de champs
+différents restent hors de cette qualification.
