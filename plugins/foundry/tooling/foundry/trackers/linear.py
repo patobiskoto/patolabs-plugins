@@ -4270,6 +4270,15 @@ class LinearTracker(Tracker):
         if not matches:
             return None
         receipt, audit_id = matches[0]
+        if (
+            receipt.project_key != project.key
+            or receipt.project_id != project.id
+            or receipt.parent_id != issue.id
+        ):
+            raise TrackerConflictError("audit de clôture Linear hors coordonnées")
+        from foundry.write import epic_parent_validation_digest
+        if receipt.parent_validation_digest != epic_parent_validation_digest(issue):
+            raise TrackerConflictError("Epic Linear modifié depuis le verdict humain")
         if require_done and (
             issue.state != "done"
             or issue.version is None
@@ -4283,26 +4292,24 @@ class LinearTracker(Tracker):
             replayed=True,
         )
 
-    @classmethod
     def _closure_from_raw(
-        cls, raw: dict, project: Project, *, require_done: bool = True,
+        self, raw: dict, project: Project, *, require_done: bool = True,
     ) -> EpicClosureOutcome | None:
         """Read the Epic audit without treating it as a code-issue lifecycle proof."""
         identifier = raw.get("identifier")
         state = raw.get("state")
         if not isinstance(identifier, str) or not isinstance(state, dict):
             raise LinearTrackerError("epic-closure.readback", None, "invalid_response")
-        comments = [
+        issue = self._to_issue(raw, project, observe_lifecycle=True)
+        issue.comments = [
             {"text": row.get("body")}
             for row in _connection(raw.get("comments"), "epic-closure.comments")
         ]
-        issue = Issue(
-            id=identifier, title="", state=(
-                "done" if state.get("id") == cls._binding(project)["state_ids"]["done"] else None
-            ),
-            version=_epoch_ms(raw.get("updatedAt")), comments=comments,
+        issue.state = (
+            "done" if state.get("id") == self._binding(project)["state_ids"]["done"]
+            else issue.state
         )
-        return cls._closure_from_issue(issue, project, require_done=require_done)
+        return self._closure_from_issue(issue, project, require_done=require_done)
 
     def get_epic_closure(self, project: Project, parent_id: str) -> EpicClosureOutcome | None:
         self.validate_issue_binding(project, parent_id)
@@ -4375,7 +4382,7 @@ class LinearTracker(Tracker):
             return existing
         if observed is not None and observed.receipt != receipt:
             raise TrackerConflictError("audit pending Linear divergent")
-        from foundry.write import bounded_epic_graph_snapshot
+        from foundry.write import bounded_epic_graph_snapshot, epic_parent_validation_digest
 
         try:
             children, dependencies = bounded_epic_graph_snapshot(
@@ -4391,6 +4398,7 @@ class LinearTracker(Tracker):
                 )))
                 or parent.type != receipt.parent_type
                 or parent.ac_done != receipt.parent_ac_done or parent.ac_total != receipt.parent_ac_total
+                or epic_parent_validation_digest(parent) != receipt.parent_validation_digest
                 or parent.state != receipt.parent_state
                 or children != receipt.children
                 or dependencies != receipt.dependencies):

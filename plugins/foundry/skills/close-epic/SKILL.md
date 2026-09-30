@@ -23,7 +23,11 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 
 This path performs no Git or code-host operation and never reuses the code-issue
-`done` transition. It requires an explicit human `accepted` verdict, complete Epic AC,
+`done` transition. It requires an explicit human `accepted` verdict and nonempty Epic
+validation criteria. For a non-code Epic, that verdict validates its own criteria;
+Linear's unchecked native checkboxes are not a code-PR acceptance proof. The receipt
+binds a digest of the Epic's exact need and test procedure, and every pending or done
+replay refuses a changed procedure. It also requires
 at least one linked required child, and qualified positive AC evidence for every child
 and transitive dependency. Zero criteria, an unknown proof, an override, or a dropped
 node never count as acceptance. The receipt binds the original parent predecessor, the

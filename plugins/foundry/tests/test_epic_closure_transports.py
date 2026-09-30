@@ -38,7 +38,7 @@ def _linear_graph(*, acceptance="proof", dependency=False):
         extra={**PROJECT.extra, "type_label_ids": {"Epic": "label-epic"}},
     )
     parent, child = wire.issues["LIN-1"], wire.issues["LIN-2"]
-    parent.update({"description": "", "state": {"id": STATE_IDS["in-progress"], "name": "In progress"}})
+    parent.update({"description": "- [ ] Epic validation", "state": {"id": STATE_IDS["in-progress"], "name": "In progress"}})
     parent["labels"] = connection([{"id": "label-epic", "name": "Epic"}])
     parent["children"] = connection([{"id": child["id"], "identifier": "LIN-2"}])
     child.update({"description": "- [ ] acceptance", "state": {"id": STATE_IDS["in-progress"], "name": "In progress"}})
@@ -98,10 +98,29 @@ def test_linear_bounded_close_roundtrips_through_graphql_and_replays(monkeypatch
     replay = write.close_epic(tracker, "LIN-1", human_verdict="accepted")
 
     assert closed.closed_parent_version > closed.receipt.parent_version
+    assert (closed.receipt.parent_ac_done, closed.receipt.parent_ac_total) == (0, 1)
+    assert closed.receipt.parent_validation_digest == write.epic_parent_validation_digest(
+        tracker.observe_issue("LIN-1")
+    )
     assert replay.replayed is True
     assert sum("foundry-epic-closure.v1" in item["body"] for item in wire.comments.values()) == 1
     # Two setup transitions belong to the child; replay adds no parent update.
     assert sum("FoundryLinearIssueUpdate" in call[0] for call in wire.calls) == 3
+
+
+def test_linear_epic_without_own_validation_criteria_refuses_before_effect(monkeypatch):
+    tracker, wire, project = _linear_graph()
+    wire.issues["LIN-1"]["description"] = ""
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    before = len(wire.calls)
+
+    with pytest.raises(SystemExit, match="critères propres"):
+        write.close_epic(tracker, "LIN-1", human_verdict="accepted")
+
+    assert not any(
+        "Create" in document or "Update" in document
+        for document, _args in wire.calls[before:]
+    )
 
 
 def test_linear_lost_comment_response_recovers_exact_deterministic_audit(monkeypatch):
@@ -192,6 +211,71 @@ def test_youtrack_close_audits_before_targeted_parent_write_and_replays(monkeypa
     effects = [(method, path) for method, path, _body in tracker.calls if method == "POST"]
     assert effects == [("POST", "/issues/YT-1/comments"), ("POST", "/issues/YT-1")]
     assert replay.replayed and closed.audit_id.startswith("foundry-epic-closure.v1:")
+
+
+@pytest.mark.parametrize("provider", ("linear", "youtrack"))
+@pytest.mark.parametrize("phase", ("pending", "done"))
+def test_epic_parent_procedure_change_blocks_replay_without_second_write(
+    monkeypatch, provider, phase,
+):
+    if provider == "linear":
+        tracker, wire, project = _linear_graph()
+        parent_id = "LIN-1"
+        original = wire.__call__
+
+        def fail_state(document, variables):
+            if (
+                phase == "pending"
+                and "FoundryLinearIssueUpdate" in document
+                and variables.get("id") == wire.issues[parent_id]["id"]
+            ):
+                raise OSError("state not applied")
+            return original(document, variables)
+
+        tracker._transport = fail_state
+    else:
+        tracker = _YouTrackWire()
+        wire = tracker
+        project = Project(key="YT", id="p")
+        parent_id = "YT-1"
+        original = tracker._req
+
+        def fail_state(method, path, body=None, fields=None, top=None):
+            if phase == "pending" and method == "POST" and path == "/issues/YT-1":
+                raise OSError("state not applied")
+            return original(method, path, body, fields, top)
+
+        tracker._req = fail_state
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+
+    if phase == "pending":
+        with pytest.raises(Exception):
+            write.close_epic(
+                tracker, parent_id, human_verdict="accepted",
+                issued_at=1_800_000_000_000, nonce="nonce_1234567890abcdef",
+            )
+    else:
+        write.close_epic(
+            tracker, parent_id, human_verdict="accepted",
+            issued_at=1_800_000_000_000, nonce="nonce_1234567890abcdef",
+        )
+
+    if provider == "linear":
+        wire.issues[parent_id]["description"] = "- [ ] Changed Epic validation"
+        tracker._transport = original
+    else:
+        wire.rows[parent_id]["description"] = "- [x] Changed acceptance"
+        tracker._req = original
+    before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="modifié depuis le verdict humain"):
+        write.close_epic(tracker, parent_id, human_verdict="accepted")
+    if provider == "linear":
+        assert not any(
+            "Create" in document or "Update" in document
+            for document, _args in wire.calls[before:]
+        )
+    else:
+        assert not any(method == "POST" for method, _path, _body in wire.calls[before:])
 
 
 @pytest.mark.parametrize("mutation", ("reopened", "version", "added"))

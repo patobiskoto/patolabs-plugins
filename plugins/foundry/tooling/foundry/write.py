@@ -11,6 +11,7 @@ import re
 import secrets
 import time
 import json
+import hashlib
 
 from foundry import registry
 from foundry.models import (
@@ -314,7 +315,22 @@ def _exact_positive_version(value, field: str) -> int:
     return version
 
 
-def _validate_epic_parent(parent) -> None:
+def epic_parent_validation_digest(parent: Issue) -> str:
+    """Bind the Epic's need and test procedure independently of provider timestamps."""
+    value = {
+        "id": parent.id,
+        "title": parent.title,
+        "body": parent.body,
+        "type": parent.type,
+        "ac_done": parent.ac_done,
+        "ac_total": parent.ac_total,
+        "pr_url": parent.pr_url,
+    }
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def _validate_epic_parent(parent, *, bounded: bool = False) -> None:
     if not isinstance(parent.id, str) or not parent.id:
         raise SystemExit("Clôture Epic refusée : identifiant parent invalide.")
     if not isinstance(parent.type, str) or parent.type.casefold() != "epic":
@@ -326,7 +342,9 @@ def _validate_epic_parent(parent) -> None:
     _exact_positive_version(parent.version, "version parent")
     ac_done = _exact_nonnegative_int(parent.ac_done, "AC satisfaites")
     ac_total = _exact_nonnegative_int(parent.ac_total, "AC totales")
-    if ac_done > ac_total or (ac_total and ac_done != ac_total):
+    if ac_done > ac_total or (bounded and ac_total == 0):
+        raise SystemExit("Clôture Epic refusée : critères propres de l'Epic absents ou invalides.")
+    if not bounded and ac_total and ac_done != ac_total:
         raise SystemExit(
             "Clôture Epic refusée : les AC propres de l'Epic sont incomplètes."
         )
@@ -487,7 +505,9 @@ def _validate_epic_outcome(
             "Clôture Epic refusée : snapshot parent de reprise contradictoire."
         )
     if receipt.parent_ac_done > receipt.parent_ac_total or (
-        receipt.parent_ac_total and receipt.parent_ac_done != receipt.parent_ac_total
+        receipt.human_verdict is None
+        and receipt.parent_ac_total
+        and receipt.parent_ac_done != receipt.parent_ac_total
     ):
         raise SystemExit("Clôture Epic refusée : AC du reçu incomplètes.")
     if type(receipt.children) is not tuple or not receipt.children:
@@ -497,6 +517,9 @@ def _validate_epic_outcome(
         receipt.human_verdict != _EPIC_HUMAN_VERDICT
         or not isinstance(receipt.parent_state, str)
         or receipt.parent_state in EPIC_CHILD_TERMINAL_STATES
+        or receipt.parent_ac_total == 0
+        or not isinstance(receipt.parent_validation_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", receipt.parent_validation_digest) is None
     ):
         raise SystemExit("Clôture Epic refusée : prédécesseur ou verdict invalide.")
 
@@ -627,7 +650,7 @@ def close_epic(
         )
     if parent.id != parent_id:
         raise SystemExit("Clôture Epic refusée : identité parent contradictoire.")
-    _validate_epic_parent(parent)
+    _validate_epic_parent(parent, bounded=bounded)
     if parent.state == "done":
         prior = tracker.get_epic_closure(project, parent_id)
         if prior is None:
@@ -671,6 +694,7 @@ def close_epic(
                 or pending.parent_type != parent.type
                 or pending.parent_ac_done != parent.ac_done
                 or pending.parent_ac_total != parent.ac_total
+                or pending.parent_validation_digest != epic_parent_validation_digest(parent)
                 or pending.human_verdict != human_verdict
                 or (issued_at is not None and pending.issued_at != issued_at)
                 or (nonce is not None and pending.nonce != nonce)
@@ -760,6 +784,9 @@ def close_epic(
         human_verdict=human_verdict if bounded else None,
         parent_state=parent.state if bounded else None,
         dependencies=dependencies,
+        parent_validation_digest=(
+            epic_parent_validation_digest(parent) if bounded else None
+        ),
     )
     outcome = tracker.close_epic(project, receipt)
     return _validate_epic_outcome(

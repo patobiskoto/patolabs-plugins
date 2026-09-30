@@ -964,6 +964,9 @@ class YouTrackTracker(Tracker):
         if not matches:
             return None
         receipt, marker = matches[0]
+        from foundry.write import epic_parent_validation_digest
+        if receipt.parent_validation_digest != epic_parent_validation_digest(issue):
+            raise TrackerConflictError("Epic YouTrack modifié depuis le verdict humain")
         if require_done and (
             issue.state != "done"
             or issue.version is None
@@ -1034,7 +1037,7 @@ class YouTrackTracker(Tracker):
             raise TrackerConflictError("audit pending YouTrack divergent")
         if before.state == "done":
             raise TrackerConflictError("Epic YouTrack done sans audit récupérable")
-        from foundry.write import bounded_epic_graph_snapshot
+        from foundry.write import bounded_epic_graph_snapshot, epic_parent_validation_digest
 
         try:
             expected_children, expected_dependencies = bounded_epic_graph_snapshot(
@@ -1051,6 +1054,7 @@ class YouTrackTracker(Tracker):
              )))
             or before.type != receipt.parent_type
             or before.ac_done != receipt.parent_ac_done or before.ac_total != receipt.parent_ac_total
+            or epic_parent_validation_digest(before) != receipt.parent_validation_digest
             or before.state != receipt.parent_state
             or expected_children != receipt.children
             or expected_dependencies != receipt.dependencies

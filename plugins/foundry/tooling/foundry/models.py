@@ -167,7 +167,7 @@ class EpicClosureDependency:
 
 @dataclass(frozen=True)
 class EpicClosureReceipt:
-    """Provider-neutral snapshot a supporting tracker must verify atomically."""
+    """Provider-neutral closure snapshot; each adapter enforces its declared gate."""
 
     project_key: str
     project_id: str
@@ -182,11 +182,12 @@ class EpicClosureReceipt:
     # A category-1 product decision (FOUNDRY-ADR-0017), supplied explicitly by
     # the human closing the Epic.  ``None`` is intentionally not success.
     human_verdict: str | None = None
-    # PAT-ADR-0006 bounded providers bind the original predecessor and the
-    # complete dependency graph.  Defaults preserve DevHub's existing atomic
-    # wire contract and historical receipts byte-for-byte.
+    # PAT-ADR-0006 bounded providers bind the original predecessor, the Epic's
+    # validation text, and the complete dependency graph. Defaults preserve
+    # DevHub's existing atomic wire contract and historical receipts byte-for-byte.
     parent_state: str | None = None
     dependencies: tuple[EpicClosureDependency, ...] = ()
+    parent_validation_digest: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         # DevHub's atomic v1 receipt predates PAT-69 and is a byte-stable public
