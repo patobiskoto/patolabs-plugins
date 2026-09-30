@@ -63,6 +63,7 @@ def test_existing_real_provider_openpr_path_is_unchanged_by_noop_preflight(
     tracker = object.__new__(provider_class)
     tracker.get_issue = lambda _issue_id: events.append("tracker:get-issue") or SimpleNamespace(
         title="Pilot", type="Feature", state="in-progress",
+        normalized_state="in-progress",
     )
     branch = "feat/demo-7-pilot"
     pull_request = SimpleNamespace(
@@ -452,13 +453,15 @@ def test_merge_reports_the_merged_sha(monkeypatch, capsys):
     assert "a1b2c3d4e5f6a7b8" in capsys.readouterr().out
 
 
-def test_proof_bound_tracker_persists_done_receipt_before_branch_delete(monkeypatch):
+def test_proof_bound_merge_refreshes_review_before_done_receipt_and_branch_delete(monkeypatch):
     events = []
     diff_bases = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
+        bounded_state_transitions=True,
         get_issue=lambda _id: SimpleNamespace(
-            id="DEMO-7", state="review", pr_url="https://github.com/acme/demo/pull/12", body="", ac_done=0, ac_total=0,
+            id="DEMO-7", state="review", normalized_state="review",
+            pr_url="https://github.com/acme/demo/pull/12", body="", ac_done=0, ac_total=0,
         ),
     )
     head = SimpleNamespace(
@@ -494,12 +497,14 @@ def test_proof_bound_tracker_persists_done_receipt_before_branch_delete(monkeypa
     assert [event[0] for event in events] == ["transition", "transition", "transition", "delete"]
     assert [event[2] for event in events[:3]] == ["in-progress", "review", "done"]
     assert events[1][3].merge_sha is None
+    assert events[1][3].expected_state == "review"
     context = events[2][3]
     assert isinstance(context, TransitionContext)
     assert context.head_sha == "a" * 40
     assert context.base_sha == "c" * 40
     assert context.review_digest == hashlib.sha256(b"exact-diff").hexdigest()
     assert context.merge_sha == "b" * 40
+    assert context.expected_state == "review"
     assert diff_bases == ["c" * 40]
 
 
@@ -778,7 +783,11 @@ def test_proof_bound_openpr_records_pr_before_review_with_exact_coordinates(monk
     diff_bases = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
-        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
+        bounded_state_transitions=True,
+        get_issue=lambda _id: SimpleNamespace(
+            title="Pilot", type="Feature", state="in-progress",
+            normalized_state="in-progress",
+        ),
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12", sha="a" * 40,
@@ -819,6 +828,7 @@ def test_proof_bound_openpr_records_pr_before_review_with_exact_coordinates(monk
     assert context.head_sha == "a" * 40
     assert context.base_sha == "c" * 40
     assert context.review_digest == hashlib.sha256(b"exact-open-pr-diff").hexdigest()
+    assert context.expected_state == "in-progress"
     assert diff_bases == ["c" * 40]
 
 
@@ -964,7 +974,10 @@ def test_proof_bound_openpr_reuse_refreshes_current_review_coordinates(monkeypat
     events = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
-        get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
+        bounded_state_transitions=True,
+        get_issue=lambda _id: SimpleNamespace(
+            title="Pilot", type="Feature", state="review", normalized_state="review",
+        ),
     )
     pull_request = SimpleNamespace(
         number=12, url="https://github.com/acme/demo/pull/12", sha="a" * 40,
@@ -1005,6 +1018,7 @@ def test_proof_bound_openpr_reuse_refreshes_current_review_coordinates(monkeypat
     assert context.head_sha == "a" * 40
     assert context.base_sha == "c" * 40
     assert context.review_digest == hashlib.sha256(b"current-remediation-diff").hexdigest()
+    assert context.expected_state == "review"
 
 
 @pytest.mark.parametrize(

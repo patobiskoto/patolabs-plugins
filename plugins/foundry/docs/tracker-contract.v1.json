@@ -7,7 +7,7 @@
     "supported": "the operation is implemented against the real provider API, exercised by tests today, and meets the tracker-contract.md #4.2 target guarantee for its journey family",
     "gap": "the operation is required by a core journey (operations[].core == true) but is unimplemented, explicitly refused by the adapter, or below the #4.2 target guarantee; blocks V1 exit for that provider until the owner ticket closes it. A non-core operation is never a gap: an unimplemented non-core capability is 'refused' instead",
     "refused": "the adapter's refusal is deliberate and never blocks V1 exit. Valid ONLY on a non-core operation (operations[].core == false): criterion 1 requires every core operation to reach 'supported', so an unsupported core operation is always 'gap' or 'to_qualify', both of which block V1 exit for that provider",
-    "to_qualify": "the operation's real behaviour against the live provider is not qualified; PAT-65 must qualify it on authorized test resources before any other status can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap'; only the reason differs (unqualified transport vs. known-missing implementation). On a non-core operation 'to_qualify' is temporary: before V1 exit it must resolve to 'supported' or to 'refused' with a typed refusal (never a bare NotImplementedError), and it names its owner ticket (PAT-65 unless stated)"
+    "to_qualify": "the operation's real behaviour against the live provider is not qualified; its owner ticket must qualify it on authorized test resources before any other status can be asserted. On a core operation, 'to_qualify' blocks V1 exit for that provider exactly like 'gap'; only the reason differs (unqualified transport vs. known-missing implementation). On a non-core operation 'to_qualify' is temporary: before V1 exit it must resolve to 'supported' or to 'refused' with a typed refusal (never a bare NotImplementedError), and it names its owner ticket"
   },
   "cell_fields": {
     "status": "one value of status_vocabulary",
@@ -31,7 +31,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/ghprojects.py",
       "class": "GitHubProjectsTracker",
       "v1_core": true,
-      "note": "workflow stub. PAT-54 implements canonical checkout selection and a bounded read-only existing-project identity probe; search, get_issue, create_issue, update_fields, set_state, link, add_comment, list_adrs, create_adr and set_adr_status still raise NotImplementedError. PAT-65 qualifies the live GraphQL workflow and PAT-57/58/59/64/66/67 implement their tranches."
+      "note": "PAT-57 implements the bounded read slice, PAT-66 core issue writes, and PAT-58 the qualified ADR issue/comment codec. PAT-67 retains lifecycle projection. PAT-65 qualified the private personal-project API shape and PAT-ADR-0007 selected the reserved foundry:adr support label."
     },
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
@@ -62,7 +62,7 @@
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py; registry.py), and ghprojects.verify_project_identity checks the exact ProjectV2 node id, owner/number and linked canonical repository through at most ten read-only GraphQL pages (ghprojects.py). Issue wire-format and workflow operations remain owned by PAT-65/PAT-57/PAT-66/PAT-67"
+          "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py; registry.py), and ghprojects.verify_project_identity checks the exact private personal ProjectV2 node id, owner/number and linked private personal repository node id through at most ten read-only GraphQL pages (ghprojects.py). PAT-65 qualified exact provider coordinates in this scope; workflow adapter operations remain owned by PAT-57/PAT-66/PAT-67"
         }
       }
     },
@@ -85,7 +85,7 @@
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the linked canonical repository before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; workflow/API conformance remains PAT-65 (registry.py; ghprojects.py)"
+          "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the exact private personal Project plus the linked private personal repository node id before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; PAT-65 qualified the broader private personal-project API shape, while workflow adapter conformance remains with its owner tickets (registry.py; ghprojects.py)"
         }
       }
     },
@@ -94,8 +94,7 @@
       "journey": "contexte/backlog",
       "core": true,
       "tracker_abc": [
-        "search",
-        "get_issue"
+        "read_release_scope"
       ],
       "cells": {
         "youtrack": {
@@ -107,9 +106,8 @@
           "evidence": "search normalizes every page through _to_issue and remains fail-closed on unknown state, label or milestone ids (linear.py); registry update supplies the bounded recovery path for a reviewed complete mapping: strict marker parsing before effects, expected configuration digest, one registry lock, concurrent-change refusal, publication and readback (registry.py). No issue mutation or provider CAS is claimed"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-57",
-          "evidence": "search/get_issue raise NotImplementedError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-57 compares every supplied Project coordinate with the active checkout binding before transport, then reads the exact bound private personal ProjectV2 and private personal repository through bounded GraphQL item pages. It distinguishes and validates repository, Project, item, Issue, field and option IDs; requires the qualified state/type catalogs, a bounded priority catalog, and coherent typed field/option values; refuses unconsumed field/label/value pages; excludes only foundry:adr supports; and hydrates a canonical bound Issue's UTF-8 body/comments/timestamps/parent/sub-issues/both dependency directions through REST. Every relation target proves the canonical repository before normalization; foreign, public, draft, PR, malformed, incomplete and ambiguous responses fail closed (ghprojects.py)"
         }
       }
     },
@@ -130,9 +128,8 @@
           "evidence": "search() raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query') whenever query is non-empty (linear.py)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "evidence": "search() raises NotImplementedError; GitHub's item filters are unqualified (PAT-65)",
-          "ticket": "PAT-65"
+          "status": "refused",
+          "evidence": "search(query=...) raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query'); PAT-57 qualifies the bound Project backlog only, not provider-native free-text search (ghprojects.py)"
         }
       },
       "note": "Criterion 4 excludes free native search from V1 core."
@@ -154,9 +151,8 @@
           "evidence": "create_issue (linear.py) creates with a client id, then verifies title, body, fields and parent on readback, TrackerConflictError on divergence, no retry"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "create_issue raises NotImplementedError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-66 persists a private local intent keyed by the exact binding and creation spec before the sole initial private-repository Issue POST. Fresh bounded observation makes zero/one/multiple candidates explicit: pending zero and multiple or unowned candidates refuse, while one exact canonical non-ADR candidate resumes without a second Issue POST. Project attachment, qualified fields and optional parent each converge by readback or get at most one recorded resume; known partial failures expose the Foundry/native Issue IDs. The journal is machine-local recovery state, not provider authority, CAS or a cross-machine exactly-once claim (ghprojects.py)."
         }
       }
     },
@@ -178,9 +174,8 @@
           "evidence": "PAT-ADR-0006 authorizes bounded in-place grooming: update_fields and issue update_body capture/re-read a targeted snapshot, perform one issueUpdate and verify readback; ambiguous responses recover by read only. edit.set_field converts the host-independent comma-separated Labels CLI argument to the portable list before write.set_field; Linear then uses addedLabelIds/removedLabelIds rather than a complete label replacement."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "update_fields raises NotImplementedError (ghprojects.py); update_body is the base refusal"
+          "status": "supported",
+          "evidence": "PAT-66 update_fields and issue update_body fresh-read only targeted portable values/body, issue one bounded write per effect and verify readback. GitHub supplies no qualified CAS: this is bounded detection with the S1-to-S2 residual race, not exclusion (ghprojects.py)."
         }
       }
     },
@@ -201,9 +196,8 @@
           "evidence": "add_comment (linear.py) creates the comment, reads it back and refuses on divergence, no retry; provider-assigned id, so a replay duplicates the note (free-text rule, #4.2)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "add_comment raises NotImplementedError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-66 proves the bound REST issue before one comment POST and validates its returned id/body. Free-text comments carry no state and a response loss is surfaced, never blindly retried (ghprojects.py)."
         }
       }
     },
@@ -224,9 +218,8 @@
           "evidence": "create_issue asserts the parent belongs to the binding, sets parentId (linear.py) and verifies the readback parent id (linear.py)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "create_issue raises NotImplementedError; whether Project v2 sub-issues map onto Foundry's parent/child model is unqualified (PAT-65)"
+          "status": "supported",
+          "evidence": "PAT-66 creates a child only after proving the parent is one unique complete non-ADR delivery item in the exact bound Project as well as the exact bound REST Issue; a canonical-repository Issue outside that Project and an ADR support refuse before any write. It then uses the child's distinct integer native Issue ID in the qualified sub_issues endpoint and verifies or boundedly resumes the normalized parent relation (ghprojects.py)."
         }
       }
     },
@@ -247,9 +240,8 @@
           "evidence": "link(subtask-of|parent-of) validates and snapshots both endpoints, re-reads them before one targeted parentId issueUpdate, then verifies the child parent readback (linear.py)."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "link() raises NotImplementedError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-66 proves both same-repository REST endpoints, snapshots/re-reads their relations, sends one targeted replace_parent sub_issues request and verifies normalized readback; it never conflates issue number and native issue id (ghprojects.py)."
         }
       }
     },
@@ -270,9 +262,8 @@
           "evidence": "link() validates and snapshots both endpoints, skips an existing identical relation, and creates depends-on/blocks/relates via issueRelationCreate at a deterministic UUIDv4 derived from canonical project/type/endpoints. For symmetric related only, both the slot identity and native payload sort endpoint IDs, so inverse calls converge on the same exact representation even with hidden projections; blocks/depends-on remain directional. The qualified input schema defines that UUIDv4 as the native identifier and issueRelation(id) as a unique-identifier lookup. Success and ambiguous recovery verify the exact ID/type/endpoints; a replay whose endpoint projections remain absent can request only that same identity, then converges through exact lookup or fails closed without another slot."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-66",
-          "evidence": "link() raises NotImplementedError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "PAT-66 proves same-repository endpoints, snapshots/re-reads relations and uses bounded native mutations: blocked_by for depends-on/blocks and qualified addRelatesTo for relates, with distinct Issue node IDs and symmetric GraphQL readback (ghprojects.py; qualification/github-projects-v1.md)."
         }
       }
     },
@@ -294,8 +285,8 @@
         },
         "ghprojects": {
           "status": "to_qualify",
-          "evidence": "no override; the base default applies and feasibility is unqualified",
-          "ticket": "PAT-65"
+          "evidence": "no override; the base default applies. PAT-65 qualified individual parent/sub-issue and dependency relations, not this aggregate projection",
+          "ticket": "PAT-57"
         }
       },
       "note": "Optional read-only projection; only DevHub implements it, for its own wave preview. The core journey is served by search(), link() and create_issue(parent=...)."
@@ -340,9 +331,8 @@
           "evidence": "list_adrs (linear.py) rebuilds Adr models from the Document/witness chains (_adr_documents, linear.py; _adr_chain)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-58",
-          "evidence": "list_adrs raises NotImplementedError (ghprojects.py); ADR storage is PAT-65's open question"
+          "status": "supported",
+          "evidence": "list_adrs exhaustively pages only the exact bound private Project, isolates foreign ADR namespaces, reads each reserved foundry:adr Issue and all version comments, then verifies source digest, sequence, predecessor coordinates and whole-version digest, native coordinates and reciprocal supersession before returning the normalized index (ghprojects.py)"
         }
       }
     },
@@ -363,9 +353,8 @@
           "evidence": "create_adr calls _create_adr_document directly (linear.py), which creates the version-0 Document and its witness at deterministic ids with byte-exact readback (linear.py; PAT-ADR-0002)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-58",
-          "evidence": "create_adr raises NotImplementedError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "create_adr reserves the next coordinate under a machine-local corpus lock after a fresh qualified snapshot, creates a reserved foundry:adr Issue in the exact private repository, adds it to the exact Project without a delivery Type default, appends its UTF-8 version-zero comment and verifies the full readback; durable stage markers prevent blind replay of an unknown provider effect without claiming distributed exclusion (ghprojects.py)"
         }
       }
     },
@@ -386,9 +375,8 @@
           "evidence": "set_adr_status appends a successor version through _next_adr_metadata and _append_adr_version (linear.py). Batch-qualified migration chains may use the exact source-digest and rendered-body-digest profile for FOUNDRY-ADR-0001 (linear.py); native ADRs, unqualified migrations, changed bodies and unknown readbacks remain on the strict closed model. Typed accept, supersede, issue-link and edit successors, predecessor/witness corruption, native/coordinated edits, interruption recovery and exact replay are covered by test_linear_tracker.py (PAT-47)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-58",
-          "evidence": "set_adr_status raises NotImplementedError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "set_adr_status verifies the caller's complete expected ADR snapshot against a fresh strict read, appends one linked version comment, and verifies exact desired metadata, source, status, relations and native comment ID; it is bounded detection without CAS or blind retry (ghprojects.py)"
         }
       }
     },
@@ -410,9 +398,8 @@
           "evidence": "adr_issue_link_supported = True (linear.py); link_adr_issue (linear.py) and supersede_adr (linear.py) append versions to the Document/witness chain"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "evidence": "not overridden; the base default applies",
-          "ticket": "PAT-65"
+          "status": "supported",
+          "evidence": "link_adr_issue and supersede_adr append verified ADR versions, respectively retaining canonical delivery Issue references and reciprocal supersession coordinates (ghprojects.py)"
         }
       },
       "note": "ADR evolution in criterion 1 is served by set_adr_status on every V1 provider; these methods are an optional reciprocal-linking enhancement."
@@ -435,9 +422,8 @@
           "evidence": "set_state accepts only in-progress/review/done (linear.py); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done). It appends the deterministic lifecycle receipt before projecting only the target native State under S1-S5; an exact, valid latest relevant receipt can repair only the missing native effect. Validation keeps immutable historical native observations separate from proof-bound logical targets: acceptance and override target their authenticated review generation even when an older receipt observed in-progress, while incompatible or regressing observations remain unknown. A late start or older review receipt cannot regress a durable done. Identical replay converges, authenticated disagreement is observable in get/observe/search, unknown chains expose no normalized state, and a bare native terminal State is never positive proof. Other states belong to frame-intake-groom-evolve-existing."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-67",
-          "evidence": "set_state raises NotImplementedError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "ghprojects.py implements proof-bound in-progress/review/done receipts in the complete paged Issue comment history, bound to the canonical repository, Project and native Issue/node/item coordinates, followed by one targeted ProjectV2 State projection with untargeted-property readback. A durable pending intent prevents a second comment POST after an unknown response; replay observes exactly one bound receipt, and native done alone fails closed. PAT-67 raw transport tests exercise the full lifecycle, later review generations and fresh-process replay. The authorized private personal Project live recipe used GHQUAL-13 and PR #14: exact head 03840ef8a56b308d53c8fec30eb6c4d09e8a1a94 had a successful verify check, Foundry merged at c080d9833de1ca66b6b43f9ca95074f22cb07f0a, and fresh readback was done/aligned."
         }
       }
     },
@@ -458,9 +444,8 @@
           "evidence": "PAT-ADR-0006 selects the proof-bound append-only projection as Linear's V1 AC authority. write.sync_acceptance dispatches to project_acceptance_proof when acceptance_proof_projection_supported = True; Issue.ac_done derives from that receipt while native checkbox replacement remains refused (write.py; linear.py)."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-67",
-          "evidence": "not overridden; the base raises AcceptanceSyncUnavailableError (base.py)"
+          "status": "supported",
+          "evidence": "ghprojects.py project_acceptance_proof reuses the canonical PAT-56 six-field proof validator, appends one exact receipt per review generation, requires checked to equal the complete semantic AC count, and derives progress without trusting native checkboxes. Legacy, partial, blocked, foreign, stale or malformed proofs fail closed on every read. GHQUAL-13/PR #14 produced an independent review proof with both AC passed on exact head 03840ef8a56b308d53c8fec30eb6c4d09e8a1a94; Foundry's post-merge readback returned 2/2 AC."
         }
       }
     },
@@ -482,9 +467,8 @@
           "evidence": "acceptance_override_projection_supported = True (linear.py); project_acceptance_override (linear.py) and recover_acceptance_override (linear.py) append a typed receipt (PAT-49)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "evidence": "not overridden; the base default applies",
-          "ticket": "PAT-65"
+          "status": "refused",
+          "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError. PAT-67 qualifies proof-bound normal acceptance, not the optional human override receipt."
         }
       }
     },
@@ -508,7 +492,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-69",
-          "evidence": "no override; the base default applies. Whether GitHub Projects v2 offers any parent/child precondition is unqualified (PAT-65); the capability itself is owned by PAT-69 (epic closure in the active tracker)."
+          "evidence": "no override; the base default applies. PAT-65 qualified individual parent/sub-issue reads and writes but no atomic graph precondition; the capability itself is owned by PAT-69 (epic closure in the active tracker)."
         }
       },
       "note": "DevHub (non-V1) retains its stronger atomic epic_closure_supported transaction; GitHub Projects remains unqualified and refuses through the base port."
@@ -564,7 +548,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-64",
-          "evidence": "not overridden; GitHub ADR storage (PAT-65/PAT-58) must exist before an import target can"
+          "evidence": "PAT-58 delivered the qualified GitHub ADR shape under PAT-ADR-0007, but the historical import port is not overridden; PAT-64 owns qualification of GitHub Projects as an import target"
         }
       },
       "note": "ADR half of the switch only. The live-work half is the next row."
@@ -593,7 +577,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-64",
-          "evidence": "stub; write tranche PAT-66 must exist first"
+          "evidence": "no live-work copy override; the write tranche PAT-66 must exist first"
         }
       },
       "note": "Criterion 4 makes the switch by faithful copy of live work AND ADRs core V1; only the ADR half has adapter code today."
@@ -609,26 +593,19 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "query.py changelog() (query.py) and milestones() (query.py) derive release scope from Issue.milestone/state returned by search(); YouTrack reads Milestone as a custom field (youtrack.py)"
+          "evidence": "read_release_scope verifies the mapped enum-value id/name in ms_bundle, pages the exact scoped query and never promotes native Done to delivery proof (youtrack.py, release-scope.md)"
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-59",
-          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock after strict marker validation (registry.py); PAT-59 still owns the release-scope semantics and provider qualification"
+          "status": "supported",
+          "evidence": "read_release_scope verifies the exact mapped ProjectMilestone, filters by its native id with full outer pagination and classifies only exact lifecycle done receipts as accepted or deviated (linear.py, release-scope.md)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-59",
-          "evidence": "depends on backlog-read (PAT-57) and on how Project v2 represents milestones (PAT-65)"
+          "status": "supported",
+          "evidence": "read_release_scope verifies the exact canonical repository Milestone, exhausts its issues and requires membership in the bound product Project; native Done stays unavailable without PAT-67 proof (ghprojects.py, release-scope.md)"
         }
       },
       "note": "Ship-iOS (plugins/ship-ios/scripts/changelog_bridge.py) consumes only the 'query changelog' JSON of foundry_cli.py; it imports no Tracker adapter and holds no provider credential."
     }
   ],
-  "open_points_not_decided_here": [
-    {
-      "id": "ghprojects-graphql-vs-rest-only-codehost-rule",
-      "description": "GitHub Projects v2 is GraphQL-only. Foundry's code-host rule is 'Never GraphQL ... REST only — the adapter enforces it' (skills/merge-pr/SKILL.md:226). A repository choosing ghprojects keeps the REST-only GitHub code-host adapter for PRs/merges, but its tracker adapter would need GraphQL. PAT-65 resolves this tension; PAT-53 does not."
-    }
-  ]
+  "open_points_not_decided_here": []
 }

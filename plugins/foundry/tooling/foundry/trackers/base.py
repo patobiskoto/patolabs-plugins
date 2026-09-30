@@ -15,6 +15,7 @@ from foundry.models import (
     EpicClosureReceipt,
     Issue,
     Project,
+    ReleaseScope,
     TransitionContext,
 )
 
@@ -79,6 +80,14 @@ class TrackerCapabilityUnavailableError(RuntimeError):
         self.capability = capability
 
 
+class ReleaseScopeUnavailableError(RuntimeError):
+    """An exact release coordinate is absent, unmapped, inaccessible or invalid."""
+
+    def __init__(self, tracker: str, release: str, reason: str):
+        super().__init__(f"release scope unavailable: {tracker}:{release}:{reason}")
+        self.tracker, self.release, self.reason = tracker, release, reason
+
+
 class EpicClosureUnavailableError(RuntimeError):
     """The active tracker lacks atomic, audited non-code Epic closure."""
 
@@ -108,6 +117,11 @@ class Tracker(ABC):
     acceptance_proof_projection_supported: bool = False
     acceptance_override_projection_supported: bool = False
     cockpit_evidence_projection_supported: bool = False
+
+    def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
+        """Read one explicitly mapped provider release without approximate discovery."""
+        del project
+        raise ReleaseScopeUnavailableError(self.name, release, "unsupported")
 
     # --- optional read-only graph projection -----------------------------
     def get_epic_subgraph(

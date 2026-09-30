@@ -30,8 +30,8 @@ to the historical comma-separated custom-field string (`[]` becomes `""`) before
 **Authority.** The exit criteria (1-4) come from the PAT-51 epic's acceptance criteria.
 Where a rule restates an accepted decision it cites the ADR (FOUNDRY-ADR-0002,
 FOUNDRY-ADR-0013, FOUNDRY-ADR-0017, FOUNDRY-ADR-0026, PAT-ADR-0001..0003,
-PAT-ADR-0006) and does not re-decide it. Accepted durable-write invariants are recorded
-in §4.3.
+PAT-ADR-0006 and PAT-ADR-0007) and does not re-decide it. Accepted durable-write
+invariants are recorded in §4.3.
 
 ## 1. Core journeys and the capability matrix
 
@@ -53,18 +53,18 @@ closed vocabulary:
 
 | Core journey | Representative `Tracker` ops | YouTrack | Linear | ghprojects |
 |---|---|---|---|---|
-| Contexte/backlog: identity and project resolution | `resolve_project`, `resolve_checkout_project`, `validate_mutation_*` | supported | supported | supported (binding only; workflow qualification remains PAT-65) |
+| Contexte/backlog: identity and project resolution | `resolve_project`, `resolve_checkout_project`, `validate_mutation_*` | supported | supported | supported (binding only; workflow methods remain with PAT-57/66/67) |
 | Contexte/backlog: repository bootstrap (bind an existing verified project) | `verify_project_identity`, `resolve_checkout_project` | supported | supported | supported (binding only) |
-| Contexte/backlog: read | `search`, `get_issue` | supported | supported (unknown mapping fails closed; `registry update` resumes) | `to_qualify` PAT-57 |
-| Frame/intake/groom: create, comment | `create_issue`, `add_comment` | supported | supported | `to_qualify` PAT-66 |
-| Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | `to_qualify` PAT-66 |
-| Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | `to_qualify` PAT-66 |
-| Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | `to_qualify` PAT-66 |
-| Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | `to_qualify` PAT-58 |
-| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 |
-| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 |
-| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | `to_qualify` PAT-69 (after PAT-65) |
-| Périmètre de release/changelog | `search` via `query.py changelog()` | supported | **gap** PAT-59 | `to_qualify` PAT-59 |
+| Contexte/backlog: read | `search`, `get_issue` | supported | supported (unknown mapping fails closed; `registry update` resumes) | supported (PAT-57, qualified private personal-project read profile) |
+| Frame/intake/groom: create, comment | `create_issue`, `add_comment` | supported | supported | supported (PAT-66) |
+| Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
+| Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) |
+| Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
+| Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) |
+| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) |
+| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
+| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | `to_qualify` PAT-69 |
+| Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
 | Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
 | Bascule (PAT-64): archived source refuses writes | mutation ports plus provider target preflight | supported | supported | `to_qualify` PAT-64 |
@@ -85,7 +85,9 @@ cell.
   native custom field rather than reporting a false snapshot/readback. The historical
   direct-adapter custom-field escape hatch remains available without that bounded
   guarantee and is outside the core contract's deliberately non-universal editor.
-  GitHub Projects remains PAT-66.
+  GitHub Projects delivers its narrower qualified portable vocabulary through PAT-66;
+  PAT-67 qualifies the lifecycle projection for the exact private personal Project
+  and canonical repository documented in `ghprojects-tracker.md`.
 - **PAT-56** — States and AC. YouTrack receives the explicit predecessor owned by the
   public lifecycle operation and re-reads it before one targeted native projection.
   `write.transition` never replaces that coordinate with the native state seen on a
@@ -138,24 +140,47 @@ before the Milestone enum or issue POST (`youtrack.py`).
 
 **Explicit refusals (non-core):** free native-text `search(query=…)` on Linear
 (`linear.py`, `provider-native-search-query`); full administrative
-provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack and Linear
+provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack, Linear and
+`ghprojects`
 (optional projection used only by DevHub); `supersede_adr`/`link_adr_issue` on YouTrack
 (ADR evolution is served by `set_adr_status`); the typed acceptance-override receipt on
 YouTrack (free-text audit note fallback, `base.py`).
 
-**`to_qualify` (`ghprojects`).** PAT-54 supplies the canonical checkout binding and
-read-only existing-project probe. The ten workflow methods `search`, `get_issue`,
-`create_issue`, `update_fields`, `set_state`, `link`,
-`add_comment`, `list_adrs`, `create_adr` and `set_adr_status`, each raising
-`NotImplementedError` (`ghprojects.py`). Everything else is inherited
-from `base.py` unchanged: optional ports raise their typed unavailability error
-(`EpicClosureUnavailableError`, `BodyUpdateUnavailableError`,
-`AcceptanceSyncUnavailableError`, `ProjectProvisioningUnavailableError`,
-`EpicSubgraphUnavailableError`, `TrackerCapabilityUnavailableError`); the
-`validate_*` checks and `preflight_issue_operation` are no-ops. PAT-65 qualifies GitHub
-Projects v2 and GitHub-hosted ADR storage on authorized test resources; each cell's
-`ticket` names the tranche that implements it (PAT-57, 58, 59, 64, 66, 67) or PAT-65
-where only qualification is known.
+**GitHub Projects read and ADR slices (PAT-57/PAT-58).** PAT-54 supplies
+the canonical checkout binding and read-only existing-project probe. PAT-65 then
+qualified the private, personal-project API shape and selected the ADR representation
+under PAT-ADR-0007; the evidence and its limits are recorded in
+[`qualification/github-projects-v1.md`](qualification/github-projects-v1.md). The two
+`search` and `get_issue` are delivered for the exact bound private personal-project
+profile: every supplied Project coordinate first matches the active checkout binding;
+GraphQL then pages Project items and rejects a field, label, or item-field-value
+connection that reports an unconsumed page, then REST hydrates the bound Issue,
+comments, parent, sub-issues and both dependency directions. Every REST relation target
+must prove the canonical repository before its number becomes a normalized key. It
+requires a distinct private personal-repository node, Project item ID and Issue node ID,
+exactly one qualified field ID, the qualified state/type catalogs, a bounded priority
+catalog, and coherent field/option value IDs.
+It rejects partial GraphQL responses and unsupported draft/PR/foreign items, and excludes only the reserved
+`foundry:adr` support. Native free-text search is explicitly refused. PAT-66 supplies
+bounded delivery-Issue creation, field/body updates, links and comments for this
+qualified profile; PAT-67 supplies the proof-bound lifecycle projection for the
+qualified private personal Project. PAT-58
+supplies an exact-project ADR codec: a reserved `foundry:adr` Issue
+is the support, its UTF-8 body is current source, and version comments bind source
+digest, sequence, predecessor, status and relations. Reads exhaust both Project and
+comment pagination and reject duplicate, foreign, incomplete or altered chains. It
+never imports the PAT-65 `EXP-ADR-0001` prototype as authority. Creation and later
+body/status/link/supersession evolution are bounded read-verify-write-readback paths;
+GitHub provides no CAS, immutable history or idempotency key, so an ambiguous comment
+or create response is explicit and not blindly replayed. Optional ports not delivered
+by these slices retain their typed unavailability errors from `base.py`; the exact
+status of each port is the matrix below. The cells therefore do
+not become `supported` from provider probes alone: each cell's `ticket` names the tranche
+that must deliver and qualify the adapter operation (PAT-57, 58, 59, 64, 66, 67, 69),
+including the still-unavailable optional Epic subgraph projection under PAT-57.
+The optional GitHub Projects acceptance-override receipt is explicitly refused.
+PAT-65
+owns no remaining adapter-delivery cell.
 
 ## 2. Identity model
 
@@ -231,12 +256,13 @@ cross-project behavior.
 Explicit creation checks the supplied native project. For
 `ghprojects`, a GitHub issue number is per repository and one Project v2 can hold issues
 from several repositories, so its normalized key must carry the issue's repository
-identity (for example `host/owner/repo#12`); PAT-65 qualifies the wire format, this
-contract fixes the requirement.
+identity (for example `host/owner/repo#12`). PAT-65 qualified exact provider
+coordinates in the private personal-project scope; this contract fixes the normalized
+key requirement for the future adapter.
 
 **Provider identifiers stay inside the adapter**: YouTrack's internal entity id, Linear's
-GraphQL node ids (validated by the generic `_SAFE_ID` pattern, `linear.py`), and — once
-qualified — GitHub's `(repository, issue number, Project item node id)`. The pipeline and
+GraphQL node ids (validated by the generic `_SAFE_ID` pattern, `linear.py`), and GitHub's
+qualified `(repository, issue number, Project item node id)` shape. The pipeline and
 skills only see the normalized `Issue`/`Adr`/`Project` models (`models.py`).
 
 ## 3. Tracker / CodeHost / Ship-iOS boundaries
@@ -250,12 +276,17 @@ skills only see the normalized `Issue`/`Adr`/`Project` models (`models.py`).
   `foundry_cli.py query changelog <MILESTONE>` from the same checkout and consumes only that JSON;
   it imports no tracker module and holds no provider credential, and exits 3 when
   Foundry is absent so the caller falls back to a changelog file.
+  The versioned payload and the stable provider mappings are documented in
+  [`release-scope.md`](release-scope.md). `milestone`, `count` and `groups` remain the
+  bridge-compatible projection; the additive categories make unknown proof explicit.
 
 ## 4. Mutation guarantees without a provider transaction/CAS
 
 Neither YouTrack nor Linear, as used by Foundry, offers a provider-side compare-and-swap
-on an issue or ADR write; GitHub Projects v2 is unqualified (PAT-65) and nothing is
-assumed. A read before the write plus a readback **detects** some concurrent writes; it
+on an issue or ADR write. PAT-65 did not qualify any GitHub provider CAS or idempotence
+key, and PAT-ADR-0007 adopts the same bounded S1-S5 model for the future GitHub ADR
+adapter, without claiming immutable comments. A read before the write plus a readback
+**detects** some concurrent writes; it
 never **excludes** them, and no text in Foundry may say otherwise.
 
 ### 4.1 Levels implemented today
@@ -374,18 +405,32 @@ state-bound and proof-bound trackers, an open PR is reread after CI and immediat
 before merge; a changed base ref or SHA is refused. This remains bounded detection,
 not a CAS: GitHub provides no expected-base parameter for the merge endpoint.
 
-Issue creation and free-text comments are outside S5: YouTrack and Linear issue creates
-use provider-assigned or fresh client ids, and ambiguous free-text comment replay can
-duplicate a non-authoritative note. Linear issue relations now use a deterministic UUID
+YouTrack and Linear issue creation remain outside S5: they use provider-assigned or
+fresh client ids. GitHub Projects issue creation meets S5 within one Foundry data
+directory through a private, atomically written intent keyed by the exact binding and
+creation spec. The adapter writes the intent before its only initial Issue POST, then
+requires zero candidates for that initial effect; a replay with zero candidates remains
+unknown and refuses, one exact canonical non-ADR candidate resumes, and multiple or
+unowned candidates refuse. Each partial Project attachment, field or parent step is
+freshly observed and gets at most one recorded resume attempt. The local lock coordinates
+Claude Code, Codex and worktrees on one machine, but is neither a provider receipt nor
+cross-machine authority and supplies no CAS or general exactly-once guarantee. An
+external identical create in the initial zero-read-to-POST window remains the explicit
+S1-to-S2 race. With no caller-supplied operation ID, an intentional second create with
+the exact same binding and spec is indistinguishable from a replay on that machine and
+converges on the retained intent.
+
+Free-text comments remain outside S5: an ambiguous replay can duplicate a
+non-authoritative note. Linear issue relations now use a deterministic UUID
 derived from their canonical project/type/endpoints. Linear's qualified schema defines
 the supplied UUIDv4 as the native relation identifier and `issueRelation(id)` as a lookup
 by its unique identifier. Success and ambiguous recovery verify that exact ID, type and
 both endpoints. A replay with endpoint projections still absent may send another create
 request only at that same identity; an existing slot converges by exact lookup, while an
 unavailable, missing, permission-denied, malformed or mismatched lookup fails closed.
-This proves S5 for the relation port without claiming general idempotence or CAS. GitHub
-Projects' targets are set by PAT-65: absent a qualified provider precondition, this
-floor applies.
+This proves S5 for the relation port without claiming general idempotence or CAS.
+GitHub's qualification still supplies no provider precondition; the local intent only
+prevents an unknown local replay from becoming another blind POST.
 
 ### 4.3 Accepted durable-invariant decision
 
@@ -399,7 +444,7 @@ ADR entry or `blocked_by_adr` cell; remaining `gap` cells are implementation wor
 by their tickets. A future stronger or weaker guarantee still requires another accepted
 ADR before code.
 
-## 5. Optional / excluded scope and the open GraphQL/REST point
+## 5. Optional / excluded scope and the resolved GraphQL/REST point
 
 **Excluded from V1 core** (criterion 4): full administrative provisioning (creating a
 provider organization/team/board, or instance-global custom fields, bundles, workflow
@@ -421,8 +466,10 @@ foundry_cli.py registry update <tracker> <repo> <KEY> <project-id> \
 `bootstrap` derives the canonical identity from the checkout rather than from an
 argument. Before the local publication, YouTrack reads the exact native project id/key;
 Linear reads the exact project id, team UUID and team key after validating every UUID
-map; YouTrack V1 extras are limited to `canonical_repo` and optional non-empty
-`ms_bundle`. Undeclared keys, including credential keys, refuse before provider readback
+map; YouTrack V1 extras are limited to `canonical_repo`, optional non-empty
+`ms_bundle`, and optional structured `release_ids`. GitHub Projects accepts the same
+structured `release_ids` map beside its required owner/number coordinates. Undeclared
+keys, including credential keys, refuse before provider readback
 or persistence. GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
 before the registry or marker changes (`registry.py`;
@@ -430,8 +477,8 @@ before the registry or marker changes (`registry.py`;
 organization/user `projectV2(number:)` lookup and `ProjectV2.repositories` connection;
 it is capped at ten 100-repository pages and needs only `read:project` permission
 ([GitHub Projects API guide](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-api-to-manage-projects),
-[ProjectV2 reference](https://docs.github.com/en/graphql/reference/projects)). This is
-an offline-tested binding probe, not PAT-65's live workflow qualification.
+[ProjectV2 reference](https://docs.github.com/en/graphql/reference/projects)). This
+offline-tested binding probe predates and is narrower than PAT-65's live qualification.
 
 If the provider's basename slot already belongs to a different canonical repository,
 bootstrap publishes the new entry under its deterministic disambiguated storage key.
@@ -487,12 +534,22 @@ canonical homonym. It rechecks the complete checkout selection across providers 
 publication lock, refusing a concurrently added binding or tombstone. Use the existing-project
 bootstrap path for homonyms; administrative setup never replaces their bindings.
 
-**Open workflow point for PAT-65.** GitHub Projects v2 is GraphQL-only (`ghprojects.py`
-module docstring). Foundry's code-host rule is REST only (`skills/merge-pr/SKILL.md:226`:
-"Never GraphQL (`gh pr create/merge/checks`). REST only — the adapter enforces it.").
-A repository choosing `ghprojects` keeps the REST-only code-host adapter for PRs and
-merges. Its tracker adapter uses one read-only GraphQL probe for PAT-54 binding and will
-use GraphQL for tracker operations only as PAT-65 and the owner tickets qualify them.
+**Resolved by PAT-65.** GitHub Projects v2 is not GraphQL-only: the authorized private
+personal project returned `200` from the REST project read, while the Projects mutations
+actually exercised by PAT-65 used GraphQL. Issue creation, comments, labels,
+parent/sub-issue relations and dependencies use the Issues REST API. No REST Projects
+mutation, organization project, public-repository ADR store or GitHub App shape is
+claimed. PAT-ADR-0007 selects one issue per ADR in the canonical private repository,
+version comments checked by digest, and the reserved `foundry:adr` label; PAT-65 also
+proved a persisted GraphQL board view with `-label:foundry:adr`. These are provider
+qualification results, not implemented adapter capabilities, so the PAT-57/58/66/67
+cells remain unavailable until their owner tickets deliver and qualify them; PAT-57's
+bounded read cell is the delivered exception described above.
+
+This resolution creates no exception to the code-host rule. A repository choosing
+`ghprojects` keeps the REST-only code-host adapter for PRs, CI and merges. GraphQL is
+confined to qualified tracker operations behind the separate `Tracker` adapter; it is
+never used by the code-host path.
 
 ## 6. Conformance test plan
 
@@ -505,8 +562,9 @@ use GraphQL for tracker operations only as PAT-65 and the owner tickets qualify 
 - **PAT-61 — real recipe, three trackers × two hosts**: authorized test resources proving
   each journey against YouTrack, Linear and GitHub Projects in Claude Code and Codex.
   PAT-68's doubles are never presented as this recipe.
-- **PAT-65 — GitHub Projects v2 and ADR-storage qualification** on authorized test
-  resources, feeding PAT-57/58/66/67.
+- **PAT-65 — GitHub Projects v2 and ADR-storage qualification** completed on authorized
+  private personal resources, feeding PAT-57/58/66/67; its report keeps organization,
+  public repositories, minimal permissions and GitHub Apps explicitly unqualified.
 
 ## Document status
 

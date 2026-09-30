@@ -30,8 +30,17 @@ import uuid
 
 from foundry import config, registry
 from foundry.models import (
-    Adr, EpicClosureChild, EpicClosureDependency, EpicClosureOutcome,
-    EpicClosureReceipt, Issue, Link, Project, TransitionContext,
+    Adr,
+    EpicClosureChild,
+    EpicClosureDependency,
+    EpicClosureOutcome,
+    EpicClosureReceipt,
+    Issue,
+    Link,
+    Project,
+    ReleaseIssue,
+    ReleaseScope,
+    TransitionContext,
 )
 from foundry.trackers.base import (
     _UNSPECIFIED_ADR_RELATION,
@@ -42,6 +51,7 @@ from foundry.trackers.base import (
     Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
+    ReleaseScopeUnavailableError,
 )
 
 
@@ -139,8 +149,14 @@ query FoundryLinearIssue($id: String!) {{
 """
 
 _PROJECT_BINDING_QUERY = """
-query FoundryLinearProjectBinding($id: String!) {
-  project(id: $id) { id team { id key } }
+query FoundryLinearProjectBinding($id: String!, $teamId: ID!) {
+  project(id: $id) {
+    id
+    teams(filter: { id: { eq: $teamId } }, first: 2) {
+      nodes { id key }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
 }
 """
 
@@ -156,6 +172,45 @@ query FoundryLinearIssues($teamId: ID!, $projectId: ID!, $after: String) {{
   }}
 }}
 """
+
+_PROJECT_RELEASES_QUERY = """
+query FoundryLinearProjectMilestones($id: String!, $after: String) {
+  project(id: $id) {
+    id
+    projectMilestones(first: 100, after: $after) {
+      nodes { id name }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+_RELEASE_ISSUES_QUERY = f"""
+query FoundryLinearReleaseIssues(
+  $teamId: ID!, $projectId: ID!, $milestoneId: ID!, $after: String
+) {{
+  issues(
+    filter: {{
+      team: {{ id: {{ eq: $teamId }} }},
+      project: {{ id: {{ eq: $projectId }} }},
+      projectMilestone: {{ id: {{ eq: $milestoneId }} }}
+    }}
+    first: 100
+    after: $after
+  ) {{
+    nodes {{ {_ISSUE_FIELDS} }}
+    pageInfo {{ hasNextPage endCursor }}
+  }}
+}}
+"""
+
+_RELEASE_NESTED_FIELDS = {
+    "labels": "id name",
+    "children": "id identifier",
+    "relations": "type relatedIssue { id identifier }",
+    "inverseRelations": "type issue { id identifier }",
+    "comments": "id body createdAt",
+}
 
 _ISSUE_CREATE = """
 mutation FoundryLinearIssueCreate($input: IssueCreateInput!) {
@@ -1800,16 +1855,29 @@ class LinearTracker(Tracker):
     def verify_project_identity(self, project: Project) -> bool:
         binding = self._binding(project)
         data = self._graphql(
-            _PROJECT_BINDING_QUERY, {"id": project.id}, "project-binding-read",
+            _PROJECT_BINDING_QUERY,
+            {"id": project.id, "teamId": binding["team_id"]},
+            "project-binding-read",
         )
         raw = data.get("project")
-        team = raw.get("team") if isinstance(raw, dict) else None
-        return bool(
-            isinstance(team, dict)
-            and raw.get("id") == project.id
-            and team.get("id") == binding["team_id"]
-            and team.get("key") == project.key
-        )
+        teams = raw.get("teams") if isinstance(raw, dict) else None
+        try:
+            rows = _connection(teams, "project-binding-read.teams")
+        except LinearTrackerError:
+            return False
+        if not (
+            raw.get("id") == project.id
+            and len(rows) == 1
+            and rows[0].get("id") == binding["team_id"]
+            and rows[0].get("key") == project.key
+        ):
+            return False
+        try:
+            for release in binding["milestone_ids"]:
+                self._mapped_release(project, release)
+        except ReleaseScopeUnavailableError:
+            return False
+        return True
 
     def resolve_project(self, repo: str) -> Project:
         # The provider-neutral port historically passes a repository basename here.
@@ -3027,6 +3095,274 @@ class LinearTracker(Tracker):
             if not isinstance(cursor, str) or not cursor:
                 raise LinearTrackerError("issue.search", None, "pagination_stalled")
         raise LinearTrackerError("issue.search", None, "pagination_limit")
+
+    def _mapped_release(self, project: Project, release: str) -> tuple[dict, str]:
+        binding = self._activate(project)
+        release_id = binding["milestone_ids"].get(release)
+        if release_id is None:
+            raise ReleaseScopeUnavailableError(self.name, release, "unmapped")
+        cursor = None
+        seen: set[str] = set()
+        match: dict | None = None
+        for _ in range(_MAX_PAGES):
+            data = self._graphql(
+                _PROJECT_RELEASES_QUERY,
+                {"id": binding["project_id"], "after": cursor},
+                "release.read",
+            )
+            raw_project = data.get("project")
+            if (
+                not isinstance(raw_project, dict)
+                or raw_project.get("id") != binding["project_id"]
+            ):
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "project_unavailable"
+                )
+            connection = raw_project.get("projectMilestones")
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list
+            ):
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            page = connection.get("pageInfo")
+            if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            for row in connection["nodes"]:
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(row.get("id"), str)
+                    or not isinstance(row.get("name"), str)
+                    or row["id"] in seen
+                ):
+                    raise ReleaseScopeUnavailableError(
+                        self.name, release, "invalid_response"
+                    )
+                seen.add(row["id"])
+                if row["id"] == release_id:
+                    if match is not None:
+                        raise ReleaseScopeUnavailableError(
+                            self.name, release, "ambiguous_coordinate"
+                        )
+                    match = row
+            if not page["hasNextPage"]:
+                break
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "pagination_stalled"
+                )
+        else:
+            raise ReleaseScopeUnavailableError(self.name, release, "pagination_limit")
+        if match is None:
+            raise ReleaseScopeUnavailableError(self.name, release, "absent")
+        if match["name"] != release:
+            raise ReleaseScopeUnavailableError(self.name, release, "mapping_mismatch")
+        return binding, release_id
+
+    def _release_issue(self, raw: dict, project: Project) -> ReleaseIssue:
+        issue = self._to_issue(raw, project, observe_lifecycle=True)
+        references: dict[str, object] = {"provider_issue_id": raw.get("id")}
+        try:
+            lifecycle = self._lifecycle_projection(
+                issue.id, raw, allow_current_disagreement=True,
+            )
+        except TrackerConflictError:
+            lifecycle = None
+        if lifecycle is not None and lifecycle["state"] == "done":
+            done = lifecycle.get("done") or {}
+            references.update({
+                key: done.get(key)
+                for key in (
+                    "pr_url", "head_sha", "base_sha", "merge_sha",
+                    "review_digest", "review_generation",
+                )
+            })
+            if issue.projection_status != "aligned":
+                # A historical exact merge receipt remains useful evidence, but a
+                # current native reopen is a conflicting fact. It cannot appear as
+                # accepted current release scope until the disagreement is resolved.
+                disposition = "unavailable"
+            elif lifecycle.get("acceptance_override") is None:
+                acceptance = lifecycle.get("acceptance_by_generation", {}).get(
+                    done.get("review_generation")
+                )
+                if isinstance(acceptance, dict):
+                    proof = acceptance.get("proof")
+                    if isinstance(proof, dict):
+                        references["acceptance_proof_id"] = proof.get("proof_id")
+                disposition = "accepted"
+            else:
+                references["override_reason"] = lifecycle["acceptance_override"]
+                disposition = "deviated"
+        elif lifecycle is not None and lifecycle["state"] in {"in-progress", "review"}:
+            disposition = "unfinished"
+            if lifecycle.get("pr_url"):
+                references["pr_url"] = lifecycle["pr_url"]
+        elif str(issue.native_state or "").casefold() in {
+            "done", "completed", "fixed", "dropped",
+        }:
+            disposition = "unavailable"
+        else:
+            disposition = "unfinished" if issue.projection_status != "unknown" else "unavailable"
+        return ReleaseIssue(
+            id=issue.id,
+            title=issue.title,
+            type=issue.type,
+            state=issue.state or issue.native_state,
+            labels=tuple(issue.labels),
+            disposition=disposition,
+            references={key: value for key, value in references.items() if value is not None},
+        )
+
+    def _complete_release_issue_connections(
+        self, raw: dict, binding: dict, release_id: str, release: str,
+    ) -> dict:
+        """Exhaust nested issue facts before classifying a release member."""
+        complete = dict(raw)
+        issue_id = raw.get("id")
+        if not isinstance(issue_id, str) or not issue_id:
+            raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+        for field, fields in _RELEASE_NESTED_FIELDS.items():
+            connection = raw.get(field)
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list,
+            ):
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            nodes = list(connection["nodes"])
+            page = connection.get("pageInfo")
+            cursors: set[str] = set()
+            for _ in range(_MAX_PAGES):
+                if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                if not page["hasNextPage"]:
+                    complete[field] = {
+                        "nodes": nodes,
+                        "pageInfo": {"hasNextPage": False, "endCursor": page.get("endCursor")},
+                    }
+                    break
+                cursor = page.get("endCursor")
+                if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                    raise ReleaseScopeUnavailableError(self.name, release, "pagination_stalled")
+                cursors.add(cursor)
+                query = f"""
+                query FoundryLinearReleaseNested($id: String!, $after: String) {{
+                  issue(id: $id) {{
+                    id identifier project {{ id }} team {{ id }} projectMilestone {{ id }}
+                    {field}(first: 100, after: $after) {{
+                      nodes {{ {fields} }} pageInfo {{ hasNextPage endCursor }}
+                    }}
+                  }}
+                }}
+                """
+                data = self._graphql(
+                    query, {"id": issue_id, "after": cursor},
+                    f"release.{field}",
+                )
+                current = data.get("issue")
+                if not isinstance(current, dict) or current.get("id") != issue_id:
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                if (
+                    current.get("identifier") != raw.get("identifier")
+                    or not isinstance(current.get("project"), dict)
+                    or current["project"].get("id") != binding["project_id"]
+                    or not isinstance(current.get("team"), dict)
+                    or current["team"].get("id") != binding["team_id"]
+                    or not isinstance(current.get("projectMilestone"), dict)
+                    or current["projectMilestone"].get("id") != release_id
+                ):
+                    raise ReleaseScopeUnavailableError(self.name, release, "foreign_membership")
+                connection = current.get(field)
+                if not isinstance(connection, dict) or not isinstance(
+                    connection.get("nodes"), list,
+                ) or any(not isinstance(node, dict) for node in connection["nodes"]):
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                nodes.extend(connection["nodes"])
+                page = connection.get("pageInfo")
+            else:
+                raise ReleaseScopeUnavailableError(self.name, release, "pagination_stalled")
+        return complete
+
+    def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
+        binding, release_id = self._mapped_release(project, release)
+        cursor = None
+        seen: set[str] = set()
+        issues: list[ReleaseIssue] = []
+        for _ in range(_MAX_PAGES):
+            data = self._graphql(
+                _RELEASE_ISSUES_QUERY,
+                {
+                    "teamId": binding["team_id"],
+                    "projectId": binding["project_id"],
+                    "milestoneId": release_id,
+                    "after": cursor,
+                },
+                "release.issues",
+            )
+            connection = data.get("issues")
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list
+            ):
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            page = connection.get("pageInfo")
+            if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            for raw in connection["nodes"]:
+                native_project = raw.get("project") if isinstance(raw, dict) else None
+                native_team = raw.get("team") if isinstance(raw, dict) else None
+                native_milestone = (
+                    raw.get("projectMilestone") if isinstance(raw, dict) else None
+                )
+                if (
+                    not isinstance(native_project, dict)
+                    or native_project.get("id") != binding["project_id"]
+                    or not isinstance(native_team, dict)
+                    or native_team.get("id") != binding["team_id"]
+                    or not isinstance(native_milestone, dict)
+                    or native_milestone.get("id") != release_id
+                ):
+                    raise ReleaseScopeUnavailableError(
+                        self.name, release, "foreign_membership"
+                    )
+                complete = self._complete_release_issue_connections(
+                    raw, binding, release_id, release,
+                )
+                item = self._release_issue(complete, project)
+                if item.id in seen:
+                    raise ReleaseScopeUnavailableError(
+                        self.name, release, "pagination_stalled"
+                    )
+                seen.add(item.id)
+                issues.append(item)
+            if not page["hasNextPage"]:
+                break
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "pagination_stalled"
+                )
+        else:
+            raise ReleaseScopeUnavailableError(self.name, release, "pagination_limit")
+        return ReleaseScope(
+            provider=self.name,
+            project_key=project.key,
+            project_id=project.id,
+            release=release,
+            release_id=release_id,
+            native_state=None,
+            issues=tuple(issues),
+            closure={
+                "mode": "operator",
+                "native_capability": "unavailable",
+                "action": "record-scope-freeze",
+                "native_mutation": False,
+                "preconditions": ["unfinished=0", "unavailable=0"],
+                "verification": "read-release-scope",
+            },
+            coordinates={
+                "project_id": binding["project_id"],
+                "team_id": binding["team_id"],
+                "project_milestone_id": release_id,
+            },
+        )
 
     def get_issue(self, issue_id: str) -> Issue:
         project = self._project()

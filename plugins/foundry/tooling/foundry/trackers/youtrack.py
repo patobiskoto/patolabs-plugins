@@ -25,11 +25,21 @@ from foundry.routing import (
     synchronize_acceptance_body,
 )
 from foundry.models import (
-    Adr, EpicClosureChild, EpicClosureDependency, EpicClosureOutcome,
-    EpicClosureReceipt, Issue, Link, Project, TransitionContext,
+    Adr,
+    EpicClosureChild,
+    EpicClosureDependency,
+    EpicClosureOutcome,
+    EpicClosureReceipt,
+    Issue,
+    Link,
+    Project,
+    ReleaseIssue,
+    ReleaseScope,
+    TransitionContext,
 )
 from foundry.trackers.base import (
     IssueUnavailableError,
+    ReleaseScopeUnavailableError,
     Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
@@ -61,10 +71,17 @@ _LINK_ROLE = {
 # so a raw provider phrase leaking through would silently break blocked_by/unlocks.
 _ROLE_TO_TYPE = {phrase: ltype for ltype, phrase in _LINK_ROLE.items()}
 
-_ISSUE_FIELDS = ("idReadable,summary,description,created,updated,"
-                 "customFields(name,value(name,minutes)),"
+_ISSUE_FIELDS = ("idReadable,id,summary,description,created,updated,"
+                 "customFields(name,value(id,name,minutes)),"
                  "links(direction,linkType(name,sourceToTarget,targetToSource),"
                  "issues(idReadable))")
+_RELEASE_ISSUE_FIELDS = (
+    _ISSUE_FIELDS.replace(
+        "customFields(name,value(id,name,minutes))",
+        "customFields(name,projectCustomField(bundle(id)),value(id,name,minutes))",
+    )
+    + ",project(id,shortName)"
+)
 
 # Keep this in lockstep with routing._AC_LINE: every checkbox accepted by the
 # proof grammar must count towards the tracker progress gate as well.
@@ -223,6 +240,22 @@ class YouTrackTracker(Tracker):
         return None
 
     @staticmethod
+    def _cf_coordinate(raw: dict, name: str) -> tuple[str | None, str | None]:
+        for field in raw.get("customFields", []):
+            if field.get("name") != name:
+                continue
+            value = field.get("value")
+            if value is None:
+                return None, None
+            if not isinstance(value, dict):
+                raise RuntimeError(f"champ YouTrack invalide : {name}")
+            identifier, title = value.get("id"), value.get("name")
+            if not isinstance(identifier, str) or not isinstance(title, str):
+                raise RuntimeError(f"champ YouTrack invalide : {name}")
+            return identifier, title
+        return None, None
+
+    @staticmethod
     def _ac_counts(body):
         if not body:
             return 0, 0
@@ -307,7 +340,32 @@ class YouTrackTracker(Tracker):
         raw = self._req(
             "GET", f"/admin/projects/{project_id}", fields="id,shortName"
         )
-        return raw.get("id") == project.id and raw.get("shortName") == project.key
+        if raw.get("id") != project.id or raw.get("shortName") != project.key:
+            return False
+        mapping = project.extra.get("release_ids", {})
+        bundle = project.extra.get("ms_bundle")
+        if not isinstance(mapping, dict) or mapping and not isinstance(bundle, str):
+            return False
+        for release, release_id in mapping.items():
+            try:
+                native = self._req(
+                    "GET",
+                    "/admin/customFieldSettings/bundles/enum/"
+                    f"{urllib.parse.quote(bundle, safe='')}/values/"
+                    f"{urllib.parse.quote(release_id, safe='')}",
+                    fields="id,name",
+                )
+            except _YouTrackHTTPError as exc:
+                if exc.status in {403, 404}:
+                    return False
+                raise
+            if (
+                not isinstance(native, dict)
+                or native.get("id") != release_id
+                or native.get("name") != release
+            ):
+                return False
+        return True
 
     def resolve_project(self, repo: str) -> Project:
         return registry.resolve("youtrack", repo)
@@ -338,6 +396,136 @@ class YouTrackTracker(Tracker):
         """Read every issue page; ``page_size`` is useful for read-only smoke tests."""
         q = f"project: {project.key}" + (f" {query}" if query else "")
         return [self._to_issue(r) for r in self._search_raw(q, _ISSUE_FIELDS, page_size)]
+
+    def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
+        mapping = project.extra.get("release_ids")
+        bundle = project.extra.get("ms_bundle")
+        if not isinstance(mapping, dict) or release not in mapping:
+            raise ReleaseScopeUnavailableError(self.name, release, "unmapped")
+        release_id = mapping[release]
+        if (
+            not isinstance(release_id, str)
+            or not release_id
+            or not isinstance(bundle, str)
+            or not bundle
+        ):
+            raise ReleaseScopeUnavailableError(self.name, release, "invalid_mapping")
+
+        def braced_search_value(value: str) -> str:
+            # YouTrack documents braces for attribute values that contain spaces,
+            # but no escaping for a literal brace inside a complex value.  Refuse
+            # any value that cannot be represented without changing its meaning.
+            if (
+                not isinstance(value, str)
+                or not value
+                or any(char in "{}" or (char.isspace() and char != " ") for char in value)
+            ):
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "query_value_unrepresentable"
+                )
+            return f"{{{value}}}"
+
+        project_query = braced_search_value(project.key)
+        release_query = braced_search_value(release)
+        try:
+            native = self._req(
+                "GET",
+                "/admin/customFieldSettings/bundles/enum/"
+                f"{urllib.parse.quote(bundle, safe='')}/values/"
+                f"{urllib.parse.quote(release_id, safe='')}",
+                fields="id,name",
+            )
+        except _YouTrackHTTPError as exc:
+            reason = "inaccessible" if exc.status == 403 else "absent" if exc.status == 404 else "provider_error"
+            raise ReleaseScopeUnavailableError(self.name, release, reason) from None
+        if (
+            not isinstance(native, dict)
+            or native.get("id") != release_id
+            or native.get("name") != release
+        ):
+            raise ReleaseScopeUnavailableError(self.name, release, "mapping_mismatch")
+        try:
+            raws = self._search_raw(
+                f"project: {project_query} Milestone: {release_query}",
+                _RELEASE_ISSUE_FIELDS,
+            )
+        except _YouTrackHTTPError as exc:
+            reason = "inaccessible" if exc.status in {401, 403} else "provider_error"
+            raise ReleaseScopeUnavailableError(self.name, release, reason) from None
+        issues: list[ReleaseIssue] = []
+        for raw in raws:
+            native_project = raw.get("project") if isinstance(raw, dict) else None
+            milestone = next(
+                (
+                    field
+                    for field in raw.get("customFields", [])
+                    if isinstance(field, dict) and field.get("name") == "Milestone"
+                ),
+                None,
+            )
+            project_custom_field = (
+                milestone.get("projectCustomField")
+                if isinstance(milestone, dict)
+                else None
+            )
+            observed_bundle = (
+                project_custom_field.get("bundle")
+                if isinstance(project_custom_field, dict)
+                else None
+            )
+            observed_id, observed_name = self._cf_coordinate(raw, "Milestone")
+            if (
+                not isinstance(native_project, dict)
+                or native_project.get("id") != project.id
+                or native_project.get("shortName") != project.key
+                or not isinstance(observed_bundle, dict)
+                or observed_bundle.get("id") != bundle
+                or observed_id != release_id
+                or observed_name != release
+            ):
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "membership_mismatch"
+                )
+            issue = self._to_issue(raw)
+            terminal = str(issue.state or "").casefold() in {
+                "done", "completed", "fixed", "dropped",
+            }
+            references = {"provider_issue_id": raw.get("id")}
+            if issue.pr_url:
+                references["pr_url"] = issue.pr_url
+            issues.append(ReleaseIssue(
+                id=issue.id,
+                title=issue.title,
+                type=issue.type,
+                state=issue.state,
+                labels=tuple(issue.labels),
+                # Native terminal state and a PR field are observations, not an
+                # exact merged/accepted receipt.
+                disposition="unavailable" if terminal else "unfinished",
+                references={key: value for key, value in references.items() if value},
+            ))
+        return ReleaseScope(
+            provider=self.name,
+            project_key=project.key,
+            project_id=project.id,
+            release=release,
+            release_id=release_id,
+            native_state=None,
+            issues=tuple(issues),
+            closure={
+                "mode": "operator",
+                "native_capability": "unavailable",
+                "action": "record-scope-freeze",
+                "native_mutation": False,
+                "preconditions": ["unfinished=0", "unavailable=0"],
+                "verification": "read-release-scope",
+            },
+            coordinates={
+                "project_id": project.id,
+                "milestone_bundle_id": bundle,
+                "enum_value_id": release_id,
+            },
+        )
 
     def get_issue(self, issue_id: str) -> Issue:
         try:

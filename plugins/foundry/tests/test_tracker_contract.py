@@ -8,7 +8,7 @@ Beyond schema consistency, it also pins the AC-1 core/non-core asymmetry (no cor
 operation cell may be ``refused``; no non-core cell may be a blocking ``gap``), the
 owner ticket on every blocking core cell, the cells gated on the pending no-CAS ADR,
 and a handful of cheap, code-tied assertions (capability flags, missing method
-overrides, the ghprojects stub actually raising ``NotImplementedError``). Only those
+overrides, and the implemented/refused ghprojects boundaries). Only those
 few cells are tied to code; the other cells' evidence is checked by review, not here.
 """
 import importlib
@@ -205,8 +205,8 @@ def test_every_operation_maps_to_a_real_tracker_abc_member():
             )
 
 
-def test_ghprojects_stub_cells_are_to_qualify_not_guessed():
-    """PAT-65 owns real GitHub Projects v2 qualification; PAT-53 must not guess it."""
+def test_ghprojects_cells_match_delivered_reads_writes_adrs_and_lifecycle():
+    """The qualified private-project lifecycle is supported; later tranches remain owned."""
     contract = _load_contract()
     for operation in contract["operations"]:
         cell = operation["cells"].get("ghprojects")
@@ -217,12 +217,23 @@ def test_ghprojects_stub_cells_are_to_qualify_not_guessed():
             assert cell["status"] == "refused"
             continue
         if operation["id"] in {
-            "identity-and-project-resolution", "repository-bootstrap",
+            "identity-and-project-resolution", "repository-bootstrap", "backlog-read",
+            "frame-intake-groom-create", "frame-intake-groom-evolve-existing",
+                "mid-flight-comment", "epics-children-creation",
+                "epics-children-reparent-existing", "dependencies-relates-blocks",
+                "release-and-changelog-scope", "adr-read", "adr-create",
+                "adr-status-evolution", "adr-supersession-and-issue-linking",
+                "issue-lifecycle-transitions", "acceptance-criteria-sync",
         }:
             assert cell["status"] == "supported"
             continue
+        if operation["id"] in {
+            "native-free-text-search", "acceptance-override-receipt",
+        }:
+            assert cell["status"] == "refused"
+            continue
         assert cell["status"] == "to_qualify", (
-            f"{operation['id']}.ghprojects must stay to_qualify (PAT-65) until qualified, "
+            f"{operation['id']}.ghprojects must stay to_qualify under its owner ticket, "
             f"got {cell['status']!r}"
         )
 
@@ -309,33 +320,27 @@ def test_youtrack_has_no_import_adr_override():
     assert "import_adr_batch" not in YouTrackTracker.__dict__
 
 
-def test_ghprojects_core_methods_are_unimplemented_stubs():
-    """The stub adapter must actually raise NotImplementedError for every
-    core method, grounding the json/'md 'to_qualify' cells in live code, not prose."""
+def test_ghprojects_pat66_pat58_writes_and_pat67_lifecycle_are_real():
+    """Delivered Issue, ADR and lifecycle ports are concrete."""
     from foundry.trackers.ghprojects import GitHubProjectsTracker
 
-    tracker = GitHubProjectsTracker()
-    calls = {
-        "search": (None,),
-        "get_issue": (None,),
-        "create_issue": (None, None, None),
-        "update_fields": (None, None),
-        "set_state": (None, None),
-        "link": (None, None, None),
-        "add_comment": (None, None),
-        "list_adrs": (None,),
-        "create_adr": (None, None, None),
-        "set_adr_status": (None, None),
-    }
-    for method_name, args in calls.items():
-        method = getattr(tracker, method_name)
-        with pytest.raises(NotImplementedError):
-            method(*args)
+    assert "search" in GitHubProjectsTracker.__dict__
+    assert "get_issue" in GitHubProjectsTracker.__dict__
+    for method_name in ("create_issue", "update_fields", "update_body", "link", "add_comment"):
+        assert method_name in GitHubProjectsTracker.__dict__
+    assert "set_state" in GitHubProjectsTracker.__dict__
+    assert "project_acceptance_proof" in GitHubProjectsTracker.__dict__
+    for method_name in ("list_adrs", "create_adr", "set_adr_status"):
+        assert method_name in GitHubProjectsTracker.__dict__
+    assert GitHubProjectsTracker.bounded_transition_proofs is True
+    assert GitHubProjectsTracker.bounded_state_transitions is True
+    assert GitHubProjectsTracker.append_only_lifecycle_supported is True
+    assert GitHubProjectsTracker.acceptance_proof_projection_supported is True
 
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-64", "PAT-59"],
+    ["PAT-64"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

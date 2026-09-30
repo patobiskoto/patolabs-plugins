@@ -75,6 +75,52 @@ class Project:
 
 
 @dataclass(frozen=True)
+class ReleaseIssue:
+    """One locale-neutral issue fact in an exact native release scope."""
+
+    id: str
+    title: str
+    type: Optional[str]
+    state: Optional[str]
+    labels: tuple[str, ...]
+    disposition: str  # accepted | deviated | unfinished | unavailable
+    references: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["labels"] = list(self.labels)
+        return value
+
+
+@dataclass(frozen=True)
+class ReleaseScope:
+    """Provider-neutral read of one mapped release, distinct from product and Epic."""
+
+    provider: str
+    project_key: str
+    project_id: str
+    release: str
+    release_id: str
+    native_state: Optional[str]
+    issues: tuple[ReleaseIssue, ...]
+    closure: dict[str, Any]
+    coordinates: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "project_key": self.project_key,
+            "project_id": self.project_id,
+            "release": self.release,
+            "release_id": self.release_id,
+            "native_state": self.native_state,
+            "issues": [issue.to_dict() for issue in self.issues],
+            "closure": dict(self.closure),
+            "coordinates": dict(self.coordinates),
+        }
+
+
+@dataclass(frozen=True)
 class TransitionContext:
     """Provider-neutral evidence attached to a mechanical state transition.
 
