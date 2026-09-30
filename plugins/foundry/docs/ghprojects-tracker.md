@@ -88,6 +88,10 @@ receipt and unchanged source. A native `in-progress` with no Foundry receipt is
 refused; it cannot be adopted as an authenticated start. The same exact-receipt
 rule repairs interrupted review and done State writes, including replay of an
 already merged PR, without a second receipt or merge.
+When a corrected PR head arrives after a durable but unprojected review receipt,
+`issue openpr` first repairs that exact review State, then records the new head
+as the next review generation. An exact start receipt cannot turn a native
+advance to review or done without matching proof into a successful replay.
 Start rejects review, done and dropped predecessors before branch preparation.
 
 Acceptance receipts accept only the canonical six-field PAT-56 proof shape and bind one

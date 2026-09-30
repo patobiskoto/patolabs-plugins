@@ -256,7 +256,7 @@ def start(issue_id, flags=()):
         if (
             it.normalized_state != "in-progress"
             or it.projection_status != "disagreement"
-            or it.native_state is None
+            or it.native_state not in {"backlog", "ready", "blocked"}
         ):
             raise
         # Only the existing authenticated start receipt may repair its missing
@@ -325,7 +325,7 @@ def openpr(issue_id=None, base=None, flags=()):
             raise SystemExit(f"⛔ Pas d'ID d'issue donné et la branche '{branch}' ne "
                              f"suit pas <type>/<ticker>-<n>-… ; passe l'ID explicitement.")
         issue_id = m.group(1).upper()
-    write.issue_binding(tr, issue_id)
+    binding = write.issue_binding(tr, issue_id)
     write.preflight_issue_operation(tr, "openpr")
     try:
         it = tr.get_issue(issue_id)
@@ -339,6 +339,13 @@ def openpr(issue_id=None, base=None, flags=()):
             and it.projection_status == "disagreement"
         ):
             raise
+        if getattr(tr, "append_only_lifecycle_supported", False):
+            repair = getattr(tr, "recover_review_projection", None)
+            if not callable(repair) or not repair(issue_id, project=binding):
+                raise TrackerConflictError(
+                    "review receipt/native State disagreement cannot be repaired"
+                )
+            it = tr.get_issue(issue_id)
     # Keep the logical predecessor returned by the proof-validating read above.
     # A later native-State observation could adopt unrelated provider drift.
     review_predecessor = _bounded_review_predecessor(tr, it)

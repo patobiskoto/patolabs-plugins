@@ -2412,6 +2412,37 @@ class GitHubProjectsTracker(Tracker):
             issue_id, self._native_issue_read(issue_id), strict=False,
         )
 
+    def recover_review_projection(
+        self, issue_id: str, *, project: Project | None = None,
+    ) -> bool:
+        """Repair the latest authenticated review before publishing a new head."""
+        if project is None:
+            return False
+        binding = self._authoritative_binding(project)
+        native = self._native_issue_read(issue_id)
+        scope = self._current_lifecycle_scope(issue_id, binding)
+        observed = self._projection(
+            issue_id, native, strict=False, binding=binding, scope=scope,
+        )
+        if (
+            observed.normalized_state != "review"
+            or observed.projection_status != "disagreement"
+        ):
+            return False
+        rows = self._lifecycle_rows(issue_id, native, scope)
+        review = rows["state-review"][-1][0]
+        self.set_state(
+            issue_id, "review",
+            context=TransitionContext(
+                pr_url=review["pr_url"], head_sha=review["head_sha"],
+                base_sha=review["base_sha"],
+                review_digest=review["review_digest"],
+                expected_state=review["source_state"],
+            ),
+            project=project,
+        )
+        return self.get_issue(issue_id).state == "review"
+
     def recover_done_projection(
         self, issue_id: str, *, pr_url: str, head_sha: str, base_sha: str,
         merge_sha: str, project: Project | None = None,
@@ -2547,7 +2578,6 @@ class GitHubProjectsTracker(Tracker):
                     ) from error
                 if error.reason in {
                     "authentication_failed", "permission_denied", "not_found",
-                    "rate_limited",
                 }:
                     self._clear_lifecycle_intent(fingerprint)
                     raise
@@ -2635,7 +2665,10 @@ class GitHubProjectsTracker(Tracker):
             if native_rank is not None and native_rank >= rank[state]:
                 if native_rank == rank[state]:
                     self._projection(issue_id, native, strict=True, binding=binding)
-                return
+                    return
+                raise TrackerConflictError(
+                    "GitHub native state advanced without lifecycle proof",
+                )
         if repair_exact and (
             native_state != payload.get("source_state")
             or self._lifecycle_source_digest(source_native)

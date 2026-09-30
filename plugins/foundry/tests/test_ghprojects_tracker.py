@@ -647,6 +647,30 @@ def test_pat67_public_start_refuses_native_only_in_progress(tmp_path, monkeypatc
     assert transport.state_writes == 0
 
 
+def test_pat67_public_start_refuses_native_drift_after_receipt_before_branch(
+    tmp_path, monkeypatch,
+):
+    transport = _StateWriteFailsOnce()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    transport.fail_state = "in-progress"
+    with pytest.raises(GitHubProjectsTrackerError):
+        tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    transport.state = "review"
+    branches = []
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue, "_sh", lambda *_args: "")
+    monkeypatch.setattr(
+        issue, "_prepare_branch", lambda branch: branches.append(branch),
+    )
+
+    with pytest.raises(TrackerConflictError):
+        issue.start("GHQUAL-1")
+
+    assert branches == []
+    assert transport.state == "review"
+
+
 @pytest.mark.parametrize("native_state", ["review", "done", "dropped"])
 def test_pat67_public_start_refuses_invalid_predecessor_before_branch(
     tmp_path, monkeypatch, native_state,
@@ -979,11 +1003,52 @@ def test_pat67_definitive_auth_rejection_clears_local_intent_for_retry(tmp_path)
     assert tracker.get_issue("GHQUAL-1").state == "in-progress"
 
 
+def test_pat67_rate_limit_keeps_pending_intent_until_receipt_visible(tmp_path):
+    class RateLimitedTransport(_LifecycleTransport):
+        def __init__(self):
+            super().__init__()
+            self.posts_attempted = 0
+            self.delayed_body = None
+
+        def __call__(self, command, **kwargs):
+            if command[2:4] == ["-X", "POST"] and command[4].endswith("/comments"):
+                self.posts_attempted += 1
+                self.delayed_body = next(
+                    value.removeprefix("body=") for value in command
+                    if value.startswith("body=")
+                )
+                return self._response(
+                    command, {"message": "rate limit", "status": "429"},
+                    returncode=1, stderr="gh: HTTP 429",
+                )
+            return super().__call__(command, **kwargs)
+
+    transport = RateLimitedTransport()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError) as limited:
+        tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    assert limited.value.reason == "effect_unknown"
+    with pytest.raises(GitHubProjectsTrackerError) as replay:
+        tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    assert replay.value.reason == "effect_unknown"
+    assert transport.posts_attempted == 1
+
+    transport.comments.append({
+        "id": 2001, "body": transport.delayed_body,
+        "created_at": "2026-09-27T12:01:00Z",
+    })
+    tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    assert transport.posts_attempted == 1
+    assert tracker.get_issue("GHQUAL-1").state == "in-progress"
+
+
+@pytest.mark.parametrize("partial_first", [False, True])
 def test_pat67_common_openpr_publishes_corrected_head_as_next_review(
     tmp_path,
     monkeypatch,
+    partial_first,
 ):
-    transport = _LifecycleTransport()
+    transport = _StateWriteFailsOnce() if partial_first else _LifecycleTransport()
     tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
     repository = "patobiskoto/foundry-v1-ghprojects-sandbox"
     branch = "feat/ghqual-1-corrected-review"
@@ -1043,7 +1108,12 @@ def test_pat67_common_openpr_publishes_corrected_head_as_next_review(
     monkeypatch.setattr(issue, "git_head", lambda: current["sha"])
     monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: current["diff"])
 
-    issue.openpr("GHQUAL-1")
+    if partial_first:
+        transport.fail_state = "review"
+        with pytest.raises(GitHubProjectsTrackerError):
+            issue.openpr("GHQUAL-1")
+    else:
+        issue.openpr("GHQUAL-1")
     current.update(sha="c" * 40, diff=b"corrected review diff")
     issue.openpr("GHQUAL-1")
     issue.openpr("GHQUAL-1")
