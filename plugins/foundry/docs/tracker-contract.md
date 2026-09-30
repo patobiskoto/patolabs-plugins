@@ -61,8 +61,8 @@ closed vocabulary:
 | Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) |
 | Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | `to_qualify` PAT-58 |
-| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 |
-| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 |
+| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 (receipt-first transport exists; live recipe pending) |
+| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 (review-bound proof transport exists; live recipe pending) |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-69 |
 | Périmètre de release/changelog | `search` via `query.py changelog()` | supported | **gap** PAT-59 | `to_qualify` PAT-59 |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |

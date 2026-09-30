@@ -52,12 +52,34 @@ plus an explicit error. This classification is target-specific: global auth or
 permission failures, malformed payloads, foreign relation URIs, transport and
 pagination failures stay explicit. Only the documented parent-endpoint 404
 payload `No parent issue found` means that a present issue has no parent. The
-Project normalized-state field is recorded as an observation with
-`projection_status=unknown`; PAT-67 owns lifecycle/projection proof.
+Project normalized-state field is recorded as an observation. PAT-67 adds a
+separate Foundry-owned lifecycle channel: a state transition writes a canonical,
+hash-bound `foundry-ghprojects-lifecycle.v1` receipt to the exact Issue comment
+history, then projects only the target ProjectV2 State. Every receipt binds the
+canonical repository, Project id/number/key, Issue key/number/database id/node id and
+Project item id. Review and done additionally bind the exact canonical PR URL,
+head/base SHA and review digest; done also binds the merge SHA. A native `done` without
+that chain is refused as an unauthorised auto-close.
+
+Before the single comment POST, the adapter persists a local pending intent under the
+digest of the fully bound receipt. A lost response is reconciled only when the complete
+paged history exposes exactly one matching receipt. If a fresh process still observes
+zero candidates, the intent remains pending and the operation fails closed without a
+second POST; multiple candidates also fail closed. The local intent never grants a
+lifecycle state by itself. Exact historical replays converge without regressing newer
+review or done evidence.
+
+Acceptance receipts accept only the canonical six-field PAT-56 proof shape and bind one
+exact review generation. The criterion identities are recomputed from the current issue
+body, so changing checkbox progress preserves the immutable criterion semantics while
+editing criterion text invalidates the old proof. `checked` must equal the complete
+criterion count; blocked, partial, foreign or malformed proofs never mark AC complete.
+Native-state disagreement is observable through `normalized_state`, `native_state` and
+`projection_status`; it does not become acceptance authority.
 
 Native free-text search is refused with `provider-native-search-query`. ADR index
-reads are typed `adr_index` refusals until PAT-58 and lifecycle projection through
-`set_state` remains a PAT-67 refusal.
+reads are typed `adr_index` refusals until PAT-58. The lifecycle transport is implemented
+but remains `to_qualify` until the authorized live PR/CI recipe proves it on an exact SHA.
 
 ## Bounded PAT-66 writes
 
@@ -89,10 +111,11 @@ body-derived checkbox counters are allowed to follow the PATCH. Unrelated fields
 mutation or an Issue-body PATCH.
 
 GitHub's qualified endpoints expose no expected-version/CAS parameter. These are
-therefore bounded detection, never CAS or exclusion: a third-party change between
-the fresh read and the write can still be overwritten. Authentication/permission,
-rate-limit, deleted-field, malformed/ambiguous response and transport errors remain
-explicit.
+therefore bounded detection, never CAS or exclusion: a third-party change in the
+residual S1→S2 window can still be overwritten and hidden by S3. Lifecycle state writes
+compare every observed untargeted property around the narrow Project State mutation,
+but that comparison does not close the window. Authentication/permission, rate-limit,
+deleted-field, malformed/ambiguous response and transport errors remain explicit.
 
 Issue creation uses a private local intent/observation journal under Foundry's data
 directory. Its fingerprint covers the exact binding, title, body, portable fields and

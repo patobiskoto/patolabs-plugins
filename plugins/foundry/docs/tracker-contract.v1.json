@@ -429,7 +429,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-67",
-          "evidence": "set_state raises TrackerCapabilityUnavailableError (ghprojects.py)"
+          "evidence": "ghprojects.py implements proof-bound in-progress/review/done receipts in the complete paged Issue comment history, bound to the canonical repository, Project and native Issue/node/item coordinates, followed by one targeted ProjectV2 State projection with untargeted-property readback. A durable pending intent prevents a second comment POST after an unknown response; replay observes exactly one bound receipt, and native done alone fails closed. PAT-67 raw transport tests exercise the full lifecycle, later review generations and fresh-process replay. The authorized live PR/CI vertical recipe remains required before this core cell becomes supported."
         }
       }
     },
@@ -452,7 +452,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-67",
-          "evidence": "not overridden; the base raises AcceptanceSyncUnavailableError (base.py)"
+          "evidence": "ghprojects.py project_acceptance_proof reuses the canonical PAT-56 six-field proof validator, appends one exact receipt per review generation, requires checked to equal the complete semantic AC count, and derives progress without trusting native checkboxes. Legacy, partial, blocked, foreign, stale or malformed proofs fail closed on every read. The live authorized PR/CI recipe remains required before this core cell becomes supported."
         }
       }
     },

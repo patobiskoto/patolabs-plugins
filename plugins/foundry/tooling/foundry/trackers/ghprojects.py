@@ -9,6 +9,7 @@ blindly posted again.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 import fcntl
 import hashlib
 import json
@@ -22,9 +23,10 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from foundry import registry
-from foundry.models import Adr, Issue, Link, Project
+from foundry.models import Adr, Issue, Link, Project, TransitionContext
 from foundry.trackers.base import (
     TrackerConflictError,
+    AcceptanceSyncUnavailableError,
     IssueUnavailableError,
     Tracker,
     TrackerCapabilityUnavailableError,
@@ -45,6 +47,12 @@ _FIELD_OPTIONS = {
 _AC_CHECKBOX = re.compile(r"^\s*[-*+]\s+\[(?P<mark>[ xX])\]\s+.+?\s*$")
 _CREATE_INTENT_SCHEMA = "foundry-ghprojects-create-intent.v1"
 _CREATE_STEPS = {"item", "parent", *(f"field:{name}" for name in _FIELDS)}
+_LIFECYCLE_SCHEMA = "foundry-ghprojects-lifecycle.v1"
+_LIFECYCLE_INTENT_SCHEMA = "foundry-ghprojects-lifecycle-intent.v1"
+_LIFECYCLE_HEADER = "Foundry lifecycle proof (append-only)."
+_LIFECYCLE_OPERATIONS = frozenset({"state-in-progress", "state-review", "state-done", "acceptance"})
+_SHA = re.compile(r"[0-9a-f]{40}")
+_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 class GitHubProjectsTrackerError(RuntimeError):
@@ -107,11 +115,17 @@ class _CreateCandidate:
 
 class GitHubProjectsTracker(Tracker):
     name = "ghprojects"
+    requires_mutation_binding = True
+    bounded_transition_proofs = True
+    bounded_state_transitions = True
+    append_only_lifecycle_supported = True
+    acceptance_proof_projection_supported = True
 
     def __init__(self, *, runner=subprocess.run, state_dir: Path | str | None = None):
         self._runner = runner
         base = Path(state_dir) if state_dir is not None else Path(registry.data_dir())
         self._create_intent_dir = base / "ghprojects-create-intents"
+        self._lifecycle_intent_dir = base / "ghprojects-lifecycle-intents"
 
     @staticmethod
     def _create_fingerprint(
@@ -1035,7 +1049,7 @@ class GitHubProjectsTracker(Tracker):
         self._qualified_repository(raw.get("repository"), binding)
         return number
 
-    def get_issue(self, issue_id: str) -> Issue:
+    def _native_issue_read(self, issue_id: str) -> Issue:
         project = self._project()
         binding = self._binding(project)
         number = self._number(issue_id, binding)
@@ -1633,7 +1647,836 @@ class GitHubProjectsTracker(Tracker):
             raise write_error
         raise TrackerConflictError("corps GitHub divergent après écriture ; aucune seconde tentative") from write_error
 
-    def set_state(self, issue_id, state, context=None, project=None): raise TrackerCapabilityUnavailableError(self.name, "set_state")
+    # ---- PAT-67 proof-bound lifecycle ---------------------------------
+    # GitHub comments do not offer a caller-selected id.  The deterministic
+    # marker therefore identifies an owned receipt; every replay first reads the
+    # complete comment history and either observes that exact body once or
+    # refuses.  A free-text comment is never decoded as a lifecycle receipt.
+    @staticmethod
+    def _lifecycle_scope(
+        binding: _Binding,
+        issue_id: str,
+        number: int,
+        native_id: int,
+        item_id: str,
+        node_id: str,
+    ) -> dict[str, Any]:
+        scope = {
+            "repository": binding.repo,
+            "project_id": binding.project_id,
+            "project_number": binding.number,
+            "project_key": binding.key,
+            "issue_id": issue_id,
+            "issue_number": number,
+            "native_issue_id": native_id,
+            "issue_node_id": node_id,
+            "project_item_id": item_id,
+        }
+        if (
+            not all(isinstance(scope[key], str) and scope[key] for key in {
+                "repository", "project_id", "project_key", "issue_id",
+                "issue_node_id", "project_item_id",
+            })
+            or type(number) is not int or number < 1
+            or type(native_id) is not int or native_id < 1
+            or type(binding.number) is not int or binding.number < 1
+        ):
+            raise TrackerConflictError("GitHub lifecycle native coordinates invalid")
+        return scope
+
+    def _current_lifecycle_scope(
+        self, issue_id: str, binding: _Binding,
+    ) -> dict[str, Any]:
+        number, native_id = self._native_issue(
+            issue_id, binding, "lifecycle.native_issue",
+        )
+        item_id, node_id = self._item_coordinate(issue_id, binding)
+        return self._lifecycle_scope(
+            binding, issue_id, number, native_id, item_id, node_id,
+        )
+
+    @staticmethod
+    def _lifecycle_marker(
+        operation: str,
+        issue_id: str,
+        payload: dict,
+        scope: dict[str, Any],
+    ) -> tuple[str, str]:
+        if operation not in _LIFECYCLE_OPERATIONS:
+            raise TrackerCapabilityUnavailableError("ghprojects", f"lifecycle:{operation}")
+        coordinates = json.dumps({"schema": _LIFECYCLE_SCHEMA, "operation": operation,
+                                  "issue": issue_id, "scope": scope, "payload": payload},
+                                 sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        marker = f"{_LIFECYCLE_SCHEMA}:{operation}:{hashlib.sha256(coordinates.encode('ascii')).hexdigest()}"
+        return marker, f"{_LIFECYCLE_HEADER}\nmarker: {marker}\ncoordinates: {coordinates}"
+
+    @classmethod
+    def _decode_lifecycle_comment(
+        cls,
+        issue_id: str,
+        body: object,
+        expected_scope: dict[str, Any] | None = None,
+    ) -> tuple[str, dict, str] | None:
+        if not isinstance(body, str) or not body.startswith(_LIFECYCLE_HEADER):
+            return None
+        lines = body.splitlines()
+        if len(lines) != 3 or not lines[1].startswith("marker: ") or not lines[2].startswith("coordinates: "):
+            raise TrackerConflictError("GitHub lifecycle comment malformed")
+        try:
+            value = json.loads(lines[2].removeprefix("coordinates: "))
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise TrackerConflictError("GitHub lifecycle comment malformed") from exc
+        scope = value.get("scope") if isinstance(value, dict) else None
+        if (not isinstance(value, dict) or set(value) != {"schema", "operation", "issue", "scope", "payload"}
+                or value.get("schema") != _LIFECYCLE_SCHEMA or value.get("issue") != issue_id
+                or value.get("operation") not in _LIFECYCLE_OPERATIONS
+                or not isinstance(value.get("payload"), dict)
+                or not isinstance(scope, dict)
+                or set(scope) != {
+                    "repository", "project_id", "project_number", "project_key",
+                    "issue_id", "issue_number", "native_issue_id", "issue_node_id",
+                    "project_item_id",
+                }
+                or scope.get("issue_id") != issue_id
+                or not all(isinstance(scope.get(key), str) and scope[key] for key in {
+                    "repository", "project_id", "project_key", "issue_node_id",
+                    "project_item_id",
+                })
+                or type(scope.get("project_number")) is not int
+                or scope["project_number"] < 1
+                or type(scope.get("issue_number")) is not int
+                or scope["issue_number"] < 1
+                or type(scope.get("native_issue_id")) is not int
+                or scope["native_issue_id"] < 1
+                or expected_scope is not None and scope != expected_scope):
+            raise TrackerConflictError("GitHub lifecycle comment malformed")
+        marker, expected = cls._lifecycle_marker(
+            value["operation"], issue_id, value["payload"], scope,
+        )
+        if lines[1].removeprefix("marker: ") != marker or expected != body:
+            raise TrackerConflictError("GitHub lifecycle comment integrity invalid")
+        return value["operation"], value["payload"], body
+
+    @staticmethod
+    def _state_payload(state: str, context: TransitionContext | None) -> dict:
+        payload = {"state": state}
+        if state in {"review", "done"}:
+            if not isinstance(context, TransitionContext) or not all((context.pr_url, context.head_sha, context.base_sha, context.review_digest)):
+                raise TrackerCapabilityUnavailableError("ghprojects", "lifecycle-proof")
+            if (not context.pr_url.startswith("https://github.com/") or _SHA.fullmatch(context.head_sha) is None
+                    or _SHA.fullmatch(context.base_sha) is None or _DIGEST.fullmatch(context.review_digest) is None):
+                raise TrackerConflictError("GitHub lifecycle coordinates invalid")
+            payload.update(pr_url=context.pr_url, head_sha=context.head_sha, base_sha=context.base_sha,
+                           review_digest=context.review_digest)
+        if state == "done":
+            if not isinstance(context, TransitionContext) or _SHA.fullmatch(context.merge_sha or "") is None:
+                raise TrackerCapabilityUnavailableError("ghprojects", "merge-proof")
+            payload["merge_sha"] = context.merge_sha
+        return payload
+
+    @staticmethod
+    def _lifecycle_source_digest(issue: Issue) -> str:
+        """Digest the complete pre-effect business snapshot, excluding observations."""
+        ignored = {
+            "comments", "created", "updated", "normalized_state", "native_state",
+            "projection_status",
+        }
+        source = {
+            key: value for key, value in issue.to_dict().items() if key not in ignored
+        }
+        return hashlib.sha256(
+            json.dumps(
+                source, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            ).encode("ascii"),
+        ).hexdigest()
+
+    @staticmethod
+    def _unrelated_state_snapshot(issue: Issue) -> dict[str, Any]:
+        ignored = {
+            "state", "normalized_state", "native_state", "projection_status",
+            "updated",
+        }
+        return {
+            key: value for key, value in issue.to_dict().items() if key not in ignored
+        }
+
+    @staticmethod
+    def _state_source_snapshot(issue: Issue) -> dict[str, Any]:
+        """Compare business data across the receipt append, excluding that comment."""
+        ignored = {
+            "state", "comments", "normalized_state", "native_state",
+            "projection_status", "updated",
+        }
+        return {
+            key: value for key, value in issue.to_dict().items() if key not in ignored
+        }
+
+    @staticmethod
+    def _comment_effect_snapshot(issue: Issue) -> dict[str, Any]:
+        """Protect every non-comment field around a comment-only effect."""
+        ignored = {
+            "comments", "normalized_state", "native_state", "projection_status",
+            "updated",
+        }
+        return {
+            key: value for key, value in issue.to_dict().items() if key not in ignored
+        }
+
+    def _lifecycle_rows(
+        self,
+        issue_id: str,
+        issue: Issue,
+        scope: dict[str, Any],
+    ) -> dict[str, list[tuple[dict, str]]]:
+        rows: dict[str, list[tuple[dict, str]]] = {}
+        for row in issue.comments:
+            decoded = self._decode_lifecycle_comment(
+                issue_id, row.get("text"), scope,
+            )
+            if decoded is not None:
+                operation, payload, body = decoded
+                rows.setdefault(operation, []).append((payload, body))
+        return rows
+
+    def _validate_lifecycle_order(
+        self,
+        issue_id: str,
+        issue: Issue,
+        scope: dict[str, Any],
+    ) -> None:
+        started = False
+        latest_review = 0
+        accepted: set[int] = set()
+        done = False
+        for row in issue.comments:
+            decoded = self._decode_lifecycle_comment(
+                issue_id, row.get("text"), scope,
+            )
+            if decoded is None:
+                continue
+            operation, payload, _body = decoded
+            if done:
+                raise TrackerConflictError("GitHub lifecycle history out of order")
+            if operation == "state-in-progress":
+                if started or latest_review or accepted:
+                    raise TrackerConflictError("GitHub lifecycle history out of order")
+                started = True
+            elif operation == "state-review":
+                generation = payload.get("generation")
+                if (
+                    not started
+                    or type(generation) is not int
+                    or generation != latest_review + 1
+                ):
+                    raise TrackerConflictError("GitHub lifecycle history out of order")
+                latest_review = generation
+            elif operation == "acceptance":
+                generation = payload.get("review_generation")
+                if generation != latest_review or generation in accepted:
+                    raise TrackerConflictError("GitHub lifecycle history out of order")
+                accepted.add(generation)
+            elif operation == "state-done":
+                if (
+                    latest_review < 1
+                    or payload.get("review_generation") != latest_review
+                    or latest_review not in accepted
+                ):
+                    raise TrackerConflictError("GitHub lifecycle history out of order")
+                done = True
+
+    def _lifecycle_intent_path(self, fingerprint: str) -> Path:
+        return self._lifecycle_intent_dir / f"{fingerprint}.json"
+
+    @contextmanager
+    def _lifecycle_intent_lock(self, fingerprint: str) -> Iterator[None]:
+        try:
+            self._lifecycle_intent_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._lifecycle_intent_dir.chmod(0o700)
+            descriptor = os.open(
+                self._lifecycle_intent_dir / f".{fingerprint}.lock",
+                os.O_RDWR | os.O_CREAT,
+                0o600,
+            )
+        except OSError as exc:
+            raise GitHubProjectsTrackerError(
+                "lifecycle.comment", "local_intent_unavailable",
+            ) from exc
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    def _read_lifecycle_intent(self, fingerprint: str) -> dict[str, str] | None:
+        try:
+            record = json.loads(
+                self._lifecycle_intent_path(fingerprint).read_text(encoding="utf-8"),
+            )
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise GitHubProjectsTrackerError(
+                "lifecycle.comment", "invalid_local_intent",
+            ) from exc
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"schema", "fingerprint", "state"}
+            or record.get("schema") != _LIFECYCLE_INTENT_SCHEMA
+            or record.get("fingerprint") != fingerprint
+            or record.get("state") not in {"pending", "complete"}
+        ):
+            raise GitHubProjectsTrackerError(
+                "lifecycle.comment", "invalid_local_intent",
+            )
+        return record
+
+    def _write_lifecycle_intent(self, fingerprint: str, state: str) -> None:
+        payload = json.dumps(
+            {"schema": _LIFECYCLE_INTENT_SCHEMA, "fingerprint": fingerprint,
+             "state": state},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=self._lifecycle_intent_dir,
+                prefix=f".{fingerprint}.", delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                os.chmod(temporary_name, 0o600)
+                temporary.write(payload)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_name, self._lifecycle_intent_path(fingerprint))
+            directory_fd = os.open(self._lifecycle_intent_dir, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError as exc:
+            raise GitHubProjectsTrackerError(
+                "lifecycle.comment", "local_intent_unavailable",
+            ) from exc
+        finally:
+            if temporary_name is not None:
+                try:
+                    os.unlink(temporary_name)
+                except FileNotFoundError:
+                    pass
+
+    def _clear_lifecycle_intent(self, fingerprint: str) -> None:
+        try:
+            self._lifecycle_intent_path(fingerprint).unlink()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise GitHubProjectsTrackerError(
+                "lifecycle.comment", "local_intent_unavailable",
+            ) from exc
+
+    @staticmethod
+    def _canonical_pr_url(value: object, binding: _Binding) -> bool:
+        """Accept only the configured repository's canonical pull URL."""
+        if not isinstance(value, str):
+            return False
+        match = re.fullmatch(
+            r"https://github\.com/(?P<repo>[^/]+/[^/]+)/pull/(?P<number>[1-9][0-9]*)",
+            value,
+        )
+        return match is not None and match["repo"] == binding.repo
+
+    @classmethod
+    def _validate_state_payload(
+        cls, name: str, payload: dict, binding: _Binding,
+    ) -> None:
+        expected = {"state"}
+        if name in {"review", "done"}:
+            expected |= {"pr_url", "head_sha", "base_sha", "review_digest"}
+        if name == "review":
+            expected |= {"generation", "previous_projection_digest"}
+        if name == "done":
+            expected |= {"merge_sha", "review_generation"}
+        expected |= {"source_state", "source_digest"}
+        if (
+            set(payload) != expected
+            or payload.get("state") != name
+            or payload.get("source_state") not in _FIELD_OPTIONS["state"]
+            or _DIGEST.fullmatch(str(payload.get("source_digest"))) is None
+            or (name in {"review", "done"} and not cls._canonical_pr_url(payload.get("pr_url"), binding))
+            or (name in {"review", "done"} and _SHA.fullmatch(str(payload.get("head_sha"))) is None)
+            or (name in {"review", "done"} and _SHA.fullmatch(str(payload.get("base_sha"))) is None)
+            or (name in {"review", "done"} and _DIGEST.fullmatch(str(payload.get("review_digest"))) is None)
+            or (name == "review" and (type(payload.get("generation")) is not int or payload["generation"] < 1))
+            or (name == "review" and payload.get("previous_projection_digest") is not None
+                and _DIGEST.fullmatch(str(payload.get("previous_projection_digest"))) is None)
+            or (name == "done" and _SHA.fullmatch(str(payload.get("merge_sha"))) is None)
+            or (name == "done" and (type(payload.get("review_generation")) is not int or payload["review_generation"] < 1))
+            or (name == "review" and payload.get("source_state")
+                != ("in-progress" if payload.get("generation") == 1 else "review"))
+            or (name == "done" and payload.get("source_state") != "review")
+            or (name == "in-progress" and payload.get("source_state") in {
+                "review", "done", "in-progress",
+            })
+        ):
+            raise TrackerConflictError("GitHub lifecycle state proof malformed")
+
+    @staticmethod
+    def _acceptance_body_digest(body: str) -> str:
+        """Bind immutable AC semantics while ignoring checkbox progress markers."""
+        from foundry.routing import acceptance_criteria, acceptance_digest
+
+        return acceptance_digest(acceptance_criteria(body))
+
+    @staticmethod
+    def _validate_acceptance_payload(
+        issue_id: str, body: str, payload: dict, review: dict | None,
+    ) -> None:
+        """Validate the canonical PAT-56 proof before deriving any progress."""
+        if set(payload) != {"review_generation", "body_digest", "checked", "proof"}:
+            raise TrackerConflictError("GitHub acceptance proof malformed")
+        proof = payload.get("proof")
+        try:
+            from foundry.routing import (
+                AcceptanceProofStore,
+                RoutingConfigError,
+                acceptance_criteria,
+                acceptance_digest,
+            )
+            proof = AcceptanceProofStore._validate_proof(proof)
+        except RoutingConfigError as exc:
+            raise TrackerConflictError("GitHub acceptance proof malformed") from exc
+        expected = acceptance_criteria(body)
+        issue = proof.get("issue")
+        proof_review = proof.get("review")
+        coordinates = proof.get("coordinates")
+        if (
+            review is None
+            or payload.get("body_digest") != GitHubProjectsTracker._acceptance_body_digest(body)
+            or type(payload.get("checked")) is not int
+            or not expected or payload["checked"] != len(expected)
+            or proof.get("quality") != "mergeable"
+            or not isinstance(issue, dict) or set(issue) != {"id", "ac_digest", "criteria"}
+            or issue.get("id") != issue_id
+            or issue.get("ac_digest") != acceptance_digest(expected)
+            or issue.get("criteria") != [{**item, "verdict": "pass"} for item in expected]
+            or not isinstance(proof_review, dict)
+            or proof_review.get("role") != "reviewer"
+            or not isinstance(coordinates, dict) or set(coordinates) != {"head", "base", "diff_hash"}
+            or coordinates.get("head") != review.get("head_sha")
+            or coordinates.get("base") != review.get("base_sha")
+            or coordinates.get("diff_hash") != review.get("review_digest")
+            or payload.get("review_generation") != review.get("generation")
+        ):
+            raise TrackerConflictError("GitHub acceptance proof malformed or stale")
+
+    def _projection(
+        self,
+        issue_id: str,
+        native: Issue,
+        *,
+        strict: bool,
+        binding: _Binding | None = None,
+        scope: dict[str, Any] | None = None,
+    ) -> Issue:
+        binding = binding or self._binding(self._project())
+        has_lifecycle = any(
+            isinstance(row.get("text"), str)
+            and row["text"].startswith(_LIFECYCLE_HEADER)
+            for row in native.comments
+        )
+        if not has_lifecycle:
+            if native.state == "done":
+                raise TrackerConflictError(
+                    "GitHub native state changed outside lifecycle",
+                )
+            native.normalized_state = None
+            native.native_state = native.state
+            native.projection_status = "native-only"
+            return native
+        scope = scope or self._current_lifecycle_scope(issue_id, binding)
+        rows = self._lifecycle_rows(issue_id, native, scope)
+        for op in ("state-in-progress", "state-done"):
+            if len(rows.get(op, ())) > 1:
+                raise TrackerConflictError("GitHub lifecycle duplicate projection")
+        in_progress = rows.get("state-in-progress", [])
+        reviews = rows.get("state-review", [])
+        done = rows.get("state-done", [])
+        if len(done) > 1:
+            raise TrackerConflictError("GitHub lifecycle duplicate projection")
+        if in_progress:
+            self._validate_state_payload("in-progress", in_progress[0][0], binding)
+        if reviews:
+            expected = 1
+            previous = None
+            for payload, body in reviews:
+                self._validate_state_payload("review", payload, binding)
+                if (payload.get("generation") != expected
+                        or payload.get("previous_projection_digest") != previous):
+                    raise TrackerConflictError("GitHub lifecycle review chain invalid")
+                previous = hashlib.sha256(body.encode()).hexdigest()
+                expected += 1
+        review = reviews[-1][0] if reviews else None
+        done_payload = done[0][0] if done else None
+        if done_payload is not None:
+            self._validate_state_payload("done", done_payload, binding)
+        if done_payload is not None and (review is None or any(done_payload.get(k) != review.get(k) for k in ("pr_url", "head_sha", "base_sha", "review_digest")) or done_payload.get("review_generation") != review.get("generation")):
+            raise TrackerConflictError("GitHub done proof lacks matching review")
+        state = "done" if done_payload else "review" if review else "in-progress" if in_progress else None
+        if native.state == "done" and state != "done":
+            raise TrackerConflictError("GitHub native state changed outside lifecycle")
+        if state is None:
+            native.normalized_state = None
+            native.native_state = native.state
+            native.projection_status = "native-only"
+            return native
+        native.normalized_state = state
+        native.native_state = native.state
+        native.projection_status = "aligned" if native.state == state else "disagreement"
+        native.state = state
+        native.pr_url = (done_payload or review or {}).get("pr_url")
+        acceptance_by_generation = {}
+        for payload, _body in rows.get("acceptance", []):
+            generation = payload.get("review_generation")
+            if generation in acceptance_by_generation:
+                raise TrackerConflictError("GitHub lifecycle duplicate projection")
+            bound = next((candidate for candidate, _body in reviews if candidate.get("generation") == generation), None)
+            self._validate_acceptance_payload(issue_id, native.body, payload, bound)
+            acceptance_by_generation[generation] = payload
+        self._validate_lifecycle_order(issue_id, native, scope)
+        if review is not None and review["generation"] in acceptance_by_generation:
+            native.ac_done = acceptance_by_generation[review["generation"]]["checked"]
+        if done_payload is not None and review["generation"] not in acceptance_by_generation:
+            raise TrackerConflictError("GitHub done proof lacks matching acceptance")
+        if strict and native.projection_status != "aligned":
+            raise TrackerConflictError("GitHub native state changed outside lifecycle")
+        return native
+
+    def observe_issue(self, issue_id: str) -> Issue:
+        return self._projection(
+            issue_id, self._native_issue_read(issue_id), strict=False,
+        )
+
+    def get_issue(self, issue_id: str) -> Issue:
+        return self._projection(
+            issue_id, self._native_issue_read(issue_id), strict=True,
+        )
+
+    def start_transition_path(self, current_state: str) -> tuple[str, ...]:
+        if current_state not in _FIELD_OPTIONS["state"]:
+            raise TrackerConflictError("GitHub lifecycle predecessor invalid")
+        return () if current_state == "in-progress" else ("in-progress",)
+
+    def preflight_issue_operation(self, operation: str) -> None:
+        if operation not in {"openpr", "merge"}:
+            raise TrackerCapabilityUnavailableError(self.name, f"lifecycle:{operation}")
+
+    def _append_lifecycle(
+        self,
+        issue_id: str,
+        binding: _Binding,
+        scope: dict[str, Any],
+        operation: str,
+        payload: dict,
+        native: Issue,
+    ) -> None:
+        _marker, body = self._lifecycle_marker(
+            operation, issue_id, payload, scope,
+        )
+        fingerprint = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        with self._lifecycle_intent_lock(fingerprint):
+            record = self._read_lifecycle_intent(fingerprint)
+            fresh_scope = self._current_lifecycle_scope(issue_id, binding)
+            if fresh_scope != scope:
+                raise TrackerConflictError(
+                    "GitHub lifecycle native coordinates changed before append",
+                )
+            fresh = self._native_issue_read(issue_id)
+            fresh_rows = self._lifecycle_rows(issue_id, fresh, scope)
+            matches = [
+                candidate for _payload, candidate in fresh_rows.get(operation, [])
+                if candidate == body
+            ]
+            if len(matches) > 1:
+                raise TrackerConflictError("GitHub lifecycle duplicate projection")
+            if matches:
+                self._write_lifecycle_intent(fingerprint, "complete")
+                return
+            if record is not None:
+                if record["state"] == "pending":
+                    raise GitHubProjectsTrackerError(
+                        "lifecycle.comment", "effect_unknown",
+                    )
+                raise TrackerConflictError(
+                    "GitHub lifecycle completed receipt missing",
+                )
+            if self._unrelated_state_snapshot(fresh) != self._unrelated_state_snapshot(native):
+                raise TrackerConflictError(
+                    "GitHub lifecycle source changed before append",
+                )
+            self._write_lifecycle_intent(fingerprint, "pending")
+            try:
+                self._rest_write(
+                    "POST",
+                    f"repos/{binding.repo}/issues/{scope['issue_number']}/comments",
+                    {"body": body},
+                    "lifecycle.comment",
+                )
+            except GitHubProjectsTrackerError as error:
+                observed = self._native_issue_read(issue_id)
+                occurrences = sum(
+                    row.get("text") == body for row in observed.comments
+                )
+                if occurrences == 1:
+                    self._write_lifecycle_intent(fingerprint, "complete")
+                    return
+                if occurrences > 1:
+                    raise TrackerConflictError(
+                        "GitHub lifecycle duplicate projection",
+                    ) from error
+                if error.reason in {
+                    "authentication_failed", "permission_denied", "not_found",
+                    "rate_limited",
+                }:
+                    self._clear_lifecycle_intent(fingerprint)
+                    raise
+                raise GitHubProjectsTrackerError(
+                    "lifecycle.comment", "effect_unknown",
+                ) from error
+            observed = self._native_issue_read(issue_id)
+            if sum(row.get("text") == body for row in observed.comments) != 1:
+                raise TrackerConflictError(
+                    "GitHub lifecycle receipt divergent after write",
+                )
+            self._write_lifecycle_intent(fingerprint, "complete")
+
+    def set_state(self, issue_id, state, context=None, project=None):
+        if state not in {"in-progress", "review", "done"}:
+            raise TrackerCapabilityUnavailableError(self.name, "set_state")
+        binding = self._authoritative_binding(project or self._project())
+        native = self._native_issue_read(issue_id)
+        source_native = deepcopy(native)
+        native_state = native.state
+        scope = self._current_lifecycle_scope(issue_id, binding)
+        rows = self._lifecycle_rows(issue_id, native, scope)
+        payload = self._state_payload(state, context)
+        if state == "review":
+            prior_reviews = rows.get("state-review", [])
+            same = [row for row in prior_reviews if all(row[0].get(key) == payload.get(key) for key in ("state", "pr_url", "head_sha", "base_sha", "review_digest"))]
+            if same:
+                payload = dict(same[-1][0])
+            else:
+                payload["generation"] = len(prior_reviews) + 1
+                previous = prior_reviews[-1][1] if prior_reviews else None
+                payload["previous_projection_digest"] = hashlib.sha256(previous.encode()).hexdigest() if previous else None
+        if state == "done":
+            review = rows.get("state-review", [])[-1][0] if rows.get("state-review") else None
+            if review is None or any(payload.get(k) != review.get(k) for k in ("pr_url", "head_sha", "base_sha", "review_digest")):
+                raise TrackerConflictError("GitHub done proof lacks matching review")
+            payload["review_generation"] = review["generation"]
+        operation = f"state-{state}"
+        existing_same = [
+            candidate for candidate, _body in rows.get(operation, [])
+            if all(candidate.get(key) == payload.get(key) for key in payload)
+        ]
+        if len(existing_same) == 1:
+            payload = dict(existing_same[0])
+        elif not existing_same:
+            expected_state = (
+                context.expected_state
+                if isinstance(context, TransitionContext)
+                and context.expected_state is not None
+                else native_state
+            )
+            if native_state != expected_state:
+                raise TrackerConflictError("GitHub lifecycle predecessor unavailable")
+            payload.update(
+                source_state=expected_state,
+                source_digest=self._lifecycle_source_digest(source_native),
+            )
+        self._validate_state_payload(state, payload, binding)
+        _marker, body = self._lifecycle_marker(operation, issue_id, payload, scope)
+        exact = [candidate for _p, candidate in rows.get(operation, []) if candidate == body]
+        if len(exact) > 1:
+            raise TrackerConflictError("GitHub lifecycle duplicate projection")
+        rank = {"in-progress": 1, "review": 2, "done": 3}
+        # Validate the entire existing proof graph before deciding whether this
+        # call is a replay.  A hash-valid marker alone is never an authority.
+        observed = self._projection(
+            issue_id, native, strict=False, binding=binding, scope=scope,
+        )
+        observed_rank = rank.get(observed.normalized_state or "")
+        native_rank = rank.get(native_state)
+        if exact:
+            # Exact historical replays are harmless once a later authenticated
+            # receipt exists. They must return before predecessor checks: the
+            # predecessor has naturally advanced. They never write a weaker State.
+            if observed_rank is not None and observed_rank > rank[state]:
+                return
+            if native_rank is not None and native_rank >= rank[state]:
+                if native_rank == rank[state]:
+                    self._projection(issue_id, native, strict=True, binding=binding)
+                return
+        predecessor = {"review": "in-progress", "done": "review"}.get(state)
+        # A new review generation advances evidence at the same logical review
+        # state. It is not a second transition and is permitted only while the
+        # current native projection is still review.
+        review_generation_advance = (
+            state == "review"
+            and observed.normalized_state == "review"
+            and native_state == "review"
+            and not exact
+        )
+        if predecessor is not None and observed.normalized_state != predecessor and not review_generation_advance:
+            raise TrackerConflictError("GitHub lifecycle predecessor unavailable")
+        if state == "done" and observed.ac_done != observed.ac_total:
+            raise TrackerConflictError("GitHub done proof lacks matching acceptance")
+        if (isinstance(context, TransitionContext) and context.expected_state is not None
+                and native_state != context.expected_state and not exact):
+            raise TrackerConflictError("GitHub lifecycle predecessor unavailable")
+        if observed.normalized_state in rank and rank[observed.normalized_state] > rank[state]:
+            if exact:
+                return
+            raise TrackerConflictError("GitHub weaker transition lacks exact receipt")
+        if not exact:
+            self._append_lifecycle(
+                issue_id, binding, scope, operation, payload, source_native,
+            )
+        current = self._native_issue_read(issue_id)
+        if self._current_lifecycle_scope(issue_id, binding) != scope:
+            raise TrackerConflictError(
+                "GitHub lifecycle native coordinates changed before state write",
+            )
+        if (
+            self._state_source_snapshot(current)
+            != self._state_source_snapshot(source_native)
+        ):
+            raise TrackerConflictError(
+                "GitHub lifecycle source changed before state write",
+            )
+        if current.state == state:
+            self._projection(
+                issue_id, current, strict=True, binding=binding, scope=scope,
+            )
+            return
+        # S1 before the single targeted ProjectV2 State update.  A state changed
+        # by a foreign actor cannot be adopted as a new predecessor.
+        if current.state != native_state:
+            raise TrackerConflictError("GitHub native state changed before bounded write")
+        before_unrelated = self._unrelated_state_snapshot(current)
+        item_id, _ = self._item_coordinate(issue_id, binding)
+        catalog = self._write_catalog(binding, {"state": state})
+        try:
+            self._set_project_field(item_id, binding.project_id, catalog["state"], state)
+        except GitHubProjectsTrackerError as error:
+            readback = self._native_issue_read(issue_id)
+            if readback.state != state:
+                raise error
+        readback = self._native_issue_read(issue_id)
+        if self._current_lifecycle_scope(issue_id, binding) != scope:
+            raise TrackerConflictError(
+                "GitHub lifecycle native coordinates changed after state write",
+            )
+        if self._unrelated_state_snapshot(readback) != before_unrelated:
+            raise TrackerConflictError(
+                "GitHub lifecycle changed untargeted properties after state write",
+            )
+        self._projection(
+            issue_id, readback, strict=True, binding=binding, scope=scope,
+        )
+
+    def project_acceptance_proof(self, issue_id: str, expected_body: str, proof: dict, *, checked: int, project=None) -> bool:
+        """Append the reviewed AC proof; native checkboxes remain non-authoritative."""
+        if not isinstance(proof, dict) or type(checked) is not int or checked < 1:
+            raise AcceptanceSyncUnavailableError("preuve AC GitHub invalide")
+        binding = self._authoritative_binding(project or self._project())
+        native = self._native_issue_read(issue_id)
+        source_native = deepcopy(native)
+        scope = self._current_lifecycle_scope(issue_id, binding)
+        if native.body != expected_body:
+            raise TrackerConflictError("corps GitHub modifié avant projection AC")
+        rows = self._lifecycle_rows(issue_id, native, scope)
+        projected = self._projection(
+            issue_id, native, strict=False, binding=binding, scope=scope,
+        )
+        reviews = rows.get("state-review", [])
+        if not reviews:
+            raise TrackerConflictError("GitHub acceptance proof lacks review")
+        review = reviews[-1][0]
+        try:
+            from foundry.routing import (
+                AcceptanceProofStore,
+                RoutingConfigError,
+                acceptance_criteria,
+                acceptance_digest,
+            )
+            proof = AcceptanceProofStore._validate_proof(proof)
+            expected = acceptance_criteria(expected_body)
+            issue = proof.get("issue")
+            proof_review = proof.get("review")
+            coordinates = proof.get("coordinates")
+            valid = (
+                proof.get("quality") == "mergeable" and isinstance(issue, dict)
+                and issue.get("id") == issue_id and issue.get("ac_digest") == acceptance_digest(expected)
+                and issue.get("criteria") == [{**item, "verdict": "pass"} for item in expected]
+                and isinstance(coordinates, dict)
+                and all(coordinates.get(name) == review.get(mapped) for name, mapped in
+                        (("head", "head_sha"), ("base", "base_sha"), ("diff_hash", "review_digest")))
+                and isinstance(proof_review, dict)
+                and proof_review.get("role") == "reviewer"
+                and checked == len(expected)
+            )
+        except (AttributeError, TypeError, ValueError, RoutingConfigError):
+            valid = False
+        if not valid:
+            raise TrackerConflictError("GitHub acceptance proof malformed or stale")
+        payload = {"review_generation": review["generation"], "body_digest": self._acceptance_body_digest(expected_body), "checked": checked, "proof": proof}
+        _marker, body = self._lifecycle_marker(
+            "acceptance", issue_id, payload, scope,
+        )
+        exact = [candidate for _p, candidate in rows.get("acceptance", []) if candidate == body]
+        if len(exact) > 1:
+            raise TrackerConflictError("GitHub lifecycle duplicate projection")
+        if exact:
+            return False
+        if (
+            projected.normalized_state != "review"
+            or projected.projection_status != "aligned"
+        ):
+            raise TrackerConflictError(
+                "GitHub acceptance proof lacks aligned review",
+            )
+        same_generation = [
+            candidate for candidate, _body in rows.get("acceptance", [])
+            if candidate.get("review_generation") == review["generation"]
+        ]
+        if same_generation:
+            raise TrackerConflictError(
+                "GitHub acceptance proof conflicts with this review generation",
+            )
+        self._append_lifecycle(
+            issue_id, binding, scope, "acceptance", payload, source_native,
+        )
+        readback = self._native_issue_read(issue_id)
+        if self._current_lifecycle_scope(issue_id, binding) != scope:
+            raise TrackerConflictError(
+                "GitHub lifecycle native coordinates changed after acceptance write",
+            )
+        if (
+            self._comment_effect_snapshot(readback)
+            != self._comment_effect_snapshot(source_native)
+        ):
+            raise TrackerConflictError(
+                "GitHub lifecycle changed untargeted properties after acceptance write",
+            )
+        observed = self._projection(
+            issue_id, readback, strict=True,
+            binding=binding, scope=scope,
+        )
+        if observed.ac_done != observed.ac_total:
+            raise TrackerConflictError("GitHub acceptance projection missing after write")
+        return True
     @staticmethod
     def _has_link(issue: Issue, link_type: str, target: str) -> bool:
         return any(link.type == link_type and link.target == target for link in issue.links)
