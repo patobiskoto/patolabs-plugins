@@ -8,8 +8,8 @@ from copy import deepcopy
 import pytest
 
 import foundry
-from foundry import frame, query, write
-from foundry.models import Adr, Issue, Link, Project, TransitionContext
+from foundry import frame, issue, query, write
+from foundry.models import Adr, Issue, Link, Project, PullRequest, TransitionContext
 from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.registry import RepositoryTrackerBinding
 from foundry.trackers.base import (
@@ -590,6 +590,92 @@ def test_pat67_raw_transport_new_review_acceptance_generation_after_prior_accept
     assert tracker.get_issue("GHQUAL-1").state == "done"
     assert transport.comment_posts == 6
     assert transport.state_writes == 3
+
+
+def test_pat67_common_openpr_publishes_corrected_head_as_next_review(
+    tmp_path,
+    monkeypatch,
+):
+    transport = _LifecycleTransport()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    repository = "patobiskoto/foundry-v1-ghprojects-sandbox"
+    branch = "feat/ghqual-1-corrected-review"
+    current = {
+        "diff": b"first review diff",
+        "opened": False,
+        "sha": "a" * 40,
+    }
+
+    monkeypatch.setattr(
+        "foundry.registry.checkout_repository_identity",
+        lambda cwd=None: PROJECT.extra["canonical_repo"],
+    )
+    write.transition(
+        tracker,
+        "GHQUAL-1",
+        "in-progress",
+        context=TransitionContext(expected_state="ready"),
+    )
+
+    def pull_request():
+        return PullRequest(
+            number=1,
+            url=f"https://github.com/{repository}/pull/1",
+            head=branch,
+            base="main",
+            base_sha="b" * 40,
+            sha=current["sha"],
+        )
+
+    def list_prs(_repo, _branch):
+        return [pull_request()] if current["opened"] else []
+
+    def open_pr(*_args):
+        current["opened"] = True
+        return pull_request()
+
+    codehost = type("CodeHost", (), {
+        "name": "github",
+        "resolve_repo": staticmethod(lambda: repository),
+        "list_prs": staticmethod(list_prs),
+        "open_pr": staticmethod(open_pr),
+        "get_pr": staticmethod(lambda *_args: pull_request()),
+    })()
+
+    def shell(*args, **_kwargs):
+        if args == ("git", "rev-parse", "--abbrev-ref", "HEAD"):
+            return branch
+        if args == ("git", "push", "-u", "origin", branch):
+            return ""
+        raise AssertionError(f"unexpected shell call: {args}")
+
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "_sh", shell)
+    monkeypatch.setattr(issue, "_default_branch", lambda: "main")
+    monkeypatch.setattr(issue, "git_head", lambda: current["sha"])
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: current["diff"])
+
+    issue.openpr("GHQUAL-1")
+    current.update(sha="c" * 40, diff=b"corrected review diff")
+    issue.openpr("GHQUAL-1")
+    issue.openpr("GHQUAL-1")
+
+    observed = tracker.get_issue("GHQUAL-1")
+    binding = tracker._binding(PROJECT)
+    rows = tracker._lifecycle_rows(
+        "GHQUAL-1",
+        observed,
+        tracker._current_lifecycle_scope("GHQUAL-1", binding),
+    )
+    reviews = rows["state-review"]
+    assert [(payload["generation"], payload["head_sha"]) for payload, _body in reviews] == [
+        (1, "a" * 40),
+        (2, "c" * 40),
+    ]
+    assert observed.state == "review"
+    assert transport.comment_posts == 3
+    assert transport.state_writes == 2
 
 
 @pytest.mark.parametrize("outcome", ["applied", "hidden"])

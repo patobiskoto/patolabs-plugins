@@ -118,6 +118,13 @@ def _require_pr_base_sha(pr) -> str:
     return base_sha
 
 
+def _bounded_review_predecessor(tracker, observed_issue) -> str | None:
+    """Reuse the logical state authenticated by the caller's lifecycle read."""
+    if not getattr(tracker, "bounded_state_transitions", False):
+        return None
+    return getattr(observed_issue, "normalized_state", None)
+
+
 def _require_unchanged_pr_coordinates(ch, repo, pr_number, original, base_sha) -> None:
     """Fail closed when the code-host no longer exposes the reviewed PR coordinates."""
     fresh = ch.get_pr(repo, int(pr_number))
@@ -306,10 +313,18 @@ def openpr(issue_id=None, base=None, flags=()):
             and it.projection_status == "disagreement"
         ):
             raise
+    # Keep the logical predecessor returned by the proof-validating read above.
+    # A later native-State observation could adopt unrelated provider drift.
+    review_predecessor = _bounded_review_predecessor(tr, it)
+    logical_state = (
+        review_predecessor
+        if getattr(tr, "bounded_state_transitions", False)
+        else getattr(it, "state", None)
+    )
     if (
         getattr(tr, "bounded_transition_proofs", False)
         or getattr(tr, "bounded_state_transitions", False)
-    ) and getattr(it, "state", None) not in {"in-progress", "review"}:
+    ) and logical_state not in {"in-progress", "review"}:
         raise SystemExit(
             "⛔ Ouverture PR refusée — l'issue doit être in-progress ou review ; "
             "aucun push ni effet code-host n'a été tenté."
@@ -352,7 +367,7 @@ def openpr(issue_id=None, base=None, flags=()):
             raise SystemExit("⛔ Transition review refusée — HEAD local différent du SHA de la PR.")
         context = TransitionContext(
             expected_state=(
-                "in-progress" if getattr(tr, "bounded_state_transitions", False)
+                review_predecessor if getattr(tr, "bounded_state_transitions", False)
                 else None
             ),
             pr_url=pr.url,
@@ -365,7 +380,7 @@ def openpr(issue_id=None, base=None, flags=()):
         write.transition(tr, issue_id, "review", context=context)
     else:
         if getattr(tr, "bounded_state_transitions", False):
-            context = TransitionContext(expected_state="in-progress")
+            context = TransitionContext(expected_state=review_predecessor)
         # Preserve the established provider call order for adapters without proofs.
         if context is None:
             write.transition(tr, issue_id, "review")
@@ -520,9 +535,12 @@ def merge(issue_id, pr_number, flags=()):
             )
         pr_base_sha = _require_pr_base_sha(pr)
         review_diff = git_diff(base=pr_base_sha)
+        # ``current`` is the proof-validated logical issue read captured before
+        # the gates.  Reuse it rather than sampling native State as a new authority.
+        review_predecessor = _bounded_review_predecessor(tr, current)
         transition_context = TransitionContext(
             expected_state=(
-                "in-progress" if getattr(tr, "bounded_state_transitions", False)
+                review_predecessor if bounded_state_transitions
                 else None
             ),
             pr_url=pr.url,
