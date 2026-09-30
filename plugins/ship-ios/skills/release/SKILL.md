@@ -93,11 +93,14 @@ contain it after a squash merge), and never `origin/<default>` blindly (another 
 have landed since):
 ```bash
 git fetch origin
-git rev-parse -q --verify "refs/tags/v<version>"  # if present, compare it to <merged-sha>; stop on mismatch
-git tag "v<version>" <merged-sha>   # `sha mergé` from foundry:merge-pr, or the PR's merge commit
-git push origin "v<version>"        # push ONLY this tag, nothing else
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<ship-ios-root>")/scripts/tag_merged.py" "<version>" "<merged-sha>" --repo .
 ```
-The tag push is allowed by the Foundry guard (only default-branch pushes are denied).
+Use the exact `sha mergé` from `foundry:merge-pr` (or the merged PR's commit in
+standalone mode). The helper verifies the local commit and both local/remote tag refs,
+creates only a missing local tag, and pushes only that tag when absent remotely.
+An identical tag already pushed is a no-op; an identical local tag left by an
+interrupted run resumes its push; any divergent tag stops without mutation. The tag
+push is allowed by the Foundry guard (only default-branch pushes are denied).
 The Xcode Cloud "Release" workflow (tag-triggered) archives, signs (cloud-managed), and
 uploads to TestFlight. Nothing to build locally here. Record the merged SHA, tag, version,
 approved locale notes, tag-push time, and observed build number together. On an interrupted

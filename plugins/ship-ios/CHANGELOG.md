@@ -13,6 +13,8 @@
 - The release procedure now preserves exact-SHA tag idempotence and keeps merged,
   build-ready, submitted, and published observations separate. Foundry retains no App
   Store deployment authority.
+- `tag_merged.py` verifies local and remote tag refs, resumes a local tag left before
+  push, and refuses any divergent tag before changing the remote.
 
 ## 0.2.1 — 2026-08-20
 

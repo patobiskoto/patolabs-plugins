@@ -123,6 +123,7 @@ templates/Appfile Snapfile   identity + screenshot matrix
 templates/UITests/…          snapshot UITest scaffold
 templates/metadata_example/  the per-locale metadata layout (illustrative)
 scripts/changelog_bridge.py  thin: pulls Foundry's changelog facts (optional)
+scripts/tag_merged.py       verifies and pushes only the exact merged release tag
 ```
 
 The bridge runs both Foundry reads with the application checkout as its working directory,
@@ -142,6 +143,9 @@ versions have no claimed compatibility. Both Claude Code and Codex use this same
 A malformed payload, inaccessible provider, or invalid/stale binding is an error, never an
 empty changelog or an implicit file fallback. Exit 3 alone means no compatible Foundry was
 discovered; elect standalone mode explicitly with `--standalone` and use a reviewed file.
+An explicitly chosen CLI, `FOUNDRY_CLI`, or an installation marker is authoritative:
+if it is broken, the bridge stops. For unconfigured discovery, it can skip an older
+candidate that lacks the V1 selection command and try another installed candidate.
 The bridge imports no tracker adapter and reads no provider credential itself.
 
 ## Status

@@ -48,9 +48,9 @@ def _marked_cli(home: Path) -> str | None:
     return value
 
 
-def _find_cli(explicit: str | None, *, home: Path | None = None,
-              plugin_root: Path | None = None) -> str | None:
-    """Find Foundry across dev checkout, Claude cache, Codex cache, or PATH."""
+def _cli_candidates(explicit: str | None, *, home: Path | None = None,
+                    plugin_root: Path | None = None) -> tuple[list[str], bool]:
+    """Return candidate paths and whether one is an authoritative configuration."""
     home = home or Path.home()
     plugin_root = plugin_root or Path(__file__).resolve().parents[1]
     configured = [explicit, os.environ.get("FOUNDRY_CLI")]
@@ -58,10 +58,10 @@ def _find_cli(explicit: str | None, *, home: Path | None = None,
         if path is not None:
             if not path or not os.path.isfile(path):
                 raise ValueError("configured Foundry CLI is unavailable")
-            return path
+            return [path], True
     marked = _marked_cli(home)
     if marked is not None:
-        return marked
+        return [marked], True
     direct = [
         str(plugin_root.parent / "foundry/tooling/foundry_cli.py"),
         str(home / ".claude/plugins/marketplaces/patolabs/plugins/foundry/tooling/foundry_cli.py"),
@@ -74,11 +74,21 @@ def _find_cli(explicit: str | None, *, home: Path | None = None,
     cached = [Path(path) for pattern in cache_patterns for path in glob.glob(str(pattern))]
     cached.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     seen = set()
+    candidates = []
     for guess in [*direct, *(str(path) for path in cached)]:
         if guess and guess not in seen and os.path.isfile(guess):
-            return guess
+            candidates.append(guess)
         seen.add(guess)
-    return None
+    return candidates, False
+
+
+def _find_cli(explicit: str | None, *, home: Path | None = None,
+              plugin_root: Path | None = None) -> str | None:
+    """Return the first discoverable CLI for callers that only need its path."""
+    candidates, _configured = _cli_candidates(
+        explicit, home=home, plugin_root=plugin_root,
+    )
+    return candidates[0] if candidates else None
 
 
 def _repository_root(repository: str | None) -> Path | None:
@@ -221,9 +231,10 @@ def _validate_changelog(value: object, *, milestone: str,
         or scope.get("project_id") != selection["project"]["id"]
         or scope.get("release") != milestone
         or not isinstance(scope.get("release_id"), str) or not scope["release_id"]
-        or not isinstance(scope.get("closure"), dict)
+        or not _valid_closure(scope.get("closure"), selection["tracker"])
         or "native_state" not in scope
-        or scope["native_state"] is not None and not isinstance(scope["native_state"], str)
+        or (scope["native_state"] not in ("open", "closed")
+            if selection["tracker"] == "ghprojects" else scope["native_state"] is not None)
         or not isinstance(scope.get("coordinates"), dict)
         or not _valid_coordinates(scope["coordinates"], selection, scope["release_id"])
         or not isinstance(scope.get("issues"), list)
@@ -270,6 +281,37 @@ def _valid_coordinates(coordinates: dict, selection: dict, release_id: str) -> b
     )
 
 
+def _valid_closure(value: object, provider: str) -> bool:
+    if not isinstance(value, dict):
+        return False
+    expected_action = (
+        "close-repository-milestone" if provider == "ghprojects"
+        else "record-scope-freeze"
+    )
+    if (
+        value.get("mode") != "operator"
+        or value.get("action") != expected_action
+        or value.get("native_mutation") is not (provider == "ghprojects")
+        or value.get("preconditions") != ["unfinished=0", "unavailable=0"]
+        or value.get("verification") != "read-release-scope"
+    ):
+        return False
+    return (
+        value.get("native_capability") == "unavailable"
+        if provider != "ghprojects" else "native_capability" not in value
+    )
+
+
+def _missing_selection_capability(output: str) -> bool:
+    """Only a syntactically absent V1 command allows trying another auto install."""
+    lowered = output.lower()
+    return (
+        "unrecognized arguments: --require-v1" in lowered
+        or ("flag(s) inconnus" in lowered and "--require-v1" in lowered)
+        or "invalid choice: 'selection'" in lowered
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("milestone")
@@ -297,27 +339,40 @@ def main() -> int:
         return 4
 
     try:
-        cli = _find_cli(args.foundry_cli)
+        candidates, configured = _cli_candidates(args.foundry_cli)
     except ValueError as exc:
         print(f"Configuration Foundry invalide : {exc}.", file=sys.stderr)
         return 2
-    if not cli:
+    if not candidates:
         print("Foundry introuvable — passe un fichier changelog au skill à la place.",
               file=sys.stderr)
         return 3
 
-    selection_command = ["python3", cli, "registry", "selection"]
-    if args.require_v1_binding:
-        selection_command.append("--require-v1")
-    selection = subprocess.run(selection_command, cwd=repository, capture_output=True,
-                               text=True, check=False)
-    if selection.returncode != 0:
-        print(selection.stderr or selection.stdout, file=sys.stderr)
-        return 2
-    try:
-        selected = _validate_selection(json.loads(selection.stdout))
-    except (TypeError, ValueError, json.JSONDecodeError):
-        print("Sélection V1 du tracker Foundry invalide.", file=sys.stderr)
+    for cli in candidates:
+        selection_command = ["python3", cli, "registry", "selection"]
+        if args.require_v1_binding:
+            selection_command.append("--require-v1")
+        selection = subprocess.run(selection_command, cwd=repository, capture_output=True,
+                                   text=True, check=False)
+        if selection.returncode != 0:
+            error = selection.stderr or selection.stdout
+            if not configured and _missing_selection_capability(error):
+                continue
+            print(error, file=sys.stderr)
+            return 2
+        try:
+            raw_selection = json.loads(selection.stdout)
+            if (not configured and isinstance(raw_selection, dict)
+                    and raw_selection.get("mode") != "v1"):
+                continue
+            selected = _validate_selection(raw_selection)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            print("Sélection V1 du tracker Foundry invalide.", file=sys.stderr)
+            return 2
+        break
+    else:
+        print("Aucune installation Foundry autodétectée ne fournit la sélection V1.",
+              file=sys.stderr)
         return 2
 
     r = subprocess.run(

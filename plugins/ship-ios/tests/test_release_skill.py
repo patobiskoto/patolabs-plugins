@@ -9,7 +9,7 @@ local state. Pinned here:
 - no push refspec targeting the default branch (main/master/HEAD);
 - no `git commit -a` (misses brand-new files — first-release release_notes.txt);
 - explicit staging is verified (`git diff --cached`) before committing;
-- the single-tag push (`git push origin "v<version>"`) is present.
+- the exact-SHA single-tag helper is present and separately tested.
 """
 import re
 import unittest
@@ -77,8 +77,11 @@ class ReleaseSkillFormTests(unittest.TestCase):
             any(ln.startswith("git diff --cached") for ln in _command_lines()),
             "the staged diff must be reviewed before the release commit")
 
-    def test_single_tag_push_present(self):
-        self.assertIn('git push origin "v<version>"', _command_lines())
+    def test_single_tag_helper_present(self):
+        self.assertTrue(any(
+            "/scripts/tag_merged.py" in line and '"<merged-sha>"' in line
+            for line in _command_lines()
+        ))
 
     def test_foundry_path_goes_through_start_issue(self):
         # foundry:open-pr refuses a hand-minted branch: it derives the issue id

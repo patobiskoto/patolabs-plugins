@@ -33,7 +33,12 @@ def _v1_payload(project, *, unavailable=False):
             "provider": "linear", "project_key": project,
             "project_id": "project-id", "release": "M1", "release_id": "release-1",
             "native_state": None, "issues": [fact] if unavailable else [],
-            "closure": {"mode": "operator"},
+            "closure": {
+                "mode": "operator", "native_capability": "unavailable",
+                "action": "record-scope-freeze", "native_mutation": False,
+                "preconditions": ["unfinished=0", "unavailable=0"],
+                "verification": "read-release-scope",
+            },
             "coordinates": {
                 "project_id": "project-id", "team_id": "team-id",
                 "project_milestone_id": "release-1",
@@ -64,6 +69,8 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
             lambda value: value["release_scope"].update(provider="ghprojects"),
             lambda value: value["release_scope"].pop("coordinates"),
             lambda value: value["release_scope"].pop("native_state"),
+            lambda value: value["release_scope"].update(native_state="closed"),
+            lambda value: value["release_scope"].update(closure={}),
             lambda value: value["release_scope"]["coordinates"].update(
                 project_milestone_id="other-release"
             ),
@@ -109,6 +116,41 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
             github_coordinates, github_selection, "8",
         ))
 
+    def test_all_three_provider_closure_shapes_validate(self):
+        base = {"project": {"key": "APP", "id": "project-id"}}
+        youtrack = _v1_payload("APP")
+        youtrack["release_scope"].update(
+            provider="youtrack",
+            coordinates={
+                "project_id": "project-id", "milestone_bundle_id": "bundle-id",
+                "enum_value_id": "release-1",
+            },
+        )
+        self.assertEqual(bridge._validate_changelog(
+            youtrack, milestone="M1", selection={**base, "tracker": "youtrack"},
+        ), youtrack)
+        github = _v1_payload("APP")
+        github["release_scope"].update(
+            provider="ghprojects", release_id="7", native_state="open",
+            closure={
+                "mode": "operator", "action": "close-repository-milestone",
+                "native_mutation": True,
+                "preconditions": ["unfinished=0", "unavailable=0"],
+                "verification": "read-release-scope",
+            },
+            coordinates={
+                "project_id": "project-id", "repository": "example/app",
+                "milestone_number": 7, "milestone_id": 700,
+                "milestone_node_id": "node-7",
+            },
+        )
+        self.assertEqual(bridge._validate_changelog(
+            github, milestone="M1", selection={
+                **base, "tracker": "ghprojects",
+                "repository": "github.com/example/app",
+            },
+        ), github)
+
     def test_explicit_cli_wins(self):
         with tempfile.TemporaryDirectory() as tmp:
             cli = Path(tmp) / "foundry_cli.py"
@@ -126,7 +168,7 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
                 "changelog_bridge.py", "M1", "--foundry-cli", str(Path(tmp) / "absent"),
             ]),
             mock.patch.object(bridge, "_repository_root", return_value=Path(tmp)),
-            mock.patch.object(bridge, "_find_cli", side_effect=ValueError(
+            mock.patch.object(bridge, "_cli_candidates", side_effect=ValueError(
                 "configured Foundry CLI is unavailable"
             )) as finder,
         ):
@@ -225,6 +267,39 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
                 run.call_args_list[1].args[0],
                 ["python3", str(cli), "query", "changelog", "M1"],
             )
+
+    def test_autodiscovery_skips_legacy_cli_but_not_provider_failure(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(bridge.sys, "argv", [
+                "changelog_bridge.py", "M1", "--require-v1-binding",
+            ]),
+            mock.patch.object(bridge, "_repository_root", return_value=Path(tmp)),
+            mock.patch.object(bridge, "_cli_candidates", return_value=(
+                ["old-cli", "new-cli"], False,
+            )),
+        ):
+            selected = {
+                "mode": "v1", "tracker": "linear",
+                "project": {"key": "APP", "id": "project-id"},
+                "repository": "github.com/example/app",
+                "configuration_digest": "sha256:" + "a" * 64,
+            }
+            replies = [
+                mock.Mock(returncode=0, stdout=json.dumps({"mode": "legacy"}), stderr=""),
+                mock.Mock(returncode=0, stdout=json.dumps(selected), stderr=""),
+                mock.Mock(returncode=0, stdout=json.dumps(_v1_payload("APP")), stderr=""),
+            ]
+            with mock.patch.object(bridge.subprocess, "run", side_effect=replies) as run:
+                self.assertEqual(bridge.main(), 0)
+            self.assertEqual([call.args[0][1] for call in run.call_args_list], [
+                "old-cli", "new-cli", "new-cli",
+            ])
+
+            failed = mock.Mock(returncode=2, stdout="", stderr="binding invalid")
+            with mock.patch.object(bridge.subprocess, "run", return_value=failed) as run:
+                self.assertEqual(bridge.main(), 2)
+                run.assert_called_once()
 
     def test_main_stops_when_v1_selection_is_invalid(self):
         with tempfile.TemporaryDirectory() as tmp:
