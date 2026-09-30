@@ -127,6 +127,17 @@ def closure_receipt_model():
     )
 
 
+def test_legacy_epic_closure_receipt_keeps_devhub_wire_shape():
+    receipt = closure_receipt_model()
+
+    assert receipt.to_dict() == closure_receipt_raw()
+    assert set(receipt.to_dict()) == {
+        "project_key", "project_id", "parent_id", "parent_version",
+        "parent_type", "parent_ac_done", "parent_ac_total", "children",
+        "issued_at", "nonce",
+    }
+
+
 def test_epic_closure_posts_exact_original_receipt_with_stable_replay_identity():
     tracker = ScriptedTracker([epic_closure_raw(replayed=False)])
     receipt = closure_receipt_model()

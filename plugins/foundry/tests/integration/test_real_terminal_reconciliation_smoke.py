@@ -9,7 +9,7 @@ cloud host, agent, PR, merge or budget seam is available.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, replace
+from dataclasses import replace
 import hashlib
 import ipaddress
 import json
@@ -241,7 +241,7 @@ def test_real_epic_closure_replay_and_terminal_projection_smoke():
             "lease_id": command.lease.id, "attempt_id": attempt_id,
             "original_closure": json.loads(json.dumps({
                 "schema_version": "devhub-epic-closure.v1",
-                "outcome": {**asdict(recovered), "replayed": True},
+                "outcome": {**recovered.to_dict(), "replayed": True},
             })), "cost_cents": None, "duration_ms": None,
         }
         reconciliation = command_client.publish_late_terminal(command, **publication)
