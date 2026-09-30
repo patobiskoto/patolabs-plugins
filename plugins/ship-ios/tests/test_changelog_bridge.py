@@ -286,7 +286,9 @@ class ChangelogBridgeDiscoveryTests(unittest.TestCase):
                 "configuration_digest": "sha256:" + "a" * 64,
             }
             replies = [
-                mock.Mock(returncode=0, stdout=json.dumps({"mode": "legacy"}), stderr=""),
+                mock.Mock(returncode=1, stdout="usage: registry [register <tracker> "
+                          "<repo> <KEY> <project-id> [k=v …] | alias <tracker> "
+                          "<source-repo> <alias-repo>]\n", stderr=""),
                 mock.Mock(returncode=0, stdout=json.dumps(selected), stderr=""),
                 mock.Mock(returncode=0, stdout=json.dumps(_v1_payload("APP")), stderr=""),
             ]

@@ -123,6 +123,9 @@ class ReleaseSkillFormTests(unittest.TestCase):
         self.assertIn("registry selection --require-v1", setup)
         self.assertIn("query changelog", setup)
         self.assertIn("--standalone", setup)
+        self.assertIn("Bash(python3:*)", setup)
+        self.assertIn("/scripts/changelog_bridge.py", setup)
+        self.assertIn("--require-v1-binding", setup)
 
 
 if __name__ == "__main__":

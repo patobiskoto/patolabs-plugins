@@ -309,6 +309,8 @@ def _missing_selection_capability(output: str) -> bool:
         "unrecognized arguments: --require-v1" in lowered
         or ("flag(s) inconnus" in lowered and "--require-v1" in lowered)
         or "invalid choice: 'selection'" in lowered
+        or (lowered.startswith("usage: registry [register ")
+            and " | alias " in lowered and "selection" not in lowered)
     )
 
 

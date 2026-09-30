@@ -15,6 +15,8 @@
   Store deployment authority.
 - `tag_merged.py` verifies local and remote tag refs, resumes a local tag left before
   push, and refuses any divergent tag before changing the remote.
+- Unconfigured discovery skips the observed Foundry 0.8.1 registry usage response
+  before probing a later V1 candidate; `ship-ios:setup` can invoke that same bridge.
 
 ## 0.2.1 — 2026-08-20
 
