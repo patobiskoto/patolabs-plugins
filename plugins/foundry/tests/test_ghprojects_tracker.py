@@ -604,6 +604,49 @@ def test_pat67_exact_review_receipt_repairs_only_missing_state(tmp_path):
     assert transport.state_writes == 2
 
 
+def test_pat67_public_start_replays_only_durable_partial_receipt(tmp_path, monkeypatch):
+    transport = _StateWriteFailsOnce()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    transport.fail_state = "in-progress"
+    with pytest.raises(GitHubProjectsTrackerError):
+        tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    receipt_count = transport.comment_posts
+    branches = []
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue, "_sh", lambda *_args: "")
+    monkeypatch.setattr(
+        issue, "_prepare_branch", lambda branch: branches.append(branch) or "existing",
+    )
+
+    issue.start("GHQUAL-1")
+
+    assert tracker.get_issue("GHQUAL-1").state == "in-progress"
+    assert transport.comment_posts == receipt_count
+    assert transport.state_writes == 1
+    assert len(branches) == 1
+
+
+def test_pat67_public_start_refuses_native_only_in_progress(tmp_path, monkeypatch):
+    transport = _LifecycleTransport()
+    transport.state = "in-progress"
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    branches = []
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue, "_sh", lambda *_args: "")
+    monkeypatch.setattr(
+        issue, "_prepare_branch", lambda branch: branches.append(branch),
+    )
+
+    with pytest.raises(SystemExit, match="sans reçu Foundry"):
+        issue.start("GHQUAL-1")
+
+    assert branches == []
+    assert transport.comment_posts == 0
+    assert transport.state_writes == 0
+
+
 def test_pat67_done_recovery_requires_exact_merged_pr_receipt(tmp_path):
     transport = _StateWriteFailsOnce()
     tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
@@ -705,6 +748,67 @@ def test_pat67_exact_receipt_refuses_changed_source_before_repair(tmp_path):
         tracker.set_state("GHQUAL-1", "review", review, PROJECT)
     assert transport.state == "in-progress"
     assert transport.comment_posts == receipt_count
+
+
+def test_pat67_release_classifies_only_aligned_done_proof(tmp_path, monkeypatch):
+    transport = _LifecycleTransport()
+    tracker = GitHubProjectsTracker(runner=transport, state_dir=tmp_path)
+    review = _review_context()
+    done = _done_context(review)
+    tracker.set_state("GHQUAL-1", "in-progress", project=PROJECT)
+    tracker.set_state("GHQUAL-1", "review", review, PROJECT)
+    tracker.project_acceptance_proof(
+        "GHQUAL-1", transport.body,
+        _canonical_acceptance_proof(
+            transport.body, head=review.head_sha, base=review.base_sha,
+            diff_hash=review.review_digest,
+        ),
+        checked=1, project=PROJECT,
+    )
+    tracker.set_state("GHQUAL-1", "done", done, PROJECT)
+    project = Project(
+        key=PROJECT.key, id=PROJECT.id,
+        extra={**PROJECT.extra, "release_ids": {"v1.0.0": "12"}},
+    )
+    snapshot = tracker._native_issue_read("GHQUAL-1")
+    repo = "patobiskoto/foundry-v1-ghprojects-sandbox"
+    original_rest = tracker._rest
+    milestone = {
+        "id": 1200, "node_id": "MI_node", "number": 12,
+        "title": "v1.0.0", "state": "open",
+        "url": f"https://api.github.com/repos/{repo}/milestones/12",
+        "html_url": f"https://github.com/{repo}/milestone/12",
+    }
+    monkeypatch.setattr(
+        tracker, "_rest",
+        lambda path, operation: milestone if path.endswith("/milestones/12")
+        else original_rest(path, operation),
+    )
+    original_rows = tracker._rows
+    release_row = {
+        "id": 1001, "node_id": "issue-node-1", "number": 1,
+        "state": "closed", "milestone": {"number": 12, "title": "v1.0.0"},
+        "repository_url": f"https://api.github.com/repos/{repo}",
+        "url": f"https://api.github.com/repos/{repo}/issues/1",
+        "html_url": f"https://github.com/{repo}/issues/1",
+    }
+    monkeypatch.setattr(
+        tracker, "_rows",
+        lambda path, operation: [release_row] if "milestone=12" in path
+        else original_rows(path, operation),
+    )
+    monkeypatch.setattr(tracker, "_search_raw", lambda *_args: [deepcopy(snapshot)])
+    monkeypatch.setattr(tracker, "_hydrate_issue", lambda current, *_args: current)
+
+    accepted = tracker.read_release_scope(project, "v1.0.0").issues[0]
+    assert accepted.disposition == "accepted"
+    assert accepted.references["merge_sha"] == done.merge_sha
+    assert accepted.references["acceptance_proof_id"]
+
+    snapshot.state = "review"
+    disagreed = tracker.read_release_scope(project, "v1.0.0").issues[0]
+    assert disagreed.disposition == "unavailable"
+    assert "merge_sha" not in disagreed.references
 
 
 def test_pat67_raw_transport_new_review_acceptance_generation_after_prior_acceptance(

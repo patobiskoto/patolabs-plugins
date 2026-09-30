@@ -79,6 +79,12 @@ and the operation fails closed without a second POST; multiple candidates also f
 closed. The local intent never grants a lifecycle state by itself. An already present
 exact receipt is accepted before the fresh-state comparison, so exact historical replays
 converge without regressing newer review or done evidence.
+If the State write was interrupted after a `state-in-progress` receipt, replaying
+`issue start` on its existing branch repairs only that State after revalidating the
+receipt and unchanged source. A native `in-progress` with no Foundry receipt is
+refused; it cannot be adopted as an authenticated start. The same exact-receipt
+rule repairs interrupted review and done State writes, including replay of an
+already merged PR, without a second receipt or merge.
 
 Acceptance receipts accept only the canonical six-field PAT-56 proof shape and bind one
 exact review generation. The criterion identities are recomputed from the current issue

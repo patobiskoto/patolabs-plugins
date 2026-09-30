@@ -924,15 +924,53 @@ class GitHubProjectsTracker(Tracker):
                 "provider_issue_id": row.get("node_id"),
                 "issue_url": row.get("html_url"),
             }
+            scope = (
+                self._current_lifecycle_scope(issue.id, binding)
+                if any(
+                    isinstance(comment.get("text"), str)
+                    and comment["text"].startswith(_LIFECYCLE_HEADER)
+                    for comment in issue.comments
+                ) else None
+            )
+            try:
+                projected = self._projection(
+                    issue.id, deepcopy(issue), strict=False, binding=binding,
+                    scope=scope,
+                )
+            except TrackerConflictError:
+                projected = None
+            disposition = "unavailable" if terminal else "unfinished"
+            if projected is None or projected.projection_status == "disagreement":
+                disposition = "unavailable"
+            elif (
+                projected.normalized_state == "done"
+                and projected.projection_status == "aligned"
+            ):
+                rows = self._lifecycle_rows(issue.id, issue, scope)
+                done = rows["state-done"][0][0]
+                acceptance = next(
+                    payload for payload, _body in rows["acceptance"]
+                    if payload["review_generation"] == done["review_generation"]
+                )
+                references.update({
+                    key: done[key] for key in (
+                        "pr_url", "head_sha", "base_sha", "merge_sha",
+                        "review_digest", "review_generation",
+                    )
+                })
+                references["acceptance_proof_id"] = acceptance["proof"]["proof_id"]
+                if self._current_lifecycle_scope(issue.id, binding) != scope:
+                    raise ReleaseScopeUnavailableError(
+                        self.name, release, "coordinates_changed"
+                    )
+                disposition = "accepted"
             issues.append(ReleaseIssue(
                 id=issue.id,
                 title=issue.title,
                 type=issue.type,
-                state=issue.state,
+                state=projected.state if projected is not None else issue.state,
                 labels=tuple(issue.labels),
-                # PAT-67 owns proof-bound lifecycle projection. A terminal Project
-                # state, Issue closure, or prerequisite PR mention cannot prove delivery.
-                disposition="unavailable" if terminal else "unfinished",
+                disposition=disposition,
                 references={key: value for key, value in references.items() if value},
             ))
         return ReleaseScope(

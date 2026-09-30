@@ -51,6 +51,11 @@ unmapped, inaccessible, mismatched or invalid release raises
 existing mapped release with zero issues is a successful, explicit empty scope.
 Issue-list pagination is exhausted and duplicate/stalled pages fail closed. GitHub
 also requires every repository-milestone issue to belong to the bound product Project.
+For a GitHub issue, only an aligned Project State `done` with valid Foundry
+review, acceptance and merge receipts classifies as `accepted`. The release fact
+includes the bound PR/SHA coordinates and acceptance proof ID. Native Issue
+closure or Project State alone remains `unavailable`; a receipt/native State
+disagreement also remains `unavailable` until the projection is repaired.
 
 ## Preparing a new release mapping
 

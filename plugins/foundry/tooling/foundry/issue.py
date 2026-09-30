@@ -246,7 +246,31 @@ def start(issue_id, flags=()):
                          f"une issue :\n{dirty}")
     tr = foundry.tracker()
     write.issue_binding(tr, issue_id)
-    it = tr.get_issue(issue_id)
+    start_replay = None
+    try:
+        it = tr.get_issue(issue_id)
+    except TrackerConflictError:
+        if not getattr(tr, "append_only_lifecycle_supported", False):
+            raise
+        it = tr.observe_issue(issue_id)
+        if (
+            it.normalized_state != "in-progress"
+            or it.projection_status != "disagreement"
+            or it.native_state is None
+        ):
+            raise
+        # Only the existing authenticated start receipt may repair its missing
+        # native State. The adapter revalidates the entire chain and source.
+        start_replay = TransitionContext(expected_state=it.native_state)
+    if (
+        getattr(tr, "append_only_lifecycle_supported", False)
+        and it.state == "in-progress"
+        and it.projection_status == "native-only"
+    ):
+        raise SystemExit(
+            "⛔ Démarrage refusé : état natif in-progress sans reçu Foundry ; "
+            "aucune preuve de transition à reprendre."
+        )
     btype = _BRANCH_TYPE.get(it.type, "chore")
     branch = f"{btype}/{issue_id.lower()}-{_slug(it.title)}"
     transition_path = _start_transition_path(tr, it.state)
@@ -262,6 +286,8 @@ def start(issue_id, flags=()):
             "aucune transition n'a été tentée."
         )
     try:
+        if start_replay is not None:
+            write.transition(tr, issue_id, "in-progress", context=start_replay)
         predecessor = it.state
         for state in transition_path:
             context = (
