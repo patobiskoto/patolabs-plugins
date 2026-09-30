@@ -8,6 +8,7 @@ by writing one subclass — the query/write tiers and the skills never change.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from copy import deepcopy
 
 from foundry.models import (
     Adr,
@@ -117,6 +118,35 @@ class Tracker(ABC):
     acceptance_proof_projection_supported: bool = False
     acceptance_override_projection_supported: bool = False
     cockpit_evidence_projection_supported: bool = False
+
+    # PAT-64 migration is deliberately a separate port.  ``create_issue`` is
+    # not an import primitive: several providers generate a fresh client id on
+    # every call and therefore cannot safely be replayed by an orchestrator.
+    # Adapters opt in only when they can keep and look up the source coordinate.
+    migration_supported_attributes: frozenset[str] = frozenset()
+
+    def migration_preflight(
+        self, project: Project, records: tuple[dict, ...],
+    ) -> dict:
+        """Qualify the target provenance profile before the first provider effect."""
+        del project, records
+        raise TrackerCapabilityUnavailableError(self.name, "migration_provenance_profile")
+
+    def migration_export_adrs(self, project: Project) -> list[dict]:
+        """Return ADR source bytes plus relation knowledge available at the provider."""
+        return [
+            {
+                "adr": adr,
+                "relations": {
+                    "supersedes": "unknown",
+                    "superseded_by": "unknown",
+                    "issues": "unknown",
+                },
+                "source_created": None,
+                "source_updated": None,
+            }
+            for adr in self.list_adrs(project)
+        ]
 
     def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
         """Read one explicitly mapped provider release without approximate discovery."""
@@ -471,6 +501,87 @@ class Tracker(ABC):
         """Import one closed historical ADR manifest without implicit acceptance."""
         del project, records
         raise TrackerCapabilityUnavailableError(self.name, "adr_historical_batch_import")
+
+    # --- bounded tracker migration (PAT-64) -----------------------------
+    def migration_find_issue(self, project: Project, source_ref: str) -> Issue | None:
+        """Return the prior imported issue for an exact source coordinate.
+
+        This is a lookup, not a fuzzy title/body search.  Returning ``None``
+        authorizes one import; providers which cannot make that distinction
+        must refuse rather than let a resume duplicate work.
+        """
+        del project, source_ref
+        raise TrackerCapabilityUnavailableError(self.name, "migration_issue_import")
+
+    def migration_import_issue(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Issue:
+        """Create or recover one faithful living-work snapshot.
+
+        ``snapshot`` is the closed manifest record.  The adapter owns how it
+        preserves ``source_ref`` and must make an exact replay return the same
+        target object without a second provider write.
+        """
+        del project, snapshot, source_ref
+        raise TrackerCapabilityUnavailableError(self.name, "migration_issue_import")
+
+    def migration_link_issue(
+        self,
+        project: Project,
+        src_id: str,
+        link_type: str,
+        dst_id: str,
+    ) -> None:
+        """Create one relation through an explicitly staged migration target."""
+        del project, src_id, link_type, dst_id
+        raise TrackerCapabilityUnavailableError(self.name, "migration_issue_link")
+
+    def migration_find_adr(self, project: Project, source_ref: str) -> Adr | None:
+        """Return the prior imported ADR for an exact source coordinate."""
+        del project, source_ref
+        raise TrackerCapabilityUnavailableError(self.name, "migration_adr_import")
+
+    def migration_prepare_adr(self, project: Project, snapshot: dict) -> dict:
+        """Translate source graph coordinates into this target's ADR namespace."""
+        del project
+        return deepcopy(snapshot)
+
+    def migration_qualify_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+    ) -> object | None:
+        """Return target evidence required before the first authoritative ADR effect.
+
+        Providers whose ADR codec needs no source-specific qualification return
+        ``None``.  A provider that needs qualification may write only isolated,
+        non-authoritative probes here; the orchestrator persists the returned
+        evidence before it calls :meth:`migration_import_adrs`.
+        """
+        del project, snapshots
+        return None
+
+    def migration_import_adr(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Adr:
+        """Create or recover one ADR while retaining its exact source body."""
+        del project, snapshot, source_ref
+        raise TrackerCapabilityUnavailableError(self.name, "migration_adr_import")
+
+    def migration_import_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+        *, qualification: object | None = None,
+    ) -> list[Adr]:
+        """Import one closed ADR corpus; adapters may override for graph atomicity."""
+        if qualification is not None:
+            raise TrackerConflictError(
+                f"{self.name} ADR migration qualification is unexpected"
+            )
+        return [
+            self.migration_find_adr(project, snapshot["source_ref"])
+            or self.migration_import_adr(
+                project, snapshot, source_ref=snapshot["source_ref"],
+            )
+            for snapshot in snapshots
+        ]
 
     @abstractmethod
     def set_adr_status(

@@ -65,9 +65,9 @@ closed vocabulary:
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) |
 | Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
-| Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
-| Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
-| Bascule (PAT-64): archived source refuses writes | mutation ports plus provider target preflight | supported | supported | `to_qualify` PAT-64 |
+| Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adr` | implemented; live source in P64Q→P64G | implemented; fake transports only | implemented; live target in P64Q→P64G |
+| Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | implemented; live source in P64Q→P64G | implemented; fake transports only | implemented; live target in P64Q→P64G |
+| Bascule (PAT-64): archived source refuses writes | staged target plus atomic registry promotion/source archive/marker replacement | implemented; live P64Q tombstone | implemented; fake transports only | implemented; live P64G binding |
 
 The JSON is authoritative for every cell and its evidence; read it before relying on a
 cell.
@@ -105,14 +105,127 @@ cell.
   Project fields remain part of the protected snapshot. The path retains the explicit
   S1→S2 race: it is neither CAS nor an atomic provider graph transaction. The non-V1
   DevHub adapter keeps the stronger atomic form of the port (`devhub.py`).
-- **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
-  target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR
-  import target. No adapter copies live work faithfully: Linear's `create_issue` sends a
-  random client id (`linear.py`), so a replay duplicates the issue, and nothing
-  copies lifecycle receipts, acceptance proofs or comments. This repository's
-  YouTrack→Linear live-work move was a private operator-side selective migration, and
-  `registry cutover` performs no provider I/O (`linear-tracker.md`). PAT-64 must provide
-  both halves for every pair.
+- **PAT-64** — The provider-neutral migration port and the three adapter
+  implementations now exist. Their fake transports exercise all six source/target
+  pairs and ambiguous-response recovery. The isolated YouTrack P64Q→GitHub Projects
+  P64G recipe completed preflight, copy, exact readback and activation. The remaining
+  pairs have fake-transport evidence only; no production repository was cut over.
+  The command deliberately does not copy comments or provider lifecycle receipts;
+  it preserves the exact Markdown checkbox marks for migration fidelity, while
+  lifecycle acceptance remains unknown until the target's normal review proof.
+
+### PAT-64 — cutover portable et reprenable
+
+`foundry.migration` définit l'orchestrateur unique de cutover. Il ne contient aucune
+branche YouTrack/Linear/GitHub Projects : il lit les deux côtés par le port `Tracker`,
+fige un manifeste JSON, copie seulement les issues dont l'état normalisé n'est ni
+`done` ni `dropped`, relit chaque cible, puis laisse `registry cutover` publier le
+binding atomique avec le digest du manifeste. Le manifeste porte le `source_ref` de
+chaque issue et ADR, les corps exacts, les attributs et les exceptions explicites des
+attributs que la cible ne sait pas représenter. Les relations ADR non exposées par le
+port sont `unknown`, jamais une liste vide.
+
+Une cible doit implémenter `migration_find_*`, `migration_import_*` et
+`migration_link_issue`. Ces primitives
+gardent et recherchent un `source_ref` exact : une reprise complète seulement les
+enregistrements absents et ne peut pas dédupliquer par titre ou corps. Les trois
+adaptateurs placent ce `source_ref` à la frontière de leur premier effet provider :
+
+- YouTrack exige un champ personnalisé `String` dédié nommé par
+  `migration_source_field`. Les ADR importées gardent le corps Article byte-exact; une
+  enveloppe canonique dans `summary` porte l'identité, le statut historique et la
+  connaissance des relations. Le lecteur enlève l'enveloppe et reste compatible avec
+  les Articles ADR historiques.
+- Linear exige `migration_identity_profile=foundry-linear-deterministic-v1`. L'identité
+  native de chaque issue est un UUID déterministe dérivé du project id et du
+  `source_ref`; une réponse perdue se résout par cette identité, jamais par le titre.
+  Si le corpus contient des ADR, `migration_adr_qualification_project_id` nomme un
+  projet Linear isolé, distinct du projet cible. Le premier préflight reste sans effet :
+  il valide le corpus, l'identité cible et cette isolation, puis déclare explicitement
+  que la qualification ADR est différée. La copie crée et relit d'abord toutes les
+  issues et leurs liens. Elle traduit alors les relations ADR→issue avec les identifiants
+  lisibles réellement attribués par Linear, produit le lot fermé, et crée dans le projet
+  isolé des probes déterministes pour les octets complets du Document et du témoin.
+  Chaque probe est relue avant le premier Document ADR autoritatif.
+
+  Le profil exact retourné par cette phase 2 est persisté dans le manifeste local avant
+  l'import ADR, mais reste hors de `source_digest` : la vue source gelée ne change pas
+  pendant la progression. Une reprise après création des probes retrouve leurs slots
+  déterministes; une reprise après persistance du profil le relit et le réutilise sans
+  nouvel effet. Le profil doit correspondre exactement au lot traduit et ses probes
+  doivent encore être présentes, non archivées, dans le projet isolé avec leurs octets
+  relus. Toute divergence échoue avant le premier effet ADR. Une défaillance de phase 2
+  laisse la source active et les issues cibles partielles reprenables; elle ne transforme
+  jamais une relation connue en relation vide. Après qualification, la copie appelle une
+  seule fois `import_adr_batch` sur le corpus fermé, puis vérifie le corps source exact,
+  le statut, la relation ADR→issue et son commentaire réciproque.
+- GitHub exige un label ancre réservé, nommé par `migration_label`, dont la description
+  exacte est `Foundry migration provenance profile v1`. Chaque source reçoit un label
+  déterministe dérivé de cette ancre et du `source_ref`; ce label est présent dans le
+  POST initial de l'Issue, y compris le support Issue d'une ADR. La création puis la
+  relecture du label source est elle-même reprenable; zéro ou plusieurs candidats après
+  une réponse ambiguë échouent fermés. Le codec PAT-ADR-0007 exige le namespace ADR de
+  la cible : `SRC-ADR-0042` devient donc `DST-ADR-0042`, et les relations de
+  supersession sont remappées avec le même suffixe. Le `source_ref` conserve l'identité
+  source exacte; un suffixe invalide, dupliqué ou déjà occupé par une autre provenance
+  est refusé au préflight. Si une création ADR s'interrompt après l'ajout de son Issue
+  support au Project mais avant son premier commentaire de version, la reprise ignore
+  temporairement ce seul support incomplet uniquement lorsque le label source, les
+  coordonnées natives et l'intention locale armée sur `adr:item` concordent exactement.
+  Elle termine alors le commentaire et l'engagement de tête sans recréer l'Issue ni
+  l'item. Tout support sans cette preuve, toute intention divergente et tout historique
+  présent mais malformé restent des conflits fermés.
+
+Le préflight lit la source complète, vérifie le profil de provenance cible et toutes
+les options de champs connues avant le premier effet provider. Pour Linear, la seule
+qualification différée est celle dont les octets dépendent des identifiants d'issues
+attribués par le provider; ses probes restent non autoritatives et isolées. Une relation
+ADR indisponible reste `unknown`; elle ne devient jamais `[]` ou `null`. La copie et la
+relecture comparent titre et corps exacts, Type, Priority, Estimate, état normalisé,
+marques de checkbox d'acceptation, graphe interne des issues, puis titre, corps, statut
+et relations ADR disponibles. Une divergence ou une provenance ambiguë arrête la
+bascule.
+
+Le registre conserve la cible en entrée `_staged_cutover` inactive. Les résolveurs
+ordinaires l'ignorent, donc elle ne crée jamais une seconde autorité d'écriture. Après
+la dernière relecture source et cible, `registry.cutover_repository_tracker` archive la
+source, promeut exactement la cible staged et remplace le marqueur V1 dans la même
+section critique locale. Une interruption peut rendre le checkout temporairement
+illisible; la reprise exacte publie le marqueur sans réactiver la source ni créer deux
+bindings actifs. Après publication, le tombstone source refuse ses écritures.
+
+La commande est :
+
+```text
+foundry_cli.py cutover preflight <target-tracker> <target-config.json> <manifest.json>
+foundry_cli.py cutover copy      <target-tracker> <target-config.json> <manifest.json>
+foundry_cli.py cutover activate  <target-tracker> <target-config.json> <manifest.json>
+```
+
+`target-config.json` contient exactement `key`, `id` et `extra`, sans secret. `extra`
+porte le `canonical_repo`, le profil de provenance ci-dessus et le binding provider
+complet déjà qualifié. Pour Linear avec ADR, `extra` porte aussi l'identifiant du projet
+isolé de qualification; le profil batch volumineux et credential-free est produit et
+conservé uniquement dans le manifeste de progression, jamais dans le binding staged ou
+actif. `preflight` peut être rejoué avec le même manifeste; `copy`
+remplit seulement les effets absents; `activate` termine aussi une interruption entre
+la publication du binding et l'écriture locale de la phase `activated`.
+
+La recette isolée P64Q→P64G a utilisé le dépôt privé
+`patobiskoto/foundry-v1-pat64-cutover-sandbox`, le Project personnel natif
+`PVT_kwHOABroCc4BlQAG`, le projet YouTrack P64Q et son champ String dédié. Le
+manifeste `sha256:162ed584b4c63149897824d61cf297dc75be395a8212860c167c42c84f33bf21`
+a copié une issue vivante et une ADR `proposed`, avec les octets du corps source,
+les marques `[x]`/`[ ]`, les attributs et les relations ADR `unknown` conservés à la
+relecture. La source P64Q est archivée et refuse une nouvelle création; le binding
+P64G est actif. Le sandbox GHQUAL déjà enregistré n'a pas été réaffecté. Les autres
+paires restent prouvées sur faux transports; un projet Linear cible et ses mappings
+complets seraient nécessaires pour une recette live supplémentaire. La PR sandbox #3
+prouve l'ouverture du parcours sur la cible; le merge n'est pas encore revendiqué.
+
+Cette procédure reste le modèle S1-S6 de PAT-ADR-0006. Le verrou et le manifeste sont
+locaux; ils n'offrent ni CAS provider ni exclusion distribuée. Une écriture externe
+entre S1 et S2 reste le risque résiduel explicite.
 - **PAT-59** — Linear release scope reads the same milestone mapping: an issue in an
   unmapped `projectMilestone` fails the read (`linear.py`). The PAT-54
   `registry update` path can now publish the missing mapping coherently; PAT-59 still

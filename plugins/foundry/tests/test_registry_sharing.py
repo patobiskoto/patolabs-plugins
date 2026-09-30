@@ -659,6 +659,136 @@ def test_repository_cutover_selects_complete_linear_binding_from_nested_checkout
         registry.resolve("youtrack", "public", cwd=str(nested))
 
 
+def test_pat64_staged_target_is_inactive_then_atomically_replaces_v1_source_marker(
+    monkeypatch, tmp_path,
+):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    repo = _make_repo(tmp_path, "public")
+    canonical = "github.com/acme/public"
+    registry.register(
+        "youtrack", "public", "SRC", "0-3", canonical_repo=canonical,
+    )
+    source = registry.bootstrap_repository_binding(
+        "youtrack", "public", "SRC", "0-3", cwd=str(repo),
+    )
+    assert source.tracker == "youtrack"
+
+    extra = _linear_binding()
+    extra.update({
+        "canonical_repo": canonical,
+        "migration_identity_profile": "foundry-linear-deterministic-v1",
+    })
+    staged = registry.stage_repository_cutover_target(
+        "linear", "public", "PAT", _LINEAR_PROJECT_ID,
+        migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo), **extra,
+    )
+
+    assert staged.key == "PAT"
+    assert registry.repository_tracker_binding(str(repo)).tracker == "youtrack"
+    assert registry.tracker_name_for_checkout(str(repo)) == "youtrack"
+
+    activated = registry.cutover_repository_tracker(
+        "linear", "PAT", _LINEAR_PROJECT_ID,
+        migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+    )
+    assert activated.tracker == "linear"
+    assert registry.repository_tracker_binding(str(repo)) == activated
+    data = registry.load()
+    assert data["youtrack"]["public"]["archive"] is True
+    target_entries = [
+        entry for entry in data["linear"].values()
+        if entry.get("canonical_repo") == canonical
+    ]
+    assert len(target_entries) == 1
+    assert "_staged_cutover" not in target_entries[0]
+
+
+def test_pat64_interrupted_v1_marker_replacement_replays_without_dual_active_binding(
+    monkeypatch, tmp_path,
+):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    repo = _make_repo(tmp_path, "public")
+    canonical = "github.com/acme/public"
+    registry.register(
+        "youtrack", "public", "SRC", "0-3", canonical_repo=canonical,
+    )
+    registry.bootstrap_repository_binding(
+        "youtrack", "public", "SRC", "0-3", cwd=str(repo),
+    )
+    extra = _linear_binding()
+    extra.update({
+        "canonical_repo": canonical,
+        "migration_identity_profile": "foundry-linear-deterministic-v1",
+    })
+    registry.stage_repository_cutover_target(
+        "linear", "public", "PAT", _LINEAR_PROJECT_ID,
+        migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo), **extra,
+    )
+    real_replace = registry.os.replace
+
+    def interrupted(source, destination):
+        if str(destination).endswith(".foundry/tracker.json"):
+            raise OSError("simulated V1 marker interruption")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(registry.os, "replace", interrupted)
+    with pytest.raises(OSError, match="V1 marker interruption"):
+        registry.cutover_repository_tracker(
+            "linear", "PAT", _LINEAR_PROJECT_ID,
+            migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+        )
+    data = registry.load()
+    assert data["youtrack"]["public"]["archive"] is True
+    promoted = [
+        entry for entry in data["linear"].values()
+        if entry.get("canonical_repo") == canonical
+    ]
+    assert len(promoted) == 1
+    assert "_staged_cutover" not in promoted[0]
+    with pytest.raises(ValueError, match="ambigu|incompatib"):
+        registry.repository_tracker_binding(str(repo))
+
+    monkeypatch.setattr(registry.os, "replace", real_replace)
+    recovered = registry.cutover_repository_tracker(
+        "linear", "PAT", _LINEAR_PROJECT_ID,
+        migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+    )
+    assert recovered.tracker == "linear"
+    assert registry.repository_tracker_binding(str(repo)) == recovered
+
+
+def test_pat64_staging_refuses_an_existing_active_target_for_same_repository(
+    monkeypatch, tmp_path,
+):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    repo = _make_repo(tmp_path, "public")
+    canonical = "github.com/acme/public"
+    registry.register(
+        "youtrack", "public", "SRC", "0-3", canonical_repo=canonical,
+    )
+    extra = _linear_binding()
+    extra.update({
+        "canonical_repo": canonical,
+        "migration_identity_profile": "foundry-linear-deterministic-v1",
+    })
+    registry.register(
+        "linear", "already-active", "PAT", _LINEAR_PROJECT_ID, **extra,
+    )
+
+    with pytest.raises(ValueError, match="déjà active"):
+        registry.stage_repository_cutover_target(
+            "linear", "public", "PAT", _LINEAR_PROJECT_ID,
+            migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo), **extra,
+        )
+    assert not any(
+        "_staged_cutover" in entry
+        for entry in registry.load()["linear"].values()
+    )
+
+
 def test_resolve_types_only_a_missing_legacy_alias_as_not_registered(
     monkeypatch, tmp_path,
 ):
