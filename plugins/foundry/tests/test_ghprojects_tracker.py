@@ -4107,6 +4107,7 @@ def test_pat69_ghprojects_epic_closure_replays_without_second_effect(
         state_loss="applied" if lost == "state" else None,
     )
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
 
     closed = write.close_epic(
         tracker, "GHQUAL-1", issued_at=123,
@@ -4120,9 +4121,18 @@ def test_pat69_ghprojects_epic_closure_replays_without_second_effect(
     assert tracker.comment_posts == tracker.state_writes == 1
 
 
+def test_pat69_ghprojects_epic_closure_stays_disabled_until_qualified(tmp_path):
+    tracker = _EpicClosureTracker(tmp_path)
+
+    with pytest.raises(write.EpicClosureUnavailableError):
+        write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
+    assert tracker.comment_posts == tracker.state_writes == 0
+
+
 def test_pat69_ghprojects_unknown_comment_effect_never_reposts(monkeypatch, tmp_path):
     tracker = _EpicClosureTracker(tmp_path, comment_loss="hidden")
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
 
     with pytest.raises(GitHubProjectsTrackerError, match="lost_response"):
         write.close_epic(
@@ -4142,6 +4152,7 @@ def test_pat69_ghprojects_pending_state_effect_replays_without_new_comment(
 ):
     tracker = _EpicClosureTracker(tmp_path, state_loss="hidden")
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
 
     with pytest.raises(GitHubProjectsTrackerError, match="lost_response"):
         write.close_epic(
@@ -4156,6 +4167,7 @@ def test_pat69_ghprojects_pending_state_effect_replays_without_new_comment(
 def test_pat69_ghprojects_epic_refuses_unknown_or_changed_child(monkeypatch, tmp_path):
     tracker = _EpicClosureTracker(tmp_path)
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
     tracker.child.acceptance_status = "override"
     with pytest.raises(SystemExit, match="dérogée"):
         write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
@@ -4178,6 +4190,7 @@ def test_pat69_ghprojects_closed_epic_replay_detects_graph_or_parent_drift(
 ):
     tracker = _EpicClosureTracker(tmp_path)
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    monkeypatch.setattr(tracker, "bounded_epic_closure_supported", True)
     write.close_epic(
         tracker, "GHQUAL-1", issued_at=123,
         nonce="synthetic_nonce_123456", human_verdict="accepted",

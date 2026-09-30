@@ -116,7 +116,12 @@ def _event_id(command_id: str, event_type: str) -> str:
 def _original_closure_wire(outcome: EpicClosureOutcome) -> dict:
     return {
         "schema_version": "devhub-epic-closure.v1",
-        "outcome": {**outcome.receipt.to_dict(), "replayed": outcome.replayed},
+        "outcome": {
+            "receipt": outcome.receipt.to_dict(),
+            "closed_parent_version": outcome.closed_parent_version,
+            "audit_id": outcome.audit_id,
+            "replayed": outcome.replayed,
+        },
     }
 
 

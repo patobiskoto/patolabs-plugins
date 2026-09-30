@@ -141,7 +141,8 @@ class GitHubProjectsTracker(Tracker):
     bounded_state_transitions = True
     append_only_lifecycle_supported = True
     acceptance_proof_projection_supported = True
-    bounded_epic_closure_supported = True
+    # Enable only after PAT-69 qualifies the transport against the private sandbox.
+    bounded_epic_closure_supported = False
 
     def __init__(self, *, runner=subprocess.run, state_dir: Path | str | None = None):
         self._runner = runner

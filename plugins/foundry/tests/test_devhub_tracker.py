@@ -144,10 +144,19 @@ def test_late_terminal_smoke_serializes_outcome_receipt_on_legacy_wire():
         closure_receipt_model(), closed_parent_version=5, audit_id="17", replayed=True,
     )
 
-    assert _original_closure_wire(outcome) == {
+    wire = _original_closure_wire(outcome)
+    assert wire == {
         "schema_version": EPIC_CLOSURE_CONTRACT,
-        "outcome": {**closure_receipt_raw(), "replayed": True},
+        "outcome": {
+            "receipt": closure_receipt_raw(),
+            "closed_parent_version": 5,
+            "audit_id": "17",
+            "replayed": True,
+        },
     }
+    assert DevHubTracker._to_epic_closure_outcome(
+        wire, project=PROJECT, parent_id=outcome.receipt.parent_id,
+    ) == outcome
 
 
 def test_epic_closure_posts_exact_original_receipt_with_stable_replay_identity():

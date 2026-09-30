@@ -335,3 +335,5 @@ la clôture et les propriétés non visées sont vérifiées après écriture. L
 risque résiduel S1→S2 de PAT-ADR-0006 subsiste ; ni transaction atomique ni
 exclusion des autres writers n'est revendiquée. La cellule de conformité reste
 `to_qualify` tant que cette tranche n'a pas été recettée sur le sandbox privé.
+La capacité publique `bounded_epic_closure_supported` reste donc désactivée ;
+les tests synthétiques l'activent seulement sur leur instance locale.
