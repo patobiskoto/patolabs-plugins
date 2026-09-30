@@ -15,6 +15,13 @@ from foundry.trackers.youtrack import YouTrackTracker
 from test_linear_tracker import LinearWire, PROJECT, STATE_IDS, connection, proof
 
 
+@pytest.fixture(autouse=True)
+def _isolated_youtrack_epic_closure_intents(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "foundry.trackers.youtrack.registry.data_dir", lambda: str(tmp_path),
+    )
+
+
 class FaithfulLinearWire(LinearWire):
     """The existing GraphQL double, with provider timestamps advancing on writes."""
 
@@ -211,6 +218,125 @@ def test_youtrack_close_audits_before_targeted_parent_write_and_replays(monkeypa
     effects = [(method, path) for method, path, _body in tracker.calls if method == "POST"]
     assert effects == [("POST", "/issues/YT-1/comments"), ("POST", "/issues/YT-1")]
     assert replay.replayed and closed.audit_id.startswith("foundry-epic-closure.v1:")
+
+
+@pytest.mark.parametrize("explicit_replay", [False, True])
+def test_youtrack_hidden_audit_effect_blocks_replay_without_second_post(
+    monkeypatch, explicit_replay,
+):
+    tracker = _YouTrackWire()
+    project = Project(key="YT", id="p")
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    original = tracker._req
+    lost = {"value": True}
+
+    def hidden_comment_effect(method, path, body=None, fields=None, top=None):
+        result = original(method, path, body, fields, top)
+        if method == "POST" and path == "/issues/YT-1/comments" and lost["value"]:
+            lost["value"] = False
+            # The provider accepted the append, but its subsequent projection does
+            # not expose that effect to Foundry, so the response cannot be resolved.
+            tracker.rows["YT-1"]["comments"].clear()
+            raise OSError("comment response lost and effect not observable")
+        return result
+
+    tracker._req = hidden_comment_effect
+    with pytest.raises(OSError, match="effect not observable"):
+        write.close_epic(
+            tracker, "YT-1", human_verdict="accepted",
+            issued_at=1_800_000_000_000, nonce="nonce_1234567890abcdef",
+        )
+    replay = _YouTrackWire()
+    replay.rows = tracker.rows
+    replay_coordinates = (
+        {"issued_at": 1_800_000_000_000, "nonce": "nonce_1234567890abcdef"}
+        if explicit_replay else {}
+    )
+    with pytest.raises(TrackerConflictError, match="no second POST"):
+        write.close_epic(
+            replay, "YT-1", human_verdict="accepted",
+            **replay_coordinates,
+        )
+
+    assert sum(
+        method == "POST" and path == "/issues/YT-1/comments"
+        for method, path, _body in [*tracker.calls, *replay.calls]
+    ) == 1
+    assert not any(
+        method == "POST" and path == "/issues/YT-1"
+        for method, path, _body in [*tracker.calls, *replay.calls]
+    )
+
+
+def test_youtrack_lost_audit_response_recovers_immediately_visible_effect(
+    monkeypatch,
+):
+    tracker = _YouTrackWire()
+    project = Project(key="YT", id="p")
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    original = tracker._req
+    lost = {"value": True}
+
+    def response_lost_after_append(method, path, body=None, fields=None, top=None):
+        result = original(method, path, body, fields, top)
+        if method == "POST" and path == "/issues/YT-1/comments" and lost["value"]:
+            lost["value"] = False
+            raise OSError("comment response lost after provider append")
+        return result
+
+    tracker._req = response_lost_after_append
+    closed = write.close_epic(
+        tracker, "YT-1", human_verdict="accepted",
+        issued_at=1_800_000_000_000, nonce="nonce_1234567890abcdef",
+    )
+    replayed = write.close_epic(tracker, "YT-1", human_verdict="accepted")
+
+    assert closed.receipt == replayed.receipt
+    assert replayed.replayed is True
+    assert sum(
+        method == "POST" and path == "/issues/YT-1/comments"
+        for method, path, _body in tracker.calls
+    ) == 1
+
+
+def test_youtrack_delayed_audit_visibility_resumes_exact_receipt_without_repost(
+    monkeypatch,
+):
+    tracker = _YouTrackWire()
+    project = Project(key="YT", id="p")
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    original = tracker._req
+    hidden = {"comment": None}
+
+    def delayed_comment_projection(method, path, body=None, fields=None, top=None):
+        result = original(method, path, body, fields, top)
+        if method == "POST" and path == "/issues/YT-1/comments":
+            hidden["comment"] = tracker.rows["YT-1"]["comments"].pop()
+            raise OSError("comment response lost before projection caught up")
+        return result
+
+    tracker._req = delayed_comment_projection
+    with pytest.raises(OSError, match="projection caught up"):
+        write.close_epic(
+            tracker, "YT-1", human_verdict="accepted",
+            issued_at=1_800_000_000_000, nonce="nonce_1234567890abcdef",
+        )
+    assert hidden["comment"] is not None
+
+    tracker.rows["YT-1"]["comments"].append(hidden["comment"])
+    replay = _YouTrackWire()
+    replay.rows = tracker.rows
+    closed = write.close_epic(replay, "YT-1", human_verdict="accepted")
+
+    assert closed.receipt.nonce == "nonce_1234567890abcdef"
+    assert sum(
+        method == "POST" and path == "/issues/YT-1/comments"
+        for method, path, _body in [*tracker.calls, *replay.calls]
+    ) == 1
+    assert sum(
+        method == "POST" and path == "/issues/YT-1"
+        for method, path, _body in [*tracker.calls, *replay.calls]
+    ) == 1
 
 
 @pytest.mark.parametrize("provider", ("linear", "youtrack"))

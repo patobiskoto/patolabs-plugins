@@ -330,8 +330,12 @@ digest de snapshot projeté sous forme d'entier positif comme coordonnée opaque
 jamais comme CAS ou ordre temporel. L'audit est un commentaire canonique avec
 identité déterministe. Un journal local interdit un second POST si l'effet du
 premier reste inconnu ; une réponse perdue avec commentaire observé reprend le
-reçu exact. Avant l'unique écriture du champ State, le graphe est relu, puis
-la clôture et les propriétés non visées sont vérifiées après écriture. Le
+reçu exact. L'identité live du Project personnel privé et de son dépôt canonique
+privé lié est requalifiée avant le POST du commentaire et de nouveau avant la
+mutation State. Un détachement à l'une de ces deux bornes refuse l'effet ; si le
+commentaire existe déjà, la reprise exacte le conserve et n'en ajoute pas un second.
+Avant l'unique écriture du champ State, le graphe est relu, puis la clôture et les
+propriétés non visées sont vérifiées après écriture. Le
 risque résiduel S1→S2 de PAT-ADR-0006 subsiste ; ni transaction atomique ni
 exclusion des autres writers n'est revendiquée.
 

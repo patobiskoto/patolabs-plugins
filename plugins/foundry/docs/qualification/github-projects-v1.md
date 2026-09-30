@@ -443,6 +443,14 @@ Un nouveau processus, avec un répertoire d'état vide, a retrouvé ce même re�
 l'a rejoué avec `replayed=true` : toujours un commentaire et aucune seconde
 projection State.
 
+Le parcours d'adaptateur requalifie en outre l'identité live du Project privé et
+du dépôt canonique lié séparément avant chacun des deux effets fournisseur. Les
+tests de transport détachent le dépôt juste avant le commentaire, puis juste avant
+State : l'effet concerné est refusé dans les deux cas. Après un refus à la seconde
+borne, une reprise requalifiée réutilise le commentaire existant et termine State
+sans second POST commentaire. Cette défense est un préflight borné ; elle ne ferme
+pas la fenêtre résiduelle entre sa lecture et l'écriture.
+
 Cette recette qualifie le parcours borné exact de PAT-ADR-0006, pas une
 transaction GitHub. Le digest de snapshot détecte une dérive observée mais ne
 sert jamais de précondition fournisseur. Une écriture concurrente externe entre

@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -57,6 +58,7 @@ _ENUM_VALUE = {"State", "Priority", "Type", "Milestone"}  # value = {"name": x},
 _PORTABLE_FIELD_NAMES = frozenset({
     "State", "Priority", "Type", "Milestone", "Estimate", "Labels", "GitHub PR",
 })
+_EPIC_CLOSURE_INTENT_SCHEMA = "foundry-youtrack-epic-closure-intent.v1"
 
 # link_type -> YouTrack command role phrase (applied to the source issue)
 _LINK_ROLE = {
@@ -1024,6 +1026,116 @@ class YouTrackTracker(Tracker):
             )
         return receipt
 
+    @staticmethod
+    def _epic_closure_intent_directory() -> Path:
+        return Path(registry.data_dir()) / "youtrack-epic-closure-intents"
+
+    @staticmethod
+    def _epic_closure_scope_fingerprint(project: Project, parent_id: str) -> str:
+        # A replay may generate a new timestamp and nonce before the old audit
+        # becomes visible.  Lock the Epic scope, not the individual receipt.
+        return hashlib.sha256(
+            f"{project.id}\0{project.key}\0{parent_id}".encode("utf-8")
+        ).hexdigest()
+
+    @classmethod
+    def _epic_closure_intent_path(cls, fingerprint: str) -> Path:
+        return cls._epic_closure_intent_directory() / f"{fingerprint}.json"
+
+    @contextmanager
+    def _epic_closure_intent_lock(self, fingerprint: str):
+        directory = self._epic_closure_intent_directory()
+        try:
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory.chmod(0o700)
+            descriptor = os.open(
+                directory / f".{fingerprint}.lock",
+                os.O_RDWR | os.O_CREAT,
+                0o600,
+            )
+        except OSError as exc:
+            raise TrackerConflictError(
+                "journal local d'audit Epic YouTrack indisponible"
+            ) from exc
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    def _read_epic_closure_intent(self, fingerprint: str) -> dict[str, str] | None:
+        try:
+            record = json.loads(
+                self._epic_closure_intent_path(fingerprint).read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise TrackerConflictError(
+                "journal local d'audit Epic YouTrack invalide"
+            ) from exc
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"schema", "fingerprint", "audit_id", "state"}
+            or record.get("schema") != _EPIC_CLOSURE_INTENT_SCHEMA
+            or record.get("fingerprint") != fingerprint
+            or not isinstance(record.get("audit_id"), str)
+            or re.fullmatch(
+                r"foundry-epic-closure\.v1:[0-9a-f]{64}", record["audit_id"],
+            ) is None
+            or record.get("state") not in {"pending", "complete"}
+        ):
+            raise TrackerConflictError(
+                "journal local d'audit Epic YouTrack invalide"
+            )
+        return record
+
+    def _write_epic_closure_intent(
+        self, fingerprint: str, audit_id: str, state: str,
+    ) -> None:
+        directory = self._epic_closure_intent_directory()
+        payload = json.dumps(
+            {
+                "schema": _EPIC_CLOSURE_INTENT_SCHEMA,
+                "fingerprint": fingerprint,
+                "audit_id": audit_id,
+                "state": state,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=directory,
+                prefix=f".{fingerprint}.",
+                delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                os.chmod(temporary_name, 0o600)
+                temporary.write(payload)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_name, self._epic_closure_intent_path(fingerprint))
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError as exc:
+            raise TrackerConflictError(
+                "journal local d'audit Epic YouTrack indisponible"
+            ) from exc
+        finally:
+            if temporary_name is not None:
+                try:
+                    os.unlink(temporary_name)
+                except FileNotFoundError:
+                    pass
+
     def close_epic(self, project: Project, receipt: EpicClosureReceipt) -> EpicClosureOutcome:
         self.validate_issue_binding(project, receipt.parent_id, *(child.id for child in receipt.children))
         before = self.get_issue(receipt.parent_id)
@@ -1061,17 +1173,52 @@ class YouTrackTracker(Tracker):
         ):
             raise TrackerConflictError("graphe Epic YouTrack divergent avant écriture")
         audit_id, audit = self._epic_closure_audit(receipt)
-        if observed is None:
-            try:
-                self.add_comment(receipt.parent_id, audit, project)
-            except Exception as error:
-                # The provider may have committed the append-only audit before
-                # losing the response.  Recover by exact read only; never retry.
-                recovered_pending = self._closure_from_issue(
-                    self.get_issue(receipt.parent_id), project, require_done=False,
+        fingerprint = self._epic_closure_scope_fingerprint(
+            project, receipt.parent_id,
+        )
+        with self._epic_closure_intent_lock(fingerprint):
+            intent = self._read_epic_closure_intent(fingerprint)
+            if intent is not None and intent["audit_id"] != audit_id:
+                raise TrackerConflictError(
+                    "reçu d'audit Epic YouTrack différent de l'effet local "
+                    "incertain ; no second POST"
                 )
-                if recovered_pending is None or recovered_pending.receipt != receipt:
-                    raise error
+            current_pending = self._closure_from_issue(
+                self.get_issue(receipt.parent_id), project, require_done=False,
+            )
+            if current_pending is None:
+                if observed is not None or intent is not None:
+                    raise TrackerConflictError(
+                        "effet de l'audit Epic YouTrack inconnu ou invisible ; "
+                        "no second POST"
+                    )
+                # Persist the exact receipt identity before the only append.  This
+                # machine-local journal prevents an explicit replay from turning an
+                # unresolved response into a second non-idempotent POST.  It is not
+                # provider CAS and does not claim exactly-once delivery.
+                self._write_epic_closure_intent(fingerprint, audit_id, "pending")
+                try:
+                    self.add_comment(receipt.parent_id, audit, project)
+                except Exception as error:
+                    # The provider may have committed the append-only audit before
+                    # losing the response. Recover by exact read only; never retry.
+                    current_pending = self._closure_from_issue(
+                        self.get_issue(receipt.parent_id), project,
+                        require_done=False,
+                    )
+                    if (
+                        current_pending is None
+                        or current_pending.receipt != receipt
+                    ):
+                        raise error
+                if current_pending is None:
+                    current_pending = self._closure_from_issue(
+                        self.get_issue(receipt.parent_id), project,
+                        require_done=False,
+                    )
+            if current_pending is None or current_pending.receipt != receipt:
+                raise TrackerConflictError("audit de clôture YouTrack divergent")
+            self._write_epic_closure_intent(fingerprint, audit_id, "complete")
         # Read the pending audit before the single parent write.  An ambiguous
         # audit response is never retried; absence is a closed failure.
         pending = self._closure_from_issue(

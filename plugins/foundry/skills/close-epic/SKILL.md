@@ -41,5 +41,9 @@ concurrent add, reopen, version change, foreign-project node, missing audit, unk
 verdict, or unsupported provider stops without a success claim. GitHub owners,
 organization projects, repositories and field catalogs outside the exact qualified
 binding still refuse through the identity and scope preflights. Re-running after an
-ambiguous response reads the exact durable audit and never adds a second parent
-transition.
+ambiguous audit response reads the exact durable audit. YouTrack and GitHub retain a
+machine-local intent before the append: if the effect remains invisible, any
+replay fails closed instead of posting the audit again, including one with a new
+timestamp and nonce. That intent coordinates only
+the shared local Foundry data directory; it is neither provider CAS nor an exactly-once
+guarantee. A resolved audit never adds a second parent transition.

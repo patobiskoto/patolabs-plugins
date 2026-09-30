@@ -4215,6 +4215,15 @@ class _EpicClosureTracker(GitHubProjectsTracker):
         self.state_writes = 0
         self.comment_loss = comment_loss
         self.state_loss = state_loss
+        self.identity_results = []
+        self.identity_checks = 0
+
+    def verify_project_identity(self, project):
+        assert project == PROJECT
+        self.identity_checks += 1
+        if self.identity_results:
+            return self.identity_results.pop(0)
+        return True
 
     def _native_issue_read(self, issue_id):
         assert issue_id == "GHQUAL-1"
@@ -4292,6 +4301,39 @@ def test_pat69_ghprojects_epic_closure_is_enabled_after_live_qualification(
     )
     assert outcome.replayed is False
     assert tracker.comment_posts == tracker.state_writes == 1
+
+
+@pytest.mark.parametrize("detached_before", ["comment", "state"])
+def test_pat69_ghprojects_detached_repository_refuses_before_each_write(
+    monkeypatch, tmp_path, detached_before,
+):
+    tracker = _EpicClosureTracker(tmp_path)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    tracker.identity_results = (
+        [False] if detached_before == "comment" else [True, False]
+    )
+
+    with pytest.raises(
+        GitHubProjectsTrackerError,
+        match=f"epic-closure\\.{detached_before}_prewrite.*unqualified_repository_project",
+    ):
+        write.close_epic(
+            tracker, "GHQUAL-1", issued_at=123,
+            nonce="synthetic_nonce_123456", human_verdict="accepted",
+        )
+
+    assert tracker.comment_posts == (detached_before == "state")
+    assert tracker.state_writes == 0
+
+    tracker.identity_results = [True, True]
+    closed = write.close_epic(
+        tracker, "GHQUAL-1", issued_at=123,
+        nonce="synthetic_nonce_123456", human_verdict="accepted",
+    )
+
+    assert closed.receipt.nonce == "synthetic_nonce_123456"
+    assert tracker.comment_posts == tracker.state_writes == 1
+    assert tracker.identity_checks == 3
 
 
 def test_pat69_state_projection_preserves_every_untargeted_parent_property(

@@ -3220,6 +3220,11 @@ class GitHubProjectsTracker(Tracker):
                 before = self._comment_effect_snapshot(current)
                 before.pop("version", None)
                 number, _ = self._native_issue(receipt.parent_id, binding, "epic-closure.comment_prewrite")
+                if not self.verify_project_identity(project):
+                    raise GitHubProjectsTrackerError(
+                        "epic-closure.comment_prewrite",
+                        "unqualified_repository_project",
+                    )
                 self._write_lifecycle_intent(fingerprint, "pending")
                 try:
                     self._rest_write(
@@ -3262,6 +3267,11 @@ class GitHubProjectsTracker(Tracker):
             before_state.pop("version", None)
             item_id, _ = self._item_coordinate(receipt.parent_id, binding)
             catalog = self._write_catalog(binding, {"state": "done"})
+            if not self.verify_project_identity(project):
+                raise GitHubProjectsTrackerError(
+                    "epic-closure.state_prewrite",
+                    "unqualified_repository_project",
+                )
             try:
                 self._set_project_field(item_id, binding.project_id, catalog["state"], "done")
             except GitHubProjectsTrackerError as error:

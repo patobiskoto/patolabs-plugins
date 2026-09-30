@@ -4881,3 +4881,73 @@ def test_cli_separates_human_verdict_from_legacy_technical_reclassification(
     assert payload["human_required"] is False
     assert payload["provider_effect_allowed"] is False
     assert payload["campaign_restart_allowed"] is False
+
+
+def test_human_retry_after_technical_diagnostics_consumes_bound_review_proof(tmp_path):
+    """A fresh human window need not inherit a technical review claim."""
+    issue = "PAT-69"
+    base, diff = _git_review_fixture(tmp_path)
+    store = EscalationStore.for_root(tmp_path, state_dir=tmp_path)
+    path = store._path(issue)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_f106_legacy_ledger(issue)), encoding="utf-8")
+    store.reclassify_legacy_terminal(issue, 1)
+    for generation in (1, 2):
+        store.resume_technical_remediation(issue, generation, f"{generation}" * 64)
+        store.claim_technical_remediation_route(
+            issue, "implementer", generation, f"pat69-local-{generation}",
+        )
+        assert store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+        ).action == "technical_blocked"
+
+    assert store.record_human_verdict(
+        issue, "implementer", "apex", category="strategy_decision",
+    ).action == "human_required"
+    assert store.resume(
+        issue, "manual_retry_approved", 3, remediation_credits=1,
+    )["remediation_authorization"]["remaining_credits"] == 1
+
+    coordinates = {"root": str(tmp_path.resolve()), "base": base}
+    diff_hash = review_diff_hash(diff)
+    ledger = ReviewDeduplicator(str(tmp_path.resolve()), tmp_path)
+    claim = ledger.claim_git(
+        diff_hash, coordinates=coordinates, claim_attempt_token="c" * 64,
+    )
+    store.claim_fresh_reviewer_authorization(
+        issue, diff_hash, validated_claim=lambda: claim,
+    )
+    body = "- [ ] correction must satisfy current acceptance\n"
+    AcceptanceProofStore(str(tmp_path.resolve()), tmp_path).create(
+        issue_id=issue, issue_body=body, reviewer_role="reviewer",
+        outcomes=[
+            {**criterion, "verdict": "fail"}
+            for criterion in acceptance_criteria(body)
+        ],
+        quality="blocked", diff_hash=diff_hash, claim_id=claim.claim_id,
+        root=tmp_path, base=base, state_dir=tmp_path,
+    )
+    binding = {
+        **ledger.validated_terminal_proof_binding(
+            issue, diff_hash, coordinates=coordinates,
+        ),
+        "diff_hash": diff_hash,
+    }
+    before = path.read_bytes()
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide"):
+        store.record_failure(
+            issue, "implementer", "review_blocking_after_fix", "apex",
+            validated_blocking_proof=lambda: {
+                **binding, "completed_at": "2020-01-01T00:00:00Z",
+            },
+        )
+    assert path.read_bytes() == before
+
+    decision = store.record_failure(
+        issue, "implementer", "review_blocking_after_fix", "apex",
+        validated_blocking_proof=lambda: binding,
+    )
+    assert decision.action == "remediation_continued"
+    status = store.status(issue)
+    assert status["remediation_authorization"]["remaining_credits"] == 0
+    assert status["consumption_audit"][-1]["blocking_proof"]["diff_hash"] == diff_hash
