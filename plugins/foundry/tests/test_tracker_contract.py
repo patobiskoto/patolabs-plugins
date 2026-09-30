@@ -205,8 +205,8 @@ def test_every_operation_maps_to_a_real_tracker_abc_member():
             )
 
 
-def test_ghprojects_cells_match_delivered_reads_writes_and_pat58_adrs():
-    """PAT-57/66/58 are delivered; lifecycle and other later tranches remain owned."""
+def test_ghprojects_cells_match_delivered_reads_writes_adrs_and_lifecycle():
+    """The qualified private-project lifecycle is supported; later tranches remain owned."""
     contract = _load_contract()
     for operation in contract["operations"]:
         cell = operation["cells"].get("ghprojects")
@@ -223,10 +223,13 @@ def test_ghprojects_cells_match_delivered_reads_writes_and_pat58_adrs():
                 "epics-children-reparent-existing", "dependencies-relates-blocks",
                 "release-and-changelog-scope", "adr-read", "adr-create",
                 "adr-status-evolution", "adr-supersession-and-issue-linking",
+                "issue-lifecycle-transitions", "acceptance-criteria-sync",
         }:
             assert cell["status"] == "supported"
             continue
-        if operation["id"] == "native-free-text-search":
+        if operation["id"] in {
+            "native-free-text-search", "acceptance-override-receipt",
+        }:
             assert cell["status"] == "refused"
             continue
         assert cell["status"] == "to_qualify", (

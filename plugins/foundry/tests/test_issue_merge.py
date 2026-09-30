@@ -457,6 +457,7 @@ def test_proof_bound_tracker_persists_done_receipt_before_branch_delete(monkeypa
     diff_bases = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
+        bounded_state_transitions=True,
         get_issue=lambda _id: SimpleNamespace(
             id="DEMO-7", state="review", pr_url="https://github.com/acme/demo/pull/12", body="", ac_done=0, ac_total=0,
         ),
@@ -494,12 +495,14 @@ def test_proof_bound_tracker_persists_done_receipt_before_branch_delete(monkeypa
     assert [event[0] for event in events] == ["transition", "transition", "transition", "delete"]
     assert [event[2] for event in events[:3]] == ["in-progress", "review", "done"]
     assert events[1][3].merge_sha is None
+    assert events[1][3].expected_state == "in-progress"
     context = events[2][3]
     assert isinstance(context, TransitionContext)
     assert context.head_sha == "a" * 40
     assert context.base_sha == "c" * 40
     assert context.review_digest == hashlib.sha256(b"exact-diff").hexdigest()
     assert context.merge_sha == "b" * 40
+    assert context.expected_state == "review"
     assert diff_bases == ["c" * 40]
 
 
@@ -778,6 +781,7 @@ def test_proof_bound_openpr_records_pr_before_review_with_exact_coordinates(monk
     diff_bases = []
     tracker = SimpleNamespace(
         bounded_transition_proofs=True,
+        bounded_state_transitions=True,
         get_issue=lambda _id: SimpleNamespace(title="Pilot", type="Feature", state="in-progress"),
     )
     pull_request = SimpleNamespace(
@@ -819,6 +823,7 @@ def test_proof_bound_openpr_records_pr_before_review_with_exact_coordinates(monk
     assert context.head_sha == "a" * 40
     assert context.base_sha == "c" * 40
     assert context.review_digest == hashlib.sha256(b"exact-open-pr-diff").hexdigest()
+    assert context.expected_state == "in-progress"
     assert diff_bases == ["c" * 40]
 
 

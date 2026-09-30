@@ -82,9 +82,35 @@ criterion count; blocked, partial, foreign or malformed proofs never mark AC com
 Native-state disagreement is observable through `normalized_state`, `native_state` and
 `projection_status`; it does not become acceptance authority.
 
-Native free-text search is refused with `provider-native-search-query`. The lifecycle
-transport is implemented but remains `to_qualify` until the authorized live PR/CI
-recipe proves it on an exact SHA.
+Native free-text search is refused with `provider-native-search-query`.
+
+## PAT-67 live lifecycle qualification
+
+The authorized private personal Project `Foundry V1 — qualification GitHub Projects`
+(number 7, node `PVT_kwHOABroCc4Bk0U-`) and its private repository
+`patobiskoto/foundry-v1-ghprojects-sandbox` exercised the common Foundry
+`frame` → `issue start` → `issue openpr` → independent review → CI →
+`issue merge` path. The synthetic Issue `GHQUAL-13` and PR #14 use the
+repository's V1 marker; PR head `03840ef8a56b308d53c8fec30eb6c4d09e8a1a94`
+had one completed/success `verify` check and no legacy statuses. The independent
+review proof `53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db`
+passed both AC; Foundry merged PR #14 at
+`c080d9833de1ca66b6b43f9ca95074f22cb07f0a`. A fresh Foundry read returned
+`done`, 2/2 accepted criteria and `projection_status=aligned`.
+
+The first frame attempt created exactly one Issue and Project item, then refused
+`item_readback` while that item was not yet visible through the bounded read.
+The private create-intent journal identified `GHQUAL-13`; a later explicit
+invocation of the common `write.create_issue` seam completed the pending fields,
+and replaying the frame converged on the same Issue. The first `openpr` invocation
+created PR #14 but refused its review transition because the caller omitted the
+required predecessor; the PAT-67 fix supplies `in-progress` for review and
+`review` for done only to bounded-state adapters. Replaying `openpr` reused
+PR #14 and published its receipt. No second Issue or PR was created.
+
+This qualifies the exact private personal Project/repository shape above. Public or
+organization-owned Projects, alternate field catalogs and human AC overrides are
+not claimed; the override receipt remains an explicit unsupported capability.
 
 ## PAT-58 ADR lifecycle
 

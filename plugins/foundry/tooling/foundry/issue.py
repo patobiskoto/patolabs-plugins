@@ -351,6 +351,10 @@ def openpr(issue_id=None, base=None, flags=()):
         if git_head() != head:
             raise SystemExit("⛔ Transition review refusée — HEAD local différent du SHA de la PR.")
         context = TransitionContext(
+            expected_state=(
+                "in-progress" if getattr(tr, "bounded_state_transitions", False)
+                else None
+            ),
             pr_url=pr.url,
             head_sha=head,
             base_sha=base_sha,
@@ -517,6 +521,10 @@ def merge(issue_id, pr_number, flags=()):
         pr_base_sha = _require_pr_base_sha(pr)
         review_diff = git_diff(base=pr_base_sha)
         transition_context = TransitionContext(
+            expected_state=(
+                "in-progress" if getattr(tr, "bounded_state_transitions", False)
+                else None
+            ),
             pr_url=pr.url,
             head_sha=head,
             base_sha=pr_base_sha,
@@ -716,6 +724,10 @@ def merge(issue_id, pr_number, flags=()):
     done_context = None
     if transition_context is not None:
         done_context = TransitionContext(
+            expected_state=(
+                "review" if getattr(tr, "bounded_state_transitions", False)
+                else None
+            ),
             pr_url=transition_context.pr_url,
             head_sha=transition_context.head_sha,
             base_sha=transition_context.base_sha,
