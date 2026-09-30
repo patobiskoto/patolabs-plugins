@@ -33,7 +33,10 @@ estimate may be absent. A draft, PR, foreign issue, deleted field, duplicate
 field or partial response fails closed. A Project field, Issue-label, or item
 field-value connection that reports a second page is refused rather than read
 as a silently truncated authority. The reserved `foundry:adr` label excludes
-that ADR support item only from delivery reads.
+that ADR support item only from delivery reads. Every delivery item is then
+hydrated through REST and passed through the same strict receipt projection as
+`get_issue`; a bare native terminal state therefore cannot appear positive in
+backlog, roadmap, grooming or intake reads.
 
 `get_issue(GHQUAL-<number>)` scopes the number to the active binding, then
 reads the exact Issue body, timestamps, comments, parent, paged sub-issues and
@@ -47,9 +50,10 @@ REST Issue labels must be a complete list of distinct, non-empty label names;
 missing or malformed labels are refused before ADR discrimination. Timestamps
 must include an explicit timezone offset; dates and local times without an
 offset are refused instead of inheriting the host timezone.
-Only complete per-line Markdown checkboxes in the current REST Issue body count
-toward observed AC progress; comments and split-line fragments do not, and these
-markers are not lifecycle acceptance proof.
+Only complete per-line Markdown checkboxes in the current REST Issue body define
+the semantic criterion count; comments and split-line fragments do not. Native
+checked markers never increment `ac_done`: only a valid receipt for the current
+review generation can project positive AC progress.
 An issue proven absent from the complete bound Project read, or whose exact
 Issue endpoint then returns 404, raises the portable `IssueUnavailableError`;
 `query issue` can therefore preserve an unavailable related target as a link
@@ -57,11 +61,78 @@ plus an explicit error. This classification is target-specific: global auth or
 permission failures, malformed payloads, foreign relation URIs, transport and
 pagination failures stay explicit. Only the documented parent-endpoint 404
 payload `No parent issue found` means that a present issue has no parent. The
-Project normalized-state field is recorded as an observation with
-`projection_status=unknown`; PAT-67 owns lifecycle/projection proof.
+Project normalized-state field is recorded as an observation. PAT-67 adds a
+separate Foundry-owned lifecycle channel: a state transition writes a canonical,
+hash-bound `foundry-ghprojects-lifecycle.v1` receipt to the exact Issue comment
+history, then projects only the target ProjectV2 State. Every receipt binds the
+canonical repository, Project id/number/key, Issue key/number/database id/node id and
+Project item id. Review and done additionally bind the exact canonical PR URL,
+head/base SHA and review digest; done also binds the merge SHA. A native `done` without
+that chain is refused as an unauthorised auto-close.
 
-Native free-text search is refused with `provider-native-search-query`; lifecycle
-projection through `set_state` remains a PAT-67 refusal.
+Before the single comment POST, the adapter re-reads both the targeted native State and
+the untargeted business snapshot, then persists a local pending intent under the digest
+of the fully bound receipt. Drift in either snapshot fails closed before append. A lost
+response is reconciled only when the complete paged history exposes exactly one matching
+receipt. If a fresh process still observes zero candidates, the intent remains pending
+and the operation fails closed without a second POST; multiple candidates also fail
+closed. A matching definitive authentication, permission or not-found refusal on
+both POST and readback clears the pending intent; ambiguous transport and rate-limit
+failures do not. The local intent never grants a lifecycle state by itself. Only the
+latest exact review receipt is replayed; returning to an older head publishes a new
+review generation and requires fresh acceptance. Exact historical start and done
+replays never regress newer evidence.
+If the State write was interrupted after a `state-in-progress` receipt, replaying
+`issue start` on its existing branch repairs only that State after revalidating the
+receipt and unchanged source. A native `in-progress` with no Foundry receipt is
+refused; it cannot be adopted as an authenticated start. The same exact-receipt
+rule repairs interrupted review and done State writes, including replay of an
+already merged PR, without a second receipt or merge.
+When a corrected PR head arrives after a durable but unprojected review receipt,
+`issue openpr` first repairs that exact review State, then records the new head
+as the next review generation. An exact start receipt cannot turn a native
+advance to review or done without matching proof into a successful replay.
+Start rejects review, done and dropped predecessors before branch preparation.
+
+Acceptance receipts accept only the canonical six-field PAT-56 proof shape and bind one
+exact review generation. The criterion identities are recomputed from the current issue
+body, so changing checkbox progress preserves the immutable criterion semantics while
+editing criterion text invalidates the old proof. `checked` must equal the complete
+criterion count; blocked, partial, foreign or malformed proofs never mark AC complete.
+An issue with zero semantic criteria is refused before the code-host merge and
+before any `done` receipt: `0/0` is not acceptance proof.
+Native-state disagreement is observable through `normalized_state`, `native_state` and
+`projection_status`; it does not become acceptance authority.
+
+Native free-text search is refused with `provider-native-search-query`.
+
+## PAT-67 live lifecycle qualification
+
+The authorized private personal Project `Foundry V1 — qualification GitHub Projects`
+(number 7, node `PVT_kwHOABroCc4Bk0U-`) and its private repository
+`patobiskoto/foundry-v1-ghprojects-sandbox` exercised the common Foundry
+`frame` → `issue start` → `issue openpr` → independent review → CI →
+`issue merge` path. The synthetic Issue `GHQUAL-13` and PR #14 use the
+repository's V1 marker; PR head `03840ef8a56b308d53c8fec30eb6c4d09e8a1a94`
+had one completed/success `verify` check and no legacy statuses. The independent
+review proof `53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db`
+passed both AC; Foundry merged PR #14 at
+`c080d9833de1ca66b6b43f9ca95074f22cb07f0a`. A fresh Foundry read returned
+`done`, 2/2 accepted criteria and `projection_status=aligned`.
+
+The first frame attempt created exactly one Issue and Project item, then refused
+`item_readback` while that item was not yet visible through the bounded read.
+The private create-intent journal identified `GHQUAL-13`; a later explicit
+invocation of the common `write.create_issue` seam completed the pending fields,
+and replaying the frame converged on the same Issue. The first `openpr` invocation
+created PR #14 but refused its review transition because the caller omitted the
+required predecessor; the PAT-67 fix supplies `in-progress` for review and
+`review` for done only to bounded-state adapters. Replaying `openpr` reused
+PR #14 and published its receipt. No second Issue or PR was created.
+
+This qualifies the exact private personal Project/repository shape above. Public or
+organization-owned Projects, alternate field catalogs and human AC overrides are
+not claimed; the override receipt remains an explicit unsupported capability.
 
 ## PAT-58 ADR lifecycle
 
@@ -173,10 +244,11 @@ body-derived checkbox counters are allowed to follow the PATCH. Unrelated fields
 mutation or an Issue-body PATCH.
 
 GitHub's qualified endpoints expose no expected-version/CAS parameter. These are
-therefore bounded detection, never CAS or exclusion: a third-party change between
-the fresh read and the write can still be overwritten. Authentication/permission,
-rate-limit, deleted-field, malformed/ambiguous response and transport errors remain
-explicit.
+therefore bounded detection, never CAS or exclusion: a third-party change in the
+residual S1→S2 window can still be overwritten and hidden by S3. Lifecycle state writes
+compare every observed untargeted property around the narrow Project State mutation,
+but that comparison does not close the window. Authentication/permission, rate-limit,
+deleted-field, malformed/ambiguous response and transport errors remain explicit.
 
 Issue creation uses a private local intent/observation journal under Foundry's data
 directory. Its fingerprint covers the exact binding, title, body, portable fields and

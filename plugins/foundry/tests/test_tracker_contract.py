@@ -205,8 +205,8 @@ def test_every_operation_maps_to_a_real_tracker_abc_member():
             )
 
 
-def test_ghprojects_cells_match_delivered_reads_writes_and_pat58_adrs():
-    """PAT-57/66/58 are delivered; lifecycle and other later tranches remain owned."""
+def test_ghprojects_cells_match_delivered_reads_writes_adrs_and_lifecycle():
+    """The qualified private-project lifecycle is supported; later tranches remain owned."""
     contract = _load_contract()
     for operation in contract["operations"]:
         cell = operation["cells"].get("ghprojects")
@@ -223,10 +223,13 @@ def test_ghprojects_cells_match_delivered_reads_writes_and_pat58_adrs():
                 "epics-children-reparent-existing", "dependencies-relates-blocks",
                 "release-and-changelog-scope", "adr-read", "adr-create",
                 "adr-status-evolution", "adr-supersession-and-issue-linking",
+                "issue-lifecycle-transitions", "acceptance-criteria-sync",
         }:
             assert cell["status"] == "supported"
             continue
-        if operation["id"] == "native-free-text-search":
+        if operation["id"] in {
+            "native-free-text-search", "acceptance-override-receipt",
+        }:
             assert cell["status"] == "refused"
             continue
         assert cell["status"] == "to_qualify", (
@@ -317,23 +320,22 @@ def test_youtrack_has_no_import_adr_override():
     assert "import_adr_batch" not in YouTrackTracker.__dict__
 
 
-def test_ghprojects_pat66_and_pat58_writes_are_real_and_lifecycle_remains_refused():
-    """PAT-66 owns issues, PAT-58 ADRs; PAT-67 retains lifecycle projection."""
+def test_ghprojects_pat66_pat58_writes_and_pat67_lifecycle_are_real():
+    """Delivered Issue, ADR and lifecycle ports are concrete."""
     from foundry.trackers.ghprojects import GitHubProjectsTracker
-    from foundry.trackers.base import TrackerCapabilityUnavailableError
 
-    tracker = GitHubProjectsTracker()
     assert "search" in GitHubProjectsTracker.__dict__
     assert "get_issue" in GitHubProjectsTracker.__dict__
     for method_name in ("create_issue", "update_fields", "update_body", "link", "add_comment"):
         assert method_name in GitHubProjectsTracker.__dict__
-    calls = {
-        "set_state": (None, None),
-    }
-    for method_name, args in calls.items():
-        method = getattr(tracker, method_name)
-        with pytest.raises(TrackerCapabilityUnavailableError):
-            method(*args)
+    assert "set_state" in GitHubProjectsTracker.__dict__
+    assert "project_acceptance_proof" in GitHubProjectsTracker.__dict__
+    for method_name in ("list_adrs", "create_adr", "set_adr_status"):
+        assert method_name in GitHubProjectsTracker.__dict__
+    assert GitHubProjectsTracker.bounded_transition_proofs is True
+    assert GitHubProjectsTracker.bounded_state_transitions is True
+    assert GitHubProjectsTracker.append_only_lifecycle_supported is True
+    assert GitHubProjectsTracker.acceptance_proof_projection_supported is True
 
 
 @pytest.mark.parametrize(

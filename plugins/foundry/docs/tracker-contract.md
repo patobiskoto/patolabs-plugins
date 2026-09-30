@@ -61,10 +61,10 @@ closed vocabulary:
 | Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) |
 | Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) |
-| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 |
-| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 |
+| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) |
+| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-69 |
-| Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; lifecycle proof remains unavailable until PAT-67) |
+| Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
 | Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
 | Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
 | Bascule (PAT-64): archived source refuses writes | mutation ports plus provider target preflight | supported | supported | `to_qualify` PAT-64 |
@@ -86,7 +86,8 @@ cell.
   direct-adapter custom-field escape hatch remains available without that bounded
   guarantee and is outside the core contract's deliberately non-universal editor.
   GitHub Projects delivers its narrower qualified portable vocabulary through PAT-66;
-  its lifecycle projection remains PAT-67.
+  PAT-67 qualifies the lifecycle projection for the exact private personal Project
+  and canonical repository documented in `ghprojects-tracker.md`.
 - **PAT-56** — States and AC. YouTrack receives the explicit predecessor owned by the
   public lifecycle operation and re-reads it before one targeted native projection.
   `write.transition` never replaces that coordinate with the native state seen on a
@@ -161,7 +162,8 @@ catalog, and coherent field/option value IDs.
 It rejects partial GraphQL responses and unsupported draft/PR/foreign items, and excludes only the reserved
 `foundry:adr` support. Native free-text search is explicitly refused. PAT-66 supplies
 bounded delivery-Issue creation, field/body updates, links and comments for this
-qualified profile; native `set_state` remains unavailable pending PAT-67. PAT-58
+qualified profile; PAT-67 supplies the proof-bound lifecycle projection for the
+qualified private personal Project. PAT-58
 supplies an exact-project ADR codec: a reserved `foundry:adr` Issue
 is the support, its UTF-8 body is current source, and version comments bind source
 digest, sequence, predecessor, status and relations. Reads exhaust both Project and
@@ -174,8 +176,9 @@ by these slices retain their typed unavailability errors from `base.py`; the exa
 status of each port is the matrix below. The cells therefore do
 not become `supported` from provider probes alone: each cell's `ticket` names the tranche
 that must deliver and qualify the adapter operation (PAT-57, 58, 59, 64, 66, 67, 69),
-including the still-unavailable optional Epic subgraph projection under PAT-57 and
-PAT-67 for the acceptance-override receipt. PAT-65
+including the still-unavailable optional Epic subgraph projection under PAT-57.
+The optional GitHub Projects acceptance-override receipt is explicitly refused.
+PAT-65
 owns no remaining adapter-delivery cell.
 
 ## 2. Identity model

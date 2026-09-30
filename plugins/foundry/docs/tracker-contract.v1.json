@@ -422,9 +422,8 @@
           "evidence": "set_state accepts only in-progress/review/done (linear.py); review and done require a full TransitionContext (pr_url/head_sha/base_sha/review_digest, plus merge_sha for done). It appends the deterministic lifecycle receipt before projecting only the target native State under S1-S5; an exact, valid latest relevant receipt can repair only the missing native effect. Validation keeps immutable historical native observations separate from proof-bound logical targets: acceptance and override target their authenticated review generation even when an older receipt observed in-progress, while incompatible or regressing observations remain unknown. A late start or older review receipt cannot regress a durable done. Identical replay converges, authenticated disagreement is observable in get/observe/search, unknown chains expose no normalized state, and a bare native terminal State is never positive proof. Other states belong to frame-intake-groom-evolve-existing."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-67",
-          "evidence": "set_state raises TrackerCapabilityUnavailableError (ghprojects.py)"
+          "status": "supported",
+          "evidence": "ghprojects.py implements proof-bound in-progress/review/done receipts in the complete paged Issue comment history, bound to the canonical repository, Project and native Issue/node/item coordinates, followed by one targeted ProjectV2 State projection with untargeted-property readback. A durable pending intent prevents a second comment POST after an unknown response; replay observes exactly one bound receipt, and native done alone fails closed. PAT-67 raw transport tests exercise the full lifecycle, later review generations and fresh-process replay. The authorized private personal Project live recipe used GHQUAL-13 and PR #14: exact head 03840ef8a56b308d53c8fec30eb6c4d09e8a1a94 had a successful verify check, Foundry merged at c080d9833de1ca66b6b43f9ca95074f22cb07f0a, and fresh readback was done/aligned."
         }
       }
     },
@@ -445,9 +444,8 @@
           "evidence": "PAT-ADR-0006 selects the proof-bound append-only projection as Linear's V1 AC authority. write.sync_acceptance dispatches to project_acceptance_proof when acceptance_proof_projection_supported = True; Issue.ac_done derives from that receipt while native checkbox replacement remains refused (write.py; linear.py)."
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-67",
-          "evidence": "not overridden; the base raises AcceptanceSyncUnavailableError (base.py)"
+          "status": "supported",
+          "evidence": "ghprojects.py project_acceptance_proof reuses the canonical PAT-56 six-field proof validator, appends one exact receipt per review generation, requires checked to equal the complete semantic AC count, and derives progress without trusting native checkboxes. Legacy, partial, blocked, foreign, stale or malformed proofs fail closed on every read. GHQUAL-13/PR #14 produced an independent review proof with both AC passed on exact head 03840ef8a56b308d53c8fec30eb6c4d09e8a1a94; Foundry's post-merge readback returned 2/2 AC."
         }
       }
     },
@@ -469,9 +467,8 @@
           "evidence": "acceptance_override_projection_supported = True (linear.py); project_acceptance_override (linear.py) and recover_acceptance_override (linear.py) append a typed receipt (PAT-49)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "evidence": "not overridden; the base default applies",
-          "ticket": "PAT-67"
+          "status": "refused",
+          "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError. PAT-67 qualifies proof-bound normal acceptance, not the optional human override receipt."
         }
       }
     },
