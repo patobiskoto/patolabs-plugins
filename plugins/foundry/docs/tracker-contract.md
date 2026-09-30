@@ -97,8 +97,9 @@ cell.
   projection (`project_acceptance_proof`, `linear.py`) as the V1 AC authority; native
   checkboxes and external state automation never count as positive acceptance evidence.
 - **PAT-69** — YouTrack and Linear implement `close_epic`/`get_epic_closure` through
-  PAT-ADR-0006's bounded path. GitHub Projects remains unqualified and refuses through
-  the base port. The non-V1 DevHub adapter retains the stronger atomic form of the port
+  PAT-ADR-0006's bounded path. GitHub Projects has a bounded local candidate that
+  still requires private sandbox qualification before its core cell can be marked
+  supported. The non-V1 DevHub adapter retains the stronger atomic form of the port
   (`devhub.py`).
 - **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
   target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR

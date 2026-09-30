@@ -320,3 +320,18 @@ Project personnel et son dépôt canonique privé lié avant le journal d'intent
 et le premier POST. Un dépôt public, détaché, étranger ou une identité indisponible
 refuse la création avant tout effet; un binding local ancien ne vaut pas cette
 requalification live.
+
+La clôture d'un Epic sans PR possède maintenant un parcours local borné
+`close_epic` / `get_epic_closure`. Le reçu lie le verdict humain explicite, le
+texte et les critères de l'Epic, l'ensemble exact des enfants et le graphe
+transitif des dépendances avec leurs preuves d'acceptation. GitHub ne fournit
+pas de version commune à l'Issue et au Project item : Foundry utilise donc un
+digest de snapshot projeté sous forme d'entier positif comme coordonnée opaque,
+jamais comme CAS ou ordre temporel. L'audit est un commentaire canonique avec
+identité déterministe. Un journal local interdit un second POST si l'effet du
+premier reste inconnu ; une réponse perdue avec commentaire observé reprend le
+reçu exact. Avant l'unique écriture du champ State, le graphe est relu, puis
+la clôture et les propriétés non visées sont vérifiées après écriture. Le
+risque résiduel S1→S2 de PAT-ADR-0006 subsiste ; ni transaction atomique ni
+exclusion des autres writers n'est revendiquée. La cellule de conformité reste
+`to_qualify` tant que cette tranche n'a pas été recettée sur le sandbox privé.

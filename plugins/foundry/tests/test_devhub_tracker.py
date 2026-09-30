@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from integration.test_real_terminal_reconciliation_smoke import _original_closure_wire
 import foundry
 import foundry.trackers.devhub as devhub_module
 from foundry import adr, edit, frame, query, write
@@ -135,6 +136,17 @@ def test_legacy_epic_closure_receipt_keeps_devhub_wire_shape():
         "project_key", "project_id", "parent_id", "parent_version",
         "parent_type", "parent_ac_done", "parent_ac_total", "children",
         "issued_at", "nonce",
+    }
+
+
+def test_late_terminal_smoke_serializes_outcome_receipt_on_legacy_wire():
+    outcome = EpicClosureOutcome(
+        closure_receipt_model(), closed_parent_version=5, audit_id="17", replayed=True,
+    )
+
+    assert _original_closure_wire(outcome) == {
+        "schema_version": EPIC_CLOSURE_CONTRACT,
+        "outcome": {**closure_receipt_raw(), "replayed": True},
     }
 
 

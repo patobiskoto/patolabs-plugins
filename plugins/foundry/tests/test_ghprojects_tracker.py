@@ -4033,3 +4033,164 @@ def test_pat66_create_qualified_live_scope_precedes_first_issue_write(monkeypatc
     assert tracker.create_issue(PROJECT, "partial", "body").id == "GHQUAL-4"
     assert provider["issue_posts"] == 1
     assert events == ["live_scope", "write"]
+
+
+class _EpicClosureTracker(GitHubProjectsTracker):
+    """Exercise the bounded Epic path with observable comment and State effects."""
+
+    def __init__(self, tmp_path, *, comment_loss=None, state_loss=None):
+        super().__init__(state_dir=tmp_path)
+        self.parent = Issue(
+            id="GHQUAL-1", title="Release Epic", type="Epic", state="in-progress",
+            body="- [ ] Human validation", ac_total=1,
+            links=[Link("parent-of", "outward", "GHQUAL-2")],
+        )
+        self.child = Issue(
+            id="GHQUAL-2", title="Delivered child", type="Task", state="done",
+            body="- [ ] Reviewed criterion", ac_done=1, ac_total=1,
+            links=[Link("subtask-of", "inward", "GHQUAL-1")],
+            acceptance_status="accepted", acceptance_source="ghprojects-review-proof",
+            acceptance_coordinates='{"proof_id":"synthetic-accepted"}',
+        )
+        self.comment_posts = 0
+        self.state_writes = 0
+        self.comment_loss = comment_loss
+        self.state_loss = state_loss
+
+    def _native_issue_read(self, issue_id):
+        assert issue_id == "GHQUAL-1"
+        return deepcopy(self.parent)
+
+    def get_issue(self, issue_id):
+        if issue_id == "GHQUAL-2":
+            return deepcopy(self.child)
+        return super().get_issue(issue_id)
+
+    def _current_lifecycle_scope(self, issue_id, binding):
+        return {**LIFECYCLE_SCOPE, "issue_id": issue_id}
+
+    def _native_issue(self, issue_id, binding, operation):
+        return 1, 1001
+
+    def _item_coordinate(self, issue_id, binding):
+        return "item-1", "issue-node-1"
+
+    def _write_catalog(self, binding, fields):
+        return {"state": object()}
+
+    def _rest_write(self, method, path, body, operation):
+        assert method == "POST" and path.endswith("/issues/1/comments")
+        self.comment_posts += 1
+        if self.comment_loss != "hidden":
+            self.parent.comments.append({"text": body["body"], "created": 1})
+        if self.comment_loss:
+            raise GitHubProjectsTrackerError(operation, "lost_response")
+        return {"id": self.comment_posts, "body": body["body"]}
+
+    def _set_project_field(self, item_id, project_id, field, value):
+        assert value == "done"
+        self.state_writes += 1
+        if self.state_loss != "hidden":
+            self.parent.state = "done"
+        if self.state_loss:
+            self.state_loss = None
+            raise GitHubProjectsTrackerError("project.field_write", "lost_response")
+
+
+@pytest.mark.parametrize("lost", [None, "comment", "state"])
+def test_pat69_ghprojects_epic_closure_replays_without_second_effect(
+    monkeypatch, tmp_path, lost,
+):
+    tracker = _EpicClosureTracker(
+        tmp_path,
+        comment_loss="applied" if lost == "comment" else None,
+        state_loss="applied" if lost == "state" else None,
+    )
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+
+    closed = write.close_epic(
+        tracker, "GHQUAL-1", issued_at=123,
+        nonce="synthetic_nonce_123456", human_verdict="accepted",
+    )
+    replayed = write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
+
+    assert closed.receipt == replayed.receipt
+    assert closed.replayed is False and replayed.replayed is True
+    assert tracker.get_issue("GHQUAL-1").state == "done"
+    assert tracker.comment_posts == tracker.state_writes == 1
+
+
+def test_pat69_ghprojects_unknown_comment_effect_never_reposts(monkeypatch, tmp_path):
+    tracker = _EpicClosureTracker(tmp_path, comment_loss="hidden")
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+
+    with pytest.raises(GitHubProjectsTrackerError, match="lost_response"):
+        write.close_epic(
+            tracker, "GHQUAL-1", issued_at=123,
+            nonce="synthetic_nonce_123456", human_verdict="accepted",
+        )
+    with pytest.raises(TrackerConflictError, match="no second POST"):
+        write.close_epic(
+            tracker, "GHQUAL-1", issued_at=123,
+            nonce="synthetic_nonce_123456", human_verdict="accepted",
+        )
+    assert tracker.comment_posts == 1 and tracker.state_writes == 0
+
+
+def test_pat69_ghprojects_pending_state_effect_replays_without_new_comment(
+    monkeypatch, tmp_path,
+):
+    tracker = _EpicClosureTracker(tmp_path, state_loss="hidden")
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+
+    with pytest.raises(GitHubProjectsTrackerError, match="lost_response"):
+        write.close_epic(
+            tracker, "GHQUAL-1", issued_at=123,
+            nonce="synthetic_nonce_123456", human_verdict="accepted",
+        )
+    outcome = write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
+    assert outcome.receipt.nonce == "synthetic_nonce_123456"
+    assert tracker.comment_posts == 1 and tracker.state_writes == 2
+
+
+def test_pat69_ghprojects_epic_refuses_unknown_or_changed_child(monkeypatch, tmp_path):
+    tracker = _EpicClosureTracker(tmp_path)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    tracker.child.acceptance_status = "override"
+    with pytest.raises(SystemExit, match="dérogée"):
+        write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
+    assert tracker.comment_posts == tracker.state_writes == 0
+
+    tracker.child.acceptance_status = "accepted"
+    write.close_epic(
+        tracker, "GHQUAL-1", issued_at=123,
+        nonce="synthetic_nonce_123456", human_verdict="accepted",
+    )
+    tracker.child.title = "Changed after closure"
+    with pytest.raises(TrackerConflictError, match="graph changed"):
+        tracker.get_epic_closure(PROJECT, "GHQUAL-1")
+    assert tracker.comment_posts == tracker.state_writes == 1
+
+
+@pytest.mark.parametrize("drift", ["title", "comment", "duplicate_audit", "child_link"])
+def test_pat69_ghprojects_closed_epic_replay_detects_graph_or_parent_drift(
+    monkeypatch, tmp_path, drift,
+):
+    tracker = _EpicClosureTracker(tmp_path)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    write.close_epic(
+        tracker, "GHQUAL-1", issued_at=123,
+        nonce="synthetic_nonce_123456", human_verdict="accepted",
+    )
+    if drift == "title":
+        tracker.parent.title = "Different title"
+    elif drift == "comment":
+        tracker.parent.comments.append({"text": "foreign note", "created": 2})
+    elif drift == "duplicate_audit":
+        tracker.parent.comments.append(deepcopy(tracker.parent.comments[0]))
+    else:
+        tracker.parent.links.append(Link("parent-of", "outward", "GHQUAL-3"))
+
+    with pytest.raises(TrackerConflictError):
+        tracker.get_issue("GHQUAL-1")
+    assert tracker.comment_posts == tracker.state_writes == 1

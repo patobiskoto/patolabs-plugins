@@ -24,7 +24,9 @@ from typing import Any, Callable, Iterator
 
 from foundry import registry
 from foundry.models import (
-    Adr, Issue, Link, Project, ReleaseIssue, ReleaseScope, TransitionContext,
+    Adr, EpicClosureChild, EpicClosureDependency, EpicClosureOutcome,
+    EpicClosureReceipt, Issue, Link, Project, ReleaseIssue, ReleaseScope,
+    TransitionContext,
 )
 from foundry.trackers.base import (
     AdrIssueUnavailableError,
@@ -69,6 +71,8 @@ _LIFECYCLE_HEADER = "Foundry lifecycle proof (append-only)."
 _LIFECYCLE_OPERATIONS = frozenset({"state-in-progress", "state-review", "state-done", "acceptance"})
 _SHA = re.compile(r"[0-9a-f]{40}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+_EPIC_CLOSURE_HEADER = "Foundry Epic closure audit (append-only).\n"
+_EPIC_CLOSURE_SCHEMA = "foundry-epic-closure.v1"
 
 
 class GitHubProjectsTrackerError(RuntimeError):
@@ -137,6 +141,7 @@ class GitHubProjectsTracker(Tracker):
     bounded_state_transitions = True
     append_only_lifecycle_supported = True
     acceptance_proof_projection_supported = True
+    bounded_epic_closure_supported = True
 
     def __init__(self, *, runner=subprocess.run, state_dir: Path | str | None = None):
         self._runner = runner
@@ -2335,6 +2340,44 @@ class GitHubProjectsTracker(Tracker):
         # Only a valid receipt for the current review generation may make it
         # positive; keep the semantic criterion count for callers either way.
         native.ac_done = 0
+        if isinstance(native.type, str) and native.type.casefold() == "epic":
+            native.version = self._epic_source_version(native)
+        if native.state == "done" and isinstance(native.type, str) and native.type.casefold() == "epic":
+            closure = self._closure_from_issue(native, self._project())
+            if closure is not None:
+                scope = scope or self._current_lifecycle_scope(issue_id, binding)
+                rows = self._lifecycle_rows(issue_id, native, scope)
+                if rows.get("state-review") or rows.get("state-done") or rows.get("acceptance"):
+                    raise TrackerConflictError("GitHub Epic closure conflicts with code lifecycle")
+                if rows.get("state-in-progress"):
+                    if len(rows["state-in-progress"]) != 1:
+                        raise TrackerConflictError("GitHub Epic start receipt duplicated")
+                    self._validate_state_payload(
+                        "in-progress", rows["state-in-progress"][0][0], binding,
+                    )
+                    self._validate_lifecycle_order(issue_id, native, scope)
+                from foundry.write import bounded_epic_graph_snapshot
+                try:
+                    children, dependencies = bounded_epic_graph_snapshot(
+                        self, self._project(), native,
+                    )
+                except (SystemExit, TrackerConflictError) as exc:
+                    raise TrackerConflictError("GitHub Epic graph changed after closure") from exc
+                if (children, dependencies) != (
+                    closure.receipt.children, closure.receipt.dependencies,
+                ):
+                    raise TrackerConflictError("GitHub Epic graph changed after closure")
+                native.normalized_state = "done"
+                native.native_state = "done"
+                native.projection_status = "aligned"
+                native.version = closure.closed_parent_version
+                return native
+        if isinstance(native.type, str) and native.type.casefold() == "epic" and native.state != "done":
+            pending = self._closure_from_issue(
+                native, self._project(), require_done=False,
+            )
+            if pending is not None:
+                native.version = pending.receipt.parent_version
         has_lifecycle = any(
             isinstance(row.get("text"), str)
             and row["text"].startswith(_LIFECYCLE_HEADER)
@@ -2342,9 +2385,7 @@ class GitHubProjectsTracker(Tracker):
         )
         if not has_lifecycle:
             if native.state == "done":
-                raise TrackerConflictError(
-                    "GitHub native state changed outside lifecycle",
-                )
+                raise TrackerConflictError("GitHub native state changed outside lifecycle")
             native.normalized_state = None
             native.native_state = native.state
             native.projection_status = "native-only"
@@ -2929,6 +2970,294 @@ class GitHubProjectsTracker(Tracker):
                 and read_dst.to_dict() == fresh_dst.to_dict()):
             raise write_error
         raise TrackerConflictError("lien GitHub divergent après écriture ; aucune seconde tentative") from write_error
+
+    @staticmethod
+    def _epic_closure_audit(receipt: EpicClosureReceipt) -> tuple[str, str]:
+        value = {"schema": _EPIC_CLOSURE_SCHEMA, "receipt": receipt.to_dict()}
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+        return f"github:epic:{digest}", (
+            _EPIC_CLOSURE_HEADER +
+            f"marker: {_EPIC_CLOSURE_SCHEMA}:{digest}\ncoordinates: {canonical}"
+        )
+
+    @classmethod
+    def _epic_source_version(
+        cls, issue: Issue, receipt: EpicClosureReceipt | None = None,
+    ) -> int:
+        """Digest an observed Issue snapshot into a positive, opaque coordinate.
+
+        GitHub exposes no CAS/version for the combined Issue and Project item.
+        The coordinate detects changes but is never a concurrency precondition.
+        For pending/done replay, remove only our exact audit and restore the
+        predecessor State; every unrelated property remains in the digest.
+        """
+        value = issue.to_dict()
+        for name in ("version", "updated", "normalized_state", "native_state", "projection_status"):
+            value.pop(name, None)
+        value["links"] = sorted(
+            value["links"], key=lambda link: (link["type"], link["direction"], link["target"]),
+        )
+        value["labels"] = sorted(value["labels"])
+        if receipt is not None:
+            _, audit = cls._epic_closure_audit(receipt)
+            value["state"] = receipt.parent_state
+            value["comments"] = [
+                row for row in value["comments"] if row.get("text") != audit
+            ]
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return int(hashlib.sha256(canonical.encode("ascii")).hexdigest()[:15], 16) + 1
+
+    def bounded_epic_version(self, issue: Issue) -> int:
+        """Opaque full-snapshot coordinate; the common gate checks acceptance."""
+        return self._epic_source_version(issue)
+
+    @classmethod
+    def _closure_from_issue(
+        cls, issue: Issue, project: Project, *, require_done: bool = True,
+    ) -> EpicClosureOutcome | None:
+        matches = []
+        for row in issue.comments:
+            text = row.get("text") if isinstance(row, dict) else None
+            if not isinstance(text, str) or not text.startswith(_EPIC_CLOSURE_HEADER):
+                continue
+            lines = text.splitlines()
+            try:
+                envelope = json.loads(lines[2].removeprefix("coordinates: "))
+                if envelope.get("schema") != _EPIC_CLOSURE_SCHEMA:
+                    raise ValueError("schema")
+                raw = envelope["receipt"]
+                dependencies = tuple(
+                    EpicClosureDependency(
+                        source_id=item["source_id"],
+                        target=EpicClosureChild(**item["target"]),
+                    ) for item in raw["dependencies"]
+                )
+                receipt = EpicClosureReceipt(**{
+                    **raw,
+                    "children": tuple(EpicClosureChild(**item) for item in raw["children"]),
+                    "dependencies": dependencies,
+                })
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                raise TrackerConflictError("GitHub Epic closure audit malformed") from None
+            audit_id, expected = cls._epic_closure_audit(receipt)
+            if len(lines) != 3 or text != expected:
+                raise TrackerConflictError("GitHub Epic closure audit divergent")
+            matches.append((receipt, audit_id))
+        if len(matches) > 1:
+            raise TrackerConflictError("GitHub Epic closure audit duplicated")
+        if not matches:
+            return None
+        receipt, audit_id = matches[0]
+        from foundry.write import epic_parent_validation_digest
+        if (
+            receipt.project_key != project.key
+            or receipt.project_id != project.id
+            or receipt.parent_id != issue.id
+            or receipt.parent_type != issue.type
+            or receipt.human_verdict != "accepted"
+            or receipt.parent_state in {None, "done", "dropped"}
+            or receipt.parent_ac_done != issue.ac_done
+            or receipt.parent_ac_total != issue.ac_total
+            or receipt.parent_validation_digest != epic_parent_validation_digest(issue)
+            or cls._epic_source_version(issue, receipt) != receipt.parent_version
+        ):
+            raise TrackerConflictError("GitHub Epic closure audit coordinates diverged")
+        if require_done and (
+            issue.state != "done"
+        ):
+            raise TrackerConflictError("GitHub Epic closure audit without closed parent")
+        return EpicClosureOutcome(
+            receipt, receipt.parent_version + 1,
+            audit_id, replayed=True,
+        )
+
+    def get_epic_closure(self, project: Project, parent_id: str) -> EpicClosureOutcome | None:
+        self._authoritative_binding(project)
+        self.validate_issue_binding(project, parent_id)
+        parent = self._native_issue_read(parent_id)
+        parent.ac_done = 0  # Native checkboxes are progress, not accepted proof.
+        parent.version = self._epic_source_version(parent)
+        outcome = self._closure_from_issue(parent, project)
+        if outcome is None:
+            if parent.state == "done":
+                raise TrackerConflictError("GitHub Epic done without closure audit")
+            return None
+        from foundry.write import bounded_epic_graph_snapshot
+        try:
+            children, dependencies = bounded_epic_graph_snapshot(self, project, parent)
+        except (SystemExit, TrackerConflictError) as exc:
+            raise TrackerConflictError("GitHub Epic graph changed after closure") from exc
+        if (children, dependencies) != (outcome.receipt.children, outcome.receipt.dependencies):
+            raise TrackerConflictError("GitHub Epic graph changed after closure")
+        return outcome
+
+    def get_pending_epic_closure(
+        self, project: Project, parent_id: str,
+    ) -> EpicClosureReceipt | None:
+        self._authoritative_binding(project)
+        self.validate_issue_binding(project, parent_id)
+        parent = self._native_issue_read(parent_id)
+        if parent.state == "done":
+            return None
+        parent.ac_done = 0
+        parent.version = self._epic_source_version(parent)
+        pending = self._closure_from_issue(parent, project, require_done=False)
+        if pending is None:
+            return None
+        receipt = pending.receipt
+        if parent.state != receipt.parent_state:
+            raise TrackerConflictError("GitHub Epic pending audit lost predecessor")
+        return receipt
+
+    def close_epic(self, project: Project, receipt: EpicClosureReceipt) -> EpicClosureOutcome:
+        binding = self._authoritative_binding(project)
+        self.validate_issue_binding(project, receipt.parent_id, *(child.id for child in receipt.children))
+        parent = self._native_issue_read(receipt.parent_id)
+        parent.ac_done = 0
+        parent.version = self._epic_source_version(parent)
+        scope = self._current_lifecycle_scope(receipt.parent_id, binding)
+        lifecycle = self._lifecycle_rows(receipt.parent_id, parent, scope)
+        if lifecycle.get("state-review") or lifecycle.get("state-done") or lifecycle.get("acceptance"):
+            raise TrackerConflictError("GitHub Epic closure conflicts with code lifecycle")
+        if lifecycle.get("state-in-progress"):
+            if len(lifecycle["state-in-progress"]) != 1:
+                raise TrackerConflictError("GitHub Epic start receipt duplicated")
+            self._validate_state_payload(
+                "in-progress", lifecycle["state-in-progress"][0][0], binding,
+            )
+            self._validate_lifecycle_order(receipt.parent_id, parent, scope)
+        if (
+            parent.type != "Epic" or parent.pr_url
+            or parent.ac_total < 1 or parent.ac_done > parent.ac_total
+            or receipt.human_verdict != "accepted"
+        ):
+            raise TrackerConflictError("GitHub Epic closure target invalid")
+        observed = self._closure_from_issue(parent, project, require_done=False)
+        if observed is not None:
+            parent.version = observed.receipt.parent_version
+        if observed is not None and parent.state == "done":
+            existing = self.get_epic_closure(project, receipt.parent_id)
+            if existing is None or existing.receipt != receipt:
+                raise TrackerConflictError("GitHub Epic closure audit divergent")
+            return existing
+        if observed is not None and observed.receipt != receipt:
+            raise TrackerConflictError("GitHub Epic pending audit divergent")
+        if parent.state == "done":
+            raise TrackerConflictError("GitHub Epic done without closure audit")
+        from foundry.write import bounded_epic_graph_snapshot, epic_parent_validation_digest
+        try:
+            children, dependencies = bounded_epic_graph_snapshot(self, project, parent)
+        except (SystemExit, TrackerConflictError) as exc:
+            raise TrackerConflictError("GitHub Epic graph divergent before write") from exc
+        if (
+            (observed is None and parent.version != receipt.parent_version)
+            or (observed is not None and (parent.version is None or parent.version < receipt.parent_version))
+            or parent.state != receipt.parent_state
+            or parent.type != receipt.parent_type
+            or parent.ac_done != receipt.parent_ac_done
+            or parent.ac_total != receipt.parent_ac_total
+            or epic_parent_validation_digest(parent) != receipt.parent_validation_digest
+            or (children, dependencies) != (receipt.children, receipt.dependencies)
+        ):
+            raise TrackerConflictError("GitHub Epic graph divergent before write")
+        audit_id, body = self._epic_closure_audit(receipt)
+        fingerprint = audit_id.removeprefix("github:epic:")
+        with self._lifecycle_intent_lock(fingerprint):
+            intent = self._read_lifecycle_intent(fingerprint)
+            current = self._native_issue_read(receipt.parent_id)
+            current.ac_done = 0
+            current.version = self._epic_source_version(current)
+            pending = self._closure_from_issue(current, project, require_done=False)
+            if pending is None:
+                if intent is not None:
+                    raise TrackerConflictError(
+                        "GitHub Epic audit effect unknown or missing; no second POST",
+                    )
+                if (
+                    current.state != receipt.parent_state
+                    or current.version != receipt.parent_version
+                    or epic_parent_validation_digest(current) != receipt.parent_validation_digest
+                ):
+                    raise TrackerConflictError("GitHub Epic changed before audit append")
+                try:
+                    fresh_children, fresh_dependencies = bounded_epic_graph_snapshot(
+                        self, project, current,
+                    )
+                except (SystemExit, TrackerConflictError) as exc:
+                    raise TrackerConflictError("GitHub Epic graph changed before audit append") from exc
+                if (fresh_children, fresh_dependencies) != (
+                    receipt.children, receipt.dependencies,
+                ):
+                    raise TrackerConflictError("GitHub Epic graph changed before audit append")
+                before = self._comment_effect_snapshot(current)
+                before.pop("version", None)
+                number, _ = self._native_issue(receipt.parent_id, binding, "epic-closure.comment_prewrite")
+                self._write_lifecycle_intent(fingerprint, "pending")
+                try:
+                    self._rest_write(
+                        "POST", f"repos/{binding.repo}/issues/{number}/comments",
+                        {"body": body}, "epic-closure.comment_write",
+                    )
+                except GitHubProjectsTrackerError as error:
+                    recovered = self._native_issue_read(receipt.parent_id)
+                    recovered.ac_done = 0
+                    after = self._closure_from_issue(recovered, project, require_done=False)
+                    if after is None or after.receipt != receipt:
+                        raise error
+                current = self._native_issue_read(receipt.parent_id)
+                current.ac_done = 0
+                current.version = self._epic_source_version(current)
+                pending = self._closure_from_issue(current, project, require_done=False)
+                after = self._comment_effect_snapshot(current)
+                after.pop("version", None)
+                if pending is None or pending.receipt != receipt or after != before:
+                    raise TrackerConflictError("GitHub Epic audit append divergent")
+            elif pending.receipt != receipt:
+                raise TrackerConflictError("GitHub Epic audit collision")
+            self._write_lifecycle_intent(fingerprint, "complete")
+            # S1: re-read the full graph immediately before the one targeted State write.
+            current = self._native_issue_read(receipt.parent_id)
+            current.ac_done = 0
+            current.version = self._epic_source_version(current)
+            try:
+                children, dependencies = bounded_epic_graph_snapshot(self, project, current)
+            except (SystemExit, TrackerConflictError) as exc:
+                raise TrackerConflictError("GitHub Epic graph divergent before state write") from exc
+            if (
+                current.state != receipt.parent_state
+                or self._closure_from_issue(current, project, require_done=False).receipt != receipt
+                or epic_parent_validation_digest(current) != receipt.parent_validation_digest
+                or (children, dependencies) != (receipt.children, receipt.dependencies)
+            ):
+                raise TrackerConflictError("GitHub Epic changed before state write")
+            before_state = self._unrelated_state_snapshot(current)
+            before_state.pop("version", None)
+            item_id, _ = self._item_coordinate(receipt.parent_id, binding)
+            catalog = self._write_catalog(binding, {"state": "done"})
+            try:
+                self._set_project_field(item_id, binding.project_id, catalog["state"], "done")
+            except GitHubProjectsTrackerError as error:
+                recovered = self._native_issue_read(receipt.parent_id)
+                if recovered.state != "done":
+                    raise error
+            closed = self._native_issue_read(receipt.parent_id)
+            closed.ac_done = 0
+            closed.version = self._epic_source_version(closed)
+            after_state = self._unrelated_state_snapshot(closed)
+            after_state.pop("version", None)
+            if after_state != before_state:
+                raise TrackerConflictError("GitHub Epic untargeted properties changed")
+            outcome = self._closure_from_issue(closed, project)
+            if outcome is None or outcome.receipt != receipt:
+                raise TrackerConflictError("GitHub Epic audit absent after state write")
+            try:
+                children, dependencies = bounded_epic_graph_snapshot(self, project, closed)
+            except (SystemExit, TrackerConflictError) as exc:
+                raise TrackerConflictError("GitHub Epic graph divergent after state write") from exc
+            if (children, dependencies) != (receipt.children, receipt.dependencies):
+                raise TrackerConflictError("GitHub Epic graph divergent after state write")
+            return EpicClosureOutcome(receipt, receipt.parent_version + 1, audit_id)
 
     def add_comment(self, issue_id, text, project=None):
         binding = self._authoritative_binding(project or self._project())

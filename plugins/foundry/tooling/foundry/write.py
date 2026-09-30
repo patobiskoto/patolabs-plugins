@@ -350,7 +350,7 @@ def _validate_epic_parent(parent, *, bounded: bool = False) -> None:
         )
 
 
-def _bounded_epic_node(issue: Issue, *, role: str) -> EpicClosureChild:
+def _bounded_epic_node(issue: Issue, *, role: str, tracker=None) -> EpicClosureChild:
     """Build one strictly accepted graph coordinate for PAT-ADR-0006."""
     if issue.state == "dropped":
         raise SystemExit(
@@ -360,7 +360,12 @@ def _bounded_epic_node(issue: Issue, *, role: str) -> EpicClosureChild:
         raise SystemExit(
             f"Clôture Epic refusée : {role} {issue.id} n'est pas terminal accepté."
         )
-    version = _exact_positive_version(issue.version, f"version {role}")
+    observed_version = issue.version
+    if observed_version is None:
+        resolver = getattr(tracker, "bounded_epic_version", None)
+        if callable(resolver):
+            observed_version = resolver(issue)
+    version = _exact_positive_version(observed_version, f"version {role}")
     ac_done = _exact_nonnegative_int(issue.ac_done, f"AC {role} satisfaites")
     ac_total = _exact_nonnegative_int(issue.ac_total, f"AC {role} totales")
     if ac_total == 0 or ac_done != ac_total:
@@ -428,7 +433,7 @@ def bounded_epic_graph_snapshot(
         return cache[issue_id]
 
     children = tuple(
-        _bounded_epic_node(fetch(child_id), role="enfant")
+        _bounded_epic_node(fetch(child_id), role="enfant", tracker=tracker)
         for child_id in child_ids
     )
     edges: list[EpicClosureDependency] = []
@@ -455,7 +460,7 @@ def bounded_epic_graph_snapshot(
             target = fetch(target_id)
             edges.append(EpicClosureDependency(
                 source_id=source.id,
-                target=_bounded_epic_node(target, role="dépendance"),
+                target=_bounded_epic_node(target, role="dépendance", tracker=tracker),
             ))
             if target_id not in expanded:
                 visit(target, (*path, target_id))

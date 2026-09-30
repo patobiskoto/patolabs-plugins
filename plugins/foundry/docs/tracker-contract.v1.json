@@ -492,10 +492,10 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-69",
-          "evidence": "no override; the base default applies. PAT-65 qualified individual parent/sub-issue reads and writes but no atomic graph precondition; the capability itself is owned by PAT-69 (epic closure in the active tracker)."
+          "evidence": "Local bounded close_epic/get_epic_closure candidate uses an opaque snapshot digest coordinate, a deterministic append-only comment audit, one targeted State update, full graph readback and a local unknown-effect journal. PAT-69 still requires private sandbox transport qualification and independent review before this core cell can be supported; no CAS or atomic provider graph precondition exists."
         }
       },
-      "note": "DevHub (non-V1) retains its stronger atomic epic_closure_supported transaction; GitHub Projects remains unqualified and refuses through the base port."
+      "note": "DevHub (non-V1) retains its stronger atomic epic_closure_supported transaction; GitHub Projects has a local bounded candidate pending private sandbox qualification."
     },
     {
       "id": "tombstone-archived-source-after-switch",
