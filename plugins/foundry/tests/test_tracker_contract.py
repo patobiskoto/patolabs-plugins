@@ -221,8 +221,8 @@ def test_ghprojects_cells_match_delivered_reads_writes_and_pat58_adrs():
             "frame-intake-groom-create", "frame-intake-groom-evolve-existing",
                 "mid-flight-comment", "epics-children-creation",
                 "epics-children-reparent-existing", "dependencies-relates-blocks",
-                "adr-read", "adr-create", "adr-status-evolution",
-                "adr-supersession-and-issue-linking",
+                "release-and-changelog-scope", "adr-read", "adr-create",
+                "adr-status-evolution", "adr-supersession-and-issue-linking",
         }:
             assert cell["status"] == "supported"
             continue
@@ -338,7 +338,7 @@ def test_ghprojects_pat66_and_pat58_writes_are_real_and_lifecycle_remains_refuse
 
 @pytest.mark.parametrize(
     "ticket",
-    ["PAT-69", "PAT-64", "PAT-59"],
+    ["PAT-69", "PAT-64"],
 )
 def test_expected_gap_tickets_are_actually_cited(ticket):
     contract = _load_contract()

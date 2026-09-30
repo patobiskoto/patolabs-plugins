@@ -15,11 +15,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tooling"))
 import foundry
 from foundry import query, registry, write
 from foundry.codehosts.github import GitHubCodeHost
-from foundry.models import Adr, Check, Issue, Link, Project, PullRequest
+from foundry.models import (
+    Adr, Check, Issue, Link, Project, PullRequest, ReleaseIssue, ReleaseScope,
+)
 from foundry.trackers.base import (
     AdrIssueUnavailableError,
     AdrUnavailableError,
     IssueUnavailableError,
+    ReleaseScopeUnavailableError,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
@@ -67,6 +70,27 @@ class _FakeTracker:
 
     def list_adrs(self, project):
         return self._adrs
+
+    def read_release_scope(self, project, release):
+        if release not in {issue.milestone for issue in self._issues if issue.milestone}:
+            raise ReleaseScopeUnavailableError(self.name, release, "unmapped")
+        facts = []
+        for issue in self._issues:
+            if issue.milestone != release:
+                continue
+            disposition = (
+                "accepted" if issue.state == "done" else
+                "unavailable" if str(issue.state).casefold() == "fixed" else
+                "unfinished"
+            )
+            facts.append(ReleaseIssue(
+                issue.id, issue.title, issue.type, issue.state,
+                tuple(issue.labels), disposition, {},
+            ))
+        return ReleaseScope(
+            self.name, project.key, project.id, release, f"native-{release}",
+            None, tuple(facts), {"mode": "operator"},
+        )
 
 
 def test_ci_gate_all_green_passes():
@@ -585,12 +609,12 @@ def test_changelog_groups_shipped_issues(monkeypatch):
     assert "body" not in out["groups"]["Feature"][0]
 
 
-def test_changelog_unknown_milestone_is_empty(monkeypatch):
+def test_changelog_unknown_milestone_is_explicit(monkeypatch):
     issues = [Issue(id="A", title="x", state="done", milestone="v1.2", type="Feature")]
     monkeypatch.setattr(foundry, "tracker", lambda name=None: _FakeTracker(issues))
     monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
-    out = query.changelog("v9.9")
-    assert out["count"] == 0 and out["groups"] == {}
+    with pytest.raises(ReleaseScopeUnavailableError, match="unmapped"):
+        query.changelog("v9.9")
 
 
 def test_changelog_empty_milestone_refuses(monkeypatch):

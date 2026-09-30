@@ -94,8 +94,7 @@
       "journey": "contexte/backlog",
       "core": true,
       "tracker_abc": [
-        "search",
-        "get_issue"
+        "read_release_scope"
       ],
       "cells": {
         "youtrack": {
@@ -554,7 +553,7 @@
         "ghprojects": {
           "status": "to_qualify",
           "ticket": "PAT-64",
-          "evidence": "not overridden; PAT-ADR-0007 selected the qualified GitHub ADR shape, but PAT-58 must deliver it before ghprojects can become an import target"
+          "evidence": "PAT-58 delivered the qualified GitHub ADR shape under PAT-ADR-0007, but the historical import port is not overridden; PAT-64 owns qualification of GitHub Projects as an import target"
         }
       },
       "note": "ADR half of the switch only. The live-work half is the next row."
@@ -599,17 +598,15 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "query.py changelog() (query.py) and milestones() (query.py) derive release scope from Issue.milestone/state returned by search(); YouTrack reads Milestone as a custom field (youtrack.py)"
+          "evidence": "read_release_scope verifies the mapped enum-value id/name in ms_bundle, pages the exact scoped query and never promotes native Done to delivery proof (youtrack.py, release-scope.md)"
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-59",
-          "evidence": "same query.py path, but an issue in a projectMilestone absent from the binding fails the read (linear.py, milestone_id_unmapped). PAT-54 now publishes a complete changed mapping and matching marker digest under one repository lock after strict marker validation (registry.py); PAT-59 still owns the release-scope semantics and provider qualification"
+          "status": "supported",
+          "evidence": "read_release_scope verifies the exact mapped ProjectMilestone, filters by its native id with full outer pagination and classifies only exact lifecycle done receipts as accepted or deviated (linear.py, release-scope.md)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-59",
-          "evidence": "depends on backlog-read (PAT-57). PAT-65 observed the native Project Milestone field, but did not qualify Foundry release-scope semantics; PAT-59 owns that work"
+          "status": "supported",
+          "evidence": "read_release_scope verifies the exact canonical repository Milestone, exhausts its issues and requires membership in the bound product Project; native Done stays unavailable without PAT-67 proof (ghprojects.py, release-scope.md)"
         }
       },
       "note": "Ship-iOS (plugins/ship-ios/scripts/changelog_bridge.py) consumes only the 'query changelog' JSON of foundry_cli.py; it imports no Tracker adapter and holds no provider credential."
