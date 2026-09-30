@@ -3241,9 +3241,29 @@ class GitHubProjectsTracker(Tracker):
                         {"body": body}, "epic-closure.comment_write",
                     )
                 except GitHubProjectsTrackerError as error:
-                    recovered = self._native_issue_read(receipt.parent_id)
+                    try:
+                        recovered = self._native_issue_read(receipt.parent_id)
+                    except GitHubProjectsTrackerError as read_error:
+                        if (
+                            error.reason in {
+                                "authentication_failed", "permission_denied", "not_found",
+                            }
+                            and read_error.reason == error.reason
+                        ):
+                            # Matching definitive refusals prove no audit append was
+                            # authorized. A repaired credential can start a new S1.
+                            intent.clear()
+                            raise error from read_error
+                        raise GitHubProjectsTrackerError(
+                            "epic-closure.comment_write", "effect_unknown",
+                        ) from read_error
                     recovered.ac_done = 0
                     after = self._closure_from_issue(recovered, project, require_done=False)
+                    if after is None and error.reason in {
+                        "authentication_failed", "permission_denied", "not_found",
+                    }:
+                        intent.clear()
+                        raise
                     if after is None or after.receipt != receipt:
                         raise error
                 current = self._native_issue_read(receipt.parent_id)

@@ -4249,6 +4249,8 @@ class _EpicClosureTracker(GitHubProjectsTracker):
     def _rest_write(self, method, path, body, operation):
         assert method == "POST" and path.endswith("/issues/1/comments")
         self.comment_posts += 1
+        if self.comment_loss in {"authentication_failed", "permission_denied", "not_found"}:
+            raise GitHubProjectsTrackerError(operation, self.comment_loss)
         if self.comment_loss != "hidden":
             self.parent.comments.append({"text": body["body"], "created": 1})
         if self.comment_loss:
@@ -4424,6 +4426,56 @@ def test_pat69_ghprojects_unknown_comment_effect_never_reposts(
             tracker, "GHQUAL-1", human_verdict="accepted", **replay_coordinates,
         )
     assert tracker.comment_posts == 1 and tracker.state_writes == 0
+
+
+@pytest.mark.parametrize("denial", [
+    "authentication_failed", "permission_denied", "not_found",
+])
+def test_pat69_ghprojects_definitive_audit_denial_can_retry_after_repair(
+    monkeypatch, tmp_path, denial,
+):
+    tracker = _EpicClosureTracker(tmp_path, comment_loss=denial)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+
+    with pytest.raises(GitHubProjectsTrackerError, match=denial):
+        write.close_epic(
+            tracker, "GHQUAL-1", issued_at=123,
+            nonce="synthetic_nonce_123456", human_verdict="accepted",
+        )
+    assert tracker.comment_posts == 1 and tracker.state_writes == 0
+    assert tracker.parent.comments == []
+
+    tracker.comment_loss = None  # Credential/scope repair after a proven denial.
+    closed = write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
+    assert closed.replayed is False
+    assert tracker.comment_posts == 2 and tracker.state_writes == 1
+    assert len(tracker.parent.comments) == 1
+
+
+def test_pat69_ghprojects_matching_read_denial_can_retry_after_repair(
+    monkeypatch, tmp_path,
+):
+    tracker = _EpicClosureTracker(tmp_path, comment_loss="authentication_failed")
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+    original_read = tracker._native_issue_read
+    denied_read = {"once": True}
+
+    def read(issue_id):
+        if tracker.comment_posts == 1 and denied_read["once"]:
+            denied_read["once"] = False
+            raise GitHubProjectsTrackerError("issue.read", "authentication_failed")
+        return original_read(issue_id)
+
+    monkeypatch.setattr(tracker, "_native_issue_read", read)
+    with pytest.raises(GitHubProjectsTrackerError, match="authentication_failed"):
+        write.close_epic(
+            tracker, "GHQUAL-1", issued_at=123,
+            nonce="synthetic_nonce_123456", human_verdict="accepted",
+        )
+    tracker.comment_loss = None
+    closed = write.close_epic(tracker, "GHQUAL-1", human_verdict="accepted")
+    assert closed.replayed is False
+    assert tracker.comment_posts == 2 and tracker.state_writes == 1
 
 
 def test_pat69_ghprojects_pending_state_effect_replays_without_new_comment(

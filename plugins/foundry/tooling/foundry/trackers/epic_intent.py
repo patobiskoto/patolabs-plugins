@@ -111,3 +111,15 @@ class EpicAuditIntent:
                     os.unlink(temporary_name)
                 except FileNotFoundError:
                     pass
+
+    def clear(self) -> None:
+        """Release an intent only after the provider definitively refused the POST."""
+        try:
+            self._path().unlink()
+            directory_fd = os.open(self.directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError as exc:
+            raise TrackerConflictError("Epic audit local intent unavailable") from exc
