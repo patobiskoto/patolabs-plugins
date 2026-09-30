@@ -91,14 +91,14 @@ class ReleaseSkillSubmitContractTests(unittest.TestCase):
 
 
 class ReleaseVersionTests(unittest.TestCase):
-    def test_manifests_and_changelog_are_aligned_at_0_2_1(self):
+    def test_manifests_and_changelog_are_aligned_at_0_3_0(self):
         for manifest in (
             ROOT / ".claude-plugin/plugin.json",
             ROOT / ".codex-plugin/plugin.json",
         ):
-            self.assertEqual(json.loads(manifest.read_text())["version"], "0.2.1")
+            self.assertEqual(json.loads(manifest.read_text())["version"], "0.3.0")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        self.assertIn("## 0.2.1", changelog)
+        self.assertIn("## 0.3.0", changelog)
         self.assertIn("## 0.2.0", changelog)
 
 
