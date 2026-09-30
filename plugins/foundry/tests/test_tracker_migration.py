@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import re
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -11,13 +14,17 @@ from foundry.migration import MigrationError, capture_manifest, copy_and_verify,
 from foundry.models import Adr, Issue, Link, Project
 from foundry.trackers.base import Tracker
 from foundry.trackers.base import IssueUnavailableError, TrackerCapabilityUnavailableError, TrackerConflictError
-from foundry.trackers.ghprojects import GitHubProjectsTracker, _CreateCandidate
+from foundry.trackers.ghprojects import (
+    GitHubProjectsTracker,
+    _CreateCandidate,
+    _FieldBinding,
+)
 from foundry.trackers.linear import LinearTracker, LinearTrackerError
 from foundry.trackers.youtrack import YouTrackTracker, _YouTrackHTTPError
 
 
 class FakeTransportTracker(Tracker):
-    """Fake provider transport; parameterizing names exercises all six pairs."""
+    """Small in-memory tracker used by focused orchestrator tests."""
     migration_supported_attributes = frozenset({"type", "priority", "estimate", "state", "parent", "children", "dependencies"})
 
     def __init__(self, name, issues=(), adrs=(), adr_relations=None):
@@ -87,28 +94,322 @@ class FakeTransportTracker(Tracker):
         return copy.deepcopy(item)
 
 
+class _YouTrackPairTransport(FakeTransportTracker):
+    """YouTrack-shaped fake: source identity lives in one dedicated field."""
+
+    def __init__(self, issues=(), adrs=(), adr_relations=None):
+        super().__init__("youtrack", issues, adrs, adr_relations)
+        self.provenance_field = {}
+
+    def migration_find_issue(self, project, source_ref):
+        candidates = [
+            self.issues[issue_id]
+            for issue_id, observed in self.provenance_field.items()
+            if observed == source_ref
+        ]
+        if len(candidates) > 1:
+            raise TrackerConflictError("provenance issue YouTrack ambiguë")
+        return copy.deepcopy(candidates[0]) if candidates else None
+
+    def migration_import_issue(self, project, snapshot, *, source_ref):
+        existing = self.migration_find_issue(project, source_ref)
+        if existing is not None:
+            return existing
+        issue_id = f"{project.key}-{len(self.provenance_field) + 1}"
+        item = Issue(
+            issue_id, snapshot["title"], body=snapshot["body"],
+            state=snapshot["attributes"]["state"],
+            type=snapshot["attributes"]["type"],
+            priority=snapshot["attributes"]["priority"],
+            estimate=snapshot["attributes"]["estimate"],
+            ac_done=snapshot["acceptance"]["projection"]["done"],
+            ac_total=snapshot["acceptance"]["projection"]["total"],
+        )
+        self.issues[issue_id] = item
+        self.provenance_field[issue_id] = source_ref
+        self.issue_refs[source_ref] = item
+        self.effects += 1
+        return copy.deepcopy(item)
+
+
+class _LinearPairTransport(FakeTransportTracker):
+    """Linear-shaped fake: creation is recovered through a deterministic native slot."""
+
+    def __init__(self, issues=(), adrs=(), adr_relations=None):
+        super().__init__("linear", issues, adrs, adr_relations)
+        self.native_slots = {}
+
+    @staticmethod
+    def _slot(project, source_ref):
+        return hashlib.sha256(
+            f"{project.id}\0{source_ref}".encode("utf-8"),
+        ).hexdigest()
+
+    def migration_find_issue(self, project, source_ref):
+        slot = self._slot(project, source_ref)
+        item = self.native_slots.get(slot)
+        return copy.deepcopy(item) if item is not None else None
+
+    def migration_import_issue(self, project, snapshot, *, source_ref):
+        slot = self._slot(project, source_ref)
+        existing = self.native_slots.get(slot)
+        if existing is not None:
+            return copy.deepcopy(existing)
+        item = Issue(
+            f"{project.key}-{len(self.native_slots) + 1}",
+            snapshot["title"], body=snapshot["body"],
+            state=snapshot["attributes"]["state"],
+            type=snapshot["attributes"]["type"],
+            priority=snapshot["attributes"]["priority"],
+            estimate=snapshot["attributes"]["estimate"],
+            ac_done=snapshot["acceptance"]["projection"]["done"],
+            ac_total=snapshot["acceptance"]["projection"]["total"],
+        )
+        self.native_slots[slot] = item
+        self.issues[item.id] = item
+        self.issue_refs[source_ref] = item
+        self.effects += 1
+        return copy.deepcopy(item)
+
+    def migration_qualify_adrs(self, project, snapshots):
+        del project
+        stable = [
+            {
+                key: value for key, value in snapshot.items()
+                if key not in {"target_id", "copy_status"}
+            }
+            for snapshot in snapshots
+        ]
+        return {
+            "kind": "linear-closed-batch-fake-v1",
+            "digest": hashlib.sha256(
+                json.dumps(stable, sort_keys=True).encode("utf-8"),
+            ).hexdigest(),
+        }
+
+    def migration_import_adrs(self, project, snapshots, *, qualification=None):
+        expected = self.migration_qualify_adrs(project, snapshots)
+        if qualification != expected:
+            raise TrackerConflictError("qualification batch Linear divergente")
+        return Tracker.migration_import_adrs(self, project, snapshots)
+
+
+class _GitHubPairTransport(FakeTransportTracker):
+    """GitHub-shaped fake: reserved labels carry provenance and ADR ids are remapped."""
+
+    def __init__(self, issues=(), adrs=(), adr_relations=None):
+        super().__init__("ghprojects", issues, adrs, adr_relations)
+        self.source_labels = {}
+
+    @staticmethod
+    def _label(source_ref):
+        return "foundry-migration-" + hashlib.sha256(
+            source_ref.encode("utf-8"),
+        ).hexdigest()[:16]
+
+    def migration_find_issue(self, project, source_ref):
+        item = self.source_labels.get(self._label(source_ref))
+        return copy.deepcopy(item) if item is not None else None
+
+    def migration_import_issue(self, project, snapshot, *, source_ref):
+        label = self._label(source_ref)
+        existing = self.source_labels.get(label)
+        if existing is not None:
+            return copy.deepcopy(existing)
+        item = Issue(
+            f"{project.key}-{len(self.source_labels) + 1}",
+            snapshot["title"], body=snapshot["body"],
+            state=snapshot["attributes"]["state"],
+            type=snapshot["attributes"]["type"],
+            priority=snapshot["attributes"]["priority"],
+            estimate=snapshot["attributes"]["estimate"],
+            ac_done=snapshot["acceptance"]["projection"]["done"],
+            ac_total=snapshot["acceptance"]["projection"]["total"],
+        )
+        self.source_labels[label] = item
+        self.issues[item.id] = item
+        self.issue_refs[source_ref] = item
+        self.effects += 1
+        return copy.deepcopy(item)
+
+    def migration_prepare_adr(self, project, snapshot):
+        prepared = copy.deepcopy(snapshot)
+
+        def remap(identifier):
+            match = re.fullmatch(r"[A-Z][A-Z0-9_-]*-ADR-(\d{4})", identifier)
+            if match is None:
+                raise TrackerCapabilityUnavailableError(
+                    self.name, "migration_adr_identifier",
+                )
+            return f"{project.key}-ADR-{match.group(1)}"
+
+        prepared["id"] = remap(snapshot["id"])
+        relations = prepared["relations"]
+        if relations.get("supersedes") != "unknown":
+            relations["supersedes"] = [remap(item) for item in relations["supersedes"]]
+        if relations.get("superseded_by") not in {None, "unknown"}:
+            relations["superseded_by"] = remap(relations["superseded_by"])
+        return prepared
+
+
+_PAIR_TRANSPORTS = {
+    "youtrack": _YouTrackPairTransport,
+    "linear": _LinearPairTransport,
+    "ghprojects": _GitHubPairTransport,
+}
+
+
 @pytest.mark.parametrize("source_name,target_name", [
     ("youtrack", "linear"), ("youtrack", "ghprojects"),
     ("linear", "youtrack"), ("linear", "ghprojects"),
     ("ghprojects", "youtrack"), ("ghprojects", "linear"),
 ])
-def test_every_tracker_pair_copies_living_work_and_adrs_once(source_name, target_name):
-    source = FakeTransportTracker(source_name, [
-        Issue("T-1", "exact title", state="in-progress", body="- [x] exact AC\n", type="Feature", priority="P1", estimate=3,
-              ac_done=1, ac_total=1, links=[Link("depends-on", "outward", "T-2")]),
-        Issue("T-2", "terminal", state="done", body="old"),
-    ], [Adr("T-ADR-1", "decision", "accepted", "* exact body\n")])
-    target = FakeTransportTracker(target_name)
-    manifest = capture_manifest(source, Project("T", "source"), target, Project("T", "target"))
-    assert [item["id"] for item in manifest["issues"]] == ["T-1"]
+def test_every_provider_transport_pair_copies_living_work_and_adrs_once(
+    source_name, target_name,
+):
+    source = _PAIR_TRANSPORTS[source_name]([
+        Issue("SRC-1", "exact title", state="in-progress", body="- [x] exact AC\n", type="Feature", priority="P1", estimate=3,
+              ac_done=1, ac_total=1, links=[Link("depends-on", "outward", "SRC-2")]),
+        Issue("SRC-2", "terminal", state="done", body="old"),
+    ], [Adr("SRC-ADR-0001", "decision", "accepted", "* exact body\n")])
+    target = _PAIR_TRANSPORTS[target_name]()
+    source_project = Project("SRC", "source")
+    target_project = Project("DST", "target")
+    manifest = capture_manifest(source, source_project, target, target_project)
+    assert [item["id"] for item in manifest["issues"]] == ["SRC-1"]
     assert manifest["adrs"][0]["relations"]["issues"] == "unknown"
-    copy_and_verify(manifest, target, Project("T", "target"), lambda: None)
+    copy_and_verify(manifest, target, target_project, lambda: None)
     assert ready_for_cutover(manifest)
     digest = manifest["source_digest"]
     effects = target.effects
-    copy_and_verify(manifest, target, Project("T", "target"), lambda: None)
+    copy_and_verify(manifest, target, target_project, lambda: None)
     assert target.effects == effects
     assert manifest["source_digest"] == digest
+    assert type(source) is _PAIR_TRANSPORTS[source_name]
+    assert type(target) is _PAIR_TRANSPORTS[target_name]
+    if target_name == "linear":
+        assert len(target.native_slots) == 1
+    elif target_name == "ghprojects":
+        assert set(target.source_labels) == {
+            target._label(f"{source_name}:issue:SRC-1")
+        }
+        assert "DST-ADR-0001" in target.adrs
+    else:
+        assert target.provenance_field == {"DST-1": f"{source_name}:issue:SRC-1"}
+
+
+def test_manifest_records_target_specific_missing_and_unsupported_values(
+    monkeypatch, tmp_path,
+):
+    source = FakeTransportTracker("youtrack", [
+        Issue("T-1", "missing", state="ready", body="body", type=None),
+        Issue("T-2", "unsupported", state="ready", body="body", type="Story"),
+    ])
+    target = GitHubProjectsTracker(state_dir=tmp_path)
+    monkeypatch.setattr(
+        target, "migration_preflight", lambda _project, _records: {"kind": "test"},
+    )
+
+    manifest = capture_manifest(
+        source,
+        Project("T", "source"),
+        target,
+        Project("T", "PVT_target", {
+            "owner": "acme", "number": "1",
+            "canonical_repo": "github.com/acme/target",
+            "migration_label": "foundry-migration",
+        }),
+    )
+
+    assert manifest["issues"][0]["exceptions"] == [{
+        "attribute": "type",
+        "reason": "target requires Task when source value is absent",
+    }]
+    assert manifest["issues"][1]["exceptions"] == [{
+        "attribute": "type",
+        "reason": "target value unavailable: Story",
+    }]
+
+
+def test_manifest_records_project_catalog_value_missing_before_first_effect(
+    monkeypatch, tmp_path,
+):
+    source = FakeTransportTracker("youtrack", [
+        Issue(
+            "T-1", "catalog mismatch", state="ready", body="body",
+            type="Feature", priority="P1", estimate=3,
+        ),
+    ])
+    target = GitHubProjectsTracker(state_dir=tmp_path)
+    project = Project("T", "PVT_target", {
+        "owner": "acme", "number": "1",
+        "canonical_repo": "github.com/acme/target",
+        "migration_label": "foundry-migration",
+    })
+    monkeypatch.setattr(target, "verify_project_identity", lambda _project: True)
+    monkeypatch.setattr(
+        target,
+        "_rest",
+        lambda *_args: {
+            "name": "foundry-migration",
+            "description": "Foundry migration provenance profile v1",
+        },
+    )
+    catalog = {
+        "type": _FieldBinding(
+            "type-id", "Foundry type", "SINGLE_SELECT", {"Task": "task-id"},
+        ),
+        "priority": _FieldBinding(
+            "priority-id", "Foundry priority", "SINGLE_SELECT", {"P1": "p1-id"},
+        ),
+        "state": _FieldBinding(
+            "state-id", "Foundry normalized state", "SINGLE_SELECT",
+            {"ready": "ready-id"},
+        ),
+        "estimate": _FieldBinding(
+            "estimate-id", "Foundry estimate", "NUMBER", {},
+        ),
+    }
+    requested = []
+
+    def write_catalog(_binding, values):
+        requested.append(values)
+        assert values.get("type") != "Feature"
+        return catalog
+
+    monkeypatch.setattr(target, "_write_catalog", write_catalog)
+
+    manifest = capture_manifest(source, Project("T", "source"), target, project)
+
+    assert manifest["issues"][0]["exceptions"] == [{
+        "attribute": "type",
+        "reason": "target native option unavailable: Feature",
+    }]
+    assert requested == [
+        {"type": "Task"},
+        {"type": "Task", "priority": "P1", "estimate": 3, "state": "ready"},
+    ]
+
+
+def test_copy_skips_exact_state_readback_only_when_manifest_declares_exception():
+    source = FakeTransportTracker("youtrack", [
+        Issue("T-1", "state mismatch", state="triage", body="body", type="Task"),
+    ])
+    target = FakeTransportTracker("linear")
+    target.migration_attribute_exceptions = (
+        lambda _project, _record: {"state": "target value unavailable: triage"}
+    )
+    manifest = capture_manifest(
+        source, Project("T", "source"), target, Project("T", "target"),
+    )
+
+    copy_and_verify(manifest, target, Project("T", "target"), lambda: None)
+
+    assert manifest["issues"][0]["exceptions"] == [{
+        "attribute": "state",
+        "reason": "target value unavailable: triage",
+    }]
+    assert target.issues["import-T-1"].state is None
 
 
 def test_manifest_reports_unsupported_attribute_instead_of_dropping_it():
@@ -364,6 +665,126 @@ def test_activate_replay_finishes_manifest_after_binding_was_already_published(
     assert load_manifest(manifest_path)["phase"] == "activated"
     assert verified == [(target, target_project)]
     assert json.loads(capsys.readouterr().out)["tracker"] == "linear"
+
+
+@pytest.mark.parametrize("source_v1", [True, False])
+def test_activate_cli_replays_after_registry_promotion_before_marker_replace(
+    monkeypatch, tmp_path, capsys, source_v1,
+):
+    state = tmp_path / "state"
+    repo = tmp_path / "public"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "main"], cwd=repo, check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "remote.origin.url", "https://github.com/acme/public.git"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git", "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+            "commit", "--allow-empty", "-m", "init",
+        ],
+        cwd=repo, check=True, capture_output=True,
+    )
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    monkeypatch.chdir(repo)
+    canonical = "github.com/acme/public"
+    source_extra = {"canonical_repo": canonical} if source_v1 else {}
+    cutover_cli.registry.register(
+        "youtrack", "public", "SRC", "0-1", **source_extra,
+    )
+    if source_v1:
+        cutover_cli.registry.bootstrap_repository_binding(
+            "youtrack", "public", "SRC", "0-1", cwd=str(repo),
+        )
+    target_project = Project("DST", "PVT_target", {
+        "canonical_repo": canonical,
+        "owner": "acme",
+        "number": "1",
+        "migration_label": "foundry-migration",
+    })
+    manifest = {
+        "schema": "foundry.tracker-cutover.v1",
+        "source": {
+            "tracker": "youtrack",
+            "project": {"key": "SRC", "id": "0-1", "extra": {
+                "canonical_repo": canonical,
+            }},
+        },
+        "target": {
+            "tracker": "ghprojects",
+            "project": {
+                "key": target_project.key,
+                "id": target_project.id,
+                "extra": target_project.extra,
+            },
+            "migration_profile": {"kind": "test"},
+        },
+        "issues": [],
+        "adrs": [],
+        "phase": "verified",
+        "adr_qualification": {"complete": False, "profile": None},
+        "source_digest": "",
+    }
+    from foundry.migration import _digest, _source_view
+    manifest["source_digest"] = _digest(_source_view(manifest))
+    cutover_cli.registry.stage_repository_cutover_target(
+        "ghprojects", "public", target_project.key, target_project.id,
+        migration_manifest_digest=manifest["source_digest"],
+        cwd=str(repo), **target_project.extra,
+    )
+    manifest_path = tmp_path / "manifest.json"
+    config_path = tmp_path / "target.json"
+    save_manifest(manifest_path, manifest)
+    config_path.write_text(json.dumps({
+        "key": target_project.key,
+        "id": target_project.id,
+        "extra": target_project.extra,
+    }), encoding="utf-8")
+    target = FakeTransportTracker("ghprojects")
+    source_calls = []
+
+    def source_tracker(*_args, **_kwargs):
+        source_calls.append(True)
+        if len(source_calls) > 1:
+            raise AssertionError("replay must repair the promoted binding before source resolution")
+        source = FakeTransportTracker("youtrack")
+        source.resolve_checkout_project = lambda: Project(
+            "SRC", "0-1", {"canonical_repo": canonical},
+        )
+        return source
+
+    monkeypatch.setattr(cutover_cli, "_target", lambda _name: target)
+    monkeypatch.setattr(cutover_cli.foundry, "tracker", source_tracker)
+    monkeypatch.setattr(cutover_cli, "source_is_unchanged", lambda *_args: True)
+    monkeypatch.setattr(cutover_cli, "verify_targets", lambda *_args: None)
+    real_replace = cutover_cli.registry.os.replace
+
+    def interrupted(source, destination):
+        if str(destination).endswith(".foundry/tracker.json"):
+            raise OSError("simulated marker interruption")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(cutover_cli.registry.os, "replace", interrupted)
+    with pytest.raises(OSError, match="marker interruption"):
+        cutover_cli.main([
+            "activate", "ghprojects", str(config_path), str(manifest_path),
+        ])
+    assert cutover_cli.registry.load()["youtrack"]["public"]["archive"] is True
+    assert load_manifest(manifest_path)["phase"] == "verified"
+
+    monkeypatch.setattr(cutover_cli.registry.os, "replace", real_replace)
+    cutover_cli.main([
+        "activate", "ghprojects", str(config_path), str(manifest_path),
+    ])
+
+    assert len(source_calls) == 1
+    assert load_manifest(manifest_path)["phase"] == "activated"
+    assert cutover_cli.registry.repository_tracker_binding(str(repo)).tracker == "ghprojects"
+    assert json.loads(capsys.readouterr().out)["tracker"] == "ghprojects"
 
 
 class _YouTrackMigrationTransport(YouTrackTracker):

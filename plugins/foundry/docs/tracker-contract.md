@@ -65,14 +65,14 @@ closed vocabulary:
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) |
 | Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
-| Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adr` | implemented; live source in P64Q→P64G | implemented; fake transports only | implemented; live target in P64Q→P64G |
-| Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | implemented; live source in P64Q→P64G | implemented; fake transports only | implemented; live target in P64Q→P64G |
-| Bascule (PAT-64): archived source refuses writes | staged target plus atomic registry promotion/source archive/marker replacement | implemented; live P64Q tombstone | implemented; fake transports only | implemented; live P64G binding |
+| Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adrs` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G |
+| Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_attribute_exceptions`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G |
+| Bascule (PAT-64): archived source refuses writes | staged target plus atomic registry promotion/source archive/marker replacement | supported; live P64Q tombstone | supported; provider-specific fake transport | supported; active-binding refusal and live P64G binding |
 
 The JSON is authoritative for every cell and its evidence; read it before relying on a
 cell.
 
-**Remaining gaps found in the current adapters:**
+**Capability work and remaining qualification limits:**
 - **PAT-55** — Grooming an existing issue is supported on YouTrack and Linear under
   PAT-ADR-0006: each targeted field/body/parent operation captures an expected snapshot,
   re-reads it immediately before its one write, and verifies readback. This is bounded
@@ -106,10 +106,14 @@ cell.
   S1→S2 race: it is neither CAS nor an atomic provider graph transaction. The non-V1
   DevHub adapter keeps the stronger atomic form of the port (`devhub.py`).
 - **PAT-64** — The provider-neutral migration port and the three adapter
-  implementations now exist. Their fake transports exercise all six source/target
-  pairs and ambiguous-response recovery. The isolated YouTrack P64Q→GitHub Projects
-  P64G recipe completed preflight, copy, exact readback and activation. The remaining
-  pairs have fake-transport evidence only; no production repository was cut over.
+  implementations now exist. Three distinct provider-specific transport doubles exercise
+  all six directed source/target pairs, including the dedicated YouTrack provenance
+  field, Linear deterministic identity/closed ADR batch and GitHub reserved
+  provenance-label/ADR-namespace rules. Real-adapter boundary tests cover ambiguous
+  response recovery; the GitHub codec test also covers a known ADR→issue relation while
+  the target remains staged. The isolated YouTrack P64Q→GitHub Projects P64G recipe
+  completed preflight, copy, exact readback and activation. The remaining pairs have
+  fake-transport evidence only; no production repository was cut over.
   The command deliberately does not copy comments or provider lifecycle receipts;
   it preserves the exact Markdown checkbox marks for migration fidelity, while
   lifecycle acceptance remains unknown until the target's normal review proof.
@@ -122,8 +126,13 @@ fige un manifeste JSON, copie seulement les issues dont l'état normalisé n'est
 `done` ni `dropped`, relit chaque cible, puis laisse `registry cutover` publier le
 binding atomique avec le digest du manifeste. Le manifeste porte le `source_ref` de
 chaque issue et ADR, les corps exacts, les attributs et les exceptions explicites des
-attributs que la cible ne sait pas représenter. Les relations ADR non exposées par le
-port sont `unknown`, jamais une liste vide.
+attributs que la cible ne sait pas représenter. Ces exceptions couvrent le nom
+d'attribut non supporté, la valeur hors vocabulaire et l'option absente du catalogue
+natif de la cible. La valeur source reste inchangée dans le manifeste; seule la copie
+de l'attribut nommé est omise ou remplacée, et la relecture ignore exactement cette
+valeur déclarée. Par exemple, GitHub ne projette `Task` pour un Type source absent ou
+indisponible que si le manifeste porte l'exception correspondante. Les relations ADR
+non exposées par le port sont `unknown`, jamais une liste vide.
 
 Une cible doit implémenter `migration_find_*`, `migration_import_*` et
 `migration_link_issue`. Ces primitives
@@ -176,6 +185,11 @@ adaptateurs placent ce `source_ref` à la frontière de leur premier effet provi
   l'item. Tout support sans cette preuve, toute intention divergente et tout historique
   présent mais malformé restent des conflits fermés.
 
+  Pour une relation ADR→issue connue, la relecture de préflight utilise le binding
+  GitHub staged fourni au port de migration. Elle ne consulte pas le binding actif de
+  la source; la cible peut donc être qualifiée avant la bascule sans devenir une seconde
+  autorité d'écriture.
+
 Le préflight lit la source complète, vérifie le profil de provenance cible et toutes
 les options de champs connues avant le premier effet provider. Pour Linear, la seule
 qualification différée est celle dont les octets dépendent des identifiants d'issues
@@ -192,7 +206,11 @@ la dernière relecture source et cible, `registry.cutover_repository_tracker` ar
 source, promeut exactement la cible staged et remplace le marqueur V1 dans la même
 section critique locale. Une interruption peut rendre le checkout temporairement
 illisible; la reprise exacte publie le marqueur sans réactiver la source ni créer deux
-bindings actifs. Après publication, le tombstone source refuse ses écritures.
+bindings actifs. Cette voie de reprise est limitée au cas où le registre contient déjà
+la cible promue, aucune source active et la source archivée désignée par l'ancien
+marqueur; sans ancien marqueur, une seule candidate archivée est admise. Tant que la
+cible reste staged ou qu'une source est active, elle refuse et repasse par la validation
+source normale. Après publication, le tombstone source refuse ses écritures.
 
 La commande est :
 

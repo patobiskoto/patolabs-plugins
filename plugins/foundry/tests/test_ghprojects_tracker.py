@@ -2772,6 +2772,41 @@ def test_pat64_migration_resumes_owned_support_after_item_readback_interruption(
     assert resumed.migration_find_adr(project, snapshot["source_ref"]) == created
 
 
+def test_pat64_migration_known_issue_relation_reads_the_staged_target(
+    monkeypatch, tmp_path,
+):
+    provider = _AdrCycleTransport()
+    tracker, project, _label = _pat64_tracker(provider, tmp_path)
+    snapshot = _pat64_migration_adr_snapshot()
+    snapshot["relations"]["issues"] = ["GHQUAL-1"]
+    source_project = Project(
+        "SRC", "0-1", {"canonical_repo": project.extra["canonical_repo"]},
+    )
+    source_binding = RepositoryTrackerBinding(
+        tracker="youtrack",
+        repository=project.extra["canonical_repo"],
+        project=source_project,
+        registry_binding_digest="sha256:" + "3" * 64,
+        migration_manifest_digest=None,
+        configuration_digest="sha256:" + "4" * 64,
+        activation_kind="bootstrap",
+    )
+    monkeypatch.setattr(
+        "foundry.trackers.ghprojects.registry.repository_tracker_selection",
+        lambda cwd=None: {
+            "tracker": "youtrack", "mode": "v1", "binding": source_binding,
+        },
+    )
+
+    created = tracker.migration_import_adr(
+        project, snapshot, source_ref=snapshot["source_ref"],
+    )
+
+    assert created.id == "GHQUAL-ADR-0002"
+    _binding, observed = tracker._adr_snapshot(project, _migration=True)
+    assert observed[created.id][1]["relations"]["issues"] == ["GHQUAL-1"]
+
+
 def test_pat64_migration_rejects_unowned_incomplete_adr_support(tmp_path):
     provider = _AdrCycleTransport()
     tracker, project, label = _pat64_tracker(provider, tmp_path)

@@ -78,8 +78,28 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
     living = [item for item in issues if (item.normalized_state or item.state) not in _TERMINAL]
     records = [_issue_snapshot(item, source.name) for item in living]
     for record in records:
-        unsupported = sorted(set(_ISSUE_ATTRIBUTES) - set(target.migration_supported_attributes))
-        record["exceptions"] = [{"attribute": name, "reason": "target capability unavailable"} for name in unsupported]
+        exceptions = {
+            name: "target capability unavailable"
+            for name in sorted(
+                set(_ISSUE_ATTRIBUTES) - set(target.migration_supported_attributes)
+            )
+        }
+        specific = target.migration_attribute_exceptions(target_project, record)
+        if (
+            not isinstance(specific, dict)
+            or any(
+                name not in _ISSUE_ATTRIBUTES
+                or not isinstance(reason, str)
+                or not reason
+                for name, reason in specific.items()
+            )
+        ):
+            raise MigrationError("exceptions d'attribut cible invalides")
+        exceptions.update(specific)
+        record["exceptions"] = [
+            {"attribute": name, "reason": exceptions[name]}
+            for name in sorted(exceptions)
+        ]
         record["digest"] = _digest({k: v for k, v in record.items() if k not in {"digest", "target_id", "status", "exceptions"}})
     adrs = [
         _adr_snapshot(item, source.name)
@@ -149,7 +169,14 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
     """Complete only missing records and compare every target readback."""
     for record in manifest["issues"]:
         prior = target.migration_find_issue(target_project, record["source_ref"])
-        imported = prior or target.migration_import_issue(target_project, record, source_ref=record["source_ref"])
+        target_record = deepcopy(record)
+        for exception in record["exceptions"]:
+            attribute = exception["attribute"]
+            if attribute in target_record["attributes"]:
+                target_record["attributes"][attribute] = None
+        imported = prior or target.migration_import_issue(
+            target_project, target_record, source_ref=record["source_ref"],
+        )
         actual = target.migration_find_issue(target_project, record["source_ref"])
         if actual is None or actual.id != imported.id:
             raise MigrationError(f"coordonnée issue divergente: {record['source_ref']}")
@@ -157,7 +184,10 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
         unsupported = {entry["attribute"] for entry in record["exceptions"]}
         if (actual.title != record["title"] or (actual.body or "") != record["body"]
                 or any(getattr(actual, name) != value for name, value in attributes.items() if name not in unsupported)
-                or (actual.normalized_state or actual.state) != attributes["state"]
+                or (
+                    "state" not in unsupported
+                    and (actual.normalized_state or actual.state) != attributes["state"]
+                )
                 or [
                     match.group(1).casefold()
                     for line in (actual.body or "").splitlines()

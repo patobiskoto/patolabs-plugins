@@ -923,6 +923,26 @@ def test_cutover_requires_registered_target_and_preserves_historical_archive(
     assert not (repo / ".foundry" / "tracker.json").exists()
 
 
+def test_marker_only_recovery_cannot_promote_an_active_source(
+    monkeypatch, tmp_path,
+):
+    repo, _extra = _prepare_cutover(monkeypatch, tmp_path)
+    before = registry.load()
+
+    with pytest.raises(
+        registry.CutoverRecoveryUnavailableError,
+        match="promotion du registre non établie",
+    ):
+        registry.cutover_repository_tracker(
+            "linear", "PAT", _LINEAR_PROJECT_ID,
+            migration_manifest_digest=_MANIFEST_DIGEST,
+            cwd=str(repo), marker_recovery_only=True,
+        )
+
+    assert registry.load() == before
+    assert not (repo / ".foundry" / "tracker.json").exists()
+
+
 def test_cutover_archives_only_public_source_and_replays_idempotently(
     monkeypatch, tmp_path,
 ):

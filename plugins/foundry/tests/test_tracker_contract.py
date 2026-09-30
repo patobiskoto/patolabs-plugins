@@ -224,7 +224,8 @@ def test_ghprojects_cells_match_delivered_reads_writes_adrs_and_lifecycle():
             "release-and-changelog-scope", "adr-read", "adr-create",
             "adr-status-evolution", "adr-supersession-and-issue-linking",
             "issue-lifecycle-transitions", "acceptance-criteria-sync",
-            "epic-closure",
+            "epic-closure", "tombstone-archived-source-after-switch",
+            "cross-tracker-adr-import", "cross-tracker-live-work-copy",
         }:
             assert cell["status"] == "supported"
             continue
@@ -312,13 +313,40 @@ def test_youtrack_epic_closure_flag_matches_the_gap_cell():
     assert YouTrackTracker.epic_closure_supported is False
 
 
-def test_youtrack_has_no_import_adr_override():
-    """PAT-64: YouTrack cannot yet be an import TARGET; it inherits the base
-    refusal rather than overriding import_adr/import_adr_batch."""
+def test_youtrack_migration_port_is_separate_from_historical_import_port():
+    """PAT-64 uses the provider-neutral migration port, without claiming that
+    YouTrack implements the older Linear-specific historical import surface."""
     from foundry.trackers.youtrack import YouTrackTracker
 
     assert "import_adr" not in YouTrackTracker.__dict__
     assert "import_adr_batch" not in YouTrackTracker.__dict__
+    for method_name in (
+        "migration_export_adrs",
+        "migration_find_issue",
+        "migration_import_issue",
+        "migration_link_issue",
+        "migration_find_adr",
+        "migration_import_adr",
+    ):
+        assert method_name in YouTrackTracker.__dict__
+
+
+def test_pat64_required_adapter_ports_are_concrete_on_all_three_providers():
+    from foundry.trackers.ghprojects import GitHubProjectsTracker
+    from foundry.trackers.linear import LinearTracker
+    from foundry.trackers.youtrack import YouTrackTracker
+
+    required = {
+        "migration_preflight",
+        "migration_export_adrs",
+        "migration_find_issue",
+        "migration_import_issue",
+        "migration_link_issue",
+        "migration_find_adr",
+        "migration_import_adr",
+    }
+    for adapter in (YouTrackTracker, LinearTracker, GitHubProjectsTracker):
+        assert required.issubset(adapter.__dict__)
 
 
 def test_ghprojects_pat66_pat58_writes_and_pat67_lifecycle_are_real():
@@ -339,19 +367,18 @@ def test_ghprojects_pat66_pat58_writes_and_pat67_lifecycle_are_real():
     assert GitHubProjectsTracker.acceptance_proof_projection_supported is True
 
 
-@pytest.mark.parametrize(
-    "ticket",
-    ["PAT-64"],
-)
-def test_expected_gap_tickets_are_actually_cited(ticket):
-    contract = _load_contract()
-    cited = {
-        cell["ticket"]
-        for operation in contract["operations"]
-        for cell in operation["cells"].values()
-        if cell.get("status") == "gap"
-    }
-    assert ticket in cited
+@pytest.mark.parametrize("operation_id", [
+    "tombstone-archived-source-after-switch",
+    "cross-tracker-adr-import",
+    "cross-tracker-live-work-copy",
+])
+def test_pat64_contract_rows_are_supported_for_all_three_providers(operation_id):
+    rows = {operation["id"]: operation for operation in _load_contract()["operations"]}
+    cells = rows[operation_id]["cells"]
+
+    assert set(cells) == {"youtrack", "linear", "ghprojects"}
+    assert {cell["status"] for cell in cells.values()} == {"supported"}
+    assert all("ticket" not in cell for cell in cells.values())
 
 
 def test_youtrack_archived_target_tombstone_is_supported_with_native_preflight_evidence():
@@ -378,11 +405,19 @@ def test_non_core_to_qualify_cells_name_an_owner_and_must_resolve_before_v1():
 
 def test_switch_rows_separate_adr_import_from_live_work_copy():
     rows = {operation["id"]: operation for operation in _load_contract()["operations"]}
-    assert rows["cross-tracker-adr-import"]["cells"]["linear"]["status"] == "supported"
+    adr = rows["cross-tracker-adr-import"]
+    assert set(adr["tracker_abc"]) == {
+        "migration_export_adrs", "migration_find_adr", "migration_prepare_adr",
+        "migration_qualify_adrs", "migration_import_adrs",
+    }
+    assert {cell["status"] for cell in adr["cells"].values()} == {"supported"}
     live = rows["cross-tracker-live-work-copy"]
     assert live["core"] is True
-    assert live["cells"]["linear"]["status"] == "gap"
-    assert live["cells"]["linear"]["ticket"] == "PAT-64"
+    assert set(live["tracker_abc"]) == {
+        "migration_preflight", "migration_attribute_exceptions",
+        "migration_find_issue", "migration_import_issue", "migration_link_issue",
+    }
+    assert {cell["status"] for cell in live["cells"].values()} == {"supported"}
     assert "cross-tracker-live-work-and-adr-copy" not in rows
 
 

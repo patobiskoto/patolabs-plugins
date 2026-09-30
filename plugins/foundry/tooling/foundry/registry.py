@@ -115,6 +115,10 @@ class RepositoryTrackerBinding:
     activation_kind: str = "migration"
 
 
+class CutoverRecoveryUnavailableError(ValueError):
+    """The registry has not yet reached marker-only cutover recovery state."""
+
+
 def _expand_ssh_alias(host: str) -> str:
     """Resolve one unqualified SSH alias from local config, without DNS or network."""
     try:
@@ -692,6 +696,7 @@ def _prepare_marker(root: Path, payload: dict) -> tuple[int, str, Path]:
 def cutover_repository_tracker(
     tracker: str, key: str, project_id: str, *,
     migration_manifest_digest: str, cwd: str | None = None,
+    marker_recovery_only: bool = False,
 ) -> RepositoryTrackerBinding:
     """Activate a pre-registered target without ever exposing two writable trackers.
 
@@ -786,8 +791,20 @@ def cutover_repository_tracker(
         ]
         if len(source_bindings) > 1:
             raise ValueError("cutover tracker refusé : bindings source actifs ambigus")
+        if marker_recovery_only and (staged or source_bindings):
+            raise CutoverRecoveryUnavailableError(
+                "reprise cutover indisponible : promotion du registre non établie"
+            )
 
         marker_snapshot = _strict_marker_snapshot(root, missing_ok=True)
+        if (
+            marker_recovery_only
+            and marker_snapshot is None
+            and len(source_candidates) != 1
+        ):
+            raise CutoverRecoveryUnavailableError(
+                "reprise cutover indisponible : source archivée ambiguë"
+            )
         if marker_snapshot is not None:
             if (
                 marker_snapshot.get("tracker") == tracker

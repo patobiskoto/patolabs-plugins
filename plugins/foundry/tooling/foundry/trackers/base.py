@@ -132,6 +132,19 @@ class Tracker(ABC):
         del project, records
         raise TrackerCapabilityUnavailableError(self.name, "migration_provenance_profile")
 
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        """Describe source values this target cannot reproduce exactly.
+
+        Attribute names advertised by ``migration_supported_attributes`` still need
+        value-level qualification.  Returning an exception keeps the source value in
+        the immutable manifest while authorizing the target adapter to omit or replace
+        only that named value.  The default assumes every advertised value is exact.
+        """
+        del project, snapshot
+        return {}
+
     def migration_export_adrs(self, project: Project) -> list[dict]:
         """Return ADR source bytes plus relation knowledge available at the provider."""
         return [

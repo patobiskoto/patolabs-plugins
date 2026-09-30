@@ -75,9 +75,16 @@ def main(argv=None) -> None:
     # files.  If the process stops between them, the migration marker is the
     # durable authority and an exact replay finishes only the local phase write.
     if action == "activate" and manifest is not None:
+        if (
+            manifest["target"]["tracker"] != target.name
+            or manifest["target"]["project"] != asdict(target_project)
+        ):
+            raise SystemExit("manifeste de cutover incompatible avec les coordonnées actives")
+        binding_error: ValueError | None = None
         try:
             active = registry.repository_tracker_binding()
-        except ValueError:
+        except ValueError as exc:
+            binding_error = exc
             active = None
         if active is not None and active.tracker == target.name:
             if (
@@ -96,6 +103,28 @@ def main(argv=None) -> None:
                 "manifest_digest": manifest["source_digest"],
             }, indent=2))
             return
+        if active is None:
+            try:
+                verify_targets(manifest, target, target_project)
+                recovered = registry.cutover_repository_tracker(
+                    target.name,
+                    key,
+                    project_id,
+                    migration_manifest_digest=manifest["source_digest"],
+                    marker_recovery_only=True,
+                )
+            except registry.CutoverRecoveryUnavailableError:
+                if binding_error is not None:
+                    raise SystemExit(str(binding_error)) from None
+            else:
+                manifest["phase"] = "activated"
+                save_manifest(path, manifest)
+                print(json.dumps({
+                    "tracker": recovered.tracker,
+                    "project": {"key": key, "id": project_id},
+                    "manifest_digest": manifest["source_digest"],
+                }, indent=2))
+                return
 
     source = foundry.tracker()
     source_project = source.resolve_checkout_project()

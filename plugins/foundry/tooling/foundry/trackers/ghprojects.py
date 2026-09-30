@@ -192,6 +192,30 @@ class GitHubProjectsTracker(Tracker):
             )
         return prepared
 
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        del project
+        attributes = snapshot.get("attributes")
+        if not isinstance(attributes, dict):
+            raise TrackerConflictError("snapshot issue de migration GitHub invalide")
+        exceptions: dict[str, str] = {}
+        issue_type = attributes.get("type")
+        if issue_type is None:
+            exceptions["type"] = "target requires Task when source value is absent"
+        elif not isinstance(issue_type, str) or issue_type not in _FIELD_OPTIONS["type"]:
+            exceptions["type"] = f"target value unavailable: {issue_type}"
+        for name in ("state", "priority"):
+            value = attributes.get(name)
+            if value is not None and (
+                not isinstance(value, str) or value not in _FIELD_OPTIONS[name]
+            ):
+                exceptions[name] = f"target value unavailable: {value}"
+        estimate = attributes.get("estimate")
+        if estimate is not None and type(estimate) is not int:
+            exceptions["estimate"] = f"target value unavailable: {estimate}"
+        return exceptions
+
     def migration_preflight(
         self, project: Project, records: tuple[dict, ...],
     ) -> dict:
@@ -236,18 +260,37 @@ class GitHubProjectsTracker(Tracker):
             raise TrackerCapabilityUnavailableError(
                 self.name, "migration_provenance_label"
             )
+        catalog = self._write_catalog(binding, {"type": "Task"})
         for record in records:
             if record.get("kind") != "issue":
                 continue
+            exceptional = {
+                entry["attribute"] for entry in record.get("exceptions", [])
+            }
+            for semantic in ("type", "priority", "state"):
+                value = record["attributes"].get(semantic)
+                field = catalog[semantic]
+                if (
+                    semantic not in exceptional
+                    and value is not None
+                    and field.data_type == "SINGLE_SELECT"
+                    and value not in field.options
+                ):
+                    record["exceptions"].append({
+                        "attribute": semantic,
+                        "reason": f"target native option unavailable: {value}",
+                    })
+                    exceptional.add(semantic)
+            record["exceptions"].sort(key=lambda entry: entry["attribute"])
             portable = self._portable_fields({
                 name: value
-                for name, value in {
-                    "Type": record["attributes"].get("type"),
-                    "Priority": record["attributes"].get("priority"),
-                    "Estimate": record["attributes"].get("estimate"),
-                    "State": record["attributes"].get("state"),
-                }.items()
-                if value is not None
+                for name, semantic, value in (
+                    ("Type", "type", record["attributes"].get("type")),
+                    ("Priority", "priority", record["attributes"].get("priority")),
+                    ("Estimate", "estimate", record["attributes"].get("estimate")),
+                    ("State", "state", record["attributes"].get("state")),
+                )
+                if value is not None and semantic not in exceptional
             })
             self._write_catalog(binding, {"type": "Task", **portable})
         adr_records = [record for record in records if record.get("kind") == "adr"]
@@ -391,15 +434,18 @@ class GitHubProjectsTracker(Tracker):
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Issue:
         binding = self._binding(project)
+        exceptional = {
+            entry["attribute"] for entry in snapshot.get("exceptions", [])
+        }
         portable = self._portable_fields({
             name: value
-            for name, value in {
-                "Type": snapshot["attributes"].get("type"),
-                "Priority": snapshot["attributes"].get("priority"),
-                "Estimate": snapshot["attributes"].get("estimate"),
-                "State": snapshot["attributes"].get("state"),
-            }.items()
-            if value is not None
+            for name, semantic, value in (
+                ("Type", "type", snapshot["attributes"].get("type")),
+                ("Priority", "priority", snapshot["attributes"].get("priority")),
+                ("Estimate", "estimate", snapshot["attributes"].get("estimate")),
+                ("State", "state", snapshot["attributes"].get("state")),
+            )
+            if value is not None and semantic not in exceptional
         })
         requested = {"type": "Task", **portable}
         catalog = self._write_catalog(binding, requested)
@@ -1098,10 +1144,12 @@ class GitHubProjectsTracker(Tracker):
         issue.links = [Link("relates", "outward", target) for target in relates]
         return issue, content_id, repo_id
 
-    def _search_raw(self, project: Project, query: str = "") -> list[Issue]:
+    def _search_raw(
+        self, project: Project, query: str = "", *, _migration: bool = False,
+    ) -> list[Issue]:
         if query:
             raise TrackerCapabilityUnavailableError(self.name, "provider-native-search-query")
-        binding = self._authoritative_binding(project)
+        binding = self._binding(project) if _migration else self._authoritative_binding(project)
         cursor, out, seen, content_ids, issue_ids = None, [], set(), set(), set()
         seen_cursors: set[str] = set()
         repository_id: str | None = None
@@ -4252,7 +4300,9 @@ class GitHubProjectsTracker(Tracker):
             for issue_id in metadata["relations"]["issues"]:
                 linked_by_issue.setdefault(issue_id, []).append(adr_id)
         if linked_by_issue:
-            project_issue_ids = {issue.id for issue in self._search_raw(project)}
+            project_issue_ids = {
+                issue.id for issue in self._search_raw(project, _migration=_migration)
+            }
             for issue_id, adr_ids in sorted(linked_by_issue.items()):
                 adr_id = sorted(adr_ids)[0]
                 if issue_id not in project_issue_ids:

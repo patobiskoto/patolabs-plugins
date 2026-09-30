@@ -520,9 +520,8 @@
           "evidence": "resolve_checkout_project (linear.py) uses the shared repository_tracker_selection port (registry.py), which revalidates the marker/digests and refuses missing, archived or ambiguous bindings; validate_mutation_repository (linear.py) runs it before any mutation"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-64",
-          "evidence": "not overridden; not yet a switch source or target"
+          "status": "supported",
+          "evidence": "GitHubProjectsTracker.requires_mutation_binding is true and every normal Issue/ADR write enters through _authoritative_binding, which resolves the active checkout provider and exact project before transport; once cutover archives a GitHub source and promotes a different provider, _project refuses foreign_tracker before any provider effect (ghprojects.py; test_ghprojects_tracker.py). Migration-only reads use the explicitly staged target binding only inside the migration port, so they do not reopen an archived source. The shared cutover tests exercise exact source archive, target promotion, marker publication and replay without two active bindings (test_registry_sharing.py; test_tracker_migration.py)"
         }
       }
     },
@@ -531,23 +530,24 @@
       "journey": "bascule de dépôt par copie fidèle (PAT-64) — ADR",
       "core": true,
       "tracker_abc": [
-        "import_adr",
-        "import_adr_batch"
+        "migration_export_adrs",
+        "migration_find_adr",
+        "migration_prepare_adr",
+        "migration_qualify_adrs",
+        "migration_import_adrs"
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-64",
-          "evidence": "no import_adr/import_adr_batch override; the base raises TrackerCapabilityUnavailableError(self.name, 'adr_historical_import'|'adr_historical_batch_import') (base.py), so YouTrack cannot be an import target"
+          "status": "supported",
+          "evidence": "migration_export_adrs preserves exact Article body bytes and available relations; migration_find_adr and migration_import_adr use the dedicated migration_source_field, recover an ambiguous response by exact provenance, and read back historical status and relation knowledge (youtrack.py; test_tracker_migration.py)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "import_adr (linear.py) and import_adr_batch (linear.py) implement bounded, idempotent, provenance-preserving historical ADR import (PAT-ADR-0001..0003), proven by the YouTrack->Linear ADR import of this repository (PAT-23)"
+          "evidence": "migration_export_adrs, migration_find_adr, migration_qualify_adrs and migration_import_adrs implement the closed isolated batch profile: exact source/body digests, translated issue coordinates, deterministic probes and one qualified batch import; replay reuses the persisted phase-2 profile (linear.py; test_tracker_migration.py)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-64",
-          "evidence": "PAT-58 delivered the qualified GitHub ADR shape under PAT-ADR-0007, but the historical import port is not overridden; PAT-64 owns qualification of GitHub Projects as an import target"
+          "status": "supported",
+          "evidence": "migration_prepare_adr remaps the source ADR namespace, while migration_find_adr and migration_import_adr use the reserved provenance label and PAT-ADR-0007 Issue/comment codec with exact body/status/relation readback. Staged-target reads now resolve known ADR-to-issue relations through the supplied migration binding rather than the active source (ghprojects.py; test_ghprojects_tracker.py; live P64Q-to-P64G qualification)"
         }
       },
       "note": "ADR half of the switch only. The live-work half is the next row."
@@ -557,29 +557,27 @@
       "journey": "bascule de dépôt par copie fidèle (PAT-64) — travail vivant",
       "core": true,
       "tracker_abc": [
-        "create_issue",
-        "link",
-        "add_comment",
-        "set_state"
+        "migration_preflight",
+        "migration_attribute_exceptions",
+        "migration_find_issue",
+        "migration_import_issue",
+        "migration_link_issue"
       ],
       "cells": {
         "youtrack": {
-          "status": "gap",
-          "ticket": "PAT-64",
-          "evidence": "no faithful-copy import path: after their archive-target preflights, create_issue/link/add_comment/set_state still have no source reference, replay key or comparison against the source item (youtrack.py)"
+          "status": "supported",
+          "evidence": "migration_preflight qualifies one dedicated String provenance field; migration_find_issue/import_issue/link_issue copy exact living issue text and supported portable fields, recover by exact source_ref and rebuild the living graph (youtrack.py; test_tracker_migration.py; live P64Q source qualification)"
         },
         "linear": {
-          "status": "gap",
-          "ticket": "PAT-64",
-          "evidence": "no adapter import of live work: create_issue sends a random uuid4 client id (linear.py), so a replay duplicates the issue, and nothing copies lifecycle receipts, acceptance proofs or comments. The YouTrack->Linear live-work leg of this repository was a private operator-side selective migration; `registry cutover` does no provider I/O (docs/linear-tracker.md, 'Repository-scoped activation and atomic cutover')"
+          "status": "supported",
+          "evidence": "migration_preflight qualifies the declared deterministic identity profile and field mappings; migration_find_issue/import_issue use a UUID derived from target project plus source_ref, recover a lost response without a second create and rebuild links through the target binding (linear.py; test_tracker_migration.py)"
         },
         "ghprojects": {
-          "status": "to_qualify",
-          "ticket": "PAT-64",
-          "evidence": "no live-work copy override; the write tranche PAT-66 must exist first"
+          "status": "supported",
+          "evidence": "migration_preflight qualifies the reserved anchor label, exact Project/repository and native field catalog before effects. The manifest records unsupported, absent and project-specific unavailable values explicitly; migration_import_issue uses Task only under a declared Type exception, and exact provenance labels make create/read/replay unambiguous (ghprojects.py; test_tracker_migration.py; live P64Q-to-P64G qualification)"
         }
       },
-      "note": "Criterion 4 makes the switch by faithful copy of live work AND ADRs core V1; only the ADR half has adapter code today."
+      "note": "Criterion 4 makes the faithful copy of living work and ADRs core V1. PAT-64 supplies one provider-neutral command and distinct adapter migration ports; the real P64Q-to-P64G recipe qualifies one directed pair and the other pairs retain provider-specific fake-transport evidence."
     },
     {
       "id": "release-and-changelog-scope",
