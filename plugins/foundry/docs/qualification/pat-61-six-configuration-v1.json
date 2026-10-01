@@ -47,7 +47,7 @@
       "tracker": "linear",
       "host": "claude-code",
       "status": "in_progress",
-      "partial_evidence": "Claude Code/Sonnet ran source Foundry CLI preflight and started synthetic PAT-77, but its PR command did not complete; in a later one-session read-only probe it selected linear/PAT and read PAT-74 done/accepted before switching to youtrack/P61Y; review and merge are not Claude-host evidence"
+      "partial_evidence": "Claude Code/Sonnet source Foundry SHA 82bf3e5 started synthetic PAT-78; README witness head 631bdbd10c21f8a0004b15546af1ed0c22ef41b2, Foundry open-pr PR #3, independent mergeable review, green verify, Foundry merge 8772d63f26b58d866643103179a08b65c9d69540; PAT-78 done AC 2/2 and Linear release scope accepted. Merge also incorrectly accepted unrelated synthetic PAT-ADR-0001 (version 6607e123-b0cd-48c8-b93b-2d6418bdab77); PAT-79 tracks the defect. Full journey and Apple remain absent"
     },
     {
       "id": "linear-codex",

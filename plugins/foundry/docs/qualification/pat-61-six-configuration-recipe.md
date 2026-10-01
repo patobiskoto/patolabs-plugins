@@ -74,7 +74,7 @@ La recette n'autorise aucun effet App Store public.
 | --- | --- | --- | --- |
 | YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `in_progress` | Claude Code/Sonnet a relu via Foundry le binding P61Y, P61Y-2 en review et le scope `unfinished=1` ; aucun lifecycle complet ni effet Apple sur cet hôte. |
 | YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 et P61Y-2/PR #2 mergées via Foundry avec CI et review ; le scope P61Y-2 passe de `unfinished` à `unavailable`, jamais à `accepted` sans reçu lifecycle exact YouTrack. ADR test créée/éditée ; lien ADR→issue refusé. Epic, adversaires et Apple restent à faire. |
-| Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a relu le binding et démarré PAT-77 par le CLI source ; sa tentative de PR n'a eu aucun effet. Revue, merge et reste du parcours ne sont pas une preuve Claude. |
+| Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 suit ce défaut. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
 | GitHub Projects × Codex | P61G et dépôt privé de sable | `blocked` | P61G-1 existe, mais le readback `Project.items` reste vide après reprise bornée ; aucune création validée. |
@@ -113,13 +113,33 @@ dans `query changelog` et le bridge Ship-iOS. Après assignation de PAT-77 par F
 les deux lectures donnent un seul ticket `accepted`, zéro `unfinished` et zéro
 `unavailable`. Ce résultat teste le bridge du dépôt synthétique, pas TestFlight.
 
+Le troisième témoin Linear, PAT-78, a qualifié le host Claude Code/Sonnet sur le
+CLI source correspondant à `82bf3e5`. Son unique issue a été relue après le retour
+`Linear issue divergent after create; no retry` ; aucune création n'a été rejouée.
+Claude a démarré le ticket, puis le témoin README a été commité sur le head
+`631bdbd10c21f8a0004b15546af1ed0c22ef41b2`. Le skill `foundry:open-pr` a
+ouvert la PR #3. Le check `verify` était vert sur ce head et une review indépendante
+a jugé le diff mergeable avant que `foundry:merge-pr` ne merge la PR à
+`8772d63f26b58d866643103179a08b65c9d69540`. PAT-78 est `done` (AC 2/2) ; le
+scope Linear relu contient PAT-77 et PAT-78 `accepted`, zéro `unfinished` et zéro
+`unavailable`.
+
+Le même merge a produit un effet indésirable réel mais limité au sandbox : il a
+accepté PAT-ADR-0001, pourtant non citée par PAT-78 et explicitement non
+décisionnelle. Le skill a confondu l'index ADR du projet renvoyé par `query issue`
+avec les ADR cadrant ce ticket. La relecture du provider confirme le statut
+`accepted` et la version `6607e123-b0cd-48c8-b93b-2d6418bdab77` ; aucun rollback
+non attesté n'est revendiqué. PAT-79 est lié comme dépendance de PAT-61 pour
+empêcher la répétition de cet effet. Cette cellule demeure `in_progress`.
+
 Dans ce même projet Linear de sable, `adr create` a créé le témoin explicitement
 non décisionnel `[TEST PAT-61 sandbox]` sous `PAT-ADR-0001`, statut `proposed`,
 référence initiale `0424d248-6f2d-46c1-92ed-96aa9694b188`. `adr edit` a ajouté
 une version du corps (`9468058c-d53e-4255-9464-cd6eebb67588`) ; `adr link-issue`
 a lié PAT-77 avec readback de la relation issue (`67a77aae-d2b8-4133-8acd-e4fd78395a65`).
-L'index de l'issue contient cette seule ADR et le corps versionné relu garde le
-statut `proposed`. Depuis ce sandbox, PAT-ADR-0006 de production reste
+L'index de l'issue contient cette seule ADR et le corps versionné relu gardait alors
+le statut `proposed` ; le merge de PAT-78 l'a ensuite changé comme décrit ci-dessus.
+Depuis ce sandbox, PAT-ADR-0006 de production reste
 `introuvable` malgré l'index local non vide. Dans le dépôt PAT actif,
 PAT-ADR-0001 garde son autre référence `ff06e6f5-eae5-4469-bffd-bb1428373ed7`
 et son statut `accepted` ; aucun support de production n'a été édité. Ce témoin
