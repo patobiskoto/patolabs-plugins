@@ -2522,10 +2522,14 @@ class _AdrCycleTransport:
         if method == "POST" and path.endswith("/issues"):
             title = next(value.removeprefix("title=") for value in command if value.startswith("title="))
             body = next(value.removeprefix("body=") for value in command if value.startswith("body="))
+            labels = [
+                {"name": value.removeprefix("labels[]=")}
+                for value in command if value.startswith("labels[]=")
+            ]
             number = self.next_number
             self.next_number += 1
             issue = {**_rest_issue(number), "title": title, "body": body,
-                     "node_id": f"node-{number}"}
+                     "node_id": f"node-{number}", "labels": labels}
             self.issues[number] = issue
             return subprocess.CompletedProcess(command, 0, json.dumps(issue), "")
         if method == "POST" and path.endswith("/labels"):
@@ -2552,7 +2556,14 @@ class _AdrCycleTransport:
             number = int(path.split("/issues/")[1].split("/")[0])
             return subprocess.CompletedProcess(command, 0, json.dumps(self.comments.get(number, [])), "")
         if "issues?state=all" in path:
-            return subprocess.CompletedProcess(command, 0, json.dumps([self._issue(n) for n in self.issues]), "")
+            rows = [self._issue(n) for n in self.issues]
+            if "&labels=" in path:
+                label = path.split("&labels=", 1)[1].split("&", 1)[0]
+                rows = [
+                    row for row in rows
+                    if label in {item["name"] for item in row["labels"]}
+                ]
+            return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
         if path.endswith("/parent"):
             return subprocess.CompletedProcess(command, 1, json.dumps({"message": "No parent issue found", "status": "404"}), "404")
         if "/issues/" in path:
@@ -2673,6 +2684,208 @@ def test_pat58_initial_version_lost_response_resumes_by_observation_only(tmp_pat
     assert replay.create_adr(PROJECT, "Interrompue", "source").id == "GHQUAL-ADR-0002"
     assert comment_posts == 1
     assert len(provider.comments[2]) == 1
+
+
+def _pat64_migration_project():
+    return Project(
+        key=PROJECT.key,
+        id=PROJECT.id,
+        extra={**PROJECT.extra, "migration_label": "foundry-migration"},
+    )
+
+
+def _pat64_migration_adr_snapshot():
+    return {
+        "id": "GHQUAL-ADR-0002",
+        "title": "Décision migrée",
+        "status": "accepted",
+        "body": "source exacte UTF-8 é",
+        "source_ref": "FOUNDRY-A-27",
+        "relations": {"issues": [], "supersedes": [], "superseded_by": None},
+    }
+
+
+def _pat64_tracker(provider, state_dir, runner=None):
+    project = _pat64_migration_project()
+    tracker = GitHubProjectsTracker(runner=runner or provider, state_dir=state_dir)
+    label = tracker._migration_label_name(
+        project, _pat64_migration_adr_snapshot()["source_ref"],
+    )
+    tracker._ensure_migration_label = lambda *_: label
+    return tracker, project, label
+
+
+def _pat64_interrupt_after_adr_item(provider, state_dir):
+    fail_project_readback = False
+
+    def runner(command, **kwargs):
+        nonlocal fail_project_readback
+        if command[2] == "graphql":
+            query = next(value for value in command if value.startswith("query="))
+            if "addProjectV2ItemById" in query:
+                result = provider(command, **kwargs)
+                fail_project_readback = True
+                return result
+            if (
+                fail_project_readback
+                and "repositories(first:100" not in query
+            ):
+                fail_project_readback = False
+                return subprocess.CompletedProcess(command, 1, "", "transport failed")
+        return provider(command, **kwargs)
+
+    tracker, project, _label = _pat64_tracker(provider, state_dir, runner)
+    snapshot = _pat64_migration_adr_snapshot()
+    with pytest.raises(GitHubProjectsTrackerError, match="transport_failed"):
+        tracker.migration_import_adr(
+            project, snapshot, source_ref=snapshot["source_ref"],
+        )
+    return tracker, project, snapshot
+
+
+def test_pat64_migration_resumes_owned_support_after_item_readback_interruption(
+    tmp_path,
+):
+    provider = _AdrCycleTransport()
+    interrupted, project, snapshot = _pat64_interrupt_after_adr_item(
+        provider, tmp_path,
+    )
+    fingerprint = interrupted._create_fingerprint(
+        interrupted._binding(project), snapshot["title"], snapshot["body"],
+        {
+            "kind": "adr", "status": snapshot["status"],
+            "source_ref": snapshot["source_ref"],
+        },
+        None,
+    )
+    intent = interrupted._read_create_intent(fingerprint)
+    assert intent is not None and intent["step"] == "adr:item"
+    assert provider.project_numbers == {1, 2}
+    assert provider.comments.get(2, []) == []
+
+    resumed, _project, _label = _pat64_tracker(provider, tmp_path)
+    [created] = resumed.migration_import_adrs(project, (snapshot,))
+
+    assert created.id == snapshot["id"]
+    assert sorted(provider.issues) == [1, 2]
+    assert len(provider.comments[2]) == 1
+    assert resumed.migration_find_adr(project, snapshot["source_ref"]) == created
+
+
+def test_pat64_migration_known_issue_relation_reads_the_staged_target(
+    monkeypatch, tmp_path,
+):
+    provider = _AdrCycleTransport()
+    tracker, project, _label = _pat64_tracker(provider, tmp_path)
+    snapshot = _pat64_migration_adr_snapshot()
+    snapshot["relations"]["issues"] = ["GHQUAL-1"]
+    snapshot["source_only_issue_refs"] = ["youtrack:issue:P64Q-9"]
+    source_project = Project(
+        "SRC", "0-1", {"canonical_repo": project.extra["canonical_repo"]},
+    )
+    source_binding = RepositoryTrackerBinding(
+        tracker="youtrack",
+        repository=project.extra["canonical_repo"],
+        project=source_project,
+        registry_binding_digest="sha256:" + "3" * 64,
+        migration_manifest_digest=None,
+        configuration_digest="sha256:" + "4" * 64,
+        activation_kind="bootstrap",
+    )
+    monkeypatch.setattr(
+        "foundry.trackers.ghprojects.registry.repository_tracker_selection",
+        lambda cwd=None: {
+            "tracker": "youtrack", "mode": "v1", "binding": source_binding,
+        },
+    )
+
+    created = tracker.migration_import_adr(
+        project, snapshot, source_ref=snapshot["source_ref"],
+    )
+
+    assert created.id == "GHQUAL-ADR-0002"
+    _binding, observed = tracker._adr_snapshot(project, _migration=True)
+    assert observed[created.id][1]["relations"]["issues"] == ["GHQUAL-1"]
+    assert observed[created.id][1]["migration"]["source_only_issue_refs"] == [
+        "youtrack:issue:P64Q-9",
+    ]
+    assert tracker.migration_export_adrs(project)[0]["source_only_issue_refs"] == [
+        "youtrack:issue:P64Q-9",
+    ]
+
+
+def test_pat64_migration_rejects_malformed_source_only_reference_before_effect(
+    tmp_path,
+):
+    provider = _AdrCycleTransport()
+    tracker, project, _label = _pat64_tracker(provider, tmp_path)
+    snapshot = _pat64_migration_adr_snapshot()
+    snapshot["source_only_issue_refs"] = ["P64Q-9"]
+    with pytest.raises(TrackerConflictError, match="références issues source"):
+        tracker.migration_import_adr(
+            project, snapshot, source_ref=snapshot["source_ref"],
+        )
+    assert provider.comments == {}
+    assert sorted(provider.issues) == [1]
+
+
+def test_pat64_migration_rejects_unowned_incomplete_adr_support(tmp_path):
+    provider = _AdrCycleTransport()
+    tracker, project, label = _pat64_tracker(provider, tmp_path)
+    snapshot = _pat64_migration_adr_snapshot()
+    provider.issues[2] = {
+        **_rest_issue(2),
+        "title": tracker._adr_title(snapshot["id"], snapshot["title"]),
+        "body": snapshot["body"],
+        "node_id": "node-2",
+        "labels": [{"name": "foundry:adr"}, {"name": label}],
+    }
+    provider.project_numbers.add(2)
+
+    with pytest.raises(TrackerConflictError, match="history missing"):
+        tracker.migration_find_adr(project, snapshot["source_ref"])
+
+
+def test_pat64_migration_never_treats_malformed_adr_history_as_missing(tmp_path):
+    provider = _AdrCycleTransport()
+    _interrupted, project, snapshot = _pat64_interrupt_after_adr_item(
+        provider, tmp_path,
+    )
+    provider.comments[2] = [{"id": 101, "body": "malformed version"}]
+
+    resumed, _project, _label = _pat64_tracker(provider, tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError, match="foreign_or_malformed_comment"):
+        resumed.migration_find_adr(project, snapshot["source_ref"])
+
+
+@pytest.mark.parametrize("corruption", ["body", "intent-coordinate"])
+def test_pat64_migration_rejects_corrupted_owned_incomplete_adr_support(
+    tmp_path, corruption,
+):
+    provider = _AdrCycleTransport()
+    interrupted, project, snapshot = _pat64_interrupt_after_adr_item(
+        provider, tmp_path,
+    )
+    if corruption == "body":
+        provider.issues[2]["body"] = "mutated source"
+    else:
+        fingerprint = interrupted._create_fingerprint(
+            interrupted._binding(project), snapshot["title"], snapshot["body"],
+            {
+                "kind": "adr", "status": snapshot["status"],
+                "source_ref": snapshot["source_ref"],
+            },
+            None,
+        )
+        intent = interrupted._read_create_intent(fingerprint)
+        assert intent is not None
+        interrupted._write_create_intent(
+            fingerprint, {**intent, "content_id": "other-node"},
+        )
+
+    resumed, _project, _label = _pat64_tracker(provider, tmp_path)
+    with pytest.raises(TrackerConflictError, match="history missing"):
+        resumed.migration_find_adr(project, snapshot["source_ref"])
 
 
 def test_pat58_unobserved_initial_version_is_not_reposted(tmp_path):

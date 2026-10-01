@@ -54,6 +54,7 @@ _LINEAR_EXTRA_KEYS = frozenset(
         "milestone_ids",
         "type_label_ids",
         "label_ids",
+        "migration_identity_profile",
     }
 )
 _LINEAR_FORBIDDEN_IDENTIFIER_KEY_PARTS = frozenset(
@@ -112,6 +113,10 @@ class RepositoryTrackerBinding:
     migration_manifest_digest: str | None
     configuration_digest: str
     activation_kind: str = "migration"
+
+
+class CutoverRecoveryUnavailableError(ValueError):
+    """The registry has not yet reached marker-only cutover recovery state."""
 
 
 def _expand_ssh_alias(host: str) -> str:
@@ -361,6 +366,7 @@ def _require_unique_checkout_provider(
         if provider in _SUPPORTED_MARKER_TRACKERS and isinstance(entries, dict)
         for name, entry in entries.items()
         if isinstance(entry, dict) and entry.get("archive") is not True
+        and "_staged_cutover" not in entry
         and (
             entry.get("canonical_repo") == repository
             or (name == repo_name and "canonical_repo" not in entry)
@@ -386,7 +392,10 @@ def _registry_project_for_marker(
         raise ValueError("binding tracker du marqueur archivé")
     if first.get("key") != key or first.get("id") != project_id:
         raise ValueError("coordonnées du marqueur incompatibles avec le registre")
-    safe_entry = {name: value for name, value in first.items() if name != "archive"}
+    safe_entry = {
+        name: value for name, value in first.items()
+        if name not in {"archive", "_staged_cutover"}
+    }
     digest = _json_digest(safe_entry)
     project = Project(
         key=key, id=project_id,
@@ -569,6 +578,7 @@ def repository_tracker_selection(
         for name, entry in entries.items()
         if isinstance(entry, dict)
         and entry.get("archive") is not True
+        and "_staged_cutover" not in entry
         and entry.get("canonical_repo") == repository
     ]
     if canonical:
@@ -598,12 +608,14 @@ def repository_tracker_selection(
         if name == repo
         and isinstance(entry, dict)
         and entry.get("archive") is not True
+        and "_staged_cutover" not in entry
         and "canonical_repo" not in entry
     ]
     pilot = [
         entry for entry in data.get("devhub", {}).values()
         if isinstance(entry, dict)
         and entry.get("archive") is not True
+        and "_staged_cutover" not in entry
         and entry.get("canonical_repo") == repository
     ] if isinstance(data.get("devhub", {}), dict) else []
     if pilot:
@@ -684,6 +696,7 @@ def _prepare_marker(root: Path, payload: dict) -> tuple[int, str, Path]:
 def cutover_repository_tracker(
     tracker: str, key: str, project_id: str, *,
     migration_manifest_digest: str, cwd: str | None = None,
+    marker_recovery_only: bool = False,
 ) -> RepositoryTrackerBinding:
     """Activate a pre-registered target without ever exposing two writable trackers.
 
@@ -709,10 +722,37 @@ def cutover_repository_tracker(
         # A waiting caller observes the winner instead of replacing it from a
         # stale snapshot with last-writer-wins semantics.
         data = load()
-        project, _target_entry, registry_digest = _registry_project_for_marker(
-            data, tracker=tracker, repository=repository, repo_name=repo_name,
-            key=key, project_id=project_id,
-        )
+        staged = [
+            (name, entry)
+            for name, entry in data.get(tracker, {}).items()
+            if isinstance(entry, dict)
+            and entry.get("canonical_repo") == repository
+            and entry.get("key") == key
+            and entry.get("id") == project_id
+            and entry.get("_staged_cutover") == migration_manifest_digest
+        ] if isinstance(data.get(tracker), dict) else []
+        if len(staged) > 1:
+            raise ValueError("cutover tracker refusé : cibles staged ambiguës")
+        if staged:
+            target_name, staged_entry = staged[0]
+            target_entry = {
+                name: value for name, value in staged_entry.items()
+                if name != "_staged_cutover"
+            }
+            registry_digest = _json_digest(target_entry)
+            project = Project(
+                key=key, id=project_id,
+                extra={
+                    name: value for name, value in target_entry.items()
+                    if name not in {"key", "id"}
+                },
+            )
+        else:
+            target_name = None
+            project, target_entry, registry_digest = _registry_project_for_marker(
+                data, tracker=tracker, repository=repository, repo_name=repo_name,
+                key=key, project_id=project_id,
+            )
         base_payload = {
             "version": _TRACKER_MARKER_VERSION,
             "repository": repository,
@@ -732,30 +772,78 @@ def cutover_repository_tracker(
             configuration_digest=payload["configuration_digest"],
             activation_kind="migration",
         )
-        current = repository_tracker_binding(str(root))
-        if current is not None:
-            if current == expected:
-                return current
-            raise ValueError(
-                "cutover tracker refusé : un binding actif différent existe déjà"
-            )
-
-        source_bindings = []
+        source_candidates = []
         for provider, entries in data.items():
             if provider == tracker or not isinstance(entries, dict):
                 continue
             for name, entry in entries.items():
                 if (
                     isinstance(entry, dict)
-                    and entry.get("archive") is not True
+                    and "_staged_cutover" not in entry
                     and (
                         entry.get("canonical_repo") == repository
                         or (name == repo_name and "canonical_repo" not in entry)
                     )
                 ):
-                    source_bindings.append((provider, name, entry))
+                    source_candidates.append((provider, name, entry))
+        source_bindings = [
+            item for item in source_candidates if item[2].get("archive") is not True
+        ]
         if len(source_bindings) > 1:
             raise ValueError("cutover tracker refusé : bindings source actifs ambigus")
+        if marker_recovery_only and (staged or source_bindings):
+            raise CutoverRecoveryUnavailableError(
+                "reprise cutover indisponible : promotion du registre non établie"
+            )
+
+        marker_snapshot = _strict_marker_snapshot(root, missing_ok=True)
+        if (
+            marker_recovery_only
+            and marker_snapshot is None
+            and len(source_candidates) != 1
+        ):
+            raise CutoverRecoveryUnavailableError(
+                "reprise cutover indisponible : source archivée ambiguë"
+            )
+        if marker_snapshot is not None:
+            if (
+                marker_snapshot.get("tracker") == tracker
+                and marker_snapshot.get("project") == {"key": key, "id": project_id}
+                and marker_snapshot.get("activation") == {
+                    "kind": "migration", "manifest_digest": migration_manifest_digest,
+                }
+                and marker_snapshot.get("configuration_digest") == payload["configuration_digest"]
+            ):
+                current = repository_tracker_binding(str(root))
+                if current == expected:
+                    return current
+                raise ValueError("cutover tracker refusé : relecture cible divergente")
+            marker_sources = [
+                item for item in source_candidates
+                if marker_snapshot.get("tracker") == item[0]
+                and marker_snapshot.get("project") == {
+                    "key": item[2].get("key"), "id": item[2].get("id"),
+                }
+            ]
+            if len(marker_sources) != 1:
+                raise ValueError(
+                    "cutover tracker refusé : un binding actif différent existe déjà"
+                )
+            source_provider, _source_name, source_entry = marker_sources[0]
+            source_safe = {
+                name: value for name, value in source_entry.items()
+                if name not in {"archive", "_staged_cutover"}
+            }
+            if (
+                marker_snapshot.get("tracker") != source_provider
+                or marker_snapshot.get("project") != {
+                    "key": source_safe.get("key"), "id": source_safe.get("id"),
+                }
+                or marker_snapshot.get("registry_binding_digest") != _json_digest(source_safe)
+            ):
+                raise ValueError(
+                    "cutover tracker refusé : un binding actif différent existe déjà"
+                )
 
         descriptor, temporary, marker = _prepare_marker(root, payload)
         try:
@@ -767,6 +855,9 @@ def cutover_repository_tracker(
             if source_bindings:
                 provider, name, entry = source_bindings[0]
                 data[provider][name] = {**entry, "archive": True}
+            if target_name is not None:
+                data[tracker][target_name] = target_entry
+            if source_bindings or target_name is not None:
                 _save(data)
             os.replace(temporary, marker)
         finally:
@@ -777,6 +868,62 @@ def cutover_repository_tracker(
         if published != expected:
             raise ValueError("cutover tracker refusé : relecture du binding divergente")
         return published
+
+
+def stage_repository_cutover_target(
+    tracker: str,
+    repo: str,
+    key: str,
+    project_id: str,
+    *,
+    migration_manifest_digest: str,
+    cwd: str | None = None,
+    **extra: object,
+) -> Project:
+    """Persist one inactive, exact cutover target without changing tracker selection.
+
+    Staged entries are ignored by every active binding resolver.  The final cutover
+    promotes this exact entry under the same lock that archives the source and
+    replaces the repository marker.
+    """
+    if (
+        tracker not in _V1_TRACKERS
+        or not isinstance(migration_manifest_digest, str)
+        or _SHA256.fullmatch(migration_manifest_digest) is None
+    ):
+        raise ValueError("cible staged de cutover invalide")
+    root = _checkout_root(cwd)
+    if root is None:
+        raise ValueError("staging cutover hors dépôt Git")
+    repository = checkout_repository_identity(str(root))
+    repo_name = repo_basename(str(root), use_env=False)
+    if repo != repo_name:
+        raise ValueError("alias de dépôt incompatible avec le checkout")
+    candidate = _validated_binding_entry(
+        tracker, repo, key, project_id, repository, dict(extra),
+    )
+    slot = _disambiguated_registry_key(repo, repository) + "@cutover"
+    staged = {**candidate, "_staged_cutover": migration_manifest_digest}
+    with _cutover_lock():
+        data = load()
+        occupied = [
+            entry for entry in data.get(tracker, {}).values()
+            if isinstance(entry, dict)
+            and "_staged_cutover" not in entry
+            and entry.get("canonical_repo") == repository
+        ] if isinstance(data.get(tracker), dict) else []
+        if occupied:
+            raise ValueError("cible de cutover déjà active ou archivée dans le registre")
+        current = data.setdefault(tracker, {}).get(slot)
+        if current is not None and current != staged:
+            raise ValueError("cible staged de cutover déjà occupée")
+        data[tracker][slot] = staged
+        _save(data)
+    return Project(
+        key=key,
+        id=project_id,
+        extra={name: value for name, value in candidate.items() if name not in {"key", "id"}},
+    )
 
 
 def _require_uuid(value: object, field: str) -> str:
@@ -899,6 +1046,12 @@ def _validate_linear_binding(
     for key in ("milestone_ids", "label_ids"):
         if key in extra:
             normalized[key] = _require_uuid_map(extra[key], key)
+    if "migration_identity_profile" in extra:
+        if extra["migration_identity_profile"] != "foundry-linear-deterministic-v1":
+            raise ValueError(
+                "binding Linear invalide : migration_identity_profile invalide"
+            )
+        normalized["migration_identity_profile"] = extra["migration_identity_profile"]
 
     repository_identity = repository
     if _UUID.fullmatch(repository) is not None:
@@ -942,7 +1095,9 @@ def _validated_binding_entry(
     if tracker == "linear":
         project_id, candidate = _validate_linear_binding(repo, project_id, candidate)
     elif tracker == "youtrack":
-        if set(candidate) - {"canonical_repo", "ms_bundle", "release_ids"}:
+        if set(candidate) - {
+            "canonical_repo", "ms_bundle", "release_ids", "migration_source_field",
+        }:
             raise ValueError("binding YouTrack V1 invalide : extra non autorisé")
         if "ms_bundle" in candidate and (
             not isinstance(candidate["ms_bundle"], str) or not candidate["ms_bundle"]
@@ -950,9 +1105,16 @@ def _validated_binding_entry(
             raise ValueError("binding YouTrack V1 invalide : ms_bundle invalide")
         if "release_ids" in candidate:
             candidate["release_ids"] = _require_release_id_map(candidate["release_ids"])
+        if "migration_source_field" in candidate and (
+            not isinstance(candidate["migration_source_field"], str)
+            or not candidate["migration_source_field"].strip()
+        ):
+            raise ValueError("binding YouTrack V1 invalide : migration_source_field invalide")
     elif tracker == "ghprojects":
         required = {"canonical_repo", "owner", "number"}
-        if not required.issubset(candidate) or set(candidate) - required - {"release_ids"}:
+        if not required.issubset(candidate) or set(candidate) - required - {
+            "release_ids", "migration_label",
+        }:
             raise ValueError(
                 "binding ghprojects invalide : canonical_repo, owner et number requis"
             )
@@ -966,6 +1128,12 @@ def _validated_binding_entry(
             raise ValueError("binding ghprojects invalide : owner/number invalides")
         if "release_ids" in candidate:
             candidate["release_ids"] = _require_release_id_map(candidate["release_ids"])
+        if "migration_label" in candidate and (
+            not isinstance(candidate["migration_label"], str)
+            or not candidate["migration_label"].strip()
+            or len(candidate["migration_label"]) > 30
+        ):
+            raise ValueError("binding ghprojects invalide : migration_label invalide")
     return {"key": key, "id": project_id, **candidate}
 
 
@@ -1339,6 +1507,7 @@ def entry_for(cwd: str | None = None, use_env: bool = True):
             if isinstance(entry, dict)
             and entry.get("canonical_repo") == repository
             and entry.get("archive") is not True
+            and "_staged_cutover" not in entry
         ]
         providers = {provider for provider, _entry in canonical_matches}
         if len(providers) > 1:
@@ -1367,7 +1536,8 @@ def entry_for(cwd: str | None = None, use_env: bool = True):
         if isinstance(entries, dict)
         for name, entry in entries.items()
         if name == repo and isinstance(entry, dict)
-        and entry.get("archive") is not True and "canonical_repo" not in entry
+        and entry.get("archive") is not True
+        and "_staged_cutover" not in entry and "canonical_repo" not in entry
     ]
     if len(legacy) > 1:
         raise ValueError("bindings tracker legacy actifs ambigus pour le dépôt courant")
@@ -1421,6 +1591,7 @@ def resolve(tracker: str, repo: str, cwd: str | None = None) -> Project:
             if isinstance(entry, dict)
             and entry.get("canonical_repo") == repository
             and entry.get("archive") is not True
+            and "_staged_cutover" not in entry
         ]
         providers = {provider for provider, _entry in canonical_matches}
         if len(providers) > 1:
@@ -1490,6 +1661,7 @@ def resolve_canonical_repository(tracker: str, canonical_repo: str) -> Project:
         if isinstance(entry, dict)
         and entry.get("canonical_repo") == canonical
         and entry.get("archive") is not True
+        and "_staged_cutover" not in entry
     ]
     if not matches:
         raise SystemExit(

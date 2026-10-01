@@ -14,7 +14,7 @@ import sys
 
 _MODULES = ("query", "edit", "issue", "frame", "adr", "doctor", "registry",
             "setup_project", "configure", "routing", "telemetry", "local-scout",
-            "local-code", "devhub-smoke", "epic-preview", "command-worker",
+            "local-code", "devhub-smoke", "epic-preview", "command-worker", "cutover",
             "campaign-gate", "campaign-retry", "campaign-reconcile",
             "campaign-review-remediation", "campaign-legacy", "campaign-terminal",
             "cost-attribution", "delivery-audit")

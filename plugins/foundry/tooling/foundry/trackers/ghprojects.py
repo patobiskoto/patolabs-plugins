@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator
@@ -36,6 +37,7 @@ from foundry.trackers.base import (
     ReleaseScopeUnavailableError,
     Tracker,
     TrackerCapabilityUnavailableError,
+    migration_source_only_issue_refs,
 )
 from foundry.trackers.epic_intent import EpicAuditIntent
 
@@ -145,6 +147,9 @@ class GitHubProjectsTracker(Tracker):
     # PAT-69 qualified this bounded path on the exact private personal-Project
     # profile documented in docs/qualification/github-projects-v1.md.
     bounded_epic_closure_supported = True
+    migration_supported_attributes = frozenset({
+        "type", "priority", "estimate", "state", "parent", "children", "dependencies",
+    })
 
     def __init__(self, *, runner=subprocess.run, state_dir: Path | str | None = None):
         self._runner = runner
@@ -152,6 +157,359 @@ class GitHubProjectsTracker(Tracker):
         self._create_intent_dir = base / "ghprojects-create-intents"
         self._lifecycle_intent_dir = base / "ghprojects-lifecycle-intents"
         self._epic_intent_base = base
+
+    @staticmethod
+    def _migration_label_name(project: Project, source_ref: str) -> str:
+        base = project.extra.get("migration_label")
+        if not isinstance(base, str) or not base:
+            raise TrackerCapabilityUnavailableError(
+                "ghprojects", "migration_provenance_profile"
+            )
+        digest = hashlib.sha256(source_ref.encode("utf-8")).hexdigest()[:16]
+        return f"{base}-{digest}"
+
+    @staticmethod
+    def _migration_adr_id(binding: _Binding, source_id: str) -> str:
+        match = re.fullmatch(r"[A-Z][A-Z0-9_-]*-ADR-(\d{4})", source_id)
+        if match is None:
+            raise TrackerCapabilityUnavailableError(
+                "ghprojects", "migration_adr_identifier",
+            )
+        return f"{binding.key}-ADR-{match.group(1)}"
+
+    def migration_prepare_adr(self, project: Project, snapshot: dict) -> dict:
+        binding = self._binding(project)
+        prepared = deepcopy(snapshot)
+        prepared["id"] = self._migration_adr_id(binding, snapshot["id"])
+        relations = prepared["relations"]
+        if relations.get("supersedes") != "unknown":
+            relations["supersedes"] = [
+                self._migration_adr_id(binding, item)
+                for item in relations["supersedes"]
+            ]
+        if relations.get("superseded_by") not in {"unknown", None}:
+            relations["superseded_by"] = self._migration_adr_id(
+                binding, relations["superseded_by"],
+            )
+        return prepared
+
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        del project
+        attributes = snapshot.get("attributes")
+        if not isinstance(attributes, dict):
+            raise TrackerConflictError("snapshot issue de migration GitHub invalide")
+        exceptions: dict[str, str] = {}
+        issue_type = attributes.get("type")
+        if issue_type is None:
+            exceptions["type"] = "target requires Task when source value is absent"
+        elif not isinstance(issue_type, str) or issue_type not in _FIELD_OPTIONS["type"]:
+            exceptions["type"] = f"target value unavailable: {issue_type}"
+        for name in ("state", "priority"):
+            value = attributes.get(name)
+            if value is not None and (
+                not isinstance(value, str) or value not in _FIELD_OPTIONS[name]
+            ):
+                exceptions[name] = f"target value unavailable: {value}"
+        estimate = attributes.get("estimate")
+        if estimate is not None and type(estimate) is not int:
+            exceptions["estimate"] = f"target value unavailable: {estimate}"
+        return exceptions
+
+    def migration_preflight(
+        self, project: Project, records: tuple[dict, ...],
+    ) -> dict:
+        binding = self._binding(project)
+        base = project.extra.get("migration_label")
+        if not isinstance(base, str) or not base or len(base) > 30:
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_profile"
+            )
+        source_refs = tuple(record["source_ref"] for record in records)
+        if len(source_refs) != len(set(source_refs)):
+            raise TrackerConflictError("provenance source de migration dupliquée")
+        labels = [self._migration_label_name(project, ref) for ref in source_refs]
+        if len(labels) != len(set(labels)):
+            raise TrackerConflictError("label de provenance GitHub ambigu")
+        if any(
+            len(label) > 50
+            or len(f"Foundry migration source: {source_ref}") > 100
+            for label, source_ref in zip(labels, source_refs)
+        ):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_label_bounds",
+            )
+        if not self.verify_project_identity(project):
+            raise TrackerConflictError("profil migration GitHub hors projet")
+        try:
+            anchor = self._rest(
+                f"repos/{binding.repo}/labels/{urllib.parse.quote(base, safe='')}",
+                "migration.profile",
+            )
+        except GitHubProjectsTrackerError as exc:
+            if exc.reason in {"not_found", "permission_denied"}:
+                raise TrackerCapabilityUnavailableError(
+                    self.name, "migration_provenance_label"
+                ) from None
+            raise
+        if (
+            not isinstance(anchor, dict)
+            or anchor.get("name") != base
+            or anchor.get("description") != "Foundry migration provenance profile v1"
+        ):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_label"
+            )
+        catalog = self._write_catalog(binding, {"type": "Task"})
+        for record in records:
+            if record.get("kind") != "issue":
+                continue
+            exceptional = {
+                entry["attribute"] for entry in record.get("exceptions", [])
+            }
+            for semantic in ("type", "priority", "state"):
+                value = record["attributes"].get(semantic)
+                field = catalog[semantic]
+                if (
+                    semantic not in exceptional
+                    and value is not None
+                    and field.data_type == "SINGLE_SELECT"
+                    and value not in field.options
+                ):
+                    record["exceptions"].append({
+                        "attribute": semantic,
+                        "reason": f"target native option unavailable: {value}",
+                    })
+                    exceptional.add(semantic)
+            record["exceptions"].sort(key=lambda entry: entry["attribute"])
+            portable = self._portable_fields({
+                name: value
+                for name, semantic, value in (
+                    ("Type", "type", record["attributes"].get("type")),
+                    ("Priority", "priority", record["attributes"].get("priority")),
+                    ("Estimate", "estimate", record["attributes"].get("estimate")),
+                    ("State", "state", record["attributes"].get("state")),
+                )
+                if value is not None and semantic not in exceptional
+            })
+            self._write_catalog(binding, {"type": "Task", **portable})
+        adr_records = [record for record in records if record.get("kind") == "adr"]
+        mapped = [self._migration_adr_id(binding, record["id"]) for record in adr_records]
+        if len(mapped) != len(set(mapped)):
+            raise TrackerConflictError("identité ADR GitHub de migration ambiguë")
+        if adr_records:
+            _target_binding, existing = self._adr_snapshot(
+                project, _validate_graph=False, _migration=True,
+            )
+            for record, target_id in zip(adr_records, mapped):
+                occupied = existing.get(target_id)
+                if occupied is None:
+                    continue
+                migration = occupied[1].get("migration")
+                if (
+                    not isinstance(migration, dict)
+                    or migration.get("source_ref") != record["source_ref"]
+                ):
+                    raise TrackerConflictError(
+                        "identité ADR GitHub de migration occupée"
+                    )
+        return {"kind": "github-reserved-label-v1", "label": base}
+
+    def _ensure_migration_label(
+        self, binding: _Binding, project: Project, source_ref: str,
+    ) -> str:
+        label = self._migration_label_name(project, source_ref)
+        description = f"Foundry migration source: {source_ref}"
+        path = f"repos/{binding.repo}/labels/{urllib.parse.quote(label, safe='')}"
+        try:
+            raw = self._rest(path, "migration.label.read")
+        except GitHubProjectsTrackerError as exc:
+            if exc.reason != "not_found":
+                raise
+            try:
+                self._rest_write(
+                    "POST", f"repos/{binding.repo}/labels",
+                    {"name": label, "color": "5319e7", "description": description},
+                    "migration.label.create",
+                )
+            except GitHubProjectsTrackerError:
+                pass
+            raw = self._rest(path, "migration.label.readback")
+        if (
+            not isinstance(raw, dict)
+            or raw.get("name") != label
+            or raw.get("description") != description
+        ):
+            raise TrackerConflictError("label de provenance GitHub divergent")
+        return label
+
+    def _migration_candidate(
+        self, binding: _Binding, label: str,
+    ) -> _CreateCandidate | None:
+        rows = self._rows(
+            f"repos/{binding.repo}/issues?state=all&labels="
+            f"{urllib.parse.quote(label, safe='')}",
+            "migration.issue.find",
+        )
+        candidates = []
+        for raw in rows:
+            if raw.get("pull_request") is not None:
+                continue
+            labels = self._rest_label_names(raw, "migration.issue.find")
+            if label not in labels:
+                raise TrackerConflictError("filtre label GitHub divergent")
+            number = self._issue_number_from_rest(raw, binding, "migration.issue.find")
+            content_id = raw.get("node_id")
+            if not isinstance(content_id, str) or not content_id:
+                raise GitHubProjectsTrackerError(
+                    "migration.issue.find", "missing_issue_node_id"
+                )
+            candidates.append(
+                _CreateCandidate(f"{binding.key}-{number}", number, raw["id"], content_id)
+            )
+        if len(candidates) > 1:
+            raise TrackerConflictError("provenance issue GitHub ambiguë")
+        return candidates[0] if candidates else None
+
+    def migration_find_issue(self, project: Project, source_ref: str) -> Issue | None:
+        binding = self._binding(project)
+        label = self._migration_label_name(project, source_ref)
+        candidate = self._migration_candidate(binding, label)
+        if candidate is None:
+            return None
+        observed = self._partial_project_issue(binding, candidate)
+        if observed is None or observed[1].type is None:
+            return None
+        return self._hydrate_issue(observed[1], binding)
+
+    def _migration_issue_read(self, issue_id: str, binding: _Binding) -> Issue:
+        number, native_id = self._native_issue(
+            issue_id, binding, "migration.issue.read",
+        )
+        raw = self._rest(
+            f"repos/{binding.repo}/issues/{number}", "migration.issue.read",
+        )
+        content_id = raw.get("node_id")
+        if not isinstance(content_id, str) or not content_id:
+            raise GitHubProjectsTrackerError(
+                "migration.issue.read", "missing_issue_node_id",
+            )
+        return self._created_issue_readback(
+            binding, _CreateCandidate(issue_id, number, native_id, content_id),
+        )
+
+    def _migration_item_coordinate(
+        self, issue_id: str, binding: _Binding,
+    ) -> tuple[str, str]:
+        number, native_id = self._native_issue(
+            issue_id, binding, "migration.issue.coordinate",
+        )
+        raw = self._rest(
+            f"repos/{binding.repo}/issues/{number}",
+            "migration.issue.coordinate",
+        )
+        content_id = raw.get("node_id")
+        if not isinstance(content_id, str) or not content_id:
+            raise GitHubProjectsTrackerError(
+                "migration.issue.coordinate", "missing_issue_node_id",
+            )
+        observed = self._partial_project_issue(
+            binding, _CreateCandidate(issue_id, number, native_id, content_id),
+        )
+        if observed is None:
+            raise IssueUnavailableError(issue_id)
+        return observed[0], content_id
+
+    def migration_link_issue(
+        self, project: Project, src_id: str, link_type: str, dst_id: str,
+    ) -> None:
+        registry.require_writable_project(self.name, project)
+        binding = self._binding(project)
+        self._link_with_binding(
+            src_id, link_type, dst_id, binding,
+            lambda issue_id: self._migration_issue_read(issue_id, binding),
+            lambda issue_id: self._migration_item_coordinate(issue_id, binding),
+        )
+
+    def migration_import_issue(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Issue:
+        registry.require_writable_project(self.name, project)
+        binding = self._binding(project)
+        exceptional = {
+            entry["attribute"] for entry in snapshot.get("exceptions", [])
+        }
+        portable = self._portable_fields({
+            name: value
+            for name, semantic, value in (
+                ("Type", "type", snapshot["attributes"].get("type")),
+                ("Priority", "priority", snapshot["attributes"].get("priority")),
+                ("Estimate", "estimate", snapshot["attributes"].get("estimate")),
+                ("State", "state", snapshot["attributes"].get("state")),
+            )
+            if value is not None and semantic not in exceptional
+        })
+        requested = {"type": "Task", **portable}
+        catalog = self._write_catalog(binding, requested)
+        if not self.verify_project_identity(project):
+            raise GitHubProjectsTrackerError(
+                "migration.issue.create", "unqualified_repository_project"
+            )
+        label = self._ensure_migration_label(binding, project, source_ref)
+        fingerprint = self._create_fingerprint(
+            binding, snapshot["title"], snapshot["body"],
+            {**requested, "migration_source_ref": source_ref}, None,
+        )
+        with self._create_intent_lock(fingerprint):
+            record = self._read_create_intent(fingerprint)
+            candidate = self._migration_candidate(binding, label)
+            if record is None:
+                if candidate is None:
+                    record = self._intent_record(fingerprint, "pending")
+                    self._write_create_intent(fingerprint, record)
+                    try:
+                        raw = self._run(
+                            [
+                                "gh", "api", "-X", "POST",
+                                f"repos/{binding.repo}/issues",
+                                "-f", f"title={snapshot['title']}",
+                                "-f", f"body={snapshot['body']}",
+                                "-f", f"labels[]={label}",
+                            ],
+                            "migration.issue.create",
+                        )
+                        candidate = self._create_candidate(
+                            raw, binding, snapshot["title"], snapshot["body"],
+                            "migration.issue.create",
+                        )
+                    except GitHubProjectsTrackerError:
+                        candidate = self._migration_candidate(binding, label)
+                    if candidate is None:
+                        raise GitHubProjectsTrackerError(
+                            "migration.issue.create", "create_effect_unknown"
+                        )
+                record = self._intent_record(
+                    fingerprint, "known", candidate,
+                )
+                self._write_create_intent(fingerprint, record)
+            else:
+                expected = (
+                    self._candidate_from_record(record, binding)
+                    if record["state"] in {"known", "complete"} else candidate
+                )
+                if candidate is None or expected is None or candidate != expected:
+                    raise GitHubProjectsTrackerError(
+                        "migration.issue.create", "create_effect_unknown"
+                    )
+                record = (
+                    record if record["state"] in {"known", "complete"}
+                    else self._intent_record(fingerprint, "known", candidate)
+                )
+            return self._resume_created_issue(
+                binding, fingerprint, record, candidate,
+                snapshot["title"], snapshot["body"], requested, catalog, None, None,
+            )
 
     @staticmethod
     def _create_fingerprint(
@@ -789,10 +1147,12 @@ class GitHubProjectsTracker(Tracker):
         issue.links = [Link("relates", "outward", target) for target in relates]
         return issue, content_id, repo_id
 
-    def _search_raw(self, project: Project, query: str = "") -> list[Issue]:
+    def _search_raw(
+        self, project: Project, query: str = "", *, _migration: bool = False,
+    ) -> list[Issue]:
         if query:
             raise TrackerCapabilityUnavailableError(self.name, "provider-native-search-query")
-        binding = self._authoritative_binding(project)
+        binding = self._binding(project) if _migration else self._authoritative_binding(project)
         cursor, out, seen, content_ids, issue_ids = None, [], set(), set(), set()
         seen_cursors: set[str] = set()
         repository_id: str | None = None
@@ -2916,11 +3276,21 @@ class GitHubProjectsTracker(Tracker):
         if link_type not in {"subtask-of", "parent-of", "depends-on", "blocks", "relates"}:
             raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
         binding = self._authoritative_binding(project or self._project())
+        self._link_with_binding(
+            src_id, link_type, dst_id, binding, self.get_issue,
+            lambda issue_id: self._item_coordinate(issue_id, binding),
+        )
+
+    def _link_with_binding(
+        self, src_id, link_type, dst_id, binding, read_issue, item_coordinate,
+    ):
+        if link_type not in {"subtask-of", "parent-of", "depends-on", "blocks", "relates"}:
+            raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
         # Both endpoint GETs prove raw REST URLs and repository ownership before
         # a mutation; they also supply the distinct integer native IDs required by REST.
         src_number, src_native = self._native_issue(src_id, binding, "issue.link_prewrite")
         dst_number, dst_native = self._native_issue(dst_id, binding, "issue.link_prewrite")
-        before_src, before_dst = self.get_issue(src_id), self.get_issue(dst_id)
+        before_src, before_dst = read_issue(src_id), read_issue(dst_id)
         reciprocal = {"subtask-of": "parent-of", "parent-of": "subtask-of",
                       "depends-on": "blocks", "blocks": "depends-on", "relates": "relates"}
         reverse_type = reciprocal[link_type]
@@ -2930,7 +3300,7 @@ class GitHubProjectsTracker(Tracker):
             return
         if source_has != destination_has:
             raise TrackerConflictError("lien GitHub asymétrique avant écriture ; aucune réparation automatique")
-        fresh_src, fresh_dst = self.get_issue(src_id), self.get_issue(dst_id)
+        fresh_src, fresh_dst = read_issue(src_id), read_issue(dst_id)
         if fresh_src.links != before_src.links or fresh_dst.links != before_dst.links:
             raise TrackerConflictError("liens GitHub modifiés avant écriture bornée")
         if link_type == "subtask-of":
@@ -2942,8 +3312,8 @@ class GitHubProjectsTracker(Tracker):
         elif link_type == "blocks":
             path, payload = f"repos/{binding.repo}/issues/{dst_number}/dependencies/blocked_by", {"issue_id": src_native}
         elif link_type == "relates":
-            _, src_node = self._item_coordinate(src_id, binding)
-            _, dst_node = self._item_coordinate(dst_id, binding)
+            _, src_node = item_coordinate(src_id)
+            _, dst_node = item_coordinate(dst_id)
             path = None
         else:
             raise TrackerCapabilityUnavailableError(self.name, f"link:{link_type}")
@@ -2962,7 +3332,7 @@ class GitHubProjectsTracker(Tracker):
                     raise GitHubProjectsTrackerError("issue.relates_write", "ambiguous_mutation_response")
         except GitHubProjectsTrackerError as exc:
             write_error = exc
-        read_src, read_dst = self.get_issue(src_id), self.get_issue(dst_id)
+        read_src, read_dst = read_issue(src_id), read_issue(dst_id)
         # Native relation endpoints change the graph and may advance timestamps;
         # they must not change either endpoint's other observable properties.
         def unrelated(issue, is_source):
@@ -3422,7 +3792,10 @@ class GitHubProjectsTracker(Tracker):
         except ValueError as exc:
             raise GitHubProjectsTrackerError("adr.history", "invalid_metadata") from exc
         required = {"schema", "project_id", "repository", "id", "title", "status", "sequence", "body_sha256", "previous_comment_id", "previous_sha256", "relations"}
-        if (not isinstance(metadata, dict) or set(metadata) != required
+        keys = set(metadata) if isinstance(metadata, dict) else set()
+        migration = metadata.get("migration") if isinstance(metadata, dict) else None
+        if (not isinstance(metadata, dict)
+                or (keys != required and keys != required | {"migration"})
                 or metadata.get("schema") != _ADR_SCHEMA
                 or metadata.get("project_id") != binding.project_id
                 or metadata.get("repository") != binding.repo
@@ -3440,8 +3813,26 @@ class GitHubProjectsTracker(Tracker):
                 or not isinstance(metadata["relations"]["supersedes"], list)
                 or not all(isinstance(x, str) and x for x in metadata["relations"]["supersedes"])
                 or len(set(metadata["relations"]["supersedes"])) != len(metadata["relations"]["supersedes"])
-                or metadata["relations"]["superseded_by"] is not None and not isinstance(metadata["relations"]["superseded_by"], str)):
+                or metadata["relations"]["superseded_by"] is not None and not isinstance(metadata["relations"]["superseded_by"], str)
+                or migration is not None and (
+                    not isinstance(migration, dict)
+                    or set(migration) not in (
+                        {"source_ref", "missing_relations"},
+                        {"source_ref", "missing_relations", "source_only_issue_refs"},
+                    )
+                    or not isinstance(migration.get("source_ref"), str)
+                    or not migration["source_ref"]
+                    or not isinstance(migration.get("missing_relations"), list)
+                    or any(name not in {"issues", "supersedes", "superseded_by"}
+                           for name in migration["missing_relations"])
+                    or len(set(migration["missing_relations"]))
+                    != len(migration["missing_relations"])
+                )):
             raise GitHubProjectsTrackerError("adr.history", "invalid_metadata")
+        if migration is not None:
+            migration_source_only_issue_refs(
+                migration.get("source_only_issue_refs", []),
+            )
         if hashlib.sha256(body.encode("utf-8")).hexdigest() != metadata["body_sha256"]:
             raise TrackerConflictError("ADR GitHub source digest divergent")
         return metadata, body, native_id
@@ -3703,8 +4094,13 @@ class GitHubProjectsTracker(Tracker):
             raise TrackerConflictError("ADR GitHub allocation reused a visible ID")
         return adr_id
 
-    def _adr_supports(self, project: Project) -> list[tuple[str, str, int]]:
-        binding = self._authoritative_binding(project)
+    def _adr_supports(
+        self, project: Project, *, _migration: bool = False,
+    ) -> list[tuple[str, str, int]]:
+        binding = (
+            self._binding(project) if _migration
+            else self._authoritative_binding(project)
+        )
         # Neither the mutable label nor Project membership is sufficient alone.
         # Exhaust both native surfaces, identify the corpus independently on
         # each, then require exact agreement before reading history.
@@ -3793,15 +4189,39 @@ class GitHubProjectsTracker(Tracker):
         *,
         _validate_graph: bool = True,
         _reconcile_head_for: str | None = None,
+        _migration: bool = False,
+        _resume_incomplete_source_ref: str | None = None,
+        _resume_intent_fingerprint: str | None = None,
     ) -> tuple[_Binding, dict[str, tuple[Adr, dict[str, Any], int]]]:
-        binding = self._authoritative_binding(project)
+        binding = (
+            self._binding(project) if _migration
+            else self._authoritative_binding(project)
+        )
         latest: dict[str, tuple[Adr, dict[str, Any], int]] = {}
-        for adr_id, title, number in self._adr_supports(project):
+        supports = (
+            self._adr_supports(project, _migration=True)
+            if _migration else self._adr_supports(project)
+        )
+        for adr_id, title, number in supports:
             if adr_id in latest:
                 raise TrackerConflictError("ADR GitHub duplicate support")
             comments = self._rows(f"repos/{binding.repo}/issues/{number}/comments", "adr.history")
             parsed = [self._parse_adr_comment(row, binding, adr_id) for row in comments]
             if not parsed:
+                if (
+                    _migration
+                    and _resume_incomplete_source_ref is not None
+                    and self._owned_interrupted_adr_item(
+                        project,
+                        binding,
+                        adr_id,
+                        title,
+                        number,
+                        _resume_incomplete_source_ref,
+                        fingerprint=_resume_intent_fingerprint,
+                    )
+                ):
+                    continue
                 raise TrackerConflictError("ADR GitHub history missing")
             parsed.sort(key=lambda row: row[0]["sequence"])
             for sequence, (metadata, _body, comment_id) in enumerate(parsed):
@@ -3810,7 +4230,10 @@ class GitHubProjectsTracker(Tracker):
                 if sequence == 0:
                     if (metadata["previous_comment_id"] is not None
                             or metadata["previous_sha256"] is not None
-                            or metadata["status"] != "proposed"):
+                            or (
+                                metadata["status"] != "proposed"
+                                and "migration" not in metadata
+                            )):
                         raise TrackerConflictError("ADR GitHub initial history invalid")
                 else:
                     previous, previous_body, previous_id = parsed[sequence - 1]
@@ -3887,7 +4310,9 @@ class GitHubProjectsTracker(Tracker):
             for issue_id in metadata["relations"]["issues"]:
                 linked_by_issue.setdefault(issue_id, []).append(adr_id)
         if linked_by_issue:
-            project_issue_ids = {issue.id for issue in self._search_raw(project)}
+            project_issue_ids = {
+                issue.id for issue in self._search_raw(project, _migration=_migration)
+            }
             for issue_id, adr_ids in sorted(linked_by_issue.items()):
                 adr_id = sorted(adr_ids)[0]
                 if issue_id not in project_issue_ids:
@@ -3904,9 +4329,161 @@ class GitHubProjectsTracker(Tracker):
                     raise TrackerConflictError("ADR GitHub issue relation coordinate divergent")
         return binding, latest
 
+    def _owned_interrupted_adr_item(
+        self,
+        project: Project,
+        binding: _Binding,
+        adr_id: str,
+        title: str,
+        number: int,
+        source_ref: str,
+        *,
+        fingerprint: str | None = None,
+    ) -> bool:
+        """Recognize only the exact locally-owned item-readback interruption.
+
+        A support Issue without history is normally corruption.  The one resumable
+        exception is an initial migration create whose local intent was durably armed
+        for ``adr:item`` and whose exact native Issue and Project item are now visible.
+        """
+        label = self._migration_label_name(project, source_ref)
+        candidate = self._migration_candidate(binding, label)
+        if candidate is None or candidate.number != number:
+            return False
+        raw = self._rest(
+            f"repos/{binding.repo}/issues/{number}", "adr.create_reconcile",
+        )
+        labels = self._rest_label_names(raw, "adr.create_reconcile")
+        if (
+            raw.get("id") != candidate.native_id
+            or raw.get("node_id") != candidate.content_id
+            or raw.get("body") is None
+            or raw.get("title") != self._adr_title(adr_id, title)
+            or {_ADR_LABEL, label} - labels
+            or self._adr_project_support(binding, candidate, adr_id, title)
+            != (adr_id, title, number)
+        ):
+            return False
+        fingerprints = (
+            (fingerprint,)
+            if fingerprint is not None
+            else tuple(
+                self._create_fingerprint(
+                    binding,
+                    title,
+                    raw["body"],
+                    {"kind": "adr", "status": status, "source_ref": source_ref},
+                    None,
+                )
+                for status in _ADR_TRANSITIONS
+            )
+        )
+        owned = []
+        for candidate_fingerprint in fingerprints:
+            record = self._read_create_intent(candidate_fingerprint)
+            if record is None:
+                continue
+            if (
+                record.get("state") == "known"
+                and record.get("step") == "adr:item"
+                and record.get("adr_id") == adr_id
+                and self._candidate_from_record(record, binding) == candidate
+            ):
+                owned.append(candidate_fingerprint)
+        if len(owned) > 1:
+            raise TrackerConflictError("ADR GitHub partial create intent is ambiguous")
+        return len(owned) == 1
+
     def list_adrs(self, project: Project) -> list[Adr]:
         _binding, latest = self._adr_snapshot(project)
         return [latest[key][0] for key in sorted(latest)]
+
+    def migration_export_adrs(self, project: Project) -> list[dict]:
+        _binding, latest = self._adr_snapshot(project, _migration=True)
+        exported = []
+        for adr_id in sorted(latest):
+            adr, metadata, _comment = latest[adr_id]
+            migration = metadata.get("migration")
+            missing = set(
+                migration.get("missing_relations", [])
+                if isinstance(migration, dict) else []
+            )
+            exported.append({
+                "adr": adr,
+                "relations": {
+                    name: "unknown" if name in missing else metadata["relations"][name]
+                    for name in ("supersedes", "superseded_by", "issues")
+                },
+                **({
+                    "source_only_issue_refs": migration["source_only_issue_refs"],
+                } if isinstance(migration, dict)
+                   and migration.get("source_only_issue_refs") else {}),
+                "source_created": None,
+                "source_updated": None,
+            })
+        return exported
+
+    def migration_find_adr(self, project: Project, source_ref: str) -> Adr | None:
+        _binding, latest = self._adr_snapshot(
+            project,
+            _validate_graph=False,
+            _migration=True,
+            _resume_incomplete_source_ref=source_ref,
+        )
+        matches = [
+            adr for adr, metadata, _comment in latest.values()
+            if isinstance(metadata.get("migration"), dict)
+            and metadata["migration"].get("source_ref") == source_ref
+        ]
+        if len(matches) > 1:
+            raise TrackerConflictError("provenance ADR GitHub ambiguë")
+        return matches[0] if matches else None
+
+    def migration_import_adr(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Adr:
+        registry.require_writable_project(self.name, project)
+        source_only_issue_refs = migration_source_only_issue_refs(
+            snapshot.get("source_only_issue_refs", []),
+        )
+        existing = self.migration_find_adr(project, source_ref)
+        if existing is not None:
+            return existing
+        binding = self._binding(project)
+        label = self._ensure_migration_label(binding, project, source_ref)
+        missing = sorted(
+            name for name, value in snapshot["relations"].items()
+            if value == "unknown"
+        )
+        relations = {
+            "issues": (
+                [] if snapshot["relations"].get("issues") == "unknown"
+                else list(snapshot["relations"]["issues"])
+            ),
+            "supersedes": (
+                [] if snapshot["relations"].get("supersedes") == "unknown"
+                else list(snapshot["relations"]["supersedes"])
+            ),
+            "superseded_by": (
+                None if snapshot["relations"].get("superseded_by") == "unknown"
+                else snapshot["relations"]["superseded_by"]
+            ),
+        }
+        return self.create_adr(
+            project,
+            snapshot["title"],
+            snapshot["body"],
+            snapshot["status"],
+            _migration={
+                "id": snapshot["id"],
+                "source_ref": source_ref,
+                "label": label,
+                "relations": relations,
+                "missing_relations": missing,
+                "source_only_issue_refs": source_only_issue_refs,
+            },
+            _allow_incomplete_graph=True,
+        )
 
     def adr_for_mutation(self, project: Project, adr_id: str) -> Adr | None:
         _binding, latest = self._adr_snapshot(
@@ -4204,14 +4781,38 @@ class GitHubProjectsTracker(Tracker):
             raise TrackerConflictError("ADR GitHub version readback divergent")
         return result[0]
 
-    def create_adr(self, project, title, body, status="proposed"):
-        if status != "proposed" or not isinstance(title, str) or not title or not isinstance(body, str):
+    def create_adr(
+        self, project, title, body, status="proposed", *,
+        _migration: dict | None = None,
+        _allow_incomplete_graph: bool = False,
+    ):
+        if ((status != "proposed" and _migration is None)
+                or status not in _ADR_TRANSITIONS
+                or not isinstance(title, str) or not title or not isinstance(body, str)):
             raise GitHubProjectsTrackerError("adr.create", "invalid_adr_payload")
-        binding = self._authoritative_binding(project)
+        binding = (
+            self._binding(project) if _migration is not None
+            else self._authoritative_binding(project)
+        )
+        def migration_snapshot():
+            if _migration is None:
+                return self._adr_snapshot(project)
+            return self._adr_snapshot(
+                project,
+                _validate_graph=not _allow_incomplete_graph,
+                _migration=True,
+                _resume_incomplete_source_ref=_migration["source_ref"],
+                _resume_intent_fingerprint=fingerprint,
+            )
         if not self.verify_project_identity(project):
             raise GitHubProjectsTrackerError("adr.create", "unqualified_repository_project")
         fingerprint = self._create_fingerprint(
-            binding, title, body, {"kind": "adr", "status": "proposed"}, None,
+            binding, title, body,
+            {
+                "kind": "adr", "status": status,
+                **({"source_ref": _migration["source_ref"]} if _migration else {}),
+            },
+            None,
         )
         # Allocation is serialized only among Foundry processes on this machine.
         # The exact qualified provider snapshot is reloaded while holding that
@@ -4220,23 +4821,30 @@ class GitHubProjectsTracker(Tracker):
             record = self._read_create_intent(fingerprint)
             latest: dict[str, tuple[Adr, dict[str, Any], int]] | None = None
             if record is None:
-                _binding, latest = self._adr_snapshot(project)
-                numbers = [
-                    int(key.rsplit("-", 1)[1]) for key in latest
-                    if key.startswith(f"{binding.key}-ADR-")
-                ]
-                native_inventory = self._repository_issue_inventory(
-                    binding, "adr.allocate",
-                )
-                next_visible = max(
-                    max(numbers, default=0) + 1,
-                    max(native_inventory, default=0) + 1,
-                )
-                if next_visible > 9999:
-                    raise GitHubProjectsTrackerError(
-                        "adr.allocate", "adr_id_space_exhausted",
+                _binding, latest = migration_snapshot()
+                if _migration is not None:
+                    adr_id = _migration["id"]
+                    if adr_id in latest:
+                        raise TrackerConflictError(
+                            "ADR GitHub migration identifier occupied"
+                        )
+                else:
+                    numbers = [
+                        int(key.rsplit("-", 1)[1]) for key in latest
+                        if key.startswith(f"{binding.key}-ADR-")
+                    ]
+                    native_inventory = self._repository_issue_inventory(
+                        binding, "adr.allocate",
                     )
-                adr_id = f"{binding.key}-ADR-{next_visible:04d}"
+                    next_visible = max(
+                        max(numbers, default=0) + 1,
+                        max(native_inventory, default=0) + 1,
+                    )
+                    if next_visible > 9999:
+                        raise GitHubProjectsTrackerError(
+                            "adr.allocate", "adr_id_space_exhausted",
+                        )
+                    adr_id = f"{binding.key}-ADR-{next_visible:04d}"
                 record = self._intent_record(fingerprint, "pending", adr_id=adr_id)
                 self._write_create_intent(fingerprint, record)
             else:
@@ -4250,12 +4858,21 @@ class GitHubProjectsTracker(Tracker):
                 return {
                     "schema": _ADR_SCHEMA, "project_id": binding.project_id,
                     "repository": binding.repo, "id": identifier, "title": title,
-                    "status": "proposed", "sequence": 0,
+                    "status": status, "sequence": 0,
                     "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
                     "previous_comment_id": None, "previous_sha256": None,
-                    "relations": {
-                        "issues": [], "supersedes": [], "superseded_by": None,
-                    },
+                    "relations": (
+                        _migration["relations"] if _migration is not None else {
+                            "issues": [], "supersedes": [], "superseded_by": None,
+                        }
+                    ),
+                    **({
+                        "migration": {
+                            "source_ref": _migration["source_ref"],
+                            "missing_relations": _migration["missing_relations"],
+                            "source_only_issue_refs": _migration["source_only_issue_refs"],
+                        }
+                    } if _migration is not None else {}),
                 }
 
             metadata = initial_metadata(adr_id)
@@ -4263,7 +4880,7 @@ class GitHubProjectsTracker(Tracker):
             provisional_title = f"[foundry-adr-create:v1:{fingerprint}]"
 
             if record["state"] == "complete":
-                _binding, latest = self._adr_snapshot(project)
+                _binding, latest = migration_snapshot()
                 entry = latest.get(adr_id)
                 candidate = self._candidate_from_record(record, binding)
                 raw = self._rest(
@@ -4334,10 +4951,23 @@ class GitHubProjectsTracker(Tracker):
                     self._write_create_intent(fingerprint, armed)
                     record = armed
                     try:
-                        created = self._rest_write(
-                            "POST", f"repos/{binding.repo}/issues",
-                            {"title": provisional_title, "body": body}, "adr.create",
-                        )
+                        if _migration is None:
+                            created = self._rest_write(
+                                "POST", f"repos/{binding.repo}/issues",
+                                {"title": provisional_title, "body": body}, "adr.create",
+                            )
+                        else:
+                            created = self._run(
+                                [
+                                    "gh", "api", "-X", "POST",
+                                    f"repos/{binding.repo}/issues",
+                                    "-f", f"title={provisional_title}",
+                                    "-f", f"body={body}",
+                                    "-f", f"labels[]={_ADR_LABEL}",
+                                    "-f", f"labels[]={_migration['label']}",
+                                ],
+                                "adr.create",
+                            )
                         if not isinstance(created, dict):
                             raise GitHubProjectsTrackerError(
                                 "adr.create", "ambiguous_mutation_response",
@@ -4366,8 +4996,8 @@ class GitHubProjectsTracker(Tracker):
                 candidate = _CreateCandidate(
                     f"{binding.key}-{number}", number, raw["id"], content_id,
                 )
-                if provisional_candidate:
-                    _binding, latest = self._adr_snapshot(project)
+                if provisional_candidate and _migration is None:
+                    _binding, latest = migration_snapshot()
                     adr_id = self._stable_adr_id(
                         binding, candidate.number, latest,
                     )
@@ -4471,6 +5101,13 @@ class GitHubProjectsTracker(Tracker):
             )
             if labelled and record["step"] == "adr:label":
                 complete_step("adr:label")
+
+            if _migration is not None:
+                labels = self._rest_label_names(raw, "adr.migration_label_readback")
+                if _migration["label"] not in labels:
+                    raise TrackerConflictError(
+                        "ADR GitHub provenance label missing after create"
+                    )
             elif not labelled:
                 arm_step("adr:label")
                 write_error: GitHubProjectsTrackerError | None = None
@@ -4577,11 +5214,11 @@ class GitHubProjectsTracker(Tracker):
                 )
                 complete_step("adr:head")
 
-            _binding, reread = self._adr_snapshot(project)
+            _binding, reread = migration_snapshot()
             result = reread.get(adr_id)
             if (
                 result is None
-                or result[0] != Adr(adr_id, title, "proposed", body, str(candidate.number))
+                or result[0] != Adr(adr_id, title, status, body, str(candidate.number))
                 or result[1] != metadata
                 or result[2] != exact[0].get("id")
             ):

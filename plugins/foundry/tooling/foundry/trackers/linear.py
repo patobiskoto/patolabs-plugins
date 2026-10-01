@@ -52,6 +52,7 @@ from foundry.trackers.base import (
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
     ReleaseScopeUnavailableError,
+    migration_source_only_issue_refs,
 )
 from foundry.trackers.epic_intent import EpicAuditIntent
 
@@ -415,6 +416,12 @@ def _relation_link(relation: dict, *, inverse: bool) -> Link:
 def _adr_client_uuid(slot: str) -> str:
     digest = hashlib.sha256(slot.encode("utf-8")).hexdigest()
     return str(uuid.UUID(digest[:32], version=4))
+
+
+def _migration_issue_id(project_id: str, source_ref: str) -> str:
+    return _adr_client_uuid(
+        f"foundry-linear-migration-issue.v1:{project_id}:{source_ref}"
+    )
 
 
 def _issue_relation_id(
@@ -1428,7 +1435,11 @@ def _parse_adr_document(
             "missing_relations",
         }
         valid_origin = (
-            set(origin) in (migration_keys, migration_keys | {"batch_sha256"})
+            set(origin) in (
+                migration_keys, migration_keys | {"batch_sha256"},
+                migration_keys | {"source_only_issue_refs"},
+                migration_keys | {"batch_sha256", "source_only_issue_refs"},
+            )
             and (
                 "batch_sha256" not in origin
                 or (
@@ -1436,7 +1447,7 @@ def _parse_adr_document(
                     and _DIGEST.fullmatch(origin["batch_sha256"]) is not None
                 )
             )
-            and origin["source_tracker"] == "youtrack"
+            and origin["source_tracker"] in {"youtrack", "linear", "ghprojects"}
             and isinstance(origin["source_ref"], str)
             and bool(origin["source_ref"])
             and all(
@@ -1450,6 +1461,25 @@ def _parse_adr_document(
             and origin["missing_relations"] == sorted(set(origin["missing_relations"]))
             and set(origin["missing_relations"]).issubset(
                 _ADR_MISSING_RELATION_FAMILIES
+            )
+            and (
+                "source_only_issue_refs" not in origin
+                or (
+                    isinstance(origin["source_only_issue_refs"], list)
+                    and all(
+                        isinstance(ref, str)
+                        for ref in origin["source_only_issue_refs"]
+                    )
+                    and origin["source_only_issue_refs"]
+                    == sorted(set(origin["source_only_issue_refs"]))
+                    and all(
+                        ref.split(":", 2)[0] in {"youtrack", "linear", "ghprojects"}
+                        and len(ref.split(":", 2)) == 3
+                        and ref.split(":", 2)[1] == "issue"
+                        and bool(ref.split(":", 2)[2])
+                        for ref in origin["source_only_issue_refs"]
+                    )
+                )
             )
             and (
                 sequence != 0
@@ -1688,6 +1718,9 @@ class LinearTracker(Tracker):
     acceptance_override_projection_supported = True
     cockpit_evidence_projection_supported = True
     bounded_epic_closure_supported = True
+    migration_supported_attributes = frozenset({
+        "type", "priority", "estimate", "state", "parent", "children", "dependencies",
+    })
 
     def __init__(
         self,
@@ -1704,6 +1737,263 @@ class LinearTracker(Tracker):
             raise ValueError("credential Linear invalid")
         self._transport = transport
         self._active_project: Project | None = None
+
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        self._binding(project)
+        attributes = snapshot.get("attributes")
+        if not isinstance(attributes, dict):
+            raise TrackerConflictError("snapshot issue de migration Linear invalide")
+        skeleton = {
+            "labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}},
+        }
+        exceptions: dict[str, str] = {}
+        for attribute, native in (
+            ("type", "Type"), ("priority", "Priority"),
+            ("estimate", "Estimate"), ("state", "State"),
+        ):
+            value = attributes.get(attribute)
+            if value is None:
+                continue
+            try:
+                self._desired_update(skeleton, project, {native: value})
+            except (LinearBindingError, ValueError) as exc:
+                if isinstance(exc, LinearBindingError) and exc.code not in {
+                    "state_unmapped", "type_unmapped",
+                }:
+                    raise
+                exceptions[attribute] = f"target value unavailable: {value}"
+        return exceptions
+
+    def migration_preflight(
+        self, project: Project, records: tuple[dict, ...],
+    ) -> dict:
+        if project.extra.get("migration_identity_profile") != (
+            "foundry-linear-deterministic-v1"
+        ):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_profile"
+            )
+        source_refs = tuple(record["source_ref"] for record in records)
+        if len(source_refs) != len(set(source_refs)):
+            raise TrackerConflictError("provenance source de migration dupliquée")
+        identities = [_migration_issue_id(project.id, ref) for ref in source_refs]
+        if len(identities) != len(set(identities)):
+            raise TrackerConflictError("identité déterministe Linear ambiguë")
+        if not self.verify_project_identity(project):
+            raise TrackerConflictError("profil migration Linear hors projet")
+        for record in records:
+            if record.get("kind") != "issue":
+                continue
+            unsupported = {
+                item["attribute"] for item in record.get("exceptions", [])
+            }
+            fields = {
+                name: value
+                for name, value in {
+                    "Type": record["attributes"].get("type"),
+                    "Priority": record["attributes"].get("priority"),
+                    "Estimate": record["attributes"].get("estimate"),
+                    "State": record["attributes"].get("state"),
+                }.items()
+                if value is not None and name.casefold() not in unsupported
+            }
+            self._desired_update(
+                {"labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}},
+                project,
+                fields,
+            )
+        adrs = tuple(record for record in records if record.get("kind") == "adr")
+        qualification_project_id = None
+        if adrs:
+            qualification_project_id = project.extra.get(
+                "migration_adr_qualification_project_id"
+            )
+            try:
+                qualification_uuid = uuid.UUID(qualification_project_id)
+            except (TypeError, ValueError, AttributeError):
+                raise TrackerCapabilityUnavailableError(
+                    self.name, "migration_adr_batch_qualification",
+                ) from None
+            if (
+                qualification_uuid.version != 4
+                or str(qualification_uuid) != qualification_project_id
+                or qualification_project_id == project.id
+            ):
+                raise TrackerConflictError(
+                    "projet de qualification batch ADR Linear non isolé"
+                )
+            qualification_project = Project(
+                project.key,
+                qualification_project_id,
+                {**project.extra, "milestone_ids": {}},
+            )
+            if not self.verify_project_identity(qualification_project):
+                raise TrackerConflictError(
+                    "projet de qualification batch ADR Linear non vérifié"
+                )
+            # The first cutover preflight is deliberately effect-free.  It can
+            # validate the source corpus and the isolated qualification target,
+            # but it cannot derive the final ADR bytes yet: known issue links
+            # need Linear's readable identifiers, assigned during issue copy.
+            base = self._migration_adr_batch_records(adrs)
+            if len({record["adr_id"] for record in base}) != len(base):
+                raise TrackerConflictError("identité ADR source de migration dupliquée")
+            for record in base:
+                _preflight_adr_body_readback(
+                    record["body"],
+                    allow_foundry_adr_0001=(
+                        record["adr_id"] == _FOUNDRY_ADR_0001_ID
+                    ),
+                )
+        profile = {
+            "kind": "linear-deterministic-identity-v1",
+            "namespace": "foundry-linear-migration-issue.v1",
+        }
+        if qualification_project_id is not None:
+            profile.update({
+                "adr_qualification": "deferred-after-issue-readback",
+                "adr_qualification_project_id": qualification_project_id,
+            })
+        return profile
+
+    @staticmethod
+    def _normalize_migration_adr_profile(raw: list[dict]) -> tuple[dict, ...]:
+        if not raw or not all(isinstance(item, dict) for item in raw):
+            raise ValueError("profil batch ADR Linear invalide")
+        normalized = []
+        for item in raw:
+            candidate = dict(item)
+            for name in (
+                "supersedes", "issue_refs", "missing_relations",
+                "source_only_issue_refs",
+            ):
+                if name in candidate and isinstance(candidate[name], list):
+                    candidate[name] = tuple(candidate[name])
+            normalized.append(candidate)
+        return tuple(normalized)
+
+    @staticmethod
+    def _migration_adr_batch_records(records: tuple[dict, ...]) -> tuple[dict, ...]:
+        out = []
+        for record in records:
+            relations = record["relations"]
+            missing = tuple(sorted(
+                name for name in ("supersedes", "superseded_by", "issues")
+                if relations.get(name) == "unknown"
+            ))
+            out.append({
+                "adr_id": record["id"], "title": record["title"],
+                "body": record["body"],
+                "historical_status": record["status"],
+                "source_ref": record["source_ref"],
+                "source_created": record.get("source_created"),
+                "source_updated": record.get("source_updated"),
+                "expected_source_sha256": hashlib.sha256(
+                    record["body"].encode()
+                ).hexdigest(),
+                "supersedes": (
+                    () if relations.get("supersedes") == "unknown"
+                    else tuple(relations["supersedes"])
+                ),
+                "superseded_by": (
+                    None if relations.get("superseded_by") == "unknown"
+                    else relations["superseded_by"]
+                ),
+                "issue_refs": (
+                    () if relations.get("issues") == "unknown"
+                    else tuple(relations["issues"])
+                ),
+                "missing_relations": missing,
+                **({
+                    "source_only_issue_refs": tuple(record["source_only_issue_refs"]),
+                } if "source_only_issue_refs" in record else {}),
+            })
+        return tuple(out)
+
+    def migration_find_issue(self, project: Project, source_ref: str) -> Issue | None:
+        binding = self._activate(project)
+        native_id = _migration_issue_id(binding["project_id"], source_ref)
+        try:
+            raw = self._read_raw(native_id)
+        except IssueUnavailableError:
+            return None
+        self._assert_issue_project(raw, binding)
+        if raw.get("id") != native_id:
+            raise TrackerConflictError("identité migration Linear divergente")
+        return self._to_issue(raw, project)
+
+    def migration_import_issue(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Issue:
+        registry.require_writable_project(self.name, project)
+        existing = self.migration_find_issue(project, source_ref)
+        if existing is not None:
+            return existing
+        binding = self._activate(project)
+        fields = {
+            native: value
+            for native, value in {
+                "Type": snapshot["attributes"].get("type"),
+                "Priority": snapshot["attributes"].get("priority"),
+                "Estimate": snapshot["attributes"].get("estimate"),
+                "State": snapshot["attributes"].get("state"),
+            }.items()
+            if value is not None
+        }
+        skeleton = {
+            "labels": {
+                "nodes": [],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }
+        }
+        values, expected = (
+            self._desired_update(skeleton, project, fields) if fields else ({}, {})
+        )
+        if "label_ids" in expected:
+            values.pop("addedLabelIds", None)
+            values.pop("removedLabelIds", None)
+            values["labelIds"] = sorted(expected["label_ids"])
+        native_id = _migration_issue_id(binding["project_id"], source_ref)
+        input_value = {
+            "id": native_id,
+            "teamId": binding["team_id"],
+            "projectId": binding["project_id"],
+            "title": snapshot["title"],
+            "description": snapshot["body"],
+            **values,
+        }
+        try:
+            data = self._graphql(_ISSUE_CREATE, {"input": input_value}, "migration.issue.create")
+            payload = self._mutation_payload(
+                data, "issueCreate", "migration.issue.create"
+            )
+            created = payload.get("issue")
+            if not isinstance(created, dict) or created.get("id") != native_id:
+                raise LinearTrackerError(
+                    "migration.issue.create", None, "ambiguous_mutation_response"
+                )
+        except LinearTrackerError:
+            recovered = self.migration_find_issue(project, source_ref)
+            if recovered is None:
+                raise
+            return recovered
+        raw = self._read_raw(native_id)
+        self._assert_issue_project(raw, binding)
+        if (
+            raw.get("title") != snapshot["title"]
+            or (raw.get("description") or "") != snapshot["body"]
+            or not self._raw_matches(raw, expected)
+        ):
+            raise TrackerConflictError("issue migration Linear divergente après création")
+        return self._to_issue(raw, project)
+
+    def migration_link_issue(
+        self, project: Project, src_id: str, link_type: str, dst_id: str,
+    ) -> None:
+        registry.require_writable_project(self.name, project)
+        self.link(src_id, link_type, dst_id, project=project)
 
     # ---- transport -------------------------------------------------
     def _graphql(self, document: str, variables: dict, operation: str) -> dict:
@@ -5208,6 +5498,243 @@ class LinearTracker(Tracker):
         _, chains = self._adr_snapshot(project)
         return [self._adr_model(chains[key]) for key in sorted(chains)]
 
+    def migration_export_adrs(self, project: Project) -> list[dict]:
+        _, chains = self._adr_snapshot(project)
+        exported = []
+        for adr_id in sorted(chains):
+            metadata = chains[adr_id][-1][0]
+            origin = metadata.get("origin")
+            missing = set(
+                origin.get("missing_relations", [])
+                if isinstance(origin, dict) else []
+            )
+            relations = {
+                name: "unknown" if name in missing else metadata["relations"][name]
+                for name in ("supersedes", "superseded_by", "issues")
+            }
+            exported.append({
+                "adr": self._adr_model(chains[adr_id]),
+                "relations": relations,
+                **({
+                    "source_only_issue_refs": origin["source_only_issue_refs"],
+                } if isinstance(origin, dict)
+                   and origin.get("source_only_issue_refs") else {}),
+                "source_created": (
+                    origin.get("source_created") if isinstance(origin, dict) else None
+                ),
+                "source_updated": (
+                    origin.get("source_updated") if isinstance(origin, dict) else None
+                ),
+            })
+        return exported
+
+    def migration_find_adr(self, project: Project, source_ref: str) -> Adr | None:
+        _, chains = self._adr_snapshot(project)
+        matches = []
+        for versions in chains.values():
+            origin = versions[-1][0].get("origin")
+            if isinstance(origin, dict) and origin.get("source_ref") == source_ref:
+                matches.append(self._adr_model(versions))
+        if len(matches) > 1:
+            raise TrackerConflictError("provenance ADR Linear ambiguë")
+        return matches[0] if matches else None
+
+    def migration_import_adr(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Adr:
+        registry.require_writable_project(self.name, project)
+        existing = self.migration_find_adr(project, source_ref)
+        if existing is not None:
+            return existing
+        relations = snapshot["relations"]
+        optional = {}
+        if relations.get("supersedes") != "unknown":
+            optional["supersedes"] = tuple(relations["supersedes"])
+        if relations.get("superseded_by") != "unknown":
+            optional["superseded_by"] = relations["superseded_by"]
+        if relations.get("issues") != "unknown":
+            optional["issue_refs"] = tuple(relations["issues"])
+        return self.import_adr(
+            project,
+            adr_id=snapshot["id"],
+            title=snapshot["title"],
+            body=snapshot["body"],
+            historical_status=snapshot["status"],
+            source_ref=source_ref,
+            source_created=snapshot.get("source_created"),
+            source_updated=snapshot.get("source_updated"),
+            expected_source_sha256=hashlib.sha256(
+                snapshot["body"].encode()
+            ).hexdigest(),
+            source_only_issue_refs=tuple(
+                snapshot.get("source_only_issue_refs", []),
+            ),
+            **optional,
+        )
+
+    def _migration_qualification_probe(
+        self,
+        *,
+        target_project_id: str,
+        qualification_project_id: str,
+        adr_id: str,
+        kind: str,
+        title: str,
+        content: str,
+    ) -> tuple[str, str]:
+        """Create or recover one deterministic, non-authoritative probe."""
+        probe_id = _adr_client_uuid(
+            "foundry-linear-adr-qualification.v1:"
+            f"{target_project_id}:{qualification_project_id}:{adr_id}:{kind}:"
+            f"{hashlib.sha256(content.encode()).hexdigest()}"
+        )
+        expected = {
+            "id": probe_id,
+            "title": title,
+            "content": content,
+            "project": {"id": qualification_project_id},
+            "archivedAt": None,
+        }
+
+        def verify(raw):
+            if raw is None:
+                return None
+            if (
+                not isinstance(raw, dict)
+                or any(
+                    raw.get(key) != value
+                    for key, value in expected.items()
+                    if key != "content"
+                )
+                or not isinstance(raw.get("content"), str)
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR batch qualification probe is not exact"
+                )
+            return raw
+
+        observed = self._create_exact_adr_document(
+            expected, "adr.qualification-probe.create", verify,
+        )
+        return probe_id, observed["content"]
+
+    def migration_qualify_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+    ) -> object | None:
+        """Qualify exact version/witness bytes after issue identifiers exist."""
+        if not snapshots:
+            return None
+        qualification_project_id = project.extra.get(
+            "migration_adr_qualification_project_id"
+        )
+        try:
+            qualification_uuid = uuid.UUID(qualification_project_id)
+        except (TypeError, ValueError, AttributeError):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_adr_batch_qualification",
+            ) from None
+        if (
+            qualification_uuid.version != 4
+            or str(qualification_uuid) != qualification_project_id
+            or qualification_project_id == project.id
+        ):
+            raise TrackerConflictError(
+                "projet de qualification batch ADR Linear non isolé"
+            )
+
+        base = self._migration_adr_batch_records(snapshots)
+        first_plan = self.plan_adr_batch_qualification(project, base)
+        observed_documents = {}
+        document_probes = {}
+        for item in first_plan:
+            if item["recovery_only"]:
+                continue
+            probe_id, observed = self._migration_qualification_probe(
+                target_project_id=project.id,
+                qualification_project_id=qualification_project_id,
+                adr_id=item["adr_id"],
+                kind="document",
+                title=item["document_probe_title"],
+                content=item["document_content"],
+            )
+            observed_documents[item["adr_id"]] = observed
+            document_probes[item["adr_id"]] = probe_id
+
+        final_plan = self.plan_adr_batch_qualification(
+            project, base, observed_documents,
+        )
+        qualified = []
+        for record, item in zip(base, final_plan):
+            profiled = {
+                **record,
+                "qualification_project_id": qualification_project_id,
+            }
+            if not item["recovery_only"]:
+                document_content = observed_documents[item["adr_id"]]
+                profiled.update({
+                    "expected_linear_document_content": document_content,
+                    "expected_linear_document_sha256": hashlib.sha256(
+                        document_content.encode()
+                    ).hexdigest(),
+                    "document_probe_id": document_probes[item["adr_id"]],
+                })
+            witness_probe_id, witness_content = self._migration_qualification_probe(
+                target_project_id=project.id,
+                qualification_project_id=qualification_project_id,
+                adr_id=item["adr_id"],
+                kind="witness",
+                title=item["witness_probe_title"],
+                content=item["witness_content"],
+            )
+            profiled.update({
+                "expected_linear_witness_content": witness_content,
+                "expected_linear_witness_sha256": hashlib.sha256(
+                    witness_content.encode()
+                ).hexdigest(),
+                "witness_probe_id": witness_probe_id,
+            })
+            qualified.append(profiled)
+
+        # Bind the returned evidence to the exact closed target batch now, so a
+        # qualification failure leaves only copied issues and isolated probes.
+        normalized = self._normalize_migration_adr_profile(qualified)
+        binding, _documents, by_id, entries, _comments = self._prepare_adr_batch(
+            project, normalized, profiled=True,
+        )
+        self._verify_adr_batch_qualification(binding, by_id, entries)
+        return qualified
+
+    def migration_import_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+        *, qualification: object | None = None,
+    ) -> list[Adr]:
+        registry.require_writable_project(self.name, project)
+        if not snapshots:
+            return []
+        supplied = (
+            qualification
+            if qualification is not None
+            else project.extra.get("migration_adr_batch_profile")
+        )
+        if not isinstance(supplied, list):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_adr_batch_qualification",
+            )
+        qualified = self._normalize_migration_adr_profile(supplied)
+        expected = self._migration_adr_batch_records(snapshots)
+        profile_fields = (
+            _ADR_BATCH_PROFILE_FIELDS | _ADR_BATCH_RECOVERY_PROFILE_FIELDS
+        )
+        observed_base = tuple(
+            {key: value for key, value in record.items() if key not in profile_fields}
+            for record in qualified
+        )
+        if observed_base != expected:
+            raise TrackerConflictError(
+                "profil batch ADR Linear incompatible avec la copie demandée"
+            )
+        return self.import_adr_batch(project, qualified)
+
     def adr_for_mutation(self, project: Project, adr_id: str) -> Adr | None:
         """Return a witnessed predecessor for an exact mutation replay.
 
@@ -5382,6 +5909,12 @@ class LinearTracker(Tracker):
         declares_missing_relations = next(iter(declared))
         if declares_missing_relations:
             keys = keys | {"missing_relations"}
+        source_only_declared = {"source_only_issue_refs" in record for record in records}
+        if len(source_only_declared) != 1:
+            raise ValueError("Linear ADR batch record fields invalid")
+        declares_source_only = next(iter(source_only_declared))
+        if declares_source_only:
+            keys = keys | {"source_only_issue_refs"}
         binding, documents = self._adr_documents(project)
         by_id = {}
         for raw in documents:
@@ -5413,6 +5946,13 @@ class LinearTracker(Tracker):
             supersedes = record["supersedes"]
             superseded_by = record["superseded_by"]
             issue_refs = record["issue_refs"]
+            source_only_refs = record.get("source_only_issue_refs", ())
+            if not isinstance(source_only_refs, tuple):
+                raise ValueError("Linear ADR batch source-only references invalid")
+            try:
+                migration_source_only_issue_refs(list(source_only_refs))
+            except TrackerConflictError as exc:
+                raise ValueError("Linear ADR batch source-only references invalid") from exc
             missing_relations = (
                 record["missing_relations"] if declares_missing_relations else ()
             )
@@ -5496,12 +6036,20 @@ class LinearTracker(Tracker):
                 "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
                 "origin": {
                     "kind": "migration",
-                    "source_tracker": "youtrack",
+                    "source_tracker": (
+                        source_ref.split(":", 1)[0]
+                        if source_ref.split(":", 1)[0]
+                        in {"youtrack", "linear", "ghprojects"}
+                        else "youtrack"
+                    ),
                     "source_ref": source_ref,
                     "source_created": record["source_created"],
                     "source_updated": record["source_updated"],
                     "source_body_sha256": record["expected_source_sha256"],
                     "missing_relations": list(missing_relations),
+                    **({
+                        "source_only_issue_refs": list(source_only_refs),
+                    } if declares_source_only else {}),
                 },
                 "relations": {
                     "supersedes": sorted(supersedes),
@@ -5854,6 +6402,7 @@ class LinearTracker(Tracker):
         supersedes: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
         superseded_by: str | None | object = _UNSPECIFIED_ADR_RELATION,
         issue_refs: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
+        source_only_issue_refs: tuple[str, ...] = (),
     ) -> Adr:
         """Store a bounded historical snapshot; this never invokes acceptance."""
         missing_relations = sorted(
@@ -5869,6 +6418,15 @@ class LinearTracker(Tracker):
             superseded_by = None
         if issue_refs is _UNSPECIFIED_ADR_RELATION:
             issue_refs = ()
+        if not isinstance(source_only_issue_refs, tuple):
+            raise ValueError("Linear ADR historical source-only references invalid")
+        try:
+            migration_source_only_issue_refs(list(source_only_issue_refs))
+        except TrackerConflictError as exc:
+            raise ValueError("Linear ADR historical source-only references invalid") from exc
+        source_tracker = source_ref.split(":", 1)[0]
+        if source_tracker not in {"youtrack", "linear", "ghprojects"}:
+            source_tracker = "youtrack"  # Legacy historical imports used opaque refs.
         digest = hashlib.sha256(body.encode()).hexdigest()
         if (
             not isinstance(adr_id, str)
@@ -6011,12 +6569,15 @@ class LinearTracker(Tracker):
             "body_sha256": digest,
             "origin": {
                 "kind": "migration",
-                "source_tracker": "youtrack",
+                "source_tracker": source_tracker,
                 "source_ref": source_ref,
                 "source_created": source_created,
                 "source_updated": source_updated,
                 "source_body_sha256": digest,
                 "missing_relations": missing_relations,
+                **({
+                    "source_only_issue_refs": list(source_only_issue_refs),
+                } if source_only_issue_refs else {}),
             },
             "relations": {
                 "supersedes": list(supersedes),

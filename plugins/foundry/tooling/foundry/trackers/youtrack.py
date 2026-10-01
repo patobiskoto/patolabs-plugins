@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+import base64
 import fcntl
 import hashlib
 import json
@@ -44,6 +45,7 @@ from foundry.trackers.base import (
     Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
+    migration_source_only_issue_refs,
 )
 
 # normalized field name -> the YouTrack customField $type to send on writes
@@ -59,6 +61,7 @@ _PORTABLE_FIELD_NAMES = frozenset({
     "State", "Priority", "Type", "Milestone", "Estimate", "Labels", "GitHub PR",
 })
 _EPIC_CLOSURE_INTENT_SCHEMA = "foundry-youtrack-epic-closure-intent.v1"
+_MIGRATION_ADR_PREFIX = "[foundry-migration-adr.v1:"
 
 # link_type -> YouTrack command role phrase (applied to the source issue)
 _LINK_ROLE = {
@@ -153,6 +156,160 @@ class YouTrackTracker(Tracker):
     # code-host coordinates through TransitionContext in the shared write tier.
     bounded_state_transitions = True
     project_provisioning_supported = True
+    migration_supported_attributes = frozenset({
+        "type", "priority", "estimate", "state", "parent", "children", "dependencies",
+    })
+
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        attributes = snapshot.get("attributes")
+        if not isinstance(attributes, dict):
+            raise TrackerConflictError("snapshot issue de migration YouTrack invalide")
+        project_id = urllib.parse.quote(project.id, safe="")
+        raw = self._req(
+            "GET", f"/admin/projects/{project_id}",
+            fields="id,shortName,customFields(field(name,fieldType(id)),bundle(values(name)))",
+        )
+        if raw.get("id") != project.id or raw.get("shortName") != project.key:
+            raise TrackerConflictError("catalogue migration YouTrack hors projet")
+        fields = raw.get("customFields")
+        if not isinstance(fields, list):
+            raise TrackerCapabilityUnavailableError(self.name, "migration_field_catalog")
+        exceptions: dict[str, str] = {}
+        for attribute, native in (
+            ("type", "Type"), ("priority", "Priority"),
+            ("state", "State"),
+        ):
+            value = attributes.get(attribute)
+            if value is None:
+                continue
+            matches = [
+                item for item in fields if isinstance(item, dict)
+                and isinstance(item.get("field"), dict)
+                and item["field"].get("name") == native
+            ]
+            if len(matches) != 1:
+                exceptions[attribute] = f"target field unavailable: {native}"
+                continue
+            bundle = matches[0].get("bundle")
+            values = bundle.get("values") if isinstance(bundle, dict) else None
+            if not isinstance(values, list):
+                raise TrackerCapabilityUnavailableError(
+                    self.name, f"migration_field_catalog:{native}",
+                )
+            if value not in {
+                item.get("name") for item in values if isinstance(item, dict)
+            }:
+                exceptions[attribute] = f"target native option unavailable: {value}"
+        estimate = attributes.get("estimate")
+        if estimate is not None:
+            matches = [
+                item for item in fields if isinstance(item, dict)
+                and isinstance(item.get("field"), dict)
+                and item["field"].get("name") == "Estimate"
+            ]
+            if len(matches) != 1:
+                exceptions["estimate"] = "target field unavailable: Estimate"
+            elif type(estimate) is not int:
+                exceptions["estimate"] = f"target value unavailable: {estimate}"
+            elif (matches[0]["field"].get("fieldType") or {}).get("id") != "integer":
+                exceptions["estimate"] = "target field type unavailable: Estimate integer"
+        return exceptions
+
+    def migration_preflight(
+        self, project: Project, records: tuple[dict, ...],
+    ) -> dict:
+        source_refs = tuple(record["source_ref"] for record in records)
+        if len(source_refs) != len(set(source_refs)):
+            raise TrackerConflictError("provenance source de migration dupliquée")
+        field_name = project.extra.get("migration_source_field")
+        if not isinstance(field_name, str) or not field_name.strip():
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_profile"
+            )
+        project_id = urllib.parse.quote(project.id, safe="")
+        raw = self._req(
+            "GET", f"/admin/projects/{project_id}",
+            fields="id,shortName,customFields(field(name,fieldType(id)))",
+        )
+        if raw.get("id") != project.id or raw.get("shortName") != project.key:
+            raise TrackerConflictError("profil migration YouTrack hors projet")
+        matches = [
+            item for item in raw.get("customFields", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("field"), dict)
+            and item["field"].get("name") == field_name
+        ]
+        if len(matches) != 1:
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_field"
+            )
+        field_type = (matches[0]["field"].get("fieldType") or {}).get("id")
+        if not isinstance(field_type, str) or "string" not in field_type.casefold():
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_field_type"
+            )
+        return {"kind": "youtrack-dedicated-field-v1", "field": field_name}
+
+    def migration_find_issue(self, project: Project, source_ref: str) -> Issue | None:
+        field_name = project.extra.get("migration_source_field")
+        if not isinstance(field_name, str) or not field_name:
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_profile"
+            )
+        matches = [
+            self._to_issue(raw)
+            for raw in self._search_raw(f"project: {project.key}", _ISSUE_FIELDS)
+            if self._cf(raw, field_name) == source_ref
+        ]
+        if len(matches) > 1:
+            raise TrackerConflictError("provenance issue YouTrack ambiguë")
+        return matches[0] if matches else None
+
+    def migration_import_issue(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Issue:
+        self._require_writable_target(project)
+        existing = self.migration_find_issue(project, source_ref)
+        if existing is not None:
+            return existing
+        field_name = project.extra["migration_source_field"]
+        attributes = snapshot["attributes"]
+        fields = {
+            "Type": attributes.get("type"),
+            "Priority": attributes.get("priority"),
+            "Estimate": attributes.get("estimate"),
+            "State": attributes.get("state"),
+            field_name: source_ref,
+        }
+        cfs = [
+            self._cf_write(name, value)
+            for name, value in fields.items() if value is not None
+        ]
+        try:
+            raw = self._req(
+                "POST", "/issues",
+                {
+                    "project": {"id": project.id},
+                    "summary": snapshot["title"],
+                    "description": snapshot["body"],
+                    "customFields": cfs,
+                },
+                "idReadable",
+            )
+        except _YouTrackHTTPError:
+            recovered = self.migration_find_issue(project, source_ref)
+            if recovered is None:
+                raise
+            return recovered
+        return self.get_issue(raw["idReadable"])
+
+    def migration_link_issue(
+        self, project: Project, src_id: str, link_type: str, dst_id: str,
+    ) -> None:
+        self._require_writable_target(project)
+        self.link(src_id, link_type, dst_id)
 
     def provision_project(
         self, name: str, key: str, canonical_repository: str | None = None,
@@ -1411,12 +1568,68 @@ class YouTrackTracker(Tracker):
                 return results
             skip += len(page)
 
+    @staticmethod
+    def _migration_adr_summary(metadata: dict) -> str:
+        canonical = json.dumps(
+            metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        encoded = base64.urlsafe_b64encode(canonical).decode("ascii").rstrip("=")
+        return f"{_MIGRATION_ADR_PREFIX}{encoded}] {metadata['title']}"
+
+    @staticmethod
+    def _decode_migration_adr(raw: dict, project: Project) -> tuple[Adr, dict] | None:
+        summary = raw.get("summary")
+        content = raw.get("content")
+        if not isinstance(summary, str) or not summary.startswith(_MIGRATION_ADR_PREFIX):
+            return None
+        closing = summary.find("]", len(_MIGRATION_ADR_PREFIX))
+        if closing < 0 or not isinstance(content, str):
+            raise TrackerConflictError("enveloppe ADR YouTrack invalide")
+        encoded = summary[len(_MIGRATION_ADR_PREFIX):closing]
+        try:
+            padding = "=" * ((4 - len(encoded) % 4) % 4)
+            metadata = json.loads(
+                base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+            )
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            raise TrackerConflictError("enveloppe ADR YouTrack invalide") from None
+        required = {
+            "schema", "project_id", "source_ref", "id", "title", "status",
+            "body_sha256", "relations", "source_created", "source_updated",
+        }
+        if (
+            not isinstance(metadata, dict)
+            or set(metadata) not in (required, required | {"source_only_issue_refs"})
+            or metadata.get("schema") != "foundry-youtrack-migration-adr.v1"
+            or metadata.get("project_id") != project.id
+            or not isinstance(metadata.get("source_ref"), str)
+            or not metadata["source_ref"]
+            or not isinstance(metadata.get("id"), str)
+            or not isinstance(metadata.get("title"), str)
+            or not isinstance(metadata.get("status"), str)
+            or metadata.get("body_sha256") != hashlib.sha256(content.encode()).hexdigest()
+            or summary[closing + 1:] != " " + metadata["title"]
+        ):
+            raise TrackerConflictError("enveloppe ADR YouTrack divergente")
+        migration_source_only_issue_refs(metadata.get("source_only_issue_refs", []))
+        return (
+            Adr(
+                metadata["id"], metadata["title"], metadata["status"], content,
+                raw.get("idReadable"),
+            ),
+            metadata,
+        )
+
     def list_adrs(self, project: Project) -> list[Adr]:
         prefix = self._adr_prefix(project)
         out = []
         # The API endpoint is project-scoped. Keep the anchored prefix check as a
         # client-side invariant, protecting similarly named project keys.
         for a in self._project_articles_raw(project, "idReadable,summary,content"):
+            imported = self._decode_migration_adr(a, project)
+            if imported is not None:
+                out.append(imported[0])
+                continue
             # ANCHORED match: summaries start with the id, and an unanchored search
             # would cross-match a project whose key is a suffix of another
             # ("TOC-ADR" inside "MDTOC-ADR-0001")
@@ -1430,6 +1643,105 @@ class YouTrackTracker(Tracker):
             out.append(Adr(id=f"{prefix}-{m.group(1)}", title=a["summary"],
                            status=status, body=a.get("content"), ref=a["idReadable"]))
         return sorted(out, key=lambda x: x.id)
+
+    def migration_export_adrs(self, project: Project) -> list[dict]:
+        out = []
+        for raw in self._project_articles_raw(
+            project, "idReadable,summary,content,created,updated"
+        ):
+            imported = self._decode_migration_adr(raw, project)
+            if imported is not None:
+                adr, metadata = imported
+                out.append({
+                    "adr": adr,
+                    "relations": metadata["relations"],
+                    **({
+                        "source_only_issue_refs": metadata["source_only_issue_refs"],
+                    } if metadata.get("source_only_issue_refs") else {}),
+                    "source_created": metadata["source_created"],
+                    "source_updated": metadata["source_updated"],
+                })
+                continue
+            summary = raw.get("summary", "")
+            prefix = self._adr_prefix(project)
+            match = re.match(rf"{re.escape(prefix)}-(\d{{4}})", summary)
+            if not match:
+                continue
+            status = "proposed"
+            status_match = re.search(
+                r"statut\s*:\s*`?(\w+)`?", raw.get("content") or ""
+            )
+            if status_match:
+                status = status_match.group(1)
+            out.append({
+                "adr": Adr(
+                    f"{prefix}-{match.group(1)}", summary, status,
+                    raw.get("content"), raw.get("idReadable"),
+                ),
+                "relations": {
+                    "supersedes": "unknown",
+                    "superseded_by": "unknown",
+                    "issues": "unknown",
+                },
+                "source_created": raw.get("created"),
+                "source_updated": raw.get("updated"),
+            })
+        return sorted(out, key=lambda item: item["adr"].id)
+
+    def migration_find_adr(self, project: Project, source_ref: str) -> Adr | None:
+        matches = []
+        for raw in self._project_articles_raw(
+            project, "idReadable,summary,content,created,updated"
+        ):
+            imported = self._decode_migration_adr(raw, project)
+            if imported is not None and imported[1]["source_ref"] == source_ref:
+                matches.append(imported[0])
+        if len(matches) > 1:
+            raise TrackerConflictError("provenance ADR YouTrack ambiguë")
+        return matches[0] if matches else None
+
+    def migration_import_adr(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Adr:
+        self._require_writable_target(project)
+        existing = self.migration_find_adr(project, source_ref)
+        if existing is not None:
+            return existing
+        metadata = {
+            "schema": "foundry-youtrack-migration-adr.v1",
+            "project_id": project.id,
+            "source_ref": source_ref,
+            "id": snapshot["id"],
+            "title": snapshot["title"],
+            "status": snapshot["status"],
+            "body_sha256": hashlib.sha256(snapshot["body"].encode()).hexdigest(),
+            "relations": snapshot["relations"],
+            "source_only_issue_refs": migration_source_only_issue_refs(
+                snapshot.get("source_only_issue_refs", []),
+            ),
+            "source_created": snapshot.get("source_created"),
+            "source_updated": snapshot.get("source_updated"),
+        }
+        summary = self._migration_adr_summary(metadata)
+        try:
+            raw = self._req(
+                "POST", "/articles",
+                {
+                    "summary": summary,
+                    "content": snapshot["body"],
+                    "project": {"id": project.id},
+                },
+                "idReadable,summary,content",
+            )
+        except _YouTrackHTTPError:
+            recovered = self.migration_find_adr(project, source_ref)
+            if recovered is None:
+                raise
+            return recovered
+        decoded = self._decode_migration_adr(raw, project)
+        if decoded is None:
+            raise TrackerConflictError("relecture ADR YouTrack absente")
+        return decoded[0]
 
     def create_adr(self, project: Project, title: str, body: str,
                    status: str = "proposed") -> Adr:
