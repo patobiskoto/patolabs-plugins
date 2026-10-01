@@ -72,6 +72,24 @@ class TrackerConflictError(RuntimeError):
     """A provider version/body changed before a bounded tracker mutation."""
 
 
+def migration_source_only_issue_refs(value: object) -> list[str]:
+    """Validate exact issue coordinates retained without a migrated target issue."""
+    if (
+        not isinstance(value, list)
+        or any(
+            not isinstance(ref, str)
+            or len(ref.split(":", 2)) != 3
+            or ref.split(":", 2)[0] not in {"youtrack", "linear", "ghprojects"}
+            or ref.split(":", 2)[1] != "issue"
+            or not ref.split(":", 2)[2]
+            for ref in value
+        )
+        or value != sorted(set(value))
+    ):
+        raise TrackerConflictError("références issues source de migration invalides")
+    return value
+
+
 class TrackerCapabilityUnavailableError(RuntimeError):
     """The active tracker cannot safely provide one explicitly named capability."""
 

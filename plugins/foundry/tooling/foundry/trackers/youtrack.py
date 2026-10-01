@@ -45,6 +45,7 @@ from foundry.trackers.base import (
     Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
+    migration_source_only_issue_refs,
 )
 
 # normalized field name -> the YouTrack customField $type to send on writes
@@ -168,7 +169,7 @@ class YouTrackTracker(Tracker):
         project_id = urllib.parse.quote(project.id, safe="")
         raw = self._req(
             "GET", f"/admin/projects/{project_id}",
-            fields="id,shortName,customFields(field(name),bundle(values(name)))",
+            fields="id,shortName,customFields(field(name,fieldType(id)),bundle(values(name)))",
         )
         if raw.get("id") != project.id or raw.get("shortName") != project.key:
             raise TrackerConflictError("catalogue migration YouTrack hors projet")
@@ -212,6 +213,8 @@ class YouTrackTracker(Tracker):
                 exceptions["estimate"] = "target field unavailable: Estimate"
             elif type(estimate) is not int:
                 exceptions["estimate"] = f"target value unavailable: {estimate}"
+            elif (matches[0]["field"].get("fieldType") or {}).get("id") != "integer":
+                exceptions["estimate"] = "target field type unavailable: Estimate integer"
         return exceptions
 
     def migration_preflight(
@@ -1596,7 +1599,7 @@ class YouTrackTracker(Tracker):
         }
         if (
             not isinstance(metadata, dict)
-            or set(metadata) != required
+            or set(metadata) not in (required, required | {"source_only_issue_refs"})
             or metadata.get("schema") != "foundry-youtrack-migration-adr.v1"
             or metadata.get("project_id") != project.id
             or not isinstance(metadata.get("source_ref"), str)
@@ -1608,6 +1611,7 @@ class YouTrackTracker(Tracker):
             or summary[closing + 1:] != " " + metadata["title"]
         ):
             raise TrackerConflictError("enveloppe ADR YouTrack divergente")
+        migration_source_only_issue_refs(metadata.get("source_only_issue_refs", []))
         return (
             Adr(
                 metadata["id"], metadata["title"], metadata["status"], content,
@@ -1651,6 +1655,9 @@ class YouTrackTracker(Tracker):
                 out.append({
                     "adr": adr,
                     "relations": metadata["relations"],
+                    **({
+                        "source_only_issue_refs": metadata["source_only_issue_refs"],
+                    } if metadata.get("source_only_issue_refs") else {}),
                     "source_created": metadata["source_created"],
                     "source_updated": metadata["source_updated"],
                 })
@@ -1709,6 +1716,9 @@ class YouTrackTracker(Tracker):
             "status": snapshot["status"],
             "body_sha256": hashlib.sha256(snapshot["body"].encode()).hexdigest(),
             "relations": snapshot["relations"],
+            "source_only_issue_refs": migration_source_only_issue_refs(
+                snapshot.get("source_only_issue_refs", []),
+            ),
             "source_created": snapshot.get("source_created"),
             "source_updated": snapshot.get("source_updated"),
         }

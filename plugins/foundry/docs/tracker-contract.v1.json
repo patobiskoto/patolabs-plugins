@@ -539,15 +539,15 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "migration_export_adrs preserves exact Article body bytes and available relations; migration_find_adr and migration_import_adr use the dedicated migration_source_field, recover an ambiguous response by exact provenance, and read back historical status and relation knowledge (youtrack.py; test_tracker_migration.py)"
+          "evidence": "migration_export_adrs preserves exact Article body bytes, available relations and source-only issue references; migration_find_adr and migration_import_adr use the dedicated migration_source_field, recover an ambiguous response by exact provenance, and read back historical status and relation knowledge (youtrack.py; test_tracker_migration.py)"
         },
         "linear": {
           "status": "supported",
-          "evidence": "migration_export_adrs, migration_find_adr, migration_qualify_adrs and migration_import_adrs implement the closed isolated batch profile: exact source/body digests, translated issue coordinates, deterministic probes and one qualified batch import; replay reuses the persisted phase-2 profile (linear.py; test_tracker_migration.py)"
+          "evidence": "migration_export_adrs, migration_find_adr, migration_qualify_adrs and migration_import_adrs implement the closed isolated batch profile: exact source/body digests, translated living issue coordinates, source-only issue references in ADR provenance, deterministic probes and one qualified batch import; replay reuses the persisted phase-2 profile (linear.py; test_linear_tracker.py; test_tracker_migration.py)"
         },
         "ghprojects": {
           "status": "supported",
-          "evidence": "migration_prepare_adr remaps the source ADR namespace, while migration_find_adr and migration_import_adr use the reserved provenance label and PAT-ADR-0007 Issue/comment codec with exact body/status/relation readback. Staged-target reads now resolve known ADR-to-issue relations through the supplied migration binding rather than the active source (ghprojects.py; test_ghprojects_tracker.py; live P64Q-to-P64G qualification)"
+          "evidence": "migration_prepare_adr remaps the source ADR namespace, while migration_find_adr and migration_import_adr use the reserved provenance label and PAT-ADR-0007 Issue/comment codec with exact body/status/relation readback and source-only issue references. Staged-target reads resolve known living ADR-to-issue relations through the supplied migration binding rather than the active source (ghprojects.py; test_ghprojects_tracker.py; live P64Q-to-P64G qualification)"
         }
       },
       "note": "ADR half of the switch only. The live-work half is the next row."

@@ -2779,6 +2779,7 @@ def test_pat64_migration_known_issue_relation_reads_the_staged_target(
     tracker, project, _label = _pat64_tracker(provider, tmp_path)
     snapshot = _pat64_migration_adr_snapshot()
     snapshot["relations"]["issues"] = ["GHQUAL-1"]
+    snapshot["source_only_issue_refs"] = ["youtrack:issue:P64Q-9"]
     source_project = Project(
         "SRC", "0-1", {"canonical_repo": project.extra["canonical_repo"]},
     )
@@ -2805,6 +2806,27 @@ def test_pat64_migration_known_issue_relation_reads_the_staged_target(
     assert created.id == "GHQUAL-ADR-0002"
     _binding, observed = tracker._adr_snapshot(project, _migration=True)
     assert observed[created.id][1]["relations"]["issues"] == ["GHQUAL-1"]
+    assert observed[created.id][1]["migration"]["source_only_issue_refs"] == [
+        "youtrack:issue:P64Q-9",
+    ]
+    assert tracker.migration_export_adrs(project)[0]["source_only_issue_refs"] == [
+        "youtrack:issue:P64Q-9",
+    ]
+
+
+def test_pat64_migration_rejects_malformed_source_only_reference_before_effect(
+    tmp_path,
+):
+    provider = _AdrCycleTransport()
+    tracker, project, _label = _pat64_tracker(provider, tmp_path)
+    snapshot = _pat64_migration_adr_snapshot()
+    snapshot["source_only_issue_refs"] = ["P64Q-9"]
+    with pytest.raises(TrackerConflictError, match="références issues source"):
+        tracker.migration_import_adr(
+            project, snapshot, source_ref=snapshot["source_ref"],
+        )
+    assert provider.comments == {}
+    assert sorted(provider.issues) == [1]
 
 
 def test_pat64_migration_rejects_unowned_incomplete_adr_support(tmp_path):

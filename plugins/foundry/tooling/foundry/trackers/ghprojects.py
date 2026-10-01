@@ -37,6 +37,7 @@ from foundry.trackers.base import (
     ReleaseScopeUnavailableError,
     Tracker,
     TrackerCapabilityUnavailableError,
+    migration_source_only_issue_refs,
 )
 from foundry.trackers.epic_intent import EpicAuditIntent
 
@@ -3815,7 +3816,10 @@ class GitHubProjectsTracker(Tracker):
                 or metadata["relations"]["superseded_by"] is not None and not isinstance(metadata["relations"]["superseded_by"], str)
                 or migration is not None and (
                     not isinstance(migration, dict)
-                    or set(migration) != {"source_ref", "missing_relations"}
+                    or set(migration) not in (
+                        {"source_ref", "missing_relations"},
+                        {"source_ref", "missing_relations", "source_only_issue_refs"},
+                    )
                     or not isinstance(migration.get("source_ref"), str)
                     or not migration["source_ref"]
                     or not isinstance(migration.get("missing_relations"), list)
@@ -3825,6 +3829,10 @@ class GitHubProjectsTracker(Tracker):
                     != len(migration["missing_relations"])
                 )):
             raise GitHubProjectsTrackerError("adr.history", "invalid_metadata")
+        if migration is not None:
+            migration_source_only_issue_refs(
+                migration.get("source_only_issue_refs", []),
+            )
         if hashlib.sha256(body.encode("utf-8")).hexdigest() != metadata["body_sha256"]:
             raise TrackerConflictError("ADR GitHub source digest divergent")
         return metadata, body, native_id
@@ -4406,6 +4414,10 @@ class GitHubProjectsTracker(Tracker):
                     name: "unknown" if name in missing else metadata["relations"][name]
                     for name in ("supersedes", "superseded_by", "issues")
                 },
+                **({
+                    "source_only_issue_refs": migration["source_only_issue_refs"],
+                } if isinstance(migration, dict)
+                   and migration.get("source_only_issue_refs") else {}),
                 "source_created": None,
                 "source_updated": None,
             })
@@ -4431,6 +4443,9 @@ class GitHubProjectsTracker(Tracker):
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Adr:
         registry.require_writable_project(self.name, project)
+        source_only_issue_refs = migration_source_only_issue_refs(
+            snapshot.get("source_only_issue_refs", []),
+        )
         existing = self.migration_find_adr(project, source_ref)
         if existing is not None:
             return existing
@@ -4465,6 +4480,7 @@ class GitHubProjectsTracker(Tracker):
                 "label": label,
                 "relations": relations,
                 "missing_relations": missing,
+                "source_only_issue_refs": source_only_issue_refs,
             },
             _allow_incomplete_graph=True,
         )
@@ -4854,6 +4870,7 @@ class GitHubProjectsTracker(Tracker):
                         "migration": {
                             "source_ref": _migration["source_ref"],
                             "missing_relations": _migration["missing_relations"],
+                            "source_only_issue_refs": _migration["source_only_issue_refs"],
                         }
                     } if _migration is not None else {}),
                 }

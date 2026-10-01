@@ -28,12 +28,13 @@ class FakeTransportTracker(Tracker):
     """Small in-memory tracker used by focused orchestrator tests."""
     migration_supported_attributes = frozenset({"type", "priority", "estimate", "state", "parent", "children", "dependencies"})
 
-    def __init__(self, name, issues=(), adrs=(), adr_relations=None):
+    def __init__(self, name, issues=(), adrs=(), adr_relations=None, source_only_issue_refs=None):
         self.name = name
         self.issues = {item.id: copy.deepcopy(item) for item in issues}
         self.adrs = {item.id: copy.deepcopy(item) for item in adrs}
         self.issue_refs, self.adr_refs = {}, {}
         self.adr_relations = copy.deepcopy(adr_relations or {})
+        self.source_only_issue_refs = copy.deepcopy(source_only_issue_refs or {})
         self.effects = 0
 
     def resolve_project(self, repo): return Project("T", "project")
@@ -60,6 +61,9 @@ class FakeTransportTracker(Tracker):
                 "supersedes": "unknown", "superseded_by": "unknown",
                 "issues": "unknown",
             })),
+            "source_only_issue_refs": copy.deepcopy(
+                self.source_only_issue_refs.get(item.id, []),
+            ),
             "source_created": None, "source_updated": None,
         } for item in self.adrs.values()]
     def create_adr(self, *args, **kwargs): raise AssertionError("migration port required")
@@ -90,6 +94,9 @@ class FakeTransportTracker(Tracker):
         item = Adr(snapshot["id"], snapshot["title"], snapshot["status"], snapshot["body"])
         self.adrs[item.id] = item
         self.adr_relations[item.id] = copy.deepcopy(snapshot["relations"])
+        self.source_only_issue_refs[item.id] = copy.deepcopy(
+            snapshot.get("source_only_issue_refs", [])
+        )
         self.adr_refs[source_ref] = item
         self.effects += 1
         return copy.deepcopy(item)
@@ -520,6 +527,56 @@ def test_youtrack_manifest_declares_absent_estimate_field_before_effect(monkeypa
     assert all(method == "GET" and body is None for method, _path, body in calls)
 
 
+@pytest.mark.parametrize(
+    ("field_type", "expected_exceptions"),
+    [
+        ("integer", []),
+        ("string", [{
+            "attribute": "estimate",
+            "reason": "target field type unavailable: Estimate integer",
+        }]),
+        (None, [{
+            "attribute": "estimate",
+            "reason": "target field type unavailable: Estimate integer",
+        }]),
+    ],
+)
+def test_youtrack_manifest_qualifies_estimate_field_type_before_effect(
+    monkeypatch, field_type, expected_exceptions,
+):
+    source = FakeTransportTracker("linear", [
+        Issue("SRC-1", "estimated", state="ready", body="body", estimate=3),
+    ])
+    target = YouTrackTracker(url="https://youtrack.invalid", token="test")
+    project = Project("DST", "target", {"migration_source_field": "Source"})
+    calls = []
+
+    def catalog(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body, fields))
+        if "bundle(values(name))" in fields:
+            return {
+                "id": "target", "shortName": "DST", "customFields": [
+                    {"field": {
+                        "name": "Estimate", "fieldType": {"id": field_type},
+                    }},
+                    {"field": {"name": "State"}, "bundle": {
+                        "values": [{"name": "ready"}],
+                    }},
+                ],
+            }
+        return {
+            "id": "target", "shortName": "DST", "customFields": [
+                {"field": {"name": "Source", "fieldType": {"id": "string"}}},
+            ],
+        }
+
+    monkeypatch.setattr(target, "_req", catalog)
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    assert manifest["issues"][0]["exceptions"] == expected_exceptions
+    assert all(method == "GET" and body is None for method, _path, body, _fields in calls)
+    assert any("fieldType(id)" in fields for _method, _path, _body, fields in calls)
+
+
 @pytest.mark.parametrize("provider", ["youtrack", "linear", "ghprojects"])
 def test_migration_adapter_refuses_archived_target_before_provider_effect(
     monkeypatch, tmp_path, provider,
@@ -671,21 +728,84 @@ def test_remapped_adr_identifier_is_checked_during_copy_and_activation():
         verify_targets(manifest, target, project)
 
 
-def test_known_adr_relation_to_terminal_issue_fails_before_target_effect():
+def test_known_adr_relation_to_terminal_issue_keeps_exact_source_reference():
     source = FakeTransportTracker(
         "youtrack",
-        [Issue("SRC-1", "done", state="done", body="body")],
+        [
+            Issue("SRC-1", "done", state="done", body="body"),
+            Issue("SRC-2", "living", state="ready", body="body"),
+        ],
         [Adr("SRC-ADR-0001", "decision", "accepted", "bytes")],
         {"SRC-ADR-0001": {
-            "supersedes": [], "superseded_by": None, "issues": ["SRC-1"],
+            "supersedes": [], "superseded_by": None,
+            "issues": ["SRC-1", "SRC-2"],
         }},
     )
     target = FakeTransportTracker("linear")
-    with pytest.raises(MigrationError, match="hors périmètre vivant"):
+    project = Project("DST", "target")
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    assert target.effects == 0
+    assert [item["id"] for item in manifest["issues"]] == ["SRC-2"]
+    assert manifest["adrs"][0]["relations"]["issues"] == ["SRC-2"]
+    assert manifest["adrs"][0]["source_only_issue_refs"] == [
+        "youtrack:issue:SRC-1",
+    ]
+    copy_and_verify(manifest, target, project, lambda: None)
+    verify_targets(manifest, target, project)
+    assert target.source_only_issue_refs["SRC-ADR-0001"] == [
+        "youtrack:issue:SRC-1",
+    ]
+    assert target.adr_relations["SRC-ADR-0001"]["issues"] == ["import-SRC-2"]
+    target.source_only_issue_refs["SRC-ADR-0001"] = []
+    with pytest.raises(MigrationError, match="relecture ADR divergente"):
+        verify_targets(manifest, target, project)
+
+
+def test_malformed_source_only_adr_reference_fails_before_target_effect():
+    source = FakeTransportTracker(
+        "youtrack", adrs=[Adr("SRC-ADR-0001", "decision", "accepted", "body")],
+        source_only_issue_refs={"SRC-ADR-0001": ["SRC-9"]},
+    )
+    target = FakeTransportTracker("linear")
+    with pytest.raises(MigrationError, match="références source ADR invalides"):
         capture_manifest(
             source, Project("SRC", "source"), target, Project("DST", "target"),
         )
     assert target.effects == 0
+
+
+def test_adr_without_source_only_relation_keeps_legacy_manifest_shape():
+    source = FakeTransportTracker(
+        "youtrack", adrs=[Adr("SRC-ADR-0001", "decision", "accepted", "body")],
+    )
+    manifest = capture_manifest(
+        source, Project("SRC", "source"),
+        FakeTransportTracker("linear"), Project("DST", "target"),
+    )
+    assert "source_only_issue_refs" not in manifest["adrs"][0]
+
+
+def test_second_cutover_keeps_original_source_only_issue_coordinate():
+    source = FakeTransportTracker(
+        "linear", adrs=[Adr("LIN-ADR-0001", "decision", "accepted", "body")],
+        adr_relations={"LIN-ADR-0001": {
+            "supersedes": [], "superseded_by": None, "issues": [],
+        }},
+        source_only_issue_refs={
+            "LIN-ADR-0001": ["youtrack:issue:SRC-1"],
+        },
+    )
+    target = FakeTransportTracker("ghprojects")
+    project = Project("DST", "target")
+    manifest = capture_manifest(source, Project("LIN", "source"), target, project)
+    assert manifest["adrs"][0]["source_only_issue_refs"] == [
+        "youtrack:issue:SRC-1",
+    ]
+    copy_and_verify(manifest, target, project, lambda: None)
+    verify_targets(manifest, target, project)
+    assert target.source_only_issue_refs["LIN-ADR-0001"] == [
+        "youtrack:issue:SRC-1",
+    ]
 
 
 class _PhaseQualificationTracker(FakeTransportTracker):
@@ -1059,6 +1179,7 @@ def test_youtrack_adapter_recovers_issue_and_adr_lost_responses_without_duplicat
             "issues": "unknown", "supersedes": [], "superseded_by": None,
         },
         "source_created": 1, "source_updated": 2,
+        "source_only_issue_refs": ["linear:issue:SRC-9"],
     }
     adr = tracker.migration_import_adr(
         project, adr_record, source_ref="linear:adr:SRC-ADR-0001"
@@ -1076,8 +1197,26 @@ def test_youtrack_adapter_recovers_issue_and_adr_lost_responses_without_duplicat
             "issues": "unknown", "supersedes": [], "superseded_by": None,
         },
         "source_created": 1, "source_updated": 2,
+        "source_only_issue_refs": ["linear:issue:SRC-9"],
     }]
     assert tracker.adr_posts == 1
+
+
+def test_youtrack_adr_import_rejects_malformed_source_only_reference_before_effect():
+    tracker = _YouTrackMigrationTransport()
+    project = Project("DST", "target")
+    snapshot = {
+        "id": "SRC-ADR-0001", "title": "Decision", "status": "accepted",
+        "body": "exact body", "relations": {
+            "issues": [], "supersedes": [], "superseded_by": None,
+        },
+        "source_only_issue_refs": ["SRC-9"],
+    }
+    with pytest.raises(TrackerConflictError, match="références issues source"):
+        tracker.migration_import_adr(
+            project, snapshot, source_ref="linear:adr:SRC-ADR-0001",
+        )
+    assert tracker.adr_posts == 0
 
 
 def test_youtrack_duplicate_provenance_fails_closed():

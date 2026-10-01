@@ -4507,6 +4507,7 @@ def test_linear_migration_phase_two_qualifies_known_issue_relation_and_replays(
         "body": "exact historical source\n",
         "status": "accepted",
         "source_ref": "youtrack:adr:SRC-ADR-0044",
+        "source_only_issue_refs": ["youtrack:issue:SRC-9"],
         "relations": {
             "supersedes": [], "superseded_by": None, "issues": ["LIN-2"],
         },
@@ -4522,6 +4523,9 @@ def test_linear_migration_phase_two_qualifies_known_issue_relation_and_replays(
     qualification = instance.migration_qualify_adrs(project, (source,))
     assert isinstance(qualification, list)
     assert qualification[0]["issue_refs"] == ("LIN-2",)
+    assert qualification[0]["source_only_issue_refs"] == (
+        "youtrack:issue:SRC-9",
+    )
     assert {
         value["project"]["id"] for value in wire.documents.values()
     } == {QUALIFICATION_PROJECT_ID}
@@ -4549,6 +4553,7 @@ def test_linear_migration_phase_two_qualifies_known_issue_relation_and_replays(
         },
         "source_created": 1,
         "source_updated": 2,
+        "source_only_issue_refs": ["youtrack:issue:SRC-9"],
     }]
 
 

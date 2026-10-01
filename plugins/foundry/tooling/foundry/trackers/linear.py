@@ -52,6 +52,7 @@ from foundry.trackers.base import (
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
     ReleaseScopeUnavailableError,
+    migration_source_only_issue_refs,
 )
 from foundry.trackers.epic_intent import EpicAuditIntent
 
@@ -1434,7 +1435,11 @@ def _parse_adr_document(
             "missing_relations",
         }
         valid_origin = (
-            set(origin) in (migration_keys, migration_keys | {"batch_sha256"})
+            set(origin) in (
+                migration_keys, migration_keys | {"batch_sha256"},
+                migration_keys | {"source_only_issue_refs"},
+                migration_keys | {"batch_sha256", "source_only_issue_refs"},
+            )
             and (
                 "batch_sha256" not in origin
                 or (
@@ -1442,7 +1447,7 @@ def _parse_adr_document(
                     and _DIGEST.fullmatch(origin["batch_sha256"]) is not None
                 )
             )
-            and origin["source_tracker"] == "youtrack"
+            and origin["source_tracker"] in {"youtrack", "linear", "ghprojects"}
             and isinstance(origin["source_ref"], str)
             and bool(origin["source_ref"])
             and all(
@@ -1456,6 +1461,25 @@ def _parse_adr_document(
             and origin["missing_relations"] == sorted(set(origin["missing_relations"]))
             and set(origin["missing_relations"]).issubset(
                 _ADR_MISSING_RELATION_FAMILIES
+            )
+            and (
+                "source_only_issue_refs" not in origin
+                or (
+                    isinstance(origin["source_only_issue_refs"], list)
+                    and all(
+                        isinstance(ref, str)
+                        for ref in origin["source_only_issue_refs"]
+                    )
+                    and origin["source_only_issue_refs"]
+                    == sorted(set(origin["source_only_issue_refs"]))
+                    and all(
+                        ref.split(":", 2)[0] in {"youtrack", "linear", "ghprojects"}
+                        and len(ref.split(":", 2)) == 3
+                        and ref.split(":", 2)[1] == "issue"
+                        and bool(ref.split(":", 2)[2])
+                        for ref in origin["source_only_issue_refs"]
+                    )
+                )
             )
             and (
                 sequence != 0
@@ -1841,7 +1865,10 @@ class LinearTracker(Tracker):
         normalized = []
         for item in raw:
             candidate = dict(item)
-            for name in ("supersedes", "issue_refs", "missing_relations"):
+            for name in (
+                "supersedes", "issue_refs", "missing_relations",
+                "source_only_issue_refs",
+            ):
                 if name in candidate and isinstance(candidate[name], list):
                     candidate[name] = tuple(candidate[name])
             normalized.append(candidate)
@@ -1879,6 +1906,9 @@ class LinearTracker(Tracker):
                     else tuple(relations["issues"])
                 ),
                 "missing_relations": missing,
+                **({
+                    "source_only_issue_refs": tuple(record["source_only_issue_refs"]),
+                } if "source_only_issue_refs" in record else {}),
             })
         return tuple(out)
 
@@ -5485,6 +5515,10 @@ class LinearTracker(Tracker):
             exported.append({
                 "adr": self._adr_model(chains[adr_id]),
                 "relations": relations,
+                **({
+                    "source_only_issue_refs": origin["source_only_issue_refs"],
+                } if isinstance(origin, dict)
+                   and origin.get("source_only_issue_refs") else {}),
                 "source_created": (
                     origin.get("source_created") if isinstance(origin, dict) else None
                 ),
@@ -5532,6 +5566,9 @@ class LinearTracker(Tracker):
             expected_source_sha256=hashlib.sha256(
                 snapshot["body"].encode()
             ).hexdigest(),
+            source_only_issue_refs=tuple(
+                snapshot.get("source_only_issue_refs", []),
+            ),
             **optional,
         )
 
@@ -5872,6 +5909,12 @@ class LinearTracker(Tracker):
         declares_missing_relations = next(iter(declared))
         if declares_missing_relations:
             keys = keys | {"missing_relations"}
+        source_only_declared = {"source_only_issue_refs" in record for record in records}
+        if len(source_only_declared) != 1:
+            raise ValueError("Linear ADR batch record fields invalid")
+        declares_source_only = next(iter(source_only_declared))
+        if declares_source_only:
+            keys = keys | {"source_only_issue_refs"}
         binding, documents = self._adr_documents(project)
         by_id = {}
         for raw in documents:
@@ -5903,6 +5946,13 @@ class LinearTracker(Tracker):
             supersedes = record["supersedes"]
             superseded_by = record["superseded_by"]
             issue_refs = record["issue_refs"]
+            source_only_refs = record.get("source_only_issue_refs", ())
+            if not isinstance(source_only_refs, tuple):
+                raise ValueError("Linear ADR batch source-only references invalid")
+            try:
+                migration_source_only_issue_refs(list(source_only_refs))
+            except TrackerConflictError as exc:
+                raise ValueError("Linear ADR batch source-only references invalid") from exc
             missing_relations = (
                 record["missing_relations"] if declares_missing_relations else ()
             )
@@ -5997,6 +6047,9 @@ class LinearTracker(Tracker):
                     "source_updated": record["source_updated"],
                     "source_body_sha256": record["expected_source_sha256"],
                     "missing_relations": list(missing_relations),
+                    **({
+                        "source_only_issue_refs": list(source_only_refs),
+                    } if declares_source_only else {}),
                 },
                 "relations": {
                     "supersedes": sorted(supersedes),
@@ -6349,6 +6402,7 @@ class LinearTracker(Tracker):
         supersedes: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
         superseded_by: str | None | object = _UNSPECIFIED_ADR_RELATION,
         issue_refs: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
+        source_only_issue_refs: tuple[str, ...] = (),
     ) -> Adr:
         """Store a bounded historical snapshot; this never invokes acceptance."""
         missing_relations = sorted(
@@ -6364,6 +6418,15 @@ class LinearTracker(Tracker):
             superseded_by = None
         if issue_refs is _UNSPECIFIED_ADR_RELATION:
             issue_refs = ()
+        if not isinstance(source_only_issue_refs, tuple):
+            raise ValueError("Linear ADR historical source-only references invalid")
+        try:
+            migration_source_only_issue_refs(list(source_only_issue_refs))
+        except TrackerConflictError as exc:
+            raise ValueError("Linear ADR historical source-only references invalid") from exc
+        source_tracker = source_ref.split(":", 1)[0]
+        if source_tracker not in {"youtrack", "linear", "ghprojects"}:
+            source_tracker = "youtrack"  # Legacy historical imports used opaque refs.
         digest = hashlib.sha256(body.encode()).hexdigest()
         if (
             not isinstance(adr_id, str)
@@ -6506,12 +6569,15 @@ class LinearTracker(Tracker):
             "body_sha256": digest,
             "origin": {
                 "kind": "migration",
-                "source_tracker": "youtrack",
+                "source_tracker": source_tracker,
                 "source_ref": source_ref,
                 "source_created": source_created,
                 "source_updated": source_updated,
                 "source_body_sha256": digest,
                 "missing_relations": missing_relations,
+                **({
+                    "source_only_issue_refs": list(source_only_issue_refs),
+                } if source_only_issue_refs else {}),
             },
             "relations": {
                 "supersedes": list(supersedes),

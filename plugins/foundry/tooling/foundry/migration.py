@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Callable
 
 from foundry.models import Adr, Issue, Project
-from foundry.trackers.base import Tracker
+from foundry.trackers.base import (
+    Tracker, TrackerConflictError, migration_source_only_issue_refs,
+)
 
 SCHEMA = "foundry.tracker-cutover.v1"
 _TERMINAL = frozenset({"done", "dropped"})
@@ -64,7 +66,7 @@ def _issue_snapshot(issue: Issue, source_tracker: str) -> dict:
 
 def _adr_snapshot(exported: dict, source_tracker: str) -> dict:
     adr = exported["adr"]
-    return {
+    snapshot = {
         "kind": "adr", "source_ref": f"{source_tracker}:adr:{adr.id}",
         "id": adr.id, "title": adr.title, "body": adr.body or "", "status": adr.status,
         "relations": exported["relations"],
@@ -72,6 +74,9 @@ def _adr_snapshot(exported: dict, source_tracker: str) -> dict:
         "source_updated": exported.get("source_updated"),
         "digest": "", "target_id": None, "copy_status": "pending", "exceptions": [],
     }
+    if exported.get("source_only_issue_refs"):
+        snapshot["source_only_issue_refs"] = exported["source_only_issue_refs"]
+    return snapshot
 
 
 def capture_manifest(source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> dict:
@@ -107,16 +112,41 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
         _adr_snapshot(item, source.name)
         for item in source.migration_export_adrs(source_project)
     ]
-    for record in adrs:
-        record["digest"] = _digest({k: v for k, v in record.items() if k not in {"digest", "target_id", "copy_status", "exceptions"}})
     living_ids = {record["id"] for record in records}
     for record in adrs:
         issue_refs = record["relations"].get("issues")
-        if issue_refs != "unknown" and not set(issue_refs).issubset(living_ids):
-            missing = sorted(set(issue_refs) - living_ids)
-            raise MigrationError(
-                f"relation ADR hors périmètre vivant: {record['source_ref']} -> {missing}"
+        source_only = record.get("source_only_issue_refs", [])
+        if (not isinstance(source_only, list)
+                or any(not isinstance(ref, str) or not ref for ref in source_only)
+                or len(source_only) != len(set(source_only))):
+            raise MigrationError(f"références source ADR invalides: {record['source_ref']}")
+        if issue_refs != "unknown":
+            if (not isinstance(issue_refs, list)
+                    or any(not isinstance(ref, str) or not ref for ref in issue_refs)
+                    or len(issue_refs) != len(set(issue_refs))):
+                raise MigrationError(f"relations issue ADR invalides: {record['source_ref']}")
+            record["relations"]["issues"] = [
+                ref for ref in issue_refs if ref in living_ids
+            ]
+            source_only.extend(
+                f"{source.name}:issue:{ref}"
+                for ref in issue_refs if ref not in living_ids
             )
+        try:
+            source_only = migration_source_only_issue_refs(
+                sorted(source_only),
+            )
+        except TrackerConflictError as exc:
+            raise MigrationError(
+                f"références source ADR invalides: {record['source_ref']}"
+            ) from exc
+        if source_only:
+            record["source_only_issue_refs"] = source_only
+    if any(record.get("source_only_issue_refs") for record in adrs):
+        for record in adrs:
+            record.setdefault("source_only_issue_refs", [])
+    for record in adrs:
+        record["digest"] = _digest({k: v for k, v in record.items() if k not in {"digest", "target_id", "copy_status", "exceptions"}})
     profile = target.migration_preflight(target_project, tuple(records + adrs))
     if not isinstance(profile, dict) or not profile:
         raise MigrationError("profil de provenance cible non qualifié")
@@ -270,11 +300,13 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
         matches = [item for item in exported_adrs if item["adr"].id == record["target_id"]]
         actual = matches[0]["adr"] if len(matches) == 1 else None
         relations = matches[0]["relations"] if len(matches) == 1 else None
+        source_only = matches[0].get("source_only_issue_refs", []) if len(matches) == 1 else None
         if (actual is None or actual.id != target_snapshot["id"]
                 or actual.title != record["title"]
                 or actual.status != record["status"]
                 or (actual.body or "") != record["body"]
-                or relations != target_snapshot["relations"]):
+                or relations != target_snapshot["relations"]
+                or source_only != target_snapshot.get("source_only_issue_refs", [])):
             raise MigrationError(f"relecture ADR divergente: {record['source_ref']}")
         record["copy_status"] = "verified"
         persist()
@@ -331,14 +363,15 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
         found = target.migration_find_adr(target_project, record["source_ref"])
         if found is None or found.id != record["target_id"]:
             raise MigrationError(f"coordonnée ADR divergente: {record['source_ref']}")
-        actual, relations = _readback_adr(target, target_project, found.id)
+        actual, relations, source_only = _readback_adr(target, target_project, found.id)
         target_snapshot = _target_adr_snapshot(
             target, target_project, record, ids,
         )
         if (actual is None or actual.id != target_snapshot["id"]
                 or actual.title != record["title"]
                 or actual.status != record["status"] or (actual.body or "") != record["body"]
-                or relations != target_snapshot["relations"]):
+                or relations != target_snapshot["relations"]
+                or source_only != target_snapshot.get("source_only_issue_refs", [])):
             raise MigrationError(f"relecture ADR divergente: {record['source_ref']}")
 
 
@@ -362,14 +395,17 @@ def _target_adr_snapshot(
 
 def _readback_adr(
     target: Tracker, target_project: Project, target_id: str,
-) -> tuple[Adr | None, object]:
+) -> tuple[Adr | None, object, object]:
     matches = [
         exported for exported in target.migration_export_adrs(target_project)
         if exported["adr"].id == target_id
     ]
     if len(matches) != 1:
-        return None, None
-    return matches[0]["adr"], matches[0]["relations"]
+        return None, None, None
+    return (
+        matches[0]["adr"], matches[0]["relations"],
+        matches[0].get("source_only_issue_refs", []),
+    )
 
 
 def ready_for_cutover(manifest: dict) -> bool:

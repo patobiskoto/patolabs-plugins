@@ -134,10 +134,17 @@ de l'attribut nommé est omise ou remplacée, et la relecture ignore exactement 
 valeur déclarée. Par exemple, GitHub ne projette `Task` pour un Type source absent ou
 indisponible que si le manifeste porte l'exception correspondante. Les relations ADR
 non exposées par le port sont `unknown`, jamais une liste vide.
+Lorsqu'une relation ADR→issue connue pointe vers une issue hors du travail vivant,
+le manifeste conserve sa coordonnée exacte `<tracker-source>:issue:<id>` dans
+`source_only_issue_refs`. La cible garde cette liste dans la provenance de l'ADR,
+distincte des liens natifs vers les issues recopiées. Elle ne crée aucune issue miroir,
+ne transforme pas la relation en `unknown` et relit la liste exacte avant activation.
+Une bascule ultérieure transporte encore ces références source sans les attribuer au
+nouveau tracker (PAT-ADR-0008).
 Linear qualifie chaque valeur contre son binding de statuts, types, priorités et
 estimations avant le premier effet; YouTrack lit le catalogue natif du projet pour
-les options State, Priority et Type, ainsi que la présence du champ Estimate. Une option
-ou un champ absent devient une exception nommée
+les options State, Priority et Type, ainsi que la présence et le type natif `integer`
+du champ Estimate. Une option, un champ ou un type incompatible devient une exception nommée
 dans le manifeste. Le fichier de progression est remplacé atomiquement avec des
 permissions `0600`, indépendamment de l'umask ou des permissions de son ancienne version.
 La relecture du graphe vivant exige l'égalité des liens internes attendus et observés,
