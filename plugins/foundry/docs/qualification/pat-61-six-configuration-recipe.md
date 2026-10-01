@@ -370,3 +370,14 @@ sur appareil physique n'est encore revendiqué. Le groupe interne demeure dédi�
 la lecture des testeurs via la clé API retourne 403, sans mutation de testeur.
 La baseline Fastlane affiche sa valeur par défaut 1 alors que la liste Apple des
 builds est vide : cette valeur n'est pas un build observé.
+
+
+Relecture finale du même run : `COMPLETE/SUCCEEDED`, terminé le 1er octobre 2026
+à 18:44:07 UTC ; archive et distribution interne chacune `SUCCEEDED`. Le build
+lié `a3426daa-dfb8-4cbf-b3b6-7efd21b1ea64`, version `1.0 (2)`, est `VALID`,
+`APP_STORE_ELIGIBLE`, `usesNonExemptEncryption=false`, upload à 18:42:00 UTC.
+L'interface native App Store Connect relit ce build dans le groupe interne dédié,
+une invitation et un seul testeur : le titulaire existant du compte. Aucun nouveau
+compte, permission administrateur, groupe externe ou soumission publique.
+Le test physique installation/Hello World/fermeture complète/relance est demandé
+au mainteneur et reste en attente ; aucun PASS global ou de cellule n'en est déduit.
