@@ -43,6 +43,21 @@ PAT/Linear, elle a échoué `issue_outside_binding`, car PAT-74 appartient au pr
 Linear de sable. Ces lectures étayent l'isolation de binding et de projet, sans prouver
 les cas de mutation, de rollback ou de credentials perdus.
 
+Le préflight adverse suivant est attaché au snapshot de plugin `82bf3e5e`. Chaque
+résultat est borné à l'opération observée ; les cases non exécutées restent ouvertes.
+
+| Cas | Observation | Limite |
+| --- | --- | --- |
+| Changement de dépôt, même session Codex | PAT-74 et P61Y-1 résolus chacun dans leur projet ; PAT-74 refusé depuis P61Y | Lectures seules, aucun write croisé tenté |
+| Nom/numéro proche | PAT-74 refusé par `issue_outside_binding` depuis le projet PAT principal de même équipe | Une seule collision inter-projets vérifiée |
+| ADR d'un autre produit | `query adr PAT-ADR-0006` depuis le sandbox Linear : `ADR introuvable`, index local vide | Pas d'écriture ADR tentée |
+| Configuration globale contradictoire | `FOUNDRY_TRACKER=youtrack` et `PROJECT_REPO` YouTrack depuis le checkout Linear résolvent encore PAT-74 dans PAT/Linear | Lecture seule |
+| Credentials du tracker actif perdus | `FOUNDRY_RUNTIME_CONFIG_ISOLATED=1` sans token en environnement : `Config manquante : LINEAR_API_TOKEN`, aucune sortie d'issue | Isolation contrôlée du processus, pas révocation du trousseau |
+| ADR déclaré indisponible | Non exécuté | Requiert une fixture ADR déclarée et isolée |
+| Dérive du registre/marqueur | Dans une copie Git locale du sandbox Linear, modifier seulement `tracker` invalide le digest du marqueur et refuse `registry selection --require-v1` ; le hook PAT-42 refuse `gh pr create`, `gh pr merge` et `git push origin main`, mais laisse `git status` passer | Commandes dangereuses soumises au hook, jamais exécutées ; aucun provider write |
+| Ancien tracker archivé | Non exécuté | Ne pas réactiver le binding historique |
+| Rollback de configuration | Restaurer les octets originaux du marqueur dans cette copie rétablit la sélection PAT/Linear ; relecture byte-identique | Rollback local, pas un cutover fournisseur |
+
 Une cellule reçoit un dépôt, projet tracker, credentials et application iOS de test
 explicitement synthétiques. Les deux hôtes peuvent partager un même sandbox fournisseur
 s'ils utilisent des issues et branches distinctes et si chaque preuve nomme son hôte.
@@ -116,6 +131,14 @@ frais, les étapes exigées du manifeste sont couvertes, le gate PAT-68 est vert
 qualifié et les validations humaines sont consignées. Sinon le bilan est `BLOCKED` avec
 la cellule et la preuve absente. Une preuve fournisseur d'un host ne se propage jamais à
 l'autre host, et une preuve simulée ne satisfait jamais une étape live.
+
+Au snapshot `82bf3e5e`, `pytest -q -m tracker_conformance tests` passe (108 tests).
+Les lectures fraîches de PAT-42/43/44 et PAT-20/45/46/47/48 indiquent chacune `done`
+avec tous leurs AC cochés ; les sondes de binding et de hook ci-dessus revalident une
+partie du comportement lié. Ce contrôle de prérequis ne transforme aucune cellule en
+`passed`. Une nouvelle lecture du Project GitHub de sable trouve toujours zéro item
+dans `ProjectV2.items` contre un item non archivé attaché à P61G-1 depuis l'Issue :
+la case GH Projects/Codex demeure `blocked` sans troisième tentative d'écriture.
 
 ## Actions live réservées au coordinateur
 
