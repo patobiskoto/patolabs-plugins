@@ -31,7 +31,8 @@
       "id": "youtrack-claude",
       "tracker": "youtrack",
       "host": "claude-code",
-      "status": "not_run"
+      "status": "in_progress",
+      "partial_evidence": "Claude Code/Sonnet using source Foundry CLI read youtrack/P61Y binding, P61Y-2 review PR #2, and release PAT61 sandbox v1 bundle 163-67/value 164-426 with unfinished=1; no Claude lifecycle or Apple action"
     },
     {
       "id": "youtrack-codex",

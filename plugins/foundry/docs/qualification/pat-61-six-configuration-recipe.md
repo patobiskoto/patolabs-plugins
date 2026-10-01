@@ -72,7 +72,7 @@ La recette n'autorise aucun effet App Store public.
 
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
-| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `not_run` | PAT-59 a lu un périmètre release YouTrack réel ; P64Q est archivé. Ni l'un ni l'autre ne prouve ce parcours ni cet hôte. |
+| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `in_progress` | Claude Code/Sonnet a relu via Foundry le binding P61Y, P61Y-2 en review et le scope `unfinished=1` ; aucun lifecycle complet ni effet Apple sur cet hôte. |
 | YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 mergée avec CI et review ; P61Y-2/PR #2 qualifie le mapping release mais sa review est bloquante, sans merge. ADR/Epic, adversaires et Apple restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a relu le binding et démarré PAT-77 par le CLI source ; sa tentative de PR n'a eu aucun effet. Revue, merge et reste du parcours ne sont pas une preuve Claude. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; le scope release et le bridge lisent PAT-77 `accepted`. ADR/Epic, adversaires restants et Apple restent à faire. |
@@ -134,6 +134,11 @@ post-merge avant le gate de review qui autorise ce merge. Le signal d'escalade
 Foundry a retourné `failure_recorded` et aucune autorisation de correction ; le
 verdict est conservé, la PR reste ouverte et aucun succès post-merge n'est affirmé.
 Une note d'avancement P61Y-2 porte la contre-lecture et ce blocage.
+Claude Code/Sonnet a ensuite relu depuis ce checkout le binding `youtrack/P61Y`,
+P61Y-2 et le même scope release, sans mutation ; son premier essai a été refusé
+par les permissions Bash du host, puis la relance avec le répertoire du plugin
+autorisé et le seul outil `Bash(python3:*)` a abouti. La lecture confirme une
+preuve partielle de l'hôte Claude, pas un deuxième lifecycle.
 
 ## Exécution d'une cellule
 
