@@ -68,16 +68,59 @@ respectivement `blocked`, `unknown`, `not_observed` ou `blocked`; aucun ne devie
 `passed`. Les appels, gestes et quotas ne sont notés que lorsqu'ils sont observables.
 La recette n'autorise aucun effet App Store public.
 
-Le préflight Apple du 1er octobre 2026 a trouvé une clé App Store Connect locale
+Le préflight Apple initial du 1er octobre 2026 a trouvé une clé App Store Connect locale
 référencée par `ASC_KEY_ID`, `ASC_ISSUER_ID` et `ASC_KEY_PATH`, sans afficher son
 contenu. Une requête authentifiée en lecture seule sur la liste des apps a reçu
 HTTP 403 `FORBIDDEN.REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED` : Apple demande un accord
 en vigueur dans App Store Connect Business. Aucune app n'a donc été sélectionnée ou
 créée côté fournisseur, aucun workflow Xcode Cloud ni build TestFlight n'a été
 déclenché. Le checkout `SouffleApp` possède Fastlane et une identité de production ;
-il ne sert pas d'app de test pour cette recette. La frontière Apple reste `blocked`
+il ne sert pas d'app de test pour cette recette. La frontière Apple restait `blocked`
 jusqu'à la régularisation de l'accord par le titulaire du compte, suivie d'une
 nouvelle lecture du catalogue avant le choix d'une app synthétique dédiée.
+
+### Reprise Apple et témoin PAT-80 du 1er octobre 2026
+
+Le titulaire a accepté l’accord Apple ; la nouvelle lecture authentifiée du
+catalogue répond HTTP 200. Le blocage initial est levé. L’app synthétique
+`Foundry PAT61 Hello` (`6818259217`) utilise le bundle
+`com.patolabs.foundry.pat61.hello` (`7L87ZWS3J6`), séparé de SouffleApp.
+
+PAT-80 a livré sa préparation dans la PR de sable Linear #4 : head
+`ae31cc841f3a3437d34fd3b168aaea5de938d543`, review indépendante AC PASS / QUALITY
+mergeable, preuve `7cc0febcf65975a37c2994324671dd17f0ed1fe5b6384db032956ed8d6443495`,
+check-run `verify` success et test humain simulateur explicitement validé.
+Foundry a mergé sous `78dd8a22b2fb998f7cdeb86488fdf0783b975d01` et clôturé PAT-80
+avec AC 3/3. Le bridge V1 Linear relu classe PAT-77, PAT-78 et PAT-80 `accepted`,
+zéro `unfinished` et zéro `unavailable`. Les reviews bloquées antérieures restent
+conservées : canal alpha des PNG corrigé, puis ancien log fourni au reviewer
+remplacé par un rebuild sur le HEAD exact. Le contrôle reproductible vérifie les
+18 PNG source et les deux AppIcon compilées sans alpha.
+
+Xcode a créé le produit cloud `1d39219b-d119-43bb-a0af-d8e710f717a7` et son
+workflow `Default` (`17A39308-CBD5-48C3-83B8-1FDD1CBD6B56`). Ce workflow a d’abord
+été désactivé, puis borné à `main` et réactivé pour un premier build manuel de
+découverte du schéma, sans distribution. L’API n’a pas supprimé la condition de
+branche pour une valeur `null` : sa relecture a arrêté le premier préflight sans
+lancer de build ; une condition explicite `main` a ensuite été relue correctement.
+Le build #1 (`fe6420a0-9d83-43f2-aa1c-147d832b3f6f`) est créé ; sa relecture donne
+`COMPLETE/SUCCEEDED` et le commit source exact
+`78dd8a22b2fb998f7cdeb86488fdf0783b975d01`. Il a terminé à
+18:13:45 UTC. Ce build de découverte ne constitue aucune preuve TestFlight.
+
+Le workflow tagué `PAT61 Release` (`cec1b3eb-fb7e-4718-b7d3-1d7d6d5e4220`)
+est enregistré et relu : `tagStartCondition` avec préfixe `v`, aucune condition de
+branche, action `ARCHIVE`, schéma `FoundryHello`, audience
+`APP_STORE_ELIGIBLE`. L’interface relue montre la post-action TestFlight interne
+limitée au groupe `PAT61 qualification interne`
+(`86d551bd-ea34-4c7b-9523-e531d25ae9ef`), zéro membre. L’API du groupe renvoie
+`isInternalGroup=true` et `publicLinkEnabled=null` ; cette valeur n’est pas
+requalifiée en `false`. Le workflow `Default` est désactivé après le build de
+découverte. Aucun tag de release n’a été poussé.
+
+Aucune déclaration de chiffrement, soumission App Store ni validation TestFlight
+sur appareil réel n’est revendiquée. La frontière Apple est `in_progress` et
+aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 
 ## Matrice de preuve
 
