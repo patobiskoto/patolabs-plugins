@@ -381,3 +381,10 @@ une invitation et un seul testeur : le titulaire existant du compte. Aucun nouve
 compte, permission administrateur, groupe externe ou soumission publique.
 Le test physique installation/Hello World/fermeture complète/relance est demandé
 au mainteneur et reste en attente ; aucun PASS global ou de cellule n'en est déduit.
+
+
+Le mainteneur a ensuite répondu « c'est bon » à la procédure ciblée sur le build
+TestFlight `1.0 (2)` : installation sur iPhone physique, affichage Hello World,
+fermeture complète et relance sans crash. Le gate bêta du chemin Apple partagé
+est donc satisfait. Cela ne vaut ni soumission App Store ni PASS des six cellules,
+dont les étapes tracker/host restantes doivent toujours être démontrées.
