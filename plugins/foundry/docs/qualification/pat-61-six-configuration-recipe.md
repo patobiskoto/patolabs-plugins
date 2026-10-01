@@ -73,7 +73,7 @@ La recette n'autorise aucun effet App Store public.
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
 | YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `not_run` | PAT-59 a lu un périmètre release YouTrack réel ; P64Q est archivé. Ni l'un ni l'autre ne prouve ce parcours ni cet hôte. |
-| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 mergée avec CI et review ; ADR/Epic, adversaires et Apple restent à faire. |
+| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 mergée avec CI et review ; P61Y-2/PR #2 qualifie le mapping release mais sa review est bloquante, sans merge. ADR/Epic, adversaires et Apple restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a relu le binding et démarré PAT-77 par le CLI source ; sa tentative de PR n'a eu aucun effet. Revue, merge et reste du parcours ne sont pas une preuve Claude. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; le scope release et le bridge lisent PAT-77 `accepted`. ADR/Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
@@ -112,6 +112,28 @@ relue est `done`. Avant assignation, le milestone natif `PAT61 sandbox v1`
 dans `query changelog` et le bridge Ship-iOS. Après assignation de PAT-77 par Foundry,
 les deux lectures donnent un seul ticket `accepted`, zéro `unfinished` et zéro
 `unavailable`. Ce résultat teste le bridge du dépôt synthétique, pas TestFlight.
+
+Le témoin YouTrack P61Y-2 a ajouté au seul projet P61Y le champ natif `Milestone`
+(`189-129`), son bundle propre (`163-67`) et la valeur exacte `PAT61 sandbox v1`
+(`164-426`). Le premier essai de création d'issue a reçu HTTP 500 car P61Y ne
+possédait pas le champ `Estimate` demandé ; une relecture a confirmé l'absence
+d'issue, puis la création sans ce champ facultatif a donné la seule P61Y-2.
+`registry update` a publié le mapping avec les coordonnées natives relues. Avant
+assignation, `query changelog` et le bridge Ship-iOS retournaient un scope vide ;
+après assignation de P61Y-2, tous deux donnent `scope_count=1`,
+`counts.unfinished=1` et `release_id=164-426`. Le bridge transporte réellement
+`counts`, `categories` et `release_scope`, en plus des champs historiques `count`
+et `groups`.
+
+La PR YouTrack #2 a été ouverte via Foundry sur le head `5b1fd05c`, dont le
+check `verify` est vert. Sa review indépendante a produit une preuve bloquante
+`a78acdc1` : un finding AC2 prétendait à tort que le bridge omettait les champs
+ci-dessus, mais une exécution fraîche et le code du bridge le contredisent. Le
+finding AC3 est valide : l'AC synthétique exigeait le merge et le classement
+post-merge avant le gate de review qui autorise ce merge. Le signal d'escalade
+Foundry a retourné `failure_recorded` et aucune autorisation de correction ; le
+verdict est conservé, la PR reste ouverte et aucun succès post-merge n'est affirmé.
+Une note d'avancement P61Y-2 porte la contre-lecture et ce blocage.
 
 ## Exécution d'une cellule
 
