@@ -74,8 +74,8 @@ La recette n'autorise aucun effet App Store public.
 | --- | --- | --- | --- |
 | YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `not_run` | PAT-59 a lu un périmètre release YouTrack réel ; P64Q est archivé. Ni l'un ni l'autre ne prouve ce parcours ni cet hôte. |
 | YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 mergée avec CI et review ; ADR/Epic, adversaires et Apple restent à faire. |
-| Linear × Claude Code | nouveau dépôt et projet Linear synthétiques ; ne pas employer le projet PAT actif | `not_run` | le binding PAT/Linear actif est une observation de préflight, pas une recette de sable complète. |
-| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 mergée avec CI et review ; ADR/Epic, adversaires et Apple restent à faire. |
+| Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a relu le binding et démarré PAT-77 par le CLI source ; sa tentative de PR n'a eu aucun effet. Revue, merge et reste du parcours ne sont pas une preuve Claude. |
+| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; le scope release et le bridge lisent PAT-77 `accepted`. ADR/Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
 | GitHub Projects × Codex | P61G et dépôt privé de sable | `blocked` | P61G-1 existe, mais le readback `Project.items` reste vide après reprise bornée ; aucune création validée. |
 
@@ -96,6 +96,22 @@ ni ADR/Epic, ni tous les adversaires, ni le chemin Apple : les cellules restent
 consultable depuis l'Issue, mais `Project.items` reste vide ; le rejeu borné a échoué
 une seconde fois à `partial_create:item_readback`. Son intention locale est conservée,
 sans nouveau retry ni assertion de succès GitHub Projects.
+
+Le second témoin Linear, PAT-77, a d'abord laissé une issue native malgré un retour
+`Linear issue divergent after create; no retry` ; le corps relu ne gardait pas le saut
+de ligne terminal, sans que la cause exacte du conflit soit attestée. La relecture
+Foundry a retrouvé cette seule issue en `ready` ;
+aucune création n'a été rejouée. Claude Code a ensuite exécuté son `issue start` sur
+le checkout de sable. Son premier `openpr` a été refusé par le sandbox de lecture du
+host avant effet ; la tentative corrigée n'a lancé aucun processus Foundry et a été
+arrêtée après vérification qu'aucune PR ni transition n'existait. Le coordinateur a
+ouvert la PR #2 via Foundry, puis la review indépendante a lié la preuve
+`a5bdb9d4` au head `b087948a` et le gate CI a mergé `ecc85f44` (AC 3/3). L'issue
+relue est `done`. Avant assignation, le milestone natif `PAT61 sandbox v1`
+(`ea006a9b-8b02-47c8-9e96-9af4d73794bf`) donnait un scope explicitement vide
+dans `query changelog` et le bridge Ship-iOS. Après assignation de PAT-77 par Foundry,
+les deux lectures donnent un seul ticket `accepted`, zéro `unfinished` et zéro
+`unavailable`. Ce résultat teste le bridge du dépôt synthétique, pas TestFlight.
 
 ## Exécution d'une cellule
 
