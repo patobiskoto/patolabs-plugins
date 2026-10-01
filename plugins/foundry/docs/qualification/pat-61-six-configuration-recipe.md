@@ -126,8 +126,8 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
-| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `blocked` | P61Y-3/PR #3 a parcouru reprise, ouverture, review, CI et merge sous Claude en mode source (`1755a3d`) ; le démarrage a été fait par le coordinateur et le cache installé 0.9.0 reste incompatible avec le marqueur v2. Le scope YouTrack classe P61Y-3 `unavailable` ; Apple reste sans preuve. |
-| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 et P61Y-2/PR #2 mergées via Foundry avec CI et review ; le scope P61Y-2 passe de `unfinished` à `unavailable`, jamais à `accepted` sans reçu lifecycle exact YouTrack. ADR test créée/éditée ; lien ADR→issue refusé. Epic, adversaires et Apple restent à faire. |
+| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `blocked` | P61Y-3/PR #3 a parcouru reprise, ouverture, review, CI et merge sous Claude en mode source (`1755a3d`) ; le démarrage a été fait par le coordinateur et le cache installé 0.9.0 reste incompatible avec le marqueur v2. PAT-ADR-0009 est acceptée et PAT-82 est mergé, mais P61Y-3 reste historiquement `unavailable`; la parité installée, le démarrage Claude autonome et le parcours complet restent à prouver. |
+| YouTrack × Codex | P61Y et dépôt privé de sable | `blocked` | P61Y-1/PR #1 et P61Y-2/PR #2 ont été mergées via Foundry avec CI et review. PAT-82 ajoute P61Y-4/PR #4, reçu neuf `accepted`; P61Y-2 et P61Y-3 restent `unavailable` sans backfill. Le scope ne peut donc pas se clore; Epic, parcours Codex complet et preuve Apple de la cellule restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 a corrigé ce défaut sans réécrire l'incident. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
@@ -342,15 +342,18 @@ personnel #9 (vide) et par les variantes GraphQL `archivedStates` et recherche
 (vides), tandis que le node de l'item `PVTI_lAHOABroCc4BlTfizg93U2A` garde le bon
 Project, la bonne Issue et `isArchived=false`. Dans la même session API, le Project
 personnel de qualification #7 liste 14 items : l'accès général à `ProjectV2.items`
-fonctionne. La divergence du Project #9 reste inexpliquée, pas résolue.
+fonctionne. La divergence du Project #9 reste inexpliquée, pas résolue. La relecture
+du jour maintient `totalCount=0`, l'item non archivé et l'Issue #1 `OPEN`. Le budget
+de cette tentative est épuisé : une décision humaine sur un unique sandbox de reprise
+isolé est requise avant tout nouvel essai, et n'est pas présumée.
 
 ## Actions live réservées au coordinateur
 
 Le coordinateur doit terminer la parité source/distribution et la vérification de la
-chaîne de hooks dans chaque checkout, exécuter les six chemins et leurs tests adverses,
-puis effectuer la validation TestFlight humaine de l'application de test. Les dépôts
-et projets synthétiques réservés et les deux témoins de PR ci-dessus sont seulement des
-étapes de ce parcours ; aucune cellule n'est encore qualifiée comme passée.
+chaîne de hooks dans chaque checkout, puis exécuter les six chemins et leurs tests
+adverses. La validation TestFlight humaine commune est déjà consignée; les dépôts et
+projets synthétiques réservés et les témoins de PR ci-dessus restent seulement des
+étapes de ce parcours. Aucune cellule n'est encore qualifiée comme passée.
 
 
 ## Suivi Apple après PAT-80 — PAT-81
@@ -406,3 +409,24 @@ PAT-ADR-0009 pour qualifier un reçu décisionnel dans les commentaires natifs
 YouTrack. Aucun code n'est changé avant acceptation explicite, aucun reçu
 historique n'est fabriqué. Les deux cellules YouTrack deviennent `blocked`.
 PAT-61 reste in-progress ; la frontière Apple validée n'efface pas ces blocages.
+
+## Reprise après PAT-82
+
+PAT-ADR-0009 est désormais `accepted`, et PAT-82 est intégré au SHA
+`f7fb4e14f272de78d7f848b3c23e4a963a623087`. Son témoin synthétique P61Y-4 a été
+mergé par Foundry (PR #4, SHA `7ff9453a9c067d290333dcf000fa8d0d60f07ac9`) avec
+un reçu de livraison YouTrack frais : les relectures du changelog et du bridge
+convergent vers `accepted=1`, `unfinished=0`, `unavailable=2` pour trois items.
+PAT-82 est `done` (4/4) : la review finale `54ce063d8ddd5c67a83663ab8ecfcabd21806bf91334613324a40ad700544f38`,
+trois CI réussies et la validation humaine ont précédé son merge. La correction
+`3b45f76` conserve le refus de tout backfill terminal historique avant intention et
+POST.
+Cette observation prouve la nouvelle capacité pour P61Y-4 seulement. P61Y-2 et
+P61Y-3 restent `unavailable`, conformément au refus explicite de backfill des
+livraisons historiques. Le scope P61Y ne peut donc toujours pas être clôturé.
+
+La capacité de reçu n'est plus un blocage architectural ou d'implémentation de
+PAT-61. Les cellules YouTrack restent toutefois `blocked` faute de parcours complets
+et, pour Claude Code, faute de parité de distribution installée et de démarrage
+autonome. Les autres cellules conservent leurs états observés; aucune des six ne
+devient `passed`.
