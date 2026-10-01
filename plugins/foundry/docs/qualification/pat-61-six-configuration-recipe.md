@@ -36,6 +36,12 @@ encore un parcours Claude complet. En outre, depuis ce même dépôt Linear, un 
 Codex avec `FOUNDRY_TRACKER=youtrack` et `PROJECT_REPO` pointant vers le dépôt YouTrack
 a quand même relu PAT-74 dans PAT/Linear : ce témoin couvre seulement la contradiction
 d'environnement, pas toute la matrice adverse.
+Deux autres lectures dans la même session Codex ont résolu PAT-74 dans PAT/Linear et
+P61Y-1 dans P61Y/YouTrack depuis leurs checkouts respectifs. La lecture de PAT-74
+depuis le checkout YouTrack a échoué `issue unavailable`; depuis le dépôt principal
+PAT/Linear, elle a échoué `issue_outside_binding`, car PAT-74 appartient au projet
+Linear de sable. Ces lectures étayent l'isolation de binding et de projet, sans prouver
+les cas de mutation, de rollback ou de credentials perdus.
 
 Une cellule reçoit un dépôt, projet tracker, credentials et application iOS de test
 explicitement synthétiques. Les deux hôtes peuvent partager un même sandbox fournisseur
