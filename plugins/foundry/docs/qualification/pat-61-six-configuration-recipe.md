@@ -49,9 +49,9 @@ résultat est borné à l'opération observée ; les cases non exécutées reste
 | Cas | Observation | Limite |
 | --- | --- | --- |
 | Changement de dépôt, même session Codex | PAT-74 et P61Y-1 résolus chacun dans leur projet ; PAT-74 refusé depuis P61Y | Lectures seules, aucun write croisé tenté |
-| Nom/numéro proche | PAT-74 refusé par `issue_outside_binding` depuis le projet PAT principal de même équipe | Une seule collision inter-projets vérifiée |
+| Nom/numéro proche | PAT-74 refusé par `issue_outside_binding` depuis le projet PAT principal de même équipe ; GHQUAL-1 (Issue #1 réelle d'un autre dépôt) refusée depuis P61G par `invalid_issue_coordinate` avant lecture native | Deux collisions de coordonnées en lecture seule, aucune mutation croisée |
 | ADR d'un autre produit | `query adr PAT-ADR-0006` depuis le sandbox Linear : `ADR introuvable`, index local vide | Pas d'écriture ADR tentée |
-| Configuration globale contradictoire | `FOUNDRY_TRACKER=youtrack` et `PROJECT_REPO` YouTrack depuis le checkout Linear résolvent encore PAT-74 dans PAT/Linear | Lecture seule |
+| Configuration globale contradictoire | `FOUNDRY_TRACKER=youtrack` et `PROJECT_REPO` YouTrack depuis le checkout Linear résolvent encore PAT-74 dans PAT/Linear ; `FOUNDRY_TRACKER=linear` et `PROJECT_REPO=patolabs-plugins` depuis P61G sélectionnent encore `ghprojects/P61G` | Lectures seules sur deux bindings, aucune écriture |
 | Credentials du tracker actif perdus | `FOUNDRY_RUNTIME_CONFIG_ISOLATED=1` sans token en environnement : `Config manquante : LINEAR_API_TOKEN`, aucune sortie d'issue | Isolation contrôlée du processus, pas révocation du trousseau |
 | ADR déclaré indisponible | Non exécuté | Requiert une fixture ADR déclarée et isolée |
 | Dérive du registre/marqueur | Dans une copie Git locale du sandbox Linear, modifier seulement `tracker` invalide le digest du marqueur et refuse `registry selection --require-v1` ; le hook PAT-42 refuse `gh pr create`, `gh pr merge` et `git push origin main`, mais laisse `git status` passer | Commandes dangereuses soumises au hook, jamais exécutées ; aucun provider write |
