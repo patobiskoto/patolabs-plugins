@@ -40,7 +40,7 @@
       "tracker": "youtrack",
       "host": "codex",
       "status": "in_progress",
-      "partial_evidence": "P61Y-1 sandbox PR #1 head b47241031bbbbd0c96f3db4629ec59e40989b7c7 merged afe441dcccc2ddd040c524b16f329fe2f772e533; P61Y-2 release mapping bundle 163-67/value 164-426 and bridge unfinished=1 readback; PR #2 head 5b1fd05cdde8dd31d6599f358c73c0bf09e15adb has green verify but blocked review proof a78acdc194f85396f65f2a74c589f5213591c3afe961cad9d69e2b877ab9e0fe, no merge or post-merge acceptance; synthetic proposed ADR P61Y-ADR-0001 created/edited, issue link correctly refused as unsupported; full journey and Apple path absent"
+      "partial_evidence": "P61Y-1 sandbox PR #1 head b47241031bbbbd0c96f3db4629ec59e40989b7c7 merged afe441dcccc2ddd040c524b16f329fe2f772e533; P61Y-2 release mapping bundle 163-67/value 164-426 and pre-merge bridge unfinished=1 readback; prior PR #2 review proof a78acdc194f85396f65f2a74c589f5213591c3afe961cad9d69e2b877ab9e0fe remains blocked history; human-authorized correction head 3dc341959c250f7b1db3902a7fb794c716939008 has green verify and mergeable proof a2f9fe2108d01d574d2b4a6ce52c4ac0585798230f9dd2bc8ed74069ef0c779f; Foundry merged PR #2 at 68408d1f426e30284d034727389d0b18ad3fac2f and issue is done AC 3/3; fresh changelog and bridge classify P61Y-2 unavailable, not accepted, because YouTrack has no exact delivery receipt; synthetic proposed ADR P61Y-ADR-0001 created/edited, issue link correctly refused as unsupported; full journey and Apple path absent"
     },
     {
       "id": "linear-claude",

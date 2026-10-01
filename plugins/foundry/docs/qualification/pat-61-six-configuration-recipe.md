@@ -73,7 +73,7 @@ La recette n'autorise aucun effet App Store public.
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
 | YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `in_progress` | Claude Code/Sonnet a relu via Foundry le binding P61Y, P61Y-2 en review et le scope `unfinished=1` ; aucun lifecycle complet ni effet Apple sur cet hôte. |
-| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 mergée avec CI et review ; P61Y-2/PR #2 qualifie le mapping release mais sa review est bloquante, sans merge ; ADR test créée/éditée. Lien ADR→issue refusé par capacité indisponible ; Epic, adversaires et Apple restent à faire. |
+| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 et P61Y-2/PR #2 mergées via Foundry avec CI et review ; le scope P61Y-2 passe de `unfinished` à `unavailable`, jamais à `accepted` sans reçu lifecycle exact YouTrack. ADR test créée/éditée ; lien ADR→issue refusé. Epic, adversaires et Apple restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a relu le binding et démarré PAT-77 par le CLI source ; sa tentative de PR n'a eu aucun effet. Revue, merge et reste du parcours ne sont pas une preuve Claude. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
@@ -160,6 +160,23 @@ Une session Claude distincte, avec les deux checkouts de sable autorisés, a ens
 lu successivement `linear/PAT` et `youtrack/P61Y` avec des cwd explicites ; PAT-74
 était `done`/accepté et P61Y-2 `review`/acceptation inconnue. Elle couvre le
 changement de dépôt dans un même hôte, toujours sans mutation ni lifecycle complet.
+
+Après autorisation humaine d'une reprise bornée, Foundry a enregistré l'arrêt
+`strategy_decision` de P61Y-2 à la génération 1 puis sa reprise
+`manual_retry_approved` avec un crédit. L'AC3 a été reformulé pour ne vérifier
+que la review indépendante et la CI avant merge ; le contrôle du scope reste une
+étape de clôture post-merge. Le README de la branche épingle le code Ship-IOS
+réellement utilisé, au SHA `dad098b2a260d07e31de93993343f854cafd4ab4`.
+La review du nouveau head `3dc341959c250f7b1db3902a7fb794c716939008`
+a passé les trois AC et la qualité (preuve `a2f9fe2108d01d574d2b4a6ce52c4ac0585798230f9dd2bc8ed74069ef0c779f`),
+le check `verify` était vert sur ce SHA, et Foundry a mergé la PR #2 sous
+`68408d1f426e30284d034727389d0b18ad3fac2f`. P61Y-2 se relit `done`, AC 3/3.
+Les relectures fraîches du changelog et du bridge donnent toutes deux
+`scope_count=1`, `accepted=0`, `unavailable=1` pour P61Y-2. C'est le résultat
+fail-closed documenté par le contrat de release YouTrack : l'état natif `done` et
+la PR mergée restent des observations tant que l'adaptateur n'expose pas de reçu
+de livraison exact. La note d'issue conserve cette divergence ; aucun `accepted`
+post-merge n'est revendiqué et la cellule n'est pas passée.
 
 Dans P61Y, `adr create` a créé le témoin non décisionnel `P61Y-ADR-0001`
 (`P61Y-A-1`, `proposed`) ; `adr edit` a remplacé la phrase version 1 par la
