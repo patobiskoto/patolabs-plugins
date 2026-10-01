@@ -256,7 +256,8 @@ relecture. La source P64Q est archivée et refuse une nouvelle création; le bin
 P64G est actif. Le sandbox GHQUAL déjà enregistré n'a pas été réaffecté. Les autres
 paires restent prouvées sur faux transports; un projet Linear cible et ses mappings
 complets seraient nécessaires pour une recette live supplémentaire. La PR sandbox #3
-prouve l'ouverture du parcours sur la cible; le merge n'est pas encore revendiqué.
+a été mergée via Foundry (`38c52c2f348be11f2ccf5b687d9841a8a188c3f1`) ;
+P64G-1 est `done` avec ses deux critères d'acceptation prouvés.
 
 Cette procédure reste le modèle S1-S6 de PAT-ADR-0006. Le verrou et le manifeste sont
 locaux; ils n'offrent ni CAS provider ni exclusion distribuée. Une écriture externe
