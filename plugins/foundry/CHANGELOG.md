@@ -2,7 +2,22 @@
 
 ## Unreleased
 
+### Added
+- The qualified private personal GitHub Projects adapter now carries Foundry-owned
+  in-progress/review/done and acceptance receipts bound to the exact repository,
+  Project, Issue, item and PR generation. A live private sandbox PR passed independent
+  review and exact-SHA CI before merge; native auto-close alone grants no authority
+  (PAT-67).
+- `query changelog <release>` now emits `foundry.release-scope.v1` from exact
+  repository-scoped release mappings on YouTrack, Linear and GitHub Projects. The
+  payload keeps Ship-iOS's `milestone`/`count`/`groups` projection and adds factual
+  accepted, deviated, unfinished and unavailable classes; a native Done or PR mention
+  alone is never delivery proof (PAT-59).
+
 ### Fixed
+- Proof-bound `openpr` and `merge` now pass the original predecessor state to
+  bounded-state adapters, so a GitHub Projects PR can resume after a partial
+  transition without weakening the common transition guard (PAT-67).
 - YouTrack now proves a targeted issue or ADR's native project coordinate before every
   write and rejects it when any alias tombstones that provider project (PAT-43). The
   guard runs before milestone setup, command links, body writes, comments, and

@@ -311,3 +311,160 @@ Contrairement à la création, les champs existants n’ont pas de journal durab
 d’intention : une relecture indisponible laisse un effet inconnu et aucun retry
 automatique. Une invocation ultérieure explicite repart d’une lecture fraîche.
 La fenêtre S1→S2 résiduelle de PAT-ADR-0006 reste assumée.
+
+### Recette PAT-58 : cycle ADR natif et source exacte
+
+La recette privée du 27 septembre 2026 utilise le port `Tracker` et les opérations
+communes `write`, avec le binding sandbox `GHQUAL`. Trois supports synthétiques
+non décisionnels ont été créés : `GHQUAL-ADR-0001` (issue 8),
+`GHQUAL-ADR-0002` (issue 9), `GHQUAL-ADR-0003` (issue 10). Le cycle observé est :
+
+- issue 8 : proposed → accepted, édition versionnée UTF-8 exacte, lien vers
+  `GHQUAL-5`, puis superseded par l'ADR de l'issue 9 ;
+- issue 9 : proposed → accepted, avec relation réciproque `supersedes` ;
+- issue 10 : proposed → accepted → deprecated.
+
+Le port relit la source, le statut et la chaîne complète des versions. Le GET
+natif GitHub au format `application/vnd.github.full+json` fournit la source
+`body` exacte et le rendu `body_html` : titre, emphase, code inline, tableau,
+lien et code clôturé sont effectivement rendus. Les caractères `é`, `œ`, `漢字`
+et les chevrons littéraux du code restent présents. Il n'y a ni réécriture de
+source pour compenser l'affichage, ni qualification générale de tout Markdown
+possible à partir de cette seule recette.
+
+Lors de chaque création, l'ajout au Project a été momentanément invisible dans
+la lecture suivante. Foundry a explicitement refusé `adr:item_effect_unknown`.
+Une nouvelle invocation n'a repris que le candidat natif exact et unique déjà
+observé, au moyen du journal d'intention conservé : aucune seconde issue n'a
+été créée. Il s'agit d'un retard de visibilité observé, pas d'une panne GitHub
+ni d'une perte de réponse artificiellement présentée comme réelle. Les tests
+de transport couvrent séparément les pertes de réponse, zéro/un/deux candidats,
+les préconditions périmées et les altérations.
+
+Les trois supports sont absents du backlog de livraison renvoyé par le port.
+La relecture native de la vue `PAT-65 qualification — delivery Kanban` confirme
+`BOARD_LAYOUT` et le filtre `-label:foundry:adr` ; elle qualifie la configuration,
+pas une inspection visuelle des cartes. L'issue expérimentale 3 conserve
+exactement son titre, son corps, ses labels et les IDs/corps de ses commentaires.
+Le marqueur tracker Linear de patolabs-plugins reste byte-identique.
+
+Ces observations de recette ne sont pas des receipts Foundry. La sérialisation
+d'intention est locale à une machine ; la supersession utilise deux commentaires
+et n'est pas atomique. Le risque résiduel S1→S2 est assumé conformément à
+PAT-ADR-0006, sans CAS ni exclusion des écritures concurrentes. Les propriétés
+non concernées sont conservées lorsque l'API permet des écritures ciblées.
+
+### Qualification de l'engagement de tête après la review PAT-58
+
+Le 30 septembre 2026, la review indépendante a relevé qu'une suppression du
+dernier commentaire laissait une chaîne préfixe valide. Avant correction native,
+les trois supports synthétiques 8, 9 et 10 ont été relus contre les snapshots
+conservés : mêmes IDs et corps de chaque commentaire, séquences contiguës,
+digests prédécesseurs exacts, titres et sources courantes inchangés. Le binding
+privé `GHQUAL` a été vérifié. Une écriture ciblée du seul titre de chaque Issue a
+ensuite engagé sa séquence, l'ID du dernier commentaire et son digest complet.
+La relecture du corpus a retrouvé les trois statuts attendus : `superseded`,
+`accepted`, `deprecated`. Le titre et le corps de l'ancien support expérimental
+3 sont restés inchangés.
+
+Un quatrième support synthétique, `GHQUAL-ADR-0004` (issue 11), a exercé la
+création puis l'acceptation avec ce format. Comme dans la première recette,
+l'ajout de l'item au Project a d'abord été momentanément invisible : l'opération
+a refusé `adr:item_effect_unknown`. Une lecture ultérieure a retrouvé l'unique
+Issue 11 et son item, puis la reprise de la même intention a terminé la version
+initiale sans créer d'autre Issue. Le passage à `accepted` a ajouté un seul
+commentaire et avancé l'engagement de tête ; le port a relu deux commentaires,
+le titre engagé et le statut `accepted`. Les tests de transport vérifient la
+détection d'une tête supprimée ou modifiée et la reprise d'un commentaire dont
+la mise à jour de titre a été interrompue. Ces essais n'attestent pas une
+résistance à une modification coordonnée des commentaires et du titre.
+
+La correction de la review suivante a qualifié la corroboration entre l'inventaire
+exhaustif des Issues du dépôt et les items du Project. Sur le support synthétique
+`GHQUAL-ADR-0004`, le retrait ciblé du label `foundry:adr` a fait refuser la
+lecture du corpus avec `reserved support label missing`. Le label a été rétabli
+une seule fois ; le titre engagé, le corps et le statut `accepted` ont été relus
+inchangés. Le retrait d'un item Project, les réponses 403/404 avec empreinte
+restante et les faux titres sans type ADR sont couverts par les tests de transport,
+pas par une mutation native de cette recette.
+
+Un cinquième support synthétique, `GHQUAL-ADR-0012` (issue 12), a qualifié la
+nouvelle allocation : l'ID reprend le numéro natif GitHub, sans réutiliser un ID
+après disparition complète d'un support. L'ajout au Project a encore été
+momentanément invisible ; après observation de l'unique Issue 12 et de son item,
+la même intention a repris sans second POST Issue. Un nouveau processus a rejoué
+la création terminée : même ID, même commentaire initial, même source et même
+engagement de tête. La suppression totale sans Issue ni item attribuable demeure
+indétectable à la lecture ; l'allocation prévient seulement la réutilisation de
+son ID. Les anciens couples `GHQUAL-ADR-0001`/issue 8 à
+`GHQUAL-ADR-0004`/issue 11 restent lisibles.
+
+## Qualification PAT-69 : clôture Epic bornée
+
+Le 30 septembre 2026, l'identité et le périmètre ont été relus avant tout effet :
+compte `patobiskoto` (id `1763337`), Project personnel privé nº 7
+`PVT_kwHOABroCc4Bk0U-`, dépôt canonique privé
+`patobiskoto/foundry-v1-ghprojects-sandbox` (id `1390303610`, node
+`R_kgDOUt5Zeg`) et catalogue normalisé complet des champs State, Type, Estimate
+et Priority. Le binding `GHQUAL` désigne exactement ces coordonnées.
+
+La création commune a produit une seule Issue parent, `GHQUAL-15` (issue native
+`5644346844`, node `I_kwDOUt5Zes8AAAABUG3l3A`), puis a refusé
+`partial_create:item_readback` pendant le délai de visibilité de son item
+`PVTI_lAHOABroCc4Bk0U-zg9okr0`. La reprise explicite de la même intention
+`8175e1f937a1b8b99b7e30029664693a3f82642940c1b64b44763b9b357343b5`
+a retrouvé l'unique Issue et l'unique item, puis a projeté Ready, Epic, P2 et
+Estimate 1 sans second POST Issue.
+
+Le lien natif parent-enfant vers `GHQUAL-13` a été appliqué une fois. La première
+relecture locale l'a refusé parce que la version opaque de l'Epic, dérivée de son
+snapshot complet, avait changé avec la relation attendue. Aucun second POST de
+relation n'a été envoyé. La correction exclut seulement cette version dérivée de
+la comparaison des propriétés non visées ; elle conserve la vérification native
+réciproque et compare toujours titre, corps, labels, autres relations et champs
+Project. Les tests provoquent séparément une dérive de chacune de ces propriétés
+et vérifient son refus.
+
+Avant clôture, la relecture complète a observé `GHQUAL-15` Ready, Epic, AC 0/1,
+sans PR, version opaque `870381632526250840`, avec pour unique enfant requis
+`GHQUAL-13`. Celui-ci était Done, AC 2/2, version
+`704908415487686180`, et portait la preuve d'acceptation authentifiée
+`53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db`.
+Le graphe de dépendances était vide et le digest de validation parent était
+`f1b22c38d325c02949de6d0b2d1e62f9812b88f64589b0460decec7b936157e8`.
+
+L'appel commun `close_epic` avec verdict humain `accepted` a ajouté l'unique
+commentaire d'audit `5908584673`, projeté une seule fois `State=done`, puis relu
+le graphe complet. Son reçu déterministe est
+`github:epic:758ff6bb0f7ecd04c4edea8f743360fa65d818662a39a051048ce7f484dfe23a`
+et la version parent fermée est `870381632526250841`. Titre, corps, labels,
+relation enfant, Type Epic, Priority P2 et Estimate 1 sont restés inchangés.
+Un nouveau processus, avec un répertoire d'état vide, a retrouvé ce même reçu et
+l'a rejoué avec `replayed=true` : toujours un commentaire et aucune seconde
+projection State.
+
+La reprise d'un POST d'audit à réponse perdue est également bornée par une
+intention locale durable, indexée par le Project et l'Epic et portant l'identité
+exacte du premier audit. Si cet audit reste invisible, un rejeu avec un nouveau
+timestamp ou nonce refuse tout second POST. Les tests de transport couvrent ce
+cas ; la sonde live ci-dessus a qualifié le rejeu d'un audit visible, et non
+cette injection de réponse perdue. L'intention locale ne constitue ni un CAS
+fournisseur, ni une garantie d'exactement une écriture entre machines ; le risque
+résiduel S1→S2 de PAT-ADR-0006 reste assumé.
+
+Le parcours d'adaptateur requalifie en outre l'identité live du Project privé et
+du dépôt canonique lié séparément avant chacun des deux effets fournisseur. Les
+tests de transport détachent le dépôt juste avant le commentaire, puis juste avant
+State : l'effet concerné est refusé dans les deux cas. Après un refus à la seconde
+borne, une reprise requalifiée réutilise le commentaire existant et termine State
+sans second POST commentaire. Cette défense est un préflight borné ; elle ne ferme
+pas la fenêtre résiduelle entre sa lecture et l'écriture.
+
+Cette recette qualifie le parcours borné exact de PAT-ADR-0006, pas une
+transaction GitHub. Le digest de snapshot détecte une dérive observée mais ne
+sert jamais de précondition fournisseur. Une écriture concurrente externe entre
+la dernière lecture S1 et l'écriture ciblée S2 peut encore être écrasée et
+échapper à la détection. Il n'existe ni CAS commun à l'Issue et à l'item Project,
+ni verrou distribué, ni exclusion d'un autre writer. Les autres propriétaires,
+Projects d'organisation, dépôts publics ou détachés et catalogues de champs
+différents restent hors de cette qualification.

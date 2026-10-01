@@ -47,6 +47,11 @@ never from mutable display names. A create using an unmapped value is refused an
 adapter never searches by name. Keys in the optional maps cannot be URL- or
 credential-shaped, and every map value must be a UUID.
 
+`milestone_ids` is also the release mapping consumed by the portable
+[`foundry.release-scope.v1`](release-scope.md) read. `registry update` verifies every
+mapped ProjectMilestone id and exact name against the bound product before publishing
+the changed marker; `query changelog` filters membership by that native id.
+
 `registry register` receives scalar extras as `k=v`. Pass each required map as a
 shell-quoted JSON object. For Linear, the command rejects before writing unless the
 project ID, team ID, seven exact state IDs, and four exact type-label IDs are UUIDs and
@@ -129,7 +134,7 @@ synchronization remains explicitly unavailable; V1 AC authority is the append-on
 projection. Lifecycle `in-progress`/`review`/`done` also remains append-only.
 
 Unsupported capabilities fail explicitly with typed errors: native acceptance-checkbox
-replacement, atomic audited non-code Epic closure, project provisioning, and free-form
+replacement, provider-atomic non-code Epic closure, project provisioning, and free-form
 provider-native search queries. ADRs are stored as project-scoped Linear Documents, never substituted by
 a Git catalogue or YouTrack read. A document has a deterministic UUIDv4 client ID for its
 `(project, ADR, version)` slot, a closed metadata header and body/content digests. Every
@@ -629,7 +634,9 @@ or replaces Foundry's review, test and CI gates.
   unrelated labels where Linear permits it; an external S1→S2 write can still be
   overwritten, so this is neither CAS nor exclusion.
 - Unsupported provider capability: replacement of native acceptance checkboxes or a PR
-  field, plus atomic audited Epic closure. Native AC completion instead comes from the
+  field, plus provider-atomic Epic closure. PAT-69 supplies bounded Epic closure with a
+  deterministic human-verdict audit tied to the Epic's exact validation text and the
+  accepted child/dependency graph. Native code-Issue AC completion comes from the
   proof-bound append-only projection; the unsupported writes remain typed refusals.
 
 ## GitHub merge automation interlock
@@ -701,8 +708,9 @@ Linear supplies no immutable append log; the next write probes its deterministic
 ID but an ordinary read cannot prove that a row was deleted. The marker hash detects
 modification but is not a Foundry signature: the workspace's Linear authorization remains
 the trust boundary. Linear permits comment update/deletion, so “append-only” describes
-Foundry's write discipline, not provider-enforced immutability. Epic closure remains
-unavailable because it requires a provider-atomic parent/child audit.
+Foundry's write discipline, not provider-enforced immutability. Non-code Epic closure
+uses PAT-ADR-0006 bounded detection: an exact audit and one targeted parent State write,
+with the residual S1→S2 race explicitly retained; it is not provider-atomic.
 
 The provider implementation was first proven without activating a real workspace.
 FOUNDRY-159 then activated `github.com/patobiskoto/patolabs-plugins` on Linear after a

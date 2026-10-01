@@ -33,6 +33,47 @@ def check(label, ok, detail=""):
     return ok
 
 
+def registered_project_diagnostic(tracker, project):
+    """Read one registry project without weakening checkout authority.
+
+    GitHub Projects deliberately refuses ``search`` for a project other than the
+    current checkout binding.  Doctor can still verify that such a registry entry
+    names a qualified provider project; the issue count remains explicitly
+    unavailable instead of being reported as an invalid binding.
+    """
+    identity_verified = False
+    if tracker.name == "ghprojects":
+        identity_verified = tracker.verify_project_identity(project) is True
+        if not identity_verified:
+            return {
+                "ok": False,
+                "status": "invalid_identity",
+                "detail": "identité provider invalide",
+            }
+    if identity_verified:
+        from foundry.trackers.ghprojects import GitHubProjectsTrackerError
+
+        try:
+            count = len(tracker.search(project))
+        except GitHubProjectsTrackerError as exc:
+            if (exc.operation, exc.reason) != ("binding", "foreign_project_binding"):
+                raise
+            return {
+                "ok": True,
+                "status": "issue_count_unavailable",
+                "detail": (
+                    "identité vérifiée · décompte issues indisponible "
+                    "(foreign_project_binding)"
+                ),
+            }
+    else:
+        count = len(tracker.search(project))
+    detail = f"{count} issues"
+    if identity_verified:
+        detail = f"identité vérifiée · {detail}"
+    return {"ok": True, "status": "readable", "detail": detail}
+
+
 # Directories the pre-push hook is known to live in: ``.githooks`` is where Foundry's
 # own belt-and-braces instructions (README.md) tell a *consumer* repo to point
 # ``core.hooksPath`` — the hook is copied there. ``plugins/foundry/.githooks`` is where
@@ -488,8 +529,14 @@ def main(argv=None):
             try:
                 from foundry.models import Project
                 extra = {k: v for k, v in e.items() if k not in ("key", "id")}
-                n = len(tr.search(Project(key=key, id=project_id, extra=extra)))
-                check(f"  {key} ({repos})", True, f"{n} issues")
+                diagnostic = registered_project_diagnostic(
+                    tr, Project(key=key, id=project_id, extra=extra),
+                )
+                check(
+                    f"  {key} ({repos})",
+                    diagnostic["ok"],
+                    diagnostic["detail"],
+                )
             except Exception as ex:
                 check(f"  {key} ({repos})", False, str(ex)[:70])
     except (SystemExit, Exception) as e:

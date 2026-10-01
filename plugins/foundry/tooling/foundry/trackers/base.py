@@ -8,6 +8,7 @@ by writing one subclass — the query/write tiers and the skills never change.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from copy import deepcopy
 
 from foundry.models import (
     Adr,
@@ -15,6 +16,7 @@ from foundry.models import (
     EpicClosureReceipt,
     Issue,
     Project,
+    ReleaseScope,
     TransitionContext,
 )
 
@@ -70,6 +72,24 @@ class TrackerConflictError(RuntimeError):
     """A provider version/body changed before a bounded tracker mutation."""
 
 
+def migration_source_only_issue_refs(value: object) -> list[str]:
+    """Validate exact issue coordinates retained without a migrated target issue."""
+    if (
+        not isinstance(value, list)
+        or any(
+            not isinstance(ref, str)
+            or len(ref.split(":", 2)) != 3
+            or ref.split(":", 2)[0] not in {"youtrack", "linear", "ghprojects"}
+            or ref.split(":", 2)[1] != "issue"
+            or not ref.split(":", 2)[2]
+            for ref in value
+        )
+        or value != sorted(set(value))
+    ):
+        raise TrackerConflictError("références issues source de migration invalides")
+    return value
+
+
 class TrackerCapabilityUnavailableError(RuntimeError):
     """The active tracker cannot safely provide one explicitly named capability."""
 
@@ -77,6 +97,14 @@ class TrackerCapabilityUnavailableError(RuntimeError):
         super().__init__(f"capability unavailable: {tracker}.{capability}")
         self.tracker = tracker
         self.capability = capability
+
+
+class ReleaseScopeUnavailableError(RuntimeError):
+    """An exact release coordinate is absent, unmapped, inaccessible or invalid."""
+
+    def __init__(self, tracker: str, release: str, reason: str):
+        super().__init__(f"release scope unavailable: {tracker}:{release}:{reason}")
+        self.tracker, self.release, self.reason = tracker, release, reason
 
 
 class EpicClosureUnavailableError(RuntimeError):
@@ -98,7 +126,9 @@ class Tracker(ABC):
     requires_mutation_binding: bool = False
     acceptance_sync_supported: bool = False
     epic_closure_supported: bool = False
-    epic_closure_supported: bool = False
+    # PAT-ADR-0006's bounded S1-S5 closure.  This is deliberately distinct from
+    # the DevHub provider transaction advertised by ``epic_closure_supported``.
+    bounded_epic_closure_supported: bool = False
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
     epic_subgraph_supported: bool = False
@@ -106,6 +136,53 @@ class Tracker(ABC):
     acceptance_proof_projection_supported: bool = False
     acceptance_override_projection_supported: bool = False
     cockpit_evidence_projection_supported: bool = False
+
+    # PAT-64 migration is deliberately a separate port.  ``create_issue`` is
+    # not an import primitive: several providers generate a fresh client id on
+    # every call and therefore cannot safely be replayed by an orchestrator.
+    # Adapters opt in only when they can keep and look up the source coordinate.
+    migration_supported_attributes: frozenset[str] = frozenset()
+
+    def migration_preflight(
+        self, project: Project, records: tuple[dict, ...],
+    ) -> dict:
+        """Qualify the target provenance profile before the first provider effect."""
+        del project, records
+        raise TrackerCapabilityUnavailableError(self.name, "migration_provenance_profile")
+
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        """Describe source values this target cannot reproduce exactly.
+
+        Attribute names advertised by ``migration_supported_attributes`` still need
+        value-level qualification.  Returning an exception keeps the source value in
+        the immutable manifest while authorizing the target adapter to omit or replace
+        only that named value.  The default assumes every advertised value is exact.
+        """
+        del project, snapshot
+        return {}
+
+    def migration_export_adrs(self, project: Project) -> list[dict]:
+        """Return ADR source bytes plus relation knowledge available at the provider."""
+        return [
+            {
+                "adr": adr,
+                "relations": {
+                    "supersedes": "unknown",
+                    "superseded_by": "unknown",
+                    "issues": "unknown",
+                },
+                "source_created": None,
+                "source_updated": None,
+            }
+            for adr in self.list_adrs(project)
+        ]
+
+    def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
+        """Read one explicitly mapped provider release without approximate discovery."""
+        del project
+        raise ReleaseScopeUnavailableError(self.name, release, "unsupported")
 
     # --- optional read-only graph projection -----------------------------
     def get_epic_subgraph(
@@ -316,12 +393,12 @@ class Tracker(ABC):
         project: Project,
         receipt: EpicClosureReceipt,
     ) -> EpicClosureOutcome:
-        """Atomically verify ``receipt``, close its parent and audit the result.
+        """Verify ``receipt``, close its parent and audit the result.
 
-        A supporting provider must lock the parent graph, compare the exact parent
-        version/type/AC snapshot and the complete required-child id/version/state set,
-        then persist both ``done`` and a replayable audit receipt in one transaction.
-        It must never delegate to the ordinary code-issue ``done`` transition.
+        DevHub atomically locks the graph and persists state plus audit.  A V1
+        provider may instead implement PAT-ADR-0006's explicitly weaker bounded
+        read/one-parent-write/append-only-audit/readback sequence.  It must expose
+        that capability separately and never claim CAS or a transaction.
         """
         raise EpicClosureUnavailableError(
             f"clôture Epic non-code indisponible pour le tracker {self.name}"
@@ -336,6 +413,19 @@ class Tracker(ABC):
         raise EpicClosureUnavailableError(
             f"clôture Epic non-code indisponible pour le tracker {self.name}"
         )
+
+    def get_pending_epic_closure(
+        self,
+        project: Project,
+        parent_id: str,
+    ) -> EpicClosureReceipt | None:
+        """Return one exact append-only audit awaiting its parent transition.
+
+        Atomic providers never expose this intermediate state.  PAT-ADR-0006
+        adapters use it only to resume the original predecessor coordinates
+        after interruption; it cannot authorize a newly captured receipt.
+        """
+        return None
 
     # --- issues (read) ----------------------------------------------------
     @abstractmethod
@@ -442,6 +532,87 @@ class Tracker(ABC):
         """Import one closed historical ADR manifest without implicit acceptance."""
         del project, records
         raise TrackerCapabilityUnavailableError(self.name, "adr_historical_batch_import")
+
+    # --- bounded tracker migration (PAT-64) -----------------------------
+    def migration_find_issue(self, project: Project, source_ref: str) -> Issue | None:
+        """Return the prior imported issue for an exact source coordinate.
+
+        This is a lookup, not a fuzzy title/body search.  Returning ``None``
+        authorizes one import; providers which cannot make that distinction
+        must refuse rather than let a resume duplicate work.
+        """
+        del project, source_ref
+        raise TrackerCapabilityUnavailableError(self.name, "migration_issue_import")
+
+    def migration_import_issue(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Issue:
+        """Create or recover one faithful living-work snapshot.
+
+        ``snapshot`` is the closed manifest record.  The adapter owns how it
+        preserves ``source_ref`` and must make an exact replay return the same
+        target object without a second provider write.
+        """
+        del project, snapshot, source_ref
+        raise TrackerCapabilityUnavailableError(self.name, "migration_issue_import")
+
+    def migration_link_issue(
+        self,
+        project: Project,
+        src_id: str,
+        link_type: str,
+        dst_id: str,
+    ) -> None:
+        """Create one relation through an explicitly staged migration target."""
+        del project, src_id, link_type, dst_id
+        raise TrackerCapabilityUnavailableError(self.name, "migration_issue_link")
+
+    def migration_find_adr(self, project: Project, source_ref: str) -> Adr | None:
+        """Return the prior imported ADR for an exact source coordinate."""
+        del project, source_ref
+        raise TrackerCapabilityUnavailableError(self.name, "migration_adr_import")
+
+    def migration_prepare_adr(self, project: Project, snapshot: dict) -> dict:
+        """Translate source graph coordinates into this target's ADR namespace."""
+        del project
+        return deepcopy(snapshot)
+
+    def migration_qualify_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+    ) -> object | None:
+        """Return target evidence required before the first authoritative ADR effect.
+
+        Providers whose ADR codec needs no source-specific qualification return
+        ``None``.  A provider that needs qualification may write only isolated,
+        non-authoritative probes here; the orchestrator persists the returned
+        evidence before it calls :meth:`migration_import_adrs`.
+        """
+        del project, snapshots
+        return None
+
+    def migration_import_adr(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Adr:
+        """Create or recover one ADR while retaining its exact source body."""
+        del project, snapshot, source_ref
+        raise TrackerCapabilityUnavailableError(self.name, "migration_adr_import")
+
+    def migration_import_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+        *, qualification: object | None = None,
+    ) -> list[Adr]:
+        """Import one closed ADR corpus; adapters may override for graph atomicity."""
+        if qualification is not None:
+            raise TrackerConflictError(
+                f"{self.name} ADR migration qualification is unexpected"
+            )
+        return [
+            self.migration_find_adr(project, snapshot["source_ref"])
+            or self.migration_import_adr(
+                project, snapshot, source_ref=snapshot["source_ref"],
+            )
+            for snapshot in snapshots
+        ]
 
     @abstractmethod
     def set_adr_status(

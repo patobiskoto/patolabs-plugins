@@ -1279,7 +1279,7 @@ class FoundryPrimitiveRunner:
             raise CampaignRevalidationError("parent_close_receipt_invalid")
         receipt = self._receipt(envelope, "completed", [
             envelope.effect_id, advancement.advancement_digest,
-            asdict(outcome.receipt), outcome.closed_parent_version, outcome.audit_id,
+            outcome.receipt.to_dict(), outcome.closed_parent_version, outcome.audit_id,
         ])
         if (expected_proof_digest is not None
                 and receipt.proof_digest != expected_proof_digest):
@@ -1320,7 +1320,12 @@ class FoundryPrimitiveRunner:
             # Keep the immutable provider envelope, never reconstruct it from F91.
             original_evidence.update(json.loads(json.dumps({
                 "schema_version": "devhub-epic-closure.v1",
-                "outcome": {**asdict(outcome), "replayed": True},
+                "outcome": {
+                    "receipt": outcome.receipt.to_dict(),
+                    "closed_parent_version": outcome.closed_parent_version,
+                    "audit_id": outcome.audit_id,
+                    "replayed": True,
+                },
             })))
         return receipt, evidence
 
@@ -1337,7 +1342,7 @@ class FoundryPrimitiveRunner:
     def _closure_digest(outcome: object) -> str:
         return _digest({
             "contract": "foundry-provider-epic-closure-audit.v1",
-            "receipt": asdict(outcome.receipt),
+            "receipt": outcome.receipt.to_dict(),
             "closed_parent_version": outcome.closed_parent_version,
             "audit_id": outcome.audit_id,
         })

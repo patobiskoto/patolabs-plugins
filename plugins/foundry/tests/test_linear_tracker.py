@@ -4185,7 +4185,7 @@ def test_linear_frame_rejects_accepted_incoming_adr_before_first_write(
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
     before_issues = copy.deepcopy(wire.issues)
 
-    with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+    with pytest.raises(ValueError, match="Tracker ADR creation must begin proposed"):
         frame.materialize({
             "adrs": [
                 {"title": "Earlier proposed", "body": "decision"},
@@ -4253,7 +4253,7 @@ def test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write(
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
     before_issues = copy.deepcopy(wire.issues)
 
-    with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+    with pytest.raises(ValueError, match="Tracker ADR creation must begin proposed"):
         frame.materialize({
             "adrs": [{
                 "title": "Inactive decision", "body": "decision", "status": status,
@@ -4484,6 +4484,121 @@ def _qualify_batch(instance, wire, records, *, render=None):
         )
         qualified.append(profiled)
     return tuple(qualified)
+
+
+def test_linear_migration_phase_two_qualifies_known_issue_relation_and_replays(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    monkeypatch.setattr(instance, "verify_project_identity", lambda _project: True)
+    project = Project(
+        PROJECT.key,
+        PROJECT.id,
+        {
+            **PROJECT.extra,
+            "migration_identity_profile": "foundry-linear-deterministic-v1",
+            "migration_adr_qualification_project_id": QUALIFICATION_PROJECT_ID,
+        },
+    )
+    source = {
+        "kind": "adr",
+        "id": "LIN-ADR-0044",
+        "title": "Known issue relation",
+        "body": "exact historical source\n",
+        "status": "accepted",
+        "source_ref": "youtrack:adr:SRC-ADR-0044",
+        "source_only_issue_refs": ["youtrack:issue:SRC-9"],
+        "relations": {
+            "supersedes": [], "superseded_by": None, "issues": ["LIN-2"],
+        },
+        "source_created": 1,
+        "source_updated": 2,
+    }
+
+    profile = instance.migration_preflight(project, (source,))
+    assert profile["adr_qualification"] == "deferred-after-issue-readback"
+    assert wire.documents == {}
+    assert wire.comments == {}
+
+    qualification = instance.migration_qualify_adrs(project, (source,))
+    assert isinstance(qualification, list)
+    assert qualification[0]["issue_refs"] == ("LIN-2",)
+    assert qualification[0]["source_only_issue_refs"] == (
+        "youtrack:issue:SRC-9",
+    )
+    assert {
+        value["project"]["id"] for value in wire.documents.values()
+    } == {QUALIFICATION_PROJECT_ID}
+    assert wire.comments == {}
+
+    imported = instance.migration_import_adrs(
+        project, (source,), qualification=qualification,
+    )
+    after_first = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    replay = instance.migration_import_adrs(
+        project, (source,), qualification=qualification,
+    )
+
+    assert replay == imported
+    assert (wire.documents, wire.comments) == after_first
+    target_documents = [
+        value for value in wire.documents.values()
+        if value["project"]["id"] == PROJECT.id
+    ]
+    assert len(target_documents) == 2
+    assert instance.migration_export_adrs(project) == [{
+        "adr": imported[0],
+        "relations": {
+            "supersedes": [], "superseded_by": None, "issues": ["LIN-2"],
+        },
+        "source_created": 1,
+        "source_updated": 2,
+        "source_only_issue_refs": ["youtrack:issue:SRC-9"],
+    }]
+
+
+def test_linear_migration_phase_two_probe_drift_refuses_authoritative_adr_effect(
+    tracker,
+):
+    instance, wire = tracker
+    project = Project(
+        PROJECT.key,
+        PROJECT.id,
+        {
+            **PROJECT.extra,
+            "migration_identity_profile": "foundry-linear-deterministic-v1",
+            "migration_adr_qualification_project_id": QUALIFICATION_PROJECT_ID,
+        },
+    )
+    source = {
+        "kind": "adr",
+        "id": "LIN-ADR-0044",
+        "title": "Known issue relation",
+        "body": "exact historical source\n",
+        "status": "accepted",
+        "source_ref": "youtrack:adr:SRC-ADR-0044",
+        "relations": {
+            "supersedes": [], "superseded_by": None, "issues": ["LIN-2"],
+        },
+        "source_created": 1,
+        "source_updated": 2,
+    }
+    qualification = instance.migration_qualify_adrs(project, (source,))
+    witness_probe = qualification[0]["witness_probe_id"]
+    wire.documents[witness_probe]["content"] += "drift"
+
+    with pytest.raises(
+        TrackerConflictError, match="qualification probe is not exact",
+    ):
+        instance.migration_import_adrs(
+            project, (source,), qualification=qualification,
+        )
+
+    assert not [
+        value for value in wire.documents.values()
+        if value["project"]["id"] == PROJECT.id
+    ]
+    assert wire.comments == {}
 
 
 def _historical_batch_pair(wire=None, instance=None):
@@ -7883,6 +7998,58 @@ def test_linear_public_openpr_refuses_done_before_push_or_codehost(tracker, monk
         issue.openpr("LIN-2")
     assert wire.issues["LIN-2"] == before
     assert all("mutation" not in doc.lower() for doc, _ in wire.calls[offset:])
+
+
+def test_linear_public_openpr_replays_partial_review_without_github_repair_port(
+    tracker, monkeypatch,
+):
+    instance, wire = tracker
+    branch = "feat/lin-2-partial-review"
+    diff = b"linear review diff"
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest=routing.review_diff_hash(diff),
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    with pytest.raises(TrackerConflictError):
+        instance.get_issue("LIN-2")
+    assert instance.observe_issue("LIN-2").projection_status == "disagreement"
+    before = len(_lifecycle_rows(wire, "LIN-2", "state-review"))
+    pr = PullRequest(
+        number=17, url=review.pr_url, head=branch, base="main",
+        base_sha=review.base_sha, sha=review.head_sha,
+    )
+    codehost = SimpleNamespace(
+        name="github",
+        resolve_repo=lambda: "acme/widgets",
+        list_prs=lambda *_args: [pr],
+        get_pr=lambda *_args: pr,
+        open_pr=lambda *_args: pytest.fail("duplicate PR"),
+    )
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: instance)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(issue, "_default_branch", lambda: "main")
+    monkeypatch.setattr(issue, "git_head", lambda: review.head_sha)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: diff)
+
+    def shell(*args, **_kwargs):
+        if args == ("git", "rev-parse", "--abbrev-ref", "HEAD"):
+            return branch
+        if args == ("git", "push", "-u", "origin", branch):
+            return ""
+        raise AssertionError(f"unexpected shell call: {args}")
+
+    monkeypatch.setattr(issue, "_sh", shell)
+    issue.openpr("LIN-2")
+
+    assert instance.get_issue("LIN-2").projection_status == "aligned"
+    assert len(_lifecycle_rows(wire, "LIN-2", "state-review")) == before
 
 
 @pytest.mark.parametrize("recovery", ["missing-override", "native-disagreement", "already-done"])

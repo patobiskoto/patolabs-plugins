@@ -6,6 +6,8 @@ import pytest
 
 from foundry import doctor
 from foundry.escalation import EscalationStore
+from foundry.models import Project
+from foundry.trackers.ghprojects import GitHubProjectsTrackerError
 
 
 def _make_hook(repo, relative_dir):
@@ -32,6 +34,66 @@ def _make_runner(hooks_path_stdout, hooks_path_returncode=0, toplevel=None, topl
 
     runner.commands = commands
     return runner
+
+
+def test_registered_github_projects_keep_foreign_issue_count_typed_unavailable():
+    current = Project("P64G", "project-8", {"canonical_repo": "github.com/o/current"})
+    foreign = Project("GHQUAL", "project-7", {"canonical_repo": "github.com/o/foreign"})
+
+    class Tracker:
+        name = "ghprojects"
+
+        def __init__(self):
+            self.verified = []
+            self.searched = []
+
+        def verify_project_identity(self, project):
+            self.verified.append(project.key)
+            return True
+
+        def search(self, project):
+            self.searched.append(project.key)
+            if project == foreign:
+                raise GitHubProjectsTrackerError("binding", "foreign_project_binding")
+            return [object()]
+
+    tracker = Tracker()
+
+    assert doctor.registered_project_diagnostic(tracker, current) == {
+        "ok": True,
+        "status": "readable",
+        "detail": "identité vérifiée · 1 issues",
+    }
+    assert doctor.registered_project_diagnostic(tracker, foreign) == {
+        "ok": True,
+        "status": "issue_count_unavailable",
+        "detail": (
+            "identité vérifiée · décompte issues indisponible "
+            "(foreign_project_binding)"
+        ),
+    }
+    assert tracker.verified == ["P64G", "GHQUAL"]
+    assert tracker.searched == ["P64G", "GHQUAL"]
+
+
+def test_registered_github_project_rejects_invalid_identity_before_search():
+    invalid = Project("BROKEN", "project-broken", {})
+
+    class Tracker:
+        name = "ghprojects"
+
+        def verify_project_identity(self, project):
+            assert project == invalid
+            return False
+
+        def search(self, _project):
+            pytest.fail("an invalid identity must not be searched")
+
+    assert doctor.registered_project_diagnostic(Tracker(), invalid) == {
+        "ok": False,
+        "status": "invalid_identity",
+        "detail": "identité provider invalide",
+    }
 
 
 def test_doctor_reports_missing_local_hook_path_as_actionable_warning(tmp_path, capsys):

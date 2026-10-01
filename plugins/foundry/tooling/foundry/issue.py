@@ -118,6 +118,13 @@ def _require_pr_base_sha(pr) -> str:
     return base_sha
 
 
+def _bounded_review_predecessor(tracker, observed_issue) -> str | None:
+    """Reuse the logical state authenticated by the caller's lifecycle read."""
+    if not getattr(tracker, "bounded_state_transitions", False):
+        return None
+    return getattr(observed_issue, "normalized_state", None)
+
+
 def _require_unchanged_pr_coordinates(ch, repo, pr_number, original, base_sha) -> None:
     """Fail closed when the code-host no longer exposes the reviewed PR coordinates."""
     fresh = ch.get_pr(repo, int(pr_number))
@@ -239,7 +246,31 @@ def start(issue_id, flags=()):
                          f"une issue :\n{dirty}")
     tr = foundry.tracker()
     write.issue_binding(tr, issue_id)
-    it = tr.get_issue(issue_id)
+    start_replay = None
+    try:
+        it = tr.get_issue(issue_id)
+    except TrackerConflictError:
+        if not getattr(tr, "append_only_lifecycle_supported", False):
+            raise
+        it = tr.observe_issue(issue_id)
+        if (
+            it.normalized_state != "in-progress"
+            or it.projection_status != "disagreement"
+            or it.native_state not in {"backlog", "ready", "blocked"}
+        ):
+            raise
+        # Only the existing authenticated start receipt may repair its missing
+        # native State. The adapter revalidates the entire chain and source.
+        start_replay = TransitionContext(expected_state=it.native_state)
+    if (
+        getattr(tr, "append_only_lifecycle_supported", False)
+        and it.state == "in-progress"
+        and it.projection_status == "native-only"
+    ):
+        raise SystemExit(
+            "⛔ Démarrage refusé : état natif in-progress sans reçu Foundry ; "
+            "aucune preuve de transition à reprendre."
+        )
     btype = _BRANCH_TYPE.get(it.type, "chore")
     branch = f"{btype}/{issue_id.lower()}-{_slug(it.title)}"
     transition_path = _start_transition_path(tr, it.state)
@@ -255,6 +286,8 @@ def start(issue_id, flags=()):
             "aucune transition n'a été tentée."
         )
     try:
+        if start_replay is not None:
+            write.transition(tr, issue_id, "in-progress", context=start_replay)
         predecessor = it.state
         for state in transition_path:
             context = (
@@ -292,7 +325,7 @@ def openpr(issue_id=None, base=None, flags=()):
             raise SystemExit(f"⛔ Pas d'ID d'issue donné et la branche '{branch}' ne "
                              f"suit pas <type>/<ticker>-<n>-… ; passe l'ID explicitement.")
         issue_id = m.group(1).upper()
-    write.issue_binding(tr, issue_id)
+    binding = write.issue_binding(tr, issue_id)
     write.preflight_issue_operation(tr, "openpr")
     try:
         it = tr.get_issue(issue_id)
@@ -306,10 +339,25 @@ def openpr(issue_id=None, base=None, flags=()):
             and it.projection_status == "disagreement"
         ):
             raise
+        repair = getattr(tr, "recover_review_projection", None)
+        if getattr(tr, "append_only_lifecycle_supported", False) and callable(repair):
+            if not repair(issue_id, project=binding):
+                raise TrackerConflictError(
+                    "review receipt/native State disagreement cannot be repaired"
+                )
+            it = tr.get_issue(issue_id)
+    # Keep the logical predecessor returned by the proof-validating read above.
+    # A later native-State observation could adopt unrelated provider drift.
+    review_predecessor = _bounded_review_predecessor(tr, it)
+    logical_state = (
+        review_predecessor
+        if getattr(tr, "bounded_state_transitions", False)
+        else getattr(it, "state", None)
+    )
     if (
         getattr(tr, "bounded_transition_proofs", False)
         or getattr(tr, "bounded_state_transitions", False)
-    ) and getattr(it, "state", None) not in {"in-progress", "review"}:
+    ) and logical_state not in {"in-progress", "review"}:
         raise SystemExit(
             "⛔ Ouverture PR refusée — l'issue doit être in-progress ou review ; "
             "aucun push ni effet code-host n'a été tenté."
@@ -351,6 +399,10 @@ def openpr(issue_id=None, base=None, flags=()):
         if git_head() != head:
             raise SystemExit("⛔ Transition review refusée — HEAD local différent du SHA de la PR.")
         context = TransitionContext(
+            expected_state=(
+                review_predecessor if getattr(tr, "bounded_state_transitions", False)
+                else None
+            ),
             pr_url=pr.url,
             head_sha=head,
             base_sha=base_sha,
@@ -361,7 +413,7 @@ def openpr(issue_id=None, base=None, flags=()):
         write.transition(tr, issue_id, "review", context=context)
     else:
         if getattr(tr, "bounded_state_transitions", False):
-            context = TransitionContext(expected_state="in-progress")
+            context = TransitionContext(expected_state=review_predecessor)
         # Preserve the established provider call order for adapters without proofs.
         if context is None:
             write.transition(tr, issue_id, "review")
@@ -462,6 +514,14 @@ def merge(issue_id, pr_number, flags=()):
                     f"fusionnée sans preuve AC ({exc}) ; aucune écriture effectuée."
                 ) from None
             current = tr.get_issue(issue_id)
+    if (
+        getattr(tr, "append_only_lifecycle_supported", False)
+        and current.ac_total < 1
+    ):
+        raise SystemExit(
+            "⛔ Merge refusé — aucun critère d’acceptation à attester ; "
+            "aucun merge GitHub tenté."
+        )
     if bounded_lifecycle:
         _require_linked_pr_coordinates(current, pr, int(pr_number))
         if (getattr(current, "state", None) == "done"
@@ -516,7 +576,14 @@ def merge(issue_id, pr_number, flags=()):
             )
         pr_base_sha = _require_pr_base_sha(pr)
         review_diff = git_diff(base=pr_base_sha)
+        # ``current`` is the proof-validated logical issue read captured before
+        # the gates.  Reuse it rather than sampling native State as a new authority.
+        review_predecessor = _bounded_review_predecessor(tr, current)
         transition_context = TransitionContext(
+            expected_state=(
+                review_predecessor if bounded_state_transitions
+                else None
+            ),
             pr_url=pr.url,
             head_sha=head,
             base_sha=pr_base_sha,
@@ -716,6 +783,10 @@ def merge(issue_id, pr_number, flags=()):
     done_context = None
     if transition_context is not None:
         done_context = TransitionContext(
+            expected_state=(
+                "review" if getattr(tr, "bounded_state_transitions", False)
+                else None
+            ),
             pr_url=transition_context.pr_url,
             head_sha=transition_context.head_sha,
             base_sha=transition_context.base_sha,
@@ -766,26 +837,38 @@ def merge(issue_id, pr_number, flags=()):
 
 
 def close_epic(issue_id, flags=()):
-    """Close a non-code Epic through the tracker's atomic audited capability."""
+    """Close a non-code Epic through a qualified audited tracker capability."""
     tracker = foundry.tracker()
     try:
-        outcome = write.close_epic(tracker, issue_id)
+        verdicts = [flag.removeprefix("--human-verdict=") for flag in flags
+                    if flag.startswith("--human-verdict=")]
+        if len(verdicts) > 1:
+            raise SystemExit("⛔ Clôture Epic refusée : verdict humain ambigu.")
+        outcome = write.close_epic(
+            tracker, issue_id, human_verdict=verdicts[0] if verdicts else None,
+        )
     except EpicClosureUnavailableError:
         raise SystemExit(
             f"⛔ Clôture Epic indisponible pour le tracker {tracker.name} : "
-            "un endpoint atomique parent+enfants avec audit est requis."
+            "aucune capacité de clôture auditée n'est qualifiée."
         ) from None
     except TrackerConflictError:
         raise SystemExit(
-            "⛔ Clôture Epic refusée : le parent ou son ensemble d'enfants a changé. "
+            "⛔ Clôture Epic refusée : le parent, ses preuves ou son graphe complet a changé. "
             "Recharge le graphe puis relance la commande."
         ) from None
     except SystemExit:
         raise
     except Exception:
+        verdict_flag = (
+            " --human-verdict=accepted"
+            if getattr(tracker, "bounded_epic_closure_supported", False)
+            else ""
+        )
         raise SystemExit(
             f"⛔ Clôture Epic interrompue pour {issue_id}. Relance exactement "
-            f"`issue close-epic {issue_id}` : le reçu provider permettra la reprise."
+            f"`issue close-epic {issue_id}{verdict_flag}` : "
+            "le reçu provider permettra la reprise."
         ) from None
     _observe_receipt(
         issue_id, "epic_closure",
@@ -811,7 +894,11 @@ if __name__ == "__main__":
     cmd, rest = sys.argv[1], sys.argv[2:]
     flags = {a for a in rest if a.startswith("--")}
     reason_flags = {flag for flag in flags if flag.startswith("--ac-override-reason=")}
-    unknown = flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags
+    epic_verdict_flags = (
+        {flag for flag in flags if flag.startswith("--human-verdict=")}
+        if cmd == "close-epic" else set()
+    )
+    unknown = flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags - epic_verdict_flags
     if unknown:  # a misspelled flag must fail loudly, not run as a normal gated call
         raise SystemExit(f"⛔ Flag(s) inconnus pour '{cmd}' : {', '.join(sorted(unknown))}. "
                          f"Autorisés : {', '.join(sorted(_KNOWN_FLAGS.get(cmd, set()))) or '(aucun)'}.")

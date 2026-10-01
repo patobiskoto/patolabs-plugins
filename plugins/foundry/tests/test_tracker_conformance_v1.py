@@ -13,6 +13,7 @@ blocker with an owner ticket; it is never represented as a passing conformance c
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import subprocess
 from contextlib import nullcontext
@@ -21,10 +22,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import foundry
-from foundry import config, query, registry
-from foundry.models import Adr, EpicClosureChild, EpicClosureReceipt, Issue, Link, Project
-from foundry.trackers.base import EpicClosureUnavailableError
+from foundry import config, registry
+from foundry.models import Adr, Issue, Link, Project
 from foundry.trackers.ghprojects import GitHubProjectsTracker
 from foundry.trackers.linear import LinearTracker
 from foundry.trackers.youtrack import YouTrackTracker
@@ -42,7 +41,7 @@ _BLOCKING = {"gap", "to_qualify"}
 _SHARED_PROVIDER_CASES = {
     "test_repository_binding_v1.py::test_adapters_use_the_same_checkout_binding_resolution",
     "test_repository_binding_v1.py::test_existing_adapter_revalidates_marker_before_consuming_interrupted_update",
-    "test_tracker_conformance_v1.py::test_provider_core_capability_refusals_are_typed_and_side_effect_free",
+    "test_tracker_conformance_v1.py::test_provider_bounded_epic_closure_capability_is_declared",
     "test_tracker_conformance_v1.py::test_archived_binding_refusal_is_shared_by_bound_providers",
     "test_tracker_conformance_v1.py::test_missing_secret_backed_tracker_credentials_fail_before_transport",
 }
@@ -241,22 +240,11 @@ def test_missing_supported_core_case_is_detected_not_skipped():
 
 def test_blocking_core_cell_cannot_be_mapped_as_passing_coverage():
     manifest = _load(MANIFEST_PATH)
-    contract = _load(CONTRACT_PATH)
-    misleading = {
-        **manifest,
-        "cases": [
-            *manifest["cases"],
-            {
-                "id": "misleading-future-adr-read",
-                "test": "test_ghprojects_tracker.py::test_search_pages_graphql_and_excludes_only_reserved_adr_support",
-                "providers": ["ghprojects"],
-                "categories": ["core-operations"],
-                "operations": ["adr-read"],
-            },
-        ],
-    }
+    contract = copy.deepcopy(_load(CONTRACT_PATH))
+    adr_read = next(row for row in contract["operations"] if row["id"] == "adr-read")
+    adr_read["cells"]["ghprojects"] = {"status": "to_qualify", "ticket": "PAT-58"}
 
-    failures = _core_gate_failures(misleading, contract)
+    failures = _core_gate_failures(manifest, contract)
 
     assert any(
         "blocking cells misrepresented as passing coverage" in failure
@@ -317,24 +305,11 @@ def _tracker_with_failing_transport(provider: str):
 
 
 @pytest.mark.parametrize("provider", ["youtrack", "linear", "ghprojects"])
-def test_provider_core_capability_refusals_are_typed_and_side_effect_free(provider):
+def test_provider_bounded_epic_closure_capability_is_declared(provider):
     tracker = _tracker_with_failing_transport(provider)
-    receipt = EpicClosureReceipt(
-        project_key="T",
-        project_id="project-1",
-        parent_id="T-1",
-        parent_version=1,
-        parent_type="Epic",
-        parent_ac_done=0,
-        parent_ac_total=0,
-        children=(EpicClosureChild(id="T-2", version=1, state="done"),),
-        issued_at=1,
-        nonce="nonce_1234567890abcdef",
-    )
-
+    assert tracker.bounded_epic_closure_supported is True
+    # The distinct DevHub atomic capability is still intentionally unavailable.
     assert tracker.epic_closure_supported is False
-    with pytest.raises(EpicClosureUnavailableError, match=provider):
-        tracker.close_epic(Project(key="T", id="project-1"), receipt)
 
 
 def test_missing_secret_backed_tracker_credentials_fail_before_transport(
@@ -425,50 +400,6 @@ def test_youtrack_comment_conformance_uses_bound_target_then_single_post(
         ("GET", "/issues/T-1", None, "project(id,shortName)", None),
         ("POST", "/issues/T-1/comments", {"text": "bounded progress"}, "id", None),
     ]
-
-
-def test_youtrack_changelog_conformance_uses_normalized_provider_fields(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    tracker = object.__new__(YouTrackTracker)
-    calls = []
-
-    def raw(issue_id, *, state, milestone):
-        return {
-            "idReadable": issue_id,
-            "summary": f"title {issue_id}",
-            "description": "body",
-            "customFields": [
-                {"name": "State", "value": {"name": state}},
-                {"name": "Milestone", "value": {"name": milestone}},
-                {"name": "Type", "value": {"name": "Feature"}},
-                {"name": "Labels", "value": "public"},
-            ],
-            "links": [],
-        }
-
-    def request(method, path, body=None, fields=None, top=None):
-        calls.append((method, path, body, fields, top))
-        assert method == "GET" and path.startswith("/issues?")
-        return [
-            raw("T-1", state="done", milestone="v1.2"),
-            raw("T-2", state="in-progress", milestone="v1.2"),
-            raw("T-3", state="done", milestone="v1.1"),
-        ]
-
-    tracker._req = request
-    tracker.resolve_checkout_project = lambda *_args, **_kwargs: Project(
-        key="T", id="0-1"
-    )
-    monkeypatch.setattr(foundry, "tracker", lambda *_args, **_kwargs: tracker)
-
-    result = query.changelog("v1.2")
-
-    assert result["count"] == 1
-    assert result["groups"] == {
-        "Feature": [{"id": "T-1", "title": "title T-1", "labels": ["public"]}]
-    }
-    assert len(calls) == 1
 
 
 def test_youtrack_adr_status_conformance_performs_real_bounded_transition(

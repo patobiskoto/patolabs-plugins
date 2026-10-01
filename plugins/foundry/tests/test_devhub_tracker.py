@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from integration.test_real_terminal_reconciliation_smoke import _original_closure_wire
 import foundry
 import foundry.trackers.devhub as devhub_module
 from foundry import adr, edit, frame, query, write
@@ -125,6 +126,37 @@ def closure_receipt_model():
         ),
         issued_at=12_000, nonce="closure_nonce_123456",
     )
+
+
+def test_legacy_epic_closure_receipt_keeps_devhub_wire_shape():
+    receipt = closure_receipt_model()
+
+    assert receipt.to_dict() == closure_receipt_raw()
+    assert set(receipt.to_dict()) == {
+        "project_key", "project_id", "parent_id", "parent_version",
+        "parent_type", "parent_ac_done", "parent_ac_total", "children",
+        "issued_at", "nonce",
+    }
+
+
+def test_late_terminal_smoke_serializes_outcome_receipt_on_legacy_wire():
+    outcome = EpicClosureOutcome(
+        closure_receipt_model(), closed_parent_version=5, audit_id="17", replayed=True,
+    )
+
+    wire = _original_closure_wire(outcome)
+    assert wire == {
+        "schema_version": EPIC_CLOSURE_CONTRACT,
+        "outcome": {
+            "receipt": closure_receipt_raw(),
+            "closed_parent_version": 5,
+            "audit_id": "17",
+            "replayed": True,
+        },
+    }
+    assert DevHubTracker._to_epic_closure_outcome(
+        wire, project=PROJECT, parent_id=outcome.receipt.parent_id,
+    ) == outcome
 
 
 def test_epic_closure_posts_exact_original_receipt_with_stable_replay_identity():

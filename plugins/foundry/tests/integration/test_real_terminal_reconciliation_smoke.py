@@ -9,7 +9,7 @@ cloud host, agent, PR, merge or budget seam is available.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, replace
+from dataclasses import replace
 import hashlib
 import ipaddress
 import json
@@ -23,7 +23,7 @@ from foundry.devhub_commands import DevHubCommandClient
 from foundry.campaign_runtime import CampaignCommandEffectProvider
 from foundry.command_worker import _binding_digest
 from foundry.execution_receipts import epic_closure_receipt
-from foundry.models import EpicClosureChild, EpicClosureReceipt, Project
+from foundry.models import EpicClosureChild, EpicClosureOutcome, EpicClosureReceipt, Project
 from foundry.trackers.devhub import DevHubTracker, DevHubTrackerError
 
 
@@ -111,6 +111,18 @@ def _event_id(command_id: str, event_type: str) -> str:
         f"{command_id}\0{event_type}".encode("utf-8"),
     ).hexdigest()[:32]
     return f"closure-smoke-{event_type}-{digest}"
+
+
+def _original_closure_wire(outcome: EpicClosureOutcome) -> dict:
+    return {
+        "schema_version": "devhub-epic-closure.v1",
+        "outcome": {
+            "receipt": outcome.receipt.to_dict(),
+            "closed_parent_version": outcome.closed_parent_version,
+            "audit_id": outcome.audit_id,
+            "replayed": outcome.replayed,
+        },
+    }
 
 
 def _append_lifecycle(
@@ -239,10 +251,9 @@ def test_real_epic_closure_replay_and_terminal_projection_smoke():
             "publication_id": f"late-smoke-{command_id}", "event_id": event_id,
             "sequence": command.next_event_sequence, "occurred_at": requested.issued_at,
             "lease_id": command.lease.id, "attempt_id": attempt_id,
-            "original_closure": json.loads(json.dumps({
-                "schema_version": "devhub-epic-closure.v1",
-                "outcome": {**asdict(recovered), "replayed": True},
-            })), "cost_cents": None, "duration_ms": None,
+            "original_closure": json.loads(json.dumps(
+                _original_closure_wire(recovered),
+            )), "cost_cents": None, "duration_ms": None,
         }
         reconciliation = command_client.publish_late_terminal(command, **publication)
         replay = command_client.publish_late_terminal(command, **publication)

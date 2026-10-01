@@ -1,4 +1,4 @@
-# GitHub Projects tracker — PAT-57 reads, PAT-66 core writes
+# GitHub Projects tracker — PAT-57 reads, PAT-66 core writes, PAT-58 ADRs
 
 PAT-57 supports only an explicitly bound **private personal** Project V2 and
 its linked canonical repository.  The binding contains `owner`, Project
@@ -9,6 +9,11 @@ canonical repository. The matching repository must expose a distinct native
 node ID, be private, and have the same personal `User` owner as the Project
 binding. Organization-owned repositories, public repositories/projects and
 inferred-owner variants are not qualified.
+
+Repository release Milestones use the optional structured `release_ids` binding map;
+see [`release-scope.md`](release-scope.md). The map stores exact repository Milestone
+numbers, while the product Project remains identified separately by owner, number and
+node id. Identity readback verifies both coordinate families before a binding update.
 
 `search(project)` reads bounded GraphQL Project item pages and requires one
 unique ID and qualified data type for each field: `Foundry normalized state`,
@@ -28,7 +33,10 @@ estimate may be absent. A draft, PR, foreign issue, deleted field, duplicate
 field or partial response fails closed. A Project field, Issue-label, or item
 field-value connection that reports a second page is refused rather than read
 as a silently truncated authority. The reserved `foundry:adr` label excludes
-that ADR support item only from delivery reads.
+that ADR support item only from delivery reads. Every delivery item is then
+hydrated through REST and passed through the same strict receipt projection as
+`get_issue`; a bare native terminal state therefore cannot appear positive in
+backlog, roadmap, grooming or intake reads.
 
 `get_issue(GHQUAL-<number>)` scopes the number to the active binding, then
 reads the exact Issue body, timestamps, comments, parent, paged sub-issues and
@@ -42,9 +50,10 @@ REST Issue labels must be a complete list of distinct, non-empty label names;
 missing or malformed labels are refused before ADR discrimination. Timestamps
 must include an explicit timezone offset; dates and local times without an
 offset are refused instead of inheriting the host timezone.
-Only complete per-line Markdown checkboxes in the current REST Issue body count
-toward observed AC progress; comments and split-line fragments do not, and these
-markers are not lifecycle acceptance proof.
+Only complete per-line Markdown checkboxes in the current REST Issue body define
+the semantic criterion count; comments and split-line fragments do not. Native
+checked markers never increment `ac_done`: only a valid receipt for the current
+review generation can project positive AC progress.
 An issue proven absent from the complete bound Project read, or whose exact
 Issue endpoint then returns 404, raises the portable `IssueUnavailableError`;
 `query issue` can therefore preserve an unavailable related target as a link
@@ -52,12 +61,158 @@ plus an explicit error. This classification is target-specific: global auth or
 permission failures, malformed payloads, foreign relation URIs, transport and
 pagination failures stay explicit. Only the documented parent-endpoint 404
 payload `No parent issue found` means that a present issue has no parent. The
-Project normalized-state field is recorded as an observation with
-`projection_status=unknown`; PAT-67 owns lifecycle/projection proof.
+Project normalized-state field is recorded as an observation. PAT-67 adds a
+separate Foundry-owned lifecycle channel: a state transition writes a canonical,
+hash-bound `foundry-ghprojects-lifecycle.v1` receipt to the exact Issue comment
+history, then projects only the target ProjectV2 State. Every receipt binds the
+canonical repository, Project id/number/key, Issue key/number/database id/node id and
+Project item id. Review and done additionally bind the exact canonical PR URL,
+head/base SHA and review digest; done also binds the merge SHA. A native `done` without
+that chain is refused as an unauthorised auto-close.
 
-Native free-text search is refused with `provider-native-search-query`. ADR index
-reads are typed `adr_index` refusals until PAT-58 and lifecycle projection through
-`set_state` remains a PAT-67 refusal.
+Before the single comment POST, the adapter re-reads both the targeted native State and
+the untargeted business snapshot, then persists a local pending intent under the digest
+of the fully bound receipt. Drift in either snapshot fails closed before append. A lost
+response is reconciled only when the complete paged history exposes exactly one matching
+receipt. If a fresh process still observes zero candidates, the intent remains pending
+and the operation fails closed without a second POST; multiple candidates also fail
+closed. A matching definitive authentication, permission or not-found refusal on
+both POST and readback clears the pending intent; ambiguous transport and rate-limit
+failures do not. The local intent never grants a lifecycle state by itself. Only the
+latest exact review receipt is replayed; returning to an older head publishes a new
+review generation and requires fresh acceptance. Exact historical start and done
+replays never regress newer evidence.
+If the State write was interrupted after a `state-in-progress` receipt, replaying
+`issue start` on its existing branch repairs only that State after revalidating the
+receipt and unchanged source. A native `in-progress` with no Foundry receipt is
+refused; it cannot be adopted as an authenticated start. The same exact-receipt
+rule repairs interrupted review and done State writes, including replay of an
+already merged PR, without a second receipt or merge.
+When a corrected PR head arrives after a durable but unprojected review receipt,
+`issue openpr` first repairs that exact review State, then records the new head
+as the next review generation. An exact start receipt cannot turn a native
+advance to review or done without matching proof into a successful replay.
+Start rejects review, done and dropped predecessors before branch preparation.
+
+Acceptance receipts accept only the canonical six-field PAT-56 proof shape and bind one
+exact review generation. The criterion identities are recomputed from the current issue
+body, so changing checkbox progress preserves the immutable criterion semantics while
+editing criterion text invalidates the old proof. `checked` must equal the complete
+criterion count; blocked, partial, foreign or malformed proofs never mark AC complete.
+An issue with zero semantic criteria is refused before the code-host merge and
+before any `done` receipt: `0/0` is not acceptance proof.
+Native-state disagreement is observable through `normalized_state`, `native_state` and
+`projection_status`; it does not become acceptance authority.
+
+Native free-text search is refused with `provider-native-search-query`.
+
+## PAT-67 live lifecycle qualification
+
+The authorized private personal Project `Foundry V1 — qualification GitHub Projects`
+(number 7, node `PVT_kwHOABroCc4Bk0U-`) and its private repository
+`patobiskoto/foundry-v1-ghprojects-sandbox` exercised the common Foundry
+`frame` → `issue start` → `issue openpr` → independent review → CI →
+`issue merge` path. The synthetic Issue `GHQUAL-13` and PR #14 use the
+repository's V1 marker; PR head `03840ef8a56b308d53c8fec30eb6c4d09e8a1a94`
+had one completed/success `verify` check and no legacy statuses. The independent
+review proof `53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db`
+passed both AC; Foundry merged PR #14 at
+`c080d9833de1ca66b6b43f9ca95074f22cb07f0a`. A fresh Foundry read returned
+`done`, 2/2 accepted criteria and `projection_status=aligned`.
+
+The first frame attempt created exactly one Issue and Project item, then refused
+`item_readback` while that item was not yet visible through the bounded read.
+The private create-intent journal identified `GHQUAL-13`; a later explicit
+invocation of the common `write.create_issue` seam completed the pending fields,
+and replaying the frame converged on the same Issue. The first `openpr` invocation
+created PR #14 but refused its review transition because the caller omitted the
+required predecessor; the PAT-67 fix supplies `in-progress` for review and
+`review` for done only to bounded-state adapters. Replaying `openpr` reused
+PR #14 and published its receipt. No second Issue or PR was created.
+
+This qualifies the exact private personal Project/repository shape above. Public or
+organization-owned Projects, alternate field catalogs and human AC overrides are
+not claimed; the override receipt remains an explicit unsupported capability.
+
+## PAT-58 ADR lifecycle
+
+PAT-ADR-0007 qualifies one deliberately narrow native form: an ADR is one Issue in
+the exact bound private repository and private personal Project, marked by the reserved
+`foundry:adr` label. The label is the explicit support type: it is never treated as a
+delivery Task and delivery reads exclude it. GitHub Projects has no native ADR object;
+the Project is only the scoped index and the source/history live in the native Issue and
+its comments. A repository that has selected `ghprojects` therefore does not fall back
+to Linear, YouTrack, Git or Discussions.
+
+The current source is the UTF-8 Issue body. Each version is a distinct comment using
+`foundry-ghprojects-adr.v1`, with the canonical Project node ID, repository coordinate,
+ADR ID, sequence, source SHA-256, predecessor comment ID and whole-version digest,
+status and relations. The predecessor digest covers both source and metadata, so an
+observable edit to either breaks the next link; this detects observable tampering but
+does not make coordinated edits cryptographically impossible. The Issue title carries
+an independent `foundry-head:v1` commitment to the latest sequence, native comment ID
+and whole-version digest. Deleting the final comment or editing its otherwise legal
+metadata therefore leaves a title/head mismatch instead of exposing a valid prefix as
+current authority. A coordinated edit of both the comment chain and this title remains
+outside the guarantee stated by PAT-ADR-0007.
+`list_adrs` exhausts both the repository Issue list and Project items, requiring the
+same typed support in both surfaces. A reserved label removed from a still-visible
+support, or an item removed from the bound Project, is an explicit conflict. A foreign
+or ordinary similarly titled Issue is not promoted into the ADR corpus. The reader
+then exhausts comment pagination and verifies the complete chain,
+the current body, head commitment, digests and reciprocal supersession links before it
+returns authority. Each current ADR-to-Issue relation must also resolve once through the
+complete bound Project read and the canonical Issue endpoint. A removed, deleted or
+permission-inaccessible delivery Issue raises `AdrIssueUnavailableError` with the exact
+ADR/Issue pair; malformed, foreign and globally ambiguous reads remain conflicts or
+transport errors rather than being collapsed into unavailability.
+Duplicate supports, a hole, a malformed same-namespace support, missing/deleted comment,
+foreign coordinate, altered source or ambiguous history fail closed. The old PAT-65
+`EXP-ADR-0001` prototype is a foreign namespace and is not imported as GHQUAL authority.
+A complete deletion that leaves no attributable Issue or Project item cannot be
+detected by a fresh read; the native Issue-number allocation below prevents reuse of
+its ADR identifier without claiming to attest that vanished object.
+
+Creation starts proposed, creates the native Issue, applies only the reserved label,
+adds the exact Project item, appends version zero and re-reads the complete chain. Later
+acceptance, deprecation, source edits, ADR-to-delivery-Issue links and supersession append
+new comments, then target only the Issue title to advance its head commitment. An update
+first verifies its fresh predecessor, writes the source body once and reads it back before
+the comment POST. GitHub exposes neither CAS nor an idempotency
+key: a lost source response is reconciled only by readback; a lost comment/create response
+converges only when one exact effect is observed, otherwise it stays explicit and never
+causes a blind second POST. Supersession needs two native updates and
+is not atomic; an interrupted non-reciprocal pair is surfaced as a conflict, not repaired
+automatically. These are bounded observations with the residual S1-to-S2 race, not
+immutability, exactly-once or a provider receipt.
+
+ADR creation reuses the private local create-intent store already used for Issue creation:
+before its first POST it records a request fingerprint, without source or title in clear
+text. The first native Issue has a provisional non-ADR title and no reserved label or
+Project item. Its GitHub-assigned Issue number determines the four-digit ADR ID, so
+deleted supports cannot cause ID reuse; gaps are allowed and an exhausted four-digit
+space fails explicitly. A machine-local corpus lock serializes local creation attempts,
+but is neither a distributed lock nor CAS. Stage markers precede the identity-title,
+label, Project-item and version-comment effects, so a fresh process can
+either observe the exact owned partial/completed support or fail closed without repeating
+an unknown effect. The initial head-title update has its own stage and is reconciled by
+fresh readback. A later version interrupted after its one comment POST but before the
+title update can likewise resume only when that one exact trailing version follows the
+still-committed head; any different or additional trailing version remains a conflict.
+Completed replay still reads the private binding, native IDs, Project
+membership, initial version and full comment chain; the local record is neither authority
+nor a provider receipt. Status, issue-link and supersession versions do not PATCH the
+current Issue body: they append their metadata/source snapshot and advance only the
+Foundry-owned title commitment. `adr_issue_link_supported` is enabled, so `frame`
+materialization records each declared ADR constraint through this same checked relation.
+
+The three synthetic GHQUAL ADR supports created by the earlier PAT-58 qualification
+were revalidated against their exact bodies and complete comment chains, then migrated
+by a targeted title update. They now carry `foundry-head:v1` and pass the corpus read.
+Any other legacy support without this commitment is refused with
+`legacy support requires migration`; a local journal never supplies the missing native
+head. Existing PAT-66 local create-intent journals remain schema-compatible: their
+older step vocabulary is still accepted.
 
 ## Bounded PAT-66 writes
 
@@ -89,10 +244,11 @@ body-derived checkbox counters are allowed to follow the PATCH. Unrelated fields
 mutation or an Issue-body PATCH.
 
 GitHub's qualified endpoints expose no expected-version/CAS parameter. These are
-therefore bounded detection, never CAS or exclusion: a third-party change between
-the fresh read and the write can still be overwritten. Authentication/permission,
-rate-limit, deleted-field, malformed/ambiguous response and transport errors remain
-explicit.
+therefore bounded detection, never CAS or exclusion: a third-party change in the
+residual S1→S2 window can still be overwritten and hidden by S3. Lifecycle state writes
+compare every observed untargeted property around the narrow Project State mutation,
+but that comparison does not close the window. Authentication/permission, rate-limit,
+deleted-field, malformed/ambiguous response and transport errors remain explicit.
 
 Issue creation uses a private local intent/observation journal under Foundry's data
 directory. Its fingerprint covers the exact binding, title, body, portable fields and
@@ -164,3 +320,36 @@ Project personnel et son dépôt canonique privé lié avant le journal d'intent
 et le premier POST. Un dépôt public, détaché, étranger ou une identité indisponible
 refuse la création avant tout effet; un binding local ancien ne vaut pas cette
 requalification live.
+
+La clôture d'un Epic sans PR possède un parcours borné qualifié
+`close_epic` / `get_epic_closure`. Le reçu lie le verdict humain explicite, le
+texte et les critères de l'Epic, l'ensemble exact des enfants et le graphe
+transitif des dépendances avec leurs preuves d'acceptation. GitHub ne fournit
+pas de version commune à l'Issue et au Project item : Foundry utilise donc un
+digest de snapshot projeté sous forme d'entier positif comme coordonnée opaque,
+jamais comme CAS ou ordre temporel. L'audit est un commentaire canonique avec
+identité déterministe. Un journal local interdit un second POST si l'effet du
+premier reste inconnu ; une réponse perdue avec commentaire observé reprend le
+reçu exact. L'identité live du Project personnel privé et de son dépôt canonique
+privé lié est requalifiée avant le POST du commentaire et de nouveau avant la
+mutation State. Un détachement à l'une de ces deux bornes refuse l'effet ; si le
+commentaire existe déjà, la reprise exacte le conserve et n'en ajoute pas un second.
+Avant l'unique écriture du champ State, le graphe est relu, puis la clôture et les
+propriétés non visées sont vérifiées après écriture. Le
+risque résiduel S1→S2 de PAT-ADR-0006 subsiste ; ni transaction atomique ni
+exclusion des autres writers n'est revendiquée.
+
+PAT-69 a qualifié ce parcours sur le Project personnel privé nº 7 et son dépôt
+canonique privé. `GHQUAL-15` a été clos sur son unique enfant requis
+`GHQUAL-13`, dont la preuve d'acceptation authentifiée est
+`53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db`.
+L'audit déterministe
+`github:epic:758ff6bb0f7ecd04c4edea8f743360fa65d818662a39a051048ce7f484dfe23a`
+a produit un seul commentaire et une seule projection `State=done`. La relecture
+complète a retrouvé le même titre, corps, labels, relation enfant, type, priorité
+et estimation ; un nouveau processus a rejoué le reçu sans second effet. Les
+tests refusent en plus toute dérive de ces propriétés, des relations hors cible
+et des autres champs Project. `bounded_epic_closure_supported` est donc activé
+pour ce profil exact. Un autre propriétaire, une organisation, un dépôt public
+ou détaché, un catalogue de champs différent ou une identité non vérifiable
+reste hors de cette qualification et échoue dans les préflights existants.

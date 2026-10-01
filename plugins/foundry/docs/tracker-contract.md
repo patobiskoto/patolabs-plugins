@@ -9,7 +9,7 @@ explicit setup and historical tooling; it never substitutes for a repository bin
 
 Every claim below is grounded in the current adapter code, cited by module and symbol. The
 machine-readable capability matrix is [`tracker-contract.v1.json`](tracker-contract.v1.json)
-(`contract: "foundry.tracker-contract.v1"`, `version: 2`);
+(`contract: "foundry.tracker-contract.v1"`, `version: 3`);
 [`test_tracker_contract.py`](../tests/test_tracker_contract.py) pins its schema and
 cross-checks it against the `Tracker` ABC and the adapter modules. This contract records
 capabilities and requirements; it changes no adapter behaviour.
@@ -60,19 +60,19 @@ closed vocabulary:
 | Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
 | Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) |
 | Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
-| Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | `to_qualify` PAT-58 |
-| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | `to_qualify` PAT-67 |
-| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | `to_qualify` PAT-67 |
-| Clôture d'epic | `close_epic`, `get_epic_closure` | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | **gap** PAT-69, implementation authorized by PAT-ADR-0006 | `to_qualify` PAT-69 |
-| Périmètre de release/changelog | `search` via `query.py changelog()` | supported | **gap** PAT-59 | `to_qualify` PAT-59 |
-| Bascule par copie fidèle (PAT-64): ADR import target | `import_adr`, `import_adr_batch` | **gap** PAT-64 | supported (PAT-23 ADR import) | `to_qualify` PAT-64 |
-| Bascule par copie fidèle (PAT-64): live-work copy | `create_issue`, `link`, `add_comment`, `set_state` | **gap** PAT-64 | **gap** PAT-64 | `to_qualify` PAT-64 |
-| Bascule (PAT-64): archived source refuses writes | mutation ports plus provider target preflight | supported | supported | `to_qualify` PAT-64 |
+| Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) |
+| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) |
+| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
+| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) |
+| Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
+| Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adrs` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G |
+| Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_attribute_exceptions`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G |
+| Bascule (PAT-64): archived source refuses writes | staged target plus atomic registry promotion/source archive/marker replacement | supported; live P64Q tombstone | supported; provider-specific fake transport | supported; active-binding refusal and live P64G binding |
 
 The JSON is authoritative for every cell and its evidence; read it before relying on a
 cell.
 
-**Remaining gaps found in the current adapters:**
+**Capability work and remaining qualification limits:**
 - **PAT-55** — Grooming an existing issue is supported on YouTrack and Linear under
   PAT-ADR-0006: each targeted field/body/parent operation captures an expected snapshot,
   re-reads it immediately before its one write, and verifies readback. This is bounded
@@ -86,7 +86,8 @@ cell.
   direct-adapter custom-field escape hatch remains available without that bounded
   guarantee and is outside the core contract's deliberately non-universal editor.
   GitHub Projects delivers its narrower qualified portable vocabulary through PAT-66;
-  its lifecycle projection remains PAT-67.
+  PAT-67 qualifies the lifecycle projection for the exact private personal Project
+  and canonical repository documented in `ghprojects-tracker.md`.
 - **PAT-56** — States and AC. YouTrack receives the explicit predecessor owned by the
   public lifecycle operation and re-reads it before one targeted native projection.
   `write.transition` never replaces that coordinate with the native state seen on a
@@ -95,17 +96,172 @@ cell.
   replacement refused, while `write.sync_acceptance` uses its proof-bound append-only
   projection (`project_acceptance_proof`, `linear.py`) as the V1 AC authority; native
   checkboxes and external state automation never count as positive acceptance evidence.
-- **PAT-69** — Neither YouTrack nor Linear implements `close_epic`/`get_epic_closure`;
-  `write.close_epic` refuses before any provider call (`write.py`). Only the non-V1
-  DevHub adapter implements the port (`devhub.py`).
-- **PAT-64** — Only the ADR half of a switch has adapter code, and only with Linear as
-  target (`import_adr`/`import_adr_batch`, PAT-ADR-0001..0003). YouTrack cannot be an ADR
-  import target. No adapter copies live work faithfully: Linear's `create_issue` sends a
-  random client id (`linear.py`), so a replay duplicates the issue, and nothing
-  copies lifecycle receipts, acceptance proofs or comments. This repository's
-  YouTrack→Linear live-work move was a private operator-side selective migration, and
-  `registry cutover` performs no provider I/O (`linear-tracker.md`). PAT-64 must provide
-  both halves for every pair.
+- **PAT-69** — YouTrack, Linear and GitHub Projects implement
+  `close_epic`/`get_epic_closure` through PAT-ADR-0006's bounded path. The GitHub
+  Projects path was qualified on the exact private personal-Project profile recorded
+  in `qualification/github-projects-v1.md`: one deterministic audit comment, one
+  targeted parent State projection, complete graph readback and fresh-process replay
+  without a second effect. Title, body, labels, unrelated relations and non-State
+  Project fields remain part of the protected snapshot. The path retains the explicit
+  S1→S2 race: it is neither CAS nor an atomic provider graph transaction. The non-V1
+  DevHub adapter keeps the stronger atomic form of the port (`devhub.py`).
+- **PAT-64** — The provider-neutral migration port and the three adapter
+  implementations now exist. Three distinct provider-specific transport doubles exercise
+  all six directed source/target pairs, including the dedicated YouTrack provenance
+  field, Linear deterministic identity/closed ADR batch and GitHub reserved
+  provenance-label/ADR-namespace rules. Real-adapter boundary tests cover ambiguous
+  response recovery; the GitHub codec test also covers a known ADR→issue relation while
+  the target remains staged. The isolated YouTrack P64Q→GitHub Projects P64G recipe
+  completed preflight, copy, exact readback and activation. The remaining pairs have
+  fake-transport evidence only; no production repository was cut over.
+  The command deliberately does not copy comments or provider lifecycle receipts;
+  it preserves the exact Markdown checkbox marks for migration fidelity, while
+  lifecycle acceptance remains unknown until the target's normal review proof.
+
+### PAT-64 — cutover portable et reprenable
+
+`foundry.migration` définit l'orchestrateur unique de cutover. Il ne contient aucune
+branche YouTrack/Linear/GitHub Projects : il lit les deux côtés par le port `Tracker`,
+fige un manifeste JSON, copie seulement les issues dont l'état normalisé n'est ni
+`done` ni `dropped`, relit chaque cible, puis laisse `registry cutover` publier le
+binding atomique avec `source_digest`, le digest de la vue source gelée du manifeste
+(distinct du SHA-256 du fichier JSON, qui change avec la progression). Le manifeste porte le `source_ref` de
+chaque issue et ADR, les corps exacts, les attributs et les exceptions explicites des
+attributs que la cible ne sait pas représenter. Ces exceptions couvrent le nom
+d'attribut non supporté, la valeur hors vocabulaire et l'option absente du catalogue
+natif de la cible. La valeur source reste inchangée dans le manifeste; seule la copie
+de l'attribut nommé est omise ou remplacée, et la relecture ignore exactement cette
+valeur déclarée. Par exemple, GitHub ne projette `Task` pour un Type source absent ou
+indisponible que si le manifeste porte l'exception correspondante. Les relations ADR
+non exposées par le port sont `unknown`, jamais une liste vide.
+Lorsqu'une relation ADR→issue connue pointe vers une issue hors du travail vivant,
+le manifeste conserve sa coordonnée exacte `<tracker-source>:issue:<id>` dans
+`source_only_issue_refs`. La cible garde cette liste dans la provenance de l'ADR,
+distincte des liens natifs vers les issues recopiées. Elle ne crée aucune issue miroir,
+ne transforme pas la relation en `unknown` et relit la liste exacte avant activation.
+Une bascule ultérieure transporte encore ces références source sans les attribuer au
+nouveau tracker (PAT-ADR-0008).
+Linear qualifie chaque valeur contre son binding de statuts, types, priorités et
+estimations avant le premier effet; YouTrack lit le catalogue natif du projet pour
+les options State, Priority et Type, ainsi que la présence et le type natif `integer`
+du champ Estimate. Une option, un champ ou un type incompatible devient une exception nommée
+dans le manifeste. Le fichier de progression est remplacé atomiquement avec des
+permissions `0600`, indépendamment de l'umask ou des permissions de son ancienne version.
+La relecture du graphe vivant exige l'égalité des liens internes attendus et observés,
+sans relation supplémentaire. Une ADR remappée doit aussi conserver l'identifiant
+cible calculé par l'adaptateur, à la copie et juste avant l'activation.
+
+Une cible doit implémenter `migration_find_*`, `migration_import_*` et
+`migration_link_issue`. Ces primitives
+gardent et recherchent un `source_ref` exact : une reprise complète seulement les
+enregistrements absents et ne peut pas dédupliquer par titre ou corps. Les trois
+adaptateurs placent ce `source_ref` à la frontière de leur premier effet provider :
+
+- YouTrack exige un champ personnalisé `String` dédié nommé par
+  `migration_source_field`. Les ADR importées gardent le corps Article byte-exact; une
+  enveloppe canonique dans `summary` porte l'identité, le statut historique et la
+  connaissance des relations. Le lecteur enlève l'enveloppe et reste compatible avec
+  les Articles ADR historiques.
+- Linear exige `migration_identity_profile=foundry-linear-deterministic-v1`. L'identité
+  native de chaque issue est un UUID déterministe dérivé du project id et du
+  `source_ref`; une réponse perdue se résout par cette identité, jamais par le titre.
+  Si le corpus contient des ADR, `migration_adr_qualification_project_id` nomme un
+  projet Linear isolé, distinct du projet cible. Le premier préflight reste sans effet :
+  il valide le corpus, l'identité cible et cette isolation, puis déclare explicitement
+  que la qualification ADR est différée. La copie crée et relit d'abord toutes les
+  issues et leurs liens. Elle traduit alors les relations ADR→issue avec les identifiants
+  lisibles réellement attribués par Linear, produit le lot fermé, et crée dans le projet
+  isolé des probes déterministes pour les octets complets du Document et du témoin.
+  Chaque probe est relue avant le premier Document ADR autoritatif.
+
+  Le profil exact retourné par cette phase 2 est persisté dans le manifeste local avant
+  l'import ADR, mais reste hors de `source_digest` : la vue source gelée ne change pas
+  pendant la progression. Une reprise après création des probes retrouve leurs slots
+  déterministes; une reprise après persistance du profil le relit et le réutilise sans
+  nouvel effet. Le profil doit correspondre exactement au lot traduit et ses probes
+  doivent encore être présentes, non archivées, dans le projet isolé avec leurs octets
+  relus. Toute divergence échoue avant le premier effet ADR. Une défaillance de phase 2
+  laisse la source active et les issues cibles partielles reprenables; elle ne transforme
+  jamais une relation connue en relation vide. Après qualification, la copie appelle une
+  seule fois `import_adr_batch` sur le corpus fermé, puis vérifie le corps source exact,
+  le statut, la relation ADR→issue et son commentaire réciproque.
+- GitHub exige un label ancre réservé, nommé par `migration_label`, dont la description
+  exacte est `Foundry migration provenance profile v1`. Chaque source reçoit un label
+  déterministe dérivé de cette ancre et du `source_ref`; ce label est présent dans le
+  POST initial de l'Issue, y compris le support Issue d'une ADR. La création puis la
+  relecture du label source est elle-même reprenable; zéro ou plusieurs candidats après
+  une réponse ambiguë échouent fermés. Le codec PAT-ADR-0007 exige le namespace ADR de
+  la cible : `SRC-ADR-0042` devient donc `DST-ADR-0042`, et les relations de
+  supersession sont remappées avec le même suffixe. Le `source_ref` conserve l'identité
+  source exacte; un suffixe invalide, dupliqué ou déjà occupé par une autre provenance
+  est refusé au préflight. Si une création ADR s'interrompt après l'ajout de son Issue
+  support au Project mais avant son premier commentaire de version, la reprise ignore
+  temporairement ce seul support incomplet uniquement lorsque le label source, les
+  coordonnées natives et l'intention locale armée sur `adr:item` concordent exactement.
+  Elle termine alors le commentaire et l'engagement de tête sans recréer l'Issue ni
+  l'item. Tout support sans cette preuve, toute intention divergente et tout historique
+  présent mais malformé restent des conflits fermés.
+
+  Pour une relation ADR→issue connue, la relecture de préflight utilise le binding
+  GitHub staged fourni au port de migration. Elle ne consulte pas le binding actif de
+  la source; la cible peut donc être qualifiée avant la bascule sans devenir une seconde
+  autorité d'écriture.
+
+Le préflight lit la source complète, vérifie le profil de provenance cible et toutes
+les options de champs connues avant le premier effet provider. Pour Linear, la seule
+qualification différée est celle dont les octets dépendent des identifiants d'issues
+attribués par le provider; ses probes restent non autoritatives et isolées. Une relation
+ADR indisponible reste `unknown`; elle ne devient jamais `[]` ou `null`. La copie et la
+relecture comparent titre et corps exacts, Type, Priority, Estimate, état normalisé,
+marques de checkbox d'acceptation, graphe interne des issues, puis titre, corps, statut
+et relations ADR disponibles. Une divergence ou une provenance ambiguë arrête la
+bascule.
+
+Le registre conserve la cible en entrée `_staged_cutover` inactive. Les résolveurs
+ordinaires l'ignorent, donc elle ne crée jamais une seconde autorité d'écriture. Après
+la dernière relecture source et cible, `registry.cutover_repository_tracker` archive la
+source, promeut exactement la cible staged et remplace le marqueur V1 dans la même
+section critique locale. Une interruption peut rendre le checkout temporairement
+illisible; la reprise exacte publie le marqueur sans réactiver la source ni créer deux
+bindings actifs. Cette voie de reprise est limitée au cas où le registre contient déjà
+la cible promue, aucune source active et la source archivée désignée par l'ancien
+marqueur; sans ancien marqueur, une seule candidate archivée est admise. Tant que la
+cible reste staged ou qu'une source est active, elle refuse et repasse par la validation
+source normale. Après publication, le tombstone source refuse ses écritures.
+
+La commande est :
+
+```text
+foundry_cli.py cutover preflight <target-tracker> <target-config.json> <manifest.json>
+foundry_cli.py cutover copy      <target-tracker> <target-config.json> <manifest.json>
+foundry_cli.py cutover activate  <target-tracker> <target-config.json> <manifest.json>
+```
+
+`target-config.json` contient exactement `key`, `id` et `extra`, sans secret. `extra`
+porte le `canonical_repo`, le profil de provenance ci-dessus et le binding provider
+complet déjà qualifié. Pour Linear avec ADR, `extra` porte aussi l'identifiant du projet
+isolé de qualification; le profil batch volumineux et credential-free est produit et
+conservé uniquement dans le manifeste de progression, jamais dans le binding staged ou
+actif. `preflight` peut être rejoué avec le même manifeste; `copy`
+remplit seulement les effets absents; `activate` termine aussi une interruption entre
+la publication du binding et l'écriture locale de la phase `activated`.
+
+La recette isolée P64Q→P64G a utilisé le dépôt privé
+`patobiskoto/foundry-v1-pat64-cutover-sandbox`, le Project personnel natif
+`PVT_kwHOABroCc4BlQAG`, le projet YouTrack P64Q et son champ String dédié. Le
+manifeste dont `source_digest` vaut `sha256:162ed584b4c63149897824d61cf297dc75be395a8212860c167c42c84f33bf21`
+a copié une issue vivante et une ADR `proposed`, avec les octets du corps source,
+les marques `[x]`/`[ ]`, les attributs et les relations ADR `unknown` conservés à la
+relecture. La source P64Q est archivée et refuse une nouvelle création; le binding
+P64G est actif. Le sandbox GHQUAL déjà enregistré n'a pas été réaffecté. Les autres
+paires restent prouvées sur faux transports; un projet Linear cible et ses mappings
+complets seraient nécessaires pour une recette live supplémentaire. La PR sandbox #3
+a été mergée via Foundry (`38c52c2f348be11f2ccf5b687d9841a8a188c3f1`) ;
+P64G-1 est `done` avec ses deux critères d'acceptation prouvés.
+
+Cette procédure reste le modèle S1-S6 de PAT-ADR-0006. Le verrou et le manifeste sont
+locaux; ils n'offrent ni CAS provider ni exclusion distribuée. Une écriture externe
+entre S1 et S2 reste le risque résiduel explicite.
 - **PAT-59** — Linear release scope reads the same milestone mapping: an issue in an
   unmapped `projectMilestone` fails the read (`linear.py`). The PAT-54
   `registry update` path can now publish the missing mapping coherently; PAT-59 still
@@ -144,7 +300,7 @@ provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack, Linear
 (ADR evolution is served by `set_adr_status`); the typed acceptance-override receipt on
 YouTrack (free-text audit note fallback, `base.py`).
 
-**GitHub Projects read slice (PAT-57).** PAT-54 supplies
+**GitHub Projects read and ADR slices (PAT-57/PAT-58).** PAT-54 supplies
 the canonical checkout binding and read-only existing-project probe. PAT-65 then
 qualified the private, personal-project API shape and selected the ADR representation
 under PAT-ADR-0007; the evidence and its limits are recorded in
@@ -159,19 +315,25 @@ requires a distinct private personal-repository node, Project item ID and Issue 
 exactly one qualified field ID, the qualified state/type catalogs, a bounded priority
 catalog, and coherent field/option value IDs.
 It rejects partial GraphQL responses and unsupported draft/PR/foreign items, and excludes only the reserved
-`foundry:adr` support. Native free-text search is explicitly refused. The write methods `create_issue`, `update_fields`, `set_state`,
-`link`, `add_comment`, `create_adr` and `set_adr_status` remain typed capability
-refusals; `list_adrs` raises the typed `adr_index` refusal until PAT-58 supplies its
-codec. Everything else is inherited
-from `base.py` unchanged: optional ports raise their typed unavailability error
-(`EpicClosureUnavailableError`, `BodyUpdateUnavailableError`,
-`AcceptanceSyncUnavailableError`, `ProjectProvisioningUnavailableError`,
-`EpicSubgraphUnavailableError`, `TrackerCapabilityUnavailableError`); the
-`validate_*` checks and `preflight_issue_operation` are no-ops. The cells therefore do
+`foundry:adr` support. Native free-text search is explicitly refused. PAT-66 supplies
+bounded delivery-Issue creation, field/body updates, links and comments for this
+qualified profile; PAT-67 supplies the proof-bound lifecycle projection for the
+qualified private personal Project. PAT-58
+supplies an exact-project ADR codec: a reserved `foundry:adr` Issue
+is the support, its UTF-8 body is current source, and version comments bind source
+digest, sequence, predecessor, status and relations. Reads exhaust both Project and
+comment pagination and reject duplicate, foreign, incomplete or altered chains. It
+never imports the PAT-65 `EXP-ADR-0001` prototype as authority. Creation and later
+body/status/link/supersession evolution are bounded read-verify-write-readback paths;
+GitHub provides no CAS, immutable history or idempotency key, so an ambiguous comment
+or create response is explicit and not blindly replayed. Optional ports not delivered
+by these slices retain their typed unavailability errors from `base.py`; the exact
+status of each port is the matrix below. The cells therefore do
 not become `supported` from provider probes alone: each cell's `ticket` names the tranche
 that must deliver and qualify the adapter operation (PAT-57, 58, 59, 64, 66, 67, 69),
-including the still-unavailable optional Epic subgraph projection under PAT-57, PAT-58 for ADR
-supersession and issue links, and PAT-67 for the acceptance-override receipt. PAT-65
+including the still-unavailable optional Epic subgraph projection under PAT-57.
+The optional GitHub Projects acceptance-override receipt is explicitly refused.
+PAT-65
 owns no remaining adapter-delivery cell.
 
 ## 2. Identity model
@@ -268,6 +430,9 @@ skills only see the normalized `Issue`/`Adr`/`Project` models (`models.py`).
   `foundry_cli.py query changelog <MILESTONE>` from the same checkout and consumes only that JSON;
   it imports no tracker module and holds no provider credential, and exits 3 when
   Foundry is absent so the caller falls back to a changelog file.
+  The versioned payload and the stable provider mappings are documented in
+  [`release-scope.md`](release-scope.md). `milestone`, `count` and `groups` remain the
+  bridge-compatible projection; the additive categories make unknown proof explicit.
 
 ## 4. Mutation guarantees without a provider transaction/CAS
 
@@ -379,7 +544,7 @@ machine.
 | AC state | S1-S4 on the checkbox body (met, level 1) | PAT-ADR-0006 declares the proof-bound append-only projection the V1 authority (S5/S6); native checkbox replacement remains refused |
 | Status projection | S1-S5: the public operation supplies its original predecessor coordinate, `set_state` retains it through the effective S1 transport read before one native State write, and an exact retry at the target converges; another state or a missing predecessor fails closed | `in-progress`/`review`/`done`: one targeted native State projection under S1-S5 plus its append-only receipt; historical native observations and proof-bound logical targets are validated separately, only the latest relevant receipt may repair a missing projection, disagreement is observable, and a bare native terminal state is never positive proof |
 | Resume | S5 on every replayable transition through the predecessor coordinate; free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | exact native/receipt recovery completes only the missing effect; `add_comment` (`linear.py`) follows the free-text rule |
-| Epic closure | Fresh read of the full parent/children graph and AC proofs, one write, append-only receipt at a deterministic id bound to the exact set of terminal children and carrying the FOUNDRY-ADR-0017 human verdict, readback, fail closed on any divergence — authorized by PAT-ADR-0006, implementation PAT-69 | same — authorized by PAT-ADR-0006, implementation PAT-69 |
+| Epic closure | Fresh read of the Epic's nonempty validation criteria, exact required children and complete transitive dependency graph; every child/dependency must be `done` with non-empty qualified AC evidence (unknown, zero-criteria, override and dropped remain refusals). The human verdict validates the Epic's own need and procedure; its title/body/AC snapshot digest is bound into the deterministic audit and rechecked on pending and done replay. A machine-local intent, keyed by the Epic's project scope and carrying the exact audit ID, is durable before the one audit POST: an exact audit that becomes visible resumes, while an unresolved or still invisible effect fails closed on every replay, even if the caller generates a new timestamp and nonce. The intent is neither provider CAS nor an exactly-once guarantee. One targeted parent write and full graph readback follow. Divergence fails closed. This is bounded detection with the named S1→S2 overwrite risk, never CAS or an atomic transaction. | same, with Linear's append-only review-bound acceptance proof as authority for child/dependency issues; native Epic checkboxes alone are not code-PR proof and an override receipt remains distinct and blocks closure |
 
 The low-level CLI makes the predecessor explicit when the active adapter requires
 bounded native transitions: `edit transition <ISSUE-ID> <target> <expected-state>`.
@@ -427,8 +592,8 @@ PAT-ADR-0006, **Garanties d'écriture sans CAS pour les trackers V1**, is accept
 explicitly amends Linear's former blanket refusal for PAT-55 grooming fields, body and
 parent under S1-S4 and the named S1→S2 risk. It keeps Linear native checkbox replacement
 refused and selects the existing append-only proof projection as V1 AC authority for
-PAT-56. It also authorizes PAT-69's bounded Epic-closure shape while leaving that
-implementation outside PAT-55. The machine-readable contract therefore has no pending
+PAT-56. It also authorizes PAT-69's bounded Epic-closure shape. The machine-readable
+contract therefore has no pending
 ADR entry or `blocked_by_adr` cell; remaining `gap` cells are implementation work owned
 by their tickets. A future stronger or weaker guarantee still requires another accepted
 ADR before code.
@@ -455,8 +620,10 @@ foundry_cli.py registry update <tracker> <repo> <KEY> <project-id> \
 `bootstrap` derives the canonical identity from the checkout rather than from an
 argument. Before the local publication, YouTrack reads the exact native project id/key;
 Linear reads the exact project id, team UUID and team key after validating every UUID
-map; YouTrack V1 extras are limited to `canonical_repo` and optional non-empty
-`ms_bundle`. Undeclared keys, including credential keys, refuse before provider readback
+map; YouTrack V1 extras are limited to `canonical_repo`, optional non-empty
+`ms_bundle`, and optional structured `release_ids`. GitHub Projects accepts the same
+structured `release_ids` map beside its required owner/number coordinates. Undeclared
+keys, including credential keys, refuse before provider readback
 or persistence. GitHub Projects reads the exact owner/number/node id and the linked canonical
 repository. A foreign coordinate, unavailable provider or incomplete binding refuses
 before the registry or marker changes (`registry.py`;
@@ -548,10 +715,9 @@ never used by the code-host path.
   `pytest -q -m tracker_conformance tests`. Every core cell already marked
   `supported` must have an executable provider case, and every remaining `gap` or
   `to_qualify` cell makes that command fail even when it names a PAT owner. After the
-  PAT-66 integration, 41/41 supported core cells have selected behavior coverage; the
-  aggregate gate remains intentionally red on 16 cells owned by PAT-58, PAT-59,
-  PAT-64, PAT-67 and PAT-69. The manifest contains no dormant future selector and a
-  blocking cell cannot be misrepresented as passing coverage.
+  PAT-64 merge, all 57 supported core cells (19 per tracker) have selected behavior
+  coverage, and the aggregate gate is green. The manifest contains no dormant future
+  selector, and a blocking cell cannot be misrepresented as passing coverage.
   [`test_tracker_contract.py`](../tests/test_tracker_contract.py) remains PAT-53's
   narrower schema/ABC/owner pin; PAT-68 composes the executable fake-transport
   regressions and adversarial matrix.
@@ -564,6 +730,6 @@ never used by the code-host path.
 
 ## Document status
 
-This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 2`. A change to
+This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 3`. A change to
 any status cell, the operation list or the closed status vocabulary bumps the JSON
 `version` and this heading together.

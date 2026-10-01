@@ -38,13 +38,13 @@ a cell into `supported`, its executable provider test must be present in the sam
 surface or the gate still fails.
 
 The manifest contains no dormant `pending_ticket` selectors and never names a test that
-is absent from the checkout. Future PAT-58 and PAT-67 cases are added only when those
-adapter implementations and tests have actually landed.
+is absent from the checkout. The PAT-58, PAT-59, PAT-64, PAT-67 and PAT-69 cases were
+added only after their adapter implementations and tests landed on `main`.
 
-After the PAT-66 GitHub core-write integration, all 41 currently `supported` core cells
-have executable coverage. The six newly active GitHub cells exercise issue creation and
-replay, bounded evolution, exact comment readback, child creation, reciprocal reparenting,
-and dependency/relation replay through the real adapter with faked transport.
+All 57 core provider cells (19 per tracker) are now `supported` and have selected
+executable coverage. The newer cases exercise ADR versions, release scopes, cutover
+imports and replay, bounded Epic closure, lifecycle and acceptance receipts, and the
+archived-project write guard through the real adapters with fake transports.
 
 The manifest also pins coverage of the failure classes required by PAT-68:
 capabilities, explicit refusals, pagination, permissions, conflicts, ambiguous
@@ -53,27 +53,18 @@ near-colliding repository identities, another product's ADR authority, contradic
 global provider configuration, missing credentials, unavailable ADR relations,
 registry drift and archived tracker state.
 
-The capability/refusal case invokes all three real adapter classes with transports that
-fail if touched and verifies their common typed, side-effect-free refusal of the still
-missing Epic-closure port. That behavioral assertion does not make the missing core
-capability pass: the final gate reports it as a blocker for each provider.
+The capability case checks the three adapters' bounded Epic-closure declaration. Their
+distinct atomic DevHub closure capability remains unavailable. The selected provider
+tests exercise bounded closure and replay, while separate refusal cases continue to
+verify unavailable optional capabilities without provider side effects.
 
 ## Current gate state
 
-The structural and executable-provider checks pass, but the exact public CI command is
-expected to remain red until the provider work is complete. It currently selects 91
-tests: 90 pass and the single aggregate gate fails on these 16 contract cells:
-
-| Owner | Remaining core cells |
-|---|---|
-| PAT-58 | GitHub ADR read, create and status evolution (3) |
-| PAT-59 | Linear and GitHub release/changelog scope (2) |
-| PAT-64 | GitHub archived-source tombstone; YouTrack/GitHub ADR import; YouTrack/Linear/GitHub live-work copy (6) |
-| PAT-67 | GitHub lifecycle transitions and acceptance sync (2) |
-| PAT-69 | Epic closure on YouTrack, Linear and GitHub (3) |
-
-This red result is the AC3 behavior. A ticket owner or `gap`/`to_qualify` status never
-turns an absent core capability into a pass.
+On the PAT-64 merge baseline, the exact public command selects 107 passing tests. The
+aggregate gate reports no missing supported cell and no core `gap` or `to_qualify`.
+The guard is still adversarially tested: deleting a supported case or marking a covered
+core cell `to_qualify` makes the command fail. A ticket owner or matrix label alone
+never turns an absent core capability into a pass.
 
 ## Evidence boundary
 

@@ -29,7 +29,19 @@ import urllib.request
 import uuid
 
 from foundry import config, registry
-from foundry.models import Adr, Issue, Link, Project, TransitionContext
+from foundry.models import (
+    Adr,
+    EpicClosureChild,
+    EpicClosureDependency,
+    EpicClosureOutcome,
+    EpicClosureReceipt,
+    Issue,
+    Link,
+    Project,
+    ReleaseIssue,
+    ReleaseScope,
+    TransitionContext,
+)
 from foundry.trackers.base import (
     _UNSPECIFIED_ADR_RELATION,
     AcceptanceSyncUnavailableError,
@@ -39,7 +51,10 @@ from foundry.trackers.base import (
     Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
+    ReleaseScopeUnavailableError,
+    migration_source_only_issue_refs,
 )
+from foundry.trackers.epic_intent import EpicAuditIntent
 
 
 LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql"
@@ -136,8 +151,14 @@ query FoundryLinearIssue($id: String!) {{
 """
 
 _PROJECT_BINDING_QUERY = """
-query FoundryLinearProjectBinding($id: String!) {
-  project(id: $id) { id team { id key } }
+query FoundryLinearProjectBinding($id: String!, $teamId: ID!) {
+  project(id: $id) {
+    id
+    teams(filter: { id: { eq: $teamId } }, first: 2) {
+      nodes { id key }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
 }
 """
 
@@ -153,6 +174,45 @@ query FoundryLinearIssues($teamId: ID!, $projectId: ID!, $after: String) {{
   }}
 }}
 """
+
+_PROJECT_RELEASES_QUERY = """
+query FoundryLinearProjectMilestones($id: String!, $after: String) {
+  project(id: $id) {
+    id
+    projectMilestones(first: 100, after: $after) {
+      nodes { id name }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+_RELEASE_ISSUES_QUERY = f"""
+query FoundryLinearReleaseIssues(
+  $teamId: ID!, $projectId: ID!, $milestoneId: ID!, $after: String
+) {{
+  issues(
+    filter: {{
+      team: {{ id: {{ eq: $teamId }} }},
+      project: {{ id: {{ eq: $projectId }} }},
+      projectMilestone: {{ id: {{ eq: $milestoneId }} }}
+    }}
+    first: 100
+    after: $after
+  ) {{
+    nodes {{ {_ISSUE_FIELDS} }}
+    pageInfo {{ hasNextPage endCursor }}
+  }}
+}}
+"""
+
+_RELEASE_NESTED_FIELDS = {
+    "labels": "id name",
+    "children": "id identifier",
+    "relations": "type relatedIssue { id identifier }",
+    "inverseRelations": "type issue { id identifier }",
+    "comments": "id body createdAt",
+}
 
 _ISSUE_CREATE = """
 mutation FoundryLinearIssueCreate($input: IssueCreateInput!) {
@@ -356,6 +416,12 @@ def _relation_link(relation: dict, *, inverse: bool) -> Link:
 def _adr_client_uuid(slot: str) -> str:
     digest = hashlib.sha256(slot.encode("utf-8")).hexdigest()
     return str(uuid.UUID(digest[:32], version=4))
+
+
+def _migration_issue_id(project_id: str, source_ref: str) -> str:
+    return _adr_client_uuid(
+        f"foundry-linear-migration-issue.v1:{project_id}:{source_ref}"
+    )
 
 
 def _issue_relation_id(
@@ -1369,7 +1435,11 @@ def _parse_adr_document(
             "missing_relations",
         }
         valid_origin = (
-            set(origin) in (migration_keys, migration_keys | {"batch_sha256"})
+            set(origin) in (
+                migration_keys, migration_keys | {"batch_sha256"},
+                migration_keys | {"source_only_issue_refs"},
+                migration_keys | {"batch_sha256", "source_only_issue_refs"},
+            )
             and (
                 "batch_sha256" not in origin
                 or (
@@ -1377,7 +1447,7 @@ def _parse_adr_document(
                     and _DIGEST.fullmatch(origin["batch_sha256"]) is not None
                 )
             )
-            and origin["source_tracker"] == "youtrack"
+            and origin["source_tracker"] in {"youtrack", "linear", "ghprojects"}
             and isinstance(origin["source_ref"], str)
             and bool(origin["source_ref"])
             and all(
@@ -1391,6 +1461,25 @@ def _parse_adr_document(
             and origin["missing_relations"] == sorted(set(origin["missing_relations"]))
             and set(origin["missing_relations"]).issubset(
                 _ADR_MISSING_RELATION_FAMILIES
+            )
+            and (
+                "source_only_issue_refs" not in origin
+                or (
+                    isinstance(origin["source_only_issue_refs"], list)
+                    and all(
+                        isinstance(ref, str)
+                        for ref in origin["source_only_issue_refs"]
+                    )
+                    and origin["source_only_issue_refs"]
+                    == sorted(set(origin["source_only_issue_refs"]))
+                    and all(
+                        ref.split(":", 2)[0] in {"youtrack", "linear", "ghprojects"}
+                        and len(ref.split(":", 2)) == 3
+                        and ref.split(":", 2)[1] == "issue"
+                        and bool(ref.split(":", 2)[2])
+                        for ref in origin["source_only_issue_refs"]
+                    )
+                )
             )
             and (
                 sequence != 0
@@ -1628,6 +1717,10 @@ class LinearTracker(Tracker):
     acceptance_proof_projection_supported = True
     acceptance_override_projection_supported = True
     cockpit_evidence_projection_supported = True
+    bounded_epic_closure_supported = True
+    migration_supported_attributes = frozenset({
+        "type", "priority", "estimate", "state", "parent", "children", "dependencies",
+    })
 
     def __init__(
         self,
@@ -1644,6 +1737,263 @@ class LinearTracker(Tracker):
             raise ValueError("credential Linear invalid")
         self._transport = transport
         self._active_project: Project | None = None
+
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        self._binding(project)
+        attributes = snapshot.get("attributes")
+        if not isinstance(attributes, dict):
+            raise TrackerConflictError("snapshot issue de migration Linear invalide")
+        skeleton = {
+            "labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}},
+        }
+        exceptions: dict[str, str] = {}
+        for attribute, native in (
+            ("type", "Type"), ("priority", "Priority"),
+            ("estimate", "Estimate"), ("state", "State"),
+        ):
+            value = attributes.get(attribute)
+            if value is None:
+                continue
+            try:
+                self._desired_update(skeleton, project, {native: value})
+            except (LinearBindingError, ValueError) as exc:
+                if isinstance(exc, LinearBindingError) and exc.code not in {
+                    "state_unmapped", "type_unmapped",
+                }:
+                    raise
+                exceptions[attribute] = f"target value unavailable: {value}"
+        return exceptions
+
+    def migration_preflight(
+        self, project: Project, records: tuple[dict, ...],
+    ) -> dict:
+        if project.extra.get("migration_identity_profile") != (
+            "foundry-linear-deterministic-v1"
+        ):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_provenance_profile"
+            )
+        source_refs = tuple(record["source_ref"] for record in records)
+        if len(source_refs) != len(set(source_refs)):
+            raise TrackerConflictError("provenance source de migration dupliquée")
+        identities = [_migration_issue_id(project.id, ref) for ref in source_refs]
+        if len(identities) != len(set(identities)):
+            raise TrackerConflictError("identité déterministe Linear ambiguë")
+        if not self.verify_project_identity(project):
+            raise TrackerConflictError("profil migration Linear hors projet")
+        for record in records:
+            if record.get("kind") != "issue":
+                continue
+            unsupported = {
+                item["attribute"] for item in record.get("exceptions", [])
+            }
+            fields = {
+                name: value
+                for name, value in {
+                    "Type": record["attributes"].get("type"),
+                    "Priority": record["attributes"].get("priority"),
+                    "Estimate": record["attributes"].get("estimate"),
+                    "State": record["attributes"].get("state"),
+                }.items()
+                if value is not None and name.casefold() not in unsupported
+            }
+            self._desired_update(
+                {"labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}},
+                project,
+                fields,
+            )
+        adrs = tuple(record for record in records if record.get("kind") == "adr")
+        qualification_project_id = None
+        if adrs:
+            qualification_project_id = project.extra.get(
+                "migration_adr_qualification_project_id"
+            )
+            try:
+                qualification_uuid = uuid.UUID(qualification_project_id)
+            except (TypeError, ValueError, AttributeError):
+                raise TrackerCapabilityUnavailableError(
+                    self.name, "migration_adr_batch_qualification",
+                ) from None
+            if (
+                qualification_uuid.version != 4
+                or str(qualification_uuid) != qualification_project_id
+                or qualification_project_id == project.id
+            ):
+                raise TrackerConflictError(
+                    "projet de qualification batch ADR Linear non isolé"
+                )
+            qualification_project = Project(
+                project.key,
+                qualification_project_id,
+                {**project.extra, "milestone_ids": {}},
+            )
+            if not self.verify_project_identity(qualification_project):
+                raise TrackerConflictError(
+                    "projet de qualification batch ADR Linear non vérifié"
+                )
+            # The first cutover preflight is deliberately effect-free.  It can
+            # validate the source corpus and the isolated qualification target,
+            # but it cannot derive the final ADR bytes yet: known issue links
+            # need Linear's readable identifiers, assigned during issue copy.
+            base = self._migration_adr_batch_records(adrs)
+            if len({record["adr_id"] for record in base}) != len(base):
+                raise TrackerConflictError("identité ADR source de migration dupliquée")
+            for record in base:
+                _preflight_adr_body_readback(
+                    record["body"],
+                    allow_foundry_adr_0001=(
+                        record["adr_id"] == _FOUNDRY_ADR_0001_ID
+                    ),
+                )
+        profile = {
+            "kind": "linear-deterministic-identity-v1",
+            "namespace": "foundry-linear-migration-issue.v1",
+        }
+        if qualification_project_id is not None:
+            profile.update({
+                "adr_qualification": "deferred-after-issue-readback",
+                "adr_qualification_project_id": qualification_project_id,
+            })
+        return profile
+
+    @staticmethod
+    def _normalize_migration_adr_profile(raw: list[dict]) -> tuple[dict, ...]:
+        if not raw or not all(isinstance(item, dict) for item in raw):
+            raise ValueError("profil batch ADR Linear invalide")
+        normalized = []
+        for item in raw:
+            candidate = dict(item)
+            for name in (
+                "supersedes", "issue_refs", "missing_relations",
+                "source_only_issue_refs",
+            ):
+                if name in candidate and isinstance(candidate[name], list):
+                    candidate[name] = tuple(candidate[name])
+            normalized.append(candidate)
+        return tuple(normalized)
+
+    @staticmethod
+    def _migration_adr_batch_records(records: tuple[dict, ...]) -> tuple[dict, ...]:
+        out = []
+        for record in records:
+            relations = record["relations"]
+            missing = tuple(sorted(
+                name for name in ("supersedes", "superseded_by", "issues")
+                if relations.get(name) == "unknown"
+            ))
+            out.append({
+                "adr_id": record["id"], "title": record["title"],
+                "body": record["body"],
+                "historical_status": record["status"],
+                "source_ref": record["source_ref"],
+                "source_created": record.get("source_created"),
+                "source_updated": record.get("source_updated"),
+                "expected_source_sha256": hashlib.sha256(
+                    record["body"].encode()
+                ).hexdigest(),
+                "supersedes": (
+                    () if relations.get("supersedes") == "unknown"
+                    else tuple(relations["supersedes"])
+                ),
+                "superseded_by": (
+                    None if relations.get("superseded_by") == "unknown"
+                    else relations["superseded_by"]
+                ),
+                "issue_refs": (
+                    () if relations.get("issues") == "unknown"
+                    else tuple(relations["issues"])
+                ),
+                "missing_relations": missing,
+                **({
+                    "source_only_issue_refs": tuple(record["source_only_issue_refs"]),
+                } if "source_only_issue_refs" in record else {}),
+            })
+        return tuple(out)
+
+    def migration_find_issue(self, project: Project, source_ref: str) -> Issue | None:
+        binding = self._activate(project)
+        native_id = _migration_issue_id(binding["project_id"], source_ref)
+        try:
+            raw = self._read_raw(native_id)
+        except IssueUnavailableError:
+            return None
+        self._assert_issue_project(raw, binding)
+        if raw.get("id") != native_id:
+            raise TrackerConflictError("identité migration Linear divergente")
+        return self._to_issue(raw, project)
+
+    def migration_import_issue(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Issue:
+        registry.require_writable_project(self.name, project)
+        existing = self.migration_find_issue(project, source_ref)
+        if existing is not None:
+            return existing
+        binding = self._activate(project)
+        fields = {
+            native: value
+            for native, value in {
+                "Type": snapshot["attributes"].get("type"),
+                "Priority": snapshot["attributes"].get("priority"),
+                "Estimate": snapshot["attributes"].get("estimate"),
+                "State": snapshot["attributes"].get("state"),
+            }.items()
+            if value is not None
+        }
+        skeleton = {
+            "labels": {
+                "nodes": [],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }
+        }
+        values, expected = (
+            self._desired_update(skeleton, project, fields) if fields else ({}, {})
+        )
+        if "label_ids" in expected:
+            values.pop("addedLabelIds", None)
+            values.pop("removedLabelIds", None)
+            values["labelIds"] = sorted(expected["label_ids"])
+        native_id = _migration_issue_id(binding["project_id"], source_ref)
+        input_value = {
+            "id": native_id,
+            "teamId": binding["team_id"],
+            "projectId": binding["project_id"],
+            "title": snapshot["title"],
+            "description": snapshot["body"],
+            **values,
+        }
+        try:
+            data = self._graphql(_ISSUE_CREATE, {"input": input_value}, "migration.issue.create")
+            payload = self._mutation_payload(
+                data, "issueCreate", "migration.issue.create"
+            )
+            created = payload.get("issue")
+            if not isinstance(created, dict) or created.get("id") != native_id:
+                raise LinearTrackerError(
+                    "migration.issue.create", None, "ambiguous_mutation_response"
+                )
+        except LinearTrackerError:
+            recovered = self.migration_find_issue(project, source_ref)
+            if recovered is None:
+                raise
+            return recovered
+        raw = self._read_raw(native_id)
+        self._assert_issue_project(raw, binding)
+        if (
+            raw.get("title") != snapshot["title"]
+            or (raw.get("description") or "") != snapshot["body"]
+            or not self._raw_matches(raw, expected)
+        ):
+            raise TrackerConflictError("issue migration Linear divergente après création")
+        return self._to_issue(raw, project)
+
+    def migration_link_issue(
+        self, project: Project, src_id: str, link_type: str, dst_id: str,
+    ) -> None:
+        registry.require_writable_project(self.name, project)
+        self.link(src_id, link_type, dst_id, project=project)
 
     # ---- transport -------------------------------------------------
     def _graphql(self, document: str, variables: dict, operation: str) -> dict:
@@ -1796,16 +2146,29 @@ class LinearTracker(Tracker):
     def verify_project_identity(self, project: Project) -> bool:
         binding = self._binding(project)
         data = self._graphql(
-            _PROJECT_BINDING_QUERY, {"id": project.id}, "project-binding-read",
+            _PROJECT_BINDING_QUERY,
+            {"id": project.id, "teamId": binding["team_id"]},
+            "project-binding-read",
         )
         raw = data.get("project")
-        team = raw.get("team") if isinstance(raw, dict) else None
-        return bool(
-            isinstance(team, dict)
-            and raw.get("id") == project.id
-            and team.get("id") == binding["team_id"]
-            and team.get("key") == project.key
-        )
+        teams = raw.get("teams") if isinstance(raw, dict) else None
+        try:
+            rows = _connection(teams, "project-binding-read.teams")
+        except LinearTrackerError:
+            return False
+        if not (
+            raw.get("id") == project.id
+            and len(rows) == 1
+            and rows[0].get("id") == binding["team_id"]
+            and rows[0].get("key") == project.key
+        ):
+            return False
+        try:
+            for release in binding["milestone_ids"]:
+                self._mapped_release(project, release)
+        except ReleaseScopeUnavailableError:
+            return False
+        return True
 
     def resolve_project(self, repo: str) -> Project:
         # The provider-neutral port historically passes a repository basename here.
@@ -2895,6 +3258,44 @@ class LinearTracker(Tracker):
             projection_status = "unknown"
         if lifecycle["acceptance_complete"]:
             done = total
+        acceptance_status = "unknown"
+        acceptance_source = None
+        acceptance_coordinates = None
+        review_generation = lifecycle.get("review_generation")
+        accepted = lifecycle.get("acceptance_by_generation", {}).get(
+            review_generation
+        )
+        overridden = lifecycle.get("acceptance_override_by_generation", {}).get(
+            review_generation
+        )
+        if lifecycle["acceptance_complete"] and isinstance(accepted, dict):
+            acceptance_status = "accepted"
+            acceptance_source = "linear-acceptance-proof"
+            acceptance_coordinates = json.dumps(
+                {
+                    "body_digest": accepted.get("body_digest"),
+                    "checked": accepted.get("checked"),
+                    "native_state_id": accepted.get("native_state_id"),
+                    "proof_id": (accepted.get("proof") or {}).get("proof_id"),
+                    "review_generation": accepted.get("review_generation"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        elif lifecycle.get("acceptance_override") is not None and isinstance(
+            overridden, dict
+        ):
+            acceptance_status = "override"
+            acceptance_source = "linear-acceptance-override"
+            acceptance_coordinates = json.dumps(
+                {
+                    "native_state_id": overridden.get("native_state_id"),
+                    "reason": overridden.get("reason"),
+                    "review_generation": overridden.get("review_generation"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         priority = raw.get("priority", 0)
         if priority not in _LINEAR_TO_PRIORITY:
             raise LinearTrackerError("normalize", None, "invalid_response")
@@ -2930,9 +3331,16 @@ class LinearTracker(Tracker):
             comments=comments,
             created=_epoch_ms(raw.get("createdAt")),
             updated=_epoch_ms(raw.get("updatedAt")),
+            # Linear exposes no independent issue revision.  Its server-managed
+            # update timestamp is the only fresh, provider-issued coordinate this
+            # bounded (non-CAS) path may bind into a closure receipt.
+            version=_epoch_ms(raw.get("updatedAt")),
             normalized_state=lifecycle["state"],
             native_state=native_state,
             projection_status=projection_status,
+            acceptance_status=acceptance_status,
+            acceptance_source=acceptance_source,
+            acceptance_coordinates=acceptance_coordinates,
         )
 
     def search(self, project: Project, query: str = "") -> list[Issue]:
@@ -2978,6 +3386,274 @@ class LinearTracker(Tracker):
             if not isinstance(cursor, str) or not cursor:
                 raise LinearTrackerError("issue.search", None, "pagination_stalled")
         raise LinearTrackerError("issue.search", None, "pagination_limit")
+
+    def _mapped_release(self, project: Project, release: str) -> tuple[dict, str]:
+        binding = self._activate(project)
+        release_id = binding["milestone_ids"].get(release)
+        if release_id is None:
+            raise ReleaseScopeUnavailableError(self.name, release, "unmapped")
+        cursor = None
+        seen: set[str] = set()
+        match: dict | None = None
+        for _ in range(_MAX_PAGES):
+            data = self._graphql(
+                _PROJECT_RELEASES_QUERY,
+                {"id": binding["project_id"], "after": cursor},
+                "release.read",
+            )
+            raw_project = data.get("project")
+            if (
+                not isinstance(raw_project, dict)
+                or raw_project.get("id") != binding["project_id"]
+            ):
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "project_unavailable"
+                )
+            connection = raw_project.get("projectMilestones")
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list
+            ):
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            page = connection.get("pageInfo")
+            if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            for row in connection["nodes"]:
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(row.get("id"), str)
+                    or not isinstance(row.get("name"), str)
+                    or row["id"] in seen
+                ):
+                    raise ReleaseScopeUnavailableError(
+                        self.name, release, "invalid_response"
+                    )
+                seen.add(row["id"])
+                if row["id"] == release_id:
+                    if match is not None:
+                        raise ReleaseScopeUnavailableError(
+                            self.name, release, "ambiguous_coordinate"
+                        )
+                    match = row
+            if not page["hasNextPage"]:
+                break
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "pagination_stalled"
+                )
+        else:
+            raise ReleaseScopeUnavailableError(self.name, release, "pagination_limit")
+        if match is None:
+            raise ReleaseScopeUnavailableError(self.name, release, "absent")
+        if match["name"] != release:
+            raise ReleaseScopeUnavailableError(self.name, release, "mapping_mismatch")
+        return binding, release_id
+
+    def _release_issue(self, raw: dict, project: Project) -> ReleaseIssue:
+        issue = self._to_issue(raw, project, observe_lifecycle=True)
+        references: dict[str, object] = {"provider_issue_id": raw.get("id")}
+        try:
+            lifecycle = self._lifecycle_projection(
+                issue.id, raw, allow_current_disagreement=True,
+            )
+        except TrackerConflictError:
+            lifecycle = None
+        if lifecycle is not None and lifecycle["state"] == "done":
+            done = lifecycle.get("done") or {}
+            references.update({
+                key: done.get(key)
+                for key in (
+                    "pr_url", "head_sha", "base_sha", "merge_sha",
+                    "review_digest", "review_generation",
+                )
+            })
+            if issue.projection_status != "aligned":
+                # A historical exact merge receipt remains useful evidence, but a
+                # current native reopen is a conflicting fact. It cannot appear as
+                # accepted current release scope until the disagreement is resolved.
+                disposition = "unavailable"
+            elif lifecycle.get("acceptance_override") is None:
+                acceptance = lifecycle.get("acceptance_by_generation", {}).get(
+                    done.get("review_generation")
+                )
+                if isinstance(acceptance, dict):
+                    proof = acceptance.get("proof")
+                    if isinstance(proof, dict):
+                        references["acceptance_proof_id"] = proof.get("proof_id")
+                disposition = "accepted"
+            else:
+                references["override_reason"] = lifecycle["acceptance_override"]
+                disposition = "deviated"
+        elif lifecycle is not None and lifecycle["state"] in {"in-progress", "review"}:
+            disposition = "unfinished"
+            if lifecycle.get("pr_url"):
+                references["pr_url"] = lifecycle["pr_url"]
+        elif str(issue.native_state or "").casefold() in {
+            "done", "completed", "fixed", "dropped",
+        }:
+            disposition = "unavailable"
+        else:
+            disposition = "unfinished" if issue.projection_status != "unknown" else "unavailable"
+        return ReleaseIssue(
+            id=issue.id,
+            title=issue.title,
+            type=issue.type,
+            state=issue.state or issue.native_state,
+            labels=tuple(issue.labels),
+            disposition=disposition,
+            references={key: value for key, value in references.items() if value is not None},
+        )
+
+    def _complete_release_issue_connections(
+        self, raw: dict, binding: dict, release_id: str, release: str,
+    ) -> dict:
+        """Exhaust nested issue facts before classifying a release member."""
+        complete = dict(raw)
+        issue_id = raw.get("id")
+        if not isinstance(issue_id, str) or not issue_id:
+            raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+        for field, fields in _RELEASE_NESTED_FIELDS.items():
+            connection = raw.get(field)
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list,
+            ):
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            nodes = list(connection["nodes"])
+            page = connection.get("pageInfo")
+            cursors: set[str] = set()
+            for _ in range(_MAX_PAGES):
+                if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                if not page["hasNextPage"]:
+                    complete[field] = {
+                        "nodes": nodes,
+                        "pageInfo": {"hasNextPage": False, "endCursor": page.get("endCursor")},
+                    }
+                    break
+                cursor = page.get("endCursor")
+                if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                    raise ReleaseScopeUnavailableError(self.name, release, "pagination_stalled")
+                cursors.add(cursor)
+                query = f"""
+                query FoundryLinearReleaseNested($id: String!, $after: String) {{
+                  issue(id: $id) {{
+                    id identifier project {{ id }} team {{ id }} projectMilestone {{ id }}
+                    {field}(first: 100, after: $after) {{
+                      nodes {{ {fields} }} pageInfo {{ hasNextPage endCursor }}
+                    }}
+                  }}
+                }}
+                """
+                data = self._graphql(
+                    query, {"id": issue_id, "after": cursor},
+                    f"release.{field}",
+                )
+                current = data.get("issue")
+                if not isinstance(current, dict) or current.get("id") != issue_id:
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                if (
+                    current.get("identifier") != raw.get("identifier")
+                    or not isinstance(current.get("project"), dict)
+                    or current["project"].get("id") != binding["project_id"]
+                    or not isinstance(current.get("team"), dict)
+                    or current["team"].get("id") != binding["team_id"]
+                    or not isinstance(current.get("projectMilestone"), dict)
+                    or current["projectMilestone"].get("id") != release_id
+                ):
+                    raise ReleaseScopeUnavailableError(self.name, release, "foreign_membership")
+                connection = current.get(field)
+                if not isinstance(connection, dict) or not isinstance(
+                    connection.get("nodes"), list,
+                ) or any(not isinstance(node, dict) for node in connection["nodes"]):
+                    raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+                nodes.extend(connection["nodes"])
+                page = connection.get("pageInfo")
+            else:
+                raise ReleaseScopeUnavailableError(self.name, release, "pagination_stalled")
+        return complete
+
+    def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
+        binding, release_id = self._mapped_release(project, release)
+        cursor = None
+        seen: set[str] = set()
+        issues: list[ReleaseIssue] = []
+        for _ in range(_MAX_PAGES):
+            data = self._graphql(
+                _RELEASE_ISSUES_QUERY,
+                {
+                    "teamId": binding["team_id"],
+                    "projectId": binding["project_id"],
+                    "milestoneId": release_id,
+                    "after": cursor,
+                },
+                "release.issues",
+            )
+            connection = data.get("issues")
+            if not isinstance(connection, dict) or not isinstance(
+                connection.get("nodes"), list
+            ):
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            page = connection.get("pageInfo")
+            if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
+                raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+            for raw in connection["nodes"]:
+                native_project = raw.get("project") if isinstance(raw, dict) else None
+                native_team = raw.get("team") if isinstance(raw, dict) else None
+                native_milestone = (
+                    raw.get("projectMilestone") if isinstance(raw, dict) else None
+                )
+                if (
+                    not isinstance(native_project, dict)
+                    or native_project.get("id") != binding["project_id"]
+                    or not isinstance(native_team, dict)
+                    or native_team.get("id") != binding["team_id"]
+                    or not isinstance(native_milestone, dict)
+                    or native_milestone.get("id") != release_id
+                ):
+                    raise ReleaseScopeUnavailableError(
+                        self.name, release, "foreign_membership"
+                    )
+                complete = self._complete_release_issue_connections(
+                    raw, binding, release_id, release,
+                )
+                item = self._release_issue(complete, project)
+                if item.id in seen:
+                    raise ReleaseScopeUnavailableError(
+                        self.name, release, "pagination_stalled"
+                    )
+                seen.add(item.id)
+                issues.append(item)
+            if not page["hasNextPage"]:
+                break
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "pagination_stalled"
+                )
+        else:
+            raise ReleaseScopeUnavailableError(self.name, release, "pagination_limit")
+        return ReleaseScope(
+            provider=self.name,
+            project_key=project.key,
+            project_id=project.id,
+            release=release,
+            release_id=release_id,
+            native_state=None,
+            issues=tuple(issues),
+            closure={
+                "mode": "operator",
+                "native_capability": "unavailable",
+                "action": "record-scope-freeze",
+                "native_mutation": False,
+                "preconditions": ["unfinished=0", "unavailable=0"],
+                "verification": "read-release-scope",
+            },
+            coordinates={
+                "project_id": binding["project_id"],
+                "team_id": binding["team_id"],
+                "project_milestone_id": release_id,
+            },
+        )
 
     def get_issue(self, issue_id: str) -> Issue:
         project = self._project()
@@ -3839,6 +4515,246 @@ class LinearTracker(Tracker):
                 "Linear relation deterministic id is occupied by another relation"
             )
 
+    @staticmethod
+    def _epic_closure_audit(receipt: EpicClosureReceipt) -> tuple[str, str, str]:
+        value = {"schema": "foundry-epic-closure.v1", "receipt": receipt.to_dict()}
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+        audit_id = f"linear:epic:{digest}"
+        return audit_id, (
+            "Foundry Epic closure audit (append-only).\n"
+            f"marker: foundry-epic-closure.v1:{digest}\ncoordinates: {canonical}"
+        ), str(uuid.UUID(digest[:32], version=4))
+
+    @classmethod
+    def _closure_from_issue(
+        cls, issue: Issue, project: Project, *, require_done: bool = True,
+    ) -> EpicClosureOutcome | None:
+        matches = []
+        for row in issue.comments:
+            text = row.get("text") if isinstance(row, dict) else None
+            if not isinstance(text, str) or not text.startswith("Foundry Epic closure audit (append-only).\n"):
+                continue
+            lines = text.splitlines()
+            try:
+                raw = json.loads(lines[2].removeprefix("coordinates: "))["receipt"]
+                dependencies = tuple(
+                    EpicClosureDependency(
+                        source_id=item["source_id"],
+                        target=EpicClosureChild(**item["target"]),
+                    )
+                    for item in raw.get("dependencies", ())
+                )
+                receipt = EpicClosureReceipt(**{
+                    **raw,
+                    "children": tuple(EpicClosureChild(**x) for x in raw["children"]),
+                    "dependencies": dependencies,
+                })
+            except (IndexError, KeyError, TypeError, ValueError):
+                raise TrackerConflictError("audit de clôture Linear malformé") from None
+            audit_id, expected, _comment_id = cls._epic_closure_audit(receipt)
+            if len(lines) != 3 or text != expected or lines[1] != f"marker: foundry-epic-closure.v1:{audit_id.removeprefix('linear:epic:')}":
+                raise TrackerConflictError("audit de clôture Linear divergent")
+            matches.append((receipt, audit_id))
+        if len(matches) > 1:
+            raise TrackerConflictError("audit de clôture Linear dupliqué")
+        if not matches:
+            return None
+        receipt, audit_id = matches[0]
+        if (
+            receipt.project_key != project.key
+            or receipt.project_id != project.id
+            or receipt.parent_id != issue.id
+        ):
+            raise TrackerConflictError("audit de clôture Linear hors coordonnées")
+        from foundry.write import epic_parent_validation_digest
+        if receipt.parent_validation_digest != epic_parent_validation_digest(issue):
+            raise TrackerConflictError("Epic Linear modifié depuis le verdict humain")
+        if require_done and (
+            issue.state != "done"
+            or issue.version is None
+            or issue.version <= receipt.parent_version
+        ):
+            raise TrackerConflictError("audit de clôture Linear sans parent clôturé")
+        return EpicClosureOutcome(
+            receipt,
+            issue.version if require_done else receipt.parent_version + 1,
+            audit_id,
+            replayed=True,
+        )
+
+    def _closure_from_raw(
+        self, raw: dict, project: Project, *, require_done: bool = True,
+    ) -> EpicClosureOutcome | None:
+        """Read the Epic audit without treating it as a code-issue lifecycle proof."""
+        identifier = raw.get("identifier")
+        state = raw.get("state")
+        if not isinstance(identifier, str) or not isinstance(state, dict):
+            raise LinearTrackerError("epic-closure.readback", None, "invalid_response")
+        issue = self._to_issue(raw, project, observe_lifecycle=True)
+        issue.comments = [
+            {"text": row.get("body")}
+            for row in _connection(raw.get("comments"), "epic-closure.comments")
+        ]
+        issue.state = (
+            "done" if state.get("id") == self._binding(project)["state_ids"]["done"]
+            else issue.state
+        )
+        return self._closure_from_issue(issue, project, require_done=require_done)
+
+    def get_epic_closure(self, project: Project, parent_id: str) -> EpicClosureOutcome | None:
+        self.validate_issue_binding(project, parent_id)
+        binding = self._activate(project)
+        raw = self._read_raw(parent_id)
+        self._assert_issue_project(raw, binding)
+        outcome = self._closure_from_raw(raw, project)
+        if outcome is None:
+            return None
+        from foundry.write import bounded_epic_graph_snapshot
+
+        try:
+            parent = self._to_issue(raw, project, observe_lifecycle=True)
+            current, dependencies = bounded_epic_graph_snapshot(
+                self, project, parent,
+            )
+        except (SystemExit, TrackerConflictError) as exc:
+            raise TrackerConflictError(
+                "graphe Epic Linear divergent au rejeu"
+            ) from exc
+        if (
+            current != outcome.receipt.children
+            or dependencies != outcome.receipt.dependencies
+        ):
+            raise TrackerConflictError("graphe Epic Linear divergent au rejeu")
+        return outcome
+
+    def get_pending_epic_closure(
+        self, project: Project, parent_id: str,
+    ) -> EpicClosureReceipt | None:
+        self.validate_issue_binding(project, parent_id)
+        binding = self._activate(project)
+        raw = self._read_raw(parent_id)
+        self._assert_issue_project(raw, binding)
+        state = raw.get("state")
+        native_state_id = state.get("id") if isinstance(state, dict) else None
+        if native_state_id == binding["state_ids"]["done"]:
+            return None
+        pending = self._closure_from_raw(raw, project, require_done=False)
+        if pending is None:
+            return None
+        receipt = pending.receipt
+        current_version = _epoch_ms(raw.get("updatedAt"))
+        current_state = next(
+            (
+                name for name, identifier in binding["state_ids"].items()
+                if identifier == native_state_id
+            ),
+            None,
+        )
+        if (
+            current_version is None
+            or current_version < receipt.parent_version
+            or current_state != receipt.parent_state
+        ):
+            raise TrackerConflictError(
+                "audit pending Linear séparé de son prédécesseur original"
+            )
+        return receipt
+
+    def close_epic(self, project: Project, receipt: EpicClosureReceipt) -> EpicClosureOutcome:
+        binding = self._activate(project)
+        self.validate_issue_binding(project, receipt.parent_id, *(x.id for x in receipt.children))
+        parent = self.get_issue(receipt.parent_id)
+        observed = self._closure_from_issue(parent, project, require_done=False)
+        if observed is not None and parent.state == "done":
+            existing = self._closure_from_issue(parent, project)
+            if existing is None or existing.receipt != receipt:
+                raise TrackerConflictError("audit de clôture Linear divergent")
+            return existing
+        if observed is not None and observed.receipt != receipt:
+            raise TrackerConflictError("audit pending Linear divergent")
+        from foundry.write import bounded_epic_graph_snapshot, epic_parent_validation_digest
+
+        try:
+            children, dependencies = bounded_epic_graph_snapshot(
+                self, project, parent,
+            )
+        except SystemExit as exc:
+            raise TrackerConflictError(
+                "graphe Epic Linear divergent avant écriture"
+            ) from exc
+        if (((observed is None and parent.version != receipt.parent_version)
+                or (observed is not None and (
+                    parent.version is None or parent.version < receipt.parent_version
+                )))
+                or parent.type != receipt.parent_type
+                or parent.ac_done != receipt.parent_ac_done or parent.ac_total != receipt.parent_ac_total
+                or epic_parent_validation_digest(parent) != receipt.parent_validation_digest
+                or parent.state != receipt.parent_state
+                or children != receipt.children
+                or dependencies != receipt.dependencies):
+            raise TrackerConflictError("graphe Epic Linear divergent avant écriture")
+        audit_id, body, comment_id = self._epic_closure_audit(receipt)
+        intent = EpicAuditIntent("linear", project, receipt.parent_id)
+        with intent.lock():
+            record = intent.read()
+            if record is not None and record["audit_id"] != audit_id:
+                raise TrackerConflictError(
+                    "reçu d'audit Epic Linear différent de l'effet local incertain ; "
+                    "no second POST"
+                )
+            raw = self._read_raw(receipt.parent_id)
+            self._assert_issue_project(raw, binding)
+            prior = self._read_comment(comment_id, "epic-closure.comment.read")
+            if observed is None and prior is None:
+                if record is not None:
+                    raise TrackerConflictError(
+                        "effet de l'audit Epic Linear inconnu ou invisible ; no second POST"
+                    )
+                # Persist the exact audit identity before the only append. A new
+                # receipt nonce must not turn an unresolved effect into a new POST.
+                intent.write(audit_id, "pending")
+                try:
+                    data = self._graphql(_COMMENT_CREATE, {"input": {"id": comment_id, "issueId": raw["id"], "body": body}}, "epic-closure.comment.create")
+                    created = self._mutation_payload(data, "commentCreate", "epic-closure.comment.create").get("comment")
+                    if not isinstance(created, dict) or created.get("id") != comment_id or created.get("body") != body:
+                        raise LinearTrackerError("epic-closure.comment.create", None, "invalid_response")
+                except LinearTrackerError:
+                    prior = self._read_comment(comment_id, "epic-closure.comment.recover")
+                    if not isinstance(prior, dict) or prior.get("body") != body:
+                        raise
+            elif prior is None or prior.get("body") != body or (prior.get("issue") or {}).get("id") != raw["id"]:
+                raise TrackerConflictError("audit de clôture Linear collision")
+            intent.write(audit_id, "complete")
+            # The audit is append-only and carries the deterministic replay identity;
+            # only after it exists can the one targeted parent State projection run.
+            # This remains PAT-ADR-0006 bounded detection, not a transaction.
+            self._project_native_state(receipt.parent_id, "done", project, binding)
+            closed_raw = self._read_raw(receipt.parent_id)
+            self._assert_issue_project(closed_raw, binding)
+            recovered = self._closure_from_raw(closed_raw, project)
+            if recovered is None or recovered.receipt != receipt:
+                raise TrackerConflictError("audit de clôture Linear absent après écriture")
+            try:
+                closed_parent = self._to_issue(
+                    closed_raw, project, observe_lifecycle=True,
+                )
+                closed_children, closed_dependencies = bounded_epic_graph_snapshot(
+                    self, project, closed_parent,
+                )
+            except (SystemExit, TrackerConflictError) as exc:
+                raise TrackerConflictError(
+                    "graphe Epic Linear divergent après écriture"
+                ) from exc
+            if (
+                closed_children != receipt.children
+                or closed_dependencies != receipt.dependencies
+            ):
+                raise TrackerConflictError(
+                    "graphe Epic Linear divergent après écriture"
+                )
+            return EpicClosureOutcome(receipt, recovered.closed_parent_version, audit_id)
+
     def add_comment(
         self,
         issue_id: str,
@@ -4582,6 +5498,243 @@ class LinearTracker(Tracker):
         _, chains = self._adr_snapshot(project)
         return [self._adr_model(chains[key]) for key in sorted(chains)]
 
+    def migration_export_adrs(self, project: Project) -> list[dict]:
+        _, chains = self._adr_snapshot(project)
+        exported = []
+        for adr_id in sorted(chains):
+            metadata = chains[adr_id][-1][0]
+            origin = metadata.get("origin")
+            missing = set(
+                origin.get("missing_relations", [])
+                if isinstance(origin, dict) else []
+            )
+            relations = {
+                name: "unknown" if name in missing else metadata["relations"][name]
+                for name in ("supersedes", "superseded_by", "issues")
+            }
+            exported.append({
+                "adr": self._adr_model(chains[adr_id]),
+                "relations": relations,
+                **({
+                    "source_only_issue_refs": origin["source_only_issue_refs"],
+                } if isinstance(origin, dict)
+                   and origin.get("source_only_issue_refs") else {}),
+                "source_created": (
+                    origin.get("source_created") if isinstance(origin, dict) else None
+                ),
+                "source_updated": (
+                    origin.get("source_updated") if isinstance(origin, dict) else None
+                ),
+            })
+        return exported
+
+    def migration_find_adr(self, project: Project, source_ref: str) -> Adr | None:
+        _, chains = self._adr_snapshot(project)
+        matches = []
+        for versions in chains.values():
+            origin = versions[-1][0].get("origin")
+            if isinstance(origin, dict) and origin.get("source_ref") == source_ref:
+                matches.append(self._adr_model(versions))
+        if len(matches) > 1:
+            raise TrackerConflictError("provenance ADR Linear ambiguë")
+        return matches[0] if matches else None
+
+    def migration_import_adr(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Adr:
+        registry.require_writable_project(self.name, project)
+        existing = self.migration_find_adr(project, source_ref)
+        if existing is not None:
+            return existing
+        relations = snapshot["relations"]
+        optional = {}
+        if relations.get("supersedes") != "unknown":
+            optional["supersedes"] = tuple(relations["supersedes"])
+        if relations.get("superseded_by") != "unknown":
+            optional["superseded_by"] = relations["superseded_by"]
+        if relations.get("issues") != "unknown":
+            optional["issue_refs"] = tuple(relations["issues"])
+        return self.import_adr(
+            project,
+            adr_id=snapshot["id"],
+            title=snapshot["title"],
+            body=snapshot["body"],
+            historical_status=snapshot["status"],
+            source_ref=source_ref,
+            source_created=snapshot.get("source_created"),
+            source_updated=snapshot.get("source_updated"),
+            expected_source_sha256=hashlib.sha256(
+                snapshot["body"].encode()
+            ).hexdigest(),
+            source_only_issue_refs=tuple(
+                snapshot.get("source_only_issue_refs", []),
+            ),
+            **optional,
+        )
+
+    def _migration_qualification_probe(
+        self,
+        *,
+        target_project_id: str,
+        qualification_project_id: str,
+        adr_id: str,
+        kind: str,
+        title: str,
+        content: str,
+    ) -> tuple[str, str]:
+        """Create or recover one deterministic, non-authoritative probe."""
+        probe_id = _adr_client_uuid(
+            "foundry-linear-adr-qualification.v1:"
+            f"{target_project_id}:{qualification_project_id}:{adr_id}:{kind}:"
+            f"{hashlib.sha256(content.encode()).hexdigest()}"
+        )
+        expected = {
+            "id": probe_id,
+            "title": title,
+            "content": content,
+            "project": {"id": qualification_project_id},
+            "archivedAt": None,
+        }
+
+        def verify(raw):
+            if raw is None:
+                return None
+            if (
+                not isinstance(raw, dict)
+                or any(
+                    raw.get(key) != value
+                    for key, value in expected.items()
+                    if key != "content"
+                )
+                or not isinstance(raw.get("content"), str)
+            ):
+                raise TrackerConflictError(
+                    "Linear ADR batch qualification probe is not exact"
+                )
+            return raw
+
+        observed = self._create_exact_adr_document(
+            expected, "adr.qualification-probe.create", verify,
+        )
+        return probe_id, observed["content"]
+
+    def migration_qualify_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+    ) -> object | None:
+        """Qualify exact version/witness bytes after issue identifiers exist."""
+        if not snapshots:
+            return None
+        qualification_project_id = project.extra.get(
+            "migration_adr_qualification_project_id"
+        )
+        try:
+            qualification_uuid = uuid.UUID(qualification_project_id)
+        except (TypeError, ValueError, AttributeError):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_adr_batch_qualification",
+            ) from None
+        if (
+            qualification_uuid.version != 4
+            or str(qualification_uuid) != qualification_project_id
+            or qualification_project_id == project.id
+        ):
+            raise TrackerConflictError(
+                "projet de qualification batch ADR Linear non isolé"
+            )
+
+        base = self._migration_adr_batch_records(snapshots)
+        first_plan = self.plan_adr_batch_qualification(project, base)
+        observed_documents = {}
+        document_probes = {}
+        for item in first_plan:
+            if item["recovery_only"]:
+                continue
+            probe_id, observed = self._migration_qualification_probe(
+                target_project_id=project.id,
+                qualification_project_id=qualification_project_id,
+                adr_id=item["adr_id"],
+                kind="document",
+                title=item["document_probe_title"],
+                content=item["document_content"],
+            )
+            observed_documents[item["adr_id"]] = observed
+            document_probes[item["adr_id"]] = probe_id
+
+        final_plan = self.plan_adr_batch_qualification(
+            project, base, observed_documents,
+        )
+        qualified = []
+        for record, item in zip(base, final_plan):
+            profiled = {
+                **record,
+                "qualification_project_id": qualification_project_id,
+            }
+            if not item["recovery_only"]:
+                document_content = observed_documents[item["adr_id"]]
+                profiled.update({
+                    "expected_linear_document_content": document_content,
+                    "expected_linear_document_sha256": hashlib.sha256(
+                        document_content.encode()
+                    ).hexdigest(),
+                    "document_probe_id": document_probes[item["adr_id"]],
+                })
+            witness_probe_id, witness_content = self._migration_qualification_probe(
+                target_project_id=project.id,
+                qualification_project_id=qualification_project_id,
+                adr_id=item["adr_id"],
+                kind="witness",
+                title=item["witness_probe_title"],
+                content=item["witness_content"],
+            )
+            profiled.update({
+                "expected_linear_witness_content": witness_content,
+                "expected_linear_witness_sha256": hashlib.sha256(
+                    witness_content.encode()
+                ).hexdigest(),
+                "witness_probe_id": witness_probe_id,
+            })
+            qualified.append(profiled)
+
+        # Bind the returned evidence to the exact closed target batch now, so a
+        # qualification failure leaves only copied issues and isolated probes.
+        normalized = self._normalize_migration_adr_profile(qualified)
+        binding, _documents, by_id, entries, _comments = self._prepare_adr_batch(
+            project, normalized, profiled=True,
+        )
+        self._verify_adr_batch_qualification(binding, by_id, entries)
+        return qualified
+
+    def migration_import_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+        *, qualification: object | None = None,
+    ) -> list[Adr]:
+        registry.require_writable_project(self.name, project)
+        if not snapshots:
+            return []
+        supplied = (
+            qualification
+            if qualification is not None
+            else project.extra.get("migration_adr_batch_profile")
+        )
+        if not isinstance(supplied, list):
+            raise TrackerCapabilityUnavailableError(
+                self.name, "migration_adr_batch_qualification",
+            )
+        qualified = self._normalize_migration_adr_profile(supplied)
+        expected = self._migration_adr_batch_records(snapshots)
+        profile_fields = (
+            _ADR_BATCH_PROFILE_FIELDS | _ADR_BATCH_RECOVERY_PROFILE_FIELDS
+        )
+        observed_base = tuple(
+            {key: value for key, value in record.items() if key not in profile_fields}
+            for record in qualified
+        )
+        if observed_base != expected:
+            raise TrackerConflictError(
+                "profil batch ADR Linear incompatible avec la copie demandée"
+            )
+        return self.import_adr_batch(project, qualified)
+
     def adr_for_mutation(self, project: Project, adr_id: str) -> Adr | None:
         """Return a witnessed predecessor for an exact mutation replay.
 
@@ -4756,6 +5909,12 @@ class LinearTracker(Tracker):
         declares_missing_relations = next(iter(declared))
         if declares_missing_relations:
             keys = keys | {"missing_relations"}
+        source_only_declared = {"source_only_issue_refs" in record for record in records}
+        if len(source_only_declared) != 1:
+            raise ValueError("Linear ADR batch record fields invalid")
+        declares_source_only = next(iter(source_only_declared))
+        if declares_source_only:
+            keys = keys | {"source_only_issue_refs"}
         binding, documents = self._adr_documents(project)
         by_id = {}
         for raw in documents:
@@ -4787,6 +5946,13 @@ class LinearTracker(Tracker):
             supersedes = record["supersedes"]
             superseded_by = record["superseded_by"]
             issue_refs = record["issue_refs"]
+            source_only_refs = record.get("source_only_issue_refs", ())
+            if not isinstance(source_only_refs, tuple):
+                raise ValueError("Linear ADR batch source-only references invalid")
+            try:
+                migration_source_only_issue_refs(list(source_only_refs))
+            except TrackerConflictError as exc:
+                raise ValueError("Linear ADR batch source-only references invalid") from exc
             missing_relations = (
                 record["missing_relations"] if declares_missing_relations else ()
             )
@@ -4870,12 +6036,20 @@ class LinearTracker(Tracker):
                 "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
                 "origin": {
                     "kind": "migration",
-                    "source_tracker": "youtrack",
+                    "source_tracker": (
+                        source_ref.split(":", 1)[0]
+                        if source_ref.split(":", 1)[0]
+                        in {"youtrack", "linear", "ghprojects"}
+                        else "youtrack"
+                    ),
                     "source_ref": source_ref,
                     "source_created": record["source_created"],
                     "source_updated": record["source_updated"],
                     "source_body_sha256": record["expected_source_sha256"],
                     "missing_relations": list(missing_relations),
+                    **({
+                        "source_only_issue_refs": list(source_only_refs),
+                    } if declares_source_only else {}),
                 },
                 "relations": {
                     "supersedes": sorted(supersedes),
@@ -5228,6 +6402,7 @@ class LinearTracker(Tracker):
         supersedes: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
         superseded_by: str | None | object = _UNSPECIFIED_ADR_RELATION,
         issue_refs: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
+        source_only_issue_refs: tuple[str, ...] = (),
     ) -> Adr:
         """Store a bounded historical snapshot; this never invokes acceptance."""
         missing_relations = sorted(
@@ -5243,6 +6418,15 @@ class LinearTracker(Tracker):
             superseded_by = None
         if issue_refs is _UNSPECIFIED_ADR_RELATION:
             issue_refs = ()
+        if not isinstance(source_only_issue_refs, tuple):
+            raise ValueError("Linear ADR historical source-only references invalid")
+        try:
+            migration_source_only_issue_refs(list(source_only_issue_refs))
+        except TrackerConflictError as exc:
+            raise ValueError("Linear ADR historical source-only references invalid") from exc
+        source_tracker = source_ref.split(":", 1)[0]
+        if source_tracker not in {"youtrack", "linear", "ghprojects"}:
+            source_tracker = "youtrack"  # Legacy historical imports used opaque refs.
         digest = hashlib.sha256(body.encode()).hexdigest()
         if (
             not isinstance(adr_id, str)
@@ -5385,12 +6569,15 @@ class LinearTracker(Tracker):
             "body_sha256": digest,
             "origin": {
                 "kind": "migration",
-                "source_tracker": "youtrack",
+                "source_tracker": source_tracker,
                 "source_ref": source_ref,
                 "source_created": source_created,
                 "source_updated": source_updated,
                 "source_body_sha256": digest,
                 "missing_relations": missing_relations,
+                **({
+                    "source_only_issue_refs": list(source_only_issue_refs),
+                } if source_only_issue_refs else {}),
             },
             "relations": {
                 "supersedes": list(supersedes),

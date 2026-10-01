@@ -1967,16 +1967,21 @@ class AcceptanceProofStore:
         )
 
     @classmethod
-    def _validated_proof(cls, marker: Path) -> dict:
-        """Load one canonical proof and reject hostile data before matching it."""
-        proof = cls._load(marker)
+    def _validate_proof(cls, proof: object) -> dict:
+        """Validate one canonical proof value without granting it local authority.
+
+        Provider adapters reuse this pure shape/integrity check when projecting an
+        already-authenticated proof into their own durable receipt.  The local store
+        remains responsible for binding a proof to its exact marker path.
+        """
+        if not isinstance(proof, dict):
+            raise RoutingConfigError("preuve AC invalide ; refus fermé.")
         if set(proof) != {
             "schema_version", "proof_id", "issue", "review", "coordinates", "quality",
         }:
             raise RoutingConfigError("preuve AC legacy ou incomplète ; refus fermé.")
         if (proof.get("schema_version") != 1 or
-                not cls._is_lower_hex(marker.name, 64) or
-                proof.get("proof_id") != marker.name):
+                not cls._is_lower_hex(proof.get("proof_id"), 64)):
             raise RoutingConfigError("preuve AC malformée ; refus fermé.")
 
         canonical = dict(proof)
@@ -2018,6 +2023,14 @@ class AcceptanceProofStore:
                 not isinstance(coordinates.get("base"), str) or
                 not coordinates["base"].strip() or
                 proof.get("quality") not in {"mergeable", "blocked"}):
+            raise RoutingConfigError("preuve AC malformée ; refus fermé.")
+        return proof
+
+    @classmethod
+    def _validated_proof(cls, marker: Path) -> dict:
+        """Load one canonical proof and reject hostile data before matching it."""
+        proof = cls._validate_proof(cls._load(marker))
+        if not cls._is_lower_hex(marker.name, 64) or proof["proof_id"] != marker.name:
             raise RoutingConfigError("preuve AC malformée ; refus fermé.")
         return proof
 

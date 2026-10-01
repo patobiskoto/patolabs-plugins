@@ -7,7 +7,7 @@ description: >
   Connect API key, sets export compliance, and creates the per-locale metadata tree. USE
   WHEN the user invokes /ship-ios:setup (Claude Code), $ship-ios:setup (Codex),
   "prépare la release", or before the first release.
-allowed-tools: Bash(ruby:*), Bash(fastlane:*), Bash(bundle:*), Bash(xcodebuild:*), Bash(xcrun:*), Bash(cp:*), Bash(mkdir:*), Bash(git:*)
+allowed-tools: Bash(python3:*), Bash(ruby:*), Bash(fastlane:*), Bash(bundle:*), Bash(xcodebuild:*), Bash(xcrun:*), Bash(cp:*), Bash(mkdir:*), Bash(git:*)
 ---
 
 # ship-ios:setup — scaffold the release tooling (Model A)
@@ -22,6 +22,21 @@ The Fastfile is per-project config, so it lives in THIS repo (versioned, runs in
 not in the plugin. This copies the plugin's templates in and fills the project values.
 Run once. Model A: Xcode Cloud builds/signs/uploads; fastlane does metadata/screenshots/
 submit — so there is NO signing/`match` setup here.
+
+If the app will use Foundry for idea→merge, qualify it from the application checkout
+before the first release. `ship-ios:release` accepts only the portable
+`ship-ios.foundry-changelog-bridge.v1` contract: Foundry must provide both
+`registry selection --require-v1` for this repository and `query changelog`. An installed
+plugin, a binding for another checkout, or a legacy binding does not qualify the app.
+Either host can verify this through the same bridge command; choose `--standalone` and a
+reviewed changelog file when this app intentionally has no Foundry authority.
+From the application checkout, use the bridge path belonging to this installed Ship-iOS
+plugin (replace `<ship-ios-root>` with the root derived from this skill's path):
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<ship-ios-root>")/scripts/changelog_bridge.py" "<milestone>" --require-v1-binding
+```
+If the app is intentionally standalone, run the same bridge with `--standalone` instead.
+Do not treat a configured Foundry failure as an absent installation.
 
 ## 1. Check the toolchain FIRST (don't discover this mid-scaffold)
 ```bash

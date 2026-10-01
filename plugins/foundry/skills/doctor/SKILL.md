@@ -24,7 +24,10 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 Reports each point green/red: model-routing JSON validity; the effective Claude and
 Codex role matrix (including reviewer/architect floors), known override names only,
 availability/fallback failures, config (tracker/codehost/URL), tracker auth + registered
-projects with issue counts, code-host repo resolution, and current-repo → project.
+project identity/readability, code-host repo resolution, and current-repo → project.
+For GitHub Projects bound to another checkout, doctor verifies the native Project
+identity but reports the issue count as unavailable: the issue search remains bound
+to the current checkout.
 It also reports local scout as disabled/configured/available/unavailable/invalid policy
 without completing a model, starting a daemon, or revealing an endpoint, model or secret.
 The CLI's availability distinction is a bounded loopback TCP connect only—never HTTP.

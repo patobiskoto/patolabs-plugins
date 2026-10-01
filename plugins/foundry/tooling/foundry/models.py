@@ -44,6 +44,12 @@ class Issue:
     normalized_state: Optional[str] = None
     native_state: Optional[str] = None
     projection_status: Optional[str] = None  # aligned | native-only | disagreement | unknown
+    # Qualified acceptance authority exposed by adapters for bounded Epic
+    # closure.  Counts alone are never proof: 0/0 is unknown, and an explicit
+    # waiver remains distinct from an accepted review/body projection.
+    acceptance_status: Optional[str] = None  # accepted | override | unknown
+    acceptance_source: Optional[str] = None
+    acceptance_coordinates: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,6 +72,52 @@ class Project:
     key: str                            # short ticker, e.g. FOUNDRY
     id: str                             # provider-native project id
     extra: dict[str, Any] = field(default_factory=dict)  # board/sprint ids, etc.
+
+
+@dataclass(frozen=True)
+class ReleaseIssue:
+    """One locale-neutral issue fact in an exact native release scope."""
+
+    id: str
+    title: str
+    type: Optional[str]
+    state: Optional[str]
+    labels: tuple[str, ...]
+    disposition: str  # accepted | deviated | unfinished | unavailable
+    references: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["labels"] = list(self.labels)
+        return value
+
+
+@dataclass(frozen=True)
+class ReleaseScope:
+    """Provider-neutral read of one mapped release, distinct from product and Epic."""
+
+    provider: str
+    project_key: str
+    project_id: str
+    release: str
+    release_id: str
+    native_state: Optional[str]
+    issues: tuple[ReleaseIssue, ...]
+    closure: dict[str, Any]
+    coordinates: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "project_key": self.project_key,
+            "project_id": self.project_id,
+            "release": self.release,
+            "release_id": self.release_id,
+            "native_state": self.native_state,
+            "issues": [issue.to_dict() for issue in self.issues],
+            "closure": dict(self.closure),
+            "coordinates": dict(self.coordinates),
+        }
 
 
 @dataclass(frozen=True)
@@ -96,11 +148,26 @@ class EpicClosureChild:
     id: str
     version: int
     state: str
+    # The state alone is never acceptance evidence.  These coordinates make the
+    # complete child snapshot replayable without treating a waiver as acceptance.
+    ac_done: int = 0
+    ac_total: int = 0
+    acceptance_status: str | None = None
+    acceptance_source: str | None = None
+    acceptance_coordinates: str | None = None
+
+
+@dataclass(frozen=True)
+class EpicClosureDependency:
+    """One exact dependency edge and target snapshot in an Epic closure."""
+
+    source_id: str
+    target: EpicClosureChild
 
 
 @dataclass(frozen=True)
 class EpicClosureReceipt:
-    """Provider-neutral snapshot a supporting tracker must verify atomically."""
+    """Provider-neutral closure snapshot; each adapter enforces its declared gate."""
 
     project_key: str
     project_id: str
@@ -112,8 +179,40 @@ class EpicClosureReceipt:
     children: tuple[EpicClosureChild, ...]
     issued_at: int
     nonce: str
+    # A category-1 product decision (FOUNDRY-ADR-0017), supplied explicitly by
+    # the human closing the Epic.  ``None`` is intentionally not success.
+    human_verdict: str | None = None
+    # PAT-ADR-0006 bounded providers bind the original predecessor, the Epic's
+    # validation text, and the complete dependency graph. Defaults preserve
+    # DevHub's existing atomic wire contract and historical receipts byte-for-byte.
+    parent_state: str | None = None
+    dependencies: tuple[EpicClosureDependency, ...] = ()
+    parent_validation_digest: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        # DevHub's atomic v1 receipt predates PAT-69 and is a byte-stable public
+        # contract.  Keep its historical shape; bounded receipts carry the
+        # additional predecessor, acceptance and dependency coordinates.
+        if self.human_verdict is None:
+            return {
+                "project_key": self.project_key,
+                "project_id": self.project_id,
+                "parent_id": self.parent_id,
+                "parent_version": self.parent_version,
+                "parent_type": self.parent_type,
+                "parent_ac_done": self.parent_ac_done,
+                "parent_ac_total": self.parent_ac_total,
+                "children": [
+                    {
+                        "id": child.id,
+                        "version": child.version,
+                        "state": child.state,
+                    }
+                    for child in self.children
+                ],
+                "issued_at": self.issued_at,
+                "nonce": self.nonce,
+            }
         return asdict(self)
 
 

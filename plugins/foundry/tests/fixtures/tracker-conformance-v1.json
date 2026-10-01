@@ -24,15 +24,14 @@
   "cases": [
     {
       "id": "contract-core-capabilities",
-      "test": "test_tracker_conformance_v1.py::test_provider_core_capability_refusals_are_typed_and_side_effect_free",
+      "test": "test_tracker_conformance_v1.py::test_provider_bounded_epic_closure_capability_is_declared",
       "providers": [
         "youtrack",
         "linear",
         "ghprojects"
       ],
       "categories": [
-        "capabilities",
-        "explicit-refusals"
+        "capabilities"
       ],
       "operations": []
     },
@@ -134,7 +133,7 @@
     },
     {
       "id": "youtrack-release-changelog",
-      "test": "test_tracker_conformance_v1.py::test_youtrack_changelog_conformance_uses_normalized_provider_fields",
+      "test": "test_release_scope.py::test_youtrack_uses_exact_product_mapping_and_near_version_coordinate",
       "providers": [
         "youtrack"
       ],
@@ -689,6 +688,166 @@
       ],
       "adversarial": [
         "missing-credentials"
+      ]
+    },
+    {
+      "id": "youtrack-migration-adapter",
+      "test": "test_tracker_migration.py::test_youtrack_adapter_recovers_issue_and_adr_lost_responses_without_duplicates",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-adr-import",
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "youtrack-epic-closure",
+      "test": "test_epic_closure_transports.py::test_youtrack_close_audits_before_targeted_parent_write_and_replays",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "linear-migration-issue",
+      "test": "test_tracker_migration.py::test_linear_adapter_deterministic_creation_recovers_lost_response",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "linear-epic-closure",
+      "test": "test_epic_closure_transports.py::test_linear_bounded_close_roundtrips_through_graphql_and_replays",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "linear-release-scope",
+      "test": "test_release_scope.py::test_linear_release_membership_paginates_to_completion",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "release-and-changelog-scope"
+      ]
+    },
+    {
+      "id": "github-adr-roundtrip",
+      "test": "test_ghprojects_tracker.py::test_pat58_public_raw_transport_full_cycle_and_completed_replay",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "adr-read",
+        "adr-create",
+        "adr-status-evolution"
+      ]
+    },
+    {
+      "id": "github-migration-adr",
+      "test": "test_ghprojects_tracker.py::test_pat64_migration_resumes_owned_support_after_item_readback_interruption",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-adr-import"
+      ]
+    },
+    {
+      "id": "github-migration-issue",
+      "test": "test_tracker_migration.py::test_github_adapter_reuses_provider_label_candidate_after_lost_response",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "github-epic-closure",
+      "test": "test_ghprojects_tracker.py::test_pat69_ghprojects_epic_closure_replays_without_second_effect",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "github-lifecycle-acceptance",
+      "test": "test_ghprojects_tracker.py::test_pat67_raw_transport_full_lifecycle_and_replays",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions",
+        "acceptance-criteria-sync"
+      ]
+    },
+    {
+      "id": "github-release-scope",
+      "test": "test_release_scope.py::test_github_repository_milestone_is_exact_and_closed_is_not_proof",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "release-and-changelog-scope"
+      ]
+    },
+    {
+      "id": "github-archive-write-guard",
+      "test": "test_tracker_migration.py::test_migration_adapter_refuses_archived_target_before_provider_effect",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "tombstone-archived-source-after-switch"
       ]
     }
   ]
