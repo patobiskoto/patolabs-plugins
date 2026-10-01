@@ -22,6 +22,7 @@
   ],
   "host_preconditions": [
     "the installed Foundry distribution files match the exact SHA recorded in the external live evidence before a cell starts",
+    "the reviewer packet identifies the absolute plugin source root and exact SHA used for this sandbox; other worktrees are not behavioral evidence",
     "the host selects the synthetic repository binding and its active tracker credentials",
     "the effective pre-push hook chain enforces both the local privacy guard and plugins/foundry/.githooks/pre-push for the synthetic checkout",
     "a separate Ship-iOS test application and TestFlight-only authorization are available for the shared Apple path"

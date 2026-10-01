@@ -153,7 +153,10 @@ changement de dépôt dans un même hôte, toujours sans mutation ni lifecycle c
 
 1. Créer un checkout synthétique propre, vérifier son identité Git, installer la même
    distribution Foundry que le SHA retenu, vérifier la chaîne de hooks et relire le binding
-   exact. Exécuter le gate PAT-68 sur ce SHA avant le chemin live.
+   exact. Exécuter le gate PAT-68 sur ce SHA avant le chemin live. Si la PR de sable
+   ne contient que son propre marker ou README, donner au reviewer le chemin absolu
+   et le SHA du plugin Foundry/Ship-iOS effectivement exécuté ; une lecture d'un
+   autre checkout du monorepo ne prouve pas le comportement de cette cellule.
 2. Sur le tracker de la cellule, faire le chemin nominal complet : binding neuf ; ADR et
    évolution ; Epic, enfants, dépendances et grooming ; start et reprise ; PR, revue,
    CI prouvée sur les deux sources et merge ; clôture d'Epic et projection ;
