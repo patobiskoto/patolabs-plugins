@@ -108,8 +108,10 @@ def _framed_adr_ids(issue_id: str, body: str | None) -> tuple[str, ...]:
 
 def accept(adr_id, *, framed_by: str | None = None):
     tr = foundry.tracker()
-    p = _project(tr)
     if framed_by is not None:
+        p = write.issue_binding(tr, framed_by)
+        if p is None:
+            p = tr.resolve_project(registry.repo_basename())
         try:
             issue = tr.get_issue(framed_by)
         except Exception as exc:
@@ -122,6 +124,8 @@ def accept(adr_id, *, framed_by: str | None = None):
                 f"⛔ Acceptation ADR automatique refusée — {framed_by} ne cadre pas "
                 f"explicitement {adr_id}."
             )
+    else:
+        p = _project(tr)
     match = write.adr_for_mutation(tr, p, adr_id)
     if not match:
         raise SystemExit(f"ADR introuvable : {adr_id}")

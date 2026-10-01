@@ -10,6 +10,7 @@ class _Tracker:
     def __init__(self, body):
         self.issue = Issue(id="PAT-78", title="Synthetic delivery", body=body)
         self.adr = Adr(id="PAT-ADR-0001", title="Synthetic ADR", status="proposed")
+        self.issue_reads = []
         self.status_writes = []
 
     def resolve_project(self, _repo):
@@ -17,6 +18,7 @@ class _Tracker:
 
     def get_issue(self, issue_id):
         assert issue_id == self.issue.id
+        self.issue_reads.append(issue_id)
         return self.issue
 
     def list_adrs(self, _project):
@@ -46,6 +48,30 @@ def test_automated_accept_promotes_the_exact_proposed_adr_framed_by_issue(monkey
     adr.accept("PAT-ADR-0001", framed_by="PAT-78")
 
     assert tracker.status_writes == [("PAT-ADR-0001", "accepted")]
+
+
+def test_automated_accept_refuses_cross_project_issue_before_read_or_effect(monkeypatch):
+    tracker = _Tracker("**Cadre (ADR) :** PAT-ADR-0001")
+    tracker.issue = Issue(
+        id="OTHER-9", title="Foreign delivery", body=tracker.issue.body
+    )
+    tracker.requires_mutation_binding = True
+    binding_calls = []
+
+    def refuse_foreign_issue(project, *issue_ids):
+        binding_calls.append((project.key, issue_ids))
+        raise SystemExit("foreign project")
+
+    tracker.validate_issue_binding = refuse_foreign_issue
+    monkeypatch.setattr(adr.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(adr.write.registry, "repo_basename", lambda: "patolabs-plugins")
+
+    with pytest.raises(SystemExit, match="foreign project"):
+        adr.accept("PAT-ADR-0001", framed_by="OTHER-9")
+
+    assert binding_calls == [("PAT", ("OTHER-9",))]
+    assert tracker.issue_reads == []
+    assert tracker.status_writes == []
 
 
 def test_automated_accept_ignores_comment_opener_inside_fence(monkeypatch):
