@@ -1398,6 +1398,12 @@ class YouTrackTracker(Tracker):
                 if observed != receipt:
                     raise TrackerConflictError("reçu de livraison YouTrack divergent")
                 return False
+            if str(current.state or "").casefold() in {
+                "done", "completed", "fixed",
+            }:
+                raise TrackerConflictError(
+                    "issue YouTrack terminale sans reçu exact ; backfill refusé"
+                )
             intent = self._read_delivery_intent(fingerprint)
             if intent is not None:
                 if intent["receipt_id"] != receipt_id:

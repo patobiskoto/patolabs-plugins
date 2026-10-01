@@ -161,6 +161,72 @@ class _AppendTracker(YouTrackTracker):
         raise OSError("response lost")
 
 
+class _NominalAppendTracker(_AppendTracker):
+    def add_comment(self, issue_id, text, project=None):
+        assert issue_id == "APP-7" and project == PROJECT
+        self.appends += 1
+        self.comments.append({"id": "delivery-1", "text": text})
+
+
+def _record_via_write(tracker, receipt):
+    return write.record_delivery_receipt(
+        tracker,
+        receipt.issue_id,
+        project=PROJECT,
+        codehost=receipt.codehost,
+        repository=receipt.repository,
+        pr_number=receipt.pr_number,
+        pr_url=receipt.pr_url,
+        head_sha=receipt.head_sha,
+        base_sha=receipt.base_sha,
+        review_digest=receipt.review_digest,
+        merge_sha=receipt.merge_sha,
+        acceptance=receipt.acceptance,
+        review_proof_id=receipt.review_proof_id,
+        review_generation=receipt.review_generation,
+        proof_ac_digest=receipt.ac_digest,
+    )
+
+
+def test_historical_done_without_receipt_refuses_backfill_before_intent(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
+    tracker = _AppendTracker(visible_on_loss=True, state="Done")
+    receipt = _receipt()
+
+    with pytest.raises(TrackerConflictError, match="backfill refusé"):
+        _record_via_write(tracker, receipt)
+
+    fingerprint = tracker._delivery_scope_fingerprint(PROJECT, receipt.issue_id)
+    assert tracker.appends == 0
+    assert tracker._read_delivery_intent(fingerprint) is None
+
+
+def test_done_with_exact_existing_receipt_replay_is_a_noop(monkeypatch, tmp_path):
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
+    tracker = _AppendTracker(visible_on_loss=True, state="Done")
+    receipt = _receipt()
+    _marker, audit = tracker._delivery_audit(receipt)
+    tracker.comments.append({"id": "delivery-1", "text": audit})
+
+    assert _record_via_write(tracker, receipt) is False
+    assert tracker.appends == 0
+
+
+def test_fresh_review_nominally_appends_one_receipt(monkeypatch, tmp_path):
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
+    tracker = _NominalAppendTracker(visible_on_loss=True)
+    receipt = _receipt()
+
+    assert _record_via_write(tracker, receipt) is True
+    assert tracker.appends == 1
+    intent = tracker._read_delivery_intent(
+        tracker._delivery_scope_fingerprint(PROJECT, receipt.issue_id)
+    )
+    assert intent is not None and intent["state"] == "complete"
+
+
 def test_lost_response_converges_by_exact_readback_without_second_append(
     monkeypatch, tmp_path,
 ):
