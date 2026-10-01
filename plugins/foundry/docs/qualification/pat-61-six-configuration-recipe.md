@@ -68,6 +68,17 @@ respectivement `blocked`, `unknown`, `not_observed` ou `blocked`; aucun ne devie
 `passed`. Les appels, gestes et quotas ne sont notés que lorsqu'ils sont observables.
 La recette n'autorise aucun effet App Store public.
 
+Le préflight Apple du 1er octobre 2026 a trouvé une clé App Store Connect locale
+référencée par `ASC_KEY_ID`, `ASC_ISSUER_ID` et `ASC_KEY_PATH`, sans afficher son
+contenu. Une requête authentifiée en lecture seule sur la liste des apps a reçu
+HTTP 403 `FORBIDDEN.REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED` : Apple demande un accord
+en vigueur dans App Store Connect Business. Aucune app n'a donc été sélectionnée ou
+créée côté fournisseur, aucun workflow Xcode Cloud ni build TestFlight n'a été
+déclenché. Le checkout `SouffleApp` possède Fastlane et une identité de production ;
+il ne sert pas d'app de test pour cette recette. La frontière Apple reste `blocked`
+jusqu'à la régularisation de l'accord par le titulaire du compte, suivie d'une
+nouvelle lecture du catalogue avant le choix d'une app synthétique dédiée.
+
 ## Matrice de preuve
 
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
