@@ -129,8 +129,11 @@ accepté PAT-ADR-0001, pourtant non citée par PAT-78 et explicitement non
 décisionnelle. Le skill a confondu l'index ADR du projet renvoyé par `query issue`
 avec les ADR cadrant ce ticket. La relecture du provider confirme le statut
 `accepted` et la version `6607e123-b0cd-48c8-b93b-2d6418bdab77` ; aucun rollback
-non attesté n'est revendiqué. PAT-79 est lié comme dépendance de PAT-61 pour
-empêcher la répétition de cet effet. Cette cellule demeure `in_progress`.
+non attesté n'est revendiqué. PAT-79, lié comme dépendance de PAT-61, a depuis été
+mergé via Foundry en PR #64 à `1755a3d56990b9456dec54c274341baabfae248f`
+(AC 3/3, trois checks verts, review indépendante). La branche de cette recette
+intègre ce correctif ; cette cellule demeure `in_progress` tant que le parcours
+complet n'est pas prouvé.
 
 Dans ce même projet Linear de sable, `adr create` a créé le témoin explicitement
 non décisionnel `[TEST PAT-61 sandbox]` sous `PAT-ADR-0001`, statut `proposed`,
