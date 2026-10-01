@@ -215,12 +215,18 @@ campaign, merge, release, edit, or external-write authority. Review escalation c
 model/effort only.
 
 ### 5. Accept the framed ADRs
-If the issue cited `proposed` ADRs (see its body / the `query issue` payload), promote
-them now — the decision is validated by shipping:
+After the merge, promote only each `proposed` ADR that the exact delivery issue frames
+with its unique `**Cadre (ADR) :** <ADR-ID>[, ...]` line. The `query issue` payload's
+`adrs` field is a project retrieval index, never an issue-to-ADR relation; it cannot
+authorize promotion. Use the bounded automated path, which verifies the issue body
+before any ADR provider mutation:
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr accept <ADR-ID>
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr accept <ADR-ID> --framed-by <ISSUE-ID>
 ```
-If the `query issue` payload's `adrs` is a `{"status": "conflict", ...}`,
+If there is no single unambiguous frame citation for the exact ADR, STOP: do not infer
+one from a native relation or from the index. `adr accept <ADR-ID>` without
+`--framed-by` remains the separate explicit human decision path. If the `query issue`
+payload's `adrs` is a `{"status": "conflict", ...}`,
 `{"status": "adr_unavailable", ...}`, or `{"status": "adr_issue_unavailable", ...}`
 object rather than a list, do not conclude "no
 proposed ADR to accept" — the index is unreadable, not empty. Acceptance stays blocked
