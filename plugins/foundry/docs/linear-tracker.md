@@ -604,7 +604,11 @@ There are two observation-only exceptions for GitHub's delayed Linear `start`
 automation. PAT-28 retains its receipt-backed `backlog|ready -> in-progress` path.
 PAT-76 additionally covers an exact, durable Foundry `state-in-progress` then
 `state-review` sequence whose native State later regresses from Review to
-`in-progress`. In either case, a normal Foundry read still projects the already-
+`in-progress`. For that second path, Foundry re-reads Linear's complete bounded
+`stateHistory` and requires an actual native In Progress → Review → In Progress span,
+with Review reached after the matching receipt was written. An interrupted review
+write with no observed native Review remains a conflict. In either case, a normal
+Foundry read still projects the already-
 receipted `review`, PR coordinates and AC result. It creates, rewrites and infers no
 receipt.
 The `state-in-progress` step replayed by Foundry's merge path is a no-op once any

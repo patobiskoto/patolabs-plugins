@@ -82,6 +82,18 @@ def connection(nodes):
     return {"nodes": nodes, "pageInfo": {"hasNextPage": False, "endCursor": None}}
 
 
+def prove_native_review_regression(wire, issue_id="LIN-2"):
+    """A provider history observed after the receipt, not merely its intended state."""
+    wire.state_histories[issue_id] = connection([
+        {"id": "span-start", "stateId": STATE_IDS["in-progress"],
+         "startedAt": "2026-09-20T10:01:00Z", "endedAt": "2026-09-20T10:03:00Z"},
+        {"id": "span-review", "stateId": STATE_IDS["review"],
+         "startedAt": "2026-09-20T10:03:00Z", "endedAt": "2026-09-20T10:04:00Z"},
+        {"id": "span-regression", "stateId": STATE_IDS["in-progress"],
+         "startedAt": "2026-09-20T10:04:00Z", "endedAt": None},
+    ])
+
+
 def raw_issue(identifier, native_id, *, title="Issue", body="- [ ] acceptance"):
     return {
         "id": native_id,
@@ -198,6 +210,7 @@ class LinearWire:
             "LIN-1": raw_issue("LIN-1", ISSUE_1_ID, title="Parent"),
             "LIN-2": raw_issue("LIN-2", ISSUE_2_ID, title="Existing"),
         }
+        self.state_histories = {}
         self.comments = {}
         self.documents = {}
         # Readback probes are historical provider observations, not ADR slots.
@@ -294,6 +307,15 @@ class LinearWire:
                     )
                 }
             }
+        if "FoundryLinearIssueStateHistory" in document:
+            issue = self._by_reference(variables["id"])
+            return {"data": {"issue": {
+                "id": issue["id"], "identifier": issue["identifier"],
+                "state": {"id": issue["state"]["id"]},
+                "stateHistory": copy.deepcopy(
+                    self.state_histories.get(issue["identifier"], connection([]))
+                ),
+            }}}
         if "FoundryLinearIssue(" in document:
             return {
                 "data": {
@@ -2384,6 +2406,7 @@ def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
     wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
 
     if has_start_receipt:
+        prove_native_review_regression(wire)
         # This is the modern PAT-76 shape; its separate test below also proves a
         # relation can proceed without adding a lifecycle receipt.
         assert instance.get_issue("LIN-2").state == "review"
@@ -2409,6 +2432,7 @@ def test_linear_reviewed_start_drift_allows_read_and_relation_without_lifecycle_
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     comments_before_drift = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
     wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    prove_native_review_regression(wire)
 
     projected = instance.get_issue("LIN-2")
     assert projected.state == "review"
@@ -2418,6 +2442,31 @@ def test_linear_reviewed_start_drift_allows_read_and_relation_without_lifecycle_
     instance.link("LIN-2", "blocks", "LIN-1", project=PROJECT)
     assert Link("blocks", "inward", "LIN-1") in instance.get_issue("LIN-2").links
     assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
+
+
+@pytest.mark.parametrize("history_shape", ["missing", "before_receipt", "incomplete"])
+def test_linear_review_receipt_does_not_authorize_unproven_native_review(
+    tracker, history_shape,
+):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    if history_shape != "missing":
+        prove_native_review_regression(wire)
+    if history_shape == "before_receipt":
+        wire.state_histories["LIN-2"]["nodes"][1]["startedAt"] = (
+            "2026-09-20T10:01:00Z"
+        )
+    if history_shape == "incomplete":
+        wire.state_histories["LIN-2"]["pageInfo"]["hasNextPage"] = True
+
+    with pytest.raises(TrackerConflictError, match="native state history|native state changed"):
+        instance.get_issue("LIN-2")
 
 
 @pytest.mark.parametrize("native_state", ["done", "blocked"])
@@ -8080,6 +8129,7 @@ def test_linear_public_openpr_replays_partial_review_without_github_repair_port(
     instance.set_state("LIN-2", "in-progress", project=PROJECT)
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
     wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    prove_native_review_regression(wire)
     assert instance.get_issue("LIN-2").state == "review"
     assert instance.observe_issue("LIN-2").projection_status == "disagreement"
     before = len(_lifecycle_rows(wire, "LIN-2", "state-review"))

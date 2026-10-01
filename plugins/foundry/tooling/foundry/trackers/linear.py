@@ -150,6 +150,18 @@ query FoundryLinearIssue($id: String!) {{
 }}
 """
 
+_ISSUE_STATE_HISTORY_QUERY = """
+query FoundryLinearIssueStateHistory($id: String!) {
+  issue(id: $id) {
+    id identifier state { id }
+    stateHistory(first: 100) {
+      nodes { id stateId startedAt endedAt }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
 _PROJECT_BINDING_QUERY = """
 query FoundryLinearProjectBinding($id: String!, $teamId: ID!) {
   project(id: $id) {
@@ -2439,12 +2451,71 @@ class LinearTracker(Tracker):
         }
         return previous in rank and current in rank and rank[current] >= rank[previous]
 
+    def _review_regression_proven(
+        self,
+        issue_id: str,
+        native_issue_id: str,
+        native_state_id: str,
+        review_receipt_at: int | None,
+        state_ids: dict[str, str],
+    ) -> bool:
+        """Prove the native Review span existed after its receipt and then regressed."""
+        if review_receipt_at is None:
+            return False
+        data = self._graphql(
+            _ISSUE_STATE_HISTORY_QUERY, {"id": issue_id}, "issue.state-history"
+        )
+        raw = data.get("issue")
+        if (
+            not isinstance(raw, dict)
+            or raw.get("id") != native_issue_id
+            or raw.get("identifier") != issue_id
+            or not isinstance(raw.get("state"), dict)
+            or raw["state"].get("id") != native_state_id
+        ):
+            raise TrackerConflictError("Linear native state history identity changed")
+        history = raw.get("stateHistory")
+        if not isinstance(history, dict):
+            raise TrackerConflictError("Linear native state history unavailable")
+        page = history.get("pageInfo")
+        if not isinstance(page, dict) or page.get("hasNextPage") is not False:
+            raise TrackerConflictError("Linear native state history incomplete")
+        spans = history.get("nodes")
+        if not isinstance(spans, list) or len(spans) < 3:
+            return False
+        start, review, current = spans[-3:]
+        if any(not isinstance(span, dict) for span in (start, review, current)):
+            raise TrackerConflictError("Linear native state history malformed")
+        if (
+            start.get("stateId") != state_ids["in-progress"]
+            or review.get("stateId") != state_ids["review"]
+            or current.get("stateId") != native_state_id
+            or current.get("endedAt") is not None
+        ):
+            return False
+        start_end = _epoch_ms(start.get("endedAt"))
+        review_start = _epoch_ms(review.get("startedAt"))
+        review_end = _epoch_ms(review.get("endedAt"))
+        current_start = _epoch_ms(current.get("startedAt"))
+        return (
+            start_end is not None
+            and review_start is not None
+            and review_end is not None
+            and current_start is not None
+            and start_end == review_start
+            and review_end == current_start
+            and review_receipt_at <= review_start < review_end
+        )
+
     def _validate_native_state_history(
         self,
         rows: dict[str, list[tuple[dict, str]]],
         ordered: list[tuple[str, dict]],
         native_state_id: str,
         *,
+        issue_id: str,
+        native_issue_id: str,
+        review_receipt_at: int | None,
         pending_operation: str | None,
         acceptance_complete: bool,
         done: dict | None,
@@ -2559,6 +2630,11 @@ class LinearTracker(Tracker):
             and latest_name == "review"
             and current_name == "in-progress"
         )
+        if reviewed_start_review_drift:
+            reviewed_start_review_drift = self._review_regression_proven(
+                issue_id, native_issue_id, native_state_id,
+                review_receipt_at, state_ids,
+            )
         pending_forward = (
             pending_operation in {"state-review", "acceptance", "acceptance-override"}
             and current_name != "done"
@@ -2825,6 +2901,16 @@ class LinearTracker(Tracker):
             rows,
             ordered,
             native_state_id,
+            issue_id=issue_id,
+            native_issue_id=raw["id"],
+            review_receipt_at=next(
+                (
+                    _epoch_ms(comment.get("createdAt"))
+                    for comment in comments
+                    if reviews and comment.get("body") == reviews[-1][1]
+                ),
+                None,
+            ),
             pending_operation=pending_operation,
             acceptance_complete=acceptance_complete or acceptance_override is not None,
             done=done,
