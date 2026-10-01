@@ -108,6 +108,12 @@ consultable depuis l'Issue, mais `Project.items` reste vide ; le rejeu borné a 
 une seconde fois à `partial_create:item_readback`. Son intention locale est conservée,
 sans nouveau retry ni assertion de succès GitHub Projects.
 
+Une relecture bilatérale du lien de dépendance Linear dans la cellule Codex montre
+PAT-75 (`ready`, AC 0/1) avec `depends-on` vers PAT-74, et PAT-74 (`done`, AC 2/2)
+avec le lien inverse `blocks` vers PAT-75. Ce témoin prouve la relation native et
+la projection dans les deux sens, mais ne constitue ni une clôture de PAT-75 ni un
+graphe Epic qualifié.
+
 Le second témoin Linear, PAT-77, a d'abord laissé une issue native malgré un retour
 `Linear issue divergent after create; no retry` ; le corps relu ne gardait pas le saut
 de ligne terminal, sans que la cause exacte du conflit soit attestée. La relecture
