@@ -33,7 +33,7 @@
       "tracker": "youtrack",
       "host": "claude-code",
       "status": "blocked",
-      "partial_evidence": "Claude Code/Sonnet read youtrack/P61Y binding, P61Y-2 review PR #2, and release PAT61 sandbox v1 bundle 163-67/value 164-426 with unfinished=1. P61Y-3 was created and started mechanically by the coordinator after Claude start-issue exhausted 12 turns without effect. Claude resume-issue wrote only an uncommitted README; its actually loaded foundry@patolabs 0.9.0 cache at SHA 4d9b0472 rejects the sandbox tracker.json v2 marker. Explicit registry-based read does not prove normal binding; plugin manager reports already latest 0.9.0 while marketplace source is at 1755a3d. No Claude PR, review, CI, merge or Apple effect"
+      "partial_evidence": "P61Y-3 was created once and started mechanically by the coordinator after Claude start-issue exhausted 12 turns without effect. Claude's installed foundry@patolabs 0.9.0 cache at SHA 4d9b0472 rejects tracker.json v2, but a session-only --plugin-dir source at 1755a3d with user plugin excluded read the marker and P61Y-3. Claude source-mode resume wrote README witness head 7a1209d87f475db7ad4aa2db71468fc8e1b3b7da, opened PR #3, obtained a blocked first review then a mergeable independent review on corrected head 5abd4995b3132c0a4f1e250fed8734bfceb7242f (proof af943114), green verify, and Foundry merge 47bcc26e8404ea90c41efa95c17629c02beb5900. P61Y-3 done AC 2/2; P61Y-ADR-0001 remains proposed. Fresh YouTrack release scope classifies both P61Y-2 and P61Y-3 unavailable. Installed-plugin parity, Claude start, full journey and Apple are not proved"
     },
     {
       "id": "youtrack-codex",

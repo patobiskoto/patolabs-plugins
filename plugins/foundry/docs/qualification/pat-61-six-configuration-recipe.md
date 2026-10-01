@@ -72,7 +72,7 @@ La recette n'autorise aucun effet App Store public.
 
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
-| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `blocked` | P61Y-3 est créé et démarré, mais le plugin effectivement chargé par Claude reste au SHA `4d9b047` et refuse le marqueur v2 du sandbox. Un README local non commité existe ; aucun lifecycle Claude complet ni effet Apple n'est prouvé. |
+| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `blocked` | P61Y-3/PR #3 a parcouru reprise, ouverture, review, CI et merge sous Claude en mode source (`1755a3d`) ; le démarrage a été fait par le coordinateur et le cache installé 0.9.0 reste incompatible avec le marqueur v2. Le scope YouTrack classe P61Y-3 `unavailable` ; Apple reste sans preuve. |
 | YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 et P61Y-2/PR #2 mergées via Foundry avec CI et review ; le scope P61Y-2 passe de `unfinished` à `unavailable`, jamais à `accepted` sans reçu lifecycle exact YouTrack. ADR test créée/éditée ; lien ADR→issue refusé. Epic, adversaires et Apple restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 suit ce défaut. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
@@ -212,8 +212,19 @@ qui refuse le marqueur `tracker.json` v2 de ce sandbox. Il a lu le projet via un
 entrée de registre explicite, ce qui ne satisfait pas la précondition de binding
 du parcours normal. Le gestionnaire de plugins répond « already latest 0.9.0 »
 malgré le marketplace source à `1755a3d` ; aucune parité de distribution n'est
-inférée. Le diff README est préservé, sans commit, PR, review, CI ni merge ; ce
-témoin reste `blocked` et ne remplace pas un lifecycle Claude qualifié.
+inférée. Le premier diff README a été préservé puis commité sur `7a1209d`.
+Claude en mode source a ouvert la PR #3 via Foundry. La première review a passé
+les deux AC mais bloqué une phrase du README devenue fausse dès l'ouverture de
+la PR ; la correction sur `5abd4995b3132c0a4f1e250fed8734bfceb7242f` a reçu
+une seconde review indépendante favorable (preuve `af943114…`) et le check
+`verify` vert. Les deux AC YouTrack ont été cochés sur leur corps exact relu,
+puis Claude `foundry:merge-pr` a mergé la PR #3 à
+`47bcc26e8404ea90c41efa95c17629c02beb5900` ; P61Y-3 est `done`, AC 2/2.
+`P61Y-ADR-0001` se relit toujours `proposed` : l'index projet n'a pas entraîné
+d'acceptation ADR. Le scope de release relu contient P61Y-2 et P61Y-3, deux
+`unavailable`, zéro `accepted`. Ce parcours source-mode apporte une preuve Claude
+partielle mais ne démontre ni un démarrage Claude autonome, ni la parité du cache
+installé, ni une livraison Apple ; la cellule reste `blocked`.
 
 Dans P61Y, `adr create` a créé le témoin non décisionnel `P61Y-ADR-0001`
 (`P61Y-A-1`, `proposed`) ; `adr edit` a remplacé la phrase version 1 par la
