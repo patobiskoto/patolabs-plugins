@@ -26,6 +26,17 @@ host. Le `pre-push` effectif d'un checkout de sable doit appliquer à la fois le
 Foundry et le garde privacy local lorsqu'il existe. Le hook privacy de cette machine
 chaîne déjà le hook Foundry ; son remplacement supprimerait une protection intentionnelle.
 
+Après le merge PAT-76 (`82bf3e5e`), la mise à jour du marketplace Codex a rendu ses
+251 fichiers Foundry suivis identiques au snapshot `main`. Le cache installé Claude
+Code reste différent sur 76 de ces fichiers bien que `claude plugin update` annonce
+0.9.0 à jour. Un préflight Claude Code/Sonnet en lecture seule, avec le répertoire de
+plugin du marketplace chargé explicitement, a résolu le dépôt Linear de sable vers
+PAT/Linear et exécuté le CLI de ce snapshot sans erreur. Ce préflight ne constitue pas
+encore un parcours Claude complet. En outre, depuis ce même dépôt Linear, un appel
+Codex avec `FOUNDRY_TRACKER=youtrack` et `PROJECT_REPO` pointant vers le dépôt YouTrack
+a quand même relu PAT-74 dans PAT/Linear : ce témoin couvre seulement la contradiction
+d'environnement, pas toute la matrice adverse.
+
 Une cellule reçoit un dépôt, projet tracker, credentials et application iOS de test
 explicitement synthétiques. Les deux hôtes peuvent partager un même sandbox fournisseur
 s'ils utilisent des issues et branches distinctes et si chaque preuve nomme son hôte.
