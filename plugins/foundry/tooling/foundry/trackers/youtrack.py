@@ -28,6 +28,7 @@ from foundry.routing import (
 )
 from foundry.models import (
     Adr,
+    MergeDeliveryReceipt,
     EpicClosureChild,
     EpicClosureDependency,
     EpicClosureOutcome,
@@ -61,6 +62,9 @@ _PORTABLE_FIELD_NAMES = frozenset({
     "State", "Priority", "Type", "Milestone", "Estimate", "Labels", "GitHub PR",
 })
 _EPIC_CLOSURE_INTENT_SCHEMA = "foundry-youtrack-epic-closure-intent.v1"
+_DELIVERY_INTENT_SCHEMA = "foundry-youtrack-delivery-intent.v1"
+_DELIVERY_SCHEMA = "foundry-youtrack-delivery.v1"
+_DELIVERY_HEADER = "Foundry delivery receipt (append-only).\n"
 _MIGRATION_ADR_PREFIX = "[foundry-migration-adr.v1:"
 
 # link_type -> YouTrack command role phrase (applied to the source issue)
@@ -155,6 +159,7 @@ class YouTrackTracker(Tracker):
     # native state into acceptance evidence; review/done still receive their
     # code-host coordinates through TransitionContext in the shared write tier.
     bounded_state_transitions = True
+    delivery_receipt_supported = True
     project_provisioning_supported = True
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
@@ -556,6 +561,170 @@ class YouTrackTracker(Tracker):
         q = f"project: {project.key}" + (f" {query}" if query else "")
         return [self._to_issue(r) for r in self._search_raw(q, _ISSUE_FIELDS, page_size)]
 
+    def _issue_comments(self, issue_id: str, page_size: int = 100) -> list[dict]:
+        """Read every native comment page, refusing malformed or stalled pagination."""
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size < 1:
+            raise TrackerConflictError("pagination des reçus YouTrack invalide")
+        comments: list[dict] = []
+        seen: set[str] = set()
+        skip = 0
+        quoted = urllib.parse.quote(issue_id, safe="")
+        while True:
+            query = urllib.parse.urlencode({
+                "fields": "id,text,created",
+                "$top": str(page_size),
+                "$skip": str(skip),
+            })
+            page = self._req("GET", f"/issues/{quoted}/comments?{query}")
+            if not isinstance(page, list):
+                raise TrackerConflictError("page de commentaires YouTrack invalide")
+            for row in page:
+                native_id = row.get("id") if isinstance(row, dict) else None
+                if not isinstance(native_id, str) or not native_id or native_id in seen:
+                    raise TrackerConflictError("pagination des commentaires YouTrack ambiguë")
+                if not isinstance(row.get("text"), str):
+                    raise TrackerConflictError("commentaire YouTrack invalide")
+                seen.add(native_id)
+                comments.append({"id": native_id, "text": row["text"], "created": row.get("created")})
+            if len(page) < page_size:
+                return comments
+            skip += len(page)
+
+    @staticmethod
+    def _delivery_audit(receipt: MergeDeliveryReceipt) -> tuple[str, str]:
+        value = {"schema": _DELIVERY_SCHEMA, "receipt": receipt.to_dict()}
+        canonical = json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        )
+        digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+        marker = f"{_DELIVERY_SCHEMA}:{digest}"
+        return marker, (
+            _DELIVERY_HEADER + f"marker: {marker}\n"
+            f"coordinates: {canonical}"
+        )
+
+    @staticmethod
+    def _validate_delivery_projection(
+        issue: Issue,
+        receipt: MergeDeliveryReceipt,
+        *,
+        require_done: bool,
+    ) -> None:
+        try:
+            criteria = acceptance_criteria(issue.body)
+        except RoutingConfigError:
+            raise TrackerConflictError("AC du reçu YouTrack illisibles") from None
+        native_state = str(issue.state or "").casefold()
+        allowed_states = (
+            {"done", "completed", "fixed"}
+            if require_done
+            else {"review", "done", "completed", "fixed"}
+        )
+        if (
+            native_state not in allowed_states
+            or issue.pr_url != receipt.pr_url
+            or hashlib.sha256((issue.body or "").encode()).hexdigest()
+            != receipt.body_sha256
+            or acceptance_digest(criteria) != receipt.ac_digest
+            or (
+                receipt.acceptance == "accepted"
+                and (issue.ac_total < 1 or issue.ac_done != issue.ac_total)
+            )
+        ):
+            raise TrackerConflictError("projection native divergente du reçu YouTrack")
+
+    @classmethod
+    def _delivery_from_issue(
+        cls,
+        issue: Issue,
+        project: Project,
+        *,
+        require_done: bool,
+    ) -> MergeDeliveryReceipt | None:
+        """Return the single exact receipt whose native projection still agrees."""
+        matches: list[MergeDeliveryReceipt] = []
+        field_names = set(MergeDeliveryReceipt.__dataclass_fields__)
+        digest = re.compile(r"[0-9a-f]{64}")
+        sha = re.compile(r"[0-9a-f]{40}")
+        for row in issue.comments:
+            text = row.get("text") if isinstance(row, dict) else None
+            if not isinstance(text, str) or not text.startswith(_DELIVERY_HEADER):
+                continue
+            lines = text.splitlines()
+            try:
+                if (
+                    len(lines) != 3
+                    or not lines[1].startswith("marker: ")
+                    or not lines[2].startswith("coordinates: ")
+                ):
+                    raise ValueError
+                value = json.loads(lines[2].removeprefix("coordinates: "))
+                if not isinstance(value, dict) or set(value) != {"schema", "receipt"}:
+                    raise ValueError
+                raw = value["receipt"]
+                if value["schema"] != _DELIVERY_SCHEMA or not isinstance(raw, dict) or set(raw) != field_names:
+                    raise ValueError
+                receipt = MergeDeliveryReceipt(**raw)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raise TrackerConflictError("reçu de livraison YouTrack malformé") from None
+            marker, expected = cls._delivery_audit(receipt)
+            if text != expected or lines[1] != f"marker: {marker}":
+                raise TrackerConflictError("reçu de livraison YouTrack altéré")
+            if (
+                receipt.project_key != project.key
+                or receipt.project_id != project.id
+                or receipt.issue_id != issue.id
+                or type(receipt.pr_number) is not int
+                or receipt.pr_number < 1
+                or not all(isinstance(value, str) and value for value in (
+                    receipt.codehost,
+                    receipt.repository,
+                    receipt.pr_url,
+                ))
+                or not isinstance(receipt.head_sha, str)
+                or sha.fullmatch(receipt.head_sha) is None
+                or not isinstance(receipt.base_sha, str)
+                or sha.fullmatch(receipt.base_sha) is None
+                or not isinstance(receipt.merge_sha, str)
+                or sha.fullmatch(receipt.merge_sha) is None
+                or not isinstance(receipt.review_digest, str)
+                or digest.fullmatch(receipt.review_digest) is None
+                or not isinstance(receipt.body_sha256, str)
+                or digest.fullmatch(receipt.body_sha256) is None
+                or not isinstance(receipt.ac_digest, str)
+                or digest.fullmatch(receipt.ac_digest) is None
+                or not isinstance(receipt.review_proof_id, str)
+                or digest.fullmatch(receipt.review_proof_id) is None
+                or type(receipt.review_generation) is not int
+                or receipt.review_generation < 1
+            ):
+                raise TrackerConflictError("reçu de livraison YouTrack hors coordonnées")
+            if receipt.acceptance == "accepted":
+                if (
+                    receipt.acceptance_source != "structured-review-proof"
+                    or receipt.override_reason is not None
+                ):
+                    raise TrackerConflictError("acceptation du reçu YouTrack invalide")
+            elif receipt.acceptance == "deviated":
+                if (
+                    receipt.acceptance_source != "human-override"
+                    or not isinstance(receipt.override_reason, str)
+                    or re.fullmatch(r"[a-z0-9_-]{3,80}", receipt.override_reason) is None
+                ):
+                    raise TrackerConflictError("dérogation du reçu YouTrack invalide")
+            else:
+                raise TrackerConflictError("qualification du reçu YouTrack invalide")
+            matches.append(receipt)
+        if len(matches) > 1:
+            raise TrackerConflictError("reçu de livraison YouTrack dupliqué")
+        if not matches:
+            return None
+        receipt = matches[0]
+        cls._validate_delivery_projection(
+            issue, receipt, require_done=require_done,
+        )
+        return receipt
+
     def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
         mapping = project.extra.get("release_ids")
         bundle = project.extra.get("ms_bundle")
@@ -652,15 +821,40 @@ class YouTrackTracker(Tracker):
             references = {"provider_issue_id": raw.get("id")}
             if issue.pr_url:
                 references["pr_url"] = issue.pr_url
+            receipt = None
+            if terminal:
+                try:
+                    issue.comments = self._issue_comments(issue.id)
+                    receipt = self._delivery_from_issue(
+                        issue, project, require_done=True,
+                    )
+                except (_YouTrackHTTPError, TrackerConflictError):
+                    # A missing, inaccessible, malformed, duplicated, foreign or
+                    # projection-divergent receipt is unknown, never acceptance.
+                    receipt = None
+            disposition = "unavailable" if terminal else "unfinished"
+            if receipt is not None:
+                disposition = receipt.acceptance
+                references.update({
+                    "repository": receipt.repository,
+                    "pr_url": receipt.pr_url,
+                    "head_sha": receipt.head_sha,
+                    "base_sha": receipt.base_sha,
+                    "review_digest": receipt.review_digest,
+                    "merge_sha": receipt.merge_sha,
+                    "ac_digest": receipt.ac_digest,
+                })
+                references["review_proof_id"] = receipt.review_proof_id
+                references["review_generation"] = receipt.review_generation
+                if receipt.override_reason is not None:
+                    references["override_reason"] = receipt.override_reason
             issues.append(ReleaseIssue(
                 id=issue.id,
                 title=issue.title,
                 type=issue.type,
                 state=issue.state,
                 labels=tuple(issue.labels),
-                # Native terminal state and a PR field are observations, not an
-                # exact merged/accepted receipt.
-                disposition="unavailable" if terminal else "unfinished",
+                disposition=disposition,
                 references={key: value for key, value in references.items() if value},
             ))
         return ReleaseScope(
@@ -1070,6 +1264,183 @@ class YouTrackTracker(Tracker):
     ) -> None:
         self._issue_target_project(issue_id)
         self._req("POST", f"/issues/{issue_id}/comments", {"text": text}, "id")
+
+    @staticmethod
+    def _delivery_intent_directory() -> Path:
+        return Path(registry.data_dir()) / "youtrack-delivery-intents"
+
+    @staticmethod
+    def _delivery_scope_fingerprint(project: Project, issue_id: str) -> str:
+        return hashlib.sha256(
+            f"{project.id}\0{project.key}\0{issue_id}".encode("utf-8")
+        ).hexdigest()
+
+    @classmethod
+    def _delivery_intent_path(cls, fingerprint: str) -> Path:
+        return cls._delivery_intent_directory() / f"{fingerprint}.json"
+
+    @contextmanager
+    def _delivery_intent_lock(self, fingerprint: str):
+        directory = self._delivery_intent_directory()
+        try:
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory.chmod(0o700)
+            descriptor = os.open(
+                directory / f".{fingerprint}.lock",
+                os.O_RDWR | os.O_CREAT,
+                0o600,
+            )
+        except OSError as exc:
+            raise TrackerConflictError(
+                "journal local du reçu de livraison YouTrack indisponible"
+            ) from exc
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    def _read_delivery_intent(self, fingerprint: str) -> dict[str, str] | None:
+        try:
+            record = json.loads(
+                self._delivery_intent_path(fingerprint).read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise TrackerConflictError(
+                "journal local du reçu de livraison YouTrack invalide"
+            ) from exc
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"schema", "fingerprint", "receipt_id", "state"}
+            or record.get("schema") != _DELIVERY_INTENT_SCHEMA
+            or record.get("fingerprint") != fingerprint
+            or not isinstance(record.get("receipt_id"), str)
+            or re.fullmatch(
+                rf"{re.escape(_DELIVERY_SCHEMA)}:[0-9a-f]{{64}}",
+                record["receipt_id"],
+            ) is None
+            or record.get("state") not in {"pending", "complete"}
+        ):
+            raise TrackerConflictError(
+                "journal local du reçu de livraison YouTrack invalide"
+            )
+        return record
+
+    def _write_delivery_intent(
+        self, fingerprint: str, receipt_id: str, state: str,
+    ) -> None:
+        directory = self._delivery_intent_directory()
+        payload = json.dumps(
+            {
+                "schema": _DELIVERY_INTENT_SCHEMA,
+                "fingerprint": fingerprint,
+                "receipt_id": receipt_id,
+                "state": state,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=directory,
+                prefix=f".{fingerprint}.", delete=False,
+            ) as temporary:
+                temporary_name = temporary.name
+                os.chmod(temporary_name, 0o600)
+                temporary.write(payload)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_name, self._delivery_intent_path(fingerprint))
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError as exc:
+            raise TrackerConflictError(
+                "journal local du reçu de livraison YouTrack indisponible"
+            ) from exc
+        finally:
+            if temporary_name is not None:
+                try:
+                    os.unlink(temporary_name)
+                except FileNotFoundError:
+                    pass
+
+    def record_delivery_receipt(
+        self, project: Project, receipt: MergeDeliveryReceipt,
+    ) -> bool:
+        """Append one exact merge receipt with bounded ambiguous-response recovery.
+
+        The local journal prevents a second POST on this machine after an invisible
+        response. It is not provider CAS, does not coordinate multiple machines and
+        does not claim exactly-once delivery; the S1->S2 residual race remains.
+        """
+        if receipt.project_key != project.key or receipt.project_id != project.id:
+            raise TrackerConflictError("projet du reçu de livraison YouTrack divergent")
+        self.validate_issue_binding(project, receipt.issue_id)
+        receipt_id, audit = self._delivery_audit(receipt)
+        fingerprint = self._delivery_scope_fingerprint(project, receipt.issue_id)
+        with self._delivery_intent_lock(fingerprint):
+            current = self.get_issue(receipt.issue_id)
+            current.comments = self._issue_comments(receipt.issue_id)
+            self._validate_delivery_projection(
+                current, receipt, require_done=False,
+            )
+            observed = self._delivery_from_issue(
+                current, project, require_done=False,
+            )
+            if observed is not None:
+                if observed != receipt:
+                    raise TrackerConflictError("reçu de livraison YouTrack divergent")
+                return False
+            if str(current.state or "").casefold() in {
+                "done", "completed", "fixed",
+            }:
+                raise TrackerConflictError(
+                    "issue YouTrack terminale sans reçu exact ; backfill refusé"
+                )
+            intent = self._read_delivery_intent(fingerprint)
+            if intent is not None:
+                if intent["receipt_id"] != receipt_id:
+                    raise TrackerConflictError(
+                        "reçu différent de l'effet local incertain ; no second POST"
+                    )
+                raise TrackerConflictError(
+                    "effet du reçu YouTrack inconnu ou invisible ; no second POST"
+                )
+            self._write_delivery_intent(fingerprint, receipt_id, "pending")
+            try:
+                self.add_comment(receipt.issue_id, audit, project)
+            except Exception as exc:
+                recovered = self.get_issue(receipt.issue_id)
+                recovered.comments = self._issue_comments(receipt.issue_id)
+                try:
+                    observed = self._delivery_from_issue(
+                        recovered, project, require_done=False,
+                    )
+                except TrackerConflictError as conflict:
+                    raise TrackerConflictError(
+                        "réponse du reçu YouTrack ambiguë ; no second POST"
+                    ) from conflict
+                if observed != receipt:
+                    raise TrackerConflictError(
+                        "réponse du reçu YouTrack perdue sans effet exact visible ; "
+                        "no second POST"
+                    ) from exc
+            readback = self.get_issue(receipt.issue_id)
+            readback.comments = self._issue_comments(receipt.issue_id)
+            observed = self._delivery_from_issue(
+                readback, project, require_done=False,
+            )
+            if observed != receipt:
+                raise TrackerConflictError("reçu de livraison YouTrack divergent")
+            self._write_delivery_intent(fingerprint, receipt_id, "complete")
+            return True
 
     @staticmethod
     def _epic_closure_audit(receipt: EpicClosureReceipt) -> tuple[str, str]:

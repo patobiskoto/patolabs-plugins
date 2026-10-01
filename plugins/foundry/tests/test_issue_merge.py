@@ -453,6 +453,93 @@ def test_merge_reports_the_merged_sha(monkeypatch, capsys):
     assert "a1b2c3d4e5f6a7b8" in capsys.readouterr().out
 
 
+def test_youtrack_merge_records_exact_delivery_before_done_and_branch_delete(monkeypatch):
+    events = []
+    project = Project("DEMO", "project-demo")
+    current = SimpleNamespace(
+        id="DEMO-7", state="review", normalized_state="review",
+        pr_url="https://github.com/acme/demo/pull/12",
+        body="- [x] delivered exactly\n", ac_done=1, ac_total=1,
+    )
+    tracker = SimpleNamespace(
+        bounded_state_transitions=True,
+        bounded_transition_proofs=False,
+        append_only_lifecycle_supported=False,
+        delivery_receipt_supported=True,
+        get_issue=lambda _issue_id: current,
+    )
+    pull_request = SimpleNamespace(
+        number=12, url=current.pr_url, sha="a" * 40, base_sha="c" * 40,
+        head="feat/demo-7", base="main", state="open", merged=False,
+    )
+    landed = SimpleNamespace(sha="b" * 40, head=pull_request.head, merged=True)
+    codehost = SimpleNamespace(
+        name="github", resolve_repo=lambda: "acme/demo",
+        get_pr=lambda *_args: pull_request,
+        merge_pr=lambda *_args, **_kwargs: events.append(("merge",)) or landed,
+        delete_branch=lambda *_args: events.append(("delete",)),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(write, "issue_binding", lambda *_args: project)
+    monkeypatch.setattr(issue, "git_head", lambda: "a" * 40)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: b"reviewed diff")
+    monkeypatch.setattr(issue, "repository_identity", lambda: "acme/demo")
+    monkeypatch.setattr(
+        issue,
+        "AcceptanceProofStore",
+        lambda _repository: SimpleNamespace(valid_for_merge=lambda **_kwargs: {
+            "proof_id": "d" * 64,
+            "review": {"generation": 1},
+            "issue": {"ac_digest": acceptance_digest(acceptance_criteria(current.body))},
+        }),
+    )
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_args: None)
+    monkeypatch.setattr(write, "ci_gate", lambda *_args, **_kwargs: {
+        "passed": True, "waived": False, "total": 1,
+        "pending": [], "failing": [],
+    })
+    monkeypatch.setattr(
+        write,
+        "record_delivery_receipt",
+        lambda *_args, **kwargs: events.append(("delivery", kwargs)) or True,
+    )
+    monkeypatch.setattr(
+        write,
+        "transition",
+        lambda _tracker, _issue_id, state, context=None: events.append(
+            ("transition", state, context)
+        ),
+    )
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+
+    issue.merge("DEMO-7", "12")
+
+    assert [event[0] for event in events] == [
+        "merge", "delivery", "transition", "delete",
+    ]
+    delivery = events[1][1]
+    assert delivery == {
+        "project": project,
+        "codehost": "github",
+        "repository": "acme/demo",
+        "pr_number": 12,
+        "pr_url": current.pr_url,
+        "head_sha": "a" * 40,
+        "base_sha": "c" * 40,
+        "review_digest": hashlib.sha256(b"reviewed diff").hexdigest(),
+        "merge_sha": "b" * 40,
+        "acceptance": "accepted",
+        "override_reason": None,
+        "review_proof_id": "d" * 64,
+        "review_generation": 1,
+        "proof_ac_digest": acceptance_digest(acceptance_criteria(current.body)),
+    }
+    done_context = events[2][2]
+    assert done_context.expected_state == "review"
+    assert done_context.merge_sha == "b" * 40
+
+
 def test_proof_bound_merge_refreshes_review_before_done_receipt_and_branch_delete(monkeypatch):
     events = []
     diff_bases = []

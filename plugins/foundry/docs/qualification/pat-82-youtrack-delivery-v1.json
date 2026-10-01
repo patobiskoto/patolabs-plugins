@@ -1,0 +1,94 @@
+{
+  "kind": "qualification-observation-not-foundry-attestation",
+  "issue": "PAT-82",
+  "implementation_source_sha": "178f03d17729ef981559d0c2641b06b1a30f750c",
+  "sandbox_pr": "https://github.com/patobiskoto/foundry-v1-pat61-youtrack-sandbox/pull/4",
+  "merge_result": "✅ PR #4 mergée (CI verte: 1 checks) · AC sync: already-complete/0 · sha mergé 7ff9453a9c067d290333dcf000fa8d0d60f07ac9 · P61Y-4 → done",
+  "release_scope": {
+    "provider": "youtrack",
+    "project_key": "P61Y",
+    "project_id": "0-10",
+    "release": "PAT61 sandbox v1",
+    "release_id": "164-426",
+    "native_state": null,
+    "issues": [
+      {
+        "id": "P61Y-4",
+        "title": "[PAT-82 sandbox] Témoin neuf de reçu de livraison YouTrack",
+        "type": "Task",
+        "state": "done",
+        "labels": [],
+        "disposition": "accepted",
+        "references": {
+          "provider_issue_id": "3-998",
+          "pr_url": "https://github.com/patobiskoto/foundry-v1-pat61-youtrack-sandbox/pull/4",
+          "repository": "patobiskoto/foundry-v1-pat61-youtrack-sandbox",
+          "head_sha": "aa755791cda0250af0ef416188a82703c5844f5d",
+          "base_sha": "47bcc26e8404ea90c41efa95c17629c02beb5900",
+          "review_digest": "43527801c019f9cb7e9b2193b6f02b315e11c1d7ea083679ee1b862e865c2015",
+          "merge_sha": "7ff9453a9c067d290333dcf000fa8d0d60f07ac9",
+          "ac_digest": "0325ae8689ac45fefa61ba7a0708a984e6b5c1f700825ace3f73ca4ab5122ae1",
+          "review_proof_id": "34d209dfcec1e3456b16ee277df5148779b335abed8fb1c3214162b3e1904047",
+          "review_generation": 1
+        }
+      },
+      {
+        "id": "P61Y-3",
+        "title": "[PAT-61 sandbox] Qualifier le lifecycle YouTrack sur Claude Code",
+        "type": "Bug",
+        "state": "done",
+        "labels": [],
+        "disposition": "unavailable",
+        "references": {
+          "provider_issue_id": "3-997",
+          "pr_url": "https://github.com/patobiskoto/foundry-v1-pat61-youtrack-sandbox/pull/3"
+        }
+      },
+      {
+        "id": "P61Y-2",
+        "title": "[PAT-61 sandbox] Qualifier le mapping release YouTrack",
+        "type": "Task",
+        "state": "done",
+        "labels": [],
+        "disposition": "unavailable",
+        "references": {
+          "provider_issue_id": "3-996",
+          "pr_url": "https://github.com/patobiskoto/foundry-v1-pat61-youtrack-sandbox/pull/2"
+        }
+      }
+    ],
+    "closure": {
+      "mode": "operator",
+      "native_capability": "unavailable",
+      "action": "record-scope-freeze",
+      "native_mutation": false,
+      "preconditions": [
+        "unfinished=0",
+        "unavailable=0"
+      ],
+      "verification": "read-release-scope"
+    },
+    "coordinates": {
+      "project_id": "0-10",
+      "milestone_bundle_id": "163-67",
+      "enum_value_id": "164-426"
+    }
+  },
+  "bridge": {
+    "mode": "foundry-v1",
+    "counts": {
+      "accepted": 1,
+      "deviated": 0,
+      "unfinished": 0,
+      "unavailable": 2
+    },
+    "scope_count": 3,
+    "matches_release_scope": true
+  },
+  "limits": [
+    "No historical backfill: P61Y-2 and P61Y-3 remain unavailable.",
+    "This records observed qualification; it does not manufacture a native Foundry proof.",
+    "The PAT61 sandbox release cannot close with unavailable=2.",
+    "No Apple effects or production tracker binding changes."
+  ]
+}

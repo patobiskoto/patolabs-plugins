@@ -18,6 +18,7 @@ from foundry.models import (
     Project,
     ReleaseScope,
     TransitionContext,
+    MergeDeliveryReceipt,
 )
 
 
@@ -136,6 +137,7 @@ class Tracker(ABC):
     acceptance_proof_projection_supported: bool = False
     acceptance_override_projection_supported: bool = False
     cockpit_evidence_projection_supported: bool = False
+    delivery_receipt_supported: bool = False
 
     # PAT-64 migration is deliberately a separate port.  ``create_issue`` is
     # not an import primitive: several providers generate a fresh client id on
@@ -246,6 +248,17 @@ class Tracker(ABC):
         """Repair only a native done projection backed by an exact receipt."""
         del issue_id, pr_url, head_sha, base_sha, merge_sha, project
         return False
+
+    def record_delivery_receipt(
+        self, project: Project, receipt: MergeDeliveryReceipt,
+    ) -> bool:
+        """Persist one exact merge receipt after the code-host merge is proven.
+
+        The optional port does not grant deployment authority. Providers that opt in
+        must recover an ambiguous append only from one exact, unique native readback.
+        """
+        del project, receipt
+        raise TrackerCapabilityUnavailableError(self.name, "delivery-receipt")
 
     def resolve_checkout_project(
         self,

@@ -57,6 +57,19 @@ includes the bound PR/SHA coordinates and acceptance proof ID. Native Issue
 closure or Project State alone remains `unavailable`; a receipt/native State
 disagreement also remains `unavailable` until the projection is repaired.
 
+For YouTrack, future merges completed by Foundry append one
+`foundry-youtrack-delivery.v1` native comment before projecting `done`. Its canonical
+payload binds the native project id/key and issue id, code-host repository and PR,
+reviewed head/base/diff digest plus proof id/generation, merged SHA, current body and AC digests, and either
+accepted AC evidence or the explicit override code. Release reads exhaust every native
+comment page and require one byte-exact receipt whose project, PR field, body, AC and
+terminal State still agree. A missing, inaccessible, malformed, altered, duplicated or
+foreign receipt, or any native projection drift, remains `unavailable`. Free-text notes
+carry no authority. Existing terminal issues receive no invented backfill and therefore
+remain `unavailable` until a distinct future Foundry delivery creates its own receipt.
+This merge receipt does not attest build, deployment, smoke or runtime health; those
+remain the separate optional post-merge evidence contract of FOUNDRY-ADR-0011.
+
 ## Preparing a new release mapping
 
 Create the native release through the provider's bounded operator UI without assigning
