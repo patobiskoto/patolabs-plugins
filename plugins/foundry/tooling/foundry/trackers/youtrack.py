@@ -202,8 +202,16 @@ class YouTrackTracker(Tracker):
             }:
                 exceptions[attribute] = f"target native option unavailable: {value}"
         estimate = attributes.get("estimate")
-        if estimate is not None and type(estimate) is not int:
-            exceptions["estimate"] = f"target value unavailable: {estimate}"
+        if estimate is not None:
+            matches = [
+                item for item in fields if isinstance(item, dict)
+                and isinstance(item.get("field"), dict)
+                and item["field"].get("name") == "Estimate"
+            ]
+            if len(matches) != 1:
+                exceptions["estimate"] = "target field unavailable: Estimate"
+            elif type(estimate) is not int:
+                exceptions["estimate"] = f"target value unavailable: {estimate}"
         return exceptions
 
     def migration_preflight(

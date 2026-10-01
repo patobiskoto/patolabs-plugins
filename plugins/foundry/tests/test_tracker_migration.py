@@ -490,6 +490,36 @@ def test_youtrack_manifest_declares_missing_native_option_before_effect(monkeypa
     assert all(method == "GET" and body is None for method, _path, body in calls)
 
 
+def test_youtrack_manifest_declares_absent_estimate_field_before_effect(monkeypatch):
+    source = FakeTransportTracker("linear", [
+        Issue("SRC-1", "estimated", state="ready", body="body", estimate=3),
+    ])
+    target = YouTrackTracker(url="https://youtrack.invalid", token="test")
+    project = Project("DST", "target", {"migration_source_field": "Source"})
+    calls = []
+
+    def catalog(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body))
+        if "bundle(values(name))" in fields:
+            return {
+                "id": "target", "shortName": "DST", "customFields": [
+                    {"field": {"name": "State"}, "bundle": {"values": [{"name": "ready"}]}},
+                ],
+            }
+        return {
+            "id": "target", "shortName": "DST", "customFields": [
+                {"field": {"name": "Source", "fieldType": {"id": "string"}}},
+            ],
+        }
+
+    monkeypatch.setattr(target, "_req", catalog)
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    assert manifest["issues"][0]["exceptions"] == [{
+        "attribute": "estimate", "reason": "target field unavailable: Estimate",
+    }]
+    assert all(method == "GET" and body is None for method, _path, body in calls)
+
+
 @pytest.mark.parametrize("provider", ["youtrack", "linear", "ghprojects"])
 def test_migration_adapter_refuses_archived_target_before_provider_effect(
     monkeypatch, tmp_path, provider,
@@ -576,6 +606,68 @@ def test_internal_graph_acceptance_and_known_adr_relations_are_read_back_exactly
     }
     target.adr_relations["SRC-ADR-0002"]["issues"] = []
     with pytest.raises(MigrationError, match="relecture ADR divergente"):
+        verify_targets(manifest, target, project)
+
+
+def test_extra_target_issue_relation_is_rejected_during_copy_and_activation():
+    source = FakeTransportTracker("youtrack", [
+        Issue("SRC-1", "living", state="ready", body="body"),
+    ])
+    project = Project("DST", "target")
+    target = FakeTransportTracker("linear")
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    # An issue without source links is still checked at the graph stage.
+    target.migration_import_issue = (
+        lambda supplied, snapshot, *, source_ref: _import_with_extra_link(
+            target, supplied, snapshot, source_ref,
+        )
+    )
+    with pytest.raises(MigrationError, match="relecture liens divergente"):
+        copy_and_verify(manifest, target, project, lambda: None)
+
+    target = FakeTransportTracker("linear")
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    copy_and_verify(manifest, target, project, lambda: None)
+    target.issues["import-SRC-1"].links.append(Link("relates", "outward", "foreign-1"))
+    with pytest.raises(MigrationError, match="relecture liens divergente"):
+        verify_targets(manifest, target, project)
+
+
+def _import_with_extra_link(target, project, snapshot, source_ref):
+    issue = FakeTransportTracker.migration_import_issue(
+        target, project, snapshot, source_ref=source_ref,
+    )
+    target.issues[issue.id].links.append(Link("relates", "outward", "foreign-1"))
+    return issue
+
+
+class _WrongAdrIdentifierTarget(_GitHubPairTransport):
+    def migration_import_adr(self, project, snapshot, *, source_ref):
+        wrong = copy.deepcopy(snapshot)
+        wrong["id"] = "OTHER-ADR-0001"
+        return super().migration_import_adr(project, wrong, source_ref=source_ref)
+
+
+def test_remapped_adr_identifier_is_checked_during_copy_and_activation():
+    source = FakeTransportTracker("youtrack", adrs=[
+        Adr("SRC-ADR-0001", "decision", "accepted", "exact body\n"),
+    ])
+    project = Project("DST", "target")
+    target = _WrongAdrIdentifierTarget()
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    with pytest.raises(MigrationError, match="coordonnée ADR divergente"):
+        copy_and_verify(manifest, target, project, lambda: None)
+    assert manifest["adrs"][0]["target_id"] is None
+
+    target = _GitHubPairTransport()
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    copy_and_verify(manifest, target, project, lambda: None)
+    original = target.adrs.pop("DST-ADR-0001")
+    wrong = Adr("OTHER-ADR-0001", original.title, original.status, original.body)
+    target.adrs[wrong.id] = wrong
+    target.adr_relations[wrong.id] = target.adr_relations.pop(original.id)
+    target.adr_refs["youtrack:adr:SRC-ADR-0001"] = wrong
+    with pytest.raises(MigrationError, match="coordonnée ADR divergente"):
         verify_targets(manifest, target, project)
 
 

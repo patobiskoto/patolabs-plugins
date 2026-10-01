@@ -221,7 +221,7 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
             raise MigrationError(f"relecture issue absente: {record['source_ref']}")
         expected = {(link["type"], ids[link["target"]]) for link in record["links"] if link["target"] in ids}
         observed = {(link.type, link.target) for link in reread.links}
-        if not expected.issubset(observed):
+        if expected != observed:
             raise MigrationError(f"relecture liens divergente: {record['source_ref']}")
     target_adr_snapshots = tuple(
         _target_adr_snapshot(target, target_project, record, ids)
@@ -252,7 +252,11 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
     ) if target_adr_snapshots else []
     if len(imported_adrs) != len(target_adr_snapshots):
         raise MigrationError("import ADR cible incomplet")
-    for record, imported in zip(manifest["adrs"], imported_adrs):
+    for record, expected, imported in zip(
+        manifest["adrs"], target_adr_snapshots, imported_adrs,
+    ):
+        if imported.id != expected["id"]:
+            raise MigrationError(f"coordonnée ADR divergente: {record['source_ref']}")
         record["target_id"] = imported.id
         persist()
     # Validate the closed ADR corpus only after every support exists.  Providers
@@ -266,7 +270,8 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
         matches = [item for item in exported_adrs if item["adr"].id == record["target_id"]]
         actual = matches[0]["adr"] if len(matches) == 1 else None
         relations = matches[0]["relations"] if len(matches) == 1 else None
-        if (actual is None or actual.title != record["title"]
+        if (actual is None or actual.id != target_snapshot["id"]
+                or actual.title != record["title"]
                 or actual.status != record["status"]
                 or (actual.body or "") != record["body"]
                 or relations != target_snapshot["relations"]):
@@ -320,7 +325,7 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
             for link in record["links"] if link["target"] in ids
         }
         observed = {(link.type, link.target) for link in actual.links}
-        if not expected.issubset(observed):
+        if expected != observed:
             raise MigrationError(f"relecture liens divergente: {record['source_ref']}")
     for record in manifest["adrs"]:
         found = target.migration_find_adr(target_project, record["source_ref"])
@@ -330,7 +335,8 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
         target_snapshot = _target_adr_snapshot(
             target, target_project, record, ids,
         )
-        if (actual is None or actual.title != record["title"]
+        if (actual is None or actual.id != target_snapshot["id"]
+                or actual.title != record["title"]
                 or actual.status != record["status"] or (actual.body or "") != record["body"]
                 or relations != target_snapshot["relations"]):
             raise MigrationError(f"relecture ADR divergente: {record['source_ref']}")

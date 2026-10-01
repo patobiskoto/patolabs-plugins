@@ -136,9 +136,13 @@ indisponible que si le manifeste porte l'exception correspondante. Les relations
 non exposées par le port sont `unknown`, jamais une liste vide.
 Linear qualifie chaque valeur contre son binding de statuts, types, priorités et
 estimations avant le premier effet; YouTrack lit le catalogue natif du projet pour
-les options State, Priority et Type. Une option absente devient une exception nommée
+les options State, Priority et Type, ainsi que la présence du champ Estimate. Une option
+ou un champ absent devient une exception nommée
 dans le manifeste. Le fichier de progression est remplacé atomiquement avec des
 permissions `0600`, indépendamment de l'umask ou des permissions de son ancienne version.
+La relecture du graphe vivant exige l'égalité des liens internes attendus et observés,
+sans relation supplémentaire. Une ADR remappée doit aussi conserver l'identifiant
+cible calculé par l'adaptateur, à la copie et juste avant l'activation.
 
 Une cible doit implémenter `migration_find_*`, `migration_import_*` et
 `migration_link_issue`. Ces primitives
