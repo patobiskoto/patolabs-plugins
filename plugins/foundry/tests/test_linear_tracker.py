@@ -2416,6 +2416,36 @@ def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
     assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
 
 
+@pytest.mark.parametrize("source_state", ["backlog", "ready"])
+def test_linear_historical_review_receipt_observing_ready_or_backlog_keeps_pat28(
+    tracker, source_state,
+):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[source_state]
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    row = _lifecycle_rows(wire, "LIN-2", "state-review")[0]
+    decoded = instance._decode_lifecycle_comment("LIN-2", row["body"])
+    assert decoded is not None
+    historical = {**decoded[1], "native_state_id": STATE_IDS[source_state]}
+    _marker, row["body"], row["id"] = instance._lifecycle_marker(
+        "state-review", "LIN-2", historical,
+    )
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    before = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+
+    projected = instance.get_issue("LIN-2")
+    assert projected.state == "review"
+    assert projected.pr_url == review.pr_url
+    assert wire.issues["LIN-2"]["comments"]["nodes"] == before
+    # This is the historical PAT-28 observation path, not PAT-76's native
+    # Review span; ordinary reads must not require a fabricated span here.
+    assert not any("FoundryLinearIssueStateHistory" in call[0] for call in wire.calls)
+
+
 def test_linear_reviewed_start_drift_allows_read_and_relation_without_lifecycle_mutation(
     tracker,
 ):

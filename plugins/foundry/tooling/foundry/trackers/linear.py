@@ -2616,7 +2616,11 @@ class LinearTracker(Tracker):
             pending_operation in {None, "state-in-progress"}
             and done is None
             and rows.get("state-review")
-            and latest_name in {"backlog", "ready"}
+            and state_by_id[next(
+                payload["native_state_id"]
+                for operation, payload in reversed(ordered)
+                if operation == "state-review"
+            )] in {"backlog", "ready"}
             and current_name == "in-progress"
         )
         # PAT-76: current receipt writers project the native start and review

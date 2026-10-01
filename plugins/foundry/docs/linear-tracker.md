@@ -602,6 +602,9 @@ snapshot so a later legitimate snapshot cannot change a deterministic comment sl
 
 There are two observation-only exceptions for GitHub's delayed Linear `start`
 automation. PAT-28 retains its receipt-backed `backlog|ready -> in-progress` path.
+That path reads the native Backlog/Ready coordinate observed by the historical Review
+receipt, rather than the receipt's logical target (`review`); a modern Review receipt
+cannot impersonate that historical observation.
 PAT-76 additionally covers an exact, durable Foundry `state-in-progress` then
 `state-review` sequence whose native State later regresses from Review to
 `in-progress`. For that second path, Foundry re-reads Linear's complete bounded
