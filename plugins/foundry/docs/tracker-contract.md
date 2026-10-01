@@ -709,10 +709,18 @@ never used by the code-host path.
 
 - **PAT-68 — deterministic conformance suite (fake transport)** for all three providers:
   core operations, capability flags, explicit refusals, pagination, permission errors,
-  conflicts, ambiguous responses and resumption, against doubles only. A missing core
-  capability fails the suite for that adapter; it is never skipped.
-  [`test_tracker_contract.py`](../tests/test_tracker_contract.py) is PAT-53's narrower
-  pin (schema, ABC membership, owners, code-tied flags), not PAT-68's suite.
+  conflicts, ambiguous responses and resumption, against doubles only. The executable
+  selector lives in [`tracker-conformance-v1.json`](../tests/fixtures/tracker-conformance-v1.json)
+  and is described in [`tracker-conformance.md`](tracker-conformance.md); public CI runs
+  `pytest -q -m tracker_conformance tests`. Every core cell already marked
+  `supported` must have an executable provider case, and every remaining `gap` or
+  `to_qualify` cell makes that command fail even when it names a PAT owner. After the
+  PAT-64 merge, all 57 supported core cells (19 per tracker) have selected behavior
+  coverage, and the aggregate gate is green. The manifest contains no dormant future
+  selector, and a blocking cell cannot be misrepresented as passing coverage.
+  [`test_tracker_contract.py`](../tests/test_tracker_contract.py) remains PAT-53's
+  narrower schema/ABC/owner pin; PAT-68 composes the executable fake-transport
+  regressions and adversarial matrix.
 - **PAT-61 — real recipe, three trackers × two hosts**: authorized test resources proving
   each journey against YouTrack, Linear and GitHub Projects in Claude Code and Codex.
   PAT-68's doubles are never presented as this recipe.

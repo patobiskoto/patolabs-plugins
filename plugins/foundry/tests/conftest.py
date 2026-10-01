@@ -1,5 +1,6 @@
 """Make the in-repo Foundry package importable without installing it."""
 import ast
+import json
 import sys
 from pathlib import Path
 
@@ -9,6 +10,12 @@ from _pytest.mark.expression import Scanner, expression
 
 TOOLING = Path(__file__).resolve().parents[1] / "tooling"
 sys.path.insert(0, str(TOOLING))
+
+_CONFORMANCE_MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" / "tracker-conformance-v1.json"
+_CONFORMANCE_MANIFEST = json.loads(_CONFORMANCE_MANIFEST_PATH.read_text(encoding="utf-8"))
+_TRACKER_CONFORMANCE_TESTS = frozenset(
+    tuple(case["test"].split("::", 1)) for case in _CONFORMANCE_MANIFEST["cases"]
+)
 
 
 @pytest.fixture(autouse=True)
@@ -145,6 +152,8 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         file_name = item.path.name
         test_name = getattr(item, "originalname", None) or item.name
+        if (file_name, test_name) in _TRACKER_CONFORMANCE_TESTS:
+            item.add_marker(pytest.mark.tracker_conformance)
         if file_name in _CAMPAIGN_FILES or (file_name, test_name) in _CAMPAIGN_TESTS:
             item.add_marker(pytest.mark.benchmark_campaign)
 

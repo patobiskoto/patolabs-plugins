@@ -1,0 +1,866 @@
+{
+  "schema": "foundry.tracker-conformance.v1",
+  "contract": "plugins/foundry/docs/tracker-contract.v1.json",
+  "required_categories": [
+    "core-operations",
+    "capabilities",
+    "explicit-refusals",
+    "pagination",
+    "permissions",
+    "conflicts",
+    "ambiguous-effects",
+    "replay"
+  ],
+  "required_adversarial": [
+    "repository-switch",
+    "near-name-or-number",
+    "foreign-product-adr",
+    "contradictory-global-provider",
+    "missing-credentials",
+    "adr-unavailable",
+    "registry-drift",
+    "archived-tracker"
+  ],
+  "cases": [
+    {
+      "id": "contract-core-capabilities",
+      "test": "test_tracker_conformance_v1.py::test_provider_bounded_epic_closure_capability_is_declared",
+      "providers": [
+        "youtrack",
+        "linear",
+        "ghprojects"
+      ],
+      "categories": [
+        "capabilities"
+      ],
+      "operations": []
+    },
+    {
+      "id": "contract-port-members",
+      "test": "test_tracker_contract.py::test_every_operation_maps_to_a_real_tracker_abc_member",
+      "providers": [],
+      "categories": [],
+      "operations": []
+    },
+    {
+      "id": "shared-repository-binding",
+      "test": "test_repository_binding_v1.py::test_adapters_use_the_same_checkout_binding_resolution",
+      "providers": [
+        "youtrack",
+        "linear",
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "identity-and-project-resolution",
+        "repository-bootstrap"
+      ]
+    },
+    {
+      "id": "repository-bootstrap-publication",
+      "test": "test_repository_binding_v1.py::test_mapping_update_publishes_binding_and_marker_together_and_refuses_stale_writer",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations",
+        "conflicts"
+      ],
+      "operations": [
+        "repository-bootstrap"
+      ],
+      "adversarial": [
+        "registry-drift"
+      ]
+    },
+    {
+      "id": "repository-bootstrap-replay",
+      "test": "test_repository_binding_v1.py::test_mapping_update_replay_completes_interrupted_marker_publication",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "replay"
+      ],
+      "operations": [
+        "repository-bootstrap"
+      ]
+    },
+    {
+      "id": "repository-switch-authority",
+      "test": "test_repository_binding_v1.py::test_marker_does_not_hide_another_active_provider_and_update_has_no_effect",
+      "providers": [],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [],
+      "adversarial": [
+        "repository-switch",
+        "contradictory-global-provider"
+      ]
+    },
+    {
+      "id": "homonymous-repositories",
+      "test": "test_repository_binding_v1.py::test_same_basename_repositories_have_independent_canonical_bindings",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [
+        "identity-and-project-resolution"
+      ],
+      "adversarial": [
+        "near-name-or-number"
+      ]
+    },
+    {
+      "id": "youtrack-backlog-pagination",
+      "test": "test_youtrack_pagination.py::test_youtrack_issue_search_paginates_past_one_thousand_without_duplicates",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations",
+        "pagination"
+      ],
+      "operations": [
+        "backlog-read"
+      ]
+    },
+    {
+      "id": "youtrack-release-changelog",
+      "test": "test_release_scope.py::test_youtrack_uses_exact_product_mapping_and_near_version_coordinate",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "release-and-changelog-scope"
+      ]
+    },
+    {
+      "id": "youtrack-create-child",
+      "test": "test_youtrack_smoke.py::test_active_cross_project_parent_does_not_block_child_creation",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "frame-intake-groom-create",
+        "epics-children-creation"
+      ]
+    },
+    {
+      "id": "youtrack-update-bounded-replay",
+      "test": "test_youtrack_smoke.py::test_update_fields_ambiguous_effect_replay_is_noop",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "youtrack-relations",
+      "test": "test_youtrack_smoke.py::test_active_cross_project_link_keeps_native_coordinates_independent",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "dependencies-relates-blocks"
+      ]
+    },
+    {
+      "id": "youtrack-permission-no-retry",
+      "test": "test_youtrack_smoke.py::test_update_fields_permission_and_missing_resource_never_retry",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "permissions",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "youtrack-adr-pages",
+      "test": "test_youtrack_pagination.py::test_youtrack_project_articles_paginate_past_one_thousand",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations",
+        "pagination"
+      ],
+      "operations": [
+        "adr-read"
+      ]
+    },
+    {
+      "id": "youtrack-adr-create",
+      "test": "test_youtrack_pagination.py::test_youtrack_create_adr_uses_an_adr_beyond_first_thousand_for_numbering",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "adr-create"
+      ]
+    },
+    {
+      "id": "youtrack-adr-status-transition",
+      "test": "test_tracker_conformance_v1.py::test_youtrack_adr_status_conformance_performs_real_bounded_transition",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "adr-status-evolution"
+      ]
+    },
+    {
+      "id": "youtrack-lifecycle",
+      "test": "test_body_updates.py::test_youtrack_transition_requires_and_rechecks_the_shared_predecessor_coordinate",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations",
+        "conflicts",
+        "replay"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions"
+      ]
+    },
+    {
+      "id": "youtrack-acceptance",
+      "test": "test_body_updates.py::test_acceptance_sync_preserves_crlf_and_only_checks_proven_criteria",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "acceptance-criteria-sync"
+      ]
+    },
+    {
+      "id": "youtrack-archive-tombstone",
+      "test": "test_youtrack_smoke.py::test_archived_issue_or_adr_target_refuses_before_command_or_body_write",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "tombstone-archived-source-after-switch"
+      ],
+      "adversarial": [
+        "archived-tracker"
+      ]
+    },
+    {
+      "id": "linear-round-trip",
+      "test": "test_linear_tracker.py::test_controlled_round_trip_retains_ids_and_safe_additive_writes_on_fresh_reader",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "backlog-read",
+        "frame-intake-groom-create",
+        "mid-flight-comment",
+        "epics-children-creation",
+        "dependencies-relates-blocks"
+      ],
+      "adversarial": [
+        "contradictory-global-provider"
+      ]
+    },
+    {
+      "id": "linear-groom-bounded",
+      "test": "test_linear_tracker.py::test_existing_issue_grooming_is_bounded_while_native_ac_sync_stays_refused",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing",
+        "epics-children-reparent-existing"
+      ]
+    },
+    {
+      "id": "linear-write-conflict",
+      "test": "test_linear_tracker.py::test_linear_field_write_refuses_prewrite_drift_without_mutation",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "linear-write-ambiguous-replay",
+      "test": "test_linear_tracker.py::test_linear_field_write_recovers_ambiguous_effect_and_replay_is_noop",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "linear-permission",
+      "test": "test_linear_tracker.py::test_linear_field_write_unknown_effect_and_permission_never_retry",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "permissions",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "linear-lifecycle-acceptance",
+      "test": "test_linear_tracker.py::test_linear_lifecycle_projects_state_pr_and_acceptance_without_replacement",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions",
+        "acceptance-criteria-sync"
+      ]
+    },
+    {
+      "id": "linear-lifecycle-replay",
+      "test": "test_linear_tracker.py::test_linear_lifecycle_replay_is_idempotent_and_uses_deterministic_comment_id",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "replay"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions"
+      ]
+    },
+    {
+      "id": "linear-adr-evolution",
+      "test": "test_linear_tracker.py::test_linear_adr_versions_append_replay_and_refuse_stale_concurrent_writer",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations",
+        "conflicts",
+        "replay"
+      ],
+      "operations": [
+        "adr-read",
+        "adr-create",
+        "adr-status-evolution"
+      ]
+    },
+    {
+      "id": "linear-adr-import",
+      "test": "test_linear_tracker.py::test_linear_historical_batch_imports_reciprocal_closure_into_empty_project",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations",
+        "replay"
+      ],
+      "operations": [
+        "cross-tracker-adr-import"
+      ]
+    },
+    {
+      "id": "linear-product-isolation",
+      "test": "test_linear_tracker.py::test_linear_same_team_projects_are_isolated_by_stable_project_ids",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [
+        "identity-and-project-resolution"
+      ],
+      "adversarial": [
+        "foreign-product-adr",
+        "near-name-or-number"
+      ]
+    },
+    {
+      "id": "linear-adr-unavailable",
+      "test": "test_linear_tracker.py::test_query_issue_projects_real_unavailable_adr_issue_with_provenance",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "adr-read"
+      ],
+      "adversarial": [
+        "adr-unavailable"
+      ]
+    },
+    {
+      "id": "ghprojects-read-pagination",
+      "test": "test_ghprojects_tracker.py::test_search_pages_graphql_and_excludes_only_reserved_adr_support",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "pagination"
+      ],
+      "operations": [
+        "backlog-read"
+      ]
+    },
+    {
+      "id": "ghprojects-binding",
+      "test": "test_ghprojects_tracker.py::test_search_refuses_foreign_input_binding_before_transport",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "conflicts",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "identity-and-project-resolution"
+      ]
+    },
+    {
+      "id": "ghprojects-permission",
+      "test": "test_ghprojects_tracker.py::test_get_issue_keeps_ambiguous_permission_failure_visible",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "permissions",
+        "ambiguous-effects"
+      ],
+      "operations": [
+        "backlog-read"
+      ]
+    },
+    {
+      "id": "ghprojects-bootstrap-probe",
+      "test": "test_repository_binding_v1.py::test_ghprojects_identity_probe_is_read_only_and_exact",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "repository-bootstrap"
+      ]
+    },
+    {
+      "id": "ghprojects-create-replay",
+      "test": "test_ghprojects_tracker.py::test_pat66_lost_issue_response_replays_in_second_instance_without_duplicate",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "frame-intake-groom-create"
+      ]
+    },
+    {
+      "id": "ghprojects-evolve-bounded",
+      "test": "test_ghprojects_tracker.py::test_pat66_ambiguous_field_write_is_observed_once_without_rewrite",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "ghprojects-comment-readback",
+      "test": "test_ghprojects_tracker.py::test_pat66_comment_readback_requires_bound_issue_and_exact_comment",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "conflicts"
+      ],
+      "operations": [
+        "mid-flight-comment"
+      ]
+    },
+    {
+      "id": "ghprojects-child-create",
+      "test": "test_ghprojects_tracker.py::test_pat66_create_parent_preserves_properties_and_reconciles_lost_response",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "epics-children-creation"
+      ]
+    },
+    {
+      "id": "ghprojects-reparent-readback",
+      "test": "test_tracker_conformance_v1.py::test_ghprojects_reparent_conformance_uses_reciprocal_readback",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "conflicts"
+      ],
+      "operations": [
+        "epics-children-reparent-existing"
+      ]
+    },
+    {
+      "id": "ghprojects-dependencies-replay",
+      "test": "test_ghprojects_tracker.py::test_pat66_body_and_links_observe_ambiguous_write_once",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations",
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "dependencies-relates-blocks"
+      ]
+    },
+    {
+      "id": "registry-drift-revalidation",
+      "test": "test_repository_binding_v1.py::test_existing_adapter_revalidates_marker_before_consuming_interrupted_update",
+      "providers": [
+        "youtrack",
+        "linear",
+        "ghprojects"
+      ],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [
+        "identity-and-project-resolution",
+        "repository-bootstrap"
+      ],
+      "adversarial": [
+        "registry-drift"
+      ]
+    },
+    {
+      "id": "shared-archived-binding-refusal",
+      "test": "test_tracker_conformance_v1.py::test_archived_binding_refusal_is_shared_by_bound_providers",
+      "providers": [
+        "youtrack",
+        "linear"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "tombstone-archived-source-after-switch"
+      ],
+      "adversarial": [
+        "archived-tracker"
+      ]
+    },
+    {
+      "id": "missing-secret-backed-credentials",
+      "test": "test_tracker_conformance_v1.py::test_missing_secret_backed_tracker_credentials_fail_before_transport",
+      "providers": [
+        "youtrack",
+        "linear"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [],
+      "adversarial": [
+        "missing-credentials"
+      ]
+    },
+    {
+      "id": "youtrack-comment-single-effect",
+      "test": "test_tracker_conformance_v1.py::test_youtrack_comment_conformance_uses_bound_target_then_single_post",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "mid-flight-comment"
+      ]
+    },
+    {
+      "id": "linear-adr-pagination",
+      "test": "test_linear_tracker.py::test_linear_adr_read_refuses_collection_collision_and_bad_page_info",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "pagination",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "adr-read"
+      ]
+    },
+    {
+      "id": "ghprojects-authentication-failure",
+      "test": "test_ghprojects_tracker.py::test_search_classifies_bounded_transport_failures",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "permissions",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "backlog-read"
+      ],
+      "adversarial": [
+        "missing-credentials"
+      ]
+    },
+    {
+      "id": "youtrack-migration-adapter",
+      "test": "test_tracker_migration.py::test_youtrack_adapter_recovers_issue_and_adr_lost_responses_without_duplicates",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-adr-import",
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "youtrack-epic-closure",
+      "test": "test_epic_closure_transports.py::test_youtrack_close_audits_before_targeted_parent_write_and_replays",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "linear-migration-issue",
+      "test": "test_tracker_migration.py::test_linear_adapter_deterministic_creation_recovers_lost_response",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "linear-epic-closure",
+      "test": "test_epic_closure_transports.py::test_linear_bounded_close_roundtrips_through_graphql_and_replays",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "linear-release-scope",
+      "test": "test_release_scope.py::test_linear_release_membership_paginates_to_completion",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "release-and-changelog-scope"
+      ]
+    },
+    {
+      "id": "github-adr-roundtrip",
+      "test": "test_ghprojects_tracker.py::test_pat58_public_raw_transport_full_cycle_and_completed_replay",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "adr-read",
+        "adr-create",
+        "adr-status-evolution"
+      ]
+    },
+    {
+      "id": "github-migration-adr",
+      "test": "test_ghprojects_tracker.py::test_pat64_migration_resumes_owned_support_after_item_readback_interruption",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-adr-import"
+      ]
+    },
+    {
+      "id": "github-migration-issue",
+      "test": "test_tracker_migration.py::test_github_adapter_reuses_provider_label_candidate_after_lost_response",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "github-epic-closure",
+      "test": "test_ghprojects_tracker.py::test_pat69_ghprojects_epic_closure_replays_without_second_effect",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "github-lifecycle-acceptance",
+      "test": "test_ghprojects_tracker.py::test_pat67_raw_transport_full_lifecycle_and_replays",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions",
+        "acceptance-criteria-sync"
+      ]
+    },
+    {
+      "id": "github-release-scope",
+      "test": "test_release_scope.py::test_github_repository_milestone_is_exact_and_closed_is_not_proof",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "release-and-changelog-scope"
+      ]
+    },
+    {
+      "id": "github-archive-write-guard",
+      "test": "test_tracker_migration.py::test_migration_adapter_refuses_archived_target_before_provider_effect",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "tombstone-archived-source-after-switch"
+      ]
+    },
+    {
+      "id": "youtrack-existing-child-reparent",
+      "test": "test_tracker_conformance_v1.py::test_youtrack_existing_child_reparent_uses_bound_command_and_readback",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epics-children-reparent-existing"
+      ]
+    }
+  ]
+}
