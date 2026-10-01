@@ -2,9 +2,9 @@
 
 Ce document rend PAT-61 exécutable sans présenter une double de transport comme une
 preuve fournisseur. La matrice machine est
-[`pat-61-six-configuration-v1.json`](pat-61-six-configuration-v1.json). Son état initial
-est volontairement `not_run` pour les six cellules : cette livraison ne fabrique aucun
-receipt, ne modifie aucun binding et ne conclut pas une qualification réelle.
+[`pat-61-six-configuration-v1.json`](pat-61-six-configuration-v1.json). Les cellules
+gardent leur état d'exécution observé ; aucune n'est encore `passed` et le manifeste ne
+fabrique aucun receipt.
 
 La recette est une qualification d'intégration, pas un nouveau design d'adaptateur. Les
 contraintes existantes de [`tracker-contract.md`](../tracker-contract.md), du contrat de
@@ -41,15 +41,29 @@ La recette n'autorise aucun effet App Store public.
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
 | YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `not_run` | PAT-59 a lu un périmètre release YouTrack réel ; P64Q est archivé. Ni l'un ni l'autre ne prouve ce parcours ni cet hôte. |
-| YouTrack × Codex | même sandbox possible, issues et branches distinctes | `not_run` | mêmes lectures seulement ; aucune preuve Codex live. |
+| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 mergée avec CI et review ; ADR/Epic, adversaires et Apple restent à faire. |
 | Linear × Claude Code | nouveau dépôt et projet Linear synthétiques ; ne pas employer le projet PAT actif | `not_run` | le binding PAT/Linear actif est une observation de préflight, pas une recette de sable complète. |
-| Linear × Codex | même sandbox possible, issues et branches distinctes | `not_run` | aucune preuve Codex live réutilisable. |
+| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 mergée avec CI et review ; ADR/Epic, adversaires et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
-| GitHub Projects × Codex | même sandbox possible, issues et branches distinctes | `not_run` | PAT-65 qualifie des primitives API privées/personnelles ; aucune preuve Codex de bout en bout. |
+| GitHub Projects × Codex | P61G et dépôt privé de sable | `blocked` | P61G-1 existe, mais le readback `Project.items` reste vide après reprise bornée ; aucune création validée. |
 
 GHQUAL et P64G peuvent être relus comme ressources historiques uniquement. P64Q et
 l'ancien binding FOUNDRY sont archivés : ils ne sont pas réactivés et ne constituent pas
-un raccourci. Aucun sandbox Linear séparé n'est actuellement enregistré.
+un raccourci. Les dépôts privés de sable `foundry-v1-pat61-linear-sandbox`,
+`foundry-v1-pat61-youtrack-sandbox` et `foundry-v1-pat61-ghprojects-sandbox` sont
+désormais enregistrés avec leurs bindings séparés PAT, P61Y et P61G. Ils ne modifient
+pas le binding du dépôt `patolabs-plugins`.
+
+Le préflight live du 1er octobre 2026 a confirmé deux témoins Codex limités :
+PAT-74 a été mergé dans le dépôt Linear de sable (PR #1, head `f52efdbc`, merge
+`855dd887`, AC 2/2) et P61Y-1 dans le dépôt YouTrack de sable (PR #1, head
+`b4724103`, merge `afe441dc`, AC 2/2). Le second a nécessité l'attachement au seul
+projet P61Y du prototype YouTrack `GitHub PR` déjà existant. Ces témoins ne couvrent
+ni ADR/Epic, ni tous les adversaires, ni le chemin Apple : les cellules restent
+`in_progress`. Le premier create P61G-1 a laissé une Issue et un item
+consultable depuis l'Issue, mais `Project.items` reste vide ; le rejeu borné a échoué
+une seconde fois à `partial_create:item_readback`. Son intention locale est conservée,
+sans nouveau retry ni assertion de succès GitHub Projects.
 
 ## Exécution d'une cellule
 
@@ -88,8 +102,8 @@ l'autre host, et une preuve simulée ne satisfait jamais une étape live.
 
 ## Actions live réservées au coordinateur
 
-Le coordinateur doit fournir les ressources synthétiques nécessaires aux six cellules,
-rétablir la parité source/distribution et vérifier la chaîne de hooks dans chaque checkout,
-exécuter les six chemins et leurs
-tests adverses, puis effectuer la validation TestFlight humaine de l'application de
-test. Cette branche ne réalise aucune de ces actions.
+Le coordinateur doit terminer la parité source/distribution et la vérification de la
+chaîne de hooks dans chaque checkout, exécuter les six chemins et leurs tests adverses,
+puis effectuer la validation TestFlight humaine de l'application de test. Les dépôts
+et projets synthétiques réservés et les deux témoins de PR ci-dessus sont seulement des
+étapes de ce parcours ; aucune cellule n'est encore qualifiée comme passée.

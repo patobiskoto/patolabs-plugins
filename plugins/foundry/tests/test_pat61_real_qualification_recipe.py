@@ -21,7 +21,20 @@ def test_pat61_recipe_has_exactly_the_six_real_tracker_host_cells():
         for host in ("claude-code", "codex")
     }
     assert len(recipe["cells"]) == 6
-    assert {cell["status"] for cell in recipe["cells"]} == {"not_run"}
+    assert {cell["id"]: cell["status"] for cell in recipe["cells"]} == {
+        "youtrack-claude": "not_run",
+        "youtrack-codex": "in_progress",
+        "linear-claude": "not_run",
+        "linear-codex": "in_progress",
+        "ghprojects-claude": "not_run",
+        "ghprojects-codex": "blocked",
+    }
+    assert all(
+        cell["partial_evidence"]
+        for cell in recipe["cells"]
+        if cell["status"] != "not_run"
+    )
+    assert not any(cell["status"] == "passed" for cell in recipe["cells"])
 
 
 def test_pat61_recipe_is_budgeted_and_does_not_promote_deterministic_evidence():

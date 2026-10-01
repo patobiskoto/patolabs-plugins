@@ -28,11 +28,11 @@
   ],
   "cells": [
     {"id": "youtrack-claude", "tracker": "youtrack", "host": "claude-code", "status": "not_run"},
-    {"id": "youtrack-codex", "tracker": "youtrack", "host": "codex", "status": "not_run"},
+    {"id": "youtrack-codex", "tracker": "youtrack", "host": "codex", "status": "in_progress", "partial_evidence": "P61Y-1, sandbox PR #1, head b47241031bbbbd0c96f3db4629ec59e40989b7c7, merge afe441dcccc2ddd040c524b16f329fe2f772e533; full journey and Apple path absent"},
     {"id": "linear-claude", "tracker": "linear", "host": "claude-code", "status": "not_run"},
-    {"id": "linear-codex", "tracker": "linear", "host": "codex", "status": "not_run"},
+    {"id": "linear-codex", "tracker": "linear", "host": "codex", "status": "in_progress", "partial_evidence": "PAT-74, sandbox PR #1, head f52efdbc7e51a46224bfdc0e73c5860106fce094, merge 855dd887f66c58a793c5bb782abacd33429383a4; full journey and Apple path absent"},
     {"id": "ghprojects-claude", "tracker": "ghprojects", "host": "claude-code", "status": "not_run"},
-    {"id": "ghprojects-codex", "tracker": "ghprojects", "host": "codex", "status": "not_run"}
+    {"id": "ghprojects-codex", "tracker": "ghprojects", "host": "codex", "status": "blocked", "partial_evidence": "P61G-1 issue and reverse project item visible, but Project.items readback empty after the bounded retry; partial_create:item_readback, no create success asserted"}
   ],
   "adversarial_cases": [
     "repository_switch_same_session",
