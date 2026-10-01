@@ -388,3 +388,21 @@ TestFlight `1.0 (2)` : installation sur iPhone physique, affichage Hello World,
 fermeture complète et relance sans crash. Le gate bêta du chemin Apple partagé
 est donc satisfait. Cela ne vaut ni soumission App Store ni PASS des six cellules,
 dont les étapes tracker/host restantes doivent toujours être démontrées.
+
+
+Après validation iPhone, le blocage GitHub #9 persiste : Foundry refuse P61G-1
+avec `IssueUnavailableError`, l'API relit le Project à zéro item et le node direct
+non archivé inchangé ; l'interface GitHub authentifiée montre également une table
+de projet vide sans filtre. Cette relecture ne répète aucune écriture et ne remet
+pas à zéro le budget de reprises. Aucune réparation destructive ou recréation.
+
+
+Au HEAD `0f175af`, la suite de conformité passe : 108 tests, 3031 deselected.
+Le diagnostic YouTrack relit P61Y-2 et P61Y-3, Done/AC complètes/PR mergées, mais
+le code classe systématiquement une livraison terminale sans reçu qualifié comme
+`unavailable`. Ce comportement est explicitement testé et ne sera pas contourné.
+L'intake, après lecture des trois pages du même snapshot, crée PAT-82 et propose
+PAT-ADR-0009 pour qualifier un reçu décisionnel dans les commentaires natifs
+YouTrack. Aucun code n'est changé avant acceptation explicite, aucun reçu
+historique n'est fabriqué. Les deux cellules YouTrack deviennent `blocked`.
+PAT-61 reste in-progress ; la frontière Apple validée n'efface pas ces blocages.
