@@ -5,7 +5,7 @@ ORFEO-ADR and scanned articles across all projects). Title on argv, body on stdi
 
 CLI:
   echo "<body>" | python3 -m foundry.adr create "<title>" [status]
-  python3 -m foundry.adr accept <ADR-ID>
+  python3 -m foundry.adr accept <ADR-ID> [--framed-by <ISSUE-ID>]
   python3 -m foundry.adr edit <ADR-ID> <expected-body.md> <updated-body.md>
 """
 
@@ -42,6 +42,13 @@ def _visible_markdown_lines(body: str):
     fence: str | None = None
     in_comment = False
     for line in body.splitlines():
+        if fence is not None:
+            closing = re.compile(
+                rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$"
+            )
+            if closing.match(line):
+                fence = None
+            continue
         if in_comment:
             if "-->" in line:
                 in_comment = False
@@ -49,13 +56,6 @@ def _visible_markdown_lines(body: str):
         if "<!--" in line:
             if "-->" not in line:
                 in_comment = True
-            continue
-        if fence is not None:
-            closing = re.compile(
-                rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$"
-            )
-            if closing.match(line):
-                fence = None
             continue
         if match := _FENCE_OPEN.match(line):
             fence = match.group("fence")

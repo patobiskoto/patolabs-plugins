@@ -48,6 +48,17 @@ def test_automated_accept_promotes_the_exact_proposed_adr_framed_by_issue(monkey
     assert tracker.status_writes == [("PAT-ADR-0001", "accepted")]
 
 
+def test_automated_accept_ignores_comment_opener_inside_fence(monkeypatch):
+    tracker = _Tracker(
+        "```markdown\n<!--\n```\n**Cadre (ADR) :** PAT-ADR-0001\n"
+    )
+    monkeypatch.setattr(adr.foundry, "tracker", lambda: tracker)
+
+    adr.accept("PAT-ADR-0001", framed_by="PAT-78")
+
+    assert tracker.status_writes == [("PAT-ADR-0001", "accepted")]
+
+
 def test_explicit_human_accept_does_not_require_an_issue_frame(monkeypatch):
     tracker = _Tracker("unrelated issue body")
     monkeypatch.setattr(adr.foundry, "tracker", lambda: tracker)
