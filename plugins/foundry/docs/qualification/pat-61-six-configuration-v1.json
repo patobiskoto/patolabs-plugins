@@ -1,0 +1,55 @@
+{
+  "schema": "foundry.pat-61-real-qualification.v1",
+  "adapter_baseline_sha": "e313f5159c2d130f629cfc6cf91c321977ba58e6",
+  "evidence_boundary": {
+    "deterministic_conformance": "required regression gate; never provider-live evidence",
+    "provider_live": "one fresh, synthetic-resource receipt and readback for the named tracker and host",
+    "unknown": "blocks PASS; it must not be projected as success"
+  },
+  "budget": {
+    "nominal_paths_per_cell": 1,
+    "reasoned_retries_per_cell": 2,
+    "public_app_store_effect": false,
+    "quota": "record only when the host or provider exposes it"
+  },
+  "required_journey": [
+    "fresh_repository_binding",
+    "adr_create_and_evolve",
+    "epic_children_dependencies_and_grooming",
+    "start_resume_pr_review_ci_merge",
+    "epic_closure_and_lifecycle_projection",
+    "release_scope_and_ship_ios_bridge"
+  ],
+  "host_preconditions": [
+    "the installed Foundry distribution files match the exact SHA recorded in the external live evidence before a cell starts",
+    "the host selects the synthetic repository binding and its active tracker credentials",
+    "the effective pre-push hook chain enforces both the local privacy guard and plugins/foundry/.githooks/pre-push for the synthetic checkout",
+    "a separate Ship-iOS test application and TestFlight-only authorization are available for the shared Apple path"
+  ],
+  "cells": [
+    {"id": "youtrack-claude", "tracker": "youtrack", "host": "claude-code", "status": "not_run"},
+    {"id": "youtrack-codex", "tracker": "youtrack", "host": "codex", "status": "not_run"},
+    {"id": "linear-claude", "tracker": "linear", "host": "claude-code", "status": "not_run"},
+    {"id": "linear-codex", "tracker": "linear", "host": "codex", "status": "not_run"},
+    {"id": "ghprojects-claude", "tracker": "ghprojects", "host": "claude-code", "status": "not_run"},
+    {"id": "ghprojects-codex", "tracker": "ghprojects", "host": "codex", "status": "not_run"}
+  ],
+  "adversarial_cases": [
+    "repository_switch_same_session",
+    "near_name_or_number",
+    "foreign_product_adr",
+    "contradictory_global_provider_configuration",
+    "active_tracker_credentials_lost",
+    "unavailable_adr",
+    "registry_drift",
+    "archived_old_tracker",
+    "configuration_rollback"
+  ],
+  "pass_condition": "all six cells have fresh provider_live receipts, all required_journey entries are evidenced, adversarial cases fail closed, and required human validation is recorded",
+  "forbidden_inference": [
+    "a PAT-68 fake-transport pass makes a real cell pass",
+    "a reusable provider proof makes the other host pass",
+    "an archived binding may be reactivated as a recipe shortcut",
+    "a Ship-iOS mock proves an Apple provider action"
+  ]
+}
