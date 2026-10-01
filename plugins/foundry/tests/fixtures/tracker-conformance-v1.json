@@ -183,7 +183,6 @@
         "core-operations"
       ],
       "operations": [
-        "epics-children-reparent-existing",
         "dependencies-relates-blocks"
       ]
     },
@@ -848,6 +847,19 @@
       ],
       "operations": [
         "tombstone-archived-source-after-switch"
+      ]
+    },
+    {
+      "id": "youtrack-existing-child-reparent",
+      "test": "test_tracker_conformance_v1.py::test_youtrack_existing_child_reparent_uses_bound_command_and_readback",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epics-children-reparent-existing"
       ]
     }
   ]

@@ -60,7 +60,7 @@ verify unavailable optional capabilities without provider side effects.
 
 ## Current gate state
 
-On the PAT-64 merge baseline, the exact public command selects 107 passing tests. The
+On the PAT-64 merge baseline, the exact public command selects 108 passing tests. The
 aggregate gate reports no missing supported cell and no core `gap` or `to_qualify`.
 The guard is still adversarially tested: deleting a supported case or marking a covered
 core cell `to_qualify` makes the command fail. A ticket owner or matrix label alone
@@ -70,8 +70,8 @@ never turns an absent core capability into a pass.
 
 These are deterministic doubles and regression tests. They prove the portable
 adapter behavior without external side effects; they are **not** evidence that a real
-provider accepted the same operations, and the current red gate means the complete
-portable contract has not yet been met.
+provider accepted the same operations. The green deterministic gate does not replace
+the real-provider recipe.
 
 The six real configurations — three trackers times Claude Code/Codex — remain the
 PAT-61 recipe. PAT-68 must never be cited as a substitute for that recipe.

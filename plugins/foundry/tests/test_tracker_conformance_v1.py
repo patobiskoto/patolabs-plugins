@@ -22,7 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from foundry import config, registry
+from foundry import config, registry, write
 from foundry.models import Adr, Issue, Link, Project
 from foundry.trackers.ghprojects import GitHubProjectsTracker
 from foundry.trackers.linear import LinearTracker
@@ -435,6 +435,55 @@ def test_youtrack_adr_status_conformance_performs_real_bounded_transition(
     assert len(posts) == 1
     assert "statut : `accepted`" in posts[0][2]["content"]
     assert content == posts[0][2]["content"]
+
+
+def test_youtrack_existing_child_reparent_uses_bound_command_and_readback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    tracker = object.__new__(YouTrackTracker)
+    project = Project(key="T", id="0-1")
+    calls: list[tuple] = []
+    linked = False
+    reads = {"T-1": 0, "T-2": 0}
+
+    def request(method, path, body=None, fields=None, top=None):
+        nonlocal linked
+        calls.append((method, path, body, fields))
+        if method == "GET" and path in {"/issues/T-1", "/issues/T-2"}:
+            assert fields == "project(id,shortName)"
+            return {"project": {"id": "0-1", "shortName": "T"}}
+        if method == "POST" and path == "/commands":
+            assert body == {
+                "query": "subtask of T-2",
+                "issues": [{"idReadable": "T-1"}],
+            }
+            linked = True
+            return {}
+        raise AssertionError((method, path, body, fields, top))
+
+    def issue(issue_id):
+        reads[issue_id] += 1
+        if issue_id == "T-1":
+            parent = "T-2" if linked else "T-OLD"
+            return Issue(issue_id, "existing child", links=[
+                Link("subtask-of", "inward", parent),
+            ])
+        return Issue(issue_id, "new parent", type="Epic")
+
+    tracker._req = request
+    tracker.get_issue = issue
+    monkeypatch.setattr(registry, "load", lambda: {"youtrack": {}})
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+
+    write.link(tracker, "T-1", "subtask-of", "T-2")
+
+    assert reads == {"T-1": 3, "T-2": 2}
+    assert [call for call in calls if call[0] == "POST"] == [
+        ("POST", "/commands", {
+            "query": "subtask of T-2", "issues": [{"idReadable": "T-1"}],
+        }, None),
+    ]
+    assert all(call[3] == "project(id,shortName)" for call in calls if call[0] == "GET")
 
 
 def test_ghprojects_reparent_conformance_uses_reciprocal_readback(
