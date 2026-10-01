@@ -2537,16 +2537,26 @@ class LinearTracker(Tracker):
         current_is_durable = native_state_id == ordered_ids[-1]
         if allow_current_disagreement:
             return
-        # Linear's GitHub integration can asynchronously apply its native ``start``
-        # automation after Foundry has already durably projected a PR review.  This
-        # is observation-only: it neither changes the lifecycle projection nor
-        # supplies a new receipt.  Keep the exception deliberately narrower than
-        # the normal pending-write forward window.
+        # PAT-28: Linear's GitHub integration can asynchronously apply its native
+        # ``start`` automation after Foundry has already durably projected a PR
+        # review.  This is observation-only: it neither changes the lifecycle
+        # projection nor supplies a new receipt.
         reviewed_start_drift = (
             pending_operation in {None, "state-in-progress"}
             and done is None
             and rows.get("state-review")
             and latest_name in {"backlog", "ready"}
+            and current_name == "in-progress"
+        )
+        # PAT-76: current receipt writers project the native start and review
+        # states themselves.  Preserve that distinct, fully receipted history when
+        # the integration later regresses only the native State to in-progress.
+        reviewed_start_review_drift = (
+            pending_operation in {None, "state-in-progress"}
+            and done is None
+            and rows.get("state-in-progress")
+            and rows.get("state-review")
+            and latest_name == "review"
             and current_name == "in-progress"
         )
         pending_forward = (
@@ -2586,6 +2596,7 @@ class LinearTracker(Tracker):
         if not (
             current_is_durable
             or reviewed_start_drift
+            or reviewed_start_review_drift
             or pending_forward
             or pending_done
             or pending_legacy_done_override
