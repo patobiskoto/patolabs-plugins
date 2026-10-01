@@ -600,18 +600,37 @@ issue to Done only when the reviewed AC proof is already durable; its readback m
 include the valid done receipt. Replays retain the receipt's original native-state
 snapshot so a later legitimate snapshot cannot change a deterministic comment slot.
 
-There is one observation-only exception for GitHub's delayed Linear `start` automation.
-After an exact, durable `state-review` receipt whose last native snapshot is
-`backlog` or `ready`, a normal Foundry read may observe native `in-progress` and still
-project the already-receipted `review`, PR coordinates and AC result. It creates,
-rewrites and infers no receipt. The `state-in-progress` step replayed by Foundry's
-merge path is a no-op once any durable review generation exists, including after a
-corrected PR adds a later review on native `in-progress`. This avoids a late start
-receipt being reordered before earlier reviews; the following exact review and CI
-gates remain mandatory. Native `done`, `blocked`, `dropped`, a different source
-state, an unmapped state, or no valid review receipt still fail closed. This does not
-authorize review, AC, CI, Done or merge: their existing exact-coordinate gates reread
-the current projection and remain unchanged.
+There are two observation-only exceptions for GitHub's delayed Linear `start`
+automation. PAT-28 retains its receipt-backed `backlog|ready -> in-progress` path.
+That path reads the native Backlog/Ready coordinate observed by the historical Review
+receipt, rather than the receipt's logical target (`review`); a modern Review receipt
+cannot impersonate that historical observation.
+PAT-76 additionally covers an exact, durable Foundry `state-in-progress` then
+`state-review` sequence whose native State later regresses from Review to
+`in-progress`. For that second path, Foundry re-reads Linear's complete bounded
+`stateHistory` and requires an actual native In Progress → Review → In Progress span,
+with Review reached after the matching receipt was written. An interrupted review
+write with no observed native Review remains a conflict. In either case, a normal
+Foundry read still projects the already-
+receipted `review`, PR coordinates and AC result. It creates, rewrites and infers no
+receipt.
+The `state-in-progress` step replayed by Foundry's merge path is a no-op once any
+durable review generation exists, including after a corrected PR adds a later review on
+native `in-progress`. This avoids a late start receipt being reordered before earlier
+reviews; the following exact review and CI gates remain mandatory. Native `done`,
+`blocked`, `dropped`, any native state other than `in-progress`, an unmapped state, a
+missing review receipt, a missing start receipt in the PAT-76 sequence, or other
+divergent histories still fail closed. This
+does not authorize review, AC, CI, Done or merge: their existing exact-coordinate gates
+reread the current projection and remain unchanged.
+
+PAT-74 exercised the second path in the private PAT-61 Linear sandbox: its native
+history showed In Progress → In Review → In Progress after Foundry's start/review
+receipts. Foundry then linked PAT-74 to PAT-75, reviewed PR #1 independently, checked
+the real `verify` success on head `f52efdbc7e51a46224bfdc0e73c5860106fce094`,
+and merged it through the gate as `855dd887f66c58a793c5bb782abacd33429383a4`.
+Fresh readback reported PAT-74 `done`, native `done`, AC 2/2 and the relation. This
+proves that sandbox path only; it is not a six-cell PAT-61 qualification.
 
 The cockpit evidence path is deliberately separate. Only a complete
 `foundry-evidence-envelope.v1` that the shared verifier classifies `GO` can be projected;
