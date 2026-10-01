@@ -329,6 +329,15 @@ witness remain conflicts before any effect. A missing witness on the exact deriv
 successor still follows the bounded interrupted-pair recovery above. A non-object entry
 in Linear's document list is an invalid provider response, not an empty ADR index.
 
+`adr accept <ADR-ID>` remains an explicit human decision. The automated post-merge
+form, `adr accept <ADR-ID> --framed-by <ISSUE-ID>`, is narrower: it first proves that
+the framing issue belongs to the current repository project, then reads the exact issue
+body and requires one unambiguous `**Cadre (ADR) :** <ADR-ID>[, ...]` citation outside
+Markdown fenced code blocks and HTML comments before it resolves or changes the ADR.
+Its ticker may contain letters, digits, `_`, and `-`. The issue payload's `adrs` field is
+a project-level retrieval index, never a delivery relation. A native ADR-to-issue link
+does not replace the citation at this provider-neutral CLI boundary.
+
 `query adr <ADR-ID>`, `query adrs`, `frame`, and every ADR write stay fail-closed on any
 of the conflicts above — none of them repair or normalize on read. `query issue <ID>` is
 the one exception: its `adrs` field only keeps the issue payload itself readable when the
