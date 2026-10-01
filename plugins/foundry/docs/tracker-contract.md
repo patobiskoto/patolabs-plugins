@@ -124,7 +124,8 @@ cell.
 branche YouTrack/Linear/GitHub Projects : il lit les deux côtés par le port `Tracker`,
 fige un manifeste JSON, copie seulement les issues dont l'état normalisé n'est ni
 `done` ni `dropped`, relit chaque cible, puis laisse `registry cutover` publier le
-binding atomique avec le digest du manifeste. Le manifeste porte le `source_ref` de
+binding atomique avec `source_digest`, le digest de la vue source gelée du manifeste
+(distinct du SHA-256 du fichier JSON, qui change avec la progression). Le manifeste porte le `source_ref` de
 chaque issue et ADR, les corps exacts, les attributs et les exceptions explicites des
 attributs que la cible ne sait pas représenter. Ces exceptions couvrent le nom
 d'attribut non supporté, la valeur hors vocabulaire et l'option absente du catalogue
@@ -133,6 +134,11 @@ de l'attribut nommé est omise ou remplacée, et la relecture ignore exactement 
 valeur déclarée. Par exemple, GitHub ne projette `Task` pour un Type source absent ou
 indisponible que si le manifeste porte l'exception correspondante. Les relations ADR
 non exposées par le port sont `unknown`, jamais une liste vide.
+Linear qualifie chaque valeur contre son binding de statuts, types, priorités et
+estimations avant le premier effet; YouTrack lit le catalogue natif du projet pour
+les options State, Priority et Type. Une option absente devient une exception nommée
+dans le manifeste. Le fichier de progression est remplacé atomiquement avec des
+permissions `0600`, indépendamment de l'umask ou des permissions de son ancienne version.
 
 Une cible doit implémenter `migration_find_*`, `migration_import_*` et
 `migration_link_issue`. Ces primitives
@@ -232,7 +238,7 @@ la publication du binding et l'écriture locale de la phase `activated`.
 La recette isolée P64Q→P64G a utilisé le dépôt privé
 `patobiskoto/foundry-v1-pat64-cutover-sandbox`, le Project personnel natif
 `PVT_kwHOABroCc4BlQAG`, le projet YouTrack P64Q et son champ String dédié. Le
-manifeste `sha256:162ed584b4c63149897824d61cf297dc75be395a8212860c167c42c84f33bf21`
+manifeste dont `source_digest` vaut `sha256:162ed584b4c63149897824d61cf297dc75be395a8212860c167c42c84f33bf21`
 a copié une issue vivante et une ADR `proposed`, avec les octets du corps source,
 les marques `[x]`/`[ ]`, les attributs et les relations ADR `unknown` conservés à la
 relecture. La source P64Q est archivée et refuse une nouvelle création; le binding

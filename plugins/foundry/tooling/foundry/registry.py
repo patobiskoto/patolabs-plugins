@@ -910,11 +910,10 @@ def stage_repository_cutover_target(
             entry for entry in data.get(tracker, {}).values()
             if isinstance(entry, dict)
             and "_staged_cutover" not in entry
-            and entry.get("archive") is not True
             and entry.get("canonical_repo") == repository
         ] if isinstance(data.get(tracker), dict) else []
         if occupied:
-            raise ValueError("cible de cutover déjà active dans le registre")
+            raise ValueError("cible de cutover déjà active ou archivée dans le registre")
         current = data.setdefault(tracker, {}).get(slot)
         if current is not None and current != staged:
             raise ValueError("cible staged de cutover déjà occupée")

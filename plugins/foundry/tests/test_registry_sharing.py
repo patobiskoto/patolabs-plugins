@@ -789,6 +789,34 @@ def test_pat64_staging_refuses_an_existing_active_target_for_same_repository(
     )
 
 
+def test_pat64_staging_refuses_archived_target_for_same_repository(
+    monkeypatch, tmp_path,
+):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    repo = _make_repo(tmp_path, "public")
+    canonical = "github.com/acme/public"
+    extra = _linear_binding()
+    extra.update({
+        "canonical_repo": canonical,
+        "migration_identity_profile": "foundry-linear-deterministic-v1",
+        "archive": True,
+    })
+    registry._save({
+        "linear": {
+            "historical": {
+                "key": "PAT", "id": _LINEAR_PROJECT_ID, **extra,
+            },
+        },
+    })
+    with pytest.raises(ValueError, match="archivée"):
+        registry.stage_repository_cutover_target(
+            "linear", "public", "PAT", _LINEAR_PROJECT_ID,
+            migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+            **{key: value for key, value in extra.items() if key != "archive"},
+        )
+
+
 def test_resolve_types_only_a_missing_legacy_alias_as_not_registered(
     monkeypatch, tmp_path,
 ):

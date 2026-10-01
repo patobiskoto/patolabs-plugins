@@ -162,6 +162,7 @@ def main(argv=None) -> None:
                 }):
             raise SystemExit("manifeste de cutover incompatible avec les coordonnées actives")
         if action == "copy":
+            registry.require_writable_project(target.name, _registry_target_project(target_project))
             copy_and_verify(manifest, target, target_project, lambda: save_manifest(path, manifest))
         else:
             if not ready_for_cutover(manifest):

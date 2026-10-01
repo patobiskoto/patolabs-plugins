@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import subprocess
 from types import SimpleNamespace
@@ -410,6 +411,111 @@ def test_copy_skips_exact_state_readback_only_when_manifest_declares_exception()
         "reason": "target value unavailable: triage",
     }]
     assert target.issues["import-T-1"].state is None
+    verify_targets(manifest, target, Project("T", "target"))
+
+
+def test_manifest_replacement_is_private_even_with_permissive_umask(tmp_path):
+    source = FakeTransportTracker("youtrack", [
+        Issue("T-1", "private", state="ready", body="private body"),
+    ])
+    target = FakeTransportTracker("linear")
+    manifest = capture_manifest(
+        source, Project("T", "source"), target, Project("T", "target"),
+    )
+    path = tmp_path / "manifest.json"
+    previous = os.umask(0)
+    try:
+        save_manifest(path, manifest)
+        assert path.stat().st_mode & 0o777 == 0o600
+        path.chmod(0o644)
+        save_manifest(path, manifest)
+        assert path.stat().st_mode & 0o777 == 0o600
+    finally:
+        os.umask(previous)
+    assert load_manifest(path)["issues"][0]["body"] == "private body"
+
+
+def test_linear_manifest_declares_unmapped_type_and_preflight_skips_it(monkeypatch):
+    source = FakeTransportTracker("youtrack", [
+        Issue("SRC-1", "unmapped type", state="ready", body="body", type="Story"),
+    ])
+    target = LinearTracker(token="test")
+    project = Project("DST", "00000000-0000-4000-8000-000000000000", {
+        "canonical_repo": "github.com/acme/dst",
+        "team_id": "00000000-0000-4000-8000-000000000001",
+        "state_ids": {
+            state: f"00000000-0000-4000-8000-{index:012d}"
+            for index, state in enumerate((
+                "backlog", "ready", "in-progress", "review", "blocked", "done", "dropped",
+            ), 10)
+        },
+        "type_label_ids": {}, "label_ids": {}, "milestone_ids": {},
+        "migration_identity_profile": "foundry-linear-deterministic-v1",
+    })
+    monkeypatch.setattr(target, "verify_project_identity", lambda _project: True)
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    assert manifest["issues"][0]["exceptions"] == [{
+        "attribute": "type", "reason": "target value unavailable: Story",
+    }]
+
+
+def test_youtrack_manifest_declares_missing_native_option_before_effect(monkeypatch):
+    source = FakeTransportTracker("linear", [
+        Issue("SRC-1", "unmapped type", state="ready", body="body", type="Story"),
+    ])
+    target = YouTrackTracker(url="https://youtrack.invalid", token="test")
+    project = Project("DST", "target", {"migration_source_field": "Source"})
+    calls = []
+
+    def catalog(method, path, body=None, fields=None, top=None):
+        calls.append((method, path, body))
+        if "bundle(values(name))" in fields:
+            return {
+                "id": "target", "shortName": "DST", "customFields": [
+                    {"field": {"name": "Type"}, "bundle": {"values": [{"name": "Task"}]}},
+                    {"field": {"name": "State"}, "bundle": {"values": [{"name": "ready"}]}},
+                ],
+            }
+        return {
+            "id": "target", "shortName": "DST", "customFields": [
+                {"field": {"name": "Source", "fieldType": {"id": "string"}}},
+            ],
+        }
+
+    monkeypatch.setattr(target, "_req", catalog)
+    manifest = capture_manifest(source, Project("SRC", "source"), target, project)
+    assert manifest["issues"][0]["exceptions"] == [{
+        "attribute": "type", "reason": "target native option unavailable: Story",
+    }]
+    assert all(method == "GET" and body is None for method, _path, body in calls)
+
+
+@pytest.mark.parametrize("provider", ["youtrack", "linear", "ghprojects"])
+def test_migration_adapter_refuses_archived_target_before_provider_effect(
+    monkeypatch, tmp_path, provider,
+):
+    project = Project("DST", "target")
+    trackers = {
+        "youtrack": YouTrackTracker(url="https://youtrack.invalid", token="test"),
+        "linear": LinearTracker(token="test"),
+        "ghprojects": GitHubProjectsTracker(state_dir=tmp_path),
+    }
+    target = trackers[provider]
+    monkeypatch.setattr(cutover_cli.registry, "load", lambda: {
+        provider: {"old": {"key": "DST", "id": "target", "archive": True}},
+    })
+    with pytest.raises(SystemExit, match="archive lisible"):
+        target.migration_import_issue(
+            project, _issue_record(), source_ref="youtrack:issue:SRC-1",
+        )
+    with pytest.raises(SystemExit, match="archive lisible"):
+        target.migration_import_adr(
+            project, {
+                "id": "DST-ADR-0001", "title": "decision", "body": "body",
+                "status": "proposed", "relations": {"issues": "unknown"},
+            },
+            source_ref="youtrack:adr:SRC-ADR-0001",
+        )
 
 
 def test_manifest_reports_unsupported_attribute_instead_of_dropping_it():

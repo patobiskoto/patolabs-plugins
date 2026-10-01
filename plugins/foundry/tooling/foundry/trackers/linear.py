@@ -1714,6 +1714,34 @@ class LinearTracker(Tracker):
         self._transport = transport
         self._active_project: Project | None = None
 
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        self._binding(project)
+        attributes = snapshot.get("attributes")
+        if not isinstance(attributes, dict):
+            raise TrackerConflictError("snapshot issue de migration Linear invalide")
+        skeleton = {
+            "labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}},
+        }
+        exceptions: dict[str, str] = {}
+        for attribute, native in (
+            ("type", "Type"), ("priority", "Priority"),
+            ("estimate", "Estimate"), ("state", "State"),
+        ):
+            value = attributes.get(attribute)
+            if value is None:
+                continue
+            try:
+                self._desired_update(skeleton, project, {native: value})
+            except (LinearBindingError, ValueError) as exc:
+                if isinstance(exc, LinearBindingError) and exc.code not in {
+                    "state_unmapped", "type_unmapped",
+                }:
+                    raise
+                exceptions[attribute] = f"target value unavailable: {value}"
+        return exceptions
+
     def migration_preflight(
         self, project: Project, records: tuple[dict, ...],
     ) -> dict:
@@ -1734,6 +1762,9 @@ class LinearTracker(Tracker):
         for record in records:
             if record.get("kind") != "issue":
                 continue
+            unsupported = {
+                item["attribute"] for item in record.get("exceptions", [])
+            }
             fields = {
                 name: value
                 for name, value in {
@@ -1742,7 +1773,7 @@ class LinearTracker(Tracker):
                     "Estimate": record["attributes"].get("estimate"),
                     "State": record["attributes"].get("state"),
                 }.items()
-                if value is not None
+                if value is not None and name.casefold() not in unsupported
             }
             self._desired_update(
                 {"labels": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}},
@@ -1866,6 +1897,7 @@ class LinearTracker(Tracker):
     def migration_import_issue(
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Issue:
+        registry.require_writable_project(self.name, project)
         existing = self.migration_find_issue(project, source_ref)
         if existing is not None:
             return existing
@@ -1930,6 +1962,7 @@ class LinearTracker(Tracker):
     def migration_link_issue(
         self, project: Project, src_id: str, link_type: str, dst_id: str,
     ) -> None:
+        registry.require_writable_project(self.name, project)
         self.link(src_id, link_type, dst_id, project=project)
 
     # ---- transport -------------------------------------------------
@@ -5475,6 +5508,7 @@ class LinearTracker(Tracker):
     def migration_import_adr(
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Adr:
+        registry.require_writable_project(self.name, project)
         existing = self.migration_find_adr(project, source_ref)
         if existing is not None:
             return existing
@@ -5637,6 +5671,7 @@ class LinearTracker(Tracker):
         self, project: Project, snapshots: tuple[dict, ...],
         *, qualification: object | None = None,
     ) -> list[Adr]:
+        registry.require_writable_project(self.name, project)
         if not snapshots:
             return []
         supplied = (

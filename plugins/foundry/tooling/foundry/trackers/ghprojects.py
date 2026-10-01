@@ -423,6 +423,7 @@ class GitHubProjectsTracker(Tracker):
     def migration_link_issue(
         self, project: Project, src_id: str, link_type: str, dst_id: str,
     ) -> None:
+        registry.require_writable_project(self.name, project)
         binding = self._binding(project)
         self._link_with_binding(
             src_id, link_type, dst_id, binding,
@@ -433,6 +434,7 @@ class GitHubProjectsTracker(Tracker):
     def migration_import_issue(
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Issue:
+        registry.require_writable_project(self.name, project)
         binding = self._binding(project)
         exceptional = {
             entry["attribute"] for entry in snapshot.get("exceptions", [])
@@ -4428,6 +4430,7 @@ class GitHubProjectsTracker(Tracker):
     def migration_import_adr(
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Adr:
+        registry.require_writable_project(self.name, project)
         existing = self.migration_find_adr(project, source_ref)
         if existing is not None:
             return existing

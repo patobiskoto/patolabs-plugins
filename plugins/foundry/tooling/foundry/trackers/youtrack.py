@@ -159,6 +159,53 @@ class YouTrackTracker(Tracker):
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })
 
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        attributes = snapshot.get("attributes")
+        if not isinstance(attributes, dict):
+            raise TrackerConflictError("snapshot issue de migration YouTrack invalide")
+        project_id = urllib.parse.quote(project.id, safe="")
+        raw = self._req(
+            "GET", f"/admin/projects/{project_id}",
+            fields="id,shortName,customFields(field(name),bundle(values(name)))",
+        )
+        if raw.get("id") != project.id or raw.get("shortName") != project.key:
+            raise TrackerConflictError("catalogue migration YouTrack hors projet")
+        fields = raw.get("customFields")
+        if not isinstance(fields, list):
+            raise TrackerCapabilityUnavailableError(self.name, "migration_field_catalog")
+        exceptions: dict[str, str] = {}
+        for attribute, native in (
+            ("type", "Type"), ("priority", "Priority"),
+            ("state", "State"),
+        ):
+            value = attributes.get(attribute)
+            if value is None:
+                continue
+            matches = [
+                item for item in fields if isinstance(item, dict)
+                and isinstance(item.get("field"), dict)
+                and item["field"].get("name") == native
+            ]
+            if len(matches) != 1:
+                exceptions[attribute] = f"target field unavailable: {native}"
+                continue
+            bundle = matches[0].get("bundle")
+            values = bundle.get("values") if isinstance(bundle, dict) else None
+            if not isinstance(values, list):
+                raise TrackerCapabilityUnavailableError(
+                    self.name, f"migration_field_catalog:{native}",
+                )
+            if value not in {
+                item.get("name") for item in values if isinstance(item, dict)
+            }:
+                exceptions[attribute] = f"target native option unavailable: {value}"
+        estimate = attributes.get("estimate")
+        if estimate is not None and type(estimate) is not int:
+            exceptions["estimate"] = f"target value unavailable: {estimate}"
+        return exceptions
+
     def migration_preflight(
         self, project: Project, records: tuple[dict, ...],
     ) -> dict:
@@ -212,6 +259,7 @@ class YouTrackTracker(Tracker):
     def migration_import_issue(
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Issue:
+        self._require_writable_target(project)
         existing = self.migration_find_issue(project, source_ref)
         if existing is not None:
             return existing
@@ -249,7 +297,7 @@ class YouTrackTracker(Tracker):
     def migration_link_issue(
         self, project: Project, src_id: str, link_type: str, dst_id: str,
     ) -> None:
-        del project
+        self._require_writable_target(project)
         self.link(src_id, link_type, dst_id)
 
     def provision_project(
@@ -1640,6 +1688,7 @@ class YouTrackTracker(Tracker):
     def migration_import_adr(
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Adr:
+        self._require_writable_target(project)
         existing = self.migration_find_adr(project, source_ref)
         if existing is not None:
             return existing

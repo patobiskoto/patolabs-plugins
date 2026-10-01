@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import tempfile
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -160,9 +162,18 @@ def save_manifest(path: Path, manifest: dict) -> None:
     # Atomic replacement makes an interruption resumable from either version.
     if manifest.get("source_digest") != _digest(_source_view(manifest)):
         raise MigrationError("manifeste de cutover modifié")
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
 
 
 def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, persist: Callable[[], None]) -> None:
@@ -289,7 +300,10 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
         unsupported = {entry["attribute"] for entry in record["exceptions"]}
         if (actual.title != record["title"] or (actual.body or "") != record["body"]
                 or any(getattr(actual, name) != value for name, value in attributes.items() if name not in unsupported)
-                or (actual.normalized_state or actual.state) != attributes["state"]
+                or (
+                    "state" not in unsupported
+                    and (actual.normalized_state or actual.state) != attributes["state"]
+                )
                 or [
                     match.group(1).casefold()
                     for line in (actual.body or "").splitlines()
