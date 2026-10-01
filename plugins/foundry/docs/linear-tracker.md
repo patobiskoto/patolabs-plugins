@@ -621,6 +621,14 @@ divergent histories still fail closed. This
 does not authorize review, AC, CI, Done or merge: their existing exact-coordinate gates
 reread the current projection and remain unchanged.
 
+PAT-74 exercised the second path in the private PAT-61 Linear sandbox: its native
+history showed In Progress → In Review → In Progress after Foundry's start/review
+receipts. Foundry then linked PAT-74 to PAT-75, reviewed PR #1 independently, checked
+the real `verify` success on head `f52efdbc7e51a46224bfdc0e73c5860106fce094`,
+and merged it through the gate as `855dd887f66c58a793c5bb782abacd33429383a4`.
+Fresh readback reported PAT-74 `done`, native `done`, AC 2/2 and the relation. This
+proves that sandbox path only; it is not a six-cell PAT-61 qualification.
+
 The cockpit evidence path is deliberately separate. Only a complete
 `foundry-evidence-envelope.v1` that the shared verifier classifies `GO` can be projected;
 the comment binds the issue, AC, PR, base/head/diff, review proof, test receipt and both CI
