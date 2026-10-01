@@ -48,7 +48,7 @@ résultat est borné à l'opération observée ; les cases non exécutées reste
 
 | Cas | Observation | Limite |
 | --- | --- | --- |
-| Changement de dépôt, même session Codex | PAT-74 et P61Y-1 résolus chacun dans leur projet ; PAT-74 refusé depuis P61Y | Lectures seules, aucun write croisé tenté |
+| Changement de dépôt, même session Codex puis Claude Code | Codex : PAT-74 et P61Y-1 résolus chacun dans leur projet, PAT-74 refusé depuis P61Y ; Claude Code/Sonnet : dans une seule session, le CLI source a sélectionné `linear/PAT` et relu PAT-74 `done`/accepté, puis sélectionné `youtrack/P61Y` et relu P61Y-2 `review`/acceptation inconnue | Lectures seules avec cwd explicite, aucun write croisé tenté ; coût Claude observé 0,124532 USD au tarif listé |
 | Nom/numéro proche | PAT-74 refusé par `issue_outside_binding` depuis le projet PAT principal de même équipe ; GHQUAL-1 (Issue #1 réelle d'un autre dépôt) refusée depuis P61G par `invalid_issue_coordinate` avant lecture native | Deux collisions de coordonnées en lecture seule, aucune mutation croisée |
 | ADR d'un autre produit | `query adr PAT-ADR-0006` depuis le sandbox Linear : `ADR introuvable`, index local vide | Pas d'écriture ADR tentée |
 | Configuration globale contradictoire | `FOUNDRY_TRACKER=youtrack` et `PROJECT_REPO` YouTrack depuis le checkout Linear résolvent encore PAT-74 dans PAT/Linear ; `FOUNDRY_TRACKER=linear` et `PROJECT_REPO=patolabs-plugins` depuis P61G sélectionnent encore `ghprojects/P61G` | Lectures seules sur deux bindings, aucune écriture |
@@ -134,11 +134,20 @@ post-merge avant le gate de review qui autorise ce merge. Le signal d'escalade
 Foundry a retourné `failure_recorded` et aucune autorisation de correction ; le
 verdict est conservé, la PR reste ouverte et aucun succès post-merge n'est affirmé.
 Une note d'avancement P61Y-2 porte la contre-lecture et ce blocage.
+Les lignes 99-110 du bridge citées par le finding AC2 correspondent au checkout
+principal ancien et sale, qui n'émet que `count/groups` ; dans le snapshot source
+qualifié pour cette recette, ces lignes concernent `_repository_root` et l'émission
+finale contient les champs nouveaux. Une seconde note P61Y-2 conserve les deux
+chemins exacts : l'erreur de contexte est probable, sans annuler le proof terminal.
 Claude Code/Sonnet a ensuite relu depuis ce checkout le binding `youtrack/P61Y`,
 P61Y-2 et le même scope release, sans mutation ; son premier essai a été refusé
 par les permissions Bash du host, puis la relance avec le répertoire du plugin
 autorisé et le seul outil `Bash(python3:*)` a abouti. La lecture confirme une
 preuve partielle de l'hôte Claude, pas un deuxième lifecycle.
+Une session Claude distincte, avec les deux checkouts de sable autorisés, a ensuite
+lu successivement `linear/PAT` et `youtrack/P61Y` avec des cwd explicites ; PAT-74
+était `done`/accepté et P61Y-2 `review`/acceptation inconnue. Elle couvre le
+changement de dépôt dans un même hôte, toujours sans mutation ni lifecycle complet.
 
 ## Exécution d'une cellule
 
