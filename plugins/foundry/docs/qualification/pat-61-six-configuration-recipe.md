@@ -351,3 +351,22 @@ chaîne de hooks dans chaque checkout, exécuter les six chemins et leurs tests 
 puis effectuer la validation TestFlight humaine de l'application de test. Les dépôts
 et projets synthétiques réservés et les deux témoins de PR ci-dessus sont seulement des
 étapes de ce parcours ; aucune cellule n'est encore qualifiée comme passée.
+
+
+## Suivi Apple après PAT-80 — PAT-81
+
+Le mainteneur a explicitement confirmé la déclaration d'export pour l'app locale sans
+cryptographie. PAT-81 ajoute `ITSAppUsesNonExemptEncryption = NO` dans XcodeGen et
+le projet généré ; le build simulateur du HEAD `204d807872e3c0977a135007a18f296cbc60b537`
+réussit et son Info.plist contient le booléen `false`. Review indépendante favorable
+(preuve `4d149c60…`), CI `verify` verte sur ce HEAD, puis Foundry merge sandbox PR #5
+à `ac36ccac6916b657932bf29949a0227ac43b742c`, PAT-81 done AC 2/2. L'interface reste
+celle validée humainement pour PAT-80.
+
+Le helper Ship-iOS a publié uniquement `v1.0` sur ce SHA mergé. Apple relit le run
+Release #2 `92286db6-7b83-45ca-96f8-ba45c814d8e7`, `GIT_REF_CHANGE`, sourceCommit
+identique, initialement `PENDING`. Aucun succès d'archive, upload TestFlight ou test
+sur appareil physique n'est encore revendiqué. Le groupe interne demeure dédié ;
+la lecture des testeurs via la clé API retourne 403, sans mutation de testeur.
+La baseline Fastlane affiche sa valeur par défaut 1 alors que la liste Apple des
+builds est vide : cette valeur n'est pas un build observé.
