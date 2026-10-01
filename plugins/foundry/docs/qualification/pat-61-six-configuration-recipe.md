@@ -55,7 +55,7 @@ résultat est borné à l'opération observée ; les cases non exécutées reste
 | Credentials du tracker actif perdus | `FOUNDRY_RUNTIME_CONFIG_ISOLATED=1` sans token en environnement : `Config manquante : LINEAR_API_TOKEN`, aucune sortie d'issue | Isolation contrôlée du processus, pas révocation du trousseau |
 | ADR déclaré indisponible | Non exécuté | Requiert une fixture ADR déclarée et isolée |
 | Dérive du registre/marqueur | Dans une copie Git locale du sandbox Linear, modifier seulement `tracker` invalide le digest du marqueur et refuse `registry selection --require-v1` ; le hook PAT-42 refuse `gh pr create`, `gh pr merge` et `git push origin main`, mais laisse `git status` passer | Commandes dangereuses soumises au hook, jamais exécutées ; aucun provider write |
-| Ancien tracker archivé | Non exécuté | Ne pas réactiver le binding historique |
+| Ancien tracker archivé | Dans le checkout migré P64G, la sélection reste `ghprojects/P64G` ; le slot source `youtrack/P64Q` est archivé et `require_writable_project` refuse sa mutation avant appel fournisseur | Préflight local sans tentative d'écriture provider ; aucun binding réactivé |
 | Rollback de configuration | Restaurer les octets originaux du marqueur dans cette copie rétablit la sélection PAT/Linear ; relecture byte-identique | Rollback local, pas un cutover fournisseur |
 
 Une cellule reçoit un dépôt, projet tracker, credentials et application iOS de test
