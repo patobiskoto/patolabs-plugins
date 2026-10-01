@@ -1,12 +1,14 @@
 """PAT-59 portable release scope and factual changelog contract."""
 
+import hashlib
 from types import MethodType
 
 import pytest
 
 import foundry
 from foundry import query, registry
-from foundry.models import Issue, Project, ReleaseIssue, ReleaseScope
+from foundry.models import Issue, MergeDeliveryReceipt, Project, ReleaseIssue, ReleaseScope
+from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.trackers.base import ReleaseScopeUnavailableError
 from foundry.trackers.ghprojects import (
     GitHubProjectsTracker, GitHubProjectsTrackerError, _Binding,
@@ -98,6 +100,11 @@ class _YouTrackRelease(YouTrackTracker):
         self.searches.append(query_text)
         self.search_fields.append(fields)
         return self.issues
+
+    def _issue_comments(self, issue_id, page_size=100):
+        del page_size
+        raw = next(row for row in self.issues if row["idReadable"] == issue_id)
+        return list(raw.get("comments", []))
 
 
 def _youtrack_raw(
@@ -223,6 +230,48 @@ def test_youtrack_native_done_and_pr_field_do_not_become_delivery_proof():
 
     assert scope.issues[0].disposition == "unavailable"
     assert scope.issues[0].references["pr_url"].endswith("prerequisite")
+
+
+@pytest.mark.parametrize(
+    ("acceptance", "expected"),
+    [("accepted", "accepted"), ("deviated", "deviated")],
+)
+def test_youtrack_release_uses_only_exact_delivery_receipts(acceptance, expected):
+    body = "- [x] exact acceptance\n" if acceptance == "accepted" else "- [ ] waived\n"
+    raw = _youtrack_raw(
+        "APP-7", "release-100", "Release 1.0", state="Done",
+    )
+    raw["description"] = body
+    raw["customFields"].append({"name": "GitHub PR", "value": "https://github.com/acme/app/pull/7"})
+    receipt = MergeDeliveryReceipt(
+        project_key="APP", project_id="project-app", issue_id="APP-7",
+        codehost="github", repository="acme/app", pr_number=7,
+        pr_url="https://github.com/acme/app/pull/7",
+        head_sha="a" * 40, base_sha="b" * 40,
+        review_digest="c" * 64, merge_sha="d" * 40,
+        body_sha256=hashlib.sha256(body.encode()).hexdigest(),
+        ac_digest=acceptance_digest(acceptance_criteria(body)),
+        review_proof_id="e" * 64, review_generation=1,
+        acceptance=acceptance,
+        acceptance_source=("structured-review-proof" if acceptance == "accepted" else "human-override"),
+        override_reason=None if acceptance == "accepted" else "approved-exception",
+    )
+    _marker, audit = YouTrackTracker._delivery_audit(receipt)
+    raw["comments"] = [{"id": "comment-1", "text": audit}]
+    project = Project(
+        "APP", "project-app",
+        {"ms_bundle": "bundle-app", "release_ids": {"Release 1.0": "release-100"}},
+    )
+
+    scope = _YouTrackRelease(
+        {"id": "release-100", "name": "Release 1.0"}, [raw],
+    ).read_release_scope(project, "Release 1.0")
+
+    assert scope.issues[0].disposition == expected
+    assert scope.issues[0].references["merge_sha"] == "d" * 40
+    assert scope.issues[0].references.get("override_reason") == (
+        "approved-exception" if acceptance == "deviated" else None
+    )
 
 
 def test_youtrack_permission_failure_is_explicit_and_sanitized():

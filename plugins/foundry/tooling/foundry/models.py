@@ -142,6 +142,33 @@ class TransitionContext:
 
 
 @dataclass(frozen=True)
+class MergeDeliveryReceipt:
+    """Exact Foundry merge evidence persisted by a qualified tracker adapter."""
+
+    project_key: str
+    project_id: str
+    issue_id: str
+    codehost: str
+    repository: str
+    pr_number: int
+    pr_url: str
+    head_sha: str
+    base_sha: str
+    review_digest: str
+    merge_sha: str
+    body_sha256: str
+    ac_digest: str
+    review_proof_id: str
+    review_generation: int
+    acceptance: str  # accepted | deviated
+    acceptance_source: str
+    override_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class EpicClosureChild:
     """One exact required-child coordinate in an Epic closure receipt."""
 
