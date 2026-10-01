@@ -32,8 +32,8 @@
       "id": "youtrack-claude",
       "tracker": "youtrack",
       "host": "claude-code",
-      "status": "in_progress",
-      "partial_evidence": "Claude Code/Sonnet using source Foundry CLI read youtrack/P61Y binding, P61Y-2 review PR #2, and release PAT61 sandbox v1 bundle 163-67/value 164-426 with unfinished=1; in one further Claude session switched from linear/PAT PAT-74 done/accepted to youtrack/P61Y P61Y-2 review/unknown with explicit cwd; no Claude lifecycle or Apple action"
+      "status": "blocked",
+      "partial_evidence": "Claude Code/Sonnet read youtrack/P61Y binding, P61Y-2 review PR #2, and release PAT61 sandbox v1 bundle 163-67/value 164-426 with unfinished=1. P61Y-3 was created and started mechanically by the coordinator after Claude start-issue exhausted 12 turns without effect. Claude resume-issue wrote only an uncommitted README; its actually loaded foundry@patolabs 0.9.0 cache at SHA 4d9b0472 rejects the sandbox tracker.json v2 marker. Explicit registry-based read does not prove normal binding; plugin manager reports already latest 0.9.0 while marketplace source is at 1755a3d. No Claude PR, review, CI, merge or Apple effect"
     },
     {
       "id": "youtrack-codex",

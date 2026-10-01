@@ -72,7 +72,7 @@ La recette n'autorise aucun effet App Store public.
 
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
-| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `in_progress` | Claude Code/Sonnet a relu via Foundry le binding P61Y, P61Y-2 en review et le scope `unfinished=1` ; aucun lifecycle complet ni effet Apple sur cet hôte. |
+| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `blocked` | P61Y-3 est créé et démarré, mais le plugin effectivement chargé par Claude reste au SHA `4d9b047` et refuse le marqueur v2 du sandbox. Un README local non commité existe ; aucun lifecycle Claude complet ni effet Apple n'est prouvé. |
 | YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 et P61Y-2/PR #2 mergées via Foundry avec CI et review ; le scope P61Y-2 passe de `unfinished` à `unavailable`, jamais à `accepted` sans reçu lifecycle exact YouTrack. ADR test créée/éditée ; lien ADR→issue refusé. Epic, adversaires et Apple restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 suit ce défaut. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
@@ -200,6 +200,20 @@ fail-closed documenté par le contrat de release YouTrack : l'état natif `done`
 la PR mergée restent des observations tant que l'adaptateur n'expose pas de reçu
 de livraison exact. La note d'issue conserve cette divergence ; aucun `accepted`
 post-merge n'est revendiqué et la cellule n'est pas passée.
+
+Le témoin suivant, P61Y-3, cible Claude Code. La création Foundry a produit une seule
+issue synthétique (`Submitted`, deux AC), assignée au Milestone de sable. Une session
+Claude `start-issue` a épuisé ses 12 tours sans effet ; le coordinateur a ensuite
+exécuté la transition Foundry et créé la branche
+`fix/p61y-3-pat-61-sandbox-qualifier-le-lifecycle`. Claude `resume-issue` a écrit
+un README local encore non commité. Son préflight a établi que le plugin qu'il
+charge effectivement est le cache `foundry@patolabs` 0.9.0 au SHA `4d9b0472`,
+qui refuse le marqueur `tracker.json` v2 de ce sandbox. Il a lu le projet via une
+entrée de registre explicite, ce qui ne satisfait pas la précondition de binding
+du parcours normal. Le gestionnaire de plugins répond « already latest 0.9.0 »
+malgré le marketplace source à `1755a3d` ; aucune parité de distribution n'est
+inférée. Le diff README est préservé, sans commit, PR, review, CI ni merge ; ce
+témoin reste `blocked` et ne remplace pas un lifecycle Claude qualifié.
 
 Dans P61Y, `adr create` a créé le témoin non décisionnel `P61Y-ADR-0001`
 (`P61Y-A-1`, `proposed`) ; `adr edit` a remplacé la phrase version 1 par la
