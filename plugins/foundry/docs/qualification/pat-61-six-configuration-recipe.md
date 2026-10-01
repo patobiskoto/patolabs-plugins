@@ -73,9 +73,9 @@ La recette n'autorise aucun effet App Store public.
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
 | YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `in_progress` | Claude Code/Sonnet a relu via Foundry le binding P61Y, P61Y-2 en review et le scope `unfinished=1` ; aucun lifecycle complet ni effet Apple sur cet hôte. |
-| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 mergée avec CI et review ; P61Y-2/PR #2 qualifie le mapping release mais sa review est bloquante, sans merge. ADR/Epic, adversaires et Apple restent à faire. |
+| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | P61Y-1/PR #1 mergée avec CI et review ; P61Y-2/PR #2 qualifie le mapping release mais sa review est bloquante, sans merge ; ADR test créée/éditée. Lien ADR→issue refusé par capacité indisponible ; Epic, adversaires et Apple restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a relu le binding et démarré PAT-77 par le CLI source ; sa tentative de PR n'a eu aucun effet. Revue, merge et reste du parcours ne sont pas une preuve Claude. |
-| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; le scope release et le bridge lisent PAT-77 `accepted`. ADR/Epic, adversaires restants et Apple restent à faire. |
+| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
 | GitHub Projects × Codex | P61G et dépôt privé de sable | `blocked` | P61G-1 existe, mais le readback `Project.items` reste vide après reprise bornée ; aucune création validée. |
 
@@ -113,6 +113,18 @@ dans `query changelog` et le bridge Ship-iOS. Après assignation de PAT-77 par F
 les deux lectures donnent un seul ticket `accepted`, zéro `unfinished` et zéro
 `unavailable`. Ce résultat teste le bridge du dépôt synthétique, pas TestFlight.
 
+Dans ce même projet Linear de sable, `adr create` a créé le témoin explicitement
+non décisionnel `[TEST PAT-61 sandbox]` sous `PAT-ADR-0001`, statut `proposed`,
+référence initiale `0424d248-6f2d-46c1-92ed-96aa9694b188`. `adr edit` a ajouté
+une version du corps (`9468058c-d53e-4255-9464-cd6eebb67588`) ; `adr link-issue`
+a lié PAT-77 avec readback de la relation issue (`67a77aae-d2b8-4133-8acd-e4fd78395a65`).
+L'index de l'issue contient cette seule ADR et le corps versionné relu garde le
+statut `proposed`. Depuis ce sandbox, PAT-ADR-0006 de production reste
+`introuvable` malgré l'index local non vide. Dans le dépôt PAT actif,
+PAT-ADR-0001 garde son autre référence `ff06e6f5-eae5-4469-bffd-bb1428373ed7`
+et son statut `accepted` ; aucun support de production n'a été édité. Ce témoin
+qualifie create/edit/lien sur Codex, pas la supersession ou le parcours complet.
+
 Le témoin YouTrack P61Y-2 a ajouté au seul projet P61Y le champ natif `Milestone`
 (`189-129`), son bundle propre (`163-67`) et la valeur exacte `PAT61 sandbox v1`
 (`164-426`). Le premier essai de création d'issue a reçu HTTP 500 car P61Y ne
@@ -148,6 +160,12 @@ Une session Claude distincte, avec les deux checkouts de sable autorisés, a ens
 lu successivement `linear/PAT` et `youtrack/P61Y` avec des cwd explicites ; PAT-74
 était `done`/accepté et P61Y-2 `review`/acceptation inconnue. Elle couvre le
 changement de dépôt dans un même hôte, toujours sans mutation ni lifecycle complet.
+
+Dans P61Y, `adr create` a créé le témoin non décisionnel `P61Y-ADR-0001`
+(`P61Y-A-1`, `proposed`) ; `adr edit` a remplacé la phrase version 1 par la
+version 2 avec relecture exacte et un seul item dans l'index. `adr link-issue`
+vers P61Y-1 a refusé `capability unavailable: youtrack.adr_issue_link` avant
+mutation : aucun lien n'est revendiqué et aucune reprise n'a été tentée.
 
 ## Exécution d'une cellule
 

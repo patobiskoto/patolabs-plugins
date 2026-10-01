@@ -40,7 +40,7 @@
       "tracker": "youtrack",
       "host": "codex",
       "status": "in_progress",
-      "partial_evidence": "P61Y-1 sandbox PR #1 head b47241031bbbbd0c96f3db4629ec59e40989b7c7 merged afe441dcccc2ddd040c524b16f329fe2f772e533; P61Y-2 release mapping bundle 163-67/value 164-426 and bridge unfinished=1 readback; PR #2 head 5b1fd05cdde8dd31d6599f358c73c0bf09e15adb has green verify but blocked review proof a78acdc194f85396f65f2a74c589f5213591c3afe961cad9d69e2b877ab9e0fe, no merge or post-merge acceptance; full journey and Apple path absent"
+      "partial_evidence": "P61Y-1 sandbox PR #1 head b47241031bbbbd0c96f3db4629ec59e40989b7c7 merged afe441dcccc2ddd040c524b16f329fe2f772e533; P61Y-2 release mapping bundle 163-67/value 164-426 and bridge unfinished=1 readback; PR #2 head 5b1fd05cdde8dd31d6599f358c73c0bf09e15adb has green verify but blocked review proof a78acdc194f85396f65f2a74c589f5213591c3afe961cad9d69e2b877ab9e0fe, no merge or post-merge acceptance; synthetic proposed ADR P61Y-ADR-0001 created/edited, issue link correctly refused as unsupported; full journey and Apple path absent"
     },
     {
       "id": "linear-claude",
@@ -54,7 +54,7 @@
       "tracker": "linear",
       "host": "codex",
       "status": "in_progress",
-      "partial_evidence": "PAT-74 sandbox PR #1 merged at 855dd887f66c58a793c5bb782abacd33429383a4; PAT-77 sandbox PR #2 head b087948ac65f90b0ad30ac48bf0a795907f4d0cb merged at ecc85f449f9160730bc3b089edb2843dc287f159 with proof a5bdb9d43f7e248c93a6ef6da8288f26fbef03ddb24944342cc359488dd94da4; release scope and Ship-iOS bridge read PAT-77 accepted, but full journey and Apple path remain absent"
+      "partial_evidence": "PAT-74 sandbox PR #1 merged at 855dd887f66c58a793c5bb782abacd33429383a4; PAT-77 sandbox PR #2 head b087948ac65f90b0ad30ac48bf0a795907f4d0cb merged at ecc85f449f9160730bc3b089edb2843dc287f159 with proof a5bdb9d43f7e248c93a6ef6da8288f26fbef03ddb24944342cc359488dd94da4; release scope and Ship-iOS bridge read PAT-77 accepted; synthetic proposed ADR PAT-ADR-0001 was created, edited and linked to PAT-77 with distinct version refs; supersession, Epic, full journey and Apple remain absent"
     },
     {
       "id": "ghprojects-claude",
