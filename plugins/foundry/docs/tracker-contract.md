@@ -64,7 +64,7 @@ closed vocabulary:
 | Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) |
-| Périmètre de release/changelog | `read_release_scope` via `query.py changelog()` | supported (exact enum-value mapping; terminal native state stays unavailable without delivery proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
+| Périmètre de release/changelog | `record_delivery_receipt`, `read_release_scope` via `query.py changelog()` | supported (PAT-82 exact merge receipt; terminal native state stays unavailable without one exact current proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
 | Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adrs` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G |
 | Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_attribute_exceptions`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G |
 | Bascule (PAT-64): archived source refuses writes | staged target plus atomic registry promotion/source archive/marker replacement | supported; live P64Q tombstone | supported; provider-specific fake transport | supported; active-binding refusal and live P64G binding |
@@ -105,6 +105,17 @@ cell.
   Project fields remain part of the protected snapshot. The path retains the explicit
   S1→S2 race: it is neither CAS nor an atomic provider graph transaction. The non-V1
   DevHub adapter keeps the stronger atomic form of the port (`devhub.py`).
+- **PAT-82** — YouTrack persists one canonical delivery receipt only after Foundry has
+  verified review, AC or explicit override, CI and the exact code-host merge. The
+  receipt binds project/issue, repository/PR, head/base/diff, exact review proof and
+  generation, merged SHA and the current
+  body/AC projection. Its non-idempotent comment append uses a machine-local persistent
+  intent before the only POST, then exhaustive exact readback. A lost response converges
+  only to one exact visible receipt; an invisible, duplicated, malformed, foreign or
+  divergent result fails closed and is never posted again automatically. The local
+  journal coordinates only one machine: it is neither provider CAS nor a transaction,
+  does not exclude the S1→S2 race, and makes no exactly-once provider claim. Historical
+  `Done` issues and free-text notes remain unavailable rather than being backfilled.
 - **PAT-64** — The provider-neutral migration port and the three adapter
   implementations now exist. Three distinct provider-specific transport doubles exercise
   all six directed source/target pairs, including the dedicated YouTrack provenance

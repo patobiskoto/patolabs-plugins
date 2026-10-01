@@ -545,6 +545,8 @@ def merge(issue_id, pr_number, flags=()):
     pr_base_sha = _require_pr_base_sha(pr) if bounded_lifecycle else None
     acceptance_sync = {"status": "already-complete", "checked": 0}
     proof = None
+    proof_store = None
+    acceptance_override_reason = None
     if getattr(tr, "bounded_transition_proofs", False):
         if getattr(current, "state", None) == "done":
             if not pr.merged or not pr.merge_sha or current.pr_url != pr.url:
@@ -596,6 +598,35 @@ def merge(issue_id, pr_number, flags=()):
             write.transition(tr, issue_id, "review", context=transition_context)
             current = tr.get_issue(issue_id)
 
+    if (
+        transition_context is None
+        and getattr(tr, "delivery_receipt_supported", False)
+        and binding is not None
+    ):
+        head = git_head()
+        if head != pr.sha:
+            raise SystemExit(
+                f"⛔ Preuve tracker refusée — HEAD local différent du SHA de la PR ({pr.sha[:9]})."
+            )
+        pr_base_sha = _require_pr_base_sha(pr)
+        review_diff = git_diff(base=pr_base_sha)
+        if str(getattr(current, "state", "") or "").casefold() not in {
+            "review", "done",
+        }:
+            raise SystemExit(
+                "⛔ Reçu de livraison refusé — l'issue YouTrack n'est pas en review."
+            )
+        transition_context = TransitionContext(
+            expected_state=getattr(current, "normalized_state", None),
+            pr_url=pr.url,
+            head_sha=head,
+            base_sha=pr_base_sha,
+            review_digest=review_diff_hash(review_diff),
+        )
+
+    if getattr(tr, "delivery_receipt_supported", False) and binding is not None:
+        proof_store = AcceptanceProofStore(repository_identity())
+
     # AC checkboxes remain the normal tracker signal.  When they lag behind, only a
     # structured, current review proof can replace that administrative signal.
     if getattr(current, "ac_done", 0) < getattr(current, "ac_total", 0):
@@ -607,7 +638,7 @@ def merge(issue_id, pr_number, flags=()):
                 pr_base_sha = _require_pr_base_sha(pr)
             if review_diff is None:
                 review_diff = git_diff(base=pr_base_sha)
-            proof = AcceptanceProofStore(repository_identity()).valid_for_merge(
+            proof = (proof_store or AcceptanceProofStore(repository_identity())).valid_for_merge(
                 issue_id=current.id, issue_body=current.body, head=head,
                 diff=review_diff, base=pr_base_sha,
             )
@@ -617,6 +648,21 @@ def merge(issue_id, pr_number, flags=()):
                     "⛔ Merge refusé — AC tracker incomplètes et preuve structurée invalide "
                     f"({exc}). Utilise l'override humain explicite si nécessaire.") from None
             reason = _ac_override_reason(flags)
+            acceptance_override_reason = reason
+            if proof_store is not None:
+                try:
+                    proof = proof_store.current_for_sync(
+                        issue_id=current.id,
+                        issue_body=current.body,
+                        head=head,
+                        diff=review_diff,
+                        base=pr_base_sha,
+                    )
+                except RoutingConfigError:
+                    raise SystemExit(
+                        "⛔ Override AC refusé — aucune preuve de review exacte et "
+                        "courante ne peut être liée au reçu de livraison."
+                    ) from None
             # This is deliberately an audit-only human escape hatch; it never modifies
             # checkboxes or turns prose into evidence.
             audit_text = f"Audit merge: override humain explicite des AC incomplètes ({reason})."
@@ -691,6 +737,20 @@ def merge(issue_id, pr_number, flags=()):
                 acceptance_sync["audit_note"] = "recorded"
             except Exception:
                 acceptance_sync["audit_note"] = "unavailable"
+    elif proof_store is not None:
+        try:
+            proof = proof_store.valid_for_merge(
+                issue_id=current.id,
+                issue_body=current.body,
+                head=transition_context.head_sha,
+                diff=review_diff,
+                base=transition_context.base_sha,
+            )
+        except RoutingConfigError as exc:
+            raise SystemExit(
+                "⛔ Merge refusé — preuve de review structurée invalide pour le "
+                f"reçu de livraison ({exc})."
+            ) from None
 
     # --- INVARIANT: CI must be green. This refuses; it is not a suggestion. ---
     # The only waiver (zero checks + explicit flag) is decided INSIDE the gate.
@@ -718,8 +778,10 @@ def merge(issue_id, pr_number, flags=()):
         # receipts. A second read below closes the race introduced by those writes.
         _require_unchanged_pr_coordinates(ch, repo, pr_number, pr, pr_base_sha)
 
-    if (transition_context is not None
-            and not getattr(tr, "append_only_lifecycle_supported", False)):
+    if (getattr(tr, "bounded_transition_proofs", False)
+            and transition_context is not None
+            and not getattr(tr, "append_only_lifecycle_supported", False)
+            and getattr(current, "state", None) != "done"):
         # A correction may have moved the PR head after openpr recorded its first
         # receipt. Refresh the provider receipt on the exact head that just passed
         # review/CI, without giving the tracker any review or merge authority.
@@ -780,6 +842,40 @@ def merge(issue_id, pr_number, flags=()):
             operation=merged_operation,
         ),
     )
+    if getattr(tr, "delivery_receipt_supported", False) and binding is not None:
+        if transition_context is None:
+            raise SystemExit(
+                "⛔ Reçu de livraison refusé — coordonnées de review bornées absentes."
+            )
+        try:
+            write.record_delivery_receipt(
+                tr,
+                issue_id,
+                project=binding,
+                codehost=ch.name,
+                repository=repo,
+                pr_number=int(pr_number),
+                pr_url=pr.url,
+                head_sha=transition_context.head_sha,
+                base_sha=transition_context.base_sha,
+                review_digest=transition_context.review_digest,
+                merge_sha=merged_sha,
+                acceptance=(
+                    "deviated"
+                    if acceptance_sync["status"] == "human-override"
+                    else "accepted"
+                ),
+                override_reason=acceptance_override_reason,
+                review_proof_id=proof["proof_id"],
+                review_generation=proof["review"]["generation"],
+                proof_ac_digest=proof["issue"]["ac_digest"],
+            )
+        except TrackerConflictError as exc:
+            raise SystemExit(
+                "⛔ Merge effectué mais reçu de livraison YouTrack non qualifié ; "
+                "relance exactement la même commande après diagnostic, sans créer "
+                "de preuve manuelle."
+            ) from exc
     done_context = None
     if transition_context is not None:
         done_context = TransitionContext(

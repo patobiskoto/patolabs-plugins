@@ -29,6 +29,24 @@ authorized by the proof may change, including valid `-`, `*`, and `+` Markdown l
 markers. DevHub keeps its stronger provider CAS and durable audit receipt; callers use
 the same full proof contract for either provider.
 
+## Delivery receipt boundary
+
+For a repository-bound YouTrack lifecycle, `issue merge` appends a structured
+`foundry-youtrack-delivery.v1` comment after the exact code-host merge and before the
+native `done` projection. The comment is not deployment evidence: it records only the
+Foundry review/AC/CI/merge delivery coordinates consumed by release scope and the
+Ship-iOS bridge. Arbitrary comments and historical `Done` issues never qualify.
+
+YouTrack comments have no client-selected idempotency key. Foundry therefore persists a
+0600 machine-local intent under `FOUNDRY_DATA/youtrack-delivery-intents` before the one
+append and exhaustively rereads native comment pages. A lost response succeeds only
+when one byte-exact receipt is visible. If the effect stays invisible or becomes
+ambiguous, replay refuses without a second POST. This journal does not coordinate
+multiple machines, is not provider CAS or a transaction, does not promise exactly once,
+and retains PAT-ADR-0006's S1→S2 residual race. Release classification also rechecks the
+current native project, PR field, body/AC digests and terminal State; drift leaves the
+issue `unavailable`.
+
 ## Required environment
 
 Set all of these in the runner environment:

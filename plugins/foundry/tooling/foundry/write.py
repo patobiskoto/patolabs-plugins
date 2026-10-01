@@ -15,6 +15,7 @@ import hashlib
 
 from foundry import registry
 from foundry.models import (
+    MergeDeliveryReceipt,
     EpicClosureChild,
     EpicClosureDependency,
     EpicClosureOutcome,
@@ -22,7 +23,12 @@ from foundry.models import (
     Issue,
     Project,
 )
-from foundry.routing import synchronize_acceptance_body
+from foundry.routing import (
+    RoutingConfigError,
+    acceptance_criteria,
+    acceptance_digest,
+    synchronize_acceptance_body,
+)
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     EpicClosureUnavailableError,
@@ -96,6 +102,105 @@ def preflight_merge_effect(tracker) -> None:
     preflight = getattr(tracker, "preflight_merge_effect", None)
     if callable(preflight):
         preflight()
+
+
+def record_delivery_receipt(
+    tracker,
+    issue_id: str,
+    *,
+    project: Project,
+    codehost: str,
+    repository: str,
+    pr_number: int,
+    pr_url: str,
+    head_sha: str,
+    base_sha: str,
+    review_digest: str,
+    merge_sha: str,
+    acceptance: str,
+    override_reason: str | None = None,
+    review_proof_id: str,
+    review_generation: int,
+    proof_ac_digest: str,
+) -> bool:
+    """Persist exact Foundry merge evidence through a qualified tracker port."""
+    if not getattr(tracker, "delivery_receipt_supported", False):
+        return False
+    if not isinstance(project, Project) or not project.key or not project.id:
+        raise TrackerConflictError("projet du reçu de livraison invalide")
+    if (
+        type(pr_number) is not int
+        or pr_number < 1
+        or not all(isinstance(value, str) and value for value in (
+            codehost, repository, pr_url,
+        ))
+        or any(
+            not isinstance(value, str)
+            or re.fullmatch(r"[0-9a-f]{40}", value) is None
+            for value in (head_sha, base_sha, merge_sha)
+        )
+        or not isinstance(review_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", review_digest) is None
+    ):
+        raise TrackerConflictError("coordonnées du reçu de livraison invalides")
+    tracker.validate_issue_binding(project, issue_id)
+    issue = tracker.get_issue(issue_id)
+    if (
+        issue.id != issue_id
+        or issue.pr_url != pr_url
+        or str(issue.state or "").casefold() not in {"review", "done"}
+    ):
+        raise TrackerConflictError("projection native divergente avant reçu de livraison")
+    try:
+        criteria = acceptance_criteria(issue.body)
+    except RoutingConfigError as exc:
+        raise TrackerConflictError("AC illisibles avant reçu de livraison") from exc
+    if (
+        not isinstance(review_proof_id, str)
+        or re.fullmatch(r"[0-9a-f]{64}", review_proof_id) is None
+        or type(review_generation) is not int
+        or review_generation < 1
+        or not isinstance(proof_ac_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", proof_ac_digest) is None
+    ):
+        raise TrackerConflictError("preuve de review invalide avant reçu de livraison")
+    current_ac_digest = acceptance_digest(criteria)
+    if current_ac_digest != proof_ac_digest:
+        raise TrackerConflictError("AC modifiées depuis la preuve de review")
+    if acceptance == "accepted":
+        if issue.ac_total < 1 or issue.ac_done != issue.ac_total or override_reason is not None:
+            raise TrackerConflictError("AC non acceptées avant reçu de livraison")
+        source = "structured-review-proof"
+    elif acceptance == "deviated":
+        if (
+            not isinstance(override_reason, str)
+            or re.fullmatch(r"[a-z0-9_-]{3,80}", override_reason) is None
+        ):
+            raise TrackerConflictError("dérogation AC invalide avant reçu de livraison")
+        source = "human-override"
+    else:
+        raise TrackerConflictError("qualification AC invalide avant reçu de livraison")
+    receipt = MergeDeliveryReceipt(
+        project_key=project.key,
+        project_id=project.id,
+        issue_id=issue_id,
+        codehost=codehost,
+        repository=repository,
+        pr_number=pr_number,
+        pr_url=pr_url,
+        head_sha=head_sha,
+        base_sha=base_sha,
+        review_digest=review_digest,
+        merge_sha=merge_sha,
+        body_sha256=hashlib.sha256((issue.body or "").encode()).hexdigest(),
+        ac_digest=current_ac_digest,
+        review_proof_id=review_proof_id,
+        review_generation=review_generation,
+        acceptance=acceptance,
+        acceptance_source=source,
+        override_reason=override_reason,
+    )
+    return tracker.record_delivery_receipt(project, receipt)
 
 
 def issue_binding(tracker, *issue_ids):
