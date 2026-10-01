@@ -60,6 +60,37 @@ def test_explicit_human_accept_does_not_require_an_issue_frame(monkeypatch):
 @pytest.mark.parametrize(
     "body",
     [
+        "```markdown\n**Cadre (ADR) :** PAT-ADR-0001\n```",
+        "<!--\n**Cadre (ADR) :** PAT-ADR-0001\n-->",
+    ],
+)
+def test_automated_accept_ignores_frames_in_non_visible_markdown_before_effect(
+    monkeypatch, body
+):
+    tracker = _Tracker(body)
+    monkeypatch.setattr(adr.foundry, "tracker", lambda: tracker)
+
+    with pytest.raises(SystemExit, match="Acceptation ADR automatique refusée"):
+        adr.accept("PAT-ADR-0001", framed_by="PAT-78")
+
+    assert tracker.status_writes == []
+
+
+def test_automated_accept_allows_hyphenated_and_underscored_tracker_ticker(monkeypatch):
+    tracker = _Tracker("**Cadre (ADR) :** PAT_79-FOO-ADR-0001")
+    tracker.adr = Adr(
+        id="PAT_79-FOO-ADR-0001", title="Synthetic ADR", status="proposed"
+    )
+    monkeypatch.setattr(adr.foundry, "tracker", lambda: tracker)
+
+    adr.accept("PAT_79-FOO-ADR-0001", framed_by="PAT-78")
+
+    assert tracker.status_writes == [("PAT_79-FOO-ADR-0001", "accepted")]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
         "**Cadre (ADR) :** PAT-ADR-0001\n**Cadre (ADR) :** PAT-ADR-0001",
         "**Cadre (ADR) :** PAT-ADR-0001\n**Cadre (ADR):** PAT-ADR-0002",
         "**Cadre (ADR) :** PAT-ADR-0001, PAT-ADR-0001",

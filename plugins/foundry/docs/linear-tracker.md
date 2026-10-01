@@ -332,8 +332,9 @@ in Linear's document list is an invalid provider response, not an empty ADR inde
 `adr accept <ADR-ID>` remains an explicit human decision. The automated post-merge
 form, `adr accept <ADR-ID> --framed-by <ISSUE-ID>`, is narrower: it reads the exact
 issue body and requires one unambiguous `**Cadre (ADR) :** <ADR-ID>[, ...]` citation
-before it resolves or changes the ADR. The issue payload's `adrs` field is a
-project-level retrieval index, never a delivery relation. A native ADR-to-issue link
+outside Markdown fenced code blocks and HTML comments before it resolves or changes the
+ADR. Its ticker may contain letters, digits, `_`, and `-`. The issue payload's `adrs`
+field is a project-level retrieval index, never a delivery relation. A native ADR-to-issue link
 does not replace the citation at this provider-neutral CLI boundary.
 
 `query adr <ADR-ID>`, `query adrs`, `frame`, and every ADR write stay fail-closed on any

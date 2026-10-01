@@ -33,7 +33,34 @@ _SKELETON = """## Contexte
 
 _FRAME_LINE = re.compile(r"^\*\*Cadre \(ADR\) :\*\*\s*(?P<refs>.*?)\s*$")
 _FRAME_CANDIDATE = re.compile(r"^\s*\*\*Cadre\s*\(ADR\)")
-_ADR_ID = re.compile(r"[A-Za-z][A-Za-z0-9]*-ADR-[0-9]+")
+_ADR_ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]*-ADR-[0-9]+")
+_FENCE_OPEN = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
+
+
+def _visible_markdown_lines(body: str):
+    """Yield body lines that are outside fenced code blocks and HTML comments."""
+    fence: str | None = None
+    in_comment = False
+    for line in body.splitlines():
+        if in_comment:
+            if "-->" in line:
+                in_comment = False
+            continue
+        if "<!--" in line:
+            if "-->" not in line:
+                in_comment = True
+            continue
+        if fence is not None:
+            closing = re.compile(
+                rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$"
+            )
+            if closing.match(line):
+                fence = None
+            continue
+        if match := _FENCE_OPEN.match(line):
+            fence = match.group("fence")
+            continue
+        yield line
 
 
 def _project(tr):
@@ -59,7 +86,7 @@ def _framed_adr_ids(issue_id: str, body: str | None) -> tuple[str, ...]:
     useful provider evidence, but they are not portable enough to replace this exact
     citation at the shared CLI boundary.
     """
-    candidates = [line for line in (body or "").splitlines()
+    candidates = [line for line in _visible_markdown_lines(body or "")
                   if _FRAME_CANDIDATE.match(line)]
     if len(candidates) != 1 or not (match := _FRAME_LINE.fullmatch(candidates[0])):
         raise SystemExit(
