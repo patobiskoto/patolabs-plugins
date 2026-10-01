@@ -131,7 +131,7 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 a corrigé ce défaut sans réécrire l'incident. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
-| GitHub Projects × Codex | P61G et dépôt privé de sable | `blocked` | P61G-1 existe, mais le readback `Project.items` reste vide après reprise bornée ; aucune création validée. |
+| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge en mode source au HEAD `662df7fc66fafd4e5cc5b53c10aad63d9eea25a1`. La relecture postmerge aligne l'état Foundry `done` et l'acceptation 2/2, avec un seul item non archivé. Le parcours complet, la parité installée, les adversaires et les autres preuves de cellule restent à faire. |
 
 GHQUAL et P64G peuvent être relus comme ressources historiques uniquement. P64Q et
 l'ancien binding FOUNDRY sont archivés : ils ne sont pas réactivés et ne constituent pas
@@ -146,7 +146,7 @@ PAT-74 a été mergé dans le dépôt Linear de sable (PR #1, head `f52efdbc`, m
 `b4724103`, merge `afe441dc`, AC 2/2). Le second a nécessité l'attachement au seul
 projet P61Y du prototype YouTrack `GitHub PR` déjà existant. Ces témoins ne couvrent
 ni ADR/Epic, ni tous les adversaires, ni le chemin Apple : les cellules restent
-`in_progress`. Le premier create P61G-1 a laissé une Issue et un item
+`in_progress`. Historiquement, le premier create P61G-1 a laissé une Issue et un item
 consultable depuis l'Issue, mais `Project.items` reste vide ; le rejeu borné a échoué
 une seconde fois à `partial_create:item_readback`. Son intention locale est conservée,
 sans nouveau retry ni assertion de succès GitHub Projects.
@@ -334,18 +334,19 @@ Au snapshot `82bf3e5e`, `pytest -q -m tracker_conformance tests` passe (108 test
 Les lectures fraîches de PAT-42/43/44 et PAT-20/45/46/47/48 indiquent chacune `done`
 avec tous leurs AC cochés ; les sondes de binding et de hook ci-dessus revalident une
 partie du comportement lié. Ce contrôle de prérequis ne transforme aucune cellule en
-`passed`. Une nouvelle lecture du Project GitHub de sable trouve toujours zéro item
+`passed`. Avant la reprise autorisée, une nouvelle lecture du Project GitHub de sable
+trouvait toujours zéro item
 dans `ProjectV2.items` contre un item non archivé attaché à P61G-1 depuis l'Issue :
-la case GH Projects/Codex demeure `blocked` sans troisième tentative d'écriture.
+la case GH Projects/Codex demeurait `blocked` sans troisième tentative d'écriture.
 Une relecture ultérieure a confirmé le même résultat par la liste REST du Project
 personnel #9 (vide) et par les variantes GraphQL `archivedStates` et recherche
 (vides), tandis que le node de l'item `PVTI_lAHOABroCc4BlTfizg93U2A` garde le bon
 Project, la bonne Issue et `isArchived=false`. Dans la même session API, le Project
 personnel de qualification #7 liste 14 items : l'accès général à `ProjectV2.items`
 fonctionne. La divergence du Project #9 reste inexpliquée, pas résolue. La relecture
-du jour maintient `totalCount=0`, l'item non archivé et l'Issue #1 `OPEN`. Le budget
-de cette tentative est épuisé : une décision humaine sur un unique sandbox de reprise
-isolé est requise avant tout nouvel essai, et n'est pas présumée.
+du jour maintenait `totalCount=0`, l'item non archivé et l'Issue #1 `OPEN`. Le budget
+de cette tentative était épuisé : une décision humaine sur un unique sandbox de reprise
+isolé était requise avant tout nouvel essai.
 
 ## Actions live réservées au coordinateur
 
@@ -398,6 +399,38 @@ avec `IssueUnavailableError`, l'API relit le Project à zéro item et le node di
 non archivé inchangé ; l'interface GitHub authentifiée montre également une table
 de projet vide sans filtre. Cette relecture ne répète aucune écriture et ne remet
 pas à zéro le budget de reprises. Aucune réparation destructive ou recréation.
+
+## Reprise GitHub Projects isolée autorisée
+
+L'autorisation humaine alors requise a couvert une seule reprise isolée, sans modifier
+le Project #9, son dépôt, ses audits ni son budget historique. Le sandbox privé
+`patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` utilise le binding P61R et
+le Project personnel privé #10 (`PVT_kwHOABroCc4BlYLD`). Le runtime source de ce
+témoin est exactement le HEAD producteur
+`662df7fc66fafd4e5cc5b53c10aad63d9eea25a1`, qui contient PAT-82 mergé à
+`f7fb4e1`; ce constat ne revendique aucune parité avec une distribution installée.
+
+Le premier `create-issue` a retourné `partial_create:item_readback` pour P61R-1.
+Les relectures GraphQL et REST ont ensuite trouvé de manière univoque l'Issue native
+et son item existant. Le rejeu Foundry de même intention n'a complété que les champs,
+sans créer de seconde Issue ni de second item. Foundry a ensuite exécuté start,
+open-pr, review, CI et merge : la PR #2 a le head
+`67c5db9caec373d50afec7e2052b206a4f3b0c42`, la base
+`adb89e430a245f29d59df8eeb56f5daf7c7731fc` et le merge
+`43d31bfd5b32649b556ce24fdaa1ac3de8a362e3`. La review de génération 1 est
+`mergeable`, ses deux AC sont `pass` et sa preuve est
+`471bb8495cd7ef40542ebfafaa8f8824aa0c3b4e2bdd0cacdfea49d4e9873ae7`.
+Le check `verify-witness` est `success` sur le head exact ; les statuts legacy sont
+vides.
+
+Après merge, P61R-1 est relu `done`, avec états natif et normalisé alignés et
+acceptation `ghprojects-acceptance-proof` 2/2. Le Project #10 relit un item unique,
+non archivé, avec `hasNextPage=false`, et la liste REST relit le même item. L'Issue
+GitHub sous-jacente reste `OPEN` : l'état Foundry `done` est ici le champ de projet,
+sans divergence cachée ni autorité de fermeture manuelle de l'Issue. La cellule
+GitHub Projects × Codex devient donc `in_progress` pour ce chemin de livraison, jamais
+`passed` : ADR, Epic, parcours hôte complet, cas adverses, parité installée et les
+preuves Ship-iOS propres à la cellule restent incomplets.
 
 
 Au HEAD `0f175af`, la suite de conformité passe : 108 tests, 3031 deselected.
