@@ -182,6 +182,12 @@ partie du comportement lié. Ce contrôle de prérequis ne transforme aucune cel
 `passed`. Une nouvelle lecture du Project GitHub de sable trouve toujours zéro item
 dans `ProjectV2.items` contre un item non archivé attaché à P61G-1 depuis l'Issue :
 la case GH Projects/Codex demeure `blocked` sans troisième tentative d'écriture.
+Une relecture ultérieure a confirmé le même résultat par la liste REST du Project
+personnel #9 (vide) et par les variantes GraphQL `archivedStates` et recherche
+(vides), tandis que le node de l'item `PVTI_lAHOABroCc4BlTfizg93U2A` garde le bon
+Project, la bonne Issue et `isArchived=false`. Dans la même session API, le Project
+personnel de qualification #7 liste 14 items : l'accès général à `ProjectV2.items`
+fonctionne. La divergence du Project #9 reste inexpliquée, pas résolue.
 
 ## Actions live réservées au coordinateur
 

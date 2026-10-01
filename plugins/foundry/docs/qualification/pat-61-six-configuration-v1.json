@@ -66,7 +66,7 @@
       "tracker": "ghprojects",
       "host": "codex",
       "status": "blocked",
-      "partial_evidence": "P61G-1 issue and reverse project item visible, but Project.items readback empty after the bounded retry; partial_create:item_readback, no create success asserted"
+      "partial_evidence": "P61G-1 issue and direct item PVTI_lAHOABroCc4BlTfizg93U2A are visible and unarchived in project #9, but its GraphQL Project.items (including archivedStates/search) and REST item list remain empty after bounded retry; comparator project #7 lists 14 items with the same API identity; partial_create:item_readback, no create success asserted"
     }
   ],
   "adversarial_cases": [
