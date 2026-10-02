@@ -131,7 +131,7 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 a corrigé ce défaut sans réécrire l'incident. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
-| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge. Au source exécuté `f743f2e`, le roundtrip ADR P61R-ADR-0003 est `proposed` (V1→V2 relu) et l'Epic P61R-4 est créé, lié à P61R-1 et attend exclusivement son verdict humain explicite avant `close-epic`. La relecture postmerge de l'enfant aligne l'état Foundry `done` et l'acceptation 2/2; le grooming complet ne propose aucune correction. Le parcours complet, la parité installée, les adversaires et les autres preuves de cellule restent à faire. |
+| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge. Au source exécuté `f743f2e`, le roundtrip ADR P61R-ADR-0003 est `proposed` (V1→V2 relu). Au source `f567764`, le verdict humain `accepted` a permis `close-epic` sur P61R-4, relu `done` et aligné avec son unique commentaire d'audit; le scope et le bridge Ship-iOS relisent P61R-1 seul, `accepted`, dans le milestone natif fermé `PAT61 sandbox v1`. L'Epic conserve AC 0/2 et aucune acceptation de code n'est inventée pour lui. Le parcours complet, la parité installée, les adversaires et les autres preuves de cellule restent à faire. |
 
 GHQUAL et P64G peuvent être relus comme ressources historiques uniquement. P64Q et
 l'ancien binding FOUNDRY sont archivés : ils ne sont pas réactivés et ne constituent pas
@@ -429,8 +429,8 @@ non archivé, avec `hasNextPage=false`, et la liste REST relit le même item. L'
 GitHub sous-jacente reste `OPEN` : l'état Foundry `done` est ici le champ de projet,
 sans divergence cachée ni autorité de fermeture manuelle de l'Issue. La cellule
 GitHub Projects × Codex devient donc `in_progress` pour ce chemin de livraison, jamais
-`passed` : ADR, Epic, parcours hôte complet, cas adverses, parité installée et les
-preuves Ship-iOS propres à la cellule restent incomplets.
+`passed` : à cette étape, ADR, Epic, parcours hôte complet, cas adverses, parité
+installée et bridge Ship-iOS propre à la cellule restaient incomplets.
 
 ### Roundtrip ADR et Epic P61R après la livraison
 
@@ -450,18 +450,48 @@ reprise demandée par l'utilisateur, la candidate et l'item natifs ont été rel
 exactement, puis Foundry a complété les champs du même Epic, sans doublon. Foundry a
 créé le lien `parent-of` P61R-4 → P61R-1; les relectures fraîches de l'Epic et de
 l'enfant confirment le lien réciproque, P61R-1 `done`, AC 2/2, acceptation qualifiée
-et PR #2 mergée à `43d31bfd5b32649b556ce24fdaa1ac3de8a362e3`. L'Epic est encore
-`backlog`, type `Epic`, AC 0/2, et reste en attente du seul verdict humain explicite
-prévu par sa procédure. Aucun `close-epic` n'a été exécuté; il n'existe donc ni reçu
-de clôture ni projection terminale à revendiquer.
+et PR #2 mergée à `43d31bfd5b32649b556ce24fdaa1ac3de8a362e3`.
 
-Le backlog frais de l'Epic est `Type=Epic`, AC 0/2. Le grooming a parcouru une page
+Au source exécuté `f56776486ccba307b3a3e71f26f201db28108f29`, le verdict humain
+explicite `accepted` a autorisé `close-epic P61R-4 --human-verdict=accepted`.
+La relecture fraîche donne l'Epic `done`, états natif et normalisé alignés; son seul
+commentaire natif est l'audit append-only `github:epic:9ba37bf81a564a36cc437dde2d78409bb6e43aec900b5af48a5306d319f6f088`
+(`5963150172`). Il établit l'enfant unique P61R-1, `done`, AC 2/2 et `accepted`,
+ainsi que l'absence de dépendance. L'Epic reste type `Epic`, AC 0/2 et
+`acceptance_status=null`: sa clôture non-code repose sur le verdict humain et cet
+audit, sans cocher artificiellement ses AC ni lui attribuer une preuve de code.
+
+Le backlog frais de l'Epic avant sa clôture est `Type=Epic`, AC 0/2. Le grooming a parcouru une page
 complète (2 éléments retournés sur 2, sans troncature), sans dépendance ni doublon et
 sans correction proposée. Le Project #9 historique, son budget de reprises épuisé et
 l'exception humaine déjà consommée restent inchangés; ce constat ne réinitialise aucun
-budget général. La parité de plugin installé reste non prouvée. La conformité sur ce
-SHA avait passé 108 tests, 3051 désélectionnés : c'est un prérequis déterministe, pas
-un receipt fournisseur ni une cellule passée.
+budget général.
+
+### Scope de release P61R et bridge Ship-iOS
+
+Le registre Foundry a conservé les coordonnées existantes du sandbox P61R
+(owner, numéro et `canonical_repo`) et ajouté seulement le mapping `release_ids`; son
+digest est `sha256:c3324282086529bcb24a024173e978ab2fe9b54e26d70c52d441ea90c03a6869`.
+Le marqueur `.foundry/tracker.json` généré dans le sandbox reste volontairement local,
+non commité et non poussé. L'opérateur a créé le milestone natif de dépôt
+`PAT61 sandbox v1` (#1, id `18273978`), puis a assigné uniquement P61R-1. Sa relecture
+confirme le changement ciblé de milestone et le changement automatique de `updated_at`;
+toutes les autres propriétés non ciblées sont préservées.
+
+Au même source `f567764`, `query changelog` et le bridge Ship-iOS en mode
+`foundry-v1` relisent le même scope fermé: `scope_count=1`, `accepted=1`,
+`deviated=0`, `unfinished=0`, `unavailable=0`, avec P61R-1 seul. Après ces
+préconditions, l'opérateur a fermé uniquement ce milestone synthétique; les deux
+relectures fraîches donnent `native_state=closed` et les mêmes coordonnées. Cette
+clôture ne crée ni tag, ni publication d'application, ni nouvel effet Apple; elle ne
+réutilise la preuve beta Apple historique que dans sa frontière déjà déclarée.
+
+Le bridge P61R peuplé et accepté est désormais observé. Le parcours hôte complet, la
+parité de plugin installé, les cas adverses et un graphe de dépendances non vide restent
+à qualifier: GitHub Projects × Codex demeure donc `in_progress`, jamais `passed`. Les
+plugins source restent annoncés `0.9.0`; aucun `1.0` installé ni parité de cache n'est
+revendiqué. La conformité sur `f567764` a passé 108 tests, 3051 désélectionnés : c'est
+un prérequis déterministe, pas un receipt fournisseur ni une cellule passée.
 
 
 Au HEAD `0f175af`, la suite de conformité passe : 108 tests, 3031 deselected.
