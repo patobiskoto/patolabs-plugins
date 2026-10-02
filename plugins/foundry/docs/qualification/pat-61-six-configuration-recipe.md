@@ -131,7 +131,7 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 a corrigé ce défaut sans réécrire l'incident. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
-| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge en mode source au HEAD `662df7fc66fafd4e5cc5b53c10aad63d9eea25a1`. La relecture postmerge aligne l'état Foundry `done` et l'acceptation 2/2, avec un seul item non archivé. Le parcours complet, la parité installée, les adversaires et les autres preuves de cellule restent à faire. |
+| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge. Au source exécuté `f743f2e`, le roundtrip ADR P61R-ADR-0003 est `proposed` (V1→V2 relu) et l'Epic P61R-4 est créé, lié à P61R-1 et attend exclusivement son verdict humain explicite avant `close-epic`. La relecture postmerge de l'enfant aligne l'état Foundry `done` et l'acceptation 2/2; le grooming complet ne propose aucune correction. Le parcours complet, la parité installée, les adversaires et les autres preuves de cellule restent à faire. |
 
 GHQUAL et P64G peuvent être relus comme ressources historiques uniquement. P64Q et
 l'ancien binding FOUNDRY sont archivés : ils ne sont pas réactivés et ne constituent pas
@@ -431,6 +431,37 @@ sans divergence cachée ni autorité de fermeture manuelle de l'Issue. La cellul
 GitHub Projects × Codex devient donc `in_progress` pour ce chemin de livraison, jamais
 `passed` : ADR, Epic, parcours hôte complet, cas adverses, parité installée et les
 preuves Ship-iOS propres à la cellule restent incomplets.
+
+### Roundtrip ADR et Epic P61R après la livraison
+
+Au source exécuté `f743f2e`, le roundtrip ADR expérimental a été borné au seul
+P61R. La création initiale de P61R-ADR-0003 s'est arrêtée sur
+`candidate_not_visible`, puis son rejeu de même intention sur
+`item_effect_unknown`. Après autorisation humaine explicite d'une unique reprise
+supplémentaire de cette même intention, Foundry a créé l'ADR `proposed`, ref `3`.
+L'édition nominale V1→V2 a été relue exactement; les commentaires natifs
+`5945946498` et `5945954397` préservent les deux versions et leur chaîne. L'ADR porte
+le label `foundry:adr`, est exclue du backlog, et ne constitue aucune décision
+d'architecture produit ni acceptation. Elle reste `proposed`.
+
+La création nominale de l'Epic P61R-4 (native `5673158090`) a d'abord retourné
+`partial_create:item_readback`; les écritures se sont arrêtées comme annoncé. À la
+reprise demandée par l'utilisateur, la candidate et l'item natifs ont été relus
+exactement, puis Foundry a complété les champs du même Epic, sans doublon. Foundry a
+créé le lien `parent-of` P61R-4 → P61R-1; les relectures fraîches de l'Epic et de
+l'enfant confirment le lien réciproque, P61R-1 `done`, AC 2/2, acceptation qualifiée
+et PR #2 mergée à `43d31bfd5b32649b556ce24fdaa1ac3de8a362e3`. L'Epic est encore
+`backlog`, type `Epic`, AC 0/2, et reste en attente du seul verdict humain explicite
+prévu par sa procédure. Aucun `close-epic` n'a été exécuté; il n'existe donc ni reçu
+de clôture ni projection terminale à revendiquer.
+
+Le backlog frais de l'Epic est `Type=Epic`, AC 0/2. Le grooming a parcouru une page
+complète (2 éléments retournés sur 2, sans troncature), sans dépendance ni doublon et
+sans correction proposée. Le Project #9 historique, son budget de reprises épuisé et
+l'exception humaine déjà consommée restent inchangés; ce constat ne réinitialise aucun
+budget général. La parité de plugin installé reste non prouvée. La conformité sur ce
+SHA avait passé 108 tests, 3051 désélectionnés : c'est un prérequis déterministe, pas
+un receipt fournisseur ni une cellule passée.
 
 
 Au HEAD `0f175af`, la suite de conformité passe : 108 tests, 3031 deselected.
