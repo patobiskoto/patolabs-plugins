@@ -131,7 +131,7 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 a corrigé ce défaut sans réécrire l'incident. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
-| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge. Au source exécuté `f743f2e`, le roundtrip ADR P61R-ADR-0003 est `proposed` (V1→V2 relu). Au source `f567764`, le verdict humain `accepted` a permis `close-epic` sur P61R-4, relu `done` et aligné avec son unique commentaire d'audit; le scope et le bridge Ship-iOS relisent P61R-1 seul, `accepted`, dans le milestone natif fermé `PAT61 sandbox v1`. L'Epic conserve AC 0/2 et aucune acceptation de code n'est inventée pour lui. Le parcours complet, la parité installée, les adversaires et les autres preuves de cellule restent à faire. |
+| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `blocked` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge. Au source exécuté `f743f2e`, le roundtrip ADR P61R-ADR-0003 est `proposed` (V1→V2 relu). Au source `f567764`, le verdict humain `accepted` a permis `close-epic` sur P61R-4, alors aligné avec son unique commentaire d'audit; le scope et le bridge Ship-iOS relisaient P61R-1 seul, `accepted`, dans le milestone natif fermé `PAT61 sandbox v1`. Au source `41d6866`, P61R-5 a été lié à P61R-1 et déclenche le garde fail-closed `GitHub Epic graph changed after closure`; la projection Epic n'est donc plus revendiquée alignée. Le cleanup exact de ce seul lien exige l'autorité mainteneur, puis une relecture fraîche. |
 
 GHQUAL et P64G peuvent être relus comme ressources historiques uniquement. P64Q et
 l'ancien binding FOUNDRY sont archivés : ils ne sont pas réactivés et ne constituent pas
@@ -486,12 +486,31 @@ relectures fraîches donnent `native_state=closed` et les mêmes coordonnées. C
 clôture ne crée ni tag, ni publication d'application, ni nouvel effet Apple; elle ne
 réutilise la preuve beta Apple historique que dans sa frontière déjà déclarée.
 
-Le bridge P61R peuplé et accepté est désormais observé. Le parcours hôte complet, la
-parité de plugin installé, les cas adverses et un graphe de dépendances non vide restent
-à qualifier: GitHub Projects × Codex demeure donc `in_progress`, jamais `passed`. Les
-plugins source restent annoncés `0.9.0`; aucun `1.0` installé ni parité de cache n'est
-revendiqué. La conformité sur `f567764` a passé 108 tests, 3051 désélectionnés : c'est
-un prérequis déterministe, pas un receipt fournisseur ni une cellule passée.
+Le bridge P61R peuplé et accepté est observé dans cet instantané de `f567764`. Les
+preuves de clôture et de scope restent valides pour le moment où elles ont été relues;
+elles ne garantissent pas une projection Epic qui changerait ensuite. La conformité sur
+`f567764` a passé 108 tests, 3051 désélectionnés : c'est un prérequis déterministe,
+pas un receipt fournisseur ni une cellule passée.
+
+### Divergence du graphe après clôture
+
+Au source `41d6866b48780fd3cb3bf386b4ecac66031b9c63`, le coordinateur a créé la
+fixture synthétique P61R-5 (native `5684847992`, item
+`PVTI_lAHOABroCc4BlYLDzg-PUMA`) par Foundry. Le premier create a retourné
+`partial_create:item_readback`; une relecture native unique, puis une reprise de même
+intention, ont terminé la création. Foundry a ensuite créé `P61R-5 depends-on P61R-1`.
+La relecture fraîche de P61R-5 ne diffère que par `links`; le rejeu common-write n'a
+observé aucune écriture (`REST_write=0`, `GraphQL_mutation=0`).
+
+Ce lien réciproque modifie l'instantané de l'enfant de l'Epic P61R-4 déjà clos.
+`query issue P61R-1` avec son Epic, `query profile groom` et `query issue P61R-4`
+refusent donc `TrackerConflictError: GitHub Epic graph changed after closure`.
+Aucun audit n'a été remplacé, aucun état forcé et le lien n'a pas été retiré. Le garde
+fail-closed est le comportement attendu, sans bug de contrat ni redesign ADR. Foundry
+ne possède pas de commande unlink: seul le mainteneur peut autoriser le cleanup exact
+de P61R-5 → P61R-1, suivi d'une relecture fraîche; les autres workflows sont arrêtés.
+P61R-5 reste `backlog`, AC 0/2, sans `accepted`. GitHub Projects × Codex est donc
+`blocked`, jamais `passed`; aucune projection Epic actuelle n'est revendiquée alignée.
 
 
 Au HEAD `0f175af`, la suite de conformité passe : 108 tests, 3031 deselected.
