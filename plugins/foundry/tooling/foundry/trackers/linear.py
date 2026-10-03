@@ -733,18 +733,44 @@ _MULTILINE_BOLD = re.compile(
     r"(?<![A-Za-z0-9_*\\])\*\*(?![\s*])(?P<before>[^*`_~\[\]\n]+)(?<!\s)\n"
     r"(?P<indent>[ \t]+)(?!\s)(?P<after>[^*`_~\[\]\n]+)(?<!\s)\*\*(?![A-Za-z0-9_*])"
 )
+# Linear's observed serializer closes a simple strong span before a trailing
+# single-backtick code fragment.  This stays narrower than a general Markdown
+# transformation: both parts are plain and the code span is non-empty.
+_STRONG_TRAILING_INLINE_CODE = re.compile(
+    r"(?<![A-Za-z0-9_*\\])\*\*(?![\s*])"
+    r"(?P<before>[^*`_~\[\]<>\\&\n\r\v\f\x1c-\x1e\x85\u2028\u2029]+?)(?<!\s) "
+    r"(?P<code>`(?![\s`])[^`\n\r\v\f\x1c-\x1e\x85\u2028\u2029]+(?<!\s)`)"
+    r"\*\*(?![A-Za-z0-9_*])"
+)
 _MULTILINE_LINK_DESTINATION = re.compile(r"\]\([^\n]*\n[^)]*\)")
 _RAW_INLINE_HTML = re.compile(r"<(?:/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>])|[!?])")
 
 
 def _paired_delimiters(fragment: str, delimiter: str) -> list[tuple[int, int]]:
-    """Return adjacent delimiter pairs; unpaired markers are ordinary text."""
-    positions = []
+    """Return active delimiter pairs; literals and unpaired markers stay text."""
+    code_spans = _paired_backtick_delimiters(fragment)
+    openers: list[int] = []
+    pairs = []
     start = 0
     while (position := fragment.find(delimiter, start)) >= 0:
-        positions.append(position)
+        if _is_escaped(fragment, position):
+            # A Markdown escape consumes only the first punctuation character.
+            # Resume inside the run so residual markers remain visible.
+            start = position + 1
+            continue
         start = position + len(delimiter)
-    return list(zip(positions[::2], positions[1::2]))
+        if any(
+            code_start <= position < code_end + length
+            for code_start, code_end, length in code_spans
+        ):
+            continue
+        can_open = _is_emphasis_opener(fragment, position, delimiter)
+        can_close = _is_emphasis_closer(fragment, position, delimiter)
+        if can_close and openers:
+            pairs.append((openers.pop(), position))
+        elif can_open:
+            openers.append(position)
+    return pairs
 
 
 def _paired_backtick_delimiters(fragment: str) -> list[tuple[int, int, int]]:
@@ -972,6 +998,88 @@ def _reject_multiline_link_labels(fragment: str) -> None:
                 raise ValueError("unsupported multiline inline Markdown in ADR body")
 
 
+def _linear_strong_trailing_inline_code_readback(fragment: str) -> str:
+    """Render the one observed strong/code form or refuse its variants.
+
+    A code span inside a paired strong range must match the whole closed profile;
+    a future renderer variation therefore fails preflight rather than being
+    silently accepted.
+    """
+    replacements = []
+    strong_ranges = (
+        _paired_delimiters(fragment, "**") + _paired_delimiters(fragment, "__")
+    )
+    for strong_start, strong_end in strong_ranges:
+        marker = fragment[strong_start : strong_start + 2]
+        if not (
+            _is_emphasis_opener(fragment, strong_start, marker)
+            and _is_emphasis_closer(fragment, strong_end, marker)
+        ):
+            continue
+        strong_end += 2
+        code_spans = [
+            (start, end, length)
+            for start, end, length in _paired_backtick_delimiters(fragment)
+            if strong_start < start and end + length < strong_end
+        ]
+        if not code_spans:
+            continue
+        match = _STRONG_TRAILING_INLINE_CODE.match(fragment, strong_start)
+        if (
+            len(code_spans) != 1
+            or match is None
+            or match.end() != strong_end
+            or code_spans[0][2] != 1
+            or match["code"] != fragment[code_spans[0][0] : code_spans[0][1] + 1]
+        ):
+            raise ValueError("unsupported strong inline-code Markdown in ADR body")
+        replacements.append(
+            (strong_start, strong_end, f"**{match['before']}** {match['code']}")
+        )
+    # Qualify the surrounding line too: a matching-looking span in HTML or
+    # another Markdown construct is not the observed simple strong/code form.
+    # Mask literal code and every qualified span before inspecting its context.
+    context = list(_masked_backtick_spans(fragment, preserve_newlines=True))
+    for start, end, _ in replacements:
+        context[start:end] = "x" * (end - start)
+    offset = 0
+    lines = fragment.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        end = offset + len(line)
+        has_candidate = any(offset <= start < end for start, _, _ in replacements)
+        indentation = line[: len(line) - len(line.lstrip(" \t"))]
+        if has_candidate and len(indentation.expandtabs(4)) >= 4:
+            raise ValueError("unsupported strong inline-code Markdown in ADR body")
+        list_prefix = re.match(r"^ {0,3}(?:[*+-]|[0-9]{1,9}[.)])([ \t]+)", line)
+        if has_candidate and list_prefix is not None and list_prefix[1] != " ":
+            raise ValueError("unsupported strong inline-code Markdown in ADR body")
+        if line.startswith("* "):
+            # The already-qualified list conversion runs before this pass.
+            context[offset] = "x"
+        if has_candidate and any(
+            character in "*_~[]<>&\\#|" for character in context[offset:end]
+        ):
+            raise ValueError("unsupported strong inline-code Markdown in ADR body")
+        if has_candidate:
+            # A setext underline can turn the whole preceding paragraph into
+            # a heading, including candidate lines before its last line. A
+            # single-column table delimiter is unqualified for the same reason.
+            for following in lines[index + 1 :]:
+                if not following.strip():
+                    break
+                if re.fullmatch(
+                    r" {0,3}(?:=+|-+|:?-{3,}:?)[ \t]*", following.rstrip("\r\n")
+                ):
+                    raise ValueError(
+                        "unsupported strong inline-code Markdown in ADR body"
+                    )
+        offset = end
+    rendered = fragment
+    for start, end, replacement in sorted(replacements, reverse=True):
+        rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
+    return rendered
+
+
 def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     """Render the two qualified multiline inline forms and reject every other one.
 
@@ -1004,6 +1112,7 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     rendered = fragment
     for start, end, replacement in reversed(code_replacements):
         rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
+    rendered = _linear_strong_trailing_inline_code_readback(rendered)
 
     # Regex matches are only candidates: literal delimiters cannot be rendered
     # as strong spans, and the same source flanking rules qualify replacements.

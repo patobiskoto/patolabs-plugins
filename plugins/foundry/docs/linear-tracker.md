@@ -201,6 +201,46 @@ removes exactly one of the two consecutive blank lines between the recorded S6 l
 item and the following `**Portée des propriétés.**` paragraph. It is a forward model
 only: the witness keeps the source UTF-8 bytes, fenced code and all other whitespace
 runs remain byte-exact, and any source-byte or rendered-byte variation is refused.
+PAT-85 adds one general but still closed non-fenced, same-line form observed on the
+PAT-61 native Document: a simple strong span whose final fragment is one non-empty,
+unpadded single-backtick code span, `**plain text \`code\`**`, is read back as
+`**plain text** \`code\``. The leading text and code are plain (no nested marks,
+links, or additional code spans); a code-only or multi-backtick strong/code span, or
+any other valid strong/code arrangement is unqualified and fails before a provider write.
+The leading-text profile also excludes angle brackets, ampersands, and backslashes, so
+inline HTML, angle-bracket links, entity references, and Markdown escapes cannot enter
+this transformation. Literal uses of those three character classes are conservatively
+unqualified too; fenced content containing them remains byte-exact.
+Strong delimiters are recognized only when they are active Markdown delimiters: an
+escaped marker or a marker inside an inline-code span is literal and cannot pair with,
+or mask, a later qualified strong/code span. A delimiter consumed as a closing pair
+cannot also open another span; an unpaired trailing marker stays literal. An escape
+consumes only its first marker;
+residual markers in the same run remain active and any resulting strong/code span
+outside the exact profile is refused before a provider write. The same-line profile
+excludes every separator recognized by Python `splitlines()` from both the leading
+text and the code fragment, including CR and Unicode line separators. On a line
+containing this form, surrounding text must also be unmarked: after literal inline
+code and qualified spans are masked, `*`, `_`, `~`, `[`, `]`, `<`, `>`, `&`, `\`, `#` and `|`
+are conservatively unqualified. This refuses HTML attributes, wrapping marks, link
+labels, ATX headings, pipe-marked tables and marked siblings instead of interpreting
+their contents as the observed form. A candidate paragraph followed before its next
+blank line by a setext underline or single-column table delimiter is unqualified too;
+this includes headings spanning several lines. Literal block markers inside inline code
+and headings separated by a blank line remain supported. The already-qualified leading
+`* ` list marker is preserved. Strong/code
+written with `__` is unqualified too. Plain surrounding text,
+literal inline code and multiple qualified spans remain supported. Fenced code remains
+byte-exact. A candidate line indented by four or more columns (tabs expand at four
+columns) is conservatively unqualified and refused before writing, so an indented
+code block is never rewritten as the observed inline form. Candidate lines after a
+list marker with padding other than one space are also unqualified, including
+indented code inside a list. This is
+source-to-readback only: the witness retains
+the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or globally
+normalized. Exact replay of an unwitnessed deterministic version may create only its
+missing witness after the existing project/id/title/envelope/body/previous-link checks;
+it never rewrites the surviving Document.
 `FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
 SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
 and its existing Linear Document content SHA-256
