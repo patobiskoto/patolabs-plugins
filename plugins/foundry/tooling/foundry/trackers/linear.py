@@ -703,6 +703,77 @@ def _linear_foundry_adr_0012_v1_readback(body: str) -> str | None:
     return rendered
 
 
+# PAT-86 pins the six observed native PAT-ADR-0011 rendering deltas.
+# No autolink or table grammar is generalized beyond this complete source.
+_PAT_86_SOURCE_SHA256 = (
+    "33982ca3393e9bca78dc4744481b83214cd7bc67248687970cb56f290e5c826e"
+)
+_PAT_86_READBACK_SHA256 = (
+    "ce79b36941e9e745c12f0ecbcf679844abab2bc2a5d30d8683b135200e2fd2be"
+)
+_PAT_86_FRAGMENTS = (
+    (
+        "Auth reports claude.ai, firstParty, Pro. Foundry source manifest is 0.9.0;\n",
+        (
+            "Auth reports [claude.ai](<http://claude.ai>), firstParty, Pro. Foundry source ma"
+            "nifest is 0.9.0;\n"
+        ),
+    ),
+    (
+        (
+            "plan billing rule : https://support.claude.com/en/articles/15424964-claude-fable"
+            "-models-on-your-plan.\n"
+        ),
+        (
+            "plan billing rule : [https://support.claude.com/en/articles/15424964-claude-fabl"
+            "e-models-on-your-plan](<https://support.claude.com/en/articles/15424964-claude-f"
+            "able-models-on-your-plan>).\n"
+        ),
+    ),
+    (
+        "model configuration : https://code.claude.com/docs/en/model-config.\n",
+        (
+            "model configuration : [https://code.claude.com/docs/en/model-config](<https://co"
+            "de.claude.com/docs/en/model-config>).\n"
+        ),
+    ),
+    (
+        "| --- | --- | --- | --- |\n",
+        "| -- | -- | -- | -- |\n",
+    ),
+    (
+        "The supported subagent contract : https://code.claude.com/docs/en/sub-agents\n",
+        (
+            "The supported subagent contract : [https://code.claude.com/docs/en/sub-agents](<"
+            "https://code.claude.com/docs/en/sub-agents>)\n"
+        ),
+    ),
+    (
+        (
+            "These two proposal documents are updated. Current runtime, AGENTS.md/CLAUDE.md R"
+            "7,\n"
+        ),
+        (
+            "These two proposal documents are updated. Current runtime, [AGENTS.md/CLAUDE.md]"
+            "(<http://AGENTS.md/CLAUDE.md>) R7,\n"
+        ),
+    ),
+)
+
+
+def _linear_pat_86_readback(body: str, rendered: str) -> str | None:
+    """Apply only the digest-pinned PAT-ADR-0011 forward serialization."""
+    if hashlib.sha256(body.encode("utf-8")).hexdigest() != _PAT_86_SOURCE_SHA256:
+        return None
+    for source, readback in _PAT_86_FRAGMENTS:
+        if body.count(source) != 1 or rendered.count(source) != 1:
+            raise ValueError("pat-86 rendering source is invalid")
+        rendered = rendered.replace(source, readback, 1)
+    if hashlib.sha256(rendered.encode("utf-8")).hexdigest() != _PAT_86_READBACK_SHA256:
+        raise ValueError("pat-86 rendering is invalid")
+    return rendered
+
+
 def _linear_pat_72_readback(body: str, rendered: str) -> str | None:
     """Return the sole PAT-72 blank-line serialization observed from Linear.
 
@@ -1185,6 +1256,9 @@ def _linear_markdown_readback_body(
     flush_nonfenced()
     rendered_body = "".join(rendered)
     qualified = _linear_pat_72_readback(body, rendered_body)
+    if qualified is not None:
+        return qualified
+    qualified = _linear_pat_86_readback(body, rendered_body)
     return rendered_body if qualified is None else qualified
 
 
