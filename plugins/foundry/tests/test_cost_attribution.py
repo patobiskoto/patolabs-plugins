@@ -1140,3 +1140,95 @@ def test_invalid_calendar_date_in_optional_quota_preserves_cost(tmp_path):
                                     "window_minutes": 300, "resets_at": 10}}}}),
     ]))
     assert read_host_log("codex", log) == []
+
+
+def test_declared_historical_haiku_snapshot_keeps_legacy_wildcard_price(tmp_path):
+    # Existing operator grids could already price the official dated wire snapshot.
+    # Reuse the historical fixture rate, never manufacture a candidate price.
+    grid = _grid(tmp_path, [_entry(host="claude", model="haiku-4.5",
+                                  aliases=["claude-haiku-4-5*", "haiku-4.5-*"],
+                                  effective_to="2026-12-31")])
+    path = tmp_path / "dated-haiku.jsonl"
+    path.write_text(json.dumps({"type": "assistant", "sessionId": "historical",
+        "timestamp": "2026-10-03T10:00:00Z", "message": {
+            "model": "claude-haiku-4-5-20251001", "usage": {
+                "input_tokens": 10, "cache_read_input_tokens": 2,
+                "cache_creation_input_tokens": 3, "output_tokens": 5}}}) + "\n")
+    rows = read_host_log("claude", path)
+    observed = cost_record(rows[0], grid)
+    incumbent = cost_record(dict(rows[0], model="haiku-4.5"), grid)
+    assert observed["cost_micros"] == incumbent["cost_micros"]
+    assert observed["cost_provenance"] == "pricing_derived"
+    assert price_for(grid, "claude", "claude-sonnet-5-5", "2026-10-03") is None
+
+
+def _claude_stream_record(request="req-1", message="msg-1", *, terminal=False,
+                          output=2, reasoning=None, model="claude-test"):
+    usage = {"input_tokens": 10, "cache_read_input_tokens": 20,
+             "cache_creation_input_tokens": 30, "output_tokens": output}
+    if reasoning is not None:
+        usage["output_tokens_details"] = {"thinking_tokens": reasoning}
+    return {"type": "assistant", "sessionId": "parent-1", "agentId": "child-1",
+            "timestamp": "2026-10-03T12:00:00Z", "requestId": request,
+            "message": {"id": message, "model": model,
+                        "stop_reason": "end_turn" if terminal else None,
+                        "content": [{"type": "text", "text": "PRIVATE_RESPONSE"}],
+                        "usage": usage}}
+
+
+def test_claude_native_content_blocks_charge_each_terminal_request_once(tmp_path):
+    log = tmp_path / "native.jsonl"
+    terminal = _claude_stream_record(terminal=True, output=100, reasoning=25)
+    log.write_text("\n".join(json.dumps(r) for r in [
+        _claude_stream_record(), terminal, terminal,
+        _claude_stream_record("req-2", "msg-2", terminal=True, output=50, reasoning=10),
+    ]))
+    diagnostics = {}
+    rows = read_host_log("claude", log, diagnostics=diagnostics)
+    assert rows[0]["tokens"] == {"input_tokens": 20, "cached_input_tokens": 40,
+                                  "cache_write_input_tokens": 60, "output_tokens": 150,
+                                  "reasoning_output_tokens": 35}
+    assert diagnostics["billable_records"] == 2
+    assert diagnostics["completeness"] == "available"
+    assert "PRIVATE_RESPONSE" not in json.dumps(rows)
+    assert "req-1" not in json.dumps(rows)
+    assert read_host_log("claude", log) == rows
+
+
+@pytest.mark.parametrize("changed", [
+    _claude_stream_record(terminal=True, output=101, reasoning=25),
+    _claude_stream_record(terminal=True, output=100, reasoning=25, model="other-model"),
+])
+def test_claude_conflicting_correlated_usage_fails_closed(tmp_path, changed):
+    log = tmp_path / "conflict.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in [
+        _claude_stream_record(terminal=True, output=100, reasoning=25), changed,
+    ]))
+    with pytest.raises(CostAttributionError, match="changed|conflicts"):
+        read_host_log("claude", log)
+
+
+@pytest.mark.parametrize("reasoning", [None, 1])
+def test_claude_partial_only_never_certifies_final_usage(tmp_path, reasoning):
+    log = tmp_path / "partial.jsonl"
+    log.write_text(json.dumps(_claude_stream_record(reasoning=reasoning)))
+    diagnostics = {}
+    with pytest.raises(CostAttributionError, match="no terminal snapshot"):
+        read_host_log("claude", log, diagnostics=diagnostics)
+    assert diagnostics == {}
+
+
+def test_claude_terminal_snapshot_crossing_midnight_uses_completion_date(tmp_path):
+    log = tmp_path / "midnight.jsonl"
+    partial = _claude_stream_record(reasoning=1)
+    partial["timestamp"] = "2026-10-03T23:59:59Z"
+    terminal = _claude_stream_record(terminal=True, output=100, reasoning=25)
+    terminal["timestamp"] = "2026-10-04T00:00:01Z"
+    log.write_text("\n".join(json.dumps(r) for r in [partial, terminal, terminal, partial]))
+    diagnostics = {}
+    rows = read_host_log("claude", log, diagnostics=diagnostics)
+    assert len(rows) == 1
+    assert rows[0]["occurred_on"] == "2026-10-04"
+    assert rows[0]["tokens"]["output_tokens"] == 100
+    assert diagnostics["billable_records"] == 1
+    assert diagnostics["completeness"] == "available"

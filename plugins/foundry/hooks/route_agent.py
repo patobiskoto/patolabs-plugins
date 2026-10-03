@@ -3,8 +3,8 @@
 
 Claude Code caches plugin agent frontmatter, so project policy cannot safely be
 materialized there.  This PreToolUse hook is the dynamic façade: it resolves the common
-policy, injects the invocation model and turn cap, then swaps the logical role for an
-internal agent whose frontmatter carries only the resolved effort/capability profile.
+policy, injects the turn cap, then selects a preloaded capability/effort profile.
+Version pins live in that profile frontmatter; only short aliases use Agent.model.
 """
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ from foundry.routing import (  # noqa: E402
 from foundry.routing_facades import (  # noqa: E402
     AGENT_IDENTITIES,
     agent_identity,
-    claude_invocation_model,
+    claude_invocation_binding,
+    claude_effort_parameters,
     claude_route_plan,
     prepare_claude_invocation,
 )
@@ -97,6 +98,7 @@ def _warning_context(
     technical_remediation_requested: bool = False,
     technical_remediation_claimed: bool = False,
     credited_correction_plan_claimed: bool = False,
+    invocation_binding: dict | None = None,
 ) -> str:
     visible = {
         "role": route.role,
@@ -104,6 +106,12 @@ def _warning_context(
         "selected_tier": route.selected_tier,
         "model": route.model,
         "effort": route.effort,
+        "effort_parameters": (invocation_binding["effort_parameters"] if invocation_binding
+                              else claude_effort_parameters(route)),
+        "transmitted_launch": ({key: invocation_binding[key] for key in
+                               ("profile", "transmitted_model", "model_source")}
+                               if invocation_binding else None),
+        "execution_observation": {"model": None, "effort": None, "status": "unknown"},
         "sources": dict(route.sources),
         "fallback_path": list(route.fallback_path),
         "gate_floor": route.gate_floor,
@@ -188,8 +196,9 @@ def route_tool_input(
         bounded_turns = _bounded_turns(
             tool_input.get("max_turns"), profile.max_turns,
         )
-        invocation_model = claude_invocation_model(
-            route.model, project_models=resolution["claude_models"],
+        binding = claude_invocation_binding(
+            route, profile.capability, plugin_root=PLUGIN_ROOT,
+            project_models=resolution["claude_models"],
         )
         routed_prompt = (
             f"{_ROUTED_MARKER}\n"
@@ -202,24 +211,29 @@ def route_tool_input(
             f"{task_prompt}"
         )
         updated = dict(tool_input)
+        # Effort is selected only by profile frontmatter; never leak caller wire keys.
+        updated.pop("effort", None)
+        # A full ID is carried by the preloaded profile, never by Agent.model.
+        updated.pop("model", None)
         # maxTurns belongs to AgentDefinition/frontmatter, never to the Agent tool wire.
         updated.pop("maxTurns", None)
         updated.update({
-            "subagent_type": f"foundry:routed-{profile.capability}-{route.effort}",
+            "subagent_type": f"foundry:{binding['profile']}",
             "prompt": routed_prompt,
-            "model": invocation_model,
             "max_turns": bounded_turns,
         })
+        if binding["agent_model"] is not None:
+            updated["model"] = binding["agent_model"]
         prepared["updated"] = updated
         prepared["unclaimed_context"] = _warning_context(
             route, issue_id, remediation_authorization, remediation_rearm_audit,
             technical_remediation_open, technical_remediation_requested,
-            technical_remediation_claimed, False,
+            technical_remediation_claimed, False, binding,
         )
         prepared["claimed_context"] = _warning_context(
             route, issue_id, remediation_authorization, remediation_rearm_audit,
             technical_remediation_open, technical_remediation_requested,
-            technical_remediation_claimed, True,
+            technical_remediation_claimed, True, binding,
         )
         if correlation:
             prepared["telemetry"] = (

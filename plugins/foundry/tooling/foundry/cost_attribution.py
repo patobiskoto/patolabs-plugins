@@ -1,6 +1,7 @@
 """Offline post-hoc cost attribution for sanitized host usage records.
 
-The module has no provider, tracker, routing, or journal-writing dependency.
+The module invokes no provider/tracker, resolves no route and writes no host journal.
+Only declarative model spelling normalization is shared with the routing facade.
 It reads only the explicitly selected log and returns no source path or raw row.
 """
 from __future__ import annotations
@@ -53,6 +54,17 @@ def _overlap(left: str, right: str) -> bool:
 
 
 def _matches(pattern: str, model: str) -> bool:
+    # A declared new wire version cannot inherit a historical wildcard rate.
+    # Exact aliases and wildcards naming the new version still work in future grids.
+    if pattern.endswith("*") and model.startswith(pattern[:-1]):
+        from foundry.routing_facades import claude_policy_model
+        prefix = pattern[:-1].rstrip("-")
+        canonical_prefix = claude_policy_model(prefix) if prefix else prefix
+        canonical_model = claude_policy_model(model)
+        if (canonical_prefix != prefix and canonical_model != model
+                and re.sub(r"-[0-9]{8}$", "", canonical_prefix)
+                != re.sub(r"-[0-9]{8}$", "", canonical_model)):
+            return False
     return model.startswith(pattern[:-1]) if pattern.endswith("*") else model == pattern
 
 
@@ -369,6 +381,7 @@ def read_host_log(host: str, log_path: str | Path,
     codex_unattested_turn_sessions: set[str] = set()
     codex_usage_seen = False
     claude_rows: dict[tuple[str, str, str], dict] = {}
+    claude_requests: dict[tuple, tuple] = {}
     claude_degradations = dict.fromkeys(REASONING_DEGRADATION_REASONS, 0)
     claude_exclusions = dict.fromkeys(EXCLUSION_REASONS, 0)
     claude_billable_records = 0
@@ -487,18 +500,25 @@ def read_host_log(host: str, log_path: str | Path,
                 message.get("usage") if isinstance(message, Mapping) else None)
             if tokens is None:
                 raise CostAttributionError("host token usage is incomplete")
-            claude_billable_records += 1
-            if degradation_reason is not None:
-                claude_degradations[degradation_reason] += 1
-            key = (event_session_id, model, occurred_on)
+            # Native Claude emits several content blocks for one API message.
+            # Only a correlated terminal snapshot is authoritative; uncorrelated
+            # legacy records retain their historical one-record semantics.
+            request_id, message_id = raw.get("requestId"), message.get("id")
+            correlated = all(isinstance(v, str) and v for v in (request_id, message_id))
+            identity = ((event_session_id, raw.get("agentId"), request_id, message_id)
+                        if correlated else ("legacy", len(claude_requests)))
+            terminal = message.get("stop_reason") is not None
+            value = (event_session_id, model, occurred_on, tokens, degradation_reason, terminal, correlated)
+            previous = claude_requests.get(identity)
+            if previous is not None:
+                if previous[:2] != value[:2]:
+                    raise CostAttributionError("host request identity changed")
+                if previous[5]:
+                    if terminal and previous[3:5] != value[3:5]:
+                        raise CostAttributionError("host terminal usage conflicts")
+                    continue
+            claude_requests[identity] = value
             cwd = raw.get("cwd") if isinstance(raw.get("cwd"), str) else cwd
-            row = claude_rows.setdefault(key, {"host": "claude", "session_id": event_session_id,
-                                                "model": model, "occurred_on": occurred_on,
-                                                "tokens": dict.fromkeys(TOKEN_KEYS, 0), "token_requests": [], "request_ranks": []})
-            _add_tokens(row["tokens"], tokens)
-            row["token_requests"].append(tokens)
-            claude_rank += 1
-            row["request_ranks"].append(claude_rank)
     finally:
         handle.close()
     if host == "codex":
@@ -602,6 +622,21 @@ def read_host_log(host: str, log_path: str | Path,
                 row["position_data_ambiguous"] = True
             rows.append(row)
         return [*rows, *codex_plan_rows]
+    for session, model, occurred_on, tokens, degradation_reason, terminal, correlated in claude_requests.values():
+        if correlated and not terminal:
+            raise CostAttributionError("host token usage unavailable: request has no terminal snapshot")
+        claude_billable_records += 1
+        if degradation_reason is not None:
+            claude_degradations[degradation_reason] += 1
+        key = (session, model, occurred_on)
+        row = claude_rows.setdefault(key, {"host": "claude", "session_id": session,
+                                          "model": model, "occurred_on": occurred_on,
+                                          "tokens": dict.fromkeys(TOKEN_KEYS, 0),
+                                          "token_requests": [], "request_ranks": []})
+        _add_tokens(row["tokens"], tokens)
+        row["token_requests"].append(tokens)
+        claude_rank += 1
+        row["request_ranks"].append(claude_rank)
     rows = list(claude_rows.values())
     if not rows:
         raise CostAttributionError("host log has no exploitable token usage")

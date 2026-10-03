@@ -88,7 +88,9 @@ from foundry.routing import (
     git_head,
     repository_identity,
 )
-from foundry.routing_facades import _load_claude_policy, claude_invocation_model
+from foundry.routing_facades import (
+    _load_claude_policy, claude_effort_parameters, claude_invocation_model,
+)
 from foundry.trackers.devhub import DevHubTrackerError
 
 
@@ -2140,14 +2142,14 @@ class IsolatedClaudeIssueExecutor:
                 "to open the PR and run external gates; return blocked otherwise."
             )
             session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"foundry:{envelope.work_id}"))
+            invocation_model = claude_invocation_model(
+                route.model, project_models=getattr(self.routing, "claude_models", {}),
+            )
+            effort = claude_effort_parameters(route, invocation_model=invocation_model)["transmitted"]
             argv = [
                 "claude", "--print", "--output-format", "json",
                 "--json-schema", self._SCHEMA,
-                "--model", claude_invocation_model(
-                    route.model,
-                    project_models=getattr(self.routing, "claude_models", {}),
-                ),
-                "--effort", route.effort,
+                "--model", invocation_model,
                 "--max-budget-usd", f"{envelope.cost_ceiling_cents / 100:.2f}",
                 "--permission-mode", "acceptEdits", "--safe-mode", "--no-chrome",
                 "--disable-slash-commands", "--strict-mcp-config", "--mcp-config",
@@ -2155,6 +2157,8 @@ class IsolatedClaudeIssueExecutor:
                 "--no-session-persistence",
                 "--session-id", session_id, "--name", f"foundry-{envelope.issue_id}",
             ]
+            if effort is not None:
+                argv.extend(["--effort", effort])
             provider_invoked = True
             completed = self.runner(
                 argv, cwd=worktree, input=prompt, capture_output=True, text=True,

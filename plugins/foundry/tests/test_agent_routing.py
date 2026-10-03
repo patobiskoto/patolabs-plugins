@@ -42,6 +42,19 @@ from foundry.telemetry import TelemetryObserver
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _transmitted_model(updated):
+    if "model" in updated:
+        return updated["model"]
+    name = updated["subagent_type"].removeprefix("foundry:")
+    text = (PLUGIN_ROOT / "agents" / f"{name}.md").read_text()
+    return re.search(r"(?m)^model: (.+)$", text).group(1)
+
+
+def _base_profile(updated):
+    return re.match(r"foundry:routed-(readonly|worker)-(low|medium|high|xhigh|max|none)",
+                    updated["subagent_type"]).group(0)
+
+
 def _load_hook(name):
     path = PLUGIN_ROOT / "hooks" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
@@ -183,10 +196,10 @@ def _credited_cross_host_state(root, state_dir, issue):
 @pytest.mark.parametrize(
     ("role", "identity", "agent", "model", "turns"),
     [
-        ("scout", "Lupin", "foundry:routed-readonly-low", "haiku", 10),
-        ("implementer", "Eiffel", "foundry:routed-worker-medium", "sonnet", 50),
-        ("reviewer", "Maigret", "foundry:routed-readonly-high", "opus", 24),
-        ("architect", "Vauban", "foundry:routed-readonly-high", "fable", 30),
+        ("scout", "Lupin", "foundry:routed-readonly-none", "claude-haiku-4-5", 10),
+        ("implementer", "Eiffel", "foundry:routed-worker-medium", "claude-sonnet-5-5", 50),
+        ("reviewer", "Maigret", "foundry:routed-readonly-high", "claude-opus-5-5", 24),
+        ("architect", "Vauban", "foundry:routed-readonly-high", "claude-opus-5-5", 30),
     ],
 )
 def test_logical_roles_rewrite_the_actual_claude_invocation(
@@ -199,8 +212,8 @@ def test_logical_roles_rewrite_the_actual_claude_invocation(
     )
 
     updated, context = result
-    assert updated["subagent_type"] == agent
-    assert updated["model"] == model
+    assert _base_profile(updated) == agent
+    assert _transmitted_model(updated) == model
     assert updated["max_turns"] == turns
     assert updated["prompt"].startswith("FOUNDRY_ROUTED_AGENT_V1\n")
     assert "--- BEGIN ROLE CONTRACT ---" in updated["prompt"]
@@ -260,7 +273,7 @@ def test_local_fallback_claude_plan_matches_the_actual_hook_route(tmp_path):
     assert visible["model"] == plan["fallback"]["route"]["model"]
     assert visible["effort"] == plan["fallback"]["route"]["effort"]
     assert visible["escalation"]["issue_id"] == "FOUNDRY-99"
-    assert updated["subagent_type"] == "foundry:routed-readonly-medium"
+    assert _base_profile(updated) == "foundry:routed-readonly-medium"
     assert plan["spawn"]["subagent_type"] == "foundry:scout"
     assert "foundry:lupin" in updated["prompt"]
 
@@ -293,7 +306,7 @@ def test_local_fallback_claude_plan_survives_an_active_scout_floor(
     assert visible["model"] == plan["fallback"]["route"]["model"]
     assert visible["effort"] == plan["fallback"]["route"]["effort"]
     assert '"model"' not in plan["spawn"]["prompt"].split("\n", 1)[0]
-    assert updated["subagent_type"] == "foundry:routed-readonly-medium"
+    assert _base_profile(updated) == "foundry:routed-readonly-medium"
 
 
 def test_user_request_wins_over_project_policy_at_invocation(tmp_path):
@@ -304,7 +317,7 @@ def test_user_request_wins_over_project_policy_at_invocation(tmp_path):
         "mappings": {"claude": {"economy": {"model": "sonnet-5"}}},
     }), encoding="utf-8")
     prompt = (
-        'FOUNDRY_ROUTE_REQUEST={"tier":"economy","model":"haiku",'
+        'FOUNDRY_ROUTE_REQUEST={"tier":"economy","model":"claude-sonnet-5",'
         '"effort":"max"}\n' + _packet()
     )
 
@@ -314,8 +327,8 @@ def test_user_request_wins_over_project_policy_at_invocation(tmp_path):
         environ={},
     )
 
-    assert updated["model"] == "haiku"
-    assert updated["subagent_type"] == "foundry:routed-worker-max"
+    assert _transmitted_model(updated) == "claude-sonnet-5"
+    assert _base_profile(updated) == "foundry:routed-worker-max"
     assert "FOUNDRY_ROUTE_REQUEST=" not in updated["prompt"]
     assert '"tier": "user"' in context
     assert '"model": "user"' in context
@@ -327,10 +340,10 @@ def test_user_request_wins_over_project_policy_at_invocation(tmp_path):
     [
         (configured, available, canonical, wire)
         for canonical, wire, spellings in (
-            ("haiku-4.5", "haiku", ("haiku", "haiku-4.5", "claude-haiku-4-5")),
-            ("sonnet-5", "sonnet", ("sonnet", "sonnet-5", "claude-sonnet-5")),
-            ("opus-5", "opus", ("opus", "opus-5", "claude-opus-5")),
-            ("fable-5", "fable", ("fable", "fable-5", "claude-fable-5")),
+            ("haiku-4.5", "claude-haiku-4-5", ("haiku-4.5", "claude-haiku-4-5")),
+            ("sonnet-5", "claude-sonnet-5", ("sonnet-5", "claude-sonnet-5")),
+            ("opus-5", "claude-opus-5", ("opus-5", "claude-opus-5")),
+            ("fable-5", "claude-fable-5", ("fable-5", "claude-fable-5")),
         )
         for configured in spellings
         for available in spellings
@@ -342,7 +355,7 @@ def test_claude_project_mapping_composes_with_all_availability_spellings(
     config = tmp_path / ".foundry" / "model-routing.json"
     config.parent.mkdir()
     config.write_text(json.dumps({
-        "mappings": {"claude": {"economy": {"model": configured}}},
+        "mappings": {"claude": {"economy": {"model": configured, "effort": "low"}}},
     }), encoding="utf-8")
 
     updated, context = route_agent.route_tool_input(
@@ -352,10 +365,11 @@ def test_claude_project_mapping_composes_with_all_availability_spellings(
     )
     route = json.loads(context.removeprefix("Foundry Claude route: "))
 
-    assert updated["model"] == wire_model
+    assert _transmitted_model(updated) == wire_model
     assert route["model"] == canonical_model
     assert route["selected_tier"] == "economy"
     assert route["sources"]["model"] == "project"
+    assert route["effort"] == "low"
 
 
 def test_claude_project_mapping_is_canonical_in_pending_telemetry(tmp_path):
@@ -371,7 +385,7 @@ def test_claude_project_mapping_is_canonical_in_pending_telemetry(tmp_path):
         {"subagent_type": "foundry:scout", "prompt": _packet()},
         cwd=tmp_path,
         environ={
-            CLAUDE_AVAILABLE_MODELS: "haiku",
+            CLAUDE_AVAILABLE_MODELS: "claude-haiku-4-5",
             "FOUNDRY_DATA": str(data_dir),
         },
         correlation="tool-use-project-mapping",
@@ -380,7 +394,7 @@ def test_claude_project_mapping_is_canonical_in_pending_telemetry(tmp_path):
     event = json.loads(pending[0].read_text(encoding="utf-8"))["event"]
 
     assert len(pending) == 1
-    assert updated["model"] == "haiku"
+    assert _transmitted_model(updated) == "claude-haiku-4-5"
     assert event["model"] == "haiku-4.5"
 
 
@@ -409,7 +423,7 @@ def test_claude_project_mapping_cannot_override_a_built_in_alias(tmp_path):
         "claude_models": {"opus-5": "haiku"},
     }), encoding="utf-8")
 
-    with pytest.raises(RoutingConfigError, match="claude_models.opus-5.*intégré incompatible.*'opus'"):
+    with pytest.raises(RoutingConfigError, match="claude_models.opus-5.*intégré incompatible.*'claude-opus-5'"):
         route_agent.route_tool_input(
             {"subagent_type": "foundry:reviewer", "prompt": _packet()},
             cwd=tmp_path, environ={},
@@ -443,7 +457,7 @@ def test_agent_model_input_is_an_explicit_user_override(tmp_path):
         environ={},
     )
 
-    assert updated["model"] == "opus"
+    assert _transmitted_model(updated) == "claude-opus-5"
     assert '"model": "user"' in context
 
     updated, _ = route_agent.route_tool_input(
@@ -453,9 +467,9 @@ def test_agent_model_input_is_an_explicit_user_override(tmp_path):
             "model": "opus",
         },
         cwd=tmp_path,
-        environ={CLAUDE_AVAILABLE_MODELS: "opus-5"},
+        environ={CLAUDE_AVAILABLE_MODELS: "opus"},
     )
-    assert updated["model"] == "opus"
+    assert _transmitted_model(updated) == "opus"
 
 
 def test_conflicting_user_model_channels_fail_loudly(tmp_path):
@@ -520,7 +534,7 @@ def test_builtin_claude_translation_does_not_load_ambient_project_policy(monkeyp
         "_project_claude_models",
         lambda _root: pytest.fail("un modèle Claude intégré ne lit pas de policy projet"),
     )
-    assert claude_invocation_model("opus-5", root="/missing") == "opus"
+    assert claude_invocation_model("opus-5", root="/missing") == "claude-opus-5"
 
 
 def test_ordinary_fallback_moves_down_and_is_visible(tmp_path):
@@ -530,28 +544,33 @@ def test_ordinary_fallback_moves_down_and_is_visible(tmp_path):
         environ={CLAUDE_AVAILABLE_MODELS: "haiku-4.5"},
     )
 
-    assert updated["model"] == "haiku"
-    assert updated["subagent_type"] == "foundry:routed-worker-low"
+    assert _transmitted_model(updated) == "claude-haiku-4-5"
+    assert _base_profile(updated) == "foundry:routed-worker-none"
     assert "MODEL_FALLBACK_DOWN" in context
     assert "descend vers economy" in context
     assert '"availability_probed": true' in context
 
 
 def test_reviewer_fallback_moves_up_and_never_down(tmp_path):
+    config = tmp_path / ".foundry" / "model-routing.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({
+        "mappings": {"claude": {"apex": {"model": "fable-5", "effort": "high"}}},
+    }), encoding="utf-8")
     updated, context = route_agent.route_tool_input(
         {"subagent_type": "foundry:reviewer", "prompt": _packet()},
         cwd=tmp_path,
         environ={CLAUDE_AVAILABLE_MODELS: "fable-5,haiku-4.5"},
     )
 
-    assert updated["model"] == "fable"
+    assert _transmitted_model(updated) == "claude-fable-5"
     assert "monte vers apex" in context
 
     with pytest.raises(RoutingUnavailableError, match="gate 'reviewer'"):
         route_agent.route_tool_input(
             {"subagent_type": "foundry:reviewer", "prompt": _packet()},
             cwd=tmp_path,
-            environ={CLAUDE_AVAILABLE_MODELS: "haiku-4.5,sonnet-5"},
+            environ={CLAUDE_AVAILABLE_MODELS: "haiku-4.5,sonnet-5.5"},
         )
 
 
@@ -626,8 +645,8 @@ def test_claude_route_applies_issue_scoped_escalation_floor(monkeypatch, tmp_pat
         environ={},
     )
 
-    assert updated["model"] == "opus"
-    assert updated["subagent_type"] == "foundry:routed-worker-high"
+    assert _transmitted_model(updated) == "claude-opus-5-5"
+    assert _base_profile(updated) == "foundry:routed-worker-high"
     assert '"minimum_tier": "frontier"' in context
     assert '"issue_id": "FOUNDRY-42"' in context
     assert '"max_parallel_agents": 4' in context
@@ -1038,7 +1057,7 @@ def test_hook_main_emits_updated_input_and_fails_closed_for_a_gate(
     route_agent.main()
     output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
     assert output["permissionDecision"] == "allow"
-    assert output["updatedInput"]["subagent_type"] == "foundry:routed-readonly-low"
+    assert _base_profile(output["updatedInput"]) == "foundry:routed-readonly-none"
 
     payload["tool_input"]["subagent_type"] = "foundry:reviewer"
     monkeypatch.setattr(route_agent.sys, "stdin", io.StringIO(json.dumps(payload)))
@@ -1072,7 +1091,7 @@ def test_claude_facade_parses_availability_and_strict_user_envelope():
     assert claude_available_models({
         CLAUDE_AVAILABLE_MODELS: "haiku, opus-5, claude-fable-5",
     }) == {
-        "haiku-4.5", "opus-5", "fable-5",
+        "haiku", "opus-5", "fable-5",
     }
     assert claude_available_models({}) is None
     assert claude_available_models({
@@ -1082,10 +1101,10 @@ def test_claude_facade_parses_availability_and_strict_user_envelope():
         claude_available_models({CLAUDE_AVAILABLE_MODELS: " , "})
     with pytest.raises(RoutingConfigError, match="clés inconnues"):
         claude_user_request('FOUNDRY_ROUTE_REQUEST={"unknown":1}\n' + _packet())
-    assert claude_invocation_model("opus-5") == "opus"
+    assert claude_invocation_model("opus-5") == "claude-opus-5"
     assert claude_invocation_model("opus") == "opus"
-    assert claude_invocation_model("claude-opus-5") == "opus"
-    assert claude_policy_model("opus") == "opus-5"
+    assert claude_invocation_model("claude-opus-5") == "claude-opus-5"
+    assert claude_policy_model("opus") == "opus"
     assert claude_policy_model("claude-opus-5") == "opus-5"
     with pytest.raises(RoutingConfigError, match="alias Agent attendu"):
         claude_invocation_model("project-model")
@@ -1180,17 +1199,21 @@ def _frontmatter(path):
 def test_agent_frontmatter_keeps_models_dynamic_and_effort_boundary_explicit():
     logical = {identity.lower() for identity in AGENT_IDENTITIES.values()}
     profiles = list((PLUGIN_ROOT / "agents").glob("routed-*.md"))
-    assert len(profiles) == 10
+    assert len(profiles) == 76
 
     for path in (PLUGIN_ROOT / "agents").glob("*.md"):
         frontmatter = _frontmatter(path)
-        assert not re.search(r"(?m)^model:", frontmatter), path
+        model = re.findall(r"(?m)^model: (.+)$", frontmatter)
+        assert len(model) <= 1, path
+        if model:
+            assert model[0].startswith("claude-"), path
+
         if path.stem in logical:
             assert not re.search(r"(?m)^effort:", frontmatter), path
             assert re.search(r"(?m)^tools: Read$", frontmatter), path
         else:
             efforts = re.findall(r"(?m)^effort: (low|medium|high|xhigh|max)$", frontmatter)
-            assert len(efforts) == 1, path
+            assert len(efforts) == (0 if re.match(r"routed-(readonly|worker)-none(?:-|$)", path.stem) else 1), path
             tools = re.search(r"(?m)^tools: (.+)$", frontmatter).group(1).split(", ")
             assert "Agent" not in tools and "Task" not in tools, path
             if path.stem.startswith("routed-readonly-"):

@@ -55,17 +55,17 @@ _REVIEW_CLAIM_ATTEMPT_TOKEN = re.compile(r"[0-9a-f]{64}\Z")
 @dataclass(frozen=True)
 class ModelTarget:
     model: str
-    effort: str
+    effort: str | None
 
 
 # This is the single provider-specific source.  Skills and agents consume roles
 # and semantic tiers, never their own copy of these mappings.
 DEFAULT_MAPPINGS = {
     "claude": {
-        "economy": ModelTarget("haiku-4.5", "low"),
-        "balanced": ModelTarget("sonnet-5", "medium"),
-        "frontier": ModelTarget("opus-5", "high"),
-        "apex": ModelTarget("fable-5", "high"),
+        "economy": ModelTarget("haiku-4.5", None),
+        "balanced": ModelTarget("sonnet-5.5", "medium"),
+        "frontier": ModelTarget("opus-5.5", "high"),
+        "apex": ModelTarget("opus-5.5", "high"),
     },
     "codex": {
         "economy": ModelTarget("gpt-6-luna", "low"),
@@ -106,7 +106,7 @@ class ResolvedRoute:
     requested_tier: str
     selected_tier: str
     model: str
-    effort: str
+    effort: str | None
     sources: Mapping[str, str]
     fallback_direction: str
     fallback_candidates: tuple[str, ...]
@@ -275,7 +275,8 @@ def _validate_project_data(data: dict, path: Path) -> tuple[dict, dict, dict, di
             if "model" in target:
                 clean_target["model"] = _public_model_identifier(target["model"], f"{where}.model")
             if "effort" in target:
-                clean_target["effort"] = _non_empty_string(target["effort"], f"{where}.effort")
+                clean_target["effort"] = (None if host == "claude" and target["effort"] is None
+                                          else _non_empty_string(target["effort"], f"{where}.effort"))
             clean_mappings[host][tier] = clean_target
     raw_scopes = data.get("effort_scopes", {})
     if not isinstance(raw_scopes, dict):
@@ -493,8 +494,27 @@ class RoutingPolicy:
                 target = ModelTarget(target.model, user.effort.strip())
                 sources["effort"] = "user"
             scope = scope_for(host, target.model, self.effort_scopes)
-            _validate_effort(target.effort, f"résolution de {role}.effort", scope)
-            _validate_gate_effort(role, target.effort, f"résolution de {role}", scope)
+            effective_model = self.claude_models.get(target.model, target.model) if host == "claude" else target.model
+            haiku = host == "claude" and effective_model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001")
+            if haiku:
+                if target.effort not in (None, "low") or user.effort is not None:
+                    raise RoutingConfigError(
+                        "Haiku 4.5 : effort rejeté, non applicable ; demandez le tier economy "
+                        "ou configurez ce modèle avec effort null, sans effort utilisateur."
+                    )
+                if role in GATE_EFFORT_FLOORS:
+                    raise RoutingConfigError("Haiku sans effort ne satisfait pas le plancher du gate.")
+            else:
+                if host == "claude" and target.effort is None:
+                    raise RoutingConfigError(
+                        f"résolution de {role}.effort : effort null réservé à Haiku 4.5 ; "
+                        f"pour '{target.model}', fournissez un effort explicite dans la "
+                        "demande utilisateur ou le mapping projet "
+                        f"(scope {scope.host}, {scope.family}, v{scope.version} ; "
+                        f"niveaux acceptés : {', '.join(scope.levels)})."
+                    )
+                _validate_effort(target.effort, f"résolution de {role}.effort", scope)
+                _validate_gate_effort(role, target.effort, f"résolution de {role}", scope)
             attempted.append(tier)
             if availability is None or target.model in availability:
                 selected = (tier, target)
@@ -511,6 +531,9 @@ class RoutingPolicy:
                 f"Aucun modèle disponible pour le {kind} sur {host}. "
                 f"Niveaux {direction} essayés : {', '.join(attempted)}. "
                 "Rendez un modèle de ce chemin disponible ou fournissez un override explicite."
+                + (" Les alias Claude courts ne certifient pas une version épinglée ; "
+                   "déclarez les IDs/canonicals disponibles, ou choisissez explicitement "
+                   "un alias dans le mapping projet." if host == "claude" else "")
             )
 
         selected_tier, target = selected

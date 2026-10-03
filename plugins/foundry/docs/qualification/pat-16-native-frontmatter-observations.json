@@ -1,0 +1,229 @@
+{
+  "kind": "Sanitized observations from actual native logs and offline fixture verification; not a Foundry receipt or acceptance attestation",
+  "adr": "PAT-ADR-0012",
+  "loaded_mode": "source",
+  "client": "2.1.285",
+  "provider": "firstParty",
+  "auth": "claude.ai Pro observed before lot",
+  "original_failed_session_preserved": true,
+  "new_sessions_started": 4,
+  "historical_sessions_started": 5,
+  "new_children_observed": 4,
+  "qualification_replays": 0,
+  "additional_credit_authorization": false,
+  "billing_caveat": "OAuth Pro and fallback_credit null observed; list-price native cost is not an invoice; offline costs unavailable, no savings claim",
+  "observations": [
+    {
+      "role": "scout",
+      "status": "passed",
+      "head_at_execution": "a17bf3d5f8d3a56a075ef9a9dcc0fdd2e0f6ccb0",
+      "native_parent_session": "45ee7ad0-84d6-4206-b474-488e9f8cb41c",
+      "native_child_agent": "a65c2911ea5e8086f",
+      "observed_models": [
+        "claude-haiku-4-5-20251001"
+      ],
+      "observed_effort": null,
+      "native_per_turn_effort": null,
+      "haiku_effort_status": "native perTurnEffort explicitly null; effort absent; model-specific not-applicable, no numerical applied-effort claim",
+      "elapsed_seconds": 11.264,
+      "verifier": "JSON value matches frozen expected result",
+      "actual_usage": {
+        "parent": {
+          "input_tokens": 4,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 158036,
+          "output_tokens": 389,
+          "reasoning_output_tokens": 0
+        },
+        "child": {
+          "input_tokens": 18,
+          "cached_input_tokens": 10453,
+          "cache_write_input_tokens": 11355,
+          "output_tokens": 471,
+          "reasoning_output_tokens": 352
+        }
+      },
+      "reader_completeness": {
+        "parent": {
+          "completeness": "available",
+          "billable_records": 2,
+          "affected_records": [],
+          "excluded_records": []
+        },
+        "child": {
+          "completeness": "available",
+          "billable_records": 2,
+          "affected_records": [],
+          "excluded_records": []
+        }
+      },
+      "log_sha256": {
+        "parent": "6182a2f6af8ff2ceb3eeb85e2951c6fb28e2cc48daf79cf1d56feb0670a64ec1",
+        "child": "664782ebbed3898c2e8cd3946890c8132c96f59f197708168e37fb07bda4dce3"
+      }
+    },
+    {
+      "role": "implementer",
+      "status": "failed",
+      "head_at_execution": "a17bf3d5f8d3a56a075ef9a9dcc0fdd2e0f6ccb0",
+      "native_parent_session": "a7aa14b7-e7e5-48c5-ab2c-0b7633b2a4a2",
+      "native_child_agent": "a61d61bcf20f9d4de",
+      "observed_models": [
+        "claude-sonnet-5-5"
+      ],
+      "observed_effort": [
+        "medium"
+      ],
+      "native_per_turn_effort": [
+        "medium"
+      ],
+      "haiku_effort_status": null,
+      "elapsed_seconds": 15.589,
+      "verifier": "Offline isolated patch satisfies both calls and expected bytes; native diff-only output failed and write attempt denied",
+      "actual_usage": {
+        "parent": {
+          "input_tokens": 4,
+          "cached_input_tokens": 256505,
+          "cache_write_input_tokens": 16473,
+          "output_tokens": 572,
+          "reasoning_output_tokens": 0
+        },
+        "child": {
+          "input_tokens": 6,
+          "cached_input_tokens": 21613,
+          "cache_write_input_tokens": 11817,
+          "output_tokens": 509,
+          "reasoning_output_tokens": 97
+        }
+      },
+      "reader_completeness": {
+        "parent": {
+          "completeness": "available",
+          "billable_records": 2,
+          "affected_records": [],
+          "excluded_records": []
+        },
+        "child": {
+          "completeness": "available",
+          "billable_records": 3,
+          "affected_records": [],
+          "excluded_records": []
+        }
+      },
+      "log_sha256": {
+        "parent": "dbea01c7edaf3f8de24052539de694c7386219c2fc080196d3bbc5236da2f95a",
+        "child": "a1bfb06eff78d32a50505903ceef79e7e5d5c28b5cc1fa23ce9dcca8e55cd067"
+      }
+    },
+    {
+      "role": "reviewer",
+      "status": "unavailable",
+      "head_at_execution": "a17bf3d5f8d3a56a075ef9a9dcc0fdd2e0f6ccb0",
+      "native_parent_session": "5c998520-88d0-4c71-ad50-1c8aa38c3fbe",
+      "native_child_agent": "a3e66e2c302b1d6a4",
+      "observed_models": [
+        "claude-opus-5-5"
+      ],
+      "observed_effort": [
+        "high"
+      ],
+      "native_per_turn_effort": [
+        "high"
+      ],
+      "haiku_effort_status": null,
+      "elapsed_seconds": 57.027,
+      "verifier": "Verified diff not emitted: compound command rejected by readonly hook; bare quoted command failed host allow rule. No AC review or proof.",
+      "actual_usage": {
+        "parent": {
+          "input_tokens": 4,
+          "cached_input_tokens": 258368,
+          "cache_write_input_tokens": 20809,
+          "output_tokens": 2607,
+          "reasoning_output_tokens": 0
+        },
+        "child": {
+          "input_tokens": 10,
+          "cached_input_tokens": 115637,
+          "cache_write_input_tokens": 38083,
+          "output_tokens": 2626,
+          "reasoning_output_tokens": 574
+        }
+      },
+      "reader_completeness": {
+        "parent": {
+          "completeness": "available",
+          "billable_records": 2,
+          "affected_records": [],
+          "excluded_records": []
+        },
+        "child": {
+          "completeness": "available",
+          "billable_records": 5,
+          "affected_records": [],
+          "excluded_records": []
+        }
+      },
+      "log_sha256": {
+        "parent": "a8cb526c33b82300018eb70a44135fbf111926e2eda9f0361a353c2d9a95786c",
+        "child": "6605f18cf755132c5a0fd712e102d899a5a3b6faee5119667a292d3d183c2fec"
+      }
+    },
+    {
+      "role": "architect",
+      "status": "passed",
+      "head_at_execution": "a17bf3d5f8d3a56a075ef9a9dcc0fdd2e0f6ccb0",
+      "native_parent_session": "6d343c0c-bfb9-4ad3-8aeb-2162ce8eb574",
+      "native_child_agent": "ac298eef29f36d942",
+      "observed_models": [
+        "claude-opus-5-5"
+      ],
+      "observed_effort": [
+        "high"
+      ],
+      "native_per_turn_effort": [
+        "high"
+      ],
+      "haiku_effort_status": null,
+      "elapsed_seconds": 13.404,
+      "verifier": "JSON value matches frozen expected result",
+      "actual_usage": {
+        "parent": {
+          "input_tokens": 4,
+          "cached_input_tokens": 256484,
+          "cache_write_input_tokens": 16223,
+          "output_tokens": 362,
+          "reasoning_output_tokens": 0
+        },
+        "child": {
+          "input_tokens": 4,
+          "cached_input_tokens": 14594,
+          "cache_write_input_tokens": 7327,
+          "output_tokens": 323,
+          "reasoning_output_tokens": 242
+        }
+      },
+      "reader_completeness": {
+        "parent": {
+          "completeness": "available",
+          "billable_records": 2,
+          "affected_records": [],
+          "excluded_records": []
+        },
+        "child": {
+          "completeness": "available",
+          "billable_records": 2,
+          "affected_records": [],
+          "excluded_records": []
+        }
+      },
+      "log_sha256": {
+        "parent": "2c2682899dfc3cfc69fdf8868f69430dc3a0da354246ab195827ffaa2fd4371d",
+        "child": "f687a53cd4314a4d97a92a1fc64a6cc2169e3f3a0379029f7c988d5d9b38403f"
+      }
+    }
+  ],
+  "review_proof": "none; reviewer did not read diff",
+  "promotion": "none",
+  "rollback": "candidate policy returned to absent baseline; original bytes retained",
+  "reader_source_sha256": "8cd83148f942bcfcda8e1069b53cff6cf9443087c7d3a4af504361e978460c0f"
+}

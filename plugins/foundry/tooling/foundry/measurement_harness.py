@@ -1012,7 +1012,7 @@ def run_claude(harness: MeasurementHarness, request: MeasurementRequest, *, task
     resolved = claude_route_plan(role, packet, root=resolved_root, environ=environ)
     route = resolved.get("route") if isinstance(resolved, Mapping) else None
     _require(isinstance(route, ResolvedRoute) and route.host == "claude", "Claude resolved route differs")
-    _require(claude_invocation_model(route.model) == model and route.effort == effort, "Claude resolved route differs from frozen profile")
+    _require(claude_invocation_model(route.model) == model and route.effort == effort, "Claude resolved route differs from frozen profile; historical alias corpus requires an explicit project alias mapping, never conversion of a version pin")
     unknown = {"status": "unknown", "failure_class": "unknown"}
     binding = {"source": "claude_resolved", "model": model, "effort": effort, "host_version": version, "host_override_active": _route_override(route), "route_sha256": _sha256(_route_projection(route)), "result_sha256": _sha256({"terminal": unknown})}
     reservation = harness._reserve(_base_record(

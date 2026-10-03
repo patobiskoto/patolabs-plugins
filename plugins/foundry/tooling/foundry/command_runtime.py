@@ -51,7 +51,9 @@ from foundry.execution_receipts import (
     ExecutionReceiptStore,
 )
 from foundry.routing import LEVELS
-from foundry.routing_facades import _load_claude_policy, claude_invocation_model
+from foundry.routing_facades import (
+    _load_claude_policy, claude_effort_parameters, claude_invocation_model,
+)
 
 
 AUTHORITY_CONTRACT = "foundry-command-authority.v3"
@@ -515,18 +517,20 @@ class ClaudeCommandEffectProvider:
         reconcile_capacity(authority.observation)
         session_id = self._session_id(command.id, authorization.binding_digest)
         attempt_started_at = self.source.now_ms()
+        invocation_model = claude_invocation_model(
+            route.model, project_models=getattr(self.routing, "claude_models", {}),
+        )
+        effort = claude_effort_parameters(route, invocation_model=invocation_model)["transmitted"]
         argv = [
             "claude", "--print", "--output-format", "json",
-            "--model", claude_invocation_model(
-                route.model,
-                project_models=getattr(self.routing, "claude_models", {}),
-            ),
-            "--effort", route.effort,
+            "--model", invocation_model,
             "--max-budget-usd",
             f"{authorization.provider_invocation_ceiling_cents / 100:.2f}",
             "--permission-mode", "auto", "--plugin-dir", str(self.plugin_root),
             "--name", f"foundry-{command.id}",
         ]
+        if effort is not None:
+            argv.extend(["--effort", effort])
         argv.extend(["--resume", session_id] if resume else ["--session-id", session_id])
         environment = _claude_child_environment()
         # This deterministic session identity is also the immutable receipt binding.

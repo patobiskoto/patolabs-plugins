@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mappings": {
+    "claude": {
+      "economy": {"model": "haiku-4.5", "effort": null},
+      "balanced": {"model": "sonnet-5.5", "effort": "medium"},
+      "frontier": {"model": "opus-5.5", "effort": "high"},
+      "apex": {"model": "opus-5.5", "effort": "high"}
+    }
+  }
+}
