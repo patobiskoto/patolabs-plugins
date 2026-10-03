@@ -27,14 +27,23 @@ def test_pat61_recipe_has_exactly_the_six_real_tracker_host_cells():
         "linear-claude": "in_progress",
         "linear-codex": "in_progress",
         "ghprojects-claude": "in_progress",
-        "ghprojects-codex": "in_progress",
+        "ghprojects-codex": "passed",
     }
     assert all(
         cell["partial_evidence"]
         for cell in recipe["cells"]
         if cell["status"] != "not_run"
     )
-    assert not any(cell["status"] == "passed" for cell in recipe["cells"])
+    assert not all(cell["status"] == "passed" for cell in recipe["cells"])
+    passed = [cell for cell in recipe["cells"] if cell["status"] == "passed"]
+    assert len(passed) == 1
+    assert set(passed[0]["journey_evidence"]) == set(recipe["required_journey"])
+    assert all(
+        set(passed[0]["journey_evidence"][step])
+        == {"source", "coordinates", "existing_proofs"}
+        and all(passed[0]["journey_evidence"][step].values())
+        for step in recipe["required_journey"]
+    )
 
 
 def test_pat61_recipe_is_budgeted_and_does_not_promote_deterministic_evidence():

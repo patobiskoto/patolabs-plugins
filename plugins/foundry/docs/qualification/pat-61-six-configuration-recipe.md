@@ -3,8 +3,9 @@
 Ce document rend PAT-61 exécutable sans présenter une double de transport comme une
 preuve fournisseur. La matrice machine est
 [`pat-61-six-configuration-v1.json`](pat-61-six-configuration-v1.json). Les cellules
-gardent leur état d'exécution observé ; aucune n'est encore `passed` et le manifeste ne
-fabrique aucun receipt.
+gardent leur état d'exécution observé ; GitHub Projects × Codex est `passed` sur son
+périmètre P61R, tandis que PAT-61 reste `blocked` avec cinq cellules non passées. Le
+manifeste ne fabrique aucun receipt.
 
 La recette est une qualification d'intégration, pas un nouveau design d'adaptateur. Les
 contraintes existantes de [`tracker-contract.md`](../tracker-contract.md), du contrat de
@@ -61,7 +62,7 @@ résultat est borné à l'opération observée ; les cases non exécutées reste
 | ADR d'un autre produit | `query adr PAT-ADR-0006` depuis le sandbox Linear : `ADR introuvable`, index local vide | Pas d'écriture ADR tentée |
 | Configuration globale contradictoire | `FOUNDRY_TRACKER=youtrack` et `PROJECT_REPO` YouTrack depuis le checkout Linear résolvent encore PAT-74 dans PAT/Linear ; `FOUNDRY_TRACKER=linear` et `PROJECT_REPO=patolabs-plugins` depuis P61G sélectionnent encore `ghprojects/P61G` | Lectures seules sur deux bindings, aucune écriture |
 | Credentials du tracker actif perdus | `FOUNDRY_RUNTIME_CONFIG_ISOLATED=1` sans token en environnement : Linear refuse `LINEAR_API_TOKEN` et YouTrack refuse `YOUTRACK_TOKEN` (URL non secrète conservée) ; GitHub Projects depuis P61G avec `GH_CONFIG_DIR` neuf et sans `GH_TOKEN`/`GITHUB_TOKEN` refuse `project.read: authentication_failed` | Isolation contrôlée des processus, pas révocation des credentials réels ; aucune issue lue |
-| ADR déclaré indisponible | Non exécuté | Requiert une fixture ADR déclarée et isolée |
+| ADR déclaré indisponible | Au source propre `f9f420f`, Foundry a lié ADR-3 à P61R-5; l'archivage natif temporaire de ce seul item a laissé P61R-6 `done`/accepté mais P61R-5 `unavailable`, et `query adrs`/`query adr 3` ont refusé avec `AdrIssueUnavailableError` typé | Aucun body ADR supprimé, aucune écriture ADR quand l'index est inconnu, aucun fallback fournisseur; après une erreur interne GitHub, une unique restauration du même item a rétabli exactement ses fields, content et coordonnées |
 | Dérive du registre/marqueur | Dans une copie Git locale du sandbox Linear, modifier seulement `tracker` invalide le digest du marqueur et refuse `registry selection --require-v1` ; le hook PAT-42 refuse `gh pr create`, `gh pr merge` et `git push origin main`, mais laisse `git status` passer | Commandes dangereuses soumises au hook, jamais exécutées ; aucun provider write |
 | Ancien tracker archivé | Dans le checkout migré P64G, la sélection reste `ghprojects/P64G` ; le slot source `youtrack/P64Q` est archivé et `require_writable_project` refuse sa mutation avant appel fournisseur | Préflight local sans tentative d'écriture provider ; aucun binding réactivé |
 | Rollback de configuration | Restaurer les octets originaux du marqueur dans cette copie rétablit la sélection PAT/Linear ; relecture byte-identique | Rollback local, pas un cutover fournisseur |
@@ -134,12 +135,12 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
-| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `blocked` | P61Y-3/PR #3 a parcouru reprise, ouverture, review, CI et merge sous Claude en mode source (`1755a3d`) ; le démarrage a été fait par le coordinateur et le cache installé 0.9.0 reste incompatible avec le marqueur v2. PAT-ADR-0009 est acceptée et PAT-82 est mergé, mais P61Y-3 reste historiquement `unavailable`; la parité installée, le démarrage Claude autonome et le parcours complet restent à prouver. |
-| YouTrack × Codex | P61Y et dépôt privé de sable | `blocked` | P61Y-1/PR #1 et P61Y-2/PR #2 ont été mergées via Foundry avec CI et review. PAT-82 ajoute P61Y-4/PR #4, reçu neuf `accepted`; P61Y-2 et P61Y-3 restent `unavailable` sans backfill. Le scope ne peut donc pas se clore; Epic, parcours Codex complet et preuve Apple de la cellule restent à faire. |
+| YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `blocked` | P61Y-3/PR #3 a parcouru reprise, ouverture, review, CI et merge sous Claude en mode source (`1755a3d`) ; le démarrage a été fait par le coordinateur. PAT-ADR-0009 est acceptée et PAT-82 est mergé, mais P61Y-3 reste historiquement `unavailable`; le démarrage Claude autonome et le parcours complet restent à prouver. Un nouveau scope, contenant seulement des receipts frais qualifiés dont P61Y-4, peut être testé sans backfill. |
+| YouTrack × Codex | P61Y et dépôt privé de sable | `blocked` | P61Y-1/PR #1 et P61Y-2/PR #2 ont été mergées via Foundry avec CI et review. PAT-82 ajoute P61Y-4/PR #4, reçu neuf `accepted`; P61Y-2 et P61Y-3 restent `unavailable` sans backfill. Un nouveau scope contenant seulement des receipts frais qualifiés, dont P61Y-4, reste une étape possible; Epic et parcours Codex complet de cette cellule restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 a corrigé ce défaut sans réécrire l'incident. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
 | GitHub Projects × Claude Code | P61R, dépôt privé et Project personnel privé #10 | `in_progress` | Claude Code 2.1.267 a chargé le package source exact par `--plugin-dir` et exécuté `resume`, `start`, `open-pr` et `merge-pr` Foundry, avec Eiffel/Maigret. P61R-6/PR #7 a été mergée après une correction README seule et une review fraîche. Le parcours demeure partiel: ADR-3 est `proposed`, aucune frame ne la cite, l'installation officielle post-publication reste PAT-62 et aucun PASS n'est inféré. |
-| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge. Au source exécuté `f743f2e`, le roundtrip ADR P61R-ADR-0003 est `proposed` (V1→V2 relu). Au source `f567764`, le verdict humain `accepted` a permis `close-epic` sur P61R-4, alors aligné avec son unique commentaire d'audit; le scope et le bridge Ship-iOS relisaient P61R-1 seul, `accepted`, dans le milestone natif fermé `PAT61 sandbox v1`. Après le cleanup historique P61R-5→P61R-1, Codex a qualifié P61R-5→P61R-6: `depends-on`/`blocks` réciproques, rejeu sans write, groom complet sans cycle ni unavailable. Epic P61R-4 reste inchangé et aligné; P61R-5 reste backlog, AC 0/2, sans acceptation. Le parcours complet, la parité installée et les adversaires restent à qualifier. |
+| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `passed` | Les six étapes P61R sont couvertes: binding; ADR-3 V1→V2 et refus ADR indisponible/restauration exacte; Epic P61R-4 avec enfant, dépendance P61R-5/P61R-6 et groom; P61R-1 start/reprise/PR/review/CI/merge; clôture Epic relue alignée; scope P61R-1 et bridge Ship-iOS `accepted`. La cellule est qualifiée sur ce périmètre; PAT-61 global reste `blocked` par les cinq autres cellules. |
 
 GHQUAL et P64G peuvent être relus comme ressources historiques uniquement. P64Q et
 l'ancien binding FOUNDRY sont archivés : ils ne sont pas réactivés et ne constituent pas
@@ -362,7 +363,8 @@ Le coordinateur doit terminer la parité source/distribution et la vérification
 chaîne de hooks dans chaque checkout, puis exécuter les six chemins et leurs tests
 adverses. La validation TestFlight humaine commune est déjà consignée; les dépôts et
 projets synthétiques réservés et les témoins de PR ci-dessus restent seulement des
-étapes de ce parcours. Aucune cellule n'est encore qualifiée comme passée.
+étapes de ce parcours. Ce constat précède les relectures P61R ultérieures; GitHub
+Projects × Codex est désormais qualifié `passed` sur son périmètre, sans débloquer PAT-61.
 
 
 ## Suivi Apple après PAT-80 — PAT-81
@@ -436,9 +438,9 @@ acceptation `ghprojects-acceptance-proof` 2/2. Le Project #10 relit un item uniq
 non archivé, avec `hasNextPage=false`, et la liste REST relit le même item. L'Issue
 GitHub sous-jacente reste `OPEN` : l'état Foundry `done` est ici le champ de projet,
 sans divergence cachée ni autorité de fermeture manuelle de l'Issue. La cellule
-GitHub Projects × Codex devient donc `in_progress` pour ce chemin de livraison, jamais
-`passed` : à cette étape, ADR, Epic, parcours hôte complet, cas adverses, parité
-installée et bridge Ship-iOS propre à la cellule restaient incomplets.
+GitHub Projects × Codex était donc `in_progress` pour ce chemin de livraison, jamais
+`passed` dans cet instantané initial : ADR, Epic, parcours hôte complet, cas adverses,
+parité installée et bridge Ship-iOS propre à la cellule restaient alors incomplets.
 
 ### Roundtrip ADR et Epic P61R après la livraison
 
@@ -555,10 +557,48 @@ P61R-1, puis a créé `P61R-5 depends-on P61R-6` et son lien réciproque
 écriture (`REST_write=0`, `GraphQL_mutation=0`). Le groom relit quatre éléments, dont le
 composant connecté P61R-5/P61R-6 et trois historiques (P61R-1, P61R-4, P61R-6), sans
 troncature, next page, cycle ni `unavailable`. Epic P61R-4 reste inchangé et aligné.
-Cette preuve de graphe Codex ne transforme aucune cellule en `passed`; l'installation ou
-l'upgrade officiel des deux hôtes reste le gate PAT-62 post-publication. Le scope YouTrack
+Cette preuve de graphe Codex, prise isolément, ne transforme aucune cellule en `passed`;
+l'installation ou l'upgrade officiel des deux hôtes reste le gate PAT-62 post-publication. Le scope YouTrack
 historique `unavailable` reste tel quel; un nouveau scope ne pourra être testé plus tard
 qu'avec des receipts qualifiés.
+
+Au source propre `f9f420f`, Foundry a relié ADR-3 à P61R-5, puis l'opérateur a archivé
+temporairement le seul item natif `PVTI_lAHOABroCc4BlYLDzg-PUMA` après vérification des
+coordonnées privées et de ses sept champs. P61R-6 reste `done`/accepté, mais P61R-5 est
+alors `unavailable` et l'index ADR devient exactement
+`adr_issue_unavailable` pour ADR-3 → P61R-5. `query adrs` et `query adr 3` refusent
+avec `AdrIssueUnavailableError`; aucun body ADR n'est supprimé ni écrit lorsque la
+contrainte est inconnue. La première restauration a reçu une erreur interne GitHub;
+après relecture archivée exacte, une unique restauration du même item a réussi et a
+rétabli à l'identique fields, content et coordonnées (`restored_exactly=true`). Aucun
+champ n'a été forcé, aucune preuve fabriquée, aucun fallback fournisseur n'est invoqué.
+La conformité du source `f9f420f` donne 108 tests, 3051 désélectionnés; ce test adverse
+pris isolément ne rend aucune cellule `passed`.
+
+### Audit des six étapes requises
+
+Pour GitHub Projects × Codex, les six étapes du `required_journey` sont couvertes dans
+la borne P61R: binding frais; création et évolution V1→V2 d'ADR-3; Epic P61R-4 avec
+enfant, dépendance non vide P61R-5/P61R-6 et groom sans cycle; start/reprise/PR/review/CI
+et merge P61R-1; clôture Epic et projection relue alignée après cleanup; scope de release
+P61R-1 et bridge Ship-iOS relus acceptés. Le refus ADR indisponible et la restauration
+exacte complètent le cas adverse déclaré. L'hôte Codex relevé le 3 octobre est
+l'exécuteur embarqué ChatGPT `.../CodexCLI.app/Contents/MacOS/codex` 0.159.2 (app
+26.928.31416, build 12553), et non le binaire PATH 0.155.1; le plugin source 0.9.0 est
+attesté au SHA `f9f420f`. Aucun test de supersession n'est requis par l'évolution ADR
+observée, ni parité installée avant publication, ni six TestFlight par
+cellule: l'installation officielle reste PAT-62 post-publication et Apple est partagé
+dans sa borne autorisée. Ces six éléments et leurs coordonnées existantes qualifient
+GitHub Projects × Codex `passed`; cette classification ne crée aucun receipt. Le bilan
+global PAT-61 reste `blocked` (AC 0/6) tant que les cinq autres cellules ne passent pas.
+
+Les gaps actuels des autres cellules restent: YouTrack × Claude Code manque un parcours
+autonome complet; un nouveau scope de receipts frais qualifiés, dont P61Y-4, peut éviter
+les historiques `unavailable` sans backfill. YouTrack × Codex a la même prochaine étape de
+scope frais, ainsi que les étapes Epic/parcours complet absentes. Linear × Claude Code manque les étapes ADR/Epic et le parcours
+de release complet; Linear × Codex manque encore l'Epic, ses enfants/dépendances/groom et
+le parcours complet. Aucun de ces constats n'ajoute de gate ou ne transforme un reçu
+historique en preuve terminale.
 
 
 Au HEAD `0f175af`, la suite de conformité passe : 108 tests, 3031 deselected.
