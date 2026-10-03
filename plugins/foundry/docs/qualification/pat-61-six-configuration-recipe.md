@@ -26,6 +26,13 @@ suivis et version `0.9.0`. Claude Code charge explicitement cette source par
 pas prouver un cache installé ni une version 1.0. Une installation propre ou upgrade
 par les gestionnaires officiels des deux hôtes, sans édition de cache, avec version
 réellement chargée, reste le gate post-publication de PAT-62.
+Le checkpoint final intégré est `1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe` après
+`84cfaa6` puis merge de `origin/main`, sans conflit. Foundry reste 0.9.0 prépublication,
+257 fichiers; SHA256(`git archive --format=tar HEAD plugins/foundry`) =
+`b4a6b872e056fb7575db9551462cb5e86082d72960f162e5426200902ac225cd`.
+Les validations actuelles sur ce HEAD sont 3215 tests publics (10 désélectionnés) et
+108 de conformité (3128 désélectionnés). C'est un checkpoint source/conformité: il ne
+refait ni les parcours historiques, ni l'installation officielle, ni une CI PAT-61.
 `adapter_baseline_sha` identifie seulement le merge de PAT-68 à partir duquel cette
 recette a été préparée. Cette précondition est importante ici : au préflight du 1er
 octobre 2026, Claude Code et Codex affichaient Foundry 0.9.0, mais des fichiers installés
@@ -136,9 +143,9 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
 | YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `in_progress` | P61Y-6/PR #5 est mergée `98bd2de`, `done`/AC 2/2/acceptée; ADR-2 est `proposed` V2. Epic P61Y-7 lie P61Y-6 dépendant de P61Y-4, et P61Y-5 lie P61Y-4; les deux attendent le verdict humain `accepted`. Le scope frais 4/6 est `accepted`; la capacité native de fermeture reste `unavailable`. L'arrêt max_turns est post-effets, pas un échec d'étape. |
-| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | Le milestone #4 a maintenant le scope frais P61Y-4 seul, `accepted` 2/2, `unfinished=0`, `unavailable=0`; la capacité native de fermeture est `unavailable`, donc aucun état natif fermé n'est inventé. P61Y-2/P61Y-3 restent historiques `unavailable`. L'Epic P61Y-5 est backlog avec P61Y-4 enfant `done`/accepté; dépendance non vide et verdict humain/closure manquent. |
-| Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Les huit BLOCK historiques sont conservés; Foundry a mergé PR #66 après 3 checks `success` sur `75c0116…ad53`, AC proof-projected 3/3, SHA `bc25c344…b36b`, PAT-85 `done`. L'intégration de `main` à la branche recette est en cours et les clôtures Epic humaines restent pendantes; aucun PASS. |
-| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | Les receipts antérieurs et les huit BLOCK restent conservés; PAT-85 est maintenant `done` après merge Foundry. L'intégration de `main` à la branche recette est en cours. L'Epic PAT-83 est backlog (parent PAT-77), verdict humain demandé sans réponse, donc ni closure ni preuve terminale; aucun PASS. |
+| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | Le milestone #4 a maintenant le scope frais P61Y-4 seul, `accepted` 2/2, `unfinished=0`, `unavailable=0`; la capacité native de fermeture est `unavailable`, donc aucun état natif fermé n'est inventé. P61Y-2/P61Y-3 restent historiques `unavailable`. L'Epic P61Y-5 est backlog avec P61Y-4 enfant `done`/accepté; le lien existant P61Y-6→P61Y-4 est rejoué sans écriture et les deux issues restent byte-identiques. Verdict humain/closure manquent. |
+| Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Les huit BLOCK historiques sont conservés; Foundry a mergé PR #66 après 3 checks `success` sur `75c0116…ad53`, AC proof-projected 3/3, SHA `bc25c344…b36b`, PAT-85 `done`. L'intégration de `main` est terminée sans conflit au HEAD `1ee3f0a`; les clôtures Epic humaines restent pendantes; aucun PASS. |
+| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | Les receipts antérieurs et les huit BLOCK restent conservés; PAT-85 est `done` après merge Foundry et l'intégration de `main` est terminée sans conflit au HEAD `1ee3f0a`. L'Epic PAT-83 est backlog (parent PAT-77), verdict humain demandé sans réponse, donc ni closure ni preuve terminale; aucun PASS. |
 | GitHub Projects × Claude Code | P61R, dépôt privé et Project personnel privé #10 | `in_progress` | ADR-8 expérimental est `proposed` V2. L'Epic P61R-9, réconcilié après `partial item_readback`, est parent de P61R-6, unique enfant requis, sans dépendance requise; groom et bridge frais relisent le scope 6 `accepted`. La clôture humaine reste pendante. Le marker Foundry du sandbox est intentionnellement non commité; l'Issue native 6 est ouverte mais son état Project est `done` avec reçu qualifié. |
 | GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `passed` | Les six étapes P61R sont couvertes: binding; ADR-3 V1→V2 et refus ADR indisponible/restauration exacte; Epic P61R-4 avec enfant, dépendance P61R-5/P61R-6 et groom; P61R-1 start/reprise/PR/review/CI/merge; clôture Epic relue alignée; scope P61R-1 et bridge Ship-iOS `accepted`. La cellule est qualifiée sur ce périmètre; PAT-61 global reste `blocked` par les cinq autres cellules. |
 
