@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Documentation compatibility note, 2026-10-03: Ship-iOS retains 0.3.0 with the
+  prepared Foundry 1.0.0 candidate. PAT-61's accepted six-configuration source
+  qualification retains its original Foundry 0.9.0 producer refs; official published
+  installation/upgrade readbacks remain pending. No bridge/API, template or App
+  Store behavior changes; see the [Foundry release matrix](../foundry/docs/release-1.0.0.md).
+
 ## 0.3.0 — 2026-09-30
 
 - Qualified the optional Foundry bridge against the repository-selected V1 contract:

@@ -2,7 +2,23 @@
 
 ## Unreleased
 
+## 1.0.0 — 2026-10-03
+
+Prepared release candidate; publication, official installation/upgrade and loaded
+version/ref readbacks remain pending. See [release notes](docs/release-1.0.0.md)
+and [setup/migration](docs/migration-1.0.0.md). This dated source entry is not a
+claim that 1.0.0 is already published or installed.
+
 ### Added
+- The V1 distribution packages for Claude Code and Codex, both declaring 1.0.0,
+  based on accepted PAT-61 (PR #72, merge `16cdaa0`). Its six qualified source
+  configurations cover YouTrack, Linear and private personal GitHub Projects on
+  both hosts; historical producer refs and unknowns remain unchanged.
+- Short per-repository setup, official dual-host upgrade from 0.9.0, explicit
+  legacy YouTrack binding upgrade, loaded-version verification, and configuration
+  rollback limits. Installing a package performs no tracker migration.
+- An explicit compatibility matrix with unchanged Ship-iOS 0.3.0 and its portable
+  V1 selection/release-scope capability probes; no App Store effect is included.
 - The qualified private personal GitHub Projects adapter now carries Foundry-owned
   in-progress/review/done and acceptance receipts bound to the exact repository,
   Project, Issue, item and PR generation. A live private sandbox PR passed independent
@@ -15,6 +31,11 @@
   alone is never delivery proof (PAT-59).
 
 ### Fixed
+- R1 remains closed on invalid, drifted or ambiguous tracker binding (PAT-42),
+  including before forbidden PR/merge/default-branch push commands can execute.
+- YouTrack delivery receipts now distinguish accepted, deviated and unavailable
+  release facts (PAT-82); older terminal issues without qualified receipts remain
+  unavailable, without fabricated backfill.
 - Proof-bound `openpr` and `merge` now pass the original predecessor state to
   bounded-state adapters, so a GitHub Projects PR can resume after a partial
   transition without weakening the common transition guard (PAT-67).
@@ -23,6 +44,21 @@
   guard runs before milestone setup, command links, body writes, comments, and
   project-explicit issue or ADR creation, so an unrelated or unregistered checkout
   cannot write to the readable archive.
+
+### Changed
+- Bounded targeted grooming writes on YouTrack, Linear and GitHub Projects and
+  audited non-atomic Epic closure carry PAT-ADR-0006's named S1→S2 overwrite risk;
+  read/write/readback is detection, not provider CAS or concurrency exclusion.
+  Linear delivery and AC authority remain proof-bound; native checkbox replacement
+  remains refused. GitHub ADR Issue supports use an integrity-checked version chain.
+- The delivered PAT-15/PAT-16 technically qualified defaults: Claude Haiku 4.5
+  without effort, Sonnet 5.5/medium and Opus 5.5/high for frontier/apex; Codex
+  GPT-6 Luna/low and GPT-6.1 Sol/medium/high/max. Minimum Claude client 2.1.284 for
+  the complete set, actually tested 2.1.285/firstParty/Pro. Existing pins remain
+  exact; observed access, effort and source/install limits are in the release notes.
+- Package descriptions now announce only qualified provider variants. DevHub remains
+  optional outside V1; Fable/Astra and economic superiority are not promoted.
+  PAT-17/PAT-18/PAT-19 remain outside V1. Historical 0.9.0 evidence is preserved.
 
 ## 0.9.0 — 2026-09-26
 

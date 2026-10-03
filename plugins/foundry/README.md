@@ -9,13 +9,22 @@ from a rough idea to shipped work — the same, repeatable, on every project:
 
 Foundry owns the **outer loop** (what to do, the source of truth, the decision memory,
 the exit gates). The **inner loop** (design → plan → implement) is delegated to Superpowers
-or Plan mode. Its gated PR lifecycle uses YouTrack, DevHubTracker, or a Linear
-append-only proof projection with the GitHub **code-host** adapter. For that lifecycle,
-Foundry derives state, PR link and reviewed AC from deterministic comments without
-replacing Linear's native fields. Separate grooming operations can replace targeted
+or Plan mode. Its V1 gated PR lifecycle uses YouTrack, Linear, or qualified private
+personal GitHub Projects bound to a private repository, with the GitHub **code-host**
+adapter. DevHubTracker remains optional outside the V1 qualification matrix. Linear
+derives delivery state, PR link and reviewed AC from deterministic receipts, with
+targeted native state synchronization; native AC checkbox replacement is refused.
+Separate grooming operations can replace targeted
 fields, body and parent under PAT-ADR-0006's bounded detection guarantee, including its
 residual S1→S2 race and absence of CAS or exclusion. Switching to another tracker or
 code-host later remains an adapter change, not a rewrite.
+
+**1.0.0 candidate prepared on 2026-10-03; publication and official installation
+verification pending.** The [release notes](docs/release-1.0.0.md) distinguish the
+accepted PAT-61 source qualification from the remaining release effects, and give the
+Foundry 1.0.0 ↔ Ship-iOS 0.3.0 compatibility matrix. The
+[setup and migration guide](docs/migration-1.0.0.md) covers a first repository, 0.9.0
+upgrades, legacy YouTrack binding, loaded-version verification and bounded rollback.
 
 ## Why
 
@@ -87,7 +96,8 @@ environment variables. Linear's exact capability and binding contract is documen
 
 The current dual-host upgrade, trusted configuration, override diagnosis, verification,
 and rollback constraints are in
-[`docs/migration-0.9.0.md`](docs/migration-0.9.0.md). The former
+[`docs/migration-1.0.0.md`](docs/migration-1.0.0.md). The former
+[`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
 Foundry never installs, downloads, starts, or selects a local model during an upgrade.
@@ -103,29 +113,6 @@ identity recovery, durable monotonic receipts and an atomic host-shared reservat
 budget and concurrency before effect. Its authority snapshot and operator entry point are documented in
 [`docs/devhub-command-worker.md`](docs/devhub-command-worker.md).
 
-### After merging this change
-
-Reinstall/refresh from the merged marketplace snapshot; do not edit an installed cache.
-The cachebuster commands below are only for a local source-development marketplace and
-are not part of a published 0.9.0 upgrade or rollback.
-
-```text
-# Claude Code
-/plugin marketplace update patolabs
-/plugin update foundry@patolabs
-/reload-plugins
-
-# Codex, when the marketplace entry points at this local checkout
-python3 ~/.codex/skills/.system/plugin-creator/scripts/update_plugin_cachebuster.py \
-  /absolute/path/to/claude-plugins/plugins/foundry
-python3 ~/.codex/skills/.system/plugin-creator/scripts/read_marketplace_name.py
-codex plugin add foundry@<marketplace-name-printed-above>
-```
-
-If Foundry is installed from a non-local marketplace, update that marketplace through its
-normal release flow, then run `codex plugin add foundry@<marketplace-name>`. Start a new
-task after the Codex command so it loads the merged plugin version.
-
 Skills keep one shared implementation. Use `/foundry:<skill>` in Claude Code and
 `$foundry:<skill>` in Codex.
 
@@ -138,7 +125,7 @@ Skills keep one shared implementation. Use `/foundry:<skill>` in Claude Code and
 | `foundry:roadmap` | sequence the smallest slice that proves value |
 | `foundry:next-issue` | pick the most valuable unblocked issue (reasoned) |
 | `foundry:start-issue` → `foundry:open-pr` → `foundry:merge-pr` | gated execution |
-| `foundry:close-epic` | provider-audited closure of a completed non-code Epic, without a PR |
+| `foundry:close-epic` | human-verdict, audited non-atomic closure of a completed non-code Epic on the V1 trackers; bounded detection, no CAS |
 | `foundry:resume-issue` | resume mid-flight work from tracker notes + git state |
 | `foundry:intake` | new idea → issue / refine / ADR / rejected-by-ADR |
 | `foundry:groom` · `foundry:blockers` | backlog health · what's stuck |
@@ -177,7 +164,7 @@ compatibility exception: it retains `foundry:scout` so its historical evidence h
 remain verifiable, and the hook resolves it to Lupin's unchanged `scout` contract.
 
 For ordinary feature/fix/chore work, use a **balanced primary profile** for the main
-coordinator: Sonnet 5 / medium on Claude Code or GPT-5.6 Terra / medium on Codex. Move
+coordinator: Sonnet 5.5 / medium on Claude Code or GPT-6.1 Sol / medium on Codex. Move
 the main loop to frontier only when it must absorb a disclosed no-subagent fallback or
 coordinate genuinely cross-cutting risk. Keep apex for explicit architecture decisions.
 This is guidance, not enforcement: Foundry controls delegated invocations but cannot
@@ -226,10 +213,10 @@ Claude and Codex evidence and the FOUNDRY-47 `keep` decision. The frozen v2 matr
 `inconclusive` on both hosts: unavailable cost, allocation, test, review, downstream,
 security, host-version, and weighted-aggregate data remain `null`, never zero. The
 historical 7.42% price-snapshot observation is noncausal and is not a savings claim. No
-local model is promoted, and every production resolver, default, gate, fallback,
-mapping, and authority remains unchanged. The
+local model was promoted by that historical release; its production resolver,
+default, gate, fallback, mapping and authority were unchanged. The
 [`0.7.0 release report`](docs/release-0.7.0.md) remains immutable historical evidence.
-The current [`0.9.0 release notes`](docs/release-0.9.0.md) publish the completed Linear
+The historical [`0.9.0 release notes`](docs/release-0.9.0.md) publish the completed Linear
 ADR adapter (versioned ADR Documents, the completed historical ADR import), this
 repository's own cutover to Linear project PAT, and the typed human AC override receipt;
 they do not change any benchmark evidence, resolver, model mapping, or gate above.
@@ -395,7 +382,7 @@ tooling/foundry/
   routing.py       shared semantic model policy, fallbacks, override warnings,
                    and cross-host review deduplication
   escalation.py    locked per-issue counters, risk floors, ceiling, and human stop
-  trackers/        Tracker port + youtrack/linear/devhub (real) + ghprojects (stub)
+  trackers/        Tracker port + youtrack/linear/ghprojects (V1) + devhub (optional)
   codehosts/       CodeHost port + github (real)
   registry.py      repo → project map (runtime data dir, then ~/.config/foundry)
   config.py        env → Claude options → keychain → config-file fallback
@@ -418,10 +405,12 @@ one already-registered historical basename binding can run in explicit `legacy` 
 an unregistered repository never falls through to `FOUNDRY_TRACKER`. A malformed,
 moved, ambiguous or stale binding refuses the command. DevHub remains the separate
 host-selected internal pilot. `trackers/base.py` and `codehosts/base.py` are the ports.
-YouTrack, Linear, and DevHubTracker v1 are real adapters; `trackers/ghprojects.py`
-supports the V1 binding probe while its issue and ADR workflow methods remain stubs.
+YouTrack, Linear and GitHub Projects are real V1 adapters; GitHub support is bounded
+to the qualified private personal Project/private-repository shape. DevHubTracker v1
+remains an optional real adapter outside the V1 qualification matrix.
 See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the Linear adapter, marker,
-and bounded recovery procedure, and
+and bounded recovery procedure, [`docs/ghprojects-tracker.md`](docs/ghprojects-tracker.md)
+for the GitHub issue/ADR/lifecycle contract, and
 [`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated DevHub pilot cutover.
 The portable V1 functional contract across all three trackers — core journeys, identity
 model, mutation-guarantee levels without a provider CAS, and the capability matrix
@@ -449,7 +438,9 @@ upgrade/recovery rules.
 Every Tracker implements the common normalized issue and ADR read/write surface.
 Capabilities that are not universal stay explicit and default-off on the port. Project
 provisioning is one such capability: YouTrack and DevHub implement it; the GitHub
-Projects stub refuses it before any provider or registry mutation. The setup command
+Projects adapter refuses it before any provider or registry mutation. Administrative
+provisioning is outside the V1 core; verified existing-project bootstrap is in scope.
+The setup command
 never branches on a concrete provider.
 
 ## Provision a project
