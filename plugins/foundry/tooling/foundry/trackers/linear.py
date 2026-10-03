@@ -1043,7 +1043,8 @@ def _linear_strong_trailing_inline_code_readback(fragment: str) -> str:
     for start, end, _ in replacements:
         context[start:end] = "x" * (end - start)
     offset = 0
-    for line in fragment.splitlines(keepends=True):
+    lines = fragment.splitlines(keepends=True)
+    for index, line in enumerate(lines):
         end = offset + len(line)
         has_candidate = any(offset <= start < end for start, _, _ in replacements)
         indentation = line[: len(line) - len(line.lstrip(" \t"))]
@@ -1056,9 +1057,22 @@ def _linear_strong_trailing_inline_code_readback(fragment: str) -> str:
             # The already-qualified list conversion runs before this pass.
             context[offset] = "x"
         if has_candidate and any(
-            character in "*_~[]<>&\\" for character in context[offset:end]
+            character in "*_~[]<>&\\#|" for character in context[offset:end]
         ):
             raise ValueError("unsupported strong inline-code Markdown in ADR body")
+        if has_candidate:
+            # A setext underline can turn the whole preceding paragraph into
+            # a heading, including candidate lines before its last line. A
+            # single-column table delimiter is unqualified for the same reason.
+            for following in lines[index + 1 :]:
+                if not following.strip():
+                    break
+                if re.fullmatch(
+                    r" {0,3}(?:=+|-+|:?-{3,}:?)[ \t]*", following.rstrip("\r\n")
+                ):
+                    raise ValueError(
+                        "unsupported strong inline-code Markdown in ADR body"
+                    )
         offset = end
     rendered = fragment
     for start, end, replacement in sorted(replacements, reverse=True):

@@ -6859,6 +6859,41 @@ def test_linear_adr_pat85_consumed_strong_close_cannot_reopen(tracker, marker):
     assert wire.documents == before
 
 
+@pytest.mark.parametrize(
+    "body",
+    (
+        "# **A `B`**",
+        "   ### **A `B`** ###",
+        "**A `B`**\n---",
+        "**A `B`**\n===",
+        "**A `B`**\ncontinuation\n---",
+        "prefix\n**A `B`**\ncontinuation\n===",
+        "| **A `B`** |",
+        "| **A `B`** |\n| --- |",
+        "**A `B`**\n:---:",
+    ),
+)
+def test_linear_adr_pat85_block_context_refuses_before_write(tracker, body):
+    instance, wire = tracker
+    with pytest.raises(
+        TrackerConflictError, match="unsupported Markdown serialization"
+    ):
+        instance.create_adr(PROJECT, "PAT-85 block context", body)
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+def test_linear_adr_pat85_literal_block_markers_and_separate_heading_stay_text():
+    source = "`# | ---` **Modifier `PAT`**\n\nSeparate heading\n---"
+    observed = "`# | ---` **Modifier** `PAT`\n\nSeparate heading\n---"
+    assert linear_module._linear_markdown_readback_body(source) == observed
+    linear_module._preflight_adr_body_readback(source)
+
+
 def test_linear_adr_pat85_ignores_literal_strong_marker_before_qualified_span(
     tracker,
 ):

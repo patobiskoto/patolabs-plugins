@@ -221,10 +221,14 @@ outside the exact profile is refused before a provider write. The same-line prof
 excludes every separator recognized by Python `splitlines()` from both the leading
 text and the code fragment, including CR and Unicode line separators. On a line
 containing this form, surrounding text must also be unmarked: after literal inline
-code and qualified spans are masked, `*`, `_`, `~`, `[`, `]`, `<`, `>`, `&` and `\`
+code and qualified spans are masked, `*`, `_`, `~`, `[`, `]`, `<`, `>`, `&`, `\`, `#` and `|`
 are conservatively unqualified. This refuses HTML attributes, wrapping marks, link
-labels and marked siblings instead of interpreting their contents as the observed
-form. The already-qualified leading `* ` list marker is preserved. Strong/code
+labels, ATX headings, pipe-marked tables and marked siblings instead of interpreting
+their contents as the observed form. A candidate paragraph followed before its next
+blank line by a setext underline or single-column table delimiter is unqualified too;
+this includes headings spanning several lines. Literal block markers inside inline code
+and headings separated by a blank line remain supported. The already-qualified leading
+`* ` list marker is preserved. Strong/code
 written with `__` is unqualified too. Plain surrounding text,
 literal inline code and multiple qualified spans remain supported. Fenced code remains
 byte-exact. A candidate line indented by four or more columns (tabs expand at four
