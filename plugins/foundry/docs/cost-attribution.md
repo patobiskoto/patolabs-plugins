@@ -56,7 +56,11 @@ la tarification nécessitant un seuil de contexte par requête.
 Les blocs natifs corrélés par session, agent, `requestId` et `message.id`
 représentent une seule requête. Le lecteur retient son snapshot terminal plutôt que
 d’additionner les compteurs intermédiaires et finaux. Deux snapshots terminaux
-contradictoires ou une identité de modèle/date divergente sont refusés. Sans ces
+contradictoires ou une identité de modèle divergente sont refusés. Une requête
+corrélée sans snapshot terminal rend le journal inexploitable : aucun total final
+n’est certifié à partir d’un compteur partiel, même avec une ventilation du raisonnement.
+Une requête traversant minuit est attribuée à la date de son premier snapshot terminal,
+sans recharger ses blocs intermédiaires. Sans ces
 identifiants, les journaux historiques conservent leur lecture par ligne ; sans
 ventilation de raisonnement, la valeur reste `unavailable`. Les identifiants de
 requête et le contenu des blocs ne sont pas exportés.

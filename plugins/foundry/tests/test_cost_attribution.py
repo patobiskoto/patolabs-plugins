@@ -1208,10 +1208,27 @@ def test_claude_conflicting_correlated_usage_fails_closed(tmp_path, changed):
         read_host_log("claude", log)
 
 
-def test_claude_partial_only_keeps_reasoning_unavailable(tmp_path):
+@pytest.mark.parametrize("reasoning", [None, 1])
+def test_claude_partial_only_never_certifies_final_usage(tmp_path, reasoning):
     log = tmp_path / "partial.jsonl"
-    log.write_text(json.dumps(_claude_stream_record()))
+    log.write_text(json.dumps(_claude_stream_record(reasoning=reasoning)))
+    diagnostics = {}
+    with pytest.raises(CostAttributionError, match="no terminal snapshot"):
+        read_host_log("claude", log, diagnostics=diagnostics)
+    assert diagnostics == {}
+
+
+def test_claude_terminal_snapshot_crossing_midnight_uses_completion_date(tmp_path):
+    log = tmp_path / "midnight.jsonl"
+    partial = _claude_stream_record(reasoning=1)
+    partial["timestamp"] = "2026-10-03T23:59:59Z"
+    terminal = _claude_stream_record(terminal=True, output=100, reasoning=25)
+    terminal["timestamp"] = "2026-10-04T00:00:01Z"
+    log.write_text("\n".join(json.dumps(r) for r in [partial, terminal, terminal, partial]))
     diagnostics = {}
     rows = read_host_log("claude", log, diagnostics=diagnostics)
-    assert rows[0]["tokens"]["reasoning_output_tokens"] == "unavailable"
-    assert diagnostics["completeness"] == "unavailable"
+    assert len(rows) == 1
+    assert rows[0]["occurred_on"] == "2026-10-04"
+    assert rows[0]["tokens"]["output_tokens"] == 100
+    assert diagnostics["billable_records"] == 1
+    assert diagnostics["completeness"] == "available"

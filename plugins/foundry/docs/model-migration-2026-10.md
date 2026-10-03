@@ -411,3 +411,49 @@ explicit approval of a fresh interface/corpus/envelope, never an implicit retry.
 The generation/frontmatter/wire distinction is updated in `model-routing.md` and R7;
 role tools, turn caps, review claims, passive telemetry schema and Codex scopes remain
 unchanged. The existing conformance/guard/correlation tests cover the suffixed profiles.
+
+
+## PAT-16 final migration boundaries and complement observations
+
+The current accepted campaign constraint is PAT-ADR-0013; PAT-ADR-0011 and
+PAT-ADR-0012 are superseded historical decisions, not current independent approvals.
+The immutable original contract and earlier failed lots remain evidence.
+
+An alias-only `FOUNDRY_CLAUDE_AVAILABLE_MODELS=haiku,sonnet,opus` cannot attest the
+version-pinned defaults. List the actually available canonical/full version IDs, or
+explicitly choose host aliases in the project mappings. Redundant built-in translations
+such as `claude_models: {"opus-5": "opus"}` must be removed to preserve the pin;
+choosing `model: "opus"` explicitly is a separate alias intent, never a migration default.
+A direct Haiku request inheriting medium/high must instead use economy or a project
+mapping with null effort. Headless runtimes now omit Haiku effort, like the Agent path.
+
+The historical FOUNDRY-43 measurement harness retains its frozen 2.1.224 alias corpus
+and refuses today's default version pins before launch. An intentional historical
+replay requires an explicit alias mapping and the original private frozen corpus;
+its bindings, traces and prices are not rewritten. That corpus is absent from this
+public checkout, so its full opt-in suite cannot be validated here. A public isolated
+unit test verifies the actionable prelaunch refusal without fabricating corpus evidence.
+
+The complement at `ec662ecd3f6e35368d412332118f08d87b853818` exercised Sonnet 5.5/medium
+worker Read/Edit on the exact isolated fixture successfully, and Opus 5.5/high read the
+verified diff and completed an independent review. The report passed 14 AC and left
+promotion/rollback/handoff AC 15–16 not covered; it is not merge approval. See
+`qualification/pat-16-native-complement-observations.json`. The reviewer first read the
+implementer observation before it existed; final delivery review must receive that
+completed observation and PAT-14's complete contract. Earlier failures remain recorded.
+The total budget is consumed: seven parents, six children, no qualification retries.
+
+The absent project-policy baseline was restored after terminal review proof, preserving
+candidate bytes separately. Personal settings and installed cache were unchanged.
+Policy rollback restores incumbent routing within this new code; it does not revert
+new full-pin transmission semantics. A code rollback must restore the previous code ref
+and profile inventory together. Incumbent Sonnet 5, Opus 5 and Fable 5 full pins have not
+been natively qualified by these candidate trials. PAT-61 must retain that limit and
+replay affected candidate cells before V1; PAT-62 retains post-install checks.
+Explicit human promotion remains pending, and no economic superiority is asserted.
+
+Document statuses for this correction: the headless effort/compatibility/diagnostic
+surfaces are updated here and in `model-routing.md`; offline terminal-snapshot/date
+semantics are updated in `cost-attribution.md`; R7 source pointers are updated in
+byte-identical AGENTS.md/CLAUDE.md. Historical corpus files, pricing, roles, tool caps,
+Codex mappings and the passive telemetry schema are unchanged.

@@ -907,7 +907,8 @@ Done when:
 Only `tier`, `model`, `effort`, and the workflow-supplied `issue` identifier are
 accepted. An explicit Agent alias `model` input is also treated as a user model request;
 conflicting values fail loudly. Built-in policy models accept current aliases, canonical
-Foundry names, and full IDs (for example `opus`, `opus-5`, and `claude-opus-5`). A custom
+Foundry version names and full IDs (`opus-5` and `claude-opus-5` name the same pin);
+`opus` is a separate host alias intent. A custom
 canonical model must have a `claude_models` translation. A translation to an accepted
 wire alias uses a generic profile; a built-in full ID selects the corresponding pin
 profile. Other custom targets are unavailable until a versioned profile declaration
@@ -924,8 +925,10 @@ Claude Code does not expose an authoritative, synchronous list of models enabled
 current organization to a command hook. Set the non-secret CSV
 `FOUNDRY_CLAUDE_AVAILABLE_MODELS` (or the equivalent
 `CLAUDE_PLUGIN_OPTION_FOUNDRY_CLAUDE_AVAILABLE_MODELS`) when availability is constrained.
-Each CSV entry accepts the built-in alias, canonical name, or full ID spellings, plus
-custom canonical names declared by the project. The common policy then performs and reports ordinary
+Each CSV entry names one availability identity: a short alias certifies only an alias
+route; a canonical name or its full ID spelling certifies only that version pin.
+An alias-only CSV cannot certify the versioned defaults. Custom canonical names
+declared by the project are also accepted. The common policy then performs and reports ordinary
 downward or gate upward fallback before spawn. Without it, `availability_probed=false`
 is visible and an unexpected provider rejection remains a loud Agent failure; Foundry
 does not pretend it observed availability.
@@ -1067,7 +1070,7 @@ No automatic spending, default promotion, or substitution is authorized by this 
 
 Haiku project effort null is model-specific non-applicability, not a ranked sentinel.
 Legacy Haiku `low` stays policy-requested historical intent and old events are not
-rewritten. Both select effort-free `routed-readonly-none`/`routed-worker-none` profiles
+rewritten. Both select effort-free `routed-readonly-none[-<version>]`/`routed-worker-none[-<version>]` profiles
 with unchanged capabilities and role turn caps. An explicit user effort request for
 Haiku is rejected. Other models still require scoped effort and gates at least high.
 Hook context reports `effort_parameters` requested/transmitted/status/observed and
@@ -1120,3 +1123,13 @@ observer still consumes its existing correlation once, independent of profile su
 metadata. Haiku's omitted frontmatter effort cannot establish observed non-applicability:
 parent/session effort may still appear in native metadata. Only the approved native
 contract may judge that observation; missing/ambiguous evidence stays unknown.
+
+
+PAT-16 compatibility clarification: a redundant `claude_models: {"opus-5": "opus"}`
+now conflicts with the built-in version pin and is rejected before launch. Remove the
+redundant declaration to preserve the full pin, or explicitly choose `model: "opus"`
+in the tier mapping for host alias intent. Foundry never converts the pin to an alias.
+For a direct Haiku request inherited from a non-economy tier, choose the economy tier
+or a project Haiku mapping with `effort: null`; an explicit user effort remains rejected.
+Both the compatibility DevHub runner and isolated campaign runner omit `--effort` for
+Haiku, including historical requested `low`. Other models retain their resolved effort.

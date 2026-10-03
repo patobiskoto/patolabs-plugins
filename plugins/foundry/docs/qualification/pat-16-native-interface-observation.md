@@ -68,3 +68,37 @@ Temporary candidate policy bytes were retained and its absent baseline restored.
 Personal overrides, production defaults and Codex qualification were unchanged. The
 lot qualifies the tested scout/architect execution boundary only; complete PAT-16
 qualification, independent delivery review and explicit promotion remain pending.
+
+
+## Authorized complement (PAT-ADR-0013)
+
+PAT-ADR-0013 supersedes PAT-ADR-0012's campaign bound only. Two authorized parents
+and two children completed at `ec662ecd3f6e35368d412332118f08d87b853818`; the historical
+total is seven parents and six children, zero qualification retries. Raw earlier
+failures remain unchanged. The actual sanitized observations and bound usage are in
+`pat-16-native-complement-observations.json`.
+
+Sonnet 5.5/medium used Read/Edit successfully on the sole isolated fixture, returned
+only a unified diff, and offline exact-byte/function checks passed. Native output
+lacked a terminal LF; the offline patch verifier added framing LF, without modifying
+native output or retrying the child. Opus 5.5/high successfully read the exact diff
+through the Foundry verifier and returned an independent report: quality mergeable,
+14 AC pass, ac-15/ac-16 not covered. Foundry recorded terminal proof
+`a75c930d4ad4d8af6f2f5d6ddcbb069e58333c1f80b753bd3f43387ad5830c83`
+for diff `1ba0730ca47e83ea2de552e9d346a93861e5647f23dcb2e0e3c46863bc7bf452`.
+This proof applies only to that reviewed ref, never to subsequent corrections.
+
+The coordinator created the worker observation after the reviewer initially tried to
+read it; the reviewer did not re-read it. Its report is preserved as returned, including
+that missing-input statement. It also lacked PAT-14's full contract. A fresh ordinary
+delivery review must receive both inputs and the corrections, with a fresh diff claim;
+no extra native qualification is authorized by this document.
+
+After terminal proof, the coordinator restored the absent candidate-policy baseline
+and preserved its exact bytes (SHA-256 in the observation). The cost reader was checked
+again on the same logs offline. Missing terminal snapshots now make a correlated log
+unavailable instead of certifying partial totals; midnight uses terminal completion
+date. Historical uncorrelated semantics remain unchanged. Incumbent version pins remain
+natively untested, policy rollback is not code rollback, and promotion is still pending
+an explicit human decision after final evidence. Source-mode qualification is not an
+installed-release guarantee or an economic benchmark.

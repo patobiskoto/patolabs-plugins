@@ -1,0 +1,134 @@
+{
+  "kind": "Sanitized actual native complement observations; not a receipt or promotion authority",
+  "adr": "PAT-ADR-0013",
+  "source_head": "ec662ecd3f6e35368d412332118f08d87b853818",
+  "client": "2.1.285",
+  "loaded_mode": "source, 80 agents",
+  "provider": "firstParty",
+  "auth": "claude.ai Pro preflight observed; no API env names",
+  "new_parents": 2,
+  "new_children": 2,
+  "historical_parents": 7,
+  "historical_children": 6,
+  "qualification_retries": 0,
+  "credit_authorization": false,
+  "policy_rollback": {
+    "baseline": "absent",
+    "restored": "absent",
+    "preserved_candidate_sha256": "bc9b35032978a7839c5e81aa6d7e6ad85792cc390eae2417cacb2a6a3d08099d"
+  },
+  "promotion": "pending explicit human decision after final evidence",
+  "billing_caveat": "Native list price is not an invoice; no savings claim; offline pricing unavailable",
+  "observations": [
+    {
+      "kind": "Actual native observation and offline verifier result; not a receipt",
+      "role": "implementer",
+      "status": "passed",
+      "head_at_execution": "ec662ecd3f6e35368d412332118f08d87b853818",
+      "session": "09e7220d-c04e-41bf-92f9-63202c1e9353",
+      "child_agent": "a681fc975ddbf568c",
+      "observed_model": "claude-sonnet-5-5",
+      "observed_effort": "medium",
+      "actual_usage": {
+        "parent": {
+          "input_tokens": 4,
+          "cached_input_tokens": 136448,
+          "cache_write_input_tokens": 137803,
+          "output_tokens": 655,
+          "reasoning_output_tokens": 0
+        },
+        "child": {
+          "input_tokens": 6,
+          "cached_input_tokens": 22841,
+          "cache_write_input_tokens": 12189,
+          "output_tokens": 336,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "reader_completeness": {
+        "parent": {
+          "completeness": "available",
+          "billable_records": 2,
+          "affected_records": [],
+          "excluded_records": []
+        },
+        "child": {
+          "completeness": "available",
+          "billable_records": 3,
+          "affected_records": [],
+          "excluded_records": []
+        }
+      },
+      "fixture_initial_sha256": "71bdccb8f575f1049fa00f1fc2ab6ba89d655be178c869ac7c190839e4fe2330",
+      "fixture_result_sha256": "63098273a7aaa630762d6f145dfcf9c61c8c9b290c6ebeb2a05fea5854ccb476",
+      "verifier": "Native Read/Edit succeeds on isolated copy; response contains diff only, offline patch with terminal LF succeeds with exact bytes, both calls pass, original preserved",
+      "elapsed_seconds": 15.976,
+      "log_sha256": {
+        "parent": "49c7065f26271bdb65010e5659c937327e924472474ec4717d7d985ace8ee485",
+        "child": "5049a9d6bd68abc64a2e8dddf673f87ebb0112d36fd6ae4ee7aa7559643dee8f"
+      }
+    },
+    {
+      "kind": "Actual native observation and persisted review proof reference; not a receipt",
+      "role": "reviewer",
+      "status": "completed_ac_block",
+      "head_at_execution": "ec662ecd3f6e35368d412332118f08d87b853818",
+      "session": "203ac2e7-5e5d-42f8-81a2-019bb8e2e992",
+      "child_agent": "aa5b1317859dfc004",
+      "observed_models": [
+        "claude-opus-5-5"
+      ],
+      "observed_efforts": [
+        "high"
+      ],
+      "actual_usage": {
+        "parent": {
+          "input_tokens": 4,
+          "cached_input_tokens": 258696,
+          "cache_write_input_tokens": 25933,
+          "output_tokens": 7861,
+          "reasoning_output_tokens": 0
+        },
+        "child": {
+          "input_tokens": 84,
+          "cached_input_tokens": 5725995,
+          "cache_write_input_tokens": 203997,
+          "output_tokens": 41200,
+          "reasoning_output_tokens": 26966
+        }
+      },
+      "reader_completeness": {
+        "parent": {
+          "completeness": "available",
+          "billable_records": 2,
+          "affected_records": [],
+          "excluded_records": []
+        },
+        "child": {
+          "completeness": "available",
+          "billable_records": 42,
+          "affected_records": [],
+          "excluded_records": []
+        }
+      },
+      "elapsed_seconds": 491.99,
+      "read_review_success": true,
+      "quality": "mergeable",
+      "acceptance_verdicts": {
+        "pass": 14,
+        "not_covered": 2
+      },
+      "not_covered": [
+        "ac-15",
+        "ac-16"
+      ],
+      "proof_id": "a75c930d4ad4d8af6f2f5d6ddcbb069e58333c1f80b753bd3f43387ad5830c83",
+      "input_limitations": "Implementer observation did not exist when reviewer first read it; PAT-14 full text not supplied; final delivery review must receive both",
+      "log_sha256": {
+        "parent": "080b395a586e2a5b1d9f31c3e35040aa2c9ef57f665198b153ec60ab4ff37dd5",
+        "child": "69607c018cf12eb4bc717f3cf12ee2692d9a9b37b57221e4c0cd5b80db347102"
+      },
+      "report_sha256": "6eb007cea91dd1823b1aca95d3b894ebefaf45f6f0f8ac9514fd5a4916ad5489"
+    }
+  ]
+}

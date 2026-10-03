@@ -508,10 +508,10 @@ def read_host_log(host: str, log_path: str | Path,
             identity = ((event_session_id, raw.get("agentId"), request_id, message_id)
                         if correlated else ("legacy", len(claude_requests)))
             terminal = message.get("stop_reason") is not None
-            value = (event_session_id, model, occurred_on, tokens, degradation_reason, terminal)
+            value = (event_session_id, model, occurred_on, tokens, degradation_reason, terminal, correlated)
             previous = claude_requests.get(identity)
             if previous is not None:
-                if previous[:3] != value[:3]:
+                if previous[:2] != value[:2]:
                     raise CostAttributionError("host request identity changed")
                 if previous[5]:
                     if terminal and previous[3:5] != value[3:5]:
@@ -622,7 +622,9 @@ def read_host_log(host: str, log_path: str | Path,
                 row["position_data_ambiguous"] = True
             rows.append(row)
         return [*rows, *codex_plan_rows]
-    for session, model, occurred_on, tokens, degradation_reason, _ in claude_requests.values():
+    for session, model, occurred_on, tokens, degradation_reason, terminal, correlated in claude_requests.values():
+        if correlated and not terminal:
+            raise CostAttributionError("host token usage unavailable: request has no terminal snapshot")
         claude_billable_records += 1
         if degradation_reason is not None:
             claude_degradations[degradation_reason] += 1

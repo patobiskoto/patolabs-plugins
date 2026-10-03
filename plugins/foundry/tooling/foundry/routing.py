@@ -497,7 +497,10 @@ class RoutingPolicy:
             haiku = host == "claude" and target.model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001")
             if haiku:
                 if target.effort not in (None, "low") or user.effort is not None:
-                    raise RoutingConfigError("Haiku 4.5 : effort rejeté, non applicable.")
+                    raise RoutingConfigError(
+                        "Haiku 4.5 : effort rejeté, non applicable ; demandez le tier economy "
+                        "ou configurez ce modèle avec effort null, sans effort utilisateur."
+                    )
                 if role in GATE_EFFORT_FLOORS:
                     raise RoutingConfigError("Haiku sans effort ne satisfait pas le plancher du gate.")
             else:
@@ -519,6 +522,9 @@ class RoutingPolicy:
                 f"Aucun modèle disponible pour le {kind} sur {host}. "
                 f"Niveaux {direction} essayés : {', '.join(attempted)}. "
                 "Rendez un modèle de ce chemin disponible ou fournissez un override explicite."
+                + (" Les alias Claude courts ne certifient pas une version épinglée ; "
+                   "déclarez les IDs/canonicals disponibles, ou choisissez explicitement "
+                   "un alias dans le mapping projet." if host == "claude" else "")
             )
 
         selected_tier, target = selected

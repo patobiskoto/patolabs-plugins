@@ -128,3 +128,32 @@ def test_posttool_completion_remains_correlated_for_suffixed_profiles(tmp_path):
     event = json.loads((tmp_path / "state/telemetry/journal.ndjson").read_text())
     assert event["model"] == "opus-5.5"
     assert event["usage"]["input_tokens"]["value"] is None
+
+
+def test_historical_measurement_alias_contract_refuses_default_pin_before_launch(tmp_path, monkeypatch):
+    from foundry import measurement_harness as harness
+
+    # The private historical F41 corpus is absent from the public repository.
+    # Isolate the route boundary; this does not qualify/recreate that corpus.
+    monkeypatch.setattr(harness, "_validate_f41_case", lambda *_args: None)
+    writer = harness.MeasurementHarness(tmp_path / "trace", "claude", enabled=True)
+    calls = []
+    request = harness.MeasurementRequest("claude-sonnet-medium", "FOUNDRY-31", "a" * 40, 1)
+    with pytest.raises(harness.MeasurementValidationError, match="explicit project alias mapping"):
+        harness.run_claude(
+            writer, request, task_packet=packet(), root=tmp_path,
+            command=("claude", "--model", "{model}", "--effort", "{effort}"),
+            timeout_seconds=1, environ={},
+            process_factory=lambda *_args, **_kwargs: calls.append(True),
+        )
+    assert calls == []
+    assert not writer.path.exists()
+
+
+def test_alias_only_availability_diagnoses_pin_identity(tmp_path):
+    from foundry.routing import RoutingUnavailableError
+    from foundry.routing_facades import claude_route_plan
+
+    with pytest.raises(RoutingUnavailableError, match="alias Claude courts"):
+        claude_route_plan("implementer", packet(), root=tmp_path,
+                          environ={"FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku,sonnet,opus"})

@@ -123,7 +123,7 @@ behaviour, not the pre-FOUNDRY-125 closed table:
 - The accepted effort levels for a Claude route are not a hardcoded tuple: `EFFORTS` is
   derived from the declared scope,
   `DEFAULT_EFFORT_SCOPES["claude"]["default"].levels`
-  (`plugins/foundry/tooling/foundry/routing.py:40`), itself validated from
+  (`plugins/foundry/tooling/foundry/routing.py`), itself validated from
   `plugins/foundry/tooling/foundry/effort_policy.py`.
 - `_CLAUDE_MODEL_DECLARATION` declares canonical versions and their explicit Agent
   identifiers, including historical Sonnet/Opus/Fable 5, Sonnet/Opus 5.5, Fable 5.1
@@ -157,7 +157,7 @@ behaviour, not the pre-FOUNDRY-125 closed table:
 - A project cannot use `claude_models` to weaken a built-in model's alias, and any
   custom Claude effort level it declares must be one of the Agent-executable profiles in
   `CLAUDE_EXECUTABLE_EFFORTS` (`low`, `medium`, `high`, `xhigh`, `max`); otherwise
-  `_load_claude_policy()` (`routing_facades.py:839-889`) fails at load, before any
+  `_load_claude_policy()` (`routing_facades.py`) fails at load, before any
   invocation.
 
 The full schema, availability-driven fallback, and cross-host review-deduplication
