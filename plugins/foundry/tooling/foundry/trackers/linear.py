@@ -774,6 +774,25 @@ def _linear_pat_86_readback(body: str, rendered: str) -> str | None:
     return rendered
 
 
+# One observed PAT-16 qualification-budget ADR body; not an autolink grammar.
+_PAT_16_ADR13_SOURCE_SHA256 = "754275fa572100ece1b8ed427881b00768d822beec72ee69b7d602cc1b747d97"
+_PAT_16_ADR13_READBACK_SHA256 = "ca3dadd06cc0f0f42185531f6ef811e98bdfb69d74be4771c52405a3fae49a3a"
+
+
+def _linear_pat_16_adr13_readback(body: str, rendered: str) -> str | None:
+    """Recognize only the complete native PAT-ADR-0013 body observed in Linear."""
+    if hashlib.sha256(body.encode("utf-8")).hexdigest() != _PAT_16_ADR13_SOURCE_SHA256:
+        return None
+    source = "copie de calculator.py dans un dossier temporaire isolé"
+    target = "copie de [calculator.py](<http://calculator.py>) dans un dossier temporaire isolé"
+    if body.count(source) != 1 or rendered.count(source) != 1:
+        raise ValueError("pat-16-adr13 rendering source is invalid")
+    rendered = rendered.replace(source, target, 1)
+    if hashlib.sha256(rendered.encode("utf-8")).hexdigest() != _PAT_16_ADR13_READBACK_SHA256:
+        raise ValueError("pat-16-adr13 rendering is invalid")
+    return rendered
+
+
 def _linear_pat_72_readback(body: str, rendered: str) -> str | None:
     """Return the sole PAT-72 blank-line serialization observed from Linear.
 
@@ -1259,6 +1278,9 @@ def _linear_markdown_readback_body(
     if qualified is not None:
         return qualified
     qualified = _linear_pat_86_readback(body, rendered_body)
+    if qualified is not None:
+        return qualified
+    qualified = _linear_pat_16_adr13_readback(body, rendered_body)
     return rendered_body if qualified is None else qualified
 
 

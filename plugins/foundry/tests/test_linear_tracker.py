@@ -8849,3 +8849,81 @@ def test_linear_pat86_new_version_preserves_source(tracker, monkeypatch, operati
     witness = linear_module._parse_adr_witness(wire.documents[witness_id], instance._binding(project))
     assert base64.b64decode(witness["source_body"]).decode() == source
     assert all("documentUpdate" not in q and "documentDelete" not in q for q, _ in wire.calls)
+
+
+def _pat16_adr13_body_fixture():
+    return json.loads((Path(__file__).parent / "fixtures" /
+                       "pat16-adr13-readback.json").read_text())
+
+
+def test_linear_pat16_adr13_exact_native_body_readback():
+    fixture = _pat16_adr13_body_fixture()
+    source, observed = fixture["source"], fixture["observed_body"]
+    assert hashlib.sha256(source.encode()).hexdigest() == linear_module._PAT_16_ADR13_SOURCE_SHA256
+    assert hashlib.sha256(observed.encode()).hexdigest() == linear_module._PAT_16_ADR13_READBACK_SHA256
+    assert linear_module._linear_markdown_readback_body(source) == observed
+    assert linear_module._linear_pat_16_adr13_readback(source, source) == observed
+
+
+def test_linear_pat16_adr13_profile_cannot_certify_neighbouring_body():
+    fixture = _pat16_adr13_body_fixture()
+    source = fixture["source"]
+    for neighbour in (source + "\n", source.replace("vingt minutes", "trente minutes"),
+                      source.replace("calculator.py", "different.py")):
+        assert linear_module._linear_pat_16_adr13_readback(neighbour, neighbour) is None
+        assert linear_module._linear_markdown_readback_body(neighbour) != fixture["observed_body"]
+    with pytest.raises(ValueError, match="source is invalid"):
+        linear_module._linear_pat_16_adr13_readback(source, source.replace("calculator.py", "wrong.py"))
+    with pytest.raises(ValueError, match="rendering is invalid"):
+        linear_module._linear_pat_16_adr13_readback(source, source + "unexpected")
+
+
+def _pat16_adr13_envelopes():
+    fixture = _pat16_adr13_body_fixture()
+    raw, source = fixture["observed_document"], fixture["source"]
+    metadata_text = raw["content"].split("\n", 2)[1].replace("\\[", "[").replace("\\]", "]")
+    metadata = json.loads(metadata_text)
+    project = Project(key="PAT", id=metadata["project_id"],
+                      extra={**PROJECT.extra, "team_id": metadata["team_id"]})
+    return project, metadata, source, raw
+
+
+def test_linear_pat16_adr13_native_witness_recovery_preserves_written_document(tracker):
+    instance, wire = tracker
+    project, metadata, source, raw = _pat16_adr13_envelopes()
+    wire.documents[raw["id"]] = copy.deepcopy(raw)
+    with pytest.raises(TrackerConflictError, match="witness is missing"):
+        instance.list_adrs(project)
+    wire.calls.clear()
+    recovered = instance.create_adr(project, metadata["title"], source)
+    witness_id = linear_module._adr_witness_id(project.id, metadata["id"], 0)
+    assert wire.documents[raw["id"]] == raw
+    assert set(wire.documents) == {raw["id"], witness_id}
+    assert instance.list_adrs(project) == [recovered]
+    assert recovered.body == linear_module._adr_document_content(metadata, source)
+    creates = [v["input"]["id"] for q, v in wire.calls if "FoundryLinearAdrDocumentCreate" in q]
+    assert creates == [witness_id]
+    wire.calls.clear()
+    assert instance.create_adr(project, metadata["title"], source) == recovered
+    assert all("mutation " not in q for q, _ in wire.calls)
+
+
+@pytest.mark.parametrize("change", ["source", "title", "content", "archive"])
+def test_linear_pat16_adr13_hostile_recovery_has_no_mutation(tracker, change):
+    instance, wire = tracker
+    project, metadata, source, raw = _pat16_adr13_envelopes()
+    title = metadata["title"]
+    if change == "source":
+        source = source.replace("vingt minutes", "trente minutes")
+    elif change == "title":
+        title += " altered"
+    elif change == "content":
+        raw["content"] = raw["content"].replace("http://calculator.py", "https://hostile.test")
+    else:
+        raw["archivedAt"] = "2026-10-03T00:00:00Z"
+    wire.documents[raw["id"]] = copy.deepcopy(raw)
+    before = copy.deepcopy(wire.documents)
+    with pytest.raises((TrackerConflictError, LinearTrackerError)):
+        instance.create_adr(project, title, source)
+    assert wire.documents == before
+    assert all("mutation " not in q for q, _ in wire.calls)

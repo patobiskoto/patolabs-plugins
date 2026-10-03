@@ -218,6 +218,18 @@ content and properties. Source bytes come only from the caller and subsequently
 the canonical witness, never from reversing the provider rendering. Ordinary
 reads still refuse the incomplete pair until its witness exists. Unknown future
 serializations require new qualification; this profile cannot normalize them.
+PAT-16 adds a closed forward profile for the native `PAT-ADR-0013` budget amendment.
+The complete source-body SHA-256 is
+`754275fa572100ece1b8ed427881b00768d822beec72ee69b7d602cc1b747d97`;
+the sole observed rendered-body SHA-256 is
+`ca3dadd06cc0f0f42185531f6ef811e98bdfb69d74be4771c52405a3fae49a3a`.
+Only the single recorded `calculator.py` token in its exact sentence becomes
+`[calculator.py](<http://calculator.py>)`. The full source and rendered digests
+must match; altered budget text, neighbouring filenames, provider targets and
+archived Documents are refused. This adds no domain/path autolink grammar.
+Native create replay uses the existing missing-witness recovery and preserves
+all previously written Document bytes; acceptance and issue-link versions use
+the same source. The storage, graph and read-time witness gates are unchanged.
 PAT-85 adds one general but still closed non-fenced, same-line form observed on the
 PAT-61 native Document: a simple strong span whose final fragment is one non-empty,
 unpadded single-backtick code span, `**plain text \`code\`**`, is read back as
