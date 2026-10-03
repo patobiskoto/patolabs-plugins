@@ -1,0 +1,632 @@
+{
+  "schema_version": 1,
+  "artifact": "PAT-14 migration-contract preflight",
+  "prepared_at": "2026-10-03",
+  "repository_head": "bc25c344d7eaccfbe9758fd2ddd28c02232db36b",
+  "tracker": {
+    "active": "linear",
+    "historical_archive": "youtrack-read-only",
+    "adr_import": "27 historical ADR Documents read back in Linear by PAT-23/PAT-10 evidence; old selective manifest covers only 13 archive-reference entries",
+    "adr_relations": "unknown/unavailable: PAT-ADR-0003 and migration envelopes declare missing_relations for issues, superseded_by, supersedes",
+    "historical_versions": "unavailable except where independently qualified",
+    "digest_note": "source_body_sha256 and Linear envelope/version digest attest different objects",
+    "binding": {
+      "activation": {
+        "kind": "migration",
+        "manifest_digest": "sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77"
+      },
+      "configuration_digest": "sha256:c61c12688c7139b4095f7dc502b4aa57c314be0527e8418f1723051e9bce9051",
+      "project": {
+        "id": "aeb77381-f8aa-48d3-a2a5-e6b2d2773007",
+        "key": "PAT"
+      },
+      "registry_binding_digest": "sha256:2a246a2ce50803d1b8ff7f0aa6a2dac383cb5f5d6860b50e08613066e07b037e",
+      "repository": "github.com/patobiskoto/patolabs-plugins",
+      "tracker": "linear",
+      "version": 2
+    }
+  },
+  "adr_readbacks": [
+    {
+      "id": "FOUNDRY-ADR-0001",
+      "status": "accepted",
+      "ref": "1c9b9ec3-8d8f-4187-86fb-83d645567b32",
+      "sequence": 0,
+      "body_sha256": "eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db",
+      "source_body_sha256": "eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0002",
+      "status": "accepted",
+      "ref": "e24493f1-23b6-4a5c-b087-51525ab3608e",
+      "sequence": 0,
+      "body_sha256": "abb3117275dd01f04a9bcc07e1ef553c910ce92f9425a4216ca101b2c4661465",
+      "source_body_sha256": "abb3117275dd01f04a9bcc07e1ef553c910ce92f9425a4216ca101b2c4661465",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0003",
+      "status": "accepted",
+      "ref": "af4c4af3-d205-4eec-b1d0-ab395addd9df",
+      "sequence": 0,
+      "body_sha256": "bd7092a50f514dc9a907da9cc581c6a5188f32cc0e79c35072506b6eaae97db5",
+      "source_body_sha256": "bd7092a50f514dc9a907da9cc581c6a5188f32cc0e79c35072506b6eaae97db5",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0005",
+      "status": "accepted",
+      "ref": "0f343d15-3fb2-4373-8fd6-28dcc7b4f47d",
+      "sequence": 0,
+      "body_sha256": "fd13aef8c719de6f63c4d5780aebde520a3e7409b269a04af8872a752208ee6d",
+      "source_body_sha256": "fd13aef8c719de6f63c4d5780aebde520a3e7409b269a04af8872a752208ee6d",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0006",
+      "status": "accepted",
+      "ref": "c5998377-ff22-4420-9acb-47e472b82a2d",
+      "sequence": 0,
+      "body_sha256": "ea28d37b96959e250157db0ec2de9d8a4db7193015aa6af687ecf39c455e550b",
+      "source_body_sha256": "ea28d37b96959e250157db0ec2de9d8a4db7193015aa6af687ecf39c455e550b",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0008",
+      "status": "accepted",
+      "ref": "5fe70e95-9496-47c3-bc1a-375d1a05e2a4",
+      "sequence": 0,
+      "body_sha256": "2f21f43315d00e24a50c41b47da32000d07b9a472d816874e1b94b53f482654f",
+      "source_body_sha256": "2f21f43315d00e24a50c41b47da32000d07b9a472d816874e1b94b53f482654f",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0010",
+      "status": "accepted",
+      "ref": "b44b5b67-4276-4d08-abf9-7ed42d03ccb2",
+      "sequence": 0,
+      "body_sha256": "a90046232373f050acad7c221a62dc8824d4c63be2aa5ce8b4ff24ff321f2289",
+      "source_body_sha256": "a90046232373f050acad7c221a62dc8824d4c63be2aa5ce8b4ff24ff321f2289",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0013",
+      "status": "accepted",
+      "ref": "3885658c-0dc8-4d42-b484-7301374f8647",
+      "sequence": 0,
+      "body_sha256": "d67bc4ad5ef75c2319051f78a66e69b938ca7110f22fd36b1085401c9d009a6b",
+      "source_body_sha256": "d67bc4ad5ef75c2319051f78a66e69b938ca7110f22fd36b1085401c9d009a6b",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0014",
+      "status": "accepted",
+      "ref": "9c2ded7b-e44c-4895-9dcd-023867d77cb3",
+      "sequence": 0,
+      "body_sha256": "a85aafe94e4d6ec577098545c0fa8d77618b31cfda3d63aed2c9c72be354f092",
+      "source_body_sha256": "a85aafe94e4d6ec577098545c0fa8d77618b31cfda3d63aed2c9c72be354f092",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0015",
+      "status": "accepted",
+      "ref": "f5935b49-cc6f-46a9-a95c-c228f8224bf4",
+      "sequence": 0,
+      "body_sha256": "31f3b61aea79970b3c315f0daeef45925fccb7c90b982dd2b850dd4a1d462350",
+      "source_body_sha256": "31f3b61aea79970b3c315f0daeef45925fccb7c90b982dd2b850dd4a1d462350",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0016",
+      "status": "accepted",
+      "ref": "61266fb3-d0cf-4d50-8e9e-930297ce2797",
+      "sequence": 0,
+      "body_sha256": "51057fcf50ffebbf59265cfd3b05f09f04cb08f0a9841243b04e2531e0664c6a",
+      "source_body_sha256": "51057fcf50ffebbf59265cfd3b05f09f04cb08f0a9841243b04e2531e0664c6a",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0017",
+      "status": "accepted",
+      "ref": "b40ee7e6-8940-4c47-a240-fbaabb1e598b",
+      "sequence": 0,
+      "body_sha256": "c418537244f6cc115ce5a09961e865e58ab23506d2249a7bf501f94bc8000645",
+      "source_body_sha256": "c418537244f6cc115ce5a09961e865e58ab23506d2249a7bf501f94bc8000645",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0018",
+      "status": "accepted",
+      "ref": "54d8c108-5cb0-48a1-a4d1-3054d022725d",
+      "sequence": 0,
+      "body_sha256": "ce9869d73a2ce0620c673ec53d6a00c8c3b87d7d8a2eb59cc254bbce8e14c5ea",
+      "source_body_sha256": "ce9869d73a2ce0620c673ec53d6a00c8c3b87d7d8a2eb59cc254bbce8e14c5ea",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0019",
+      "status": "accepted",
+      "ref": "050a1ff8-0d0b-496e-b25d-759a1551d23d",
+      "sequence": 0,
+      "body_sha256": "e2d462182f2787fe81f1d940f7b8e1b88a75456b5e22c4d63ec1cf4e3c7e9298",
+      "source_body_sha256": "e2d462182f2787fe81f1d940f7b8e1b88a75456b5e22c4d63ec1cf4e3c7e9298",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0020",
+      "status": "accepted",
+      "ref": "9a04d5e0-4a02-49e8-9ab0-7ef0127317b0",
+      "sequence": 0,
+      "body_sha256": "acd7f880918bf680b00094ff6887b5df7d788a463496938b1d0fa8d3c4817044",
+      "source_body_sha256": "acd7f880918bf680b00094ff6887b5df7d788a463496938b1d0fa8d3c4817044",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0021",
+      "status": "accepted",
+      "ref": "e17e188b-ea46-4d2e-bb28-ce49b3d6cdfb",
+      "sequence": 0,
+      "body_sha256": "f53a42c9082a18b7c49985e2b28570dade14ee417a28b0ae5e2c148d78222b48",
+      "source_body_sha256": "f53a42c9082a18b7c49985e2b28570dade14ee417a28b0ae5e2c148d78222b48",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0022",
+      "status": "accepted",
+      "ref": "b7b781bb-8925-4f90-acf9-e857e6730132",
+      "sequence": 0,
+      "body_sha256": "fff4b9b3ec620a6bf309bbc8d6b5dabcd71b36b9e7741d78ea0c9fb431846705",
+      "source_body_sha256": "fff4b9b3ec620a6bf309bbc8d6b5dabcd71b36b9e7741d78ea0c9fb431846705",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0023",
+      "status": "accepted",
+      "ref": "198c1b41-700c-48b6-a7b6-4cb0ec107f2b",
+      "sequence": 0,
+      "body_sha256": "2517a191def9add142c310246ae6a47b7b6d0a6be3e6a50088efeebc27799688",
+      "source_body_sha256": "2517a191def9add142c310246ae6a47b7b6d0a6be3e6a50088efeebc27799688",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "FOUNDRY-ADR-0026",
+      "status": "accepted",
+      "ref": "affec5e5-72f3-47ed-8818-2208f69ffad2",
+      "sequence": 0,
+      "body_sha256": "eca2ce30b1f26486b2fda93481c13b151944d65fbcdaea46100f17fd25cb951e",
+      "source_body_sha256": "eca2ce30b1f26486b2fda93481c13b151944d65fbcdaea46100f17fd25cb951e",
+      "missing_relations": [
+        "issues",
+        "superseded_by",
+        "supersedes"
+      ]
+    },
+    {
+      "id": "PAT-ADR-0003",
+      "status": "accepted",
+      "ref": "2f767b13-9e36-4374-9585-050abe850b6a",
+      "sequence": 2,
+      "body_sha256": "73944352940e6d4f36d38c8b7cd3f863aaf408d8a3256a39cf819a2cec3d59c5",
+      "source_body_sha256": null,
+      "missing_relations": null
+    }
+  ],
+  "adr_import_reconciliation": {
+    "historical_adr_count": 27,
+    "historical_statuses": {
+      "accepted": 25,
+      "deprecated": 1,
+      "proposed": 1
+    },
+    "batch_sha256": "94729124ab1267f6ada99c0815e04b0a083a330e44cb3499ba58ab7b541baed2",
+    "source_manifest_file_sha256": "263ab3aea0aef80be177fc7984888629929f41c223704b369dd92473bfd0ef3a",
+    "post_write_audit_sha256": "c127aaaf0514a9d249f3a0d6cbbed5a4e48c1ddfb0506fb2b9c03dfd22ebc015",
+    "historical_versions": "unavailable-in-source",
+    "public_selective_manifest": "13 archive-reference entries only; insufficient to prove later import",
+    "post_write_audit_read_currently": false
+  },
+  "intake": {
+    "snapshot_identity": "sha256:eabc7db5d702c3785aa7b1b10b55f8bd0f9822a440dc5a66419e2f19a7f45d94",
+    "pages": 3,
+    "issues_union": 70,
+    "historical_index_union": 56,
+    "older_profile_included": false
+  },
+  "baseline": {
+    "codex": {
+      "economy": {
+        "model": "gpt-5.6-luna",
+        "effort": "low"
+      },
+      "balanced": {
+        "model": "gpt-5.6-terra",
+        "effort": "medium"
+      },
+      "frontier": {
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "apex": {
+        "model": "gpt-5.6-sol",
+        "effort": "max"
+      }
+    },
+    "historical_corpus": "plugins/foundry/docs/model-routing-pilot-results-v1.md",
+    "historical_verdict": "historical-only; not evidence for candidate identity, quality, access, or cost"
+  },
+  "candidates": [
+    {
+      "role": "scout",
+      "tier": "economy",
+      "model": "gpt-6-luna",
+      "effort": "low",
+      "status": "unqualified"
+    },
+    {
+      "role": "implementer",
+      "tier": "balanced",
+      "model": "gpt-6.1-sol",
+      "effort": "medium",
+      "status": "unqualified"
+    },
+    {
+      "role": "reviewer",
+      "tier": "frontier",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "status": "unqualified"
+    },
+    {
+      "role": "architect",
+      "tier": "apex",
+      "model": "gpt-6.1-sol",
+      "effort": "max",
+      "status": "unqualified"
+    }
+  ],
+  "astra": "explicit, bounded escalation/comparison only; no default or assumed superiority",
+  "host_observations": {
+    "codex_cli": {
+      "value": "0.155.1",
+      "proves_model_support": false,
+      "proves_account_access": false
+    },
+    "claude_code": {
+      "value": "2.1.267",
+      "proves_model_support": false,
+      "proves_account_access": false
+    }
+  },
+  "budget_proposal_not_authorization": {
+    "host": "codex",
+    "total_usd": 10,
+    "per_host_usd": 10,
+    "per_session_or_call_usd": 2,
+    "max_sessions": 4,
+    "retries": 0,
+    "expiry_hours_after_signature": 24,
+    "authorized_spend_usd": 0,
+    "paid_trials_authorized": false
+  },
+  "promotion": "blocked pending explicit human approval of contract and proposed ADR, deterministic qualification, authorized campaign, independent review, exact-SHA CI, and per-host rollback proof",
+  "adr_index": {
+    "read_at": "2026-10-03",
+    "entries": [
+      {
+        "id": "FOUNDRY-ADR-0001",
+        "title": "FOUNDRY-ADR-0001 — Pipeline idée→livraison + forme plugin",
+        "status": "accepted",
+        "ref": "1c9b9ec3-8d8f-4187-86fb-83d645567b32"
+      },
+      {
+        "id": "FOUNDRY-ADR-0002",
+        "title": "FOUNDRY-ADR-0002 — Sémantique du gate CI : vert = prouvé vert, sur deux sources",
+        "status": "accepted",
+        "ref": "e24493f1-23b6-4a5c-b087-51525ab3608e"
+      },
+      {
+        "id": "FOUNDRY-ADR-0003",
+        "title": "FOUNDRY-ADR-0003 — Tier query : payloads maigres — résumé d'abord, détail à la demande",
+        "status": "accepted",
+        "ref": "af4c4af3-d205-4eec-b1d0-ab395addd9df"
+      },
+      {
+        "id": "FOUNDRY-ADR-0004",
+        "title": "FOUNDRY-ADR-0004 — Distribution : monorepo claude-plugins (Foundry n'est plus son propre marketplace)",
+        "status": "accepted",
+        "ref": "ffba7fef-d003-4c6d-ac98-42a23d85e59c"
+      },
+      {
+        "id": "FOUNDRY-ADR-0005",
+        "title": "FOUNDRY-ADR-0005 — Distribution dual-runtime : une implémentation, deux packages Claude Code et Codex",
+        "status": "accepted",
+        "ref": "0f343d15-3fb2-4373-8fd6-28dcc7b4f47d"
+      },
+      {
+        "id": "FOUNDRY-ADR-0006",
+        "title": "FOUNDRY-ADR-0006 — Routage sémantique des agents par coût, risque et niveau de raisonnement",
+        "status": "accepted",
+        "ref": "c5998377-ff22-4420-9acb-47e472b82a2d"
+      },
+      {
+        "id": "FOUNDRY-ADR-0007",
+        "title": "FOUNDRY-ADR-0007 — Prétraitement local non privilégié via endpoint compatible OpenAI",
+        "status": "accepted",
+        "ref": "9ee9a15c-e819-4819-91b8-41b744ecce84"
+      },
+      {
+        "id": "FOUNDRY-ADR-0008",
+        "title": "FOUNDRY-ADR-0008 — Découpler modèle, effort de raisonnement et politique de contexte",
+        "status": "accepted",
+        "ref": "5fe70e95-9496-47c3-bc1a-375d1a05e2a4"
+      },
+      {
+        "id": "FOUNDRY-ADR-0009",
+        "title": "FOUNDRY-ADR-0009 — Context Broker expérimental, borné et orthogonal au routage",
+        "status": "accepted",
+        "ref": "c78ac4d0-3570-455f-b0ba-b029ab9a427d"
+      },
+      {
+        "id": "FOUNDRY-ADR-0010",
+        "title": "FOUNDRY-ADR-0010 — Autorisation externe et snapshots attestés pour campagnes benchmark",
+        "status": "accepted",
+        "ref": "b44b5b67-4276-4d08-abf9-7ed42d03ccb2"
+      },
+      {
+        "id": "FOUNDRY-ADR-0011",
+        "title": "FOUNDRY-ADR-0011 — Étendre l’outer loop à la preuve de livraison sans posséder le déploiement",
+        "status": "accepted",
+        "ref": "28f50e4c-8b54-492b-bb29-8e687b8e2e8c"
+      },
+      {
+        "id": "FOUNDRY-ADR-0012",
+        "title": "FOUNDRY-ADR-0012 — --help",
+        "status": "deprecated",
+        "ref": "f88b6e71-af41-4486-9413-2c7a4453dcf7"
+      },
+      {
+        "id": "FOUNDRY-ADR-0013",
+        "title": "FOUNDRY-ADR-0013 — Autorité bornée du coordinateur de campagne epic",
+        "status": "accepted",
+        "ref": "3885658c-0dc8-4d42-b484-7301374f8647"
+      },
+      {
+        "id": "FOUNDRY-ADR-0014",
+        "title": "FOUNDRY-ADR-0014 — Verdict humain réservé à la stratégie produit ou à l’ambiguïté attestée",
+        "status": "accepted",
+        "ref": "9c2ded7b-e44c-4895-9dcd-023867d77cb3"
+      },
+      {
+        "id": "FOUNDRY-ADR-0015",
+        "title": "FOUNDRY-ADR-0015 — Lire les journaux de session des hosts hors du chemin d'invocation pour attribuer un coût",
+        "status": "accepted",
+        "ref": "f5935b49-cc6f-46a9-a95c-c228f8224bf4"
+      },
+      {
+        "id": "FOUNDRY-ADR-0016",
+        "title": "FOUNDRY-ADR-0016 — Autoriser un store d'approbation local comme porteur d'intention de campagne Epic",
+        "status": "accepted",
+        "ref": "61266fb3-d0cf-4d50-8e9e-930297ce2797"
+      },
+      {
+        "id": "FOUNDRY-ADR-0017",
+        "title": "FOUNDRY-ADR-0017 — Sessions jetables enchaînées par un cadenceur déterministe, verdict humain porté par l'Epic",
+        "status": "accepted",
+        "ref": "b40ee7e6-8940-4c47-a240-fbaabb1e598b"
+      },
+      {
+        "id": "FOUNDRY-ADR-0018",
+        "title": "FOUNDRY-ADR-0018 — Documentation prouvée : statut explicite par artefact documenté touché",
+        "status": "accepted",
+        "ref": "54d8c108-5cb0-48a1-a4d1-3054d022725d"
+      },
+      {
+        "id": "FOUNDRY-ADR-0019",
+        "title": "FOUNDRY-ADR-0019 — Promouvoir un modèle sur un rôle par comparaison bornée contre l'historique",
+        "status": "accepted",
+        "ref": "050a1ff8-0d0b-496e-b25d-759a1551d23d"
+      },
+      {
+        "id": "FOUNDRY-ADR-0020",
+        "title": "FOUNDRY-ADR-0020 — Comparaison appariée à échelle d escalade complète et symétrique",
+        "status": "accepted",
+        "ref": "9a04d5e0-4a02-49e8-9ab0-7ef0127317b0"
+      },
+      {
+        "id": "FOUNDRY-ADR-0021",
+        "title": "FOUNDRY-ADR-0021 — Arrêt économique monotone de la comparaison appariée",
+        "status": "accepted",
+        "ref": "e17e188b-ea46-4d2e-bb28-ce49b3d6cdfb"
+      },
+      {
+        "id": "FOUNDRY-ADR-0022",
+        "title": "FOUNDRY-ADR-0022 — Rejouer chaque palier de comparaison depuis une fixture isolée",
+        "status": "accepted",
+        "ref": "b7b781bb-8925-4f90-acf9-e857e6730132"
+      },
+      {
+        "id": "FOUNDRY-ADR-0023",
+        "title": "FOUNDRY-ADR-0023 — F146 Plan Authority authentifiée et handoffs provider typés",
+        "status": "accepted",
+        "ref": "198c1b41-700c-48b6-a7b6-4cb0ec107f2b"
+      },
+      {
+        "id": "FOUNDRY-ADR-0024",
+        "title": "FOUNDRY-ADR-0024 — Monorepo public successeur à historique propre",
+        "status": "accepted",
+        "ref": "048dbb49-42c2-4b7d-85e0-c0c4bd31bd78"
+      },
+      {
+        "id": "FOUNDRY-ADR-0025",
+        "title": "FOUNDRY-ADR-0025 — Frontière de confiance pour un dépôt public maintenu sans contributions externes",
+        "status": "accepted",
+        "ref": "34e38ff2-95a8-41bd-8dc8-66b7bfe776d9"
+      },
+      {
+        "id": "FOUNDRY-ADR-0026",
+        "title": "FOUNDRY-ADR-0026 — Un tracker unique par dépôt et cutover atomique vers Linear",
+        "status": "accepted",
+        "ref": "affec5e5-72f3-47ed-8818-2208f69ffad2"
+      },
+      {
+        "id": "FOUNDRY-ADR-0027",
+        "title": "FOUNDRY-ADR-0027 — Cockpit ChatGPT MCP à mutations tracker et preuves bornées",
+        "status": "proposed",
+        "ref": "14275d54-4b26-4f85-8d5d-c37670f833bf"
+      },
+      {
+        "id": "PAT-ADR-0001",
+        "title": "Importer intégralement le corpus ADR historique de Foundry dans Linear",
+        "status": "accepted",
+        "ref": "ff06e6f5-eae5-4469-bffd-bb1428373ed7"
+      },
+      {
+        "id": "PAT-ADR-0002",
+        "title": "Conserver le corps source exact des ADR face au rendu Markdown Linear",
+        "status": "accepted",
+        "ref": "2afa1adc-f521-496d-906a-a915a2c22b96"
+      },
+      {
+        "id": "PAT-ADR-0003",
+        "title": "Préserver explicitement les relations historiques indisponibles lors de l’import Linear",
+        "status": "accepted",
+        "ref": "2f767b13-9e36-4374-9585-050abe850b6a"
+      },
+      {
+        "id": "PAT-ADR-0004",
+        "title": "[TEST PAT-23] Recette cycle de vie ADR — non décisionnelle",
+        "status": "deprecated",
+        "ref": "958c1748-d213-49bd-910f-17f7fff9679f"
+      },
+      {
+        "id": "PAT-ADR-0005",
+        "title": "[TEST PAT-10] Recette Codex cycle de vie ADR — non décisionnelle",
+        "status": "deprecated",
+        "ref": "c5cca568-358b-4d8f-9202-99024253091d"
+      },
+      {
+        "id": "PAT-ADR-0006",
+        "title": "Garanties d'écriture sans CAS pour les trackers V1",
+        "status": "accepted",
+        "ref": "f6c64220-b897-4693-8c38-4fc0569b08ab"
+      },
+      {
+        "id": "PAT-ADR-0007",
+        "title": "Stocker les ADR GitHub V1 dans des issues privées et commentaires versionnés à intégrité vérifiée",
+        "status": "accepted",
+        "ref": "ef18a088-ad14-4c2d-bc15-d08035c472f4"
+      },
+      {
+        "id": "PAT-ADR-0008",
+        "title": "Conserver les références des issues non migrées dans la provenance ADR",
+        "status": "accepted",
+        "ref": "c2d0bc2f-8ffc-4dc8-9b83-62a3bc38d7f1"
+      },
+      {
+        "id": "PAT-ADR-0009",
+        "title": "Qualifier les reçus de livraison YouTrack pour le changelog et Ship-iOS",
+        "status": "accepted",
+        "ref": "b2eed300-beb4-4a59-a89b-0afc5a9efc6f"
+      }
+    ]
+  },
+  "artifact_kind": "sanitized observation and proposed contract; not a Foundry receipt or attestation",
+  "proposed_adr": {
+    "id": "PAT-ADR-0010",
+    "status": "proposed",
+    "initial_ref": "39779d79-a2f1-4152-8cae-7046a4718b74"
+  },
+  "v1_native_smoke_proposal": {
+    "host": "codex",
+    "maximum_sessions": 4,
+    "maximum_minutes_per_session": 20,
+    "qualification_retries": 0,
+    "api_or_additional_credits_usd": 0,
+    "approval": "pending",
+    "economic_gain": "not_proven"
+  },
+  "local_validation": {
+    "source_head": "bc25c344d7eaccfbe9758fd2ddd28c02232db36b",
+    "public_passed": 3213,
+    "public_deselected": 10,
+    "tracker_conformance_passed": 108,
+    "routing_and_process_contract_passed": 17,
+    "ship_ios_passed": 35,
+    "catalogue_passed": 19,
+    "ruff": "passed",
+    "compileall": "passed"
+  }
+}

@@ -1,5 +1,10 @@
 # Model routing contract
 
+The proposed 2026 Codex migration is documented separately in
+[model-migration-2026-10.md](model-migration-2026-10.md). It is a preparation
+contract only: this page's GPT-5.6 defaults remain the production baseline until
+the required ADR and per-host qualification/promotion gates have been satisfied.
+
 Foundry routes delegated work through semantic roles rather than provider model names.
 The shared deterministic contract lives in `tooling/foundry/routing.py` and
 `tooling/foundry/escalation.py`; Claude Code and Codex façades must call it instead of
