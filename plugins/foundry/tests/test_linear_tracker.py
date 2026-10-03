@@ -6947,6 +6947,33 @@ def test_linear_adr_pat85_outer_context_refuses_before_write(tracker, body):
     linear_module._preflight_adr_body_readback(fenced)
 
 
+@pytest.mark.parametrize("indentation", ("    ", "\t", " \t", "   \t", "        ", "\t "))
+@pytest.mark.parametrize("prefix", ("", "paragraph\n\n"))
+def test_linear_adr_pat85_indented_code_refuses_before_write(tracker, indentation, prefix):
+    instance, wire = tracker
+    body = f"{prefix}{indentation}**Modifier `PAT`**"
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown serialization"):
+        instance.create_adr(PROJECT, "PAT-85 indented code", body)
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+@pytest.mark.parametrize("prefix", ("-     ", "*     ", "+     ", "1.     ", "3)     ", "- \t    ", "  -     "))
+def test_linear_adr_pat85_list_indented_code_refuses_before_write(tracker, prefix):
+    instance, wire = tracker
+    body = f"{prefix}**Modifier `PAT`**"
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown serialization"):
+        instance.create_adr(PROJECT, "PAT-85 list indented code", body)
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
 def test_linear_adr_pat85_preserves_qualified_plain_surroundings_and_literal_code():
     source = '`<span>[_~**]` **Modifier `PAT`** puis `accepted` et **Accepter `PAT`**'
     observed = '`<span>[_~**]` **Modifier** `PAT` puis `accepted` et **Accepter** `PAT`'

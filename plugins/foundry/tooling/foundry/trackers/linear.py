@@ -1045,10 +1045,17 @@ def _linear_strong_trailing_inline_code_readback(fragment: str) -> str:
     offset = 0
     for line in fragment.splitlines(keepends=True):
         end = offset + len(line)
+        has_candidate = any(offset <= start < end for start, _, _ in replacements)
+        indentation = line[: len(line) - len(line.lstrip(" \t"))]
+        if has_candidate and len(indentation.expandtabs(4)) >= 4:
+            raise ValueError("unsupported strong inline-code Markdown in ADR body")
+        list_prefix = re.match(r"^ {0,3}(?:[*+-]|[0-9]{1,9}[.)])([ \t]+)", line)
+        if has_candidate and list_prefix is not None and list_prefix[1] != " ":
+            raise ValueError("unsupported strong inline-code Markdown in ADR body")
         if line.startswith("* "):
             # The already-qualified list conversion runs before this pass.
             context[offset] = "x"
-        if any(offset <= start < end for start, _, _ in replacements) and any(
+        if has_candidate and any(
             character in "*_~[]<>&\\" for character in context[offset:end]
         ):
             raise ValueError("unsupported strong inline-code Markdown in ADR body")

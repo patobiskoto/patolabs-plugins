@@ -225,7 +225,11 @@ labels and marked siblings instead of interpreting their contents as the observe
 form. The already-qualified leading `* ` list marker is preserved. Strong/code
 written with `__` is unqualified too. Plain surrounding text,
 literal inline code and multiple qualified spans remain supported. Fenced code remains
-byte-exact. This is
+byte-exact. A candidate line indented by four or more columns (tabs expand at four
+columns) is conservatively unqualified and refused before writing, so an indented
+code block is never rewritten as the observed inline form. Candidate lines after a
+list marker with padding other than one space are also unqualified, including
+indented code inside a list. This is
 source-to-readback only: the witness retains
 the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or globally
 normalized. Exact replay of an unwitnessed deterministic version may create only its
