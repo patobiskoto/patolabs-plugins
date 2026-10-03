@@ -276,6 +276,26 @@ def test_whitelist_rejects_unknown_model_and_sensitive_free_fields(tmp_path):
     assert not (tmp_path / "telemetry" / "journal.ndjson").exists()
 
 
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        ("gpt-6-luna", "low"),
+        ("gpt-6.1-sol", "medium"),
+        ("gpt-6-astra", "high"),
+    ],
+)
+def test_gpt6_models_are_public_telemetry_vocabulary_with_null_metrics(model, effort):
+    event = _invocation()
+    event.update({"model": model, "effort": effort})
+    clean = validate_event(_raw(event))
+    assert clean["model"] == model
+    assert clean["usage"] == {
+        "input_tokens": {"value": None, "provenance": "unknown"},
+        "output_tokens": {"value": None, "provenance": "unknown"},
+        "total_tokens": {"value": None, "provenance": "unknown"},
+    }
+
+
 def test_project_model_and_effort_survive_write_and_export(
     tmp_path, monkeypatch, capsys,
 ):
@@ -1051,9 +1071,9 @@ def test_concurrent_process_consumers_win_exactly_once(tmp_path, kind):
     ("available", "overrides", "fallbacks", "override_count"),
     [
         (None, (), 0, 0),
-        ({"gpt-5.6-luna"}, (), 1, 0),
+        ({"gpt-6-luna"}, (), 1, 0),
         (None, ("profile.model",), 0, 1),
-        ({"gpt-5.6-luna"}, ("profile.model",), 1, 1),
+        ({"gpt-6-luna"}, ("profile.model",), 1, 1),
     ],
 )
 def test_route_signals_count_actual_fallbacks_and_only_override_warnings(
@@ -1596,16 +1616,16 @@ def test_enabled_observation_preserves_gate_plan_retry_and_host_result(tmp_path,
     monkeypatch.delenv("FOUNDRY_DATA", raising=False)
     disabled = codex_spawn_plan(
         "reviewer", packet, root=tmp_path, review_claim=claim,
-        available_models={"gpt-5.6-sol"},
+        available_models={"gpt-6.1-sol"},
     )
     monkeypatch.setenv("FOUNDRY_DATA", str(data_dir))
     first = codex_spawn_plan(
         "reviewer", packet, root=tmp_path, review_claim=claim,
-        available_models={"gpt-5.6-sol"},
+        available_models={"gpt-6.1-sol"},
     )
     second = codex_spawn_plan(
         "reviewer", packet, root=tmp_path, review_claim=claim,
-        available_models={"gpt-5.6-sol"},
+        available_models={"gpt-6.1-sol"},
     )
     for observed in (first, second):
         observed = dict(observed)

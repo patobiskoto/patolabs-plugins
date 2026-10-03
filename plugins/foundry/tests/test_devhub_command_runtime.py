@@ -218,15 +218,20 @@ def test_file_authority_persists_an_exact_approved_ac_child_mapping(tmp_path):
         empty_source.load(empty_command)
 
 
+@pytest.mark.parametrize("model,effort,wire", [
+    ("runtime-model", "high", "runtime-wire-alias"),
+    ("haiku-4.5", "low", "claude-haiku-4-5"),
+    ("haiku-4.5", None, "claude-haiku-4-5"),
+])
 def test_concrete_claude_runtime_enforces_budget_floor_and_scrubs_authority_secrets(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, model, effort, wire,
 ):
     command, document = authority_material()
     directory = write_authority(tmp_path, document)
     routing_config = tmp_path / ".foundry" / "model-routing.json"
     routing_config.parent.mkdir()
     routing_config.write_text(json.dumps({
-        "mappings": {"claude": {"frontier": {"model": "runtime-model"}}},
+        "mappings": {"claude": {"frontier": {"model": model, "effort": effort}}},
         "claude_models": {"runtime-model": "runtime-wire-alias"},
     }), encoding="utf-8")
     calls = []
@@ -342,7 +347,12 @@ def test_concrete_claude_runtime_enforces_budget_floor_and_scrubs_authority_secr
     assert reconciled[0].budget_remaining_cents == 300
     argv, kwargs = calls[0]
     assert argv[argv.index("--max-budget-usd") + 1] == "3.00"
-    assert argv[argv.index("--model") + 1] == "runtime-wire-alias"
+    assert argv[argv.index("--model") + 1] == wire
+    if model == "haiku-4.5":
+        assert "--effort" not in argv
+    else:
+        assert argv[argv.index("--effort") + 1] == effort
+    assert all(isinstance(value, str) for value in argv)
     assert "runtime-model" not in argv
     assert authority_secrets.isdisjoint(kwargs["env"])
     assert "DEVHUB_URL" not in kwargs["env"]

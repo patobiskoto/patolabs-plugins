@@ -285,8 +285,8 @@ def test_doctor_routing_reports_both_hosts_and_redacts_override_values(tmp_path,
     sentinel = "MODEL_OVERRIDE_VALUE_MUST_NEVER_APPEAR"
     environ = {
         "CLAUDE_CODE_SUBAGENT_MODEL": sentinel,
-        "FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku-4.5,sonnet-5,opus-5,fable-5",
-        "FOUNDRY_CODEX_AVAILABLE_MODELS": "gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol",
+        "FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku-4.5,sonnet-5.5,opus-5.5",
+        "FOUNDRY_CODEX_AVAILABLE_MODELS": "gpt-6-luna,gpt-6.1-sol,gpt-6.1-sol",
     }
 
     payload = doctor.routing_diagnostics(tmp_path, environ=environ)
@@ -299,8 +299,8 @@ def test_doctor_routing_reports_both_hosts_and_redacts_override_values(tmp_path,
     assert sentinel not in rendered
     assert all(sentinel not in str(value) for value in payload.values())
     expected = {
-        "claude": ("fable-5", "high"),
-        "codex": ("gpt-5.6-sol", "max"),
+        "claude": ("opus-5.5", "high"),
+        "codex": ("gpt-6.1-sol", "max"),
     }
     for host, (model, effort) in expected.items():
         architect = next(r for r in payload["hosts"][host]["routes"] if r["role"] == "architect")
@@ -469,7 +469,7 @@ def test_doctor_reports_escalated_and_halted_issue_state(tmp_path, monkeypatch):
 def test_doctor_renders_successful_fallback_as_a_visible_warning(tmp_path, capsys):
     payload = doctor.routing_diagnostics(
         tmp_path,
-        environ={"FOUNDRY_CODEX_AVAILABLE_MODELS": "gpt-5.6-luna,gpt-5.6-sol"},
+        environ={"FOUNDRY_CODEX_AVAILABLE_MODELS": "gpt-6-luna"},
     )
     implementer = next(
         item for item in payload["hosts"]["codex"]["routes"]
@@ -658,7 +658,7 @@ def test_doctor_renders_halted_issue_as_unhealthy(tmp_path, monkeypatch, capsys)
 def test_doctor_reports_unavailable_gate_without_silent_fallback(tmp_path):
     payload = doctor.routing_diagnostics(
         tmp_path,
-        environ={"FOUNDRY_CODEX_AVAILABLE_MODELS": "gpt-5.6-luna"},
+        environ={"FOUNDRY_CODEX_AVAILABLE_MODELS": "gpt-6-luna"},
     )
     reviewer = next(
         item for item in payload["hosts"]["codex"]["routes"]

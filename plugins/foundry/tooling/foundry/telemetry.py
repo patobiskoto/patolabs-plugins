@@ -39,8 +39,11 @@ TEST_STATES = ("passed", "failed", "not_run", "unknown")
 REVIEW_STATES = ("passed", "failed", "not_run", "unknown")
 SEVERITIES = ("info", "warning", "error", "blocking")
 KNOWN_MODELS = frozenset({
-    "haiku-4.5", "sonnet-5", "opus-5", "fable-5",
+    "haiku-4.5", "haiku-4.5-20251001", "sonnet-5", "opus-5", "fable-5",
+    "haiku", "sonnet", "opus", "fable",
+    "sonnet-5.5", "opus-5.5", "fable-5.1",
     "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol",
+    "gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra",
 })
 # These are labels shipped with Foundry, rather than caller-selected identifiers.
 PRICE_TABLE_IDS = ("foundry-public-v1",)

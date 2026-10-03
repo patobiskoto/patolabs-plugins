@@ -8670,3 +8670,260 @@ def test_linear_combined_history_still_refuses_foreign_cockpit_native_coordinate
     assert observed.normalized_state is None
     assert observed.ac_done == 0
     assert wire.issues["LIN-2"] == before
+
+
+def _pat86_envelopes():
+    canonical = (PAT71_FIXTURES / "linear_pat86_source.txt").read_text()
+    actual = (PAT71_FIXTURES / "linear_pat86_actual.txt").read_text()
+    header, source = canonical[len(linear_module._ADR_HEADER):].split("\n-->\n\n", 1)
+    metadata = json.loads(header)
+    project = Project(
+        key="PAT", id=metadata["project_id"],
+        extra={**PROJECT.extra, "team_id": metadata["team_id"]},
+    )
+    raw = {
+        "id": "04e3c77e-7f27-449b-8ea8-46eb0f6545be",
+        "title": linear_module._adr_document_title(metadata),
+        "content": actual, "project": {"id": project.id}, "archivedAt": None,
+    }
+    return project, metadata, source, canonical, raw
+
+
+def test_linear_pat86_complete_observed_envelope_and_closed_profile(monkeypatch):
+    project, metadata, source, canonical, raw = _pat86_envelopes()
+    assert source == source.strip()  # CLI strips only outer whitespace.
+    assert hashlib.sha256(source.encode()).hexdigest() == metadata["body_sha256"]
+    assert metadata["body_sha256"] == linear_module._PAT_86_SOURCE_SHA256
+    assert hashlib.sha256(raw["content"].encode()).hexdigest() == (
+        "19123eb2c94aea2f327637292da4ebf5317089804ad8b43e0a30a57d4fc9fbce"
+    )
+    assert linear_module._adr_document_id(project.id, metadata["id"], 0) == raw["id"]
+    assert linear_module._linear_adr_readback_content(canonical) == raw["content"]
+    strict = (PAT71_FIXTURES / "linear_pat86_strict.txt").read_text()
+    monkeypatch.setattr(linear_module, "_PAT_86_SOURCE_SHA256", "0" * 64)
+    assert linear_module._linear_adr_readback_content(canonical) == strict
+    for before, after in linear_module._PAT_86_FRAGMENTS:
+        assert source.count(before) == 1
+        assert strict.count(before) == 1
+        neighbour = source.replace(before, after, 1)
+        expected = linear_markdown_body_readback(neighbour)
+        assert linear_module._linear_pat_86_readback(neighbour, expected) is None
+        try:
+            assert linear_module._linear_markdown_readback_body(neighbour) == expected
+        except ValueError:
+            # Some already-linked neighbours are outside the strict grammar.
+            with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+                linear_module._preflight_adr_body_readback(neighbour)
+
+
+@pytest.mark.parametrize("failure", ["fragment", "rendered_digest"])
+def test_linear_pat86_profile_checks_fragments_and_final_digest(monkeypatch, failure):
+    _project, _metadata, source, _canonical, _raw = _pat86_envelopes()
+    if failure == "fragment":
+        monkeypatch.setattr(linear_module, "_PAT_86_FRAGMENTS", (("absent", "replacement"),))
+    else:
+        monkeypatch.setattr(linear_module, "_PAT_86_READBACK_SHA256", "0" * 64)
+    with pytest.raises(ValueError, match="pat-86 rendering"):
+        linear_module._linear_markdown_readback_body(source)
+
+
+def test_linear_pat86_native_recovery_replay_and_future_version(tracker):
+    instance, wire = tracker
+    project, metadata, source, canonical, raw = _pat86_envelopes()
+    wire.documents[raw["id"]] = copy.deepcopy(raw)
+    with pytest.raises(TrackerConflictError, match="version witness is missing"):
+        instance.list_adrs(project)
+    wire.calls.clear()
+    recovered = instance.create_adr(project, metadata["title"], source)
+    witness_id = linear_module._adr_witness_id(project.id, metadata["id"], 0)
+    assert wire.documents[raw["id"]] == raw
+    assert set(wire.documents) == {raw["id"], witness_id}
+    witness = linear_module._parse_adr_witness(wire.documents[witness_id], instance._binding(project))
+    assert base64.b64decode(witness["source_body"]).decode() == source
+    assert recovered.body == canonical
+    assert recovered.status == "proposed"
+    assert instance.list_adrs(project) == [recovered]
+    creates = [v["input"]["id"] for q, v in wire.calls if "FoundryLinearAdrDocumentCreate" in q]
+    assert creates == [witness_id]
+    wire.calls.clear()
+    assert instance.create_adr(project, metadata["title"], source) == recovered
+    assert all("mutation " not in q for q, _ in wire.calls)
+    # The same source remains qualified in a new metadata envelope. The fake
+    # provider uses the independent recorded fixture for this exact body.
+    original = instance._transport
+    def observed_provider(query_text, variables):
+        result = original(query_text, variables)
+        if "FoundryLinearAdrDocumentCreate" in query_text and variables["input"]["content"].startswith(linear_module._ADR_HEADER):
+            created = result["data"]["documentCreate"]["document"]
+            header = created["content"].split("\n\\-->\n\n", 1)[0]
+            actual_body = raw["content"].split("\n\\-->\n\n", 1)[1]
+            created["content"] = header + "\n\\-->\n\n" + actual_body
+            wire.documents[created["id"]] = copy.deepcopy(created)
+        return result
+    instance._transport = observed_provider
+    instance.set_adr_status(recovered, "accepted", project=project)
+    updated = instance.list_adrs(project)[0]
+    assert updated.status == "accepted"
+    assert updated.body.split("\n-->\n\n", 1)[1] == source
+    assert wire.documents[raw["id"]] == raw
+    assert all("documentUpdate" not in q and "documentDelete" not in q for q, _ in wire.calls)
+
+
+@pytest.mark.parametrize("change", ["source", "title", "metadata", "project", "content", "archive"])
+def test_linear_pat86_hostile_recovery_has_no_effect(tracker, change):
+    instance, wire = tracker
+    project, metadata, source, canonical, raw = _pat86_envelopes()
+    title = metadata["title"]
+    if change == "source":
+        source = source.replace("firstParty", "thirdParty", 1)
+    elif change == "title":
+        title += " altered"
+    elif change == "metadata":
+        raw["content"] = raw["content"].replace('"origin":{"kind":"native"}', '"origin":{"kind":"unknown"}', 1)
+    elif change == "project":
+        raw["content"] = raw["content"].replace(project.id, "foreign-project", 1)
+    elif change == "content":
+        raw["content"] = raw["content"].replace("firstParty", "thirdParty", 1)
+    else:
+        raw["archivedAt"] = "2026-10-03T00:00:00Z"
+    wire.documents[raw["id"]] = copy.deepcopy(raw)
+    before = copy.deepcopy(wire.documents)
+    with pytest.raises((TrackerConflictError, LinearTrackerError)):
+        instance.create_adr(project, title, source)
+    assert wire.documents == before
+    assert all("mutation " not in q for q, _ in wire.calls)
+
+
+@pytest.mark.parametrize("after_write", [False, True])
+def test_linear_pat86_interrupted_witness_recovery(tracker, after_write):
+    instance, wire = tracker
+    project, metadata, source, canonical, raw = _pat86_envelopes()
+    wire.documents[raw["id"]] = copy.deepcopy(raw)
+    original = instance._transport
+    def interrupted(query_text, variables):
+        if "FoundryLinearAdrDocumentCreate" in query_text:
+            if after_write:
+                original(query_text, variables)
+            raise OSError("witness response lost")
+        return original(query_text, variables)
+    instance._transport = interrupted
+    if after_write:
+        recovered = instance.create_adr(project, metadata["title"], source)
+        assert recovered.ref == raw["id"]
+    else:
+        with pytest.raises(LinearTrackerError, match="transport_error"):
+            instance.create_adr(project, metadata["title"], source)
+        assert wire.documents == {raw["id"]: raw}
+    instance._transport = original
+    recovered = instance.create_adr(project, metadata["title"], source)
+    assert recovered.ref == raw["id"]
+    assert recovered.body == canonical
+    assert wire.documents[raw["id"]] == raw
+    assert len(wire.documents) == 2
+    wire.calls.clear()
+    assert instance.create_adr(project, metadata["title"], source) == recovered
+    assert all("mutation " not in q for q, _ in wire.calls)
+
+
+@pytest.mark.parametrize("operation", ["create", "edit"])
+def test_linear_pat86_new_version_preserves_source(tracker, monkeypatch, operation):
+    instance, wire = tracker
+    project, metadata, source, canonical, raw = _pat86_envelopes()
+    actual_body = raw["content"].split("\n\\-->\n\n", 1)[1]
+    independent_render = linear_markdown_body_readback
+    def observed_render(body):
+        return actual_body if body == source else independent_render(body)
+    monkeypatch.setitem(globals(), "linear_markdown_body_readback", observed_render)
+    if operation == "create":
+        created = instance.create_adr(project, "new qualified source", source)
+    else:
+        created = instance.create_adr(project, "edit qualified source", "original body")
+        assert instance.update_body(
+            created, created.body, created.body.replace("original body", source), project=project
+        )
+        created = instance.list_adrs(project)[0]
+    assert created.body.split("\n-->\n\n", 1)[1] == source
+    assert wire.documents[created.ref]["content"].split("\n\\-->\n\n", 1)[1] == actual_body
+    sequence = 0 if operation == "create" else 1
+    witness_id = linear_module._adr_witness_id(project.id, created.id, sequence)
+    witness = linear_module._parse_adr_witness(wire.documents[witness_id], instance._binding(project))
+    assert base64.b64decode(witness["source_body"]).decode() == source
+    assert all("documentUpdate" not in q and "documentDelete" not in q for q, _ in wire.calls)
+
+
+def _pat16_adr13_body_fixture():
+    return json.loads((Path(__file__).parent / "fixtures" /
+                       "pat16-adr13-readback.json").read_text())
+
+
+def test_linear_pat16_adr13_exact_native_body_readback():
+    fixture = _pat16_adr13_body_fixture()
+    source, observed = fixture["source"], fixture["observed_body"]
+    assert hashlib.sha256(source.encode()).hexdigest() == linear_module._PAT_16_ADR13_SOURCE_SHA256
+    assert hashlib.sha256(observed.encode()).hexdigest() == linear_module._PAT_16_ADR13_READBACK_SHA256
+    assert linear_module._linear_markdown_readback_body(source) == observed
+    assert linear_module._linear_pat_16_adr13_readback(source, source) == observed
+
+
+def test_linear_pat16_adr13_profile_cannot_certify_neighbouring_body():
+    fixture = _pat16_adr13_body_fixture()
+    source = fixture["source"]
+    for neighbour in (source + "\n", source.replace("vingt minutes", "trente minutes"),
+                      source.replace("calculator.py", "different.py")):
+        assert linear_module._linear_pat_16_adr13_readback(neighbour, neighbour) is None
+        assert linear_module._linear_markdown_readback_body(neighbour) != fixture["observed_body"]
+    with pytest.raises(ValueError, match="source is invalid"):
+        linear_module._linear_pat_16_adr13_readback(source, source.replace("calculator.py", "wrong.py"))
+    with pytest.raises(ValueError, match="rendering is invalid"):
+        linear_module._linear_pat_16_adr13_readback(source, source + "unexpected")
+
+
+def _pat16_adr13_envelopes():
+    fixture = _pat16_adr13_body_fixture()
+    raw, source = fixture["observed_document"], fixture["source"]
+    metadata_text = raw["content"].split("\n", 2)[1].replace("\\[", "[").replace("\\]", "]")
+    metadata = json.loads(metadata_text)
+    project = Project(key="PAT", id=metadata["project_id"],
+                      extra={**PROJECT.extra, "team_id": metadata["team_id"]})
+    return project, metadata, source, raw
+
+
+def test_linear_pat16_adr13_native_witness_recovery_preserves_written_document(tracker):
+    instance, wire = tracker
+    project, metadata, source, raw = _pat16_adr13_envelopes()
+    wire.documents[raw["id"]] = copy.deepcopy(raw)
+    with pytest.raises(TrackerConflictError, match="witness is missing"):
+        instance.list_adrs(project)
+    wire.calls.clear()
+    recovered = instance.create_adr(project, metadata["title"], source)
+    witness_id = linear_module._adr_witness_id(project.id, metadata["id"], 0)
+    assert wire.documents[raw["id"]] == raw
+    assert set(wire.documents) == {raw["id"], witness_id}
+    assert instance.list_adrs(project) == [recovered]
+    assert recovered.body == linear_module._adr_document_content(metadata, source)
+    creates = [v["input"]["id"] for q, v in wire.calls if "FoundryLinearAdrDocumentCreate" in q]
+    assert creates == [witness_id]
+    wire.calls.clear()
+    assert instance.create_adr(project, metadata["title"], source) == recovered
+    assert all("mutation " not in q for q, _ in wire.calls)
+
+
+@pytest.mark.parametrize("change", ["source", "title", "content", "archive"])
+def test_linear_pat16_adr13_hostile_recovery_has_no_mutation(tracker, change):
+    instance, wire = tracker
+    project, metadata, source, raw = _pat16_adr13_envelopes()
+    title = metadata["title"]
+    if change == "source":
+        source = source.replace("vingt minutes", "trente minutes")
+    elif change == "title":
+        title += " altered"
+    elif change == "content":
+        raw["content"] = raw["content"].replace("http://calculator.py", "https://hostile.test")
+    else:
+        raw["archivedAt"] = "2026-10-03T00:00:00Z"
+    wire.documents[raw["id"]] = copy.deepcopy(raw)
+    before = copy.deepcopy(wire.documents)
+    with pytest.raises((TrackerConflictError, LinearTrackerError)):
+        instance.create_adr(project, title, source)
+    assert wire.documents == before
+    assert all("mutation " not in q for q, _ in wire.calls)

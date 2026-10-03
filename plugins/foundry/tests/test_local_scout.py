@@ -2461,7 +2461,7 @@ def test_cloud_fallback_plan_requires_real_selected_route(tmp_path):
     assert bound["resolved_tier"] == "balanced"
     assert bound["route"]["role"] == "scout"
     assert bound["route"]["host"] == "codex"
-    assert bound["route"]["model"] == "gpt-5.6-terra"
+    assert bound["route"]["model"] == "gpt-6.1-sol"
     assert bound["route"]["effort"] == "medium"
     with pytest.raises(local_scout.LocalScoutError) as raised:
         local_scout.cloud_fallback_spawn_plan(
@@ -2521,7 +2521,7 @@ def test_cli_local_failure_packet_binds_real_route_into_one_spawn_plan(
     assert route["host"] == host
     assert route["requested_tier"] == route["selected_tier"] == "balanced"
     assert route["model"] == (
-        "sonnet-5" if host == "claude" else "gpt-5.6-terra"
+        "sonnet-5.5" if host == "claude" else "gpt-6.1-sol"
     )
     assert route["effort"] == "medium"
     assert plan["host_plan"]["route"] == plan["fallback"]["route"]
@@ -2542,7 +2542,7 @@ def test_cli_local_failure_packet_binds_real_route_into_one_spawn_plan(
             "agent_type": "explorer",
             "fork_turns": "none",
             "message": plan["spawn"]["message"],
-            "model": "gpt-5.6-terra",
+            "model": "gpt-6.1-sol",
             "reasoning_effort": "medium",
         }
 

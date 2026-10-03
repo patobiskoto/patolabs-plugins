@@ -165,16 +165,16 @@ def test_semantic_levels_roles_and_host_mappings_are_the_adr_contract(tmp_path):
         for host, mapping in DEFAULT_MAPPINGS.items()
     } == {
         "claude": {
-            "economy": ("haiku-4.5", "low"),
-            "balanced": ("sonnet-5", "medium"),
-            "frontier": ("opus-5", "high"),
-            "apex": ("fable-5", "high"),
+            "economy": ("haiku-4.5", None),
+            "balanced": ("sonnet-5.5", "medium"),
+            "frontier": ("opus-5.5", "high"),
+            "apex": ("opus-5.5", "high"),
         },
         "codex": {
-            "economy": ("gpt-5.6-luna", "low"),
-            "balanced": ("gpt-5.6-terra", "medium"),
-            "frontier": ("gpt-5.6-sol", "high"),
-            "apex": ("gpt-5.6-sol", "max"),
+            "economy": ("gpt-6-luna", "low"),
+            "balanced": ("gpt-6.1-sol", "medium"),
+            "frontier": ("gpt-6.1-sol", "high"),
+            "apex": ("gpt-6.1-sol", "max"),
         },
     }
 
@@ -242,7 +242,7 @@ def test_non_gate_fallback_goes_down_and_is_visible(tmp_path):
     policy = RoutingPolicy.load(tmp_path)
 
     route = policy.resolve(
-        "implementer", "codex", available_models={"gpt-5.6-luna"},
+        "implementer", "codex", available_models={"gpt-6-luna"},
     )
 
     assert (route.requested_tier, route.selected_tier) == ("balanced", "economy")
@@ -257,16 +257,19 @@ def test_explicit_user_effort_survives_model_fallback(tmp_path):
         "implementer",
         "codex",
         user=UserRouteRequest(effort="max"),
-        available_models={"gpt-5.6-luna"},
+        available_models={"gpt-6-luna"},
     )
 
     assert (route.selected_tier, route.model, route.effort) == (
-        "economy", "gpt-5.6-luna", "max",
+        "economy", "gpt-6-luna", "max",
     )
     assert route.sources == {"tier": "fallback", "model": "default", "effort": "user"}
 
 
 def test_gate_fallback_goes_up_and_never_down(tmp_path):
+    _write_config(tmp_path, {
+        "mappings": {"claude": {"apex": {"model": "fable-5", "effort": "high"}}},
+    })
     policy = RoutingPolicy.load(tmp_path)
 
     route = policy.resolve("reviewer", "claude", available_models={"fable-5", "haiku-4.5"})
@@ -286,7 +289,7 @@ def test_gate_fails_loudly_when_no_model_at_or_above_floor(tmp_path):
     with pytest.raises(RoutingUnavailableError, match=(
         r"gate 'reviewer'.*Niveaux supérieurs essayés : frontier, apex"
     )):
-        policy.resolve("reviewer", "claude", available_models={"haiku-4.5", "sonnet-5"})
+        policy.resolve("reviewer", "claude", available_models={"haiku-4.5", "sonnet-5.5"})
 
 
 def test_architect_cannot_be_downgraded_by_an_explicit_user_request(tmp_path):

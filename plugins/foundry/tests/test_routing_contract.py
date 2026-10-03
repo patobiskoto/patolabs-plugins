@@ -13,6 +13,19 @@ from foundry.routing_facades import AGENT_IDENTITIES, codex_spawn_plan
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _transmitted_model(updated):
+    if "model" in updated:
+        return updated["model"]
+    name = updated["subagent_type"].removeprefix("foundry:")
+    text = (PLUGIN_ROOT / "agents" / f"{name}.md").read_text()
+    return re.search(r"(?m)^model: (.+)$", text).group(1)
+
+
+def _base_profile(updated):
+    return re.match(r"foundry:routed-(readonly|worker)-(low|medium|high|xhigh|max|none)",
+                    updated["subagent_type"]).group(0)
+
+
 def _load_hook(filename, module_name):
     path = PLUGIN_ROOT / "hooks" / f"{filename}.py"
     spec = importlib.util.spec_from_file_location(module_name, path)
@@ -44,12 +57,12 @@ def _frontmatter(path):
 @pytest.mark.parametrize(
     ("role", "profile", "model", "effort", "turns", "capability"),
     [
-        ("scout", "routed-readonly-low", "haiku", "low", 10, "readonly"),
-        ("implementer", "routed-worker-medium", "sonnet", "medium", 50,
+        ("scout", "routed-readonly-none", "claude-haiku-4-5", None, 10, "readonly"),
+        ("implementer", "routed-worker-medium", "claude-sonnet-5-5", "medium", 50,
          "worker"),
-        ("reviewer", "routed-readonly-high", "opus", "high", 24,
+        ("reviewer", "routed-readonly-high", "claude-opus-5-5", "high", 24,
          "readonly"),
-        ("architect", "routed-readonly-high", "fable", "high", 30,
+        ("architect", "routed-readonly-high", "claude-opus-5-5", "high", 30,
          "readonly"),
     ],
 )
@@ -62,18 +75,23 @@ def test_ci_validates_resolved_claude_invocation_without_model_frontmatter(
         environ={},
     )
 
-    assert updated["subagent_type"] == f"foundry:{profile}"
-    assert updated["model"] == model
+    assert _base_profile(updated) == f"foundry:{profile}"
+    assert _transmitted_model(updated) == model
     assert updated["max_turns"] == turns
 
     identity = AGENT_IDENTITIES[role].lower()
     logical = _frontmatter(PLUGIN_ROOT / "agents" / f"{identity}.md")
     assert f"name: {identity}" in logical
-    execution = _frontmatter(PLUGIN_ROOT / "agents" / f"{profile}.md")
+    execution = _frontmatter(PLUGIN_ROOT / "agents" / f"{updated['subagent_type'].removeprefix('foundry:')}.md")
     assert not re.search(r"(?m)^(model|effort|maxTurns):", logical)
     assert re.search(r"(?m)^tools: Read$", logical)
-    assert not re.search(r"(?m)^(model|maxTurns):", execution)
-    assert re.search(rf"(?m)^effort: {effort}$", execution)
+    assert not re.search(r"(?m)^maxTurns:", execution)
+    assert re.search(rf"(?m)^model: {re.escape(model)}$", execution)
+    assert "model" not in updated
+    if effort is None:
+        assert not re.search(r"(?m)^effort:", execution)
+    else:
+        assert re.search(rf"(?m)^effort: {effort}$", execution)
 
     tools = re.search(r"(?m)^tools: (.+)$", execution).group(1).split(", ")
     assert "Agent" not in tools and "Task" not in tools
@@ -96,7 +114,7 @@ def test_claude_xhigh_route_uses_a_shipped_profile_through_the_real_hook(tmp_pat
         environ={},
     )
 
-    assert updated["subagent_type"] == "foundry:routed-worker-xhigh"
+    assert _base_profile(updated) == "foundry:routed-worker-xhigh"
     profile = PLUGIN_ROOT / "agents" / "routed-worker-xhigh.md"
     assert profile.is_file()
     assert "effort: xhigh" in _frontmatter(profile)
@@ -105,10 +123,10 @@ def test_claude_xhigh_route_uses_a_shipped_profile_through_the_real_hook(tmp_pat
 @pytest.mark.parametrize(
     ("role", "agent_type", "model", "effort"),
     [
-        ("scout", "explorer", "gpt-5.6-luna", "low"),
-        ("implementer", "worker", "gpt-5.6-terra", "medium"),
-        ("reviewer", "reviewer", "gpt-5.6-sol", "high"),
-        ("architect", "default", "gpt-5.6-sol", "max"),
+        ("scout", "explorer", "gpt-6-luna", "low"),
+        ("implementer", "worker", "gpt-6.1-sol", "medium"),
+        ("reviewer", "reviewer", "gpt-6.1-sol", "high"),
+        ("architect", "default", "gpt-6.1-sol", "max"),
     ],
 )
 def test_ci_validates_resolved_codex_invocation(role, agent_type, model, effort, tmp_path):
@@ -150,7 +168,7 @@ def test_minimal_project_override_example_is_executable(tmp_path):
     }
     route = RoutingPolicy.load(tmp_path).resolve("implementer", "codex")
     assert route.selected_tier == "frontier"
-    assert route.model == "gpt-5.6-sol"
+    assert route.model == "gpt-6.1-sol"
     assert route.effort == "high"
 
 

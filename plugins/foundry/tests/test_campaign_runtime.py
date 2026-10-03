@@ -2031,12 +2031,20 @@ def test_production_ambiguous_implementation_stays_suspended_without_duplicate(t
     assert store.issue(item.id, "DEVHUB-21")["attempt"] == 1
 
 
-def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(tmp_path, monkeypatch):
+@pytest.mark.parametrize("model,effort,wire", [
+    ("opus-5", "high", "claude-opus-5"),
+    ("haiku-4.5", "low", "claude-haiku-4-5"),
+    ("haiku-4.5", None, "claude-haiku-4-5"),
+])
+def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(
+    tmp_path, monkeypatch, model, effort, wire,
+):
     calls = []
     routing_config = tmp_path / ".foundry" / "model-routing.json"
     routing_config.parent.mkdir()
     routing_config.write_text(json.dumps({
         "claude_models": {"future-campaign-model": "campaign-wire-alias"},
+        "mappings": {"claude": {"frontier": {"model": model, "effort": effort}}},
     }), encoding="utf-8")
 
     class Worktrees:
@@ -2089,7 +2097,12 @@ def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(tmp_path, 
 
     assert proposal.outcome == "completed"
     argv, kwargs = calls[0]
-    assert argv[argv.index("--model") + 1] == "opus"
+    assert argv[argv.index("--model") + 1] == wire
+    if model == "haiku-4.5":
+        assert "--effort" not in argv
+    else:
+        assert argv[argv.index("--effort") + 1] == effort
+    assert all(isinstance(value, str) for value in argv)
     assert "opus-5" not in argv
     assert argv[argv.index("--tools") + 1] == "Read,Edit,Write,Grep,Glob"
     assert "--safe-mode" in argv and "--disable-slash-commands" in argv

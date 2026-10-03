@@ -1,5 +1,20 @@
 # Model routing contract
 
+The Codex defaults in this revision apply the urgent V1 technical promotion
+accepted by PAT-ADR-0010 and PAT-14. The four completed native observations,
+verified explicit rollback and remaining delivery gates are recorded in the
+[PAT-15 qualification report](qualification/pat-15-codex-qualification-v1.md).
+Independent review and exact-SHA CI of the final delivery revision are required
+before merge; this report does not claim that revision is already released.
+Full economic and cross-host qualification remains in PAT-17. See
+[model-migration-2026-10.md](model-migration-2026-10.md).
+
+The Claude defaults apply the maintainer's explicit PAT-16 promotion approval,
+under accepted PAT-ADR-0013. The [promotion decision](qualification/pat-16-claude-default-promotion.md)
+separates that approval from frozen native observations and pending delivery review,
+exact-SHA CI and merge. PAT-61 retains affected tracker replays; PAT-62 retains
+official installation and upgrade checks.
+
 Foundry routes delegated work through semantic roles rather than provider model names.
 The shared deterministic contract lives in `tooling/foundry/routing.py` and
 `tooling/foundry/escalation.py`; Claude Code and Codex façades must call it instead of
@@ -10,20 +25,39 @@ reproducing precedence, fallback, or escalation logic.
 The levels, from cheapest to strongest, are `economy`, `balanced`, `frontier`, and
 `apex`. Defaults are scout=economy, implementer=balanced, coordinator=balanced,
 reviewer=frontier, and architect=apex. The provider mappings implement
-FOUNDRY-ADR-0006.
+FOUNDRY-ADR-0006, amended for Codex by accepted PAT-ADR-0010 and for Claude by
+the limited PAT-16 contract retained in accepted PAT-ADR-0013.
 
 | Tier | Claude Code | Codex | Default role / minimum gate |
 |---|---|---|---|
-| `economy` | Haiku 4.5 / low | GPT-5.6 Luna / low | scout |
-| `balanced` | Sonnet 5 / medium | GPT-5.6 Terra / medium | implementer, coordinator |
-| `frontier` | Opus 5 / high | GPT-5.6 Sol / high | reviewer minimum |
-| `apex` | Fable 5 / high | GPT-5.6 Sol / max | architect minimum |
+| `economy` | Haiku 4.5 / null (not applicable) | GPT-6 Luna / low | scout |
+| `balanced` | Sonnet 5.5 / medium | GPT-6.1 Sol / medium | implementer, coordinator |
+| `frontier` | Opus 5.5 / high | GPT-6.1 Sol / high | reviewer minimum |
+| `apex` | Opus 5.5 / high | GPT-6.1 Sol / max | architect minimum |
 
 The recommended primary coordinator for ordinary feature/fix/chore work is the balanced
-profile: Sonnet 5 / medium in Claude Code or GPT-5.6 Terra / medium in Codex. This is
+profile: Sonnet 5.5 / medium in Claude Code or GPT-6.1 Sol / medium in Codex. This is
 operator guidance, not an enforceable main-conversation setting. Frontier is appropriate
 when the main loop must absorb a disclosed no-subagent fallback or genuinely
 cross-cutting risk; apex remains reserved for explicit architecture decisions.
+
+The [explicit GPT-5.6 rollback example](../examples/codex-gpt-5.6-rollback.json)
+reproduces the Codex mapping at `7adc33793cc04dfd5102f1e11a5d47cb6ecc9cd0`
+(0.9 reference). An operator can apply its `mappings.codex` section to the
+project policy after preserving existing configuration; this is a deliberate
+per-project rollback, never an implicit cross-generation fallback. The offline
+verifier is `PYTHONPATH=plugins/foundry/tooling pytest -q
+plugins/foundry/tests/test_codex_rollback.py` from the repository root. It verifies
+resolution, gate floors, declared fallback, persistent escalation and historical
+proof preservation in the current runtime. It does not reinstall a plugin or
+claim CI on a rollback commit. An actual release rollback still requires CI on
+its exact SHA and an operational readback. Astra remains an explicit motivated
+escalation. The separate Claude promotion is recorded in the PAT-16 decision above.
+
+Documentation status (PAT-15): updated for `DEFAULT_MAPPINGS`, recommended primary
+profile and the explicit rollback example. Model/effort scope and delegation
+restrictions retain their documented contract; no automatic main-conversation
+configuration is introduced.
 
 ## Model, effort, and context are separate
 
@@ -35,7 +69,7 @@ FOUNDRY-ADR-0008 represents a resolved invocation as three independent dimension
 - `context_policy` defines deterministic collection, filtering, truncation, and the
   bounded packet given to that role.
 
-The tier table above remains the production resolution in 0.7.0. Separation makes the
+The tier table above describes this source revision's default resolution. Separation makes the
 dimensions observable and testable; it does not add an adaptive resolver, an effort
 ladder, an automatic context transition, a production shadow call, or a telemetry-fed
 decision. The ADR-0006 precedence, fallbacks, gate floors, deterministic signals, and
@@ -86,7 +120,7 @@ inside that one scope. For example, a six-level family can expose `xhigh` while 
         "version": 1,
         "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
         "inadmissible": {
-          "ultra": "automatic task delegation is inadmissible pending a Foundry ADR"
+          "ultra": "automatic task delegation is inadmissible by PAT-ADR-0010"
         }
       }
     }
@@ -94,14 +128,20 @@ inside that one scope. For example, a six-level family can expose `xhigh` while 
 }
 ```
 
-`ultra` is inadmissible by default pending the separate delegation-authority ADR.
+`ultra` is inadmissible by PAT-ADR-0010.
 Unknown efforts name both the rejected level and the levels accepted by the relevant
 scope. Claude host translations are also declarative: `claude_models` may map a new
 canonical policy model to its Agent wire alias; a missing translation fails explicitly.
 
-Built-in Claude models accept the current aliases, Foundry canonical names, and current
-full IDs. A project model declared in `claude_models` keeps its configured canonical name
-in the resolved route and telemetry, while the Agent wire receives its declared alias.
+Built-in Claude version names and full IDs resolve to explicit preloaded profile pins. A
+historical `opus-5` or `claude-opus-5` selects frontmatter `model: claude-opus-5`,
+never `opus`. The Agent tool wire omits `model` for a pin.
+Short `haiku`/`sonnet`/`opus`/`fable` remain explicit version-dependent host aliases,
+with `CLAUDE_ALIAS_VERSION_UNOBSERVED`; their resolved route and telemetry retain the
+alias intent. They are distinct from version pins when matching observed availability.
+Project `claude_models` may extend identities but cannot weaken a built-in translation.
+Unknown translations fail before dispatch. An unsupported historical pin remains
+unavailable for operator decision; it never silently selects a newer alias.
 
 That diagnostic detail belongs to the internal/direct module boundary: calling
 `foundry.routing.main()` directly (including development use through
@@ -792,11 +832,18 @@ packaged reviewer and the portable Codex review skill share these rules.
 
 ## Claude Code invocation façade
 
-Claude Code plugin-agent frontmatter is static once the plugin is cached. Foundry never
-writes a literal `model:` into an agent definition, because doing so would make the
-project policy look configurable while the cached definition kept winning. This façade
-is validated against Claude Code 2.1.224; an older runtime without Agent `updatedInput`,
-`max_turns`, or agent `effort` support is not compatible.
+Claude Code plugin-agent frontmatter is static once the plugin is cached. Logical
+entrypoints and generic capability/effort profiles have no model. Versioned internal
+profiles are generated deterministically from `_CLAUDE_MODEL_DECLARATION` and those
+same capability/effort templates, with exact full IDs in their frontmatter. The hook
+selects the matching preloaded profile per policy; it never writes a runtime/cache file.
+The first PAT-16 native attempt on 2.1.285 established that the Agent tool's `model`
+wire schema accepts only `haiku`, `sonnet`, `opus`, `fable`, rejecting a full ID before
+child launch. Full pins therefore use supported profile frontmatter, omitting wire
+`model` entirely so a short alias cannot override the pin. This remediation has only
+deterministic validation until a separately approved fresh native envelope runs.
+An older runtime without Agent `updatedInput`, `max_turns`, or profile effort support
+is not compatible; a native run remains necessary for exact client/provider proof.
 
 The runtime path is deliberately explicit:
 
@@ -808,8 +855,10 @@ The runtime path is deliberately explicit:
    those semantic keys remain deterministic compatibility aliases during the migration.
 2. The `PreToolUse` hook on `Agent|Task` loads `.foundry/model-routing.json`, then
    applies user request > project config > Foundry defaults through the common policy.
-3. The hook rewrites the actual Agent input with the resolved `model`, a bounded
-   `max_turns`, and an internal `foundry:routed-<capability>-<effort>` agent.
+3. The hook rewrites Agent input with bounded `max_turns` and the preloaded
+   `foundry:routed-<capability>-<effort>-<canonical-version>` profile for full pins.
+   Wire `model` is absent for pins. Explicit short aliases use the generic profile
+   and the supported alias enum in wire `model`.
 4. Claude Code spawns that rewritten invocation. The routing pre-hook's telemetry-free
    `additionalContext` exposes the selected tier/model/effort, sources, fallback path,
    availability status, and warnings; the post-hook emits no context at all.
@@ -827,19 +876,20 @@ The static/dynamic boundary is therefore:
 
 | Concern | Static in agent frontmatter | Dynamic per invocation |
 |---|---:|---:|
-| Provider model | never | yes, from resolved policy |
+| Provider model | full pin in versioned profiles; absent from generic profiles | select pin profile or explicit wire alias from policy |
 | Reasoning effort | internal profile only | profile chosen from resolved policy |
 | Tool capability | read-only or worker profile | profile chosen from role |
 | Turn limit | no | yes, caller value capped by role maximum |
 | Task context | no | bounded four-section packet |
 
 Effort needs a static internal profile because Claude Code's interactive Agent tool can
-override `model` and `max_turns` per call but does not expose an invocation-level effort
+override an alias `model` and `max_turns` per call but does not expose invocation-level effort
 field. `max_turns` is the Agent tool wire key; `maxTurns` belongs only to an
 AgentDefinition/frontmatter concept and is never emitted in `updatedInput`. The hook reads
 the caller value, defaults it to the role ceiling when absent, caps it deterministically,
-and rejects non-positive/non-integer values fail-closed. The internal profiles contain no
-provider model. Calling one directly is refused by its prompt marker; skills call only
+and rejects non-positive/non-integer values fail-closed. Versioned profiles contain
+the declared full pin; generic profiles contain no model. Calling one directly is
+refused by its prompt marker; skills call only
 logical roles.
 
 Task packets must contain the literal `Goal:`, `Inputs:`, `Constraints:`, and
@@ -862,30 +912,38 @@ Done when:
 ```
 
 Only `tier`, `model`, `effort`, and the workflow-supplied `issue` identifier are
-accepted. An explicit Agent `model` input is also treated as a user model request;
+accepted. An explicit Agent alias `model` input is also treated as a user model request;
 conflicting values fail loudly. Built-in policy models accept current aliases, canonical
-Foundry names, and full IDs (for example `opus`, `opus-5`, and `claude-opus-5`). A custom
-canonical model must have a `claude_models` translation, and outgoing Agent input uses
-that declared alias.
+Foundry version names and full IDs (`opus-5` and `claude-opus-5` name the same pin);
+`opus` is a separate host alias intent. A custom
+canonical model must have a `claude_models` translation. A translation to an accepted
+wire alias uses a generic profile; a built-in full ID selects the corresponding pin
+profile. Other custom targets are unavailable until a versioned profile declaration
+is shipped; neither unknown full IDs nor arbitrary strings are injected into wire
+`model`. The diagnostic asks for a compatible preloaded declaration, never substitutes.
 
-Claude aliases deliberately follow the current Claude Code CLI version instead of
-pinning an exact provider ID. Where supported, administrators can pin the alias targets
+Explicit short Claude aliases follow the current Claude Code CLI/provider version.
+Versioned canonical names and full pins preserve explicit provider IDs. Where supported, administrators can pin the alias targets
 with `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`,
-`ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_FABLE_MODEL`. This differs from
-Codex's explicit versioned model IDs, which remain pinned by shared policy.
+`ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_FABLE_MODEL`. Codex IDs
+remain pinned by shared policy.
 
 Claude Code does not expose an authoritative, synchronous list of models enabled for the
 current organization to a command hook. Set the non-secret CSV
 `FOUNDRY_CLAUDE_AVAILABLE_MODELS` (or the equivalent
 `CLAUDE_PLUGIN_OPTION_FOUNDRY_CLAUDE_AVAILABLE_MODELS`) when availability is constrained.
-Each CSV entry accepts the built-in alias, canonical name, or full ID spellings, plus
-custom canonical names declared by the project. The common policy then performs and reports ordinary
+Each CSV entry names one availability identity: a short alias certifies only an alias
+route; a canonical name or its full ID spelling certifies only that version pin.
+An alias-only CSV cannot certify the versioned defaults. Custom canonical names
+declared by the project are also accepted. The common policy then performs and reports ordinary
 downward or gate upward fallback before spawn. Without it, `availability_probed=false`
 is visible and an unexpected provider rejection remains a loud Agent failure; Foundry
 does not pretend it observed availability.
 
-`CLAUDE_CODE_SUBAGENT_MODEL` has higher host precedence than the injected Agent model,
-and `CLAUDE_CODE_EFFORT_LEVEL` outranks subagent frontmatter effort. The alias targets
+`CLAUDE_CODE_SUBAGENT_MODEL` supplies a default; with
+`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` it overrides injected model selection. Force alone
+can select the parent model. `CLAUDE_CODE_EFFORT_LEVEL` outranks subagent frontmatter
+effort. The alias targets
 can also be repointed by `ANTHROPIC_DEFAULT_HAIKU_MODEL`,
 `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and
 `ANTHROPIC_DEFAULT_FABLE_MODEL`. Any of these signals can neutralize the policy. The
@@ -902,7 +960,8 @@ Bash guard allows only the claimed-diff verifier during normal operation.
 ## Host detector seam
 
 `tooling/foundry/routing_facades.py` supplies the two concrete detection adapters:
-Claude detects `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_EFFORT_LEVEL`, and the four
+Claude detects `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`,
+`CLAUDE_CODE_EFFORT_LEVEL`, and the four
 `ANTHROPIC_DEFAULT_*_MODEL` alias-target signals listed above; Codex inspects the effective
 profile mapping for `model` and `model_reasoning_effort`. They return signal names only.
 The shared `host_override_warnings` function owns the value-free warning decision.
@@ -987,8 +1046,9 @@ The repository CI runs `tests/test_routing_contract.py` as an explicit invocatio
 For every logical role it verifies the resolved provider model, effort/profile, Claude
 turn cap and frontmatter tool boundary, plus the Codex fresh-context descriptor, host
 capability role, and injected role contract. It also
-proves that provider models and turn caps are absent from agent frontmatter, so project
-overrides still reach the actual invocation. The broader routing suites cover mappings,
+proves that generic capability templates carry no provider model or turn cap, while
+versioned profiles carry the exact declared model ID and role turn caps remain injected
+at launch. Project mappings select the corresponding profile without rewriting its pin. The broader routing suites cover mappings,
 field-level precedence, host overrides, ordinary and gate fallback, exact-diff review
 deduplication, persistent escalation, ceilings, and concurrent counter updates.
 
@@ -1004,3 +1064,91 @@ The implementation follows the official Codex documentation for
 [subagents](https://developers.openai.com/codex/multi-agent),
 [configuration precedence](https://developers.openai.com/codex/config-reference), and
 [GPT-5.6 model selection](https://developers.openai.com/api/docs/guides/latest-model).
+
+
+### PAT-16 Claude defaults and qualification limits
+
+Accepted PAT-ADR-0013 retains the limited Claude amendment from superseded
+PAT-ADR-0011/0012. After native observations and verified policy rollback, the
+maintainer approved the defaults above by « C’est bon » on 3 October 2026.
+`docs/examples/claude-candidates-pat16.json` remains an explicit project example,
+now identical to these defaults; it is not installed automatically. The apex mapping
+preserves the architect tier/floor. Fable 5.1 is recognized as `claude-fable-5-1`
+for diagnosis, but remains excluded from the Pro zero-credit native envelope.
+The [handoff](qualification/pat-16-pat61-handoff.md) records qualified source refs
+and remaining delivery boundaries. All untested client/provider pairs stay unqualified.
+
+Haiku default/project effort null is model-specific non-applicability, not a ranked sentinel.
+Legacy Haiku `low` stays policy-requested historical intent and old events are not
+rewritten. Both select effort-free `routed-readonly-none[-<version>]`/`routed-worker-none[-<version>]` profiles
+with unchanged capabilities and role turn caps. An explicit user effort request for
+Haiku is rejected. Other models still require scoped effort and gates at least high.
+An economy model-only override to Sonnet, Opus, Fable or another non-Haiku model
+inherits null and fails explicitly: provide an effort in the user request or project
+mapping. No effort is guessed, and null cannot satisfy a gate floor.
+Hook context reports `effort_parameters` requested/transmitted/status/observed and
+`execution_observation` null/unknown; neither is proof that a native child ran a model.
+The caller's unsupported Agent `effort` key is removed; supported effort is exclusively
+selected by profile frontmatter.
+
+`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` joins the value-free override detector, including
+when set without `CLAUDE_CODE_SUBAGENT_MODEL`. It can force the parent's model despite
+per-call selection. Alias `ANTHROPIC_DEFAULT_*_MODEL` and
+`CLAUDE_CODE_EFFORT_LEVEL` signals remain diagnosed. The detector accepts explicitly
+supplied effective settings names (`availableModels`, `enforceAvailableModels`,
+`maxEffortLevel`, `modelSettings`, `fallbackModel`, `ultracode`); it neither guesses
+corresponding environment variables nor reads private settings files. Hook environment
+inspection cannot establish absence of managed/org restrictions. Preflight must observe
+those separately. No value is exposed. Client refusals, restrictions, substitutions,
+safety fallback, and capped efforts cannot certify the requested profile. Floors and
+provider refusals remain authoritative. `ultra`/`ultracode` are never enabled here.
+
+Names and precedence were checked against [subagent docs](https://code.claude.com/docs/en/sub-agents)
+and [model configuration](https://code.claude.com/docs/en/model-config), 3 October 2026.
+The target preflight client is 2.1.285; tests do not qualify that client/provider. Exact
+child identity/effective effort must come from supported native metadata bound to the
+child, not a prompt, agent name, plan, self-description or generated receipt. Missing
+observations stay unknown. Alias-family displays alone are insufficient.
+
+Passive telemetry retains new/historical canonical identities and null effort/counters.
+The existing explicit offline ADR-0015 reader retains native IDs; new version IDs cannot
+match historical wildcard price rows, so absent new prices yield null/unavailable.
+No new price, cost claim, hook log reader, evidence pipeline or role authority is added.
+
+
+### Reproducible source profile generation
+
+Run `python3 plugins/foundry/tooling/generate_claude_profiles.py` from the repository
+root after changing a declaration/template, then review the derived diff and reload
+through the normal plugin path. The 64 versioned profiles cover both capabilities,
+all five existing executable efforts for the six non-Haiku versions, and no-effort
+profiles for the two explicit Haiku IDs. This static inventory is not a native
+qualification matrix. There is no runtime generation, cache mutation, new router,
+role authority or provider invocation. The source drift test requires exact generated
+bytes; the launcher refuses missing/divergent preloaded profile bytes before claims.
+Generic aliases remain version dependent; custom full pins without a shipped profile
+are explicitly unsupported. Built-in declarations cannot be weakened by project data.
+
+Every versioned read-only profile retains `routed-readonly-` and the existing Bash
+guard: only the claimed `routing read-review` verifier is allowed. The post-tool
+observer still consumes its existing correlation once, independent of profile suffix.
+`transmitted_launch` describes selected profile/model/source intent. It is not execution
+metadata. Haiku's omitted frontmatter effort cannot establish observed non-applicability:
+parent/session effort may still appear in native metadata. Only the approved native
+contract may judge that observation; missing/ambiguous evidence stays unknown.
+
+
+PAT-16 compatibility clarification: a redundant `claude_models: {"opus-5": "opus"}`
+now conflicts with the built-in version pin and is rejected before launch. Remove the
+redundant declaration to preserve the full pin, or explicitly choose `model: "opus"`
+in the tier mapping for host alias intent. Foundry never converts the pin to an alias.
+For a direct Haiku request inherited from a non-economy tier, choose the economy tier
+or a project Haiku mapping with `effort: null`; an explicit user effort remains rejected.
+Both the compatibility DevHub runner and isolated campaign runner omit `--effort` for
+Haiku, including historical requested `low`. Other models retain their resolved effort.
+
+Custom `claude_models` translations to a Haiku alias or supported full Haiku pin use
+the same effort rules as built-in Haiku identities: null or historical requested low
+is non-applicable; every explicit user effort is rejected and no gate floor is lowered.
+The declared policy name and its provenance stay intact; only effort validation uses
+the effective target. This does not certify a custom alias's native version.

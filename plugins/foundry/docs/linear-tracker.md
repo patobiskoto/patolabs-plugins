@@ -201,6 +201,35 @@ removes exactly one of the two consecutive blank lines between the recorded S6 l
 item and the following `**Portée des propriétés.**` paragraph. It is a forward model
 only: the witness keeps the source UTF-8 bytes, fenced code and all other whitespace
 runs remain byte-exact, and any source-byte or rendered-byte variation is refused.
+PAT-86 adds a closed forward profile for the interrupted native `PAT-ADR-0011`
+source. Its complete source-body SHA-256 is
+`33982ca3393e9bca78dc4744481b83214cd7bc67248687970cb56f290e5c826e`; its sole
+modelled rendered-body SHA-256 is
+`ce79b36941e9e745c12f0ecbcf679844abab2bc2a5d30d8683b135200e2fd2be`.
+After the strict general rendering, six exact, single-occurrence line fragments
+are replaced: the recorded `claude.ai` domain, three official documentation URLs,
+the `AGENTS.md/CLAUDE.md` path, and the four-column table delimiter. Their complete
+result must match the pinned rendered digest. This does not introduce an autolink,
+path or table renderer; neighbouring source bodies retain the strict general model.
+The metadata/header contract stays independent and strict, including for later
+same-source status or relation versions. The byte-identical native create replay
+can complete the missing witness while preserving the existing Document ID,
+content and properties. Source bytes come only from the caller and subsequently
+the canonical witness, never from reversing the provider rendering. Ordinary
+reads still refuse the incomplete pair until its witness exists. Unknown future
+serializations require new qualification; this profile cannot normalize them.
+PAT-16 adds a closed forward profile for the native `PAT-ADR-0013` budget amendment.
+The complete source-body SHA-256 is
+`754275fa572100ece1b8ed427881b00768d822beec72ee69b7d602cc1b747d97`;
+the sole observed rendered-body SHA-256 is
+`ca3dadd06cc0f0f42185531f6ef811e98bdfb69d74be4771c52405a3fae49a3a`.
+Only the single recorded `calculator.py` token in its exact sentence becomes
+`[calculator.py](<http://calculator.py>)`. The full source and rendered digests
+must match; altered budget text, neighbouring filenames, provider targets and
+archived Documents are refused. This adds no domain/path autolink grammar.
+Native create replay uses the existing missing-witness recovery and preserves
+all previously written Document bytes; acceptance and issue-link versions use
+the same source. The storage, graph and read-time witness gates are unchanged.
 PAT-85 adds one general but still closed non-fenced, same-line form observed on the
 PAT-61 native Document: a simple strong span whose final fragment is one non-empty,
 unpadded single-backtick code span, `**plain text \`code\`**`, is read back as

@@ -14,7 +14,7 @@ from typing import Mapping
 
 
 ULTRA_INADMISSIBLE_REASON = (
-    "automatic task delegation is inadmissible pending a Foundry ADR"
+    "automatic task delegation is inadmissible by PAT-ADR-0010"
 )
 
 # These identifiers cross the telemetry boundary.  Keep the vocabulary open to
@@ -81,7 +81,7 @@ def validate_scope_data(host: str, family: str, raw: object, where: str) -> Effo
         raise ValueError(f"{where}.inadmissible: raisons non vides requises pour des niveaux déclarés.")
     clean_inadmissible = dict(inadmissible)
     if "ultra" in levels:
-        # ADR-0013 is a Foundry-wide authority boundary. A project may extend a
+        # PAT-ADR-0010 forbids ultra for delegation. A project may extend a
         # vocabulary, but configuration cannot grant delegation authority.
         clean_inadmissible["ultra"] = ULTRA_INADMISSIBLE_REASON
     return EffortScope(host, family, version, tuple(levels), clean_inadmissible)

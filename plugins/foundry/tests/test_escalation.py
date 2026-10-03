@@ -603,18 +603,18 @@ def test_active_floor_cannot_be_demoted_or_bypassed_by_availability(tmp_path):
     with pytest.raises(RoutingConfigError, match="modèle direct"):
         policy.resolve(
             "implementer", "codex",
-            user=UserRouteRequest(model="gpt-5.6-luna"),
+            user=UserRouteRequest(model="gpt-6-luna"),
             minimum_tier="frontier", minimum_source="escalation:FOUNDRY-42",
         )
     with pytest.raises(RoutingUnavailableError, match="plancher actif"):
         policy.resolve(
             "implementer", "codex",
-            available_models={"gpt-5.6-luna", "gpt-5.6-terra"},
+            available_models={"gpt-6-luna"},
             minimum_tier="frontier", minimum_source="escalation:FOUNDRY-42",
         )
 
     route = policy.resolve(
-        "implementer", "codex", available_models={"gpt-5.6-sol"},
+        "implementer", "codex", available_models={"gpt-6.1-sol"},
         minimum_tier="frontier", minimum_source="escalation:FOUNDRY-42",
     )
     assert route.selected_tier == "frontier"
@@ -634,7 +634,7 @@ def test_codex_plan_applies_persistent_floor_without_changing_capability(tmp_pat
     )
 
     assert plan["spawn"]["agent_type"] == "worker"
-    assert plan["spawn"]["model"] == "gpt-5.6-sol"
+    assert plan["spawn"]["model"] == "gpt-6.1-sol"
     assert plan["spawn"]["reasoning_effort"] == "high"
     assert plan["route"]["selected_tier"] == "frontier"
     assert plan["escalation"] == {
