@@ -733,6 +733,15 @@ _MULTILINE_BOLD = re.compile(
     r"(?<![A-Za-z0-9_*\\])\*\*(?![\s*])(?P<before>[^*`_~\[\]\n]+)(?<!\s)\n"
     r"(?P<indent>[ \t]+)(?!\s)(?P<after>[^*`_~\[\]\n]+)(?<!\s)\*\*(?![A-Za-z0-9_*])"
 )
+# Linear's observed serializer closes a simple strong span before a trailing
+# single-backtick code fragment.  This stays narrower than a general Markdown
+# transformation: both parts are plain and the code span is non-empty.
+_STRONG_TRAILING_INLINE_CODE = re.compile(
+    r"(?<![A-Za-z0-9_*\\])\*\*(?![\s*])"
+    r"(?P<before>[^*`_~\[\]\n]+?)(?<!\s) "
+    r"(?P<code>`(?![\s`])[^`\n]+(?<!\s)`)"
+    r"\*\*(?![A-Za-z0-9_*])"
+)
 _MULTILINE_LINK_DESTINATION = re.compile(r"\]\([^\n]*\n[^)]*\)")
 _RAW_INLINE_HTML = re.compile(r"<(?:/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>])|[!?])")
 
@@ -972,6 +981,46 @@ def _reject_multiline_link_labels(fragment: str) -> None:
                 raise ValueError("unsupported multiline inline Markdown in ADR body")
 
 
+def _linear_strong_trailing_inline_code_readback(fragment: str) -> str:
+    """Render the one observed strong/code form or refuse its variants.
+
+    A code span inside a paired strong range must match the whole closed profile;
+    a future renderer variation therefore fails preflight rather than being
+    silently accepted.
+    """
+    replacements = []
+    for strong_start, strong_end in _paired_delimiters(fragment, "**"):
+        if not (
+            _is_emphasis_opener(fragment, strong_start, "**")
+            and _is_emphasis_closer(fragment, strong_end, "**")
+        ):
+            continue
+        strong_end += 2
+        code_spans = [
+            (start, end, length)
+            for start, end, length in _paired_backtick_delimiters(fragment)
+            if strong_start < start and end + length < strong_end
+        ]
+        if not code_spans:
+            continue
+        match = _STRONG_TRAILING_INLINE_CODE.match(fragment, strong_start)
+        if (
+            len(code_spans) != 1
+            or match is None
+            or match.end() != strong_end
+            or code_spans[0][2] != 1
+            or match["code"] != fragment[code_spans[0][0] : code_spans[0][1] + 1]
+        ):
+            raise ValueError("unsupported strong inline-code Markdown in ADR body")
+        replacements.append(
+            (strong_start, strong_end, f"**{match['before']}** {match['code']}")
+        )
+    rendered = fragment
+    for start, end, replacement in reversed(replacements):
+        rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
+    return rendered
+
+
 def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     """Render the two qualified multiline inline forms and reject every other one.
 
@@ -1004,6 +1053,7 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     rendered = fragment
     for start, end, replacement in reversed(code_replacements):
         rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
+    rendered = _linear_strong_trailing_inline_code_readback(rendered)
 
     # Regex matches are only candidates: literal delimiters cannot be rendered
     # as strong spans, and the same source flanking rules qualify replacements.

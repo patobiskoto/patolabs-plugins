@@ -201,6 +201,17 @@ removes exactly one of the two consecutive blank lines between the recorded S6 l
 item and the following `**Portée des propriétés.**` paragraph. It is a forward model
 only: the witness keeps the source UTF-8 bytes, fenced code and all other whitespace
 runs remain byte-exact, and any source-byte or rendered-byte variation is refused.
+PAT-85 adds one general but still closed non-fenced, same-line form observed on the
+PAT-61 native Document: a simple strong span whose final fragment is one non-empty,
+unpadded single-backtick code span, `**plain text \`code\`**`, is read back as
+`**plain text** \`code\``. The leading text and code are plain (no nested marks,
+links, or additional code spans); a code-only or multi-backtick strong/code span, or
+any other valid strong/code arrangement is unqualified and fails before a provider write.
+Fenced code remains byte-exact. This is source-to-readback only: the witness retains
+the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or globally
+normalized. Exact replay of an unwitnessed deterministic version may create only its
+missing witness after the existing project/id/title/envelope/body/previous-link checks;
+it never rewrites the surviving Document.
 `FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
 SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
 and its existing Linear Document content SHA-256
