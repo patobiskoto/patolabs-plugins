@@ -9,6 +9,12 @@ before merge; this report does not claim that revision is already released.
 Full economic and cross-host qualification remains in PAT-17. See
 [model-migration-2026-10.md](model-migration-2026-10.md).
 
+The Claude defaults apply the maintainer's explicit PAT-16 promotion approval,
+under accepted PAT-ADR-0013. The [promotion decision](qualification/pat-16-claude-default-promotion.md)
+separates that approval from frozen native observations and pending delivery review,
+exact-SHA CI and merge. PAT-61 retains affected tracker replays; PAT-62 retains
+official installation and upgrade checks.
+
 Foundry routes delegated work through semantic roles rather than provider model names.
 The shared deterministic contract lives in `tooling/foundry/routing.py` and
 `tooling/foundry/escalation.py`; Claude Code and Codex façades must call it instead of
@@ -19,17 +25,18 @@ reproducing precedence, fallback, or escalation logic.
 The levels, from cheapest to strongest, are `economy`, `balanced`, `frontier`, and
 `apex`. Defaults are scout=economy, implementer=balanced, coordinator=balanced,
 reviewer=frontier, and architect=apex. The provider mappings implement
-FOUNDRY-ADR-0006, amended for Codex by accepted PAT-ADR-0010.
+FOUNDRY-ADR-0006, amended for Codex by accepted PAT-ADR-0010 and for Claude by
+the limited PAT-16 contract retained in accepted PAT-ADR-0013.
 
 | Tier | Claude Code | Codex | Default role / minimum gate |
 |---|---|---|---|
-| `economy` | Haiku 4.5 / low | GPT-6 Luna / low | scout |
-| `balanced` | Sonnet 5 / medium | GPT-6.1 Sol / medium | implementer, coordinator |
-| `frontier` | Opus 5 / high | GPT-6.1 Sol / high | reviewer minimum |
-| `apex` | Fable 5 / high | GPT-6.1 Sol / max | architect minimum |
+| `economy` | Haiku 4.5 / null (not applicable) | GPT-6 Luna / low | scout |
+| `balanced` | Sonnet 5.5 / medium | GPT-6.1 Sol / medium | implementer, coordinator |
+| `frontier` | Opus 5.5 / high | GPT-6.1 Sol / high | reviewer minimum |
+| `apex` | Opus 5.5 / high | GPT-6.1 Sol / max | architect minimum |
 
 The recommended primary coordinator for ordinary feature/fix/chore work is the balanced
-profile: Sonnet 5 / medium in Claude Code or GPT-6.1 Sol / medium in Codex. This is
+profile: Sonnet 5.5 / medium in Claude Code or GPT-6.1 Sol / medium in Codex. This is
 operator guidance, not an enforceable main-conversation setting. Frontier is appropriate
 when the main loop must absorb a disclosed no-subagent fallback or genuinely
 cross-cutting risk; apex remains reserved for explicit architecture decisions.
@@ -45,7 +52,7 @@ resolution, gate floors, declared fallback, persistent escalation and historical
 proof preservation in the current runtime. It does not reinstall a plugin or
 claim CI on a rollback commit. An actual release rollback still requires CI on
 its exact SHA and an operational readback. Astra remains an explicit motivated
-escalation, and Claude mappings are unchanged.
+escalation. The separate Claude promotion is recorded in the PAT-16 decision above.
 
 Documentation status (PAT-15): updated for `DEFAULT_MAPPINGS`, recommended primary
 profile and the explicit rollback example. Model/effort scope and delegation
@@ -62,7 +69,7 @@ FOUNDRY-ADR-0008 represents a resolved invocation as three independent dimension
 - `context_policy` defines deterministic collection, filtering, truncation, and the
   bounded packet given to that role.
 
-The tier table above remains the production resolution in 0.7.0. Separation makes the
+The tier table above describes this source revision's default resolution. Separation makes the
 dimensions observable and testable; it does not add an adaptive resolver, an effort
 ladder, an automatic context transition, a production shadow call, or a telemetry-fed
 decision. The ADR-0006 precedence, fallbacks, gate floors, deterministic signals, and
@@ -1059,21 +1066,26 @@ The implementation follows the official Codex documentation for
 [GPT-5.6 model selection](https://developers.openai.com/api/docs/guides/latest-model).
 
 
-### PAT-16 Claude candidates (opt-in, unqualified)
+### PAT-16 Claude defaults and qualification limits
 
-Accepted limited PAT-ADR-0011 permits deterministic preparation; defaults remain the
-incumbent policy. `docs/examples/claude-candidates-pat16.json` is an opt-in example,
-not an installed project configuration. Its tiers are Haiku 4.5/null, Sonnet
-5.5/medium, Opus 5.5/high, and Opus 5.5/high at apex. The last is the explicitly
-approved limited apex mapping, preserving architect tier/floor. Fable 5.1 is recognized
-as `claude-fable-5-1` for diagnosis, but excluded from the Pro zero-credit native envelope.
-No automatic spending, default promotion, or substitution is authorized by this example.
+Accepted PAT-ADR-0013 retains the limited Claude amendment from superseded
+PAT-ADR-0011/0012. After native observations and verified policy rollback, the
+maintainer approved the defaults above by « C’est bon » on 3 October 2026.
+`docs/examples/claude-candidates-pat16.json` remains an explicit project example,
+now identical to these defaults; it is not installed automatically. The apex mapping
+preserves the architect tier/floor. Fable 5.1 is recognized as `claude-fable-5-1`
+for diagnosis, but remains excluded from the Pro zero-credit native envelope.
+The [handoff](qualification/pat-16-pat61-handoff.md) records qualified source refs
+and remaining delivery boundaries. All untested client/provider pairs stay unqualified.
 
-Haiku project effort null is model-specific non-applicability, not a ranked sentinel.
+Haiku default/project effort null is model-specific non-applicability, not a ranked sentinel.
 Legacy Haiku `low` stays policy-requested historical intent and old events are not
 rewritten. Both select effort-free `routed-readonly-none[-<version>]`/`routed-worker-none[-<version>]` profiles
 with unchanged capabilities and role turn caps. An explicit user effort request for
 Haiku is rejected. Other models still require scoped effort and gates at least high.
+An economy model-only override to Sonnet, Opus, Fable or another non-Haiku model
+inherits null and fails explicitly: provide an effort in the user request or project
+mapping. No effort is guessed, and null cannot satisfy a gate floor.
 Hook context reports `effort_parameters` requested/transmitted/status/observed and
 `execution_observation` null/unknown; neither is proof that a native child ran a model.
 The caller's unsupported Agent `effort` key is removed; supported effort is exclusively

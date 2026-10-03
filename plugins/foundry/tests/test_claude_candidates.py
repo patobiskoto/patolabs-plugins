@@ -36,8 +36,12 @@ def install_candidates(root):
     ("reviewer", "claude-opus-5-5", "high", "readonly-high", 24),
     ("architect", "claude-opus-5-5", "high", "readonly-high", 30),
 ])
-def test_opt_in_candidates_preserve_wire_permissions_and_unknown_observation(tmp_path, role, model, effort, profile, turns):
-    install_candidates(tmp_path)
+@pytest.mark.parametrize("configured", [False, True])
+def test_promoted_defaults_and_explicit_candidates_preserve_wire_permissions_and_unknown_observation(tmp_path, role, model, effort, profile, turns, configured):
+    if configured:
+        install_candidates(tmp_path)
+    route = RoutingPolicy.load(tmp_path).resolve(role, "claude")
+    assert (route.model, route.effort) == (claude_policy_model(model), effort)
     updated, context = hook.route_tool_input({"subagent_type": f"foundry:{role}", "prompt": packet(), "max_turns": 999, "effort": "max"}, cwd=tmp_path, environ={})
     visible = json.loads(context.removeprefix("Foundry Claude route: "))
     assert "model" not in updated
@@ -61,11 +65,29 @@ def test_explicit_pins_never_become_latest_aliases(pin):
 
 @pytest.mark.parametrize("alias", ["haiku", "sonnet", "opus", "fable"])
 def test_alias_intent_is_preserved_and_diagnosed(tmp_path, alias):
-    prompt = 'FOUNDRY_ROUTE_REQUEST=' + json.dumps({"model": alias}) + '\n' + packet()
+    request = {"model": alias}
+    if alias != "haiku":
+        request["effort"] = "low"
+    prompt = 'FOUNDRY_ROUTE_REQUEST=' + json.dumps(request) + '\n' + packet()
     updated, context = hook.route_tool_input({"subagent_type": "foundry:scout", "prompt": prompt}, cwd=tmp_path, environ={})
     assert updated["model"] == alias
     assert "CLAUDE_ALIAS_VERSION_UNOBSERVED" in context
     assert '"status": "unknown"' in context
+
+
+@pytest.mark.parametrize("model", ["sonnet", "opus", "fable", "claude-sonnet-5-5"])
+@pytest.mark.parametrize("source", ["user", "project"])
+def test_non_haiku_model_override_requires_explicit_effort(tmp_path, model, source):
+    prompt = packet()
+    if source == "user":
+        prompt = 'FOUNDRY_ROUTE_REQUEST=' + json.dumps({"model": model}) + '\n' + prompt
+    else:
+        path = tmp_path / ".foundry/model-routing.json"
+        path.parent.mkdir()
+        path.write_text(json.dumps({"mappings": {"claude": {"economy": {"model": model}}}}))
+    with pytest.raises(RoutingConfigError, match="effort null réservé à Haiku 4.5.*effort explicite"):
+        hook.route_tool_input({"subagent_type": "foundry:scout", "prompt": prompt},
+                             cwd=tmp_path, environ={})
 
 
 def test_alias_availability_cannot_certify_a_version_pin(tmp_path):
@@ -111,6 +133,11 @@ def test_explicit_effective_settings_are_value_free_diagnostics(setting):
 
 
 def test_legacy_requested_low_is_preserved_but_never_transmitted(tmp_path):
+    path = tmp_path / ".foundry/model-routing.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"mappings": {"claude": {
+        "economy": {"model": "haiku-4.5", "effort": "low"},
+    }}}))
     _, context = hook.route_tool_input({"subagent_type": "foundry:scout", "prompt": packet()}, cwd=tmp_path, environ={})
     visible = json.loads(context.removeprefix("Foundry Claude route: "))
     assert visible["effort"] == "low"
@@ -128,7 +155,8 @@ def test_rollback_restores_only_original_project_policy_bytes(tmp_path):
     path.write_bytes(original)
     assert path.read_bytes() == original
     assert before == [RoutingPolicy.load(tmp_path).resolve(role, "claude").to_dict() for role in ("scout", "implementer", "reviewer", "architect")]
-    assert DEFAULT_MAPPINGS["claude"]["balanced"].model == "sonnet-5"
+    assert RoutingPolicy.load(tmp_path).resolve("implementer", "claude").model == "claude-sonnet-5"
+    assert DEFAULT_MAPPINGS["claude"]["balanced"].model == "sonnet-5.5"
     assert DEFAULT_MAPPINGS["codex"]["apex"].effort == "max"
 
 

@@ -1,8 +1,10 @@
-# Contrat de migration Codex 2026-10 (PAT-14)
+# Contrat de migration des modèles 2026-10 (PAT-14 / PAT-16)
 
-Ce document est le contrat versionné de préparation de PAT-14. Il ne modifie ni
-les défauts de production, ni les règles d'escalade, ni les autorités de
-campagne. La promotion éventuelle reste une décision humaine par hôte et exige
+Ce document conserve le contrat versionné de préparation de PAT-14 et consigne
+les promotions techniques Codex/PAT-15 et Claude/PAT-16. Les étapes historiques
+sont identifiées ; la décision Claude approuvée et les gates de livraison restantes
+figurent dans la [décision de promotion](qualification/pat-16-claude-default-promotion.md).
+Une promotion reste une décision humaine par hôte et exige
 une ADR acceptée : FOUNDRY-ADR-0008 gèle les mappings, fallbacks et planchers
 existants jusqu'à une décision future explicitement acceptée ;
 FOUNDRY-ADR-0019 confirme qu'un changement de défaut est un changement de
@@ -60,8 +62,9 @@ post-write audit mentionné dans les notes historiques (artefact non relu ici). 
 relations are unknown, not empty. This is why raw unchecked boxes in an issue
 body are neither proof of failure nor a delivery verdict.
 
-FOUNDRY-ADR-0006/0008 are amended only by the accepted PAT-ADR-0010 decision
-for candidate qualification and a per-host default promotion. ADR-0019 remains
+FOUNDRY-ADR-0006/0008 are amended for Codex by accepted PAT-ADR-0010 and for
+Claude by the limited PAT-16 contract retained in accepted PAT-ADR-0013,
+which supersedes PAT-ADR-0011/0012. ADR-0019 remains
 the policy for ordinary role-local comparison and promotion. ADR-0020--0022
 govern only the separate FOUNDRY-140 full escalation pipeline and are not
 silently imported into the ordinary comparison.
@@ -96,9 +99,12 @@ avec revue indépendante et CI du SHA final encore requises avant merge. Le
 [rapport PAT-15](qualification/pat-15-codex-qualification-v1.md) conserve les
 coordonnées gelées et les limites ; il ne clôt pas PAT-17.
 
-Claude Code est préservé : Haiku 4.5/low, Sonnet 5/medium, Opus 5/high et
-Fable 5/high ne sont ni reconfigurés ni qualifiés dans cette tranche (PAT-16
-est post-V1). Le candidat `gpt-6-astra` ne porte aucune présomption de supériorité et
+Lors de la tranche PAT-14/PAT-15, Claude Code conservait Haiku 4.5/low,
+Sonnet 5/medium, Opus 5/high et Fable 5/high. Le report initial de PAT-16 après
+V1 a depuis été remplacé par son inclusion limitée et la décision Claude approuvée
+du 3 octobre 2026. Les défauts courants et la recommandation coordinateur sont
+dans [model-routing.md](model-routing.md) ; les observations restent liées à
+leurs anciens SHA. Le candidat `gpt-6-astra` ne porte aucune présomption de supériorité et
 ne devient jamais un défaut apex à partir d'une liste de modèles ou d'une
 annonce.
 
@@ -339,9 +345,9 @@ extrapolées. Le rollback est par hôte et consiste à rétablir le mapping vers
 précédent, vérifier résolution, planchers, traces et CI sur le SHA de rollback,
 puis enregistrer l'écart sans réécrire les journaux ou preuves historiques.
 
-## Décision approuvée
+## Décision Codex approuvée (PAT-14 / PAT-15)
 
-Le seul amendement d'architecture nécessaire est le contrat versionné
+L'amendement initial pour Codex est le contrat versionné
 [`qualification/pat-14-proposed-adr.md`](qualification/pat-14-proposed-adr.md),
 enregistré dans Linear comme PAT-ADR-0010 (accepted) : il autorise une qualification
 Codex bornée et une promotion par hôte selon ce contrat. Il ne contourne pas
@@ -358,10 +364,11 @@ la CI exacte et le rollback restent les gates avant tout changement de défaut.
 - CLI, précédence, scopes, télémétrie, gates et autorités : aucun nouveau comportement public dans cette phase ; les contrats déjà documentés demeurent applicables.
 
 
-## PAT-16 Claude candidate preparation and rollback
+## PAT-16 Claude preparation and rollback — pre-promotion history
 
-The Claude mappings described above are the incumbent policy, not a native compatibility
-claim. PAT-ADR-0011's limited accepted amendment permits the opt-in candidate example
+The historical Claude mappings above were the incumbent policy during preparation,
+not a native compatibility claim. PAT-ADR-0011's then-accepted limited amendment
+permitted the opt-in candidate example
 `examples/claude-candidates-pat16.json`: Haiku 4.5 with null/not-applicable effort,
 Sonnet 5.5/medium and Opus 5.5/high for frontier and apex. Fable 5.1 remains excluded
 on Pro from the zero-credit envelope. Codex defaults, scopes and PAT-14/15 evidence
@@ -370,9 +377,9 @@ are unchanged. No example is copied into `.foundry/model-routing.json` automatic
 Save original project policy bytes (or record that no policy file exists) before opt-in.
 After the bounded qualification, restore exactly those bytes or remove only the newly
 created policy file. Keep personal settings and primary-session model intact. The
-rollback test resolves all four incumbent roles again after restoration, including an
-operator's explicit historical pin. Incumbent defaults remain Haiku4.5/legacy-low,
-Sonnet5/medium, Opus5/high and Fable5/high. Their invocation now preserves exact version
+rollback test resolves all four roles again after restoration, including an
+operator's explicit historical pin. At that stage the defaults were Haiku4.5/legacy-low,
+Sonnet5/medium, Opus5/high and Fable5/high. Their invocation preserves exact version
 IDs; legacy Haiku low is requested intent with no transmitted effort. An unsupported
 incumbent is unavailable, never guessed. Frozen proposal files remain unchanged.
 
@@ -386,24 +393,25 @@ specific surfaces needs no change.
 
 Deterministic checks precede frozen native qualification, independent review,
 exact-SHA two-source CI, and an explicit human default-promotion decision. Native
-qualification remains pending; all untested client/provider pairs remain unqualified.
+qualification was pending at this preparation stage; all untested client/provider pairs remain unqualified.
 Loaded native Foundry ref/version, precise child model/effort and actual bound usage
 must be observed by the coordinator, never inferred from this source preparation.
 
 
 The immutable step-0 proposal remains a historical review copy. The governing tracker
-record is accepted PAT-ADR-0011, revision v2, as read back by the coordinator after
-PAT-86 repair and explicit limited acceptance. Its frozen Claude contract SHA-256 is
+record at that stage was PAT-ADR-0011, then accepted revision v2, as read back by the
+coordinator after PAT-86 repair and explicit limited acceptance. It is now superseded
+through PAT-ADR-0012 by accepted PAT-ADR-0013. Its frozen Claude contract SHA-256 is
 `8aa613503dbf04326d6c01e011d9dedef21c21036932be2577624a922df3fb78`.
-Approval authorizes the bounded candidate preparation/qualification envelope; this
-source change still retains incumbent defaults and has candidate-only status pending
+That approval authorized the bounded candidate preparation/qualification envelope;
+the preparation source retained incumbent defaults and had candidate-only status pending
 native evidence, independent review, CI, verified rollback and promotion decision.
 
 
 PAT-16 interface remediation: the first original-envelope scout slot failed before
 child launch because Claude Code 2.1.285 rejected a full identifier in Agent `model`.
-The three remaining original slots were not run. No native profile was qualified or
-promoted. The static remedy selects generated preloaded full-ID profiles and omits
+The three remaining original slots were not run. At that point no native profile was
+qualified or promoted. The static remedy selects generated preloaded full-ID profiles and omits
 wire `model`; aliases use only the observed supported enum. Original frozen proposal
 bytes and failed evidence remain preserved. See
 `qualification/pat-16-native-interface-observation.md`; another native attempt requires
@@ -443,14 +451,20 @@ implementer observation before it existed; final delivery review must receive th
 completed observation and PAT-14's complete contract. Earlier failures remain recorded.
 The total budget is consumed: seven parents, six children, no qualification retries.
 
-The absent project-policy baseline was restored after terminal review proof, preserving
-candidate bytes separately. Personal settings and installed cache were unchanged.
-Policy rollback restores incumbent routing within this new code; it does not revert
+The absent project-policy baseline was restored after terminal review proof and before
+default promotion, preserving candidate bytes separately. Personal settings and
+installed cache were unchanged. At that source ref, policy rollback restored incumbent
+routing within the new code; it did not revert
 new full-pin transmission semantics. A code rollback must restore the previous code ref
 and profile inventory together. Incumbent Sonnet 5, Opus 5 and Fable 5 full pins have not
 been natively qualified by these candidate trials. PAT-61 must retain that limit and
-replay affected candidate cells before V1; PAT-62 retains post-install checks.
-Explicit human promotion remains pending, and no economic superiority is asserted.
+replay affected promoted cells before V1; PAT-62 retains post-install checks.
+The maintainer subsequently approved the concrete defaults by « C’est bon » on
+3 October 2026 after presentation of the observations and verified rollback.
+The [promotion decision](qualification/pat-16-claude-default-promotion.md) records
+that approval separately; the historical observation JSON retains its original
+pre-promotion status. Delivery review, exact-SHA CI and merge of the promotion diff
+remain required. No economic superiority is asserted.
 
 Document statuses for this correction: the headless effort/compatibility/diagnostic
 surfaces are updated here and in `model-routing.md`; offline terminal-snapshot/date
@@ -463,4 +477,13 @@ project declarations pointing to Haiku did not preserve null-effort/user-effort 
 The correction validates the translated target without replacing the policy model
 name; hook regressions cover alias/full/dated targets, null and legacy low, explicit
 user efforts and gate floors. `model-routing.md` also corrects the CI frontmatter
-summary. Native qualification is not replayed and the explicit promotion is pending.
+summary. Native qualification is not replayed; the approved promotion now requires
+delivery review and CI on its final SHA.
+
+## Statuts documentaires de la promotion Claude PAT-16
+
+- `DEFAULT_MAPPINGS` Claude et recommandation coordinateur : mis à jour dans `model-routing.md`.
+- Override economy vers un modèle non-Haiku : l'effort null hérité est refusé avec une demande d'effort explicite, documentée dans `model-routing.md`.
+- Décision humaine, références qualifiées, budget consommé et rollback : consignés dans `qualification/pat-16-claude-default-promotion.md`.
+- Livraison et replays PAT-61/PAT-62 : état actualisé dans `qualification/pat-16-pat61-handoff.md`.
+- R7, rôles, permissions, plafonds, scopes, CLI et paramètres personnels : aucun contrat nouveau dans cette promotion ; les règles déjà documentées restent applicables.

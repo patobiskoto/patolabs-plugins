@@ -285,7 +285,7 @@ def test_doctor_routing_reports_both_hosts_and_redacts_override_values(tmp_path,
     sentinel = "MODEL_OVERRIDE_VALUE_MUST_NEVER_APPEAR"
     environ = {
         "CLAUDE_CODE_SUBAGENT_MODEL": sentinel,
-        "FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku-4.5,sonnet-5,opus-5,fable-5",
+        "FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku-4.5,sonnet-5.5,opus-5.5",
         "FOUNDRY_CODEX_AVAILABLE_MODELS": "gpt-6-luna,gpt-6.1-sol,gpt-6.1-sol",
     }
 
@@ -299,7 +299,7 @@ def test_doctor_routing_reports_both_hosts_and_redacts_override_values(tmp_path,
     assert sentinel not in rendered
     assert all(sentinel not in str(value) for value in payload.values())
     expected = {
-        "claude": ("fable-5", "high"),
+        "claude": ("opus-5.5", "high"),
         "codex": ("gpt-6.1-sol", "max"),
     }
     for host, (model, effort) in expected.items():

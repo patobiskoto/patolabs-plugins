@@ -344,7 +344,8 @@ def test_routing_documentation_keeps_dimensions_floors_and_static_resolver():
         "`reviewer` has a `frontier` floor and `architect` an `apex` floor",
         "At most two actual tier increases are allowed per issue",
         "does not add an adaptive resolver",
-        "Sonnet 5 / medium",
+        "source revision's default resolution",
+        "Sonnet 5.5 / medium",
         "GPT-6.1 Sol / medium",
     ):
         assert contract in routing

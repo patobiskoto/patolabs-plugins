@@ -2521,7 +2521,7 @@ def test_cli_local_failure_packet_binds_real_route_into_one_spawn_plan(
     assert route["host"] == host
     assert route["requested_tier"] == route["selected_tier"] == "balanced"
     assert route["model"] == (
-        "sonnet-5" if host == "claude" else "gpt-6.1-sol"
+        "sonnet-5.5" if host == "claude" else "gpt-6.1-sol"
     )
     assert route["effort"] == "medium"
     assert plan["host_plan"]["route"] == plan["fallback"]["route"]

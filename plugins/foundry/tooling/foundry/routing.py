@@ -62,10 +62,10 @@ class ModelTarget:
 # and semantic tiers, never their own copy of these mappings.
 DEFAULT_MAPPINGS = {
     "claude": {
-        "economy": ModelTarget("haiku-4.5", "low"),
-        "balanced": ModelTarget("sonnet-5", "medium"),
-        "frontier": ModelTarget("opus-5", "high"),
-        "apex": ModelTarget("fable-5", "high"),
+        "economy": ModelTarget("haiku-4.5", None),
+        "balanced": ModelTarget("sonnet-5.5", "medium"),
+        "frontier": ModelTarget("opus-5.5", "high"),
+        "apex": ModelTarget("opus-5.5", "high"),
     },
     "codex": {
         "economy": ModelTarget("gpt-6-luna", "low"),
@@ -505,6 +505,14 @@ class RoutingPolicy:
                 if role in GATE_EFFORT_FLOORS:
                     raise RoutingConfigError("Haiku sans effort ne satisfait pas le plancher du gate.")
             else:
+                if host == "claude" and target.effort is None:
+                    raise RoutingConfigError(
+                        f"résolution de {role}.effort : effort null réservé à Haiku 4.5 ; "
+                        f"pour '{target.model}', fournissez un effort explicite dans la "
+                        "demande utilisateur ou le mapping projet "
+                        f"(scope {scope.host}, {scope.family}, v{scope.version} ; "
+                        f"niveaux acceptés : {', '.join(scope.levels)})."
+                    )
                 _validate_effort(target.effort, f"résolution de {role}.effort", scope)
                 _validate_gate_effort(role, target.effort, f"résolution de {role}", scope)
             attempted.append(tier)

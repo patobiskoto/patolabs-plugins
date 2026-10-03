@@ -197,9 +197,9 @@ def _credited_cross_host_state(root, state_dir, issue):
     ("role", "identity", "agent", "model", "turns"),
     [
         ("scout", "Lupin", "foundry:routed-readonly-none", "claude-haiku-4-5", 10),
-        ("implementer", "Eiffel", "foundry:routed-worker-medium", "claude-sonnet-5", 50),
-        ("reviewer", "Maigret", "foundry:routed-readonly-high", "claude-opus-5", 24),
-        ("architect", "Vauban", "foundry:routed-readonly-high", "claude-fable-5", 30),
+        ("implementer", "Eiffel", "foundry:routed-worker-medium", "claude-sonnet-5-5", 50),
+        ("reviewer", "Maigret", "foundry:routed-readonly-high", "claude-opus-5-5", 24),
+        ("architect", "Vauban", "foundry:routed-readonly-high", "claude-opus-5-5", 30),
     ],
 )
 def test_logical_roles_rewrite_the_actual_claude_invocation(
@@ -355,7 +355,7 @@ def test_claude_project_mapping_composes_with_all_availability_spellings(
     config = tmp_path / ".foundry" / "model-routing.json"
     config.parent.mkdir()
     config.write_text(json.dumps({
-        "mappings": {"claude": {"economy": {"model": configured}}},
+        "mappings": {"claude": {"economy": {"model": configured, "effort": "low"}}},
     }), encoding="utf-8")
 
     updated, context = route_agent.route_tool_input(
@@ -369,6 +369,7 @@ def test_claude_project_mapping_composes_with_all_availability_spellings(
     assert route["model"] == canonical_model
     assert route["selected_tier"] == "economy"
     assert route["sources"]["model"] == "project"
+    assert route["effort"] == "low"
 
 
 def test_claude_project_mapping_is_canonical_in_pending_telemetry(tmp_path):
@@ -551,6 +552,11 @@ def test_ordinary_fallback_moves_down_and_is_visible(tmp_path):
 
 
 def test_reviewer_fallback_moves_up_and_never_down(tmp_path):
+    config = tmp_path / ".foundry" / "model-routing.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({
+        "mappings": {"claude": {"apex": {"model": "fable-5", "effort": "high"}}},
+    }), encoding="utf-8")
     updated, context = route_agent.route_tool_input(
         {"subagent_type": "foundry:reviewer", "prompt": _packet()},
         cwd=tmp_path,
@@ -564,7 +570,7 @@ def test_reviewer_fallback_moves_up_and_never_down(tmp_path):
         route_agent.route_tool_input(
             {"subagent_type": "foundry:reviewer", "prompt": _packet()},
             cwd=tmp_path,
-            environ={CLAUDE_AVAILABLE_MODELS: "haiku-4.5,sonnet-5"},
+            environ={CLAUDE_AVAILABLE_MODELS: "haiku-4.5,sonnet-5.5"},
         )
 
 
@@ -639,7 +645,7 @@ def test_claude_route_applies_issue_scoped_escalation_floor(monkeypatch, tmp_pat
         environ={},
     )
 
-    assert _transmitted_model(updated) == "claude-opus-5"
+    assert _transmitted_model(updated) == "claude-opus-5-5"
     assert _base_profile(updated) == "foundry:routed-worker-high"
     assert '"minimum_tier": "frontier"' in context
     assert '"issue_id": "FOUNDRY-42"' in context

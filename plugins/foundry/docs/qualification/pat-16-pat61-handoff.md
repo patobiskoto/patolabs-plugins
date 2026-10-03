@@ -1,7 +1,13 @@
 # PAT-16 → PAT-61 / PAT-62 handoff
 
-Status: evidence supplied; Claude default promotion and PAT-16 delivery pending.
+Status: Claude default promotion approved and implemented in source; PAT-16 delivery pending.
 This document grants no additional campaign budget or provider authority.
+
+The maintainer approved the concrete defaults by « C’est bon » on 3 October 2026,
+after the observations and verified rollback were presented. The separate
+[promotion decision](pat-16-claude-default-promotion.md) records that approval;
+the current mapping and coordinator guidance are in [model-routing.md](../model-routing.md).
+Independent delivery review, exact-SHA two-source CI and Foundry merge remain required.
 
 The limited contract is PAT-ADR-0013 (accepted), with PAT-ADR-0012/0011 preserved
 as superseded history. The native complement is source mode at
@@ -12,7 +18,7 @@ claude.ai Pro observed before dispatch. Installed Foundry remains unchanged.
 | --- | --- | --- |
 | Scout | Haiku 4.5 dated ID `claude-haiku-4-5-20251001`, effort N/A | Round 2 at `a17bf3d`; frozen JSON passed, numeric effort not asserted |
 | Implementer | Sonnet 5.5 / medium | Round 3 at `ec662ec`; sole isolated Read/Edit fixture and offline byte/functions passed |
-| Reviewer | Opus 5.5 / high | Round 3 verified diff read and 14/16 AC; proof recorded, promotion/handoff not yet covered |
+| Reviewer | Opus 5.5 / high | Round 3 verified diff read and 14/16 AC; proof recorded, promotion/handoff not covered at that ref |
 | Architect | Opus 5.5 / high | Round 2 at `a17bf3d`; frozen invariants passed |
 
 Actual counters, exact native identities, session/child/log digests and failures are
@@ -22,14 +28,16 @@ round-2 worker and unavailable round-2 reviewer remain failures. Seven parents a
 six children consumed; no qualification retries or additional credits. Native list
 price is not an invoice and no economic improvement is claimed; PAT-17 remains later.
 
-Policy rollback restored the absent baseline after the terminal complement proof,
-with candidate bytes retained separately. This restores incumbent mappings under
-new code, not old transmission semantics: version pins now remain full IDs. Untested
+Before promotion, policy rollback restored the absent baseline after the terminal
+complement proof, with candidate bytes retained separately. At that ref it restored
+incumbent mappings under new code, not old transmission semantics: version pins now
+remain full IDs. After promotion, an absent policy selects the promoted defaults;
+restoring old defaults requires an explicit historical mapping or code rollback. Untested
 incumbent Sonnet 5, Opus 5 and Fable 5 pins remain unqualified. A code rollback must
 restore the prior code ref and generated profiles together. Codex defaults, scopes,
 qualification calls and prior PAT-14/PAT-15 evidence are unchanged.
 
-PAT-61 must read the eventual explicit human Claude promotion verdict and exact
+PAT-61 must read the approved human Claude promotion verdict and eventual exact
 merged ref before its global PASS. Replay the affected Claude paths for YouTrack,
 Linear and GitHub Projects, plus shared Codex checks warranted by the impact analysis.
 Reuse authorized existing sandboxes and frozen fixtures within PAT-61's own budget;
@@ -40,5 +48,7 @@ observation (which was unavailable at the native reviewer's first read).
 
 PAT-62 owns official fresh installation, upgrade, post-publication checks and rollback.
 Source `--plugin-dir` observations are not evidence of an installed 1.0.0 release.
-No default is promoted by this handoff. Fable 5.1 remains outside the zero-credit Pro
+This handoff carries the separate approved decision without creating a new proof.
+The observation JSON and prior proofs retain their pre-promotion statuses and exact refs.
+Fable 5.1 remains outside the zero-credit Pro
 qualification envelope. All untested client/provider pairs stay unqualified.
