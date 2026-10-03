@@ -24,8 +24,8 @@ def test_pat61_recipe_has_exactly_the_six_real_tracker_host_cells():
     assert {cell["id"]: cell["status"] for cell in recipe["cells"]} == {
         "youtrack-claude": "in_progress",
         "youtrack-codex": "in_progress",
-        "linear-claude": "blocked",
-        "linear-codex": "blocked",
+        "linear-claude": "in_progress",
+        "linear-codex": "in_progress",
         "ghprojects-claude": "in_progress",
         "ghprojects-codex": "passed",
     }
