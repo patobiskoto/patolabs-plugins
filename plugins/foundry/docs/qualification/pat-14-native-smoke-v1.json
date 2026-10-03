@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "artifact": "PAT-14 Codex native smoke fixtures",
+  "status": "frozen-before-call",
+  "digest_encoding": "sha256 of UTF-8 fixture text; JSON fixtures use sorted-key compact JSON without a trailing newline, while source and patch fixtures use their exact supplied text concatenation where stated.",
+  "purpose": "Mechanical Codex host/delegation qualification only. It is not a paid comparison, performance benchmark, separate PR gate, promotion decision, Foundry receipt, or evidence of general quality or subscription economics. The one real PAT-15 review remains its ordinary gate.",
+  "host": "codex",
+  "limits": {
+    "exact_sessions": 4,
+    "one_session_per_slot": true,
+    "maximum_minutes_per_session": 20,
+    "qualification_retries": 0,
+    "api_or_additional_credits_usd": 0,
+    "additional_slots": 0,
+    "cancellation_owner": "coordinator native observer",
+    "on_timeout_or_limit": "cancel; record unavailable; retain baseline"
+  },
+  "execution_identity": {
+    "required": true,
+    "accepted_evidence": "Native host metadata, observed by the coordinator, that binds the launched session to the exact transmitted model and effort. The record must distinguish requested_route, transmitted_launch, host_observed_execution, status, and context_identity.",
+    "unacceptable_evidence": [
+      "model self-reported text",
+      "agent name",
+      "agent plan",
+      "family prefix alone",
+      "a Foundry-generated receipt"
+    ],
+    "on_unavailable": "Do not invoke a substitute. Mark the slot unavailable and retain the baseline."
+  },
+  "preflight": {
+    "before_first_call": [
+      "Validate this artifact with the offline verifier below.",
+      "Materialize only the scout, implementer, and architect fixture text in a fresh temporary directory outside the development checkout.",
+      "For the reviewer slot, select the first immutable PAT-15 pull-request head observed after this preflight starts whose base/head are 40-hex Git SHAs and whose PAT-15 deterministic checks pass at that exact head. Freeze its PR URL, base SHA, head SHA, diff SHA-256, check commands and check results before any of the four dispatches. Claim that exact real PR diff through the normal deterministic reviewer-claim mechanism, then use its normal reviewer result as the reviewer smoke. Do not use PAT-85 or a synthetic repository, and do not choose another PR head after any smoke result.",
+      "Record the exact route requested by Foundry and the exact model/effort transmitted to Codex before dispatch."
+    ],
+    "selection_rule": "The four slots, their order, fixtures, expected verdicts, and verifier are this file. No corpus, threshold, or fixture may be chosen after a result is seen."
+  },
+  "result_object_schema": {
+    "required_fields": [
+      "slot_id",
+      "requested_route",
+      "transmitted_launch",
+      "host_observed_execution",
+      "status",
+      "context_identity",
+      "fixture_sha256",
+      "verifier_verdict"
+    ],
+    "requested_route": "Foundry's resolved role, tier, canonical model, and effort before host launch.",
+    "transmitted_launch": "The exact model and effort sent in the native Codex launch request; this is not execution identity.",
+    "host_observed_execution": "Null or native-host metadata only. A non-null value must name the exact canonical model and effort actually executed.",
+    "status_values": [
+      "passed",
+      "failed",
+      "unavailable",
+      "cancelled"
+    ],
+    "context_identity": "Opaque native session or delegation identity when the host provides one; never prompt text or a model self-report.",
+    "verifier_verdict_values": [
+      "pass",
+      "fail",
+      "unavailable"
+    ],
+    "host_mode": "Standard or Fast only when native metadata exposes it; otherwise null/unavailable. Freeze per session, never aggregate different or unknown modes as equivalent."
+  },
+  "slots": [
+    {
+      "slot_id": "economy-scout",
+      "role": "scout",
+      "tier": "economy",
+      "route": {
+        "model": "gpt-6-luna",
+        "effort": "low"
+      },
+      "packet": {
+        "instruction": "Read only the fixture. Return exactly the expected JSON value, with no prose and no model claim.",
+        "fixture": {
+          "entries": [
+            {
+              "path": "docs/a.md",
+              "kind": "documentation"
+            },
+            {
+              "path": "plugins/foundry/tooling/x.py",
+              "kind": "code"
+            },
+            {
+              "path": "tests/x_test.py",
+              "kind": "test"
+            }
+          ]
+        },
+        "expected_json": {
+          "code_paths": [
+            "plugins/foundry/tooling/x.py"
+          ],
+          "test_paths": [
+            "tests/x_test.py"
+          ]
+        }
+      },
+      "verifier": "Parse the response as JSON and require byte-for-byte canonical JSON equality after sorted-key, compact serialization to packet.expected_json.",
+      "fixture_sha256": "sha256:0d22127864a391b4fa21451e2f85144ddf425bbda40e1b527f776acda7396bd8"
+    },
+    {
+      "slot_id": "balanced-implementer",
+      "role": "implementer",
+      "tier": "balanced",
+      "route": {
+        "model": "gpt-6.1-sol",
+        "effort": "medium"
+      },
+      "packet": {
+        "instruction": "In the isolated fixture only, replace the implementation so add(2, 3) returns 5 and add(-2, 3) returns 1. Do not change the function name, signature, imports, or test file. Return a unified diff only.",
+        "source_path": "calculator.py",
+        "source_text": "def add(left, right):\n    return left - right\n",
+        "offline_verifier": "Write the proposed diff to a copy of source_text, reject a diff touching any path other than calculator.py, then run: python3 -I -c 'import runpy; add = runpy.run_path(\"calculator.py\")[\"add\"]; assert add(2, 3) == 5; assert add(-2, 3) == 1'. Require exit status 0 and the resulting calculator.py SHA-256 shown below.",
+        "expected_result_sha256": "sha256:63098273a7aaa630762d6f145dfcf9c61c8c9b290c6ebeb2a05fea5854ccb476"
+      },
+      "fixture_sha256": "sha256:71bdccb8f575f1049fa00f1fc2ab6ba89d655be178c869ac7c190839e4fe2330"
+    },
+    {
+      "slot_id": "frontier-reviewer",
+      "role": "reviewer",
+      "tier": "frontier",
+      "route": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "packet": {
+        "instruction": "Perform the normal independent review of the frozen real PAT-15 pull-request diff under the ordinary reviewer contract. Do not claim a model identity.",
+        "fixture": "The exact PAT-15 PR URL, base SHA, head SHA, diff SHA-256, check commands and passing outputs frozen by the preflight rule.",
+        "expected_result": "A normal terminal reviewer result for exactly the claimed frozen PR diff: PASS or BLOCK with the ordinary contract's structured findings and coordinates."
+      },
+      "scope": "The real PAT-15 review is both the frontier smoke and its ordinary independent review gate. Its result is not a comparative-quality benchmark and does not itself promote a model.",
+      "verifier": "Use the existing deterministic reviewer-claim and normal review verifier for the frozen real PR coordinates. Require its terminal result to name the frozen base/head/diff and contain the ordinary structured review outcome; any missing identity, claim, terminal result, or coordinate mismatch is unavailable.",
+      "fixture_sha256": "dynamic: frozen preflight PAT-15 git diff SHA-256"
+    },
+    {
+      "slot_id": "apex-architect",
+      "role": "architect",
+      "tier": "apex",
+      "route": {
+        "model": "gpt-6.1-sol",
+        "effort": "max"
+      },
+      "packet": {
+        "instruction": "Read only the enumerated accepted invariants and proposed mapping. Return exactly the expected JSON value, with no prose and no model claim.",
+        "accepted_invariants": [
+          "reviewer effort must be high or stronger",
+          "architect effort must be high or stronger",
+          "ultra is excluded",
+          "no production default changes occur during qualification"
+        ],
+        "proposed_mapping": {
+          "reviewer": {
+            "model": "gpt-6.1-sol",
+            "effort": "high"
+          },
+          "architect": {
+            "model": "gpt-6.1-sol",
+            "effort": "max"
+          },
+          "production_defaults_changed": false,
+          "requested_efforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        },
+        "expected_json": {
+          "violations": []
+        }
+      },
+      "verifier": "Parse the response as JSON and require byte-for-byte canonical JSON equality after sorted-key, compact serialization to packet.expected_json.",
+      "fixture_sha256": "sha256:a58c6508ab419fce84413952fc9eea558c173c8feaf35e66da0142e60e1fd18f"
+    }
+  ],
+  "verdict_rule": "A slot passes only when native execution identity is present and exactly matches route.model and route.effort, all result-object fields are present, status is passed, and its verifier passes: static offline verifier for scout, implementer, and architect; the existing normal review verifier for reviewer. Any other outcome is unavailable or failed and retains the corresponding GPT-5.6 baseline. Four passing slots are technical host/delegation evidence only; normal PAT-15 acceptance tests, exact-SHA CI, rollback proof, and a human promotion decision still remain required."
+}

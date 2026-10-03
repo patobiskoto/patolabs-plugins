@@ -604,10 +604,10 @@
     ]
   },
   "artifact_kind": "sanitized observation and proposed contract; not a Foundry receipt or attestation",
-  "proposed_adr": {
+  "accepted_adr": {
     "id": "PAT-ADR-0010",
-    "status": "proposed",
-    "initial_ref": "39779d79-a2f1-4152-8cae-7046a4718b74"
+    "status": "accepted",
+    "ref": "2323a67d-9c87-4ca2-859e-79be391f6bd3"
   },
   "v1_native_smoke_proposal": {
     "host": "codex",
@@ -615,8 +615,10 @@
     "maximum_minutes_per_session": 20,
     "qualification_retries": 0,
     "api_or_additional_credits_usd": 0,
-    "approval": "pending",
-    "economic_gain": "not_proven"
+    "approval": "accepted by PAT-ADR-0010; execution still requires the frozen fixture preflight and native execution-identity evidence",
+    "economic_gain": "not_proven",
+    "fixture_contract": "plugins/foundry/docs/qualification/pat-14-native-smoke-v1.json",
+    "not_a_paid_benchmark_or_pr_gate": true
   },
   "local_validation": {
     "source_head": "bc25c344d7eaccfbe9758fd2ddd28c02232db36b",

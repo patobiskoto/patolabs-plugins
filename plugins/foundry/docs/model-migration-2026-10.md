@@ -153,10 +153,14 @@ Avant M2, l'ajout des candidats devra déclarer leurs mappings, scopes et
 vocabulaire de télémétrie de façon cohérente. Le préfixe `gpt-6` sélectionne
 actuellement un scope d'effort ; il ne déclare pas une identité de télémétrie.
 `telemetry.KNOWN_MODELS` ne contient aujourd'hui que les modèles GPT-5.6 et
-Claude livrés. Un modèle GPT-6 ne peut donc être journalisé que s'il est
-explicitement déclaré via la politique projet au moment de l'observation ; un
-suffixe arbitraire est refusé. Les journaux historiques signés avec leur
-`effort_scope` enregistré restent lisibles après retrait d'une déclaration.
+Claude livrés. Lors de la préparation d'une invocation Codex, la façade ajoute
+toutefois le `route.model` déjà résolu à son vocabulaire d'observation : une
+demande directe hors gate peut donc conserver son modèle GPT-6 résolu sans une
+déclaration projet qui en serait l'unique source. Ce complément ne déclare pas
+une identité d'exécution, ne rend pas un suffixe arbitraire acceptable et ne
+remplace pas une politique projet pour un mapping. Les journaux historiques
+signés avec leur `effort_scope` enregistré restent lisibles après retrait d'une
+déclaration.
 
 
 Les alias Claude historiques haiku/sonnet/opus/fable gardent leur traduction
@@ -220,6 +224,32 @@ quota inconnu ne démontre aucune économie. Une autorisation de campagne ultér
 explicitement, sans
 conversion points ou tokens -> quota.
 
+La qualification technique urgente acceptée par PAT-ADR-0010 n'est pas ce
+benchmark reviewer. Ses quatre sessions incluses sont entièrement gelées dans
+[`qualification/pat-14-native-smoke-v1.json`](qualification/pat-14-native-smoke-v1.json) :
+un packet par tier (scout, implementer, reviewer, architect), fixture/source
+digesté, verdict attendu et vérificateur hors ligne. Elles sont exactement
+quatre, vingt minutes chacune, sans slot supplémentaire ni retry. Le reviewer
+est la revue normale du premier HEAD immuable de la PR PAT-15 qui satisfait les
+checks déterministes : URL, base, head, digest du diff et résultats de checks
+sont gelés avant les quatre dispatchs, puis claimés par le mécanisme normal.
+Il ne réutilise ni PAT-85, ni son hash, ni une ancienne claim, et ne crée aucun
+receipt artificiel. Son verdict reste la gate réelle de cette PR ; il n'est pas
+une preuve de qualité comparative ou de compétence générale. L'implementer ne touche qu'une
+fixture temporaire isolée et son patch est contrôlé hors ligne. Le smoke ne
+mesure aucune qualité comparative, économie ni compétence générale. Les trois
+slots statiques ne sont pas des gates PR ; la revue PAT-15 reste sa gate
+ordinaire, et les tests et CI exacts de PAT-15 restent requis.
+
+Le record natif d'une session distingue : la route demandée/résolue par
+Foundry, le modèle/effort transmis à l'hôte, l'identité réellement observée par
+l'hôte, le statut et une identité de contexte opaque. Le modèle transmis n'est
+pas une identité exécutée. Seules des métadonnées natives liant la session au
+modèle et effort exacts peuvent attester celle-ci ; nom d'agent, plan,
+préfixe de famille, texte auto-déclaré ou receipt Foundry sont insuffisants.
+Si l'hôte ne fournit pas cette preuve, le coordinateur annule ou marque la
+coordonnée `unavailable` et conserve la baseline, sans substitution.
+
 Les stops sont : autorisation absente/invalide/expirée ; dépassement ou risque
 de dépassement d'un plafond ; SHA, corpus ou worktree non conformes ; gate,
 plancher ou indépendance non respectés ; client/compte/modèle indisponible ;
@@ -269,14 +299,14 @@ des interfaces partagées M2/M3 : déclaration de modèles/scopes, façade Codex
 télémétrie, tests de compatibilité et documentation. M2 et M3 ne modifient pas
 ces surfaces en parallèle sans son ordre sérialisé et son readback de SHA.
 
-Pour la tranche urgente PAT-15, la proposition d'ADR distingue la conformité
+Pour la tranche urgente PAT-15, PAT-ADR-0010 distingue la conformité
 technique d'une preuve d'économie : une promotion Codex peut être proposée après
 les tests déterministes, au maximum quatre smoke sessions natives incluses
 dans l'abonnement, une par tier, vingt minutes par session, zéro retry de
 qualification, zéro crédit additionnel/API, revue indépendante, CI exacte et
 rollback vérifié. Un refus, une substitution non attestée ou un plancher non
 respecté conserve la baseline. Cette exception explicite à la qualification
-économique d'ADR-0019 doit être acceptée avant application. Elle ne permet
+économique d'ADR-0019 est acceptée, mais son exécution reste bornée. Elle ne permet
 aucun benchmark payant et ne garantit aucun gain de quota. La comparaison
 reviewer ci-dessus reste distincte, facultative et soumise à son autorisation
 signée ; elle n'est pas un préalable caché exigeant PAT-17. Conserver GPT-5.6 est un verdict valide. Si un hôte échoue ou reste
@@ -285,13 +315,12 @@ extrapolées. Le rollback est par hôte et consiste à rétablir le mapping vers
 précédent, vérifier résolution, planchers, traces et CI sur le SHA de rollback,
 puis enregistrer l'écart sans réécrire les journaux ou preuves historiques.
 
-## Décision à approuver
+## Décision approuvée
 
-Le seul amendement d'architecture nécessaire est le brouillon versionné
+Le seul amendement d'architecture nécessaire est le contrat versionné
 [`qualification/pat-14-proposed-adr.md`](qualification/pat-14-proposed-adr.md),
-enregistré dans Linear comme PAT-ADR-0010 (proposed) : il autorise, si accepté, une qualification
+enregistré dans Linear comme PAT-ADR-0010 (accepted) : il autorise une qualification
 Codex bornée et une promotion par hôte selon ce contrat. Il ne contourne pas
 ADR-0008 ou ADR-0019 et n'élargit pas Claude, Astra, l'autorité de campagne ni
-la promotion automatique. L'approbation humaine explicite du présent contrat
-et de ce brouillon est le gate AC10 avant M2/M3 ; aucun changement de défaut ne
-peut commencer auparavant.
+la promotion automatique. Les preuves déterministes, le smoke natif, la revue,
+la CI exacte et le rollback restent les gates avant tout changement de défaut.
