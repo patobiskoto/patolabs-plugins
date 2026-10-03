@@ -738,8 +738,8 @@ _MULTILINE_BOLD = re.compile(
 # transformation: both parts are plain and the code span is non-empty.
 _STRONG_TRAILING_INLINE_CODE = re.compile(
     r"(?<![A-Za-z0-9_*\\])\*\*(?![\s*])"
-    r"(?P<before>[^*`_~\[\]<>\\&\n]+?)(?<!\s) "
-    r"(?P<code>`(?![\s`])[^`\n]+(?<!\s)`)"
+    r"(?P<before>[^*`_~\[\]<>\\&\n\r\v\f\x1c-\x1e\x85\u2028\u2029]+?)(?<!\s) "
+    r"(?P<code>`(?![\s`])[^`\n\r\v\f\x1c-\x1e\x85\u2028\u2029]+(?<!\s)`)"
     r"\*\*(?![A-Za-z0-9_*])"
 )
 _MULTILINE_LINK_DESTINATION = re.compile(r"\]\([^\n]*\n[^)]*\)")

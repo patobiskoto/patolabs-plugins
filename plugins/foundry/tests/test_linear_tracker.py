@@ -6922,6 +6922,26 @@ def test_linear_adr_pat85_preserves_literal_or_ordinary_escaped_runs(source):
     linear_module._preflight_adr_body_readback(source)
 
 
+@pytest.mark.parametrize("separator", ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"))
+@pytest.mark.parametrize("position", ("before", "code"))
+def test_linear_adr_pat85_line_separators_refuse_before_write(tracker, separator, position):
+    instance, wire = tracker
+    body = (
+        f"**Modifier{separator}X `PAT`**"
+        if position == "before"
+        else f"**Modifier `PAT{separator}X`**"
+    )
+
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown serialization"):
+        instance.create_adr(PROJECT, "PAT-85 line separator", body)
+
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
 def test_linear_adr_pat85_rejects_hostile_strong_code_divergence(tracker):
     instance, wire = tracker
     source = "**Modifier `PAT-ADR-0001`**"

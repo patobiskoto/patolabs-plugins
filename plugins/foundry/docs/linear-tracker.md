@@ -215,7 +215,9 @@ Strong delimiters are recognized only when they are active Markdown delimiters: 
 escaped marker or a marker inside an inline-code span is literal and cannot pair with,
 or mask, a later qualified strong/code span. An escape consumes only its first marker;
 residual markers in the same run remain active and any resulting strong/code span
-outside the exact profile is refused before a provider write. Fenced code remains
+outside the exact profile is refused before a provider write. The same-line profile
+excludes every separator recognized by Python `splitlines()` from both the leading
+text and the code fragment, including CR and Unicode line separators. Fenced code remains
 byte-exact. This is
 source-to-readback only: the witness retains
 the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or globally
