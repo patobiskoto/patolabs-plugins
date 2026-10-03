@@ -1,0 +1,145 @@
+<!-- foundry-linear-adr.v1
+{"body_sha256":"33982ca3393e9bca78dc4744481b83214cd7bc67248687970cb56f290e5c826e","id":"PAT-ADR-0011","origin":{"kind":"native"},"previous_id":null,"previous_sha256":null,"project_id":"aeb77381-f8aa-48d3-a2a5-e6b2d2773007","relations":{"issues":\[\],"superseded_by":null,"supersedes":\[\]},"schema":"foundry-linear-adr.v1","sequence":0,"status":"proposed","team_id":"1b38b4c0-322c-4b56-8049-57a31f40974b","title":"Qualifier la tranche technique Claude V1 sur Pro sans crédits supplémentaires"}
+\-->
+
+# Proposed ADR — bounded Claude technical qualification before V1
+
+Review copy for explicit maintainer approval. The authoritative ADR identifier
+and status come from the Foundry tracker lifecycle. Related issue: PAT-16.
+No runtime promotion or native campaign is authorized before explicit approval.
+
+## Context
+
+PAT-14 is delivered and PAT-15's Codex migration is delivered at base
+`ee035f7b2cfcce4f9f272afede2b4510d54d5e9a`. Accepted PAT-ADR-0010 v0003 permits
+only the urgent Codex exception; its text and proofs are not modified here.
+The maintainer's V1 scope decision includes PAT-16 but explicitly requires
+approval of the concrete Claude contract before governed implementation or native
+qualification. FOUNDRY-ADR-0006/0008/0013/0015/0018/0019 remain authoritative
+outside the narrow amendment below.
+
+Coordinator preflight on 3 October 2026 initially found Claude Code 2.1.267.
+The normal Homebrew upgrade completed; the actual binary
+`/opt/homebrew/bin/claude` reads 2.1.285. It clears the documented client
+minimums; this is compatibility evidence, not model execution qualification.
+Auth reports claude.ai, firstParty, Pro. Foundry source manifest is 0.9.0;
+actual native loaded Foundry version remains unknown. No native qualification
+call has been made. Version and identity must be read again before execution.
+
+Fable 5.1 is not included on Pro: usage credits apply from the first request.
+The zero-credit envelope cannot call it. See the official
+plan billing rule : https://support.claude.com/en/articles/15424964-claude-fable-models-on-your-plan.
+Claude Code also permits non-interactive Fable billing without a consent prompt;
+`-p` is not a spending guard. See
+model configuration : https://code.claude.com/docs/en/model-config.
+
+## Proposed decision
+
+Extend PAT-ADR-0010's urgent V1 technical exception to Claude in PAT-16 only,
+and amend FOUNDRY-ADR-0006/0008 mappings and ADR-0019's economic prerequisite
+only to allow an explicitly approved technical Claude promotion after the
+checks below, before PAT-17. This does not claim cheaper usage, general capability,
+full cross-host qualification or completion of PAT-17. Codex mappings, authority,
+budgets, paid-comparison envelope and historic proofs remain unchanged.
+
+Freeze the proposed contract
+pat-16-claude-technical-contract-v1.json : pat-16-claude-technical-contract-v1.json
+and its digest with the human decision. Frozen contract file SHA-256:
+`8aa613503dbf04326d6c01e011d9dedef21c21036932be2577624a922df3fb78`. Ticket candidates are:
+
+| Role / tier | Explicit transmitted model | Effort | Current constraint |
+| --- | --- | --- | --- |
+| Lupin / economy | `claude-haiku-4-5` | not applicable, omitted | Qualification pending |
+| Eiffel / balanced | `claude-sonnet-5-5` | medium | Qualification pending |
+| Maigret / frontier | `claude-opus-5-5` | high | Qualification pending |
+| Vauban / apex | `claude-fable-5-1` | high | Blocked: Pro requires credits |
+
+Concrete decision proposed for acceptance: qualify the Pro zero-credit V1
+tranche with Vauban / apex = `claude-opus-5-5` / high. Keep apex tier and
+architect high floor; this is an explicit limited mapping amendment, not a
+demotion to frontier. Fable 5.1 remains the ticket's original candidate but is
+excluded from V1 native qualification on this Pro account. The JSON slots freeze
+this exact proposed alternative. It is recommended, not selected, authorized or
+promoted until the maintainer explicitly accepts this ADR and contract digest.
+
+If the maintainer declines this branch, apex stays blocked/unqualified and the
+contract must be revised and frozen before any dispatch. No Fable probe,
+replacement call, added slot, subscription migration or paid Fable authority is
+included. Paid Fable would require a separate authority and different envelope.
+
+At most four native Claude host sessions, one per role, twenty minutes per
+session, zero qualification retries, zero API/additional usage credits. The real
+Agent path entails up to eight native contexts (four parents plus four
+children), all calls and tokens counted within those four slots. The parent is
+Sonnet 5.5/medium, with included access verified, at most two turns and exactly
+one intended Foundry Agent dispatch. No extra orchestration session, preparatory
+model probe, resume, autonomous delegation or uncounted retry is allowed. This
+Claude budget is separate from the already delivered Codex campaign.
+
+Qualification must exercise the native Claude Agent boundary with Foundry
+routing hook, capability profiles, permissions, effort frontmatter and normal
+review claims. Four ordinary `-p` prompts merely named after roles are insufficient.
+`--agent` selects a current-session role and alone does not prove the Agent-tool
+hook. CLI help establishes available interfaces, not their actual execution.
+The supported subagent contract : https://code.claude.com/docs/en/sub-agents
+allows explicit IDs; all version/provider behavior still needs bounded evidence.
+`--bare` is excluded because it disables OAuth/hooks and uses API access.
+
+Before any dispatch, pass deterministic tests at exact candidate SHA, validate
+statics and their verifiers, and freeze the first eligible normal PAT-16 PR
+head observed after preflight starts: PR URL, immutable base/head, diff digest,
+AC/ADR/contract digests, test commands/results and deterministic reviewer claim.
+No new head or different corpus may be selected after a smoke result. Reuse exact
+PAT-14 static packets/verifiers 1/2/4; static 4 reasons about the original enumerated
+Codex proposal and is only an invariant task, not a Claude quality benchmark.
+The frontier slot is the normal independent blank-context PAT-16 review of the
+frozen real diff; its terminal BLOCK is execution evidence, never delivery success.
+
+Requested route, transmitted parameters and native observed child identity/effort
+must be distinct. No plan, model self-description, agent name, family-only display
+or Foundry-generated receipt proves executed identity. Missing exact identity or
+effective effort remains unavailable. Haiku explicitly transmits no effort;
+historical low records retain legacy requested intent without claiming supported
+execution. Old full pins are never silently changed to latest aliases. Override,
+allowlist, cap, provider refusal and safety fallback diagnostics preserve floors;
+substitution is not successful qualification and cannot justify another call.
+
+Collect actual parent/child tokens after completion through the explicit offline
+ADR-0015 reader; missing counters remain null/unavailable, never planned tokens or
+zero. Preserve ADR-0008 passive telemetry privacy and fail-open behavior. Qualification
+digests stay in existing qualification artifacts, not passive telemetry. No evidence
+store redesign, raw-log upload or credential copying is introduced.
+
+## Promotion, rollback and delivery
+
+Implementation remains blocked until this ADR/contract including this explicit apex amendment are approved.
+Then deterministic tests, authorized bounded native results, independent review,
+exact-SHA CI through both sources, and verified rollback precede any explicit human
+Claude promotion decision. Permissions, blank review, turn/packet caps, escalation
+rules and reviewer/architect floors stay intact; neither ultra nor ultracode is enabled.
+Each provider/client not tested stays unqualified. A changed final head requires
+ordinary fresh review and CI; a frozen smoke proof does not certify later diffs.
+
+Freeze and verify restoration of original Claude defaults/profiles and explicit
+operator pins at the candidate base. On regression or identity/effort/billing
+uncertainty, stop new launches and retain/restore incumbent through the normal
+reviewed path. An unsupported incumbent remains diagnosed unavailable, never guessed.
+Personal overrides and the primary session model are not changed automatically.
+
+PAT-61 consumes exact source-mode Claude evidence and unresolved affected cells;
+PAT-62 retains official post-installation/upgrade readback after release. Source
+plugin loading is not an official installation. Both stages remain distinct.
+
+## Documentation status and limits
+
+These two proposal documents are updated. Current runtime, AGENTS.md/CLAUDE.md R7,
+CLI/config/model vocabularies and skill surfaces are unchanged in step 0, so current
+behavior docs require no implementation update yet. The approved implementation
+must update model-routing/migration notes per touched surface, and copy any R7 edit
+byte-identically into CLAUDE.md. No unshipped documentation gate is claimed.
+
+Alternatives rejected: promotion from announcements alone; silent alias migration;
+paid Fable hidden behind `-p`; reusing Codex receipts as Claude proof; expanding the
+smoke into a PAT-17 benchmark. Unavailable evidence normally retains the incumbent.
+The proposal author cannot accept this ADR, authorize its own native campaign or
+select the maintainer's apex alternative.
