@@ -136,15 +136,22 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
 | YouTrack × Claude Code | dépôt et projet YouTrack synthétiques actifs | `blocked` | P61Y-3/PR #3 a parcouru reprise, ouverture, review, CI et merge sous Claude en mode source (`1755a3d`) ; le démarrage a été fait par le coordinateur. PAT-ADR-0009 est acceptée et PAT-82 est mergé, mais P61Y-3 reste historiquement `unavailable`; le démarrage Claude autonome et le parcours complet restent à prouver. Un nouveau scope, contenant seulement des receipts frais qualifiés dont P61Y-4, peut être testé sans backfill. |
-| YouTrack × Codex | P61Y et dépôt privé de sable | `blocked` | P61Y-1/PR #1 et P61Y-2/PR #2 ont été mergées via Foundry avec CI et review. PAT-82 ajoute P61Y-4/PR #4, reçu neuf `accepted`; P61Y-2 et P61Y-3 restent `unavailable` sans backfill. Un nouveau scope contenant seulement des receipts frais qualifiés, dont P61Y-4, reste une étape possible; Epic et parcours Codex complet de cette cellule restent à faire. |
-| Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 a corrigé ce défaut sans réécrire l'incident. Le reste du parcours et Apple restent sans preuve. |
-| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
+| YouTrack × Codex | P61Y et dépôt privé de sable | `in_progress` | Le milestone #4 a maintenant le scope frais P61Y-4 seul, `accepted` 2/2, `unfinished=0`, `unavailable=0`; la capacité native de fermeture est `unavailable`, donc aucun état natif fermé n'est inventé. P61Y-2/P61Y-3 restent historiques `unavailable`. L'Epic P61Y-5 est backlog avec P61Y-4 enfant `done`/accepté; dépendance non vide et verdict humain/closure manquent. |
+| Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `blocked` | ADR-2 v0 existe mais le modèle manque le couple littéral requis **texte `code`**→**texte** `code`; le diagnostic ne prouve que deux diffs forts après modélisation. PAT-85 porte le bug de production et le lien PAT-61→PAT-85; aucune réparation ADR ni passage n'est inventé. Les previews Epic et le scope frais 77/78/80/81 `accepted` restent des preuves limitées. |
+| Linear × Codex | projet PAT synthétique et dépôt privé de sable | `blocked` | Les receipts antérieurs restent corrects, mais l'index ADR partagé est actuellement bloqué par ADR-2. L'Epic PAT-83 est backlog (parent PAT-77); verdict humain demandé sans réponse, donc ni closure ni preuve terminale. |
 | GitHub Projects × Claude Code | P61R, dépôt privé et Project personnel privé #10 | `in_progress` | Claude Code 2.1.267 a chargé le package source exact par `--plugin-dir` et exécuté `resume`, `start`, `open-pr` et `merge-pr` Foundry, avec Eiffel/Maigret. P61R-6/PR #7 a été mergée après une correction README seule et une review fraîche. Le parcours demeure partiel: ADR-3 est `proposed`, aucune frame ne la cite, l'installation officielle post-publication reste PAT-62 et aucun PASS n'est inféré. |
 | GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `passed` | Les six étapes P61R sont couvertes: binding; ADR-3 V1→V2 et refus ADR indisponible/restauration exacte; Epic P61R-4 avec enfant, dépendance P61R-5/P61R-6 et groom; P61R-1 start/reprise/PR/review/CI/merge; clôture Epic relue alignée; scope P61R-1 et bridge Ship-iOS `accepted`. La cellule est qualifiée sur ce périmètre; PAT-61 global reste `blocked` par les cinq autres cellules. |
 
 GHQUAL et P64G peuvent être relus comme ressources historiques uniquement. P64Q et
 l'ancien binding FOUNDRY sont archivés : ils ne sont pas réactivés et ne constituent pas
-un raccourci. Les dépôts privés de sable `foundry-v1-pat61-linear-sandbox`,
+un raccourci. Au source propre `14b4f1802386806ebf2cc0ea1e47fff280fe3efa`, le package
+Foundry 0.9.0 compte 257 fichiers; son SHA256 `git archive` est `fdb1d2ac…`, algorithme
+explicitement distinct de l'agrégat historique `8a`. Claude 2.1.267 a confirmé sa racine
+inline. Le lecteur Claude frais a relu une seule fois changelog et bridge complets:
+scope Linear PAT-77/PAT-78/PAT-80/PAT-81 tous `accepted`, sans tag ni effet Apple; coût
+listé 0,128946 USD, inclus dans 4,154751 USD sur trois invocations, ni facture ni quota.
+Les 108 tests de conformité passent (3051 désélectionnés); les 45 tours/2,9773205 USD de
+la phase native et la continuation tronquée ne sont pas une preuve du bridge. Les dépôts privés de sable `foundry-v1-pat61-linear-sandbox`,
 `foundry-v1-pat61-youtrack-sandbox` et `foundry-v1-pat61-ghprojects-sandbox` sont
 désormais enregistrés avec leurs bindings séparés PAT, P61Y et P61G. Ils ne modifient
 pas le binding du dépôt `patolabs-plugins`.
