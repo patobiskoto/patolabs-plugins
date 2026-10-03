@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Callable, Mapping
 
 from foundry.routing import (
@@ -75,7 +76,8 @@ _CLAUDE_MODEL_DECLARATION = (
 )
 _CLAUDE_MODEL_IDS = {canonical: alias for canonical, alias, _ in _CLAUDE_MODEL_DECLARATION}
 # Short aliases express version-dependent host intent, never a frozen version.
-_CLAUDE_MODEL_IDS.update({alias: alias for alias in ("haiku", "sonnet", "opus", "fable")})
+CLAUDE_AGENT_MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")
+_CLAUDE_MODEL_IDS.update({alias: alias for alias in CLAUDE_AGENT_MODEL_ALIASES})
 _CLAUDE_POLICY_MODELS = {
     **{alias: canonical for canonical, alias, _ in _CLAUDE_MODEL_DECLARATION},
     **{spelling: canonical for canonical, _, spellings in _CLAUDE_MODEL_DECLARATION for spelling in spellings},
@@ -865,15 +867,80 @@ def _project_claude_models(root: str | os.PathLike | None) -> dict[str, str]:
     return dict(RoutingPolicy.load(root).claude_models)
 
 
-def claude_effort_parameters(route) -> dict:
+def claude_effort_parameters(route, *, invocation_model: str | None = None) -> dict:
     """Separate requested policy effort from transmitted frontmatter intent."""
-    if route.model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001"):
+    if (invocation_model or route.model) in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001"):
         if route.effort not in (None, "low"):
             raise RoutingConfigError("Haiku 4.5 : effort rejeté, non applicable.")
         return {"requested": route.effort, "transmitted": None,
                 "status": "not_applicable", "observed": None}
     return {"requested": route.effort, "transmitted": route.effort,
             "status": "requested", "observed": None}
+
+
+def claude_pin_profile_text(
+    invocation_model: str, capability: str, effort: str | None, *, plugin_root,
+) -> tuple[str, str]:
+    """Render one shipped pin from the central declaration and capability template."""
+    canonical = next((canonical for canonical, wire, _ in _CLAUDE_MODEL_DECLARATION
+                      if wire == invocation_model), None)
+    if canonical is None:
+        raise RoutingConfigError(
+            f"modèle Claude '{invocation_model}' : aucun profil épinglé préchargé ; "
+            "déclarez/livrez un profil versionné compatible avant invocation, "
+            "ou choisissez explicitement un alias hôte supporté."
+        )
+    if capability not in ("readonly", "worker") or (effort is not None and effort not in CLAUDE_EXECUTABLE_EFFORTS):
+        raise RoutingConfigError("profil Claude : capability/effort non exécutable.")
+    no_effort = canonical.startswith("haiku-4.5")
+    if (effort is None) != no_effort:
+        raise RoutingConfigError("profil Claude : effort incompatible avec le modèle épinglé.")
+    generic_name = f"routed-{capability}-{effort or 'none'}"
+    name = f"{generic_name}-{canonical}"
+    try:
+        template = (Path(plugin_root) / "agents" / f"{generic_name}.md").read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RoutingConfigError(f"template de profil Claude absent : {generic_name}.") from exc
+    expected_name = f"name: {generic_name}\n"
+    if template.count(expected_name) != 1 or "\nmodel:" in template:
+        raise RoutingConfigError(f"template de profil Claude invalide : {generic_name}.")
+    text = template.replace(expected_name, f"name: {name}\nmodel: {invocation_model}\n", 1)
+    return name, text
+
+
+def claude_pin_profile_documents(plugin_root) -> dict[str, str]:
+    """Deterministic source generation only; no host, cache or runtime writes."""
+    result = {}
+    for canonical, wire, _ in _CLAUDE_MODEL_DECLARATION:
+        efforts = (None,) if canonical.startswith("haiku-4.5") else tuple(sorted(CLAUDE_EXECUTABLE_EFFORTS))
+        for capability in ("readonly", "worker"):
+            for effort in efforts:
+                name, text = claude_pin_profile_text(wire, capability, effort, plugin_root=plugin_root)
+                result[name] = text
+    return result
+
+
+def claude_invocation_binding(route, capability: str, *, plugin_root, project_models=None) -> dict:
+    """Bind pins to preloaded frontmatter; Agent.model accepts only short aliases."""
+    model = claude_invocation_model(route.model, project_models=project_models)
+    effort_parameters = claude_effort_parameters(route, invocation_model=model)
+    effort = effort_parameters["transmitted"]
+    if model in CLAUDE_AGENT_MODEL_ALIASES:
+        return {"profile": f"routed-{capability}-{effort or 'none'}",
+                "agent_model": model, "transmitted_model": model,
+                "model_source": "agent_input", "effort_parameters": effort_parameters}
+    name, expected = claude_pin_profile_text(model, capability, effort, plugin_root=plugin_root)
+    try:
+        actual = (Path(plugin_root) / "agents" / f"{name}.md").read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RoutingConfigError(
+            f"profil Claude épinglé préchargé absent : {name} ; "
+            "livrez/régénérez les profils source avant de recharger le plugin."
+        ) from exc
+    if actual != expected:
+        raise RoutingConfigError(f"profil Claude épinglé divergent : {name} ; régénérez/rechargez le plugin.")
+    return {"profile": name, "agent_model": None, "transmitted_model": model,
+            "model_source": "profile_frontmatter", "effort_parameters": effort_parameters}
 
 
 def claude_invocation_model(

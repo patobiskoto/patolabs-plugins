@@ -126,8 +126,9 @@ Unknown efforts name both the rejected level and the levels accepted by the rele
 scope. Claude host translations are also declarative: `claude_models` may map a new
 canonical policy model to its Agent wire alias; a missing translation fails explicitly.
 
-Built-in Claude version names and full IDs resolve to explicit wire identifiers. A
-historical `opus-5` or `claude-opus-5` transmits `claude-opus-5`, never `opus`.
+Built-in Claude version names and full IDs resolve to explicit preloaded profile pins. A
+historical `opus-5` or `claude-opus-5` selects frontmatter `model: claude-opus-5`,
+never `opus`. The Agent tool wire omits `model` for a pin.
 Short `haiku`/`sonnet`/`opus`/`fable` remain explicit version-dependent host aliases,
 with `CLAUDE_ALIAS_VERSION_UNOBSERVED`; their resolved route and telemetry retain the
 alias intent. They are distinct from version pins when matching observed availability.
@@ -824,11 +825,18 @@ packaged reviewer and the portable Codex review skill share these rules.
 
 ## Claude Code invocation façade
 
-Claude Code plugin-agent frontmatter is static once the plugin is cached. Foundry never
-writes a literal `model:` into an agent definition, because doing so would make the
-project policy look configurable while the cached definition kept winning. This façade
-is validated against Claude Code 2.1.224; an older runtime without Agent `updatedInput`,
-`max_turns`, or agent `effort` support is not compatible.
+Claude Code plugin-agent frontmatter is static once the plugin is cached. Logical
+entrypoints and generic capability/effort profiles have no model. Versioned internal
+profiles are generated deterministically from `_CLAUDE_MODEL_DECLARATION` and those
+same capability/effort templates, with exact full IDs in their frontmatter. The hook
+selects the matching preloaded profile per policy; it never writes a runtime/cache file.
+The first PAT-16 native attempt on 2.1.285 established that the Agent tool's `model`
+wire schema accepts only `haiku`, `sonnet`, `opus`, `fable`, rejecting a full ID before
+child launch. Full pins therefore use supported profile frontmatter, omitting wire
+`model` entirely so a short alias cannot override the pin. This remediation has only
+deterministic validation until a separately approved fresh native envelope runs.
+An older runtime without Agent `updatedInput`, `max_turns`, or profile effort support
+is not compatible; a native run remains necessary for exact client/provider proof.
 
 The runtime path is deliberately explicit:
 
@@ -840,8 +848,10 @@ The runtime path is deliberately explicit:
    those semantic keys remain deterministic compatibility aliases during the migration.
 2. The `PreToolUse` hook on `Agent|Task` loads `.foundry/model-routing.json`, then
    applies user request > project config > Foundry defaults through the common policy.
-3. The hook rewrites the actual Agent input with the resolved `model`, a bounded
-   `max_turns`, and an internal `foundry:routed-<capability>-<effort>` agent.
+3. The hook rewrites Agent input with bounded `max_turns` and the preloaded
+   `foundry:routed-<capability>-<effort>-<canonical-version>` profile for full pins.
+   Wire `model` is absent for pins. Explicit short aliases use the generic profile
+   and the supported alias enum in wire `model`.
 4. Claude Code spawns that rewritten invocation. The routing pre-hook's telemetry-free
    `additionalContext` exposes the selected tier/model/effort, sources, fallback path,
    availability status, and warnings; the post-hook emits no context at all.
@@ -859,19 +869,20 @@ The static/dynamic boundary is therefore:
 
 | Concern | Static in agent frontmatter | Dynamic per invocation |
 |---|---:|---:|
-| Provider model | never | yes, from resolved policy |
+| Provider model | full pin in versioned profiles; absent from generic profiles | select pin profile or explicit wire alias from policy |
 | Reasoning effort | internal profile only | profile chosen from resolved policy |
 | Tool capability | read-only or worker profile | profile chosen from role |
 | Turn limit | no | yes, caller value capped by role maximum |
 | Task context | no | bounded four-section packet |
 
 Effort needs a static internal profile because Claude Code's interactive Agent tool can
-override `model` and `max_turns` per call but does not expose an invocation-level effort
+override an alias `model` and `max_turns` per call but does not expose invocation-level effort
 field. `max_turns` is the Agent tool wire key; `maxTurns` belongs only to an
 AgentDefinition/frontmatter concept and is never emitted in `updatedInput`. The hook reads
 the caller value, defaults it to the role ceiling when absent, caps it deterministically,
-and rejects non-positive/non-integer values fail-closed. The internal profiles contain no
-provider model. Calling one directly is refused by its prompt marker; skills call only
+and rejects non-positive/non-integer values fail-closed. Versioned profiles contain
+the declared full pin; generic profiles contain no model. Calling one directly is
+refused by its prompt marker; skills call only
 logical roles.
 
 Task packets must contain the literal `Goal:`, `Inputs:`, `Constraints:`, and
@@ -894,11 +905,14 @@ Done when:
 ```
 
 Only `tier`, `model`, `effort`, and the workflow-supplied `issue` identifier are
-accepted. An explicit Agent `model` input is also treated as a user model request;
+accepted. An explicit Agent alias `model` input is also treated as a user model request;
 conflicting values fail loudly. Built-in policy models accept current aliases, canonical
 Foundry names, and full IDs (for example `opus`, `opus-5`, and `claude-opus-5`). A custom
-canonical model must have a `claude_models` translation, and outgoing Agent input uses
-that declared alias.
+canonical model must have a `claude_models` translation. A translation to an accepted
+wire alias uses a generic profile; a built-in full ID selects the corresponding pin
+profile. Other custom targets are unavailable until a versioned profile declaration
+is shipped; neither unknown full IDs nor arbitrary strings are injected into wire
+`model`. The diagnostic asks for a compatible preloaded declaration, never substitutes.
 
 Explicit short Claude aliases follow the current Claude Code CLI/provider version.
 Versioned canonical names and full pins preserve explicit provider IDs. Where supported, administrators can pin the alias targets
@@ -1084,3 +1098,25 @@ Passive telemetry retains new/historical canonical identities and null effort/co
 The existing explicit offline ADR-0015 reader retains native IDs; new version IDs cannot
 match historical wildcard price rows, so absent new prices yield null/unavailable.
 No new price, cost claim, hook log reader, evidence pipeline or role authority is added.
+
+
+### Reproducible source profile generation
+
+Run `python3 plugins/foundry/tooling/generate_claude_profiles.py` from the repository
+root after changing a declaration/template, then review the derived diff and reload
+through the normal plugin path. The 64 versioned profiles cover both capabilities,
+all five existing executable efforts for the six non-Haiku versions, and no-effort
+profiles for the two explicit Haiku IDs. This static inventory is not a native
+qualification matrix. There is no runtime generation, cache mutation, new router,
+role authority or provider invocation. The source drift test requires exact generated
+bytes; the launcher refuses missing/divergent preloaded profile bytes before claims.
+Generic aliases remain version dependent; custom full pins without a shipped profile
+are explicitly unsupported. Built-in declarations cannot be weakened by project data.
+
+Every versioned read-only profile retains `routed-readonly-` and the existing Bash
+guard: only the claimed `routing read-review` verifier is allowed. The post-tool
+observer still consumes its existing correlation once, independent of profile suffix.
+`transmitted_launch` describes selected profile/model/source intent. It is not execution
+metadata. Haiku's omitted frontmatter effort cannot establish observed non-applicability:
+parent/session effort may still appear in native metadata. Only the approved native
+contract may judge that observation; missing/ambiguous evidence stays unknown.

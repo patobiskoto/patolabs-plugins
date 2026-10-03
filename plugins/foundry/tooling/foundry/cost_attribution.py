@@ -1,6 +1,7 @@
 """Offline post-hoc cost attribution for sanitized host usage records.
 
-The module has no provider, tracker, routing, or journal-writing dependency.
+The module invokes no provider/tracker, resolves no route and writes no host journal.
+Only declarative model spelling normalization is shared with the routing facade.
 It reads only the explicitly selected log and returns no source path or raw row.
 """
 from __future__ import annotations
@@ -61,7 +62,8 @@ def _matches(pattern: str, model: str) -> bool:
         canonical_prefix = claude_policy_model(prefix) if prefix else prefix
         canonical_model = claude_policy_model(model)
         if (canonical_prefix != prefix and canonical_model != model
-                and canonical_prefix != canonical_model):
+                and re.sub(r"-[0-9]{8}$", "", canonical_prefix)
+                != re.sub(r"-[0-9]{8}$", "", canonical_model)):
             return False
     return model.startswith(pattern[:-1]) if pattern.endswith("*") else model == pattern
 

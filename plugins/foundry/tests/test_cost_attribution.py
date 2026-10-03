@@ -1140,3 +1140,23 @@ def test_invalid_calendar_date_in_optional_quota_preserves_cost(tmp_path):
                                     "window_minutes": 300, "resets_at": 10}}}}),
     ]))
     assert read_host_log("codex", log) == []
+
+
+def test_declared_historical_haiku_snapshot_keeps_legacy_wildcard_price(tmp_path):
+    # Existing operator grids could already price the official dated wire snapshot.
+    # Reuse the historical fixture rate, never manufacture a candidate price.
+    grid = _grid(tmp_path, [_entry(host="claude", model="haiku-4.5",
+                                  aliases=["claude-haiku-4-5*", "haiku-4.5-*"],
+                                  effective_to="2026-12-31")])
+    path = tmp_path / "dated-haiku.jsonl"
+    path.write_text(json.dumps({"type": "assistant", "sessionId": "historical",
+        "timestamp": "2026-10-03T10:00:00Z", "message": {
+            "model": "claude-haiku-4-5-20251001", "usage": {
+                "input_tokens": 10, "cache_read_input_tokens": 2,
+                "cache_creation_input_tokens": 3, "output_tokens": 5}}}) + "\n")
+    rows = read_host_log("claude", path)
+    observed = cost_record(rows[0], grid)
+    incumbent = cost_record(dict(rows[0], model="haiku-4.5"), grid)
+    assert observed["cost_micros"] == incumbent["cost_micros"]
+    assert observed["cost_provenance"] == "pricing_derived"
+    assert price_for(grid, "claude", "claude-sonnet-5-5", "2026-10-03") is None

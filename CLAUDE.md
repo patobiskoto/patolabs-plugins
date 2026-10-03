@@ -128,16 +128,25 @@ behaviour, not the pre-FOUNDRY-125 closed table:
 - `_CLAUDE_MODEL_DECLARATION` declares canonical versions and their explicit Agent
   identifiers, including historical Sonnet/Opus/Fable 5, Sonnet/Opus 5.5, Fable 5.1
   and Haiku 4.5 (including its explicit `20251001` snapshot). Versioned policy models
-  transmit the declared full identifier; historical pins never become latest aliases.
+  select a preloaded versioned profile whose frontmatter carries the declared full
+  identifier. The Agent tool wire omits `model` for these pins: the observed 2.1.285
+  Agent schema accepts only `haiku`, `sonnet`, `opus`, `fable` there. Historical pins
+  never become latest aliases.
   Short `haiku`, `sonnet`, `opus`, `fable` aliases preserve host alias intent and emit
   `CLAUDE_ALIAS_VERSION_UNOBSERVED`; they are not evidence of a precise version.
 - `claude_invocation_model()` normalizes full IDs to declared canonical names with
   `claude_policy_model()`, resolves a built-in explicit ID or short alias, and otherwise
   uses the project's own `claude_models` declaration. A version pin and a short alias are
   distinct availability identities; an alias observation cannot satisfy a pinned version.
+  `claude_invocation_binding()` binds declared pins to preloaded static profiles, checks
+  them against the deterministic capability/effort template, and fails closed on an
+  absent/divergent profile. Project translations to a built-in full ID use that pin;
+  translations to an accepted short alias retain the generic profile/wire path. A custom
+  full ID without a shipped profile declaration is diagnosed, never silently aliased.
 - Claude Haiku 4.5 accepts an explicit null project effort as model-specific
   `not_applicable`. Legacy mapping `low` stays requested historical intent; the hook
-  selects `routed-<capability>-none`, omits effort frontmatter and exposes transmitted
+  selects the corresponding `routed-<capability>-none[-<version>]`, omits effort
+  frontmatter and exposes transmitted
   effort null. Explicit user effort is rejected. Null has no rank and cannot satisfy
   reviewer/architect floors or another model's effort scope. Requested, transmitted and
   observed efforts stay separate; missing native observation remains unknown.

@@ -398,3 +398,16 @@ PAT-86 repair and explicit limited acceptance. Its frozen Claude contract SHA-25
 Approval authorizes the bounded candidate preparation/qualification envelope; this
 source change still retains incumbent defaults and has candidate-only status pending
 native evidence, independent review, CI, verified rollback and promotion decision.
+
+
+PAT-16 interface remediation: the first original-envelope scout slot failed before
+child launch because Claude Code 2.1.285 rejected a full identifier in Agent `model`.
+The three remaining original slots were not run. No native profile was qualified or
+promoted. The static remedy selects generated preloaded full-ID profiles and omits
+wire `model`; aliases use only the observed supported enum. Original frozen proposal
+bytes and failed evidence remain preserved. See
+`qualification/pat-16-native-interface-observation.md`; another native attempt requires
+explicit approval of a fresh interface/corpus/envelope, never an implicit retry.
+The generation/frontmatter/wire distinction is updated in `model-routing.md` and R7;
+role tools, turn caps, review claims, passive telemetry schema and Codex scopes remain
+unchanged. The existing conformance/guard/correlation tests cover the suffixed profiles.

@@ -40,13 +40,14 @@ def test_opt_in_candidates_preserve_wire_permissions_and_unknown_observation(tmp
     install_candidates(tmp_path)
     updated, context = hook.route_tool_input({"subagent_type": f"foundry:{role}", "prompt": packet(), "max_turns": 999, "effort": "max"}, cwd=tmp_path, environ={})
     visible = json.loads(context.removeprefix("Foundry Claude route: "))
-    assert updated["model"] == model
+    assert "model" not in updated
     assert updated["max_turns"] == turns
-    assert updated["subagent_type"] == f"foundry:routed-{profile}"
+    assert updated["subagent_type"] == f"foundry:routed-{profile}-{claude_policy_model(model)}"
     assert "effort" not in updated and "maxTurns" not in updated
     assert visible["effort_parameters"]["transmitted"] == effort
     assert visible["execution_observation"] == {"model": None, "effort": None, "status": "unknown"}
-    frontmatter = (ROOT / f"agents/routed-{profile}.md").read_text().split("---", 2)[1]
+    frontmatter = (ROOT / f"agents/{updated['subagent_type'].removeprefix('foundry:')}.md").read_text().split("---", 2)[1]
+    assert f"model: {model}" in frontmatter
     assert "Agent" not in frontmatter and "Task" not in frontmatter
     assert ("effort:" not in frontmatter) if effort is None else f"effort: {effort}" in frontmatter
     if role != "implementer":
