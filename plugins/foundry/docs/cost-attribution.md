@@ -53,6 +53,14 @@ la tarification nécessitant un seuil de contexte par requête.
 
 ## Complétude Claude
 
+Les blocs natifs corrélés par session, agent, `requestId` et `message.id`
+représentent une seule requête. Le lecteur retient son snapshot terminal plutôt que
+d’additionner les compteurs intermédiaires et finaux. Deux snapshots terminaux
+contradictoires ou une identité de modèle/date divergente sont refusés. Sans ces
+identifiants, les journaux historiques conservent leur lecture par ligne ; sans
+ventilation de raisonnement, la valeur reste `unavailable`. Les identifiants de
+requête et le contenu des blocs ne sont pas exportés.
+
 Certaines lignes `assistant` Claude réelles ne rapportent pas le compteur de raisonnement
 (`output_tokens_details.thinking_tokens`). D'autres rapportent un `thinking_tokens`
 supérieur à `output_tokens`. Dans les deux cas, les quatre compteurs tarifés restent
