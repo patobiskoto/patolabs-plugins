@@ -22,7 +22,7 @@ def test_pat61_recipe_has_exactly_the_six_real_tracker_host_cells():
     }
     assert len(recipe["cells"]) == 6
     assert {cell["id"]: cell["status"] for cell in recipe["cells"]} == {
-        "youtrack-claude": "blocked",
+        "youtrack-claude": "in_progress",
         "youtrack-codex": "in_progress",
         "linear-claude": "blocked",
         "linear-codex": "blocked",
