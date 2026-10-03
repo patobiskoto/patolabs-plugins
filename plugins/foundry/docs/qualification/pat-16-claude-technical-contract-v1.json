@@ -1,0 +1,414 @@
+{
+  "schema": "pat-16-claude-technical-contract.v1",
+  "issue": "PAT-16",
+  "status": "proposed_not_authorized",
+  "artifact_kind": "Reviewable proposal; no receipt, attestation, acceptance proof, or native result",
+  "prepared_at": "2026-10-03",
+  "source_base_sha": "ee035f7b2cfcce4f9f272afede2b4510d54d5e9a",
+  "adr_id": null,
+  "adr_approval": null,
+  "native_authorization": null,
+  "governance": {
+    "amendment": "Narrow extension of PAT-ADR-0010 urgent V1 technical exception to Claude; limited amendment of FOUNDRY-ADR-0006/0008 mappings and FOUNDRY-ADR-0019 economic prerequisite for this ticket only.",
+    "codex": "PAT-14/PAT-15 contract, authorization, budgets, delivered proofs and mappings unchanged; no shared spend or new Codex calls.",
+    "unchanged": [
+      "Role/tier precedence and gate floors",
+      "Permissions and existing escalation rules; maximum two escalations per issue outside qualification",
+      "Independent blank-context review, normal Foundry PR/merge gates and exact-SHA two-source CI",
+      "FOUNDRY-ADR-0008 passive observer privacy/nullability and ADR-0015 offline reader boundary",
+      "No architecture or evidence-storage redesign"
+    ],
+    "excluded": [
+      "PAT-17 full comparison",
+      "Economic or quota-saving claims",
+      "Paid/API invocation",
+      "ultra or ultracode",
+      "Automatic promotion or substitution",
+      "Personal override changes or main-session model changes",
+      "Credential copying or installed-cache edits"
+    ]
+  },
+  "sources": [
+    {
+      "url": "https://code.claude.com/docs/en/model-config",
+      "read_at": "2026-10-03",
+      "facts": "Full pins and provider/version dependent aliases; minimum client Sonnet 5.5 2.1.284, Opus 5.5 2.1.280, Fable 5.1 2.1.257; Fable may bill credits without consent in -p; Haiku effort not supported."
+    },
+    {
+      "url": "https://code.claude.com/docs/en/sub-agents",
+      "read_at": "2026-10-03",
+      "facts": "Full model IDs supported in definition/per-invocation; forced subagent model option requires 2.1.257; restrictions can substitute inherited model; /tasks can display model/effort, not necessarily an exact resolved ID."
+    },
+    {
+      "url": "https://support.claude.com/en/articles/15424964-claude-fable-models-on-your-plan",
+      "read_at": "2026-10-03",
+      "facts": "Pro does not include Fable 5 or Fable 5.1. Pay-as-you-go usage credits required from first request; zero-credit qualification branch blocked."
+    }
+  ],
+  "preflight_snapshot": {
+    "provenance": "Coordinator supplied sanitized preflight; revalidate before execution",
+    "initial_claude_version": "2.1.267",
+    "auth": {
+      "loggedIn": true,
+      "authMethod": "claude.ai",
+      "apiProvider": "firstParty",
+      "subscriptionType": "pro"
+    },
+    "relevant_environment_names": [],
+    "scope": "Coordinator environment only; not proof of effective child/settings/managed overrides",
+    "native_calls": 0,
+    "client_update": {
+      "status": "completed_normal_homebrew_update",
+      "procedure": "Coordinator: claude update identified Homebrew ownership; brew upgrade claude-code completed; actual claude --version readback 2.1.285. No forced install/channel/cache edit.",
+      "final_version": "2.1.285",
+      "provenance": "Coordinator readback, 2026-10-03"
+    },
+    "fable_included_access": "blocked: authenticated Pro plan does not include Fable 5 or 5.1; usage credits required from first request",
+    "qualified_host_provider_versions": [],
+    "current_claude_version": "2.1.285",
+    "compatibility": "Documented minimums satisfied; account/model execution access still not qualification evidence.",
+    "binary": "/opt/homebrew/bin/claude",
+    "foundry_source_manifest_version": "0.9.0",
+    "native_loaded_foundry_version": null,
+    "observation_file": "Coordinator sanitized /tmp/pat16-preflight-observed.json; not an attestation"
+  },
+  "limits": {
+    "maximum_native_sessions": 4,
+    "one_session_per_role": true,
+    "maximum_minutes_per_session": 20,
+    "qualification_retries": 0,
+    "additional_slots": 0,
+    "api_usd": 0,
+    "additional_usage_credits_usd": 0,
+    "subscription_included_only": true,
+    "concurrency": 1,
+    "parent_and_child_accounting": "Each slot is one bounded native host session containing exactly one intended Foundry role delegation. Parent orchestration requests, child requests, fallback requests and all tokens count within the slot. No uncounted preparatory model call.",
+    "cancellation_owner": "Trusted coordinator native observer",
+    "on_timeout_partial_limit_or_billing_risk": "Stop/cancel; record cancelled or unavailable; do not resume, retry or replace. Preserve incumbent.",
+    "maximum_native_contexts": 8,
+    "context_accounting": "At most four parent host sessions plus four delegated child contexts, unlike Codex four standalone contexts. All parent/child calls and tokens share each slot 20-minute limit and zero retries; no fifth host session."
+  },
+  "preflight_before_any_dispatch": [
+    "Record approval of exact ADR text and contract digest, selected apex branch, authenticated machine/provider, binary path/version, Foundry loaded ref/version and source/install mode. No execution approval is inferred from this proposal.",
+    "Revalidate official source compatibility, actual selected account entitlement and included billing for all intended parent and child models. auth status and a model announcement are insufficient.",
+    "Inspect effective child environment names and managed/project/user restrictions without exposing values/secrets; preserve R6 real HOME/LANG/LC_ALL/LOGNAME/PATH/TMPDIR/USER identity. No persistent edits.",
+    "Validate JSON, exact static packet digests, expected implementer result hash and all deterministic tests at candidate SHA before native execution.",
+    "Record preflight start timestamp; select FIRST eligible normal PAT-16 PR head observed after it starts with 40-hex base/head and passing deterministic tests at exact head. Freeze PR URL, base/head SHA, git diff SHA-256, issue AC digest, ADR/contract digest, test commands/results and reviewer-claim coordinates before ANY slot. No synthetic review or PAT-15 proof reuse.",
+    "Materialize statics 1/2/4 in an isolated temporary fixture outside development checkout; bind outer Goal/Inputs/Constraints/Done when packet and fixture digest; never modify exact reused inner fixtures.",
+    "Prove supported native Agent boundary and available execution evidence without a model probe. If not established, mark relevant slots unavailable and do not spend to discover it.",
+    "Reserve all slot budgets before start; any changed contract, role, candidate, corpus or billing branch returns to human approval before dispatch."
+  ],
+  "native_execution": {
+    "required_boundary": "Real Claude Code host session with Foundry plugin loaded, logical foundry:Lupin/Eiffel/Maigret/Vauban Agent dispatch through route_agent hook and routed capability/effort profile; preserve native session and child correlation.",
+    "not_equivalent": "Four plain claude -p top-level prompts labeled with role names do not exercise Agent dispatch, hook rewrites, role permissions, effort frontmatter, reviewer claims or blank context; they cannot qualify delegation. A -p parent is allowed only if the real intended Agent dispatch and evidence are established and all parent/child usage remains included and bounded.",
+    "wire": "Explicit full model ID per Agent invocation; effort via appropriate routed subagent frontmatter. Haiku uses an effort-free capability profile with no effort parameter. Model and effort in a plan are transmitted intent only.",
+    "permissions": "Preserve current readonly vs worker tools and guard; no Agent/Task tool inside the delegated role; no broader permission mode. Worker writes only isolated fixture. Reviewer/architect remain readonly.",
+    "review": "Normal deterministic claim, blank context, two-stage AC/quality review; no implementer history or answer leakage.",
+    "turn_caps": "Retain role ceilings 10/50/24/30 and packet ceilings 4000/12000/16000/10000, max_turns tool field and installed maxTurns only where supported; timeout/partial is not success.",
+    "overrides_to_test": [
+      "CLAUDE_CODE_SUBAGENT_MODEL",
+      "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+      "CLAUDE_CODE_EFFORT_LEVEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "ANTHROPIC_DEFAULT_FABLE_MODEL",
+      "availableModels",
+      "enforceAvailableModels",
+      "maxEffortLevel",
+      "organization effort/model restrictions",
+      "modelSettings",
+      "fallbackModel"
+    ],
+    "on_override_restriction_refusal_or_safety_fallback": "Observe/diagnose supported metadata; preserve provider refusal and floors. No certified requested profile from substituted identity or capped effort. Unavailable is not success; no automatic replacement.",
+    "cli_local_preflight": "Coordinator read --help for 2.1.285 without a model call: --agent/--agents/--model/--effort exist. --agent selects the current-session role and alone does not exercise Agent tool hook rewrite/claim. A native --agent run can prove only its declared-role boundary, not the required Agent-tool path. No substitution of one for the other. --bare is forbidden: API-only/OAuth disabled.",
+    "parent": "Proposed parent model claude-sonnet-5-5/medium, included subscription access revalidated before dispatch; never Fable. Disposable bounded parent definition, at most two agentic turns, one Agent call to the intended role, no resume/nested delegation. Parent tool access narrowed to Agent plus only required readonly observation; no shell/edit/tracker mutation. Preflight must demonstrate supported parent turn/tool caps without a model call; otherwise stop unavailable, do not relax caps.",
+    "worktree": "Scratch fixture/isolated review checkout only; no write authority to the development checkout or existing evidence. Use source plugin via supported --plugin-dir only after approval, capture actual loaded ref/version; manifest 0.9.0 alone is not loaded native version proof.",
+    "host_mode": "Capture native mode only if exposed; otherwise null/unavailable, never assume Standard/Fast equivalence."
+  },
+  "slots": [
+    {
+      "slot_id": "economy-scout",
+      "role": "scout",
+      "identity": "Lupin",
+      "tier": "economy",
+      "requested_route": {
+        "model": "haiku-4.5",
+        "effort": null,
+        "effort_status": "not_applicable"
+      },
+      "expected_transmitted_model": "claude-haiku-4-5",
+      "expected_effort_parameter": null,
+      "maximum_turns": 10,
+      "maximum_packet_chars": 4000,
+      "capability": "readonly",
+      "status": "not_executed",
+      "packet": {
+        "instruction": "Read only the fixture. Return exactly the expected JSON value, with no prose and no model claim.",
+        "fixture": {
+          "entries": [
+            {
+              "path": "docs/a.md",
+              "kind": "documentation"
+            },
+            {
+              "path": "plugins/foundry/tooling/x.py",
+              "kind": "code"
+            },
+            {
+              "path": "tests/x_test.py",
+              "kind": "test"
+            }
+          ]
+        },
+        "expected_json": {
+          "code_paths": [
+            "plugins/foundry/tooling/x.py"
+          ],
+          "test_paths": [
+            "tests/x_test.py"
+          ]
+        }
+      },
+      "verifier": "Parse the response as JSON and require byte-for-byte canonical JSON equality after sorted-key, compact serialization to packet.expected_json.",
+      "fixture_sha256": "sha256:0d22127864a391b4fa21451e2f85144ddf425bbda40e1b527f776acda7396bd8",
+      "reuse": "Exact PAT-14 packet and verifier bytes/values; routing metadata is Claude-specific.",
+      "fixture_digest_definition": "canonical JSON of packet.fixture; canonical JSON uses sorted keys, compact separators, UTF-8, no trailing newline"
+    },
+    {
+      "slot_id": "balanced-implementer",
+      "role": "implementer",
+      "identity": "Eiffel",
+      "tier": "balanced",
+      "requested_route": {
+        "model": "sonnet-5.5",
+        "effort": "medium",
+        "effort_status": "requested"
+      },
+      "expected_transmitted_model": "claude-sonnet-5-5",
+      "expected_effort_parameter": "medium",
+      "maximum_turns": 50,
+      "maximum_packet_chars": 12000,
+      "capability": "worker",
+      "status": "not_executed",
+      "packet": {
+        "instruction": "In the isolated fixture only, replace the implementation so add(2, 3) returns 5 and add(-2, 3) returns 1. Do not change the function name, signature, imports, or test file. Return a unified diff only.",
+        "source_path": "calculator.py",
+        "source_text": "def add(left, right):\n    return left - right\n",
+        "offline_verifier": "Write the proposed diff to a copy of source_text, reject a diff touching any path other than calculator.py, then run: python3 -I -c 'import runpy; add = runpy.run_path(\"calculator.py\")[\"add\"]; assert add(2, 3) == 5; assert add(-2, 3) == 1'. Require exit status 0 and the resulting calculator.py SHA-256 shown below.",
+        "expected_result_sha256": "sha256:63098273a7aaa630762d6f145dfcf9c61c8c9b290c6ebeb2a05fea5854ccb476"
+      },
+      "verifier": "Write the proposed diff to a copy of source_text, reject a diff touching any path other than calculator.py, then run: python3 -I -c 'import runpy; add = runpy.run_path(\"calculator.py\")[\"add\"]; assert add(2, 3) == 5; assert add(-2, 3) == 1'. Require exit status 0 and the resulting calculator.py SHA-256 shown below.",
+      "fixture_sha256": "sha256:71bdccb8f575f1049fa00f1fc2ab6ba89d655be178c869ac7c190839e4fe2330",
+      "reuse": "Exact PAT-14 packet and verifier bytes/values; routing metadata is Claude-specific.",
+      "fixture_digest_definition": "UTF-8 packet.source_text; canonical JSON uses sorted keys, compact separators, UTF-8, no trailing newline"
+    },
+    {
+      "slot_id": "frontier-reviewer",
+      "role": "reviewer",
+      "identity": "Maigret",
+      "tier": "frontier",
+      "requested_route": {
+        "model": "opus-5.5",
+        "effort": "high",
+        "effort_status": "requested"
+      },
+      "expected_transmitted_model": "claude-opus-5-5",
+      "expected_effort_parameter": "high",
+      "maximum_turns": 24,
+      "maximum_packet_chars": 16000,
+      "capability": "readonly",
+      "status": "not_executed",
+      "packet": {
+        "instruction": "Perform the normal independent blank-context review of the frozen real PAT-16 PR diff under the ordinary reviewer contract. Do not claim model identity.",
+        "fixture": "First eligible PAT-16 normal PR head, frozen before any of the four dispatches.",
+        "expected_result": "Normal terminal PASS or BLOCK with structured findings and exact frozen coordinates."
+      },
+      "fixture_sha256": null,
+      "verifier": "Existing deterministic review claim/result verifier bound to frozen base/head/diff, ordinary AC and quality review stages. A valid BLOCK completes technical review execution but blocks delivery/promotion until ordinary remediation and a fresh independent delivery review; no qualification retry or replacement head is allowed."
+    },
+    {
+      "slot_id": "apex-architect",
+      "role": "architect",
+      "identity": "Vauban",
+      "tier": "apex",
+      "requested_route": {
+        "model": "opus-5.5",
+        "effort": "high",
+        "effort_status": "requested"
+      },
+      "expected_transmitted_model": "claude-opus-5-5",
+      "expected_effort_parameter": "high",
+      "maximum_turns": 30,
+      "maximum_packet_chars": 10000,
+      "capability": "readonly",
+      "status": "not_executed",
+      "packet": {
+        "instruction": "Read only the enumerated accepted invariants and proposed mapping. Return exactly the expected JSON value, with no prose and no model claim.",
+        "accepted_invariants": [
+          "reviewer effort must be high or stronger",
+          "architect effort must be high or stronger",
+          "ultra is excluded",
+          "no production default changes occur during qualification"
+        ],
+        "proposed_mapping": {
+          "reviewer": {
+            "model": "gpt-6.1-sol",
+            "effort": "high"
+          },
+          "architect": {
+            "model": "gpt-6.1-sol",
+            "effort": "max"
+          },
+          "production_defaults_changed": false,
+          "requested_efforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        },
+        "expected_json": {
+          "violations": []
+        }
+      },
+      "verifier": "Parse the response as JSON and require byte-for-byte canonical JSON equality after sorted-key, compact serialization to packet.expected_json.",
+      "fixture_sha256": "sha256:a58c6508ab419fce84413952fc9eea558c173c8feaf35e66da0142e60e1fd18f",
+      "reuse": "Exact PAT-14 packet and verifier bytes/values; routing metadata is Claude-specific. The apex packet checks invariant reasoning over its enumerated Codex proposal, not Claude model capability or the proposed Claude mapping.",
+      "blocker": "Pro Fable requires usage credits and is excluded from proposed V1 native slots; explicit acceptance of proposed Opus apex amendment pending.",
+      "fixture_digest_definition": "canonical JSON object with packet.accepted_invariants and packet.proposed_mapping; canonical JSON uses sorted keys, compact separators, UTF-8, no trailing newline",
+      "proposed_alternative_status": "Recommended concrete V1 Pro zero-credit branch; not selected/authorized until explicit maintainer ADR acceptance."
+    }
+  ],
+  "result_contract": {
+    "required": [
+      "slot_id",
+      "requested_route",
+      "transmitted_launch",
+      "host_observed_execution",
+      "context_identity",
+      "host_provider_version",
+      "foundry_ref_mode",
+      "fixture_sha256",
+      "verifier_verdict",
+      "status",
+      "elapsed_seconds",
+      "actual_usage",
+      "billing_inclusion_provenance"
+    ],
+    "no_results_yet": true,
+    "status_values": [
+      "passed",
+      "failed",
+      "unavailable",
+      "cancelled"
+    ],
+    "effort_outcome_values": [
+      "matched",
+      "not_applicable",
+      "rejected",
+      "capped",
+      "unknown"
+    ],
+    "identity_evidence": "Native host metadata bound to actual child/session and request, including precise model ID and effective effort or native not-applicable state. A family-only /tasks display is diagnostic, not exact-ID proof. Retain null if absent. Reject self text, agent name, configured route, transmitted parameter, plan or generated receipt as observation.",
+    "actual_usage": "After session termination, explicit offline host-log reader under ADR-0015 extracts allowed actual input/cache-read/cache-write/output/reasoning token counters and provenance, parent and child separately; never infer from prompt size or plan. Missing counters null/unavailable, never 0. Missing required identity/effective effort or unbindable usage prevents complete qualification. No raw logs/prompts/responses/paths/secrets exported into passive telemetry.",
+    "artifact_boundary": "Contract/corpus digests live in qualification evidence under existing mechanisms, not ADR-0008 passive telemetry. No new evidence store or raw-log upload.",
+    "pass_rule": "Exact requested/transmitted/observed identity and effective effort (Haiku explicitly not applicable), complete bound required evidence and verifier pass are required. Supported aliases may normalize only through a frozen exact observed ID table, never by family or latest guess. All other states retain incumbent. A technical reviewer BLOCK is execution evidence only, not a passing delivery gate."
+  },
+  "apex_choice": {
+    "status": "human_choice_pending",
+    "primary": "Fable 5.1/high is a ticket candidate but blocked on observed Pro: paid usage credits required from first request. No paid/API authorization exists. No Fable call in this envelope.",
+    "alternative": "If maintainer declines the proposed Opus apex branch, keep Fable blocked and apex unqualified; amend and re-freeze contract before any dispatch. No paid Fable call is authorized.",
+    "prohibited": "Do not downgrade to frontier, guess included access, buy credits or choose substitute automatically.",
+    "recommended_proposed_decision": "Approve Pro zero-credit tranche with explicit apex Opus 5.5/high; retain apex semantic tier and high floor. Fable 5.1 stays a ticket candidate but outside V1 native qualification. Slots below describe this exact proposed branch, not an executed selection."
+  },
+  "compatibility": {
+    "full_pins": "Preserve explicit historical full IDs verbatim at supported boundary; do not convert to latest aliases. If unsupported/retired, diagnose unavailable and retain configuration for operator decision.",
+    "legacy_aliases": "Accept existing short aliases/project claude_models declarations through documented precedence and frozen provider/version behavior; distinguish alias intent from exact observed execution. Built-in alias weakening remains forbidden.",
+    "legacy_haiku_effort": "Historical haiku-4.5/low means legacy policy requested low, not proof Haiku applied effort. Preserve historical events and scope; never rewrite to successful low. New qualification records requested/transmitted effort null with not_applicable; explicit unsupported effort requests diagnose rejection/not_applicable without pretending application.",
+    "null_design": "Choose a backward-compatible explicit not-applicable representation before implementation; do not introduce a universal ranked effort sentinel, alter Codex scope ordering or weaken gate floors."
+  },
+  "planned_implementation": {
+    "status": "not_implemented_pending_approval",
+    "surfaces": [
+      "routing.py Claude mappings and model-specific non-applicable effort representation",
+      "routing_facades.py declarative normalization, explicit-ID transmission, supported override detection and fail-closed certification",
+      "default-effort-scopes.json / effort_policy.py model-specific admissibility without Codex drift",
+      "hooks/route_agent.py effort-free readonly Haiku profile selection preserving tools/turn caps/claims",
+      "agents/routed-* profiles only if needed for no-effort Haiku execution",
+      "telemetry.py and offline reader alias vocabulary preserving new/historical identity and null semantics",
+      "docs/model-routing.md, migration notes and AGENTS.md R7 copied byte-identical to CLAUDE.md"
+    ],
+    "deterministic_cases": [
+      "All four new full IDs transmit exactly; historical full pins never become latest aliases; project declarations/unknown models fail closed and built-ins cannot weaken.",
+      "Haiku N/A roundtrip and effort-free profile; legacy low remains requested-only history; unsupported/capped/rejected/unknown effort explicit; gate roles still at least high.",
+      "Force/default/alias overrides, allowlists and effort caps tested against documented target version; values remain private; observed substitutions never certify requested route.",
+      "Native-hook rewrite, no-permission-expansion, no nested delegation, packet/turn caps, blank review and claim mismatch/dedup.",
+      "New and historical telemetry alias retention, unavailable cost/tokens null, offline reader outside hook/invocation, no missing event vocabulary.",
+      "Codex behavior/default/scopes/accepted proofs unchanged, dual process files byte-identical, rollback restored per host/provider."
+    ],
+    "test_command_after_implementation": "PYTHONPATH=plugins/foundry/tooling pytest -q plugins/foundry/tests/test_routing.py plugins/foundry/tests/test_agent_routing.py plugins/foundry/tests/test_codex_routing.py plugins/foundry/tests/test_effort_scopes.py plugins/foundry/tests/test_telemetry.py plugins/foundry/tests/test_routing_contract.py plugins/foundry/tests/test_process_contract.py",
+    "required_checks": "Run repository required public suite/lint/catalogue checks appropriate to final change; freeze commands, counts, failures and candidate SHA. No passing assertion from this plan."
+  },
+  "promotion_and_rollback": {
+    "promotion": "Only after approved amendment/contract, deterministic tests, bounded native evidence, independent review, exact-SHA two-source CI and per-host rollback verification; human makes explicit technical Claude promotion decision. Each untested provider/version remains unqualified. No automatic mapping change from smoke.",
+    "rollback": "Capture baseline Claude mapping/translation/profile refs at candidate base; verify offline restore and resolution of Haiku 4.5/legacy-low, Sonnet 5/medium, Opus 5/high, Fable 5/high using original explicit pins where supplied. Stop new launches on regression or identity/effort/billing uncertainty; restore only task-scoped defaults/profiles through normal reviewed change. Unsupported incumbent model remains diagnosed unavailable, never guessed. Personal settings/overrides unchanged.",
+    "delivery": "Frozen reviewer smoke proves only frozen PR diff. Final changed head needs ordinary fresh independent review/CI; it is normal lifecycle work, not a qualification retry. Budget never auto-expands; additional native review needs ordinary separately established authority/included access.",
+    "handoff": "PAT-61 receives source-mode evidence with exact ref, provider/client, qualified affected Claude cells and unresolved cells; PAT-62 owns official installation/upgrade readback after publication. Source loading is not official installed validation.",
+    "limitations": [
+      "Mechanical bounded tasks only, not general quality",
+      "No economic gain/quota prediction",
+      "No full PAT-17 closure",
+      "No portable qualification beyond observed host/provider/version"
+    ]
+  },
+  "document_statuses": [
+    {
+      "artifact": "This contract and proposed ADR",
+      "status": "updated_proposal_only"
+    },
+    {
+      "artifact": "routing/effort/override/profile/telemetry public behavior",
+      "status": "not_changed_step0; planned model-routing/migration documentation after approval"
+    },
+    {
+      "artifact": "AGENTS.md/CLAUDE.md R7",
+      "status": "not_changed_step0; no current runtime rule changed; synchronize if implementation changes it"
+    }
+  ],
+  "human_choices_required": [
+    "Approve registered limited ADR and exact contract/native envelope, not the backlog scope alone.",
+    "Accept explicit proposed Pro zero-credit branch with apex Opus 5.5/high and Fable excluded from V1 qualification, or reject it and retain apex unqualified; no runtime substitution is automatic.",
+    "If exact native child identity/effective effort/usage evidence is unsupported, retain affected incumbent and decide later scope; never loosen proof requirement after a result."
+  ],
+  "ticket_candidates": [
+    {
+      "role": "scout",
+      "tier": "economy",
+      "model": "haiku-4.5",
+      "wire_model": "claude-haiku-4-5",
+      "effort": null
+    },
+    {
+      "role": "implementer",
+      "tier": "balanced",
+      "model": "sonnet-5.5",
+      "wire_model": "claude-sonnet-5-5",
+      "effort": "medium"
+    },
+    {
+      "role": "reviewer",
+      "tier": "frontier",
+      "model": "opus-5.5",
+      "wire_model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    {
+      "role": "architect",
+      "tier": "apex",
+      "model": "fable-5.1",
+      "wire_model": "claude-fable-5-1",
+      "effort": "high"
+    }
+  ]
+}

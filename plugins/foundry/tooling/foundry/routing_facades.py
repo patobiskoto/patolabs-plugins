@@ -17,6 +17,7 @@ from foundry.routing import (
     ReviewDeduplicator,
     RoutingConfigError,
     RoutingPolicy,
+    RoutingWarning,
     UserRouteRequest,
     repository_identity,
     review_diff_hash,
@@ -27,6 +28,7 @@ from foundry.telemetry import TelemetryObserver, TelemetryRun, unknown_metric
 
 
 CLAUDE_MODEL_OVERRIDE = "CLAUDE_CODE_SUBAGENT_MODEL"
+CLAUDE_FORCE_MODEL_OVERRIDE = "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"
 CLAUDE_EFFORT_OVERRIDE = "CLAUDE_CODE_EFFORT_LEVEL"
 CLAUDE_ALIAS_MODEL_OVERRIDES = (
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -62,12 +64,18 @@ def agent_identity(role: str) -> str:
 
 # Host translation is a declaration, not a chain of model-specific code paths.
 _CLAUDE_MODEL_DECLARATION = (
-    ("haiku-4.5", "haiku", ("claude-haiku-4-5",)),
-    ("sonnet-5", "sonnet", ("claude-sonnet-5",)),
-    ("opus-5", "opus", ("claude-opus-5",)),
-    ("fable-5", "fable", ("claude-fable-5",)),
+    ("haiku-4.5-20251001", "claude-haiku-4-5-20251001", ("claude-haiku-4-5-20251001",)),
+    ("haiku-4.5", "claude-haiku-4-5", ("claude-haiku-4-5",)),
+    ("sonnet-5", "claude-sonnet-5", ("claude-sonnet-5",)),
+    ("opus-5", "claude-opus-5", ("claude-opus-5",)),
+    ("fable-5", "claude-fable-5", ("claude-fable-5",)),
+    ("sonnet-5.5", "claude-sonnet-5-5", ("claude-sonnet-5-5",)),
+    ("opus-5.5", "claude-opus-5-5", ("claude-opus-5-5",)),
+    ("fable-5.1", "claude-fable-5-1", ("claude-fable-5-1",)),
 )
 _CLAUDE_MODEL_IDS = {canonical: alias for canonical, alias, _ in _CLAUDE_MODEL_DECLARATION}
+# Short aliases express version-dependent host intent, never a frozen version.
+_CLAUDE_MODEL_IDS.update({alias: alias for alias in ("haiku", "sonnet", "opus", "fable")})
 _CLAUDE_POLICY_MODELS = {
     **{alias: canonical for canonical, alias, _ in _CLAUDE_MODEL_DECLARATION},
     **{spelling: canonical for canonical, _, spellings in _CLAUDE_MODEL_DECLARATION for spelling in spellings},
@@ -312,15 +320,26 @@ def codex_invocation_completed(
     return observe_invocation_completion(observer, route, **completion)
 
 
-def detect_claude_overrides(environ: Mapping[str, str] | None = None) -> tuple[str, ...]:
+def detect_claude_overrides(
+    environ: Mapping[str, str] | None = None, *, settings: Mapping[str, object] | None = None,
+) -> tuple[str, ...]:
     """Detect Claude Code overrides that outrank invocation/frontmatter policy."""
     environ = os.environ if environ is None else environ
     signals = (
         CLAUDE_MODEL_OVERRIDE,
+        CLAUDE_FORCE_MODEL_OVERRIDE,
         CLAUDE_EFFORT_OVERRIDE,
         *CLAUDE_ALIAS_MODEL_OVERRIDES,
     )
-    return tuple(signal for signal in signals if environ.get(signal))
+    active = [signal for signal in signals if environ.get(signal)]
+    # Only explicitly supplied effective host settings are observed here. Never infer
+    # absence from a file not read or expose restriction/model values.
+    if settings is not None:
+        active.extend(key for key in (
+            "availableModels", "enforceAvailableModels", "maxEffortLevel",
+            "modelSettings", "fallbackModel", "ultracode",
+        ) if key in settings and settings[key] is not None)
+    return tuple(active)
 
 
 def detect_codex_overrides(profile: Mapping[str, object] | None) -> tuple[str, ...]:
@@ -846,13 +865,24 @@ def _project_claude_models(root: str | os.PathLike | None) -> dict[str, str]:
     return dict(RoutingPolicy.load(root).claude_models)
 
 
+def claude_effort_parameters(route) -> dict:
+    """Separate requested policy effort from transmitted frontmatter intent."""
+    if route.model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001"):
+        if route.effort not in (None, "low"):
+            raise RoutingConfigError("Haiku 4.5 : effort rejeté, non applicable.")
+        return {"requested": route.effort, "transmitted": None,
+                "status": "not_applicable", "observed": None}
+    return {"requested": route.effort, "transmitted": route.effort,
+            "status": "requested", "observed": None}
+
+
 def claude_invocation_model(
     policy_model: str,
     *,
     root: str | os.PathLike | None = None,
     project_models: Mapping[str, str] | None = None,
 ) -> str:
-    """Translate accepted Claude policy spellings to current Agent tool aliases."""
+    """Translate Claude version pins or explicit aliases to their declared Agent IDs."""
     if not isinstance(policy_model, str) or not policy_model.strip():
         raise RoutingConfigError("modèle Claude résolu : chaîne non vide attendue.")
     canonical = claude_policy_model(policy_model)
@@ -888,7 +918,7 @@ def _load_claude_policy(
     if declared_models is None:
         return policy
 
-    # The shipped canonical spellings have fixed Agent aliases.  Project data
+    # The shipped canonical versions have fixed Agent identifiers.  Project data
     # may add future models, but cannot silently turn a reviewer/architect
     # route into a weaker built-in Agent model.
     for configured_model, alias in declared_models.items():
@@ -1066,6 +1096,11 @@ def claude_route_plan(
         minimum_tier=escalation_floor,
         minimum_source=f"escalation:{issue_id}" if escalation_floor else None,
     )
+    if route.model in ("haiku", "sonnet", "opus", "fable"):
+        route = replace(route, warnings=(*route.warnings, RoutingWarning(
+            code="CLAUDE_ALIAS_VERSION_UNOBSERVED",
+            message="Alias Claude explicite dépendant du client/provider ; version exécutée inconnue.",
+        )))
     # A direct model override must fail here, before the route can be used to
     # create telemetry state.  The host translation is intentionally checked
     # again by the launcher so this remains a pure validation boundary.

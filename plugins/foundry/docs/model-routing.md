@@ -126,9 +126,14 @@ Unknown efforts name both the rejected level and the levels accepted by the rele
 scope. Claude host translations are also declarative: `claude_models` may map a new
 canonical policy model to its Agent wire alias; a missing translation fails explicitly.
 
-Built-in Claude models accept the current aliases, Foundry canonical names, and current
-full IDs. A project model declared in `claude_models` keeps its configured canonical name
-in the resolved route and telemetry, while the Agent wire receives its declared alias.
+Built-in Claude version names and full IDs resolve to explicit wire identifiers. A
+historical `opus-5` or `claude-opus-5` transmits `claude-opus-5`, never `opus`.
+Short `haiku`/`sonnet`/`opus`/`fable` remain explicit version-dependent host aliases,
+with `CLAUDE_ALIAS_VERSION_UNOBSERVED`; their resolved route and telemetry retain the
+alias intent. They are distinct from version pins when matching observed availability.
+Project `claude_models` may extend identities but cannot weaken a built-in translation.
+Unknown translations fail before dispatch. An unsupported historical pin remains
+unavailable for operator decision; it never silently selects a newer alias.
 
 That diagnostic detail belongs to the internal/direct module boundary: calling
 `foundry.routing.main()` directly (including development use through
@@ -895,11 +900,11 @@ Foundry names, and full IDs (for example `opus`, `opus-5`, and `claude-opus-5`).
 canonical model must have a `claude_models` translation, and outgoing Agent input uses
 that declared alias.
 
-Claude aliases deliberately follow the current Claude Code CLI version instead of
-pinning an exact provider ID. Where supported, administrators can pin the alias targets
+Explicit short Claude aliases follow the current Claude Code CLI/provider version.
+Versioned canonical names and full pins preserve explicit provider IDs. Where supported, administrators can pin the alias targets
 with `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`,
-`ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_FABLE_MODEL`. This differs from
-Codex's explicit versioned model IDs, which remain pinned by shared policy.
+`ANTHROPIC_DEFAULT_OPUS_MODEL`, and `ANTHROPIC_DEFAULT_FABLE_MODEL`. Codex IDs
+remain pinned by shared policy.
 
 Claude Code does not expose an authoritative, synchronous list of models enabled for the
 current organization to a command hook. Set the non-secret CSV
@@ -911,8 +916,10 @@ downward or gate upward fallback before spawn. Without it, `availability_probed=
 is visible and an unexpected provider rejection remains a loud Agent failure; Foundry
 does not pretend it observed availability.
 
-`CLAUDE_CODE_SUBAGENT_MODEL` has higher host precedence than the injected Agent model,
-and `CLAUDE_CODE_EFFORT_LEVEL` outranks subagent frontmatter effort. The alias targets
+`CLAUDE_CODE_SUBAGENT_MODEL` supplies a default; with
+`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` it overrides injected model selection. Force alone
+can select the parent model. `CLAUDE_CODE_EFFORT_LEVEL` outranks subagent frontmatter
+effort. The alias targets
 can also be repointed by `ANTHROPIC_DEFAULT_HAIKU_MODEL`,
 `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and
 `ANTHROPIC_DEFAULT_FABLE_MODEL`. Any of these signals can neutralize the policy. The
@@ -929,7 +936,8 @@ Bash guard allows only the claimed-diff verifier during normal operation.
 ## Host detector seam
 
 `tooling/foundry/routing_facades.py` supplies the two concrete detection adapters:
-Claude detects `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_EFFORT_LEVEL`, and the four
+Claude detects `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`,
+`CLAUDE_CODE_EFFORT_LEVEL`, and the four
 `ANTHROPIC_DEFAULT_*_MODEL` alias-target signals listed above; Codex inspects the effective
 profile mapping for `model` and `model_reasoning_effort`. They return signal names only.
 The shared `host_override_warnings` function owns the value-free warning decision.
@@ -1031,3 +1039,48 @@ The implementation follows the official Codex documentation for
 [subagents](https://developers.openai.com/codex/multi-agent),
 [configuration precedence](https://developers.openai.com/codex/config-reference), and
 [GPT-5.6 model selection](https://developers.openai.com/api/docs/guides/latest-model).
+
+
+### PAT-16 Claude candidates (opt-in, unqualified)
+
+Accepted limited PAT-ADR-0011 permits deterministic preparation; defaults remain the
+incumbent policy. `docs/examples/claude-candidates-pat16.json` is an opt-in example,
+not an installed project configuration. Its tiers are Haiku 4.5/null, Sonnet
+5.5/medium, Opus 5.5/high, and Opus 5.5/high at apex. The last is the explicitly
+approved limited apex mapping, preserving architect tier/floor. Fable 5.1 is recognized
+as `claude-fable-5-1` for diagnosis, but excluded from the Pro zero-credit native envelope.
+No automatic spending, default promotion, or substitution is authorized by this example.
+
+Haiku project effort null is model-specific non-applicability, not a ranked sentinel.
+Legacy Haiku `low` stays policy-requested historical intent and old events are not
+rewritten. Both select effort-free `routed-readonly-none`/`routed-worker-none` profiles
+with unchanged capabilities and role turn caps. An explicit user effort request for
+Haiku is rejected. Other models still require scoped effort and gates at least high.
+Hook context reports `effort_parameters` requested/transmitted/status/observed and
+`execution_observation` null/unknown; neither is proof that a native child ran a model.
+The caller's unsupported Agent `effort` key is removed; supported effort is exclusively
+selected by profile frontmatter.
+
+`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` joins the value-free override detector, including
+when set without `CLAUDE_CODE_SUBAGENT_MODEL`. It can force the parent's model despite
+per-call selection. Alias `ANTHROPIC_DEFAULT_*_MODEL` and
+`CLAUDE_CODE_EFFORT_LEVEL` signals remain diagnosed. The detector accepts explicitly
+supplied effective settings names (`availableModels`, `enforceAvailableModels`,
+`maxEffortLevel`, `modelSettings`, `fallbackModel`, `ultracode`); it neither guesses
+corresponding environment variables nor reads private settings files. Hook environment
+inspection cannot establish absence of managed/org restrictions. Preflight must observe
+those separately. No value is exposed. Client refusals, restrictions, substitutions,
+safety fallback, and capped efforts cannot certify the requested profile. Floors and
+provider refusals remain authoritative. `ultra`/`ultracode` are never enabled here.
+
+Names and precedence were checked against [subagent docs](https://code.claude.com/docs/en/sub-agents)
+and [model configuration](https://code.claude.com/docs/en/model-config), 3 October 2026.
+The target preflight client is 2.1.285; tests do not qualify that client/provider. Exact
+child identity/effective effort must come from supported native metadata bound to the
+child, not a prompt, agent name, plan, self-description or generated receipt. Missing
+observations stay unknown. Alias-family displays alone are insufficient.
+
+Passive telemetry retains new/historical canonical identities and null effort/counters.
+The existing explicit offline ADR-0015 reader retains native IDs; new version IDs cannot
+match historical wildcard price rows, so absent new prices yield null/unavailable.
+No new price, cost claim, hook log reader, evidence pipeline or role authority is added.

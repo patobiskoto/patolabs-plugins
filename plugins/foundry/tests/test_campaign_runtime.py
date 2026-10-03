@@ -2089,7 +2089,7 @@ def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(tmp_path, 
 
     assert proposal.outcome == "completed"
     argv, kwargs = calls[0]
-    assert argv[argv.index("--model") + 1] == "opus"
+    assert argv[argv.index("--model") + 1] == "claude-opus-5"
     assert "opus-5" not in argv
     assert argv[argv.index("--tools") + 1] == "Read,Edit,Write,Grep,Glob"
     assert "--safe-mode" in argv and "--disable-slash-commands" in argv

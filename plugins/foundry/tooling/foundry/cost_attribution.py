@@ -53,6 +53,16 @@ def _overlap(left: str, right: str) -> bool:
 
 
 def _matches(pattern: str, model: str) -> bool:
+    # A declared new wire version cannot inherit a historical wildcard rate.
+    # Exact aliases and wildcards naming the new version still work in future grids.
+    if pattern.endswith("*") and model.startswith(pattern[:-1]):
+        from foundry.routing_facades import claude_policy_model
+        prefix = pattern[:-1].rstrip("-")
+        canonical_prefix = claude_policy_model(prefix) if prefix else prefix
+        canonical_model = claude_policy_model(model)
+        if (canonical_prefix != prefix and canonical_model != model
+                and canonical_prefix != canonical_model):
+            return False
     return model.startswith(pattern[:-1]) if pattern.endswith("*") else model == pattern
 
 

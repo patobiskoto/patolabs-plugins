@@ -26,6 +26,7 @@ from foundry.routing_facades import (  # noqa: E402
     AGENT_IDENTITIES,
     agent_identity,
     claude_invocation_model,
+    claude_effort_parameters,
     claude_route_plan,
     prepare_claude_invocation,
 )
@@ -104,6 +105,8 @@ def _warning_context(
         "selected_tier": route.selected_tier,
         "model": route.model,
         "effort": route.effort,
+        "effort_parameters": claude_effort_parameters(route),
+        "execution_observation": {"model": None, "effort": None, "status": "unknown"},
         "sources": dict(route.sources),
         "fallback_path": list(route.fallback_path),
         "gate_floor": route.gate_floor,
@@ -201,11 +204,15 @@ def route_tool_input(
             "Do not delegate to another agent. The task packet follows.\n\n"
             f"{task_prompt}"
         )
+        effort_parameters = claude_effort_parameters(route)
+        profile_effort = effort_parameters["transmitted"] or "none"
         updated = dict(tool_input)
+        # Effort is selected only by profile frontmatter; never leak caller wire keys.
+        updated.pop("effort", None)
         # maxTurns belongs to AgentDefinition/frontmatter, never to the Agent tool wire.
         updated.pop("maxTurns", None)
         updated.update({
-            "subagent_type": f"foundry:routed-{profile.capability}-{route.effort}",
+            "subagent_type": f"foundry:routed-{profile.capability}-{profile_effort}",
             "prompt": routed_prompt,
             "model": invocation_model,
             "max_turns": bounded_turns,

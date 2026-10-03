@@ -44,12 +44,12 @@ def _frontmatter(path):
 @pytest.mark.parametrize(
     ("role", "profile", "model", "effort", "turns", "capability"),
     [
-        ("scout", "routed-readonly-low", "haiku", "low", 10, "readonly"),
-        ("implementer", "routed-worker-medium", "sonnet", "medium", 50,
+        ("scout", "routed-readonly-none", "claude-haiku-4-5", None, 10, "readonly"),
+        ("implementer", "routed-worker-medium", "claude-sonnet-5", "medium", 50,
          "worker"),
-        ("reviewer", "routed-readonly-high", "opus", "high", 24,
+        ("reviewer", "routed-readonly-high", "claude-opus-5", "high", 24,
          "readonly"),
-        ("architect", "routed-readonly-high", "fable", "high", 30,
+        ("architect", "routed-readonly-high", "claude-fable-5", "high", 30,
          "readonly"),
     ],
 )
@@ -73,7 +73,10 @@ def test_ci_validates_resolved_claude_invocation_without_model_frontmatter(
     assert not re.search(r"(?m)^(model|effort|maxTurns):", logical)
     assert re.search(r"(?m)^tools: Read$", logical)
     assert not re.search(r"(?m)^(model|maxTurns):", execution)
-    assert re.search(rf"(?m)^effort: {effort}$", execution)
+    if effort is None:
+        assert not re.search(r"(?m)^effort:", execution)
+    else:
+        assert re.search(rf"(?m)^effort: {effort}$", execution)
 
     tools = re.search(r"(?m)^tools: (.+)$", execution).group(1).split(", ")
     assert "Agent" not in tools and "Task" not in tools

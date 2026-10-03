@@ -356,3 +356,45 @@ la CI exacte et le rollback restent les gates avant tout changement de défaut.
 - Rapport de qualification : ajouté avec observations natives, digests gelés et limites économiques.
 - Commentaire d'autorité `ultra` : corrigé vers PAT-ADR-0010 ; la restriction publique existante ne change pas.
 - CLI, précédence, scopes, télémétrie, gates et autorités : aucun nouveau comportement public dans cette phase ; les contrats déjà documentés demeurent applicables.
+
+
+## PAT-16 Claude candidate preparation and rollback
+
+The Claude mappings described above are the incumbent policy, not a native compatibility
+claim. PAT-ADR-0011's limited accepted amendment permits the opt-in candidate example
+`examples/claude-candidates-pat16.json`: Haiku 4.5 with null/not-applicable effort,
+Sonnet 5.5/medium and Opus 5.5/high for frontier and apex. Fable 5.1 remains excluded
+on Pro from the zero-credit envelope. Codex defaults, scopes and PAT-14/15 evidence
+are unchanged. No example is copied into `.foundry/model-routing.json` automatically.
+
+Save original project policy bytes (or record that no policy file exists) before opt-in.
+After the bounded qualification, restore exactly those bytes or remove only the newly
+created policy file. Keep personal settings and primary-session model intact. The
+rollback test resolves all four incumbent roles again after restoration, including an
+operator's explicit historical pin. Incumbent defaults remain Haiku4.5/legacy-low,
+Sonnet5/medium, Opus5/high and Fable5/high. Their invocation now preserves exact version
+IDs; legacy Haiku low is requested intent with no transmitted effort. An unsupported
+incumbent is unavailable, never guessed. Frozen proposal files remain unchanged.
+
+Document statuses: model declarations, alias compatibility, null effort, effort-free
+profiles, value-free force/settings detectors, native-observation limits and telemetry/
+offline pricing vocabulary are updated in `model-routing.md`; the opt-in/rollback
+surface is updated here and in the example; R7 is updated in byte-identical
+`AGENTS.md`/`CLAUDE.md`. No new CLI verb, role/permission/turn cap, Codex effort scope,
+price grid or passive telemetry schema is introduced, so documentation for those
+specific surfaces needs no change.
+
+Deterministic checks precede frozen native qualification, independent review,
+exact-SHA two-source CI, and an explicit human default-promotion decision. Native
+qualification remains pending; all untested client/provider pairs remain unqualified.
+Loaded native Foundry ref/version, precise child model/effort and actual bound usage
+must be observed by the coordinator, never inferred from this source preparation.
+
+
+The immutable step-0 proposal remains a historical review copy. The governing tracker
+record is accepted PAT-ADR-0011, revision v2, as read back by the coordinator after
+PAT-86 repair and explicit limited acceptance. Its frozen Claude contract SHA-256 is
+`8aa613503dbf04326d6c01e011d9dedef21c21036932be2577624a922df3fb78`.
+Approval authorizes the bounded candidate preparation/qualification envelope; this
+source change still retains incumbent defaults and has candidate-only status pending
+native evidence, independent review, CI, verified rollback and promotion decision.

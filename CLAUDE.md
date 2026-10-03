@@ -125,18 +125,22 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   `DEFAULT_EFFORT_SCOPES["claude"]["default"].levels`
   (`plugins/foundry/tooling/foundry/routing.py:40`), itself validated from
   `plugins/foundry/tooling/foundry/effort_policy.py`.
-- The built-in canonical-model-to-Agent-alias table is a declaration, not a chain of
-  per-model code paths: `_CLAUDE_MODEL_DECLARATION` lists `(canonical, alias,
-  accepted_spellings)` tuples (e.g. `("sonnet-5", "sonnet", ("claude-sonnet-5",))`);
-  `_CLAUDE_MODEL_IDS` (canonical → alias) and `_CLAUDE_POLICY_MODELS` (any accepted
-  spelling → canonical) are both derived from it
-  (`plugins/foundry/tooling/foundry/routing_facades.py:64-73`).
-- Resolving a policy model to what Claude's Agent tool actually invokes is
-  `claude_invocation_model()` (`routing_facades.py:809-828`): normalize the requested
-  spelling to its canonical name via `claude_policy_model()`; if that canonical name is
-  one of the built-in models, return its built-in alias; otherwise fall back to the
-  project's own `claude_models` declaration (`.foundry/model-routing.json`, loaded
-  through `RoutingPolicy.load()` or an explicit `project_models` mapping).
+- `_CLAUDE_MODEL_DECLARATION` declares canonical versions and their explicit Agent
+  identifiers, including historical Sonnet/Opus/Fable 5, Sonnet/Opus 5.5, Fable 5.1
+  and Haiku 4.5 (including its explicit `20251001` snapshot). Versioned policy models
+  transmit the declared full identifier; historical pins never become latest aliases.
+  Short `haiku`, `sonnet`, `opus`, `fable` aliases preserve host alias intent and emit
+  `CLAUDE_ALIAS_VERSION_UNOBSERVED`; they are not evidence of a precise version.
+- `claude_invocation_model()` normalizes full IDs to declared canonical names with
+  `claude_policy_model()`, resolves a built-in explicit ID or short alias, and otherwise
+  uses the project's own `claude_models` declaration. A version pin and a short alias are
+  distinct availability identities; an alias observation cannot satisfy a pinned version.
+- Claude Haiku 4.5 accepts an explicit null project effort as model-specific
+  `not_applicable`. Legacy mapping `low` stays requested historical intent; the hook
+  selects `routed-<capability>-none`, omits effort frontmatter and exposes transmitted
+  effort null. Explicit user effort is rejected. Null has no rank and cannot satisfy
+  reviewer/architect floors or another model's effort scope. Requested, transmitted and
+  observed efforts stay separate; missing native observation remains unknown.
 - **Effect of a model that resolves to neither the built-in table nor the project's
   `claude_models`**: `claude_invocation_model()` raises `RoutingConfigError` naming the
   unresolved canonical model. Resolution fails closed — it never guesses, silently
