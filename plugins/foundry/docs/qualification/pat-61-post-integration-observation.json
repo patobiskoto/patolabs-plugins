@@ -1,0 +1,387 @@
+{
+  "root": "/Users/pato/.codex/worktrees/pat68-resume/patolabs-plugins",
+  "head": "4559570ee7f8882a12f2d60236db1d79870c6bcd",
+  "plugin_version": "0.9.0",
+  "source_archive_sha256": "e1a8a40b5dda6ed4e4abef74c74de05b48e0a239a6ad34b4c7fd2c1a9b26b5b1",
+  "mode": "source",
+  "claude_version": "2.1.285",
+  "phase_limits": {
+    "parents": 1,
+    "children": 0,
+    "max_turns": 12,
+    "max_budget_usd": 3,
+    "retries": 0,
+    "api_credits_authorized": 0
+  },
+  "requested": {
+    "model": "sonnet-5.5",
+    "effort": "medium"
+  },
+  "transmitted": {
+    "model": "claude-sonnet-5-5",
+    "effort": "medium"
+  },
+  "schema": "pat61-post-integration-read-observation.v1",
+  "observation_not_receipt": true,
+  "host_return": {
+    "exit_code": 0,
+    "subtype": "success",
+    "is_error": false,
+    "num_turns": 4,
+    "permission_denials": []
+  },
+  "runtime_observed": {
+    "assistant_models": [
+      "claude-sonnet-5-5"
+    ],
+    "provider": "firstParty",
+    "effort": null,
+    "effort_status": "not_exposed",
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 8,
+        "outputTokens": 1301,
+        "cacheReadInputTokens": 25882,
+        "cacheCreationInputTokens": 8012,
+        "webSearchRequests": 0,
+        "costUSD": 0.0502504,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 70,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "usage": {
+      "input_tokens": 8,
+      "cache_creation_input_tokens": 8012,
+      "cache_read_input_tokens": 25882,
+      "output_tokens": 1301,
+      "output_tokens_details": {
+        "thinking_tokens": 70
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 8012,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 919,
+          "cache_read_input_tokens": 9107,
+          "cache_creation_input_tokens": 835,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 835
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "cost_catalogue_usd": 0.0502504,
+    "cost_basis": "list_not_invoice",
+    "quota_remaining": null,
+    "quota_status": "not_observed"
+  },
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "command": "python3 /tmp/pat61-final-native-read-helper.py youtrack"
+    },
+    {
+      "name": "Bash",
+      "command": "python3 /tmp/pat61-final-native-read-helper.py linear"
+    },
+    {
+      "name": "Bash",
+      "command": "python3 /tmp/pat61-final-native-read-helper.py ghprojects"
+    }
+  ],
+  "effects": "readonly provider calls, local observation files only; zero child agents",
+  "file_digests": {
+    "/tmp/pat61-final-native-preflight.json": "832fd2b23603e6fb53c711d76db78de4201eba2f2ed5191ac3fb9bb858103238",
+    "/tmp/pat61-final-native-stream.jsonl": "541639a2d07613b4b4161b216d7274b7817769af1db359d414ba87ea6464b1a4",
+    "/tmp/pat61-final-native-result.json": "d8b2ba8ade6bd073c20a43d0e520ff65e4ce33f6bc32ca9c8a7534ad8149c5cc",
+    "/tmp/pat61-final-native-read-helper.py": "2684991ab0acd34f2cc5833993005f18be6936c4cb67afe22a2a7c31cc0294ba",
+    "/tmp/pat61-final-native-read-runner.py": "1217ce27bd67ae928cd65c0ef5557bdb874c10e89db643d536b2456b03fb81c3",
+    "/tmp/pat61-final-native-packet.txt": "915449136f99b66d3e9c0b21fa384356b0184926567924cef60acf7590e6f7b2",
+    "/tmp/pat61-final-native-youtrack-summary.json": "d7b3b5d5859a535b66de8b28dc8090be85a0a5b25837268c72c353806c2a323c",
+    "/tmp/pat61-final-native-linear-summary.json": "0970e3644985dc5d7671f513b40959e22697e7c20babe428ab924d4b472ceb4f",
+    "/tmp/pat61-final-native-ghprojects-summary.json": "b32ae68ee0f8dfd00aa1a6cee352643440c107273736d90768a9ddf1754641e8"
+  },
+  "trackers": {
+    "youtrack": {
+      "provider": "youtrack",
+      "source_head": "4559570ee7f8882a12f2d60236db1d79870c6bcd",
+      "project_key": "P61Y",
+      "project_id": "0-10",
+      "mode": "source",
+      "read_only": true,
+      "adr": {
+        "id": "P61Y-ADR-0002",
+        "status": "proposed",
+        "body_sha256": "79bf83e6d846c0c4799433a53f4abe11064a4a29ea4169c0732a59eb9f712fff"
+      },
+      "children": {
+        "P61Y-4": {
+          "state": "done",
+          "ac_done": 2,
+          "ac_total": 2,
+          "acceptance_status": "accepted"
+        },
+        "P61Y-6": {
+          "state": "done",
+          "ac_done": 2,
+          "ac_total": 2,
+          "acceptance_status": "accepted"
+        }
+      },
+      "epics": {
+        "P61Y-5": {
+          "state": "done",
+          "native_state": "done",
+          "projection_status": "native-only",
+          "audit_id": "foundry-epic-closure.v1:0a6436cb01d7ed44cf5555a400de59d7ca62c01ba4e5ac0c5213e8712ab3d100",
+          "required_children": [
+            "P61Y-4"
+          ],
+          "dependencies": []
+        },
+        "P61Y-7": {
+          "state": "done",
+          "native_state": "done",
+          "projection_status": "native-only",
+          "audit_id": "foundry-epic-closure.v1:f3f74a1b6e819b099132c6826040d9d163791443182287744a2bace8d4f4cc27",
+          "required_children": [
+            "P61Y-6"
+          ],
+          "dependencies": [
+            {
+              "source_id": "P61Y-6",
+              "target_id": "P61Y-4"
+            }
+          ]
+        }
+      },
+      "groom": {
+        "truncated": false,
+        "next_page": null,
+        "snapshot_identity": "sha256:a01adab49486a304e9d8e1ad133529e8df410acc01c03d18c700bdaf67011fe1"
+      },
+      "changelog": {
+        "items": {
+          "P61Y-6": "accepted",
+          "P61Y-4": "accepted"
+        },
+        "project_id": "0-10",
+        "closure": {
+          "mode": "operator",
+          "native_capability": "unavailable",
+          "action": "record-scope-freeze",
+          "native_mutation": false,
+          "preconditions": [
+            "unfinished=0",
+            "unavailable=0"
+          ],
+          "verification": "read-release-scope"
+        }
+      },
+      "bridge": {
+        "items": {
+          "P61Y-6": "accepted",
+          "P61Y-4": "accepted"
+        },
+        "project_id": "0-10",
+        "closure": {
+          "mode": "operator",
+          "native_capability": "unavailable",
+          "action": "record-scope-freeze",
+          "native_mutation": false,
+          "preconditions": [
+            "unfinished=0",
+            "unavailable=0"
+          ],
+          "verification": "read-release-scope"
+        }
+      }
+    },
+    "linear": {
+      "provider": "linear",
+      "source_head": "4559570ee7f8882a12f2d60236db1d79870c6bcd",
+      "project_key": "PAT",
+      "project_id": "d3d412b6-1327-4bba-905b-01e4bb29797f",
+      "mode": "source",
+      "read_only": true,
+      "adr": {
+        "id": "PAT-ADR-0002",
+        "status": "proposed",
+        "body_sha256": "348166568146ab9a6664724b695e21ea4dcb6a1d231970f3a1e357b63ded481a"
+      },
+      "children": {
+        "PAT-77": {
+          "state": "done",
+          "ac_done": 3,
+          "ac_total": 3,
+          "acceptance_status": "accepted"
+        },
+        "PAT-78": {
+          "state": "done",
+          "ac_done": 2,
+          "ac_total": 2,
+          "acceptance_status": "accepted"
+        }
+      },
+      "epics": {
+        "PAT-83": {
+          "state": "done",
+          "native_state": "done",
+          "projection_status": "aligned",
+          "audit_id": "linear:epic:68d62ab643e087354e76596c92627e5c890c9edcec9a7d61fb4d1184e0faeca5",
+          "required_children": [
+            "PAT-77"
+          ],
+          "dependencies": []
+        },
+        "PAT-84": {
+          "state": "done",
+          "native_state": "done",
+          "projection_status": "aligned",
+          "audit_id": "linear:epic:cbf12439d7e5ca84868dcf38f9a1aea5bb3fc40cae12aa6dc907a6a3286564d7",
+          "required_children": [
+            "PAT-78"
+          ],
+          "dependencies": [
+            {
+              "source_id": "PAT-78",
+              "target_id": "PAT-77"
+            }
+          ]
+        }
+      },
+      "groom": {
+        "truncated": false,
+        "next_page": null,
+        "snapshot_identity": "sha256:8b28574e6a0e78df304519e6cfe0954f9f48cdb29e3118de88dffc8075b4dc48"
+      },
+      "changelog": {
+        "items": {
+          "PAT-81": "accepted",
+          "PAT-80": "accepted",
+          "PAT-78": "accepted",
+          "PAT-77": "accepted"
+        },
+        "project_id": "d3d412b6-1327-4bba-905b-01e4bb29797f",
+        "closure": {
+          "mode": "operator",
+          "native_capability": "unavailable",
+          "action": "record-scope-freeze",
+          "native_mutation": false,
+          "preconditions": [
+            "unfinished=0",
+            "unavailable=0"
+          ],
+          "verification": "read-release-scope"
+        }
+      },
+      "bridge": {
+        "items": {
+          "PAT-81": "accepted",
+          "PAT-80": "accepted",
+          "PAT-78": "accepted",
+          "PAT-77": "accepted"
+        },
+        "project_id": "d3d412b6-1327-4bba-905b-01e4bb29797f",
+        "closure": {
+          "mode": "operator",
+          "native_capability": "unavailable",
+          "action": "record-scope-freeze",
+          "native_mutation": false,
+          "preconditions": [
+            "unfinished=0",
+            "unavailable=0"
+          ],
+          "verification": "read-release-scope"
+        }
+      }
+    },
+    "ghprojects": {
+      "provider": "ghprojects",
+      "source_head": "4559570ee7f8882a12f2d60236db1d79870c6bcd",
+      "project_key": "P61R",
+      "project_id": "PVT_kwHOABroCc4BlYLD",
+      "mode": "source",
+      "read_only": true,
+      "adr": {
+        "id": "P61R-ADR-0008",
+        "status": "proposed",
+        "body_sha256": "e6e65a6c3f8cf4d5ab48cdf4a92db1b430db82154347f490b00e189ecf086fbf"
+      },
+      "children": {
+        "P61R-6": {
+          "state": "done",
+          "ac_done": 2,
+          "ac_total": 2,
+          "acceptance_status": "accepted"
+        }
+      },
+      "epics": {
+        "P61R-9": {
+          "state": "done",
+          "native_state": "done",
+          "projection_status": "aligned",
+          "audit_id": "github:epic:e2a46fb61b2ea34ecdb1cf829fe8406455a80fa7a2586f71d8b9a7d93a7aca39",
+          "required_children": [
+            "P61R-6"
+          ],
+          "dependencies": []
+        }
+      },
+      "groom": {
+        "truncated": false,
+        "next_page": null,
+        "snapshot_identity": "sha256:41a77c979446e6f303af2a4b60af4849af8d6bdf43ecf882795ff8a430c03970"
+      },
+      "changelog": {
+        "items": {
+          "P61R-6": "accepted"
+        },
+        "project_id": "PVT_kwHOABroCc4BlYLD",
+        "closure": {
+          "mode": "operator",
+          "action": "close-repository-milestone",
+          "native_mutation": true,
+          "preconditions": [
+            "unfinished=0",
+            "unavailable=0"
+          ],
+          "verification": "read-release-scope"
+        }
+      },
+      "bridge": {
+        "items": {
+          "P61R-6": "accepted"
+        },
+        "project_id": "PVT_kwHOABroCc4BlYLD",
+        "closure": {
+          "mode": "operator",
+          "action": "close-repository-milestone",
+          "native_mutation": true,
+          "preconditions": [
+            "unfinished=0",
+            "unavailable=0"
+          ],
+          "verification": "read-release-scope"
+        }
+      }
+    }
+  }
+}

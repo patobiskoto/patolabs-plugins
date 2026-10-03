@@ -1,5 +1,6 @@
 """Keep the PAT-61 provider-live recipe bounded and honest."""
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -21,29 +22,30 @@ def test_pat61_recipe_has_exactly_the_six_real_tracker_host_cells():
         for host in ("claude-code", "codex")
     }
     assert len(recipe["cells"]) == 6
-    assert {cell["id"]: cell["status"] for cell in recipe["cells"]} == {
-        "youtrack-claude": "in_progress",
-        "youtrack-codex": "in_progress",
-        "linear-claude": "in_progress",
-        "linear-codex": "in_progress",
-        "ghprojects-claude": "in_progress",
-        "ghprojects-codex": "passed",
-    }
-    assert all(
-        cell["partial_evidence"]
-        for cell in recipe["cells"]
-        if cell["status"] != "not_run"
+    assert all(cell["status"] == "passed" for cell in recipe["cells"])
+    assert all(cell["partial_evidence"] for cell in recipe["cells"])
+    assert recipe["final_assessment"]["required_stage_count"] == 36
+    assert recipe["final_assessment"]["core_behavior_gaps"] == []
+    for cell in recipe["cells"]:
+        assert cell["historical_status"] in {"in_progress", "passed"}
+        assert set(cell["journey_evidence"]) == set(recipe["required_journey"])
+        assert cell["journey_classification"] == {
+            step: "passed" for step in recipe["required_journey"]
+        }
+        for step in recipe["required_journey"]:
+            assert set(cell["journey_evidence"][step]) == {
+                "source", "coordinates", "existing_proofs"
+            }
+            assert all(cell["journey_evidence"][step].values())
+    # The material composite attribution must remain visible, not be silently
+    # recast as a native Claude mutation or an execution under the new defaults.
+    linear_claude = next(
+        cell for cell in recipe["cells"] if cell["id"] == "linear-claude"
     )
-    assert not all(cell["status"] == "passed" for cell in recipe["cells"])
-    passed = [cell for cell in recipe["cells"] if cell["status"] == "passed"]
-    assert len(passed) == 1
-    assert set(passed[0]["journey_evidence"]) == set(recipe["required_journey"])
-    assert all(
-        set(passed[0]["journey_evidence"][step])
-        == {"source", "coordinates", "existing_proofs"}
-        and all(passed[0]["journey_evidence"][step].values())
-        for step in recipe["required_journey"]
-    )
+    assert "not attributed to Claude" in linear_claude["journey_evidence"][
+        "adr_create_and_evolve"
+    ]["existing_proofs"]
+    assert "subject to independent" in recipe["final_assessment"]["proposal"]
 
 
 def test_pat61_recipe_is_budgeted_and_does_not_promote_deterministic_evidence():
@@ -62,3 +64,33 @@ def test_pat61_recipe_is_budgeted_and_does_not_promote_deterministic_evidence():
     assert len(recipe["adversarial_cases"]) == 9
     assert any("other host" in rule for rule in recipe["forbidden_inference"])
     assert any("archived binding" in rule for rule in recipe["forbidden_inference"])
+
+
+def test_pat61_native_observation_preserves_identity_unknowns_and_hashes():
+    recipe = json.loads(RECIPE.read_text(encoding="utf-8"))
+    ref = recipe["post_integration_observation"]
+    observation_path = RECIPE.parent / ref["file"]
+    assert hashlib.sha256(observation_path.read_bytes()).hexdigest() == ref["sha256"]
+    observation = json.loads(observation_path.read_text(encoding="utf-8"))
+    assert observation["observation_not_receipt"] is True
+    assert observation["head"] == recipe["current_checkpoint"]["head"]
+    assert observation["plugin_version"] == "0.9.0"
+    assert observation["runtime_observed"]["effort"] is None
+    assert observation["runtime_observed"]["effort_status"] == "not_exposed"
+    assert observation["runtime_observed"]["quota_remaining"] is None
+    assert observation["runtime_observed"]["quota_status"] == "not_observed"
+    assert observation["phase_limits"]["parents"] == 1
+    assert observation["phase_limits"]["children"] == 0
+    assert observation["phase_limits"]["retries"] == 0
+    assert len(observation["tool_calls"]) == 3
+    for tracker in ("youtrack", "linear", "ghprojects"):
+        seen = observation["trackers"][tracker]
+        assert seen["read_only"] is True
+        assert seen["groom"]["truncated"] is False
+        assert seen["groom"]["next_page"] is None
+        assert seen["changelog"]["items"] == seen["bridge"]["items"]
+        assert set(seen["bridge"]["items"].values()) == {"accepted"}
+    for tracker in ("youtrack", "linear"):
+        assert observation["trackers"][tracker]["bridge"]["closure"][
+            "native_capability"
+        ] == "unavailable"

@@ -2,10 +2,11 @@
 
 Ce document rend PAT-61 exécutable sans présenter une double de transport comme une
 preuve fournisseur. La matrice machine est
-[`pat-61-six-configuration-v1.json`](pat-61-six-configuration-v1.json). Les cellules
-gardent leur état d'exécution observé ; GitHub Projects × Codex est `passed` sur son
-périmètre P61R, tandis que PAT-61 reste `blocked` avec cinq cellules non passées. Le
-manifeste ne fabrique aucun receipt.
+[`pat-61-six-configuration-v1.json`](pat-61-six-configuration-v1.json). Les récits ci-dessous conservent les états de leurs snapshots historiques. La
+classification courante figure dans le [bilan final](pat-61-final-qualification-report.md)
+et le manifeste : six cellules `passed` sur leur parcours composite explicitement
+attribué, PASS proposé pour revue indépendante, sans livraison PAT-61 ni release V1.
+Le manifeste ne fabrique aucun receipt.
 
 La recette est une qualification d'intégration, pas un nouveau design d'adaptateur. Les
 contraintes existantes de [`tracker-contract.md`](../tracker-contract.md), du contrat de
@@ -148,7 +149,7 @@ Aucune déclaration de chiffrement, soumission App Store ni validation TestFligh
 sur appareil réel n’est revendiquée. La frontière Apple est `in_progress` et
 aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 
-## Matrice de preuve
+## Matrice de preuve — snapshot historique avant clôtures finales
 
 | Cellule | Ressource à réserver | État de cette livraison | Preuves réutilisables, avec limite |
 | --- | --- | --- | --- |
@@ -750,3 +751,34 @@ Les sept parents/six enfants PAT-16 et les quatre appels de qualification Codex 
 Si le reliquat ne couvre pas ce plan, rapporter l'ambiguïté sans lancer ni élargir.
 PAT-92 (projection Epic Linear), les gaps E2E/adverses/migration et ce replay demeurent
 ouverts ; PAT-62 conserve l'installation propre/upgrade après publication.
+
+## Bilan courant après intégration PAT-92
+
+Le [rapport final](pat-61-final-qualification-report.md) et le manifeste actualisent
+les 36 étapes sans réécrire les récits précédents. Le replay proposé plus haut est
+maintenant remplacé par l’exécution réellement autorisée : **un seul parent Claude
+et trois helpers séquentiels dans la même session**, à source 4559570 / 0.9.0,
+Claude 2.1.285, Pro/firstParty, quatre tours observés et 0.0502504 USD catalogue.
+La [copie exacte de l’observation](pat-61-post-integration-observation.json) conserve
+les trois lectures provider, les modèles demandés/transmis/observés, l’effort runtime
+inconnu, les budgets et les digests ; ce n’est pas un receipt. La phase est achevée
+et épuisée, sans renouveler aucun budget historique.
+
+Les cinq graphes sont réellement clôturés et relus avec leurs audits. PAT-92 est
+mergé à 5edae5165ffdc979407f79b2f4a1090000499f6d et les projections Linear sont
+relues alignées. Les scopes frais exacts sont acceptés ; YouTrack 2/3 restent
+historiques unavailable. La fermeture native release indisponible YouTrack/Linear
+est traitée par le contrat opérateur de gel de scope existant, pas par une feature
+manquante. L’installation iPhone 1.0(2) et fermeture/relance sont déjà validées.
+
+Le PASS proposé repose sur les nominales historiques par hôte et l’analyse
+d’impact explicite. **ADR Linear × Claude est composite : création Claude,
+récupération/évolution PAT-85 par coordinateur, relecture exacte Claude** ; aucune
+mutation V2 Claude n’est inventée. Aucun nouveau start/PR/merge sous les défauts
+PAT-16 n’est affirmé : leur qualification native et le replay de lecture sont
+distincts. Ces limites doivent être jugées explicitement par la revue indépendante
+contre les neuf AC. Source 0.9.0 n’est pas installation 1.0 ; PAT-62 conserve les
+vérifications officielles après publication. Le suivi tracker reste 0/9 avant revue.
+
+Documentation R5 : manifeste de recette actualisé, observation réelle copiée avec
+digests et bilan final des 36 étapes ; les snapshots historiques sont préservés.
