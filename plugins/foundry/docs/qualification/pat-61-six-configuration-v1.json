@@ -1,0 +1,817 @@
+{
+  "schema": "foundry.pat-61-real-qualification.v1",
+  "adapter_baseline_sha": "e313f5159c2d130f629cfc6cf91c321977ba58e6",
+  "evidence_boundary": {
+    "deterministic_conformance": "required regression gate; never provider-live evidence",
+    "provider_live": "actual provider receipts/readbacks at producer refs for each named tracker/host journey, with explicitly identified operator/shared stages; fresh integration read is not a new mutation journey",
+    "unknown": "blocks PASS; it must not be projected as success"
+  },
+  "current_checkpoint": {
+    "head": "4559570ee7f8882a12f2d60236db1d79870c6bcd",
+    "integration": "PAT-16 c8c4073ca45656b46050418f187f26bf4cccb767 and PAT-92 5edae5165ffdc979407f79b2f4a1090000499f6d integrated; exact readonly native observation attached",
+    "plugin": "Foundry 0.9.0 source; sha256(git archive --format=tar HEAD plugins/foundry)=e1a8a40b5dda6ed4e4abef74c74de05b48e0a239a6ad34b4c7fd2c1a9b26b5b1",
+    "root": "/Users/pato/.codex/worktrees/pat68-resume/patolabs-plugins",
+    "validation": "108 conformance passed / 3333 deselected and 24 shared-routing passed at 4559570; 3418 public passed / 10 excluded at f67fd3549f6a27d6f9bd47b63e0557e82a94b038 with identical source code; final documentation branch validation is separate",
+    "boundary": "source only, not installed 1.0 or PAT-61 CI; original journeys keep producer refs"
+  },
+  "historical_source_checkpoints": [
+    {
+      "head": "1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe",
+      "integration": "doc 84cfaa6 followed by conflict-free merge origin/main",
+      "plugin": "Foundry 0.9.0 pre-publication; 257 files; sha256(git archive --format=tar HEAD plugins/foundry)=b4a6b872e056fb7575db9551462cb5e86082d72960f162e5426200902ac225cd",
+      "validation": "3215 public passed, 10 deselected; 108 conformance passed, 3128 deselected",
+      "boundary": "source/conformance checkpoint only; does not rerun historical journeys, official installation, or PAT-61 CI"
+    },
+    {
+      "head": "83ca100f6a23fe15cf9e4a4f2313c0bfbb507b5c",
+      "integration": "PAT-16 PR #70 merged at c8c4073ca45656b46050418f187f26bf4cccb767; integrated source checkpoint, not provider replay",
+      "plugin": "Foundry 0.9.0 source; 347 tracked files; sha256(git archive --format=tar HEAD plugins/foundry)=51305c194ebcb5ec8810986fc24dad2cc08488f95a26ee1a8f60a0663dabe9d5",
+      "root": "/Users/pato/.codex/worktrees/pat68-resume/patolabs-plugins",
+      "validation": "3390 public passed, 10 deselected; 108 conformance passed, 3303 deselected; 24 shared-routing passed",
+      "boundary": "source/conformance checkpoint only; historical journeys keep original refs; no PAT-61 CI, provider replay or installed 1.0 parity inferred"
+    }
+  ],
+  "post_PAT16_delivery": {
+    "pr": "https://github.com/patobiskoto/patolabs-plugins/pull/70",
+    "merge_sha": "c8c4073ca45656b46050418f187f26bf4cccb767",
+    "reviewed_head": "07b0e8dc964eb18777b95270b5dade4e78e25afb",
+    "proof_id": "ddecc855512bb2ed19d1267905dae0acbaea312ec8e7140889bde0a8f15e7573",
+    "state": "done",
+    "ac_done": 16,
+    "ac_total": 16,
+    "acceptance_status": "accepted",
+    "promotion": "human-approved source defaults; historical PAT-16 handoff/native files keep their original pending/failure statuses",
+    "evidence": [
+      "pat-16-pat61-handoff.md",
+      "pat-16-claude-default-promotion.md",
+      "pat-16-native-frontmatter-observations.json",
+      "pat-16-native-complement-observations.json"
+    ]
+  },
+  "budget": {
+    "nominal_paths_per_cell": 1,
+    "reasoned_retries_per_cell": 2,
+    "public_app_store_effect": false,
+    "quota": "record only when the host or provider exposes it"
+  },
+  "required_journey": [
+    "fresh_repository_binding",
+    "adr_create_and_evolve",
+    "epic_children_dependencies_and_grooming",
+    "start_resume_pr_review_ci_merge",
+    "epic_closure_and_lifecycle_projection",
+    "release_scope_and_ship_ios_bridge"
+  ],
+  "host_preconditions": [
+    "before publication, external live evidence identifies the absolute root package actually loaded, host version, exact SHA and digest; current witness is plugins/foundry in worktree pat68-resume at 8a4bbaecb5834f13f69fc9c5a954784020569344, digest 426240efcb9d560964d0ffb5df5cdde0d5c9dc5491f416bb6a45d78b2671e117, 257 tracked files and version 0.9.0; Claude source mode uses explicit --plugin-dir and Codex resolves the skill root, without claiming installed-cache parity or 1.0",
+    "after publication, PAT-62 still requires clean installation or upgrade through each host's official manager, with the loaded version verified and no cache editing",
+    "the reviewer packet identifies the absolute plugin source root and exact SHA used for this sandbox; other worktrees are not behavioral evidence",
+    "the host selects the synthetic repository binding and its active tracker credentials",
+    "the effective pre-push hook chain enforces both the local privacy guard and plugins/foundry/.githooks/pre-push for the synthetic checkout",
+    "a separate Ship-iOS test application and TestFlight-only authorization are available for the shared Apple path"
+  ],
+  "cells": [
+    {
+      "id": "youtrack-claude",
+      "tracker": "youtrack",
+      "host": "claude-code",
+      "status": "passed",
+      "partial_evidence": "P61Y-3 was created once and started mechanically by the coordinator after Claude start-issue exhausted 12 turns without effect. Claude's installed foundry@patolabs 0.9.0 cache at SHA 4d9b0472 rejects tracker.json v2, but a session-only --plugin-dir source at 1755a3d with user plugin excluded read the marker and P61Y-3. Claude source-mode resume wrote README witness head 7a1209d87f475db7ad4aa2db71468fc8e1b3b7da, opened PR #3, obtained a blocked first review then a mergeable independent review on corrected head 5abd4995b3132c0a4f1e250fed8734bfceb7242f (proof af943114), green verify, and Foundry merge 47bcc26e8404ea90c41efa95c17629c02beb5900. P61Y-3 done AC 2/2; P61Y-ADR-0001 remains proposed. PAT-ADR-0009 is now accepted and PAT-82 merged at f7fb4e14f272de78d7f848b3c23e4a963a623087. Fresh P61Y-4 receipt evidence is accepted, while historical P61Y-2 and P61Y-3 remain unavailable without backfill. At dacb802, P61Y-6 PR #5 merge 98bd2de is done/accepted AC 2/2; native ADR-2 is proposed V2; Epic P61Y-7 has P61Y-6 child depending on P61Y-4, while P61Y-5 has P61Y-4 child. Both Epics await requested human accepted verdicts, with no closure proof. Fresh native script full changelog/bridge accepts {P61Y-4,P61Y-6}; native closure capability is unavailable. Host max_turns followed completed effects; listed phases 4.77420335 and 0.3675985 USD total 5.14180185, neither invoice nor quota. The cell is in_progress and no historical receipt is fabricated.",
+      "historical_status": "in_progress",
+      "partial_evidence_boundary": "historical snapshot narrative retained verbatim; current assessment is journey_evidence and journey_classification",
+      "observed_host": {
+        "version": "2.1.285 current; 2.1.267 historical sessions",
+        "provider": "firstParty; claude.ai/Pro current",
+        "mode": "source --plugin-dir",
+        "requested": "sonnet-5.5 / medium",
+        "transmitted": "claude-sonnet-5-5 / medium",
+        "runtime_observed": "claude-sonnet-5-5; effort not exposed (unknown); no child agents"
+      },
+      "source_version": "Foundry 0.9.0 source; historical producer refs per stage; final integration 4559570ee7f8882a12f2d60236db1d79870c6bcd; no installed 1.0 claim",
+      "repository": "github.com/patobiskoto/foundry-v1-pat61-youtrack-sandbox",
+      "project": {
+        "id": "0-10",
+        "key": "P61Y"
+      },
+      "assessment_method": "historical nominal journey plus explicit targeted impact observation; operator human closure is named, never attributed as an autonomous host mutation",
+      "journey_evidence": {
+        "fresh_repository_binding": {
+          "source": "historical synthetic bootstrap/host selection; final integration 4559570 (Claude native read, Codex existing binding retained)",
+          "coordinates": "github.com/patobiskoto/foundry-v1-pat61-youtrack-sandbox; project {'id': '0-10', 'key': 'P61Y'}; configuration sha256:d65a3a4572f9b34f6080896810318b5ae507eebf98d7903d232872b33372876c",
+          "existing_proofs": "shared freshly created sandbox, independent cwd/binding selection; historical source loading documented in recipe; no fresh repository claimed on final replay; saved evidence: /tmp/pat61-final-native-youtrack-binding.json, /tmp/pat61-final-native-stream.jsonl"
+        },
+        "adr_create_and_evolve": {
+          "source": "dacb80232ef9bc1c09d5718bae3528e885ea63b4 / Claude Code 2.1.267; reread 4559570",
+          "coordinates": "P61Y-ADR-0002 / P61Y-A-2 / proposed V1→V2",
+          "existing_proofs": "native fresh create and native finish edit expected/current; exact V2 readback; no acceptance or supersession; saved evidence: /tmp/pat61-youtrack-claude-fresh-adr-create.out, /tmp/pat61-youtrack-claude-fresh-stream.jsonl, /tmp/pat61-youtrack-claude-finish-adr2-before.txt, /tmp/pat61-youtrack-claude-finish-adr2-after.txt, /tmp/pat61-youtrack-claude-finish-stream.jsonl, /tmp/pat61-final-native-youtrack-adr.json"
+        },
+        "epic_children_dependencies_and_grooming": {
+          "source": "dacb802 Claude graph; 1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe Codex dependency replay; reread 4559570",
+          "coordinates": "P61Y-7 -> P61Y-6; P61Y-6 depends-on P61Y-4",
+          "existing_proofs": "accepted 2/2 endpoints; complete groom without truncation/next page; Codex replay11 calls/0writes and unchanged nodes; saved evidence: /tmp/pat61-youtrack-claude-finish-stream.jsonl, /tmp/pat61-final-native-youtrack-groom.json, /tmp/pat61-final-native-youtrack-P61Y-7.json"
+        },
+        "start_resume_pr_review_ci_merge": {
+          "source": "dacb80232ef9bc1c09d5718bae3528e885ea63b4 / Claude2.1.267 native parent+Eiffel/Maigret",
+          "coordinates": "P61Y-6 / PR #5 / head 19b26a48c1542dac99ff31808639fbbd7a8d7095 / merge 98bd2deff1a0bbe1b1cecb3d2201d8f175b7abf3 / proof 5152410b4c0ecc5720a605f8346e9d63ecba48665d75e8eceb9085015b325659 / done accepted AC 2/2",
+          "existing_proofs": "fresh native lifecycle completed; final max_turns happened after completed effects; old P61Y-3 coordinator-start limitation retained only as history; saved evidence: /tmp/pat61-youtrack-claude-fresh-stream.jsonl, /tmp/pat61-youtrack-claude-fresh-merge.out, /tmp/pat61-youtrack-claude-fresh-reviewproof.json, /tmp/pat61-youtrack-claude-fresh-postmerge.json, /tmp/pat61-final-native-youtrack-P61Y-6.json; merge.out rc=1 is a post-effect local git pull --ff-only failure after the remote merge, not evidence of absent provider merge; raw changelog references pin remote outcome"
+        },
+        "epic_closure_and_lifecycle_projection": {
+          "source": "actual operator human accepted closure after PAT16; final authenticated native Claude read 4559570",
+          "coordinates": "P61Y-7 audit foundry-epic-closure.v1:f3f74a1b6e819b099132c6826040d9d163791443182287744a2bace8d4f4cc27",
+          "existing_proofs": "done/native done/native-only; exact required-child/dependency graph authenticated; parent AC0/2/acceptance unknown remain as observed, independent of valid non-code closure; saved evidence: /tmp/pat61-final-native-youtrack-P61Y-7.json"
+        },
+        "release_scope_and_ship_ios_bridge": {
+          "source": "fresh receipts after PAT82; per-host historical bridge; final Claude integration4559570",
+          "coordinates": "PAT61 fresh receipt qualification: P61Y-4/P61Y-6 accepted only",
+          "existing_proofs": "complete changelog and common Ship-iOS bridge; native closure unavailable is existing operator record-scope-freeze contract; no native closed state claimed; historical2/3 unavailable remain excluded; saved evidence: /tmp/pat61-youtrack-claude-finish-bridge.json, /tmp/pat61-final-native-youtrack-changelog.json, /tmp/pat61-final-native-youtrack-bridge.json"
+        }
+      },
+      "journey_classification": {
+        "fresh_repository_binding": "passed",
+        "adr_create_and_evolve": "passed",
+        "epic_children_dependencies_and_grooming": "passed",
+        "start_resume_pr_review_ci_merge": "passed",
+        "epic_closure_and_lifecycle_projection": "passed",
+        "release_scope_and_ship_ios_bridge": "passed"
+      },
+      "current_limits": [
+        "source-mode qualification only; not installed1.0",
+        "historical source/host stages are not rerun or relabelled by final native read",
+        "runtime effort/quota unexposed remain unknown; not required provider success evidence",
+        "shared Apple proof does not replace per-cell tracker integration"
+      ]
+    },
+    {
+      "id": "youtrack-codex",
+      "tracker": "youtrack",
+      "host": "codex",
+      "status": "passed",
+      "partial_evidence": "P61Y-1 sandbox PR #1 head b47241031bbbbd0c96f3db4629ec59e40989b7c7 merged afe441dcccc2ddd040c524b16f329fe2f772e533; P61Y-2 release mapping bundle 163-67/value 164-426 and pre-merge bridge unfinished=1 readback; prior PR #2 review proof a78acdc194f85396f65f2a74c589f5213591c3afe961cad9d69e2b877ab9e0fe remains blocked history; human-authorized correction head 3dc341959c250f7b1db3902a7fb794c716939008 has green verify and mergeable proof a2f9fe2108d01d574d2b4a6ce52c4ac0585798230f9dd2bc8ed74069ef0c779f; Foundry merged PR #2 at 68408d1f426e30284d034727389d0b18ad3fac2f and issue is done AC 3/3. PAT-ADR-0009 is accepted and PAT-82 merged at f7fb4e14f272de78d7f848b3c23e4a963a623087; fresh P61Y-4 delivery evidence is accepted with PR #4 merge 7ff9453a9c067d290333dcf000fa8d0d60f07ac9. P61Y-2 and P61Y-3 remain unavailable without historical backfill. Fresh milestone #4 scopes P61Y-4 only, accepted 2/2 with unfinished=0/unavailable=0; native closure capability is unavailable, so no native closed state is claimed. P61Y-5 backlog Epic has P61Y-4 done/accepted child after one optional-estimate-omitting retry. At source 1ee3f0ae, the existing P61Y-6 depends-on P61Y-4 link was replayed via business CLI with 11 provider calls and zero writes; P61Y-4/P61Y-6 are byte-identical before/after and groom pagination.next_page is null. An initial wrong query groom verb was rejected after the link replay and is not counted as success; the motivated retry used query profile groom. No new fixture/relation or closure was made. Human verdict/closure remain absent. Current human previews revalidate required children/dependencies accepted while five parents remain backlog AC 0/2. The cell is in_progress and no historical receipt is fabricated.",
+      "historical_status": "in_progress",
+      "partial_evidence_boundary": "historical snapshot narrative retained verbatim; current assessment is journey_evidence and journey_classification",
+      "observed_host": {
+        "observed_at": "2026-10-03",
+        "executor": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+        "codex_cli_version": "0.159.2",
+        "chatgpt_app_version": "26.928.31416",
+        "chatgpt_build": "12553",
+        "mode": "source skill root",
+        "boundary": "current host readback; not a retrospective version claim for every historical command; PAT-15 qualification retained on original refs"
+      },
+      "source_version": "Foundry 0.9.0 source; historical producer refs per stage; final integration 4559570ee7f8882a12f2d60236db1d79870c6bcd; no installed 1.0 claim",
+      "repository": "github.com/patobiskoto/foundry-v1-pat61-youtrack-sandbox",
+      "project": {
+        "id": "0-10",
+        "key": "P61Y"
+      },
+      "assessment_method": "historical nominal journey plus explicit targeted impact observation; operator human closure is named, never attributed as an autonomous host mutation",
+      "journey_evidence": {
+        "fresh_repository_binding": {
+          "source": "historical synthetic bootstrap/host selection; final integration 4559570 (Claude native read, Codex existing binding retained)",
+          "coordinates": "github.com/patobiskoto/foundry-v1-pat61-youtrack-sandbox; project {'id': '0-10', 'key': 'P61Y'}; configuration sha256:d65a3a4572f9b34f6080896810318b5ae507eebf98d7903d232872b33372876c",
+          "existing_proofs": "shared freshly created sandbox, independent cwd/binding selection; historical source loading documented in recipe; no fresh repository claimed on final replay; saved evidence: /tmp/pat61-final-native-youtrack-binding.json"
+        },
+        "adr_create_and_evolve": {
+          "source": "historical Codex source witness documented in recipe; not relabelled4559570",
+          "coordinates": "P61Y-ADR-0001 / P61Y-A-1 / proposed V1→V2",
+          "existing_proofs": "create/edit exact native article reread and unique index; ADR issue link typed unavailable is documented optional capability, not invented as success"
+        },
+        "epic_children_dependencies_and_grooming": {
+          "source": "dacb802 Claude graph; 1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe Codex dependency replay; reread 4559570",
+          "coordinates": "P61Y-5 -> P61Y-4; P61Y-6 depends-on P61Y-4",
+          "existing_proofs": "accepted 2/2 endpoints; complete groom without truncation/next page; Codex replay11 calls/0writes and unchanged nodes; saved evidence: /tmp/pat61-youtrack-codex-dependency-replay-final.json, /tmp/pat61-final-native-youtrack-groom.json, /tmp/pat61-final-native-youtrack-P61Y-5.json"
+        },
+        "start_resume_pr_review_ci_merge": {
+          "source": "historical Codex nominal P61Y-1/2 plus fresh PAT82 producer receipt witness",
+          "coordinates": "P61Y-1 PR1 mergeafe441dcccc2ddd040c524b16f329fe2f772e533; P61Y-2 PR2 corrected head3dc341959c250f7b1db3902a7fb794c716939008 merge68408d1f426e30284d034727389d0b18ad3fac2f; P61Y-4 PR4 merge7ff9453a9c067d290333dcf000fa8d0d60f07ac9",
+          "existing_proofs": "historical review/CI/merge proof a2f9fe2108d01d574d2b4a6ce52c4ac0585798230f9dd2bc8ed74069ef0c779f; fresh receipt accepted2/2; no backfill to P61Y-2/3; saved evidence: /tmp/pat61-youtrack-codex-dependency-replay-final.json, /tmp/pat61-final-native-youtrack-P61Y-4.json"
+        },
+        "epic_closure_and_lifecycle_projection": {
+          "source": "actual operator human accepted closure after PAT16; final authenticated native Claude read 4559570",
+          "coordinates": "P61Y-5 audit foundry-epic-closure.v1:0a6436cb01d7ed44cf5555a400de59d7ca62c01ba4e5ac0c5213e8712ab3d100",
+          "existing_proofs": "done/native done/native-only; exact required-child/dependency graph authenticated; parent AC0/2/acceptance unknown remain as observed, independent of valid non-code closure; saved evidence: /tmp/pat61-final-native-youtrack-P61Y-5.json"
+        },
+        "release_scope_and_ship_ios_bridge": {
+          "source": "fresh receipts after PAT82; per-host historical bridge; final Claude integration4559570",
+          "coordinates": "PAT61 fresh receipt qualification: P61Y-4/P61Y-6 accepted only",
+          "existing_proofs": "complete changelog and common Ship-iOS bridge; native closure unavailable is existing operator record-scope-freeze contract; no native closed state claimed; historical2/3 unavailable remain excluded; saved evidence: /tmp/pat61-youtrack-codex-dependency-replay-final.json, /tmp/pat61-final-native-youtrack-changelog.json, /tmp/pat61-final-native-youtrack-bridge.json"
+        }
+      },
+      "journey_classification": {
+        "fresh_repository_binding": "passed",
+        "adr_create_and_evolve": "passed",
+        "epic_children_dependencies_and_grooming": "passed",
+        "start_resume_pr_review_ci_merge": "passed",
+        "epic_closure_and_lifecycle_projection": "passed",
+        "release_scope_and_ship_ios_bridge": "passed"
+      },
+      "current_limits": [
+        "source-mode qualification only; not installed1.0",
+        "historical source/host stages are not rerun or relabelled by final native read",
+        "runtime effort/quota unexposed remain unknown; not required provider success evidence",
+        "shared Apple proof does not replace per-cell tracker integration"
+      ]
+    },
+    {
+      "id": "linear-claude",
+      "tracker": "linear",
+      "host": "claude-code",
+      "status": "passed",
+      "partial_evidence": "Claude Code/Sonnet source Foundry SHA 82bf3e5 started synthetic PAT-78; README witness head 631bdbd10c21f8a0004b15546af1ed0c22ef41b2, Foundry open-pr PR #3, independent mergeable review, green verify, Foundry merge 8772d63f26b58d866643103179a08b65c9d69540; PAT-78 done AC 2/2 and Linear release scope accepted. Merge also incorrectly accepted unrelated synthetic PAT-ADR-0001 (version 6607e123-b0cd-48c8-b93b-2d6418bdab77); PAT-79 fixed the scope defect via Foundry PR #64 merged at 1755a3d56990b9456dec54c274341baabfae248f, but the sandbox incident remains. At clean source 14b4f1802386806ebf2cc0ea1e47fff280fe3efa, ADR-2 v0 document 95b3ab9e-72ee-454b-8178-0c6e014f0eb0 lacks the literal model pair **texte `code`** to **texte** `code`; only two strong/code diffs are proven after modelling. PAT-85 has three AC and accepted PAT-ADR-2 frame, linked from PAT-61; no ADR repair, archive or acceptance is claimed. PAT-84 backlog Epic has PAT-78 done/accepted child and PAT-78 depends-on PAT-77 done/accepted; human verdict requested, no closure. Fresh full changelog/bridge scope 77/78/80/81 is accepted, with no tag or Apple effect, but this cell is blocked by ADR-2. PAT-85 third review on exact 15b89c9 is BLOCK: escaped first star in \\***Modifier `PAT` consumes the residual delimiter run and bypasses preflight. Public 3147 and 108 conformance plus CI remain successful historical observations; fourth review on 9ee7ce7 is BLOCK for CR/Unicode line separators escaping same-line closed profile, proof f67ce737d2fb35f53e343746230eee57aa1b29406026d3efc23d1b7b48634149. Apex is technical_blocked with human_required=false; local diagnosis generation 1 was claimed/resumed through Foundry without provider restart authority. Local unpushed commit a52723f excludes splitline separators before/code, preserves fences and passes 20 zero-write regressions plus 3172 public, 458 Linear, 36 PAT-85 and 108 conformance tests. Fifth review on a52723f is BLOCK for enclosing HTML attributes/link labels, proof ecc47d0648aea35f78d8571d7ca57b58667ca1ba345b8383419ba7545e8cb47c. Technical diagnostic generation 2 and local route are claimed through Foundry without provider/campaign restart grant. Local unpushed 0f0c239 conservatively fixes surrounding-line context and rejects underscore strong/code while preserving qualified leading list, literal inline code, multiple spans and fences; 3182 public, 468 Linear, 46 PAT-85, 108 conformance and 11 routing/lint/compile tests pass. Sixth review on 0f0c239 is BLOCK for indented code, proof 1b71e1940117f62beadc506b1d3fae574ad9c2235da027e5bd470dc5f59ac88a. Technical diagnostic generation 3 local-only is claimed/resumed through Foundry; technical stop is historical and no campaign/provider grant exists. Local unpushed 1b52490 refuses candidate lines at 4+ columns and list padding not equal to one space, preserving 19 transport variants zero-write and fences; 65 target, 487 Linear, 3201 public, 108 conformance, 11 routing and lint/compile tests pass on the exact offline native PAT-61 source. Seventh canonical review has all three AC pass but quality BLOCK for false reuse of consumed ** as closure on **a!**? `c` x**, proof f09df7ce2c603158c87723c481f3440a76029e8a2343a118fe20c57cc88b34ad. Technical diagnostic generation 4 and resume-technical/local claim are recorded through Foundry without provider/campaign grant. Local unpushed 3bbee7c changes only elif and passes 67 targeted, 489 Linear, 3203 public, 108 conformance and 11 routing/lint/compile tests, including byte-exact star/underscore transport regressions, witness and replay. Eighth canonical review is BLOCK with ac1 contradicted, ac2 pass and ac3 not_covered because unqualified ATX/setext/table contexts were transformed, proof c1d770f70e284259cb94ccc177546aaf9dad96cde18c6a06d053f47aff620d71. Technical diagnostic generation 5 is recorded/consumed local-only through Foundry with no provider/campaign grant. Local unpushed 75c0116 refuses # and | after code masking and setext underline/single-column table before next blank line, including multiline titles; ten zero-write regressions preserve fences, literal code and separate headings, with 3213 public, 499 Linear, 77 targeted, 108 conformance and 11 routing/lint/compile tests passing on unchanged offline native PAT-61 source. Ninth review is AC 3/3 and quality mergeable, proof ab5660ff18a79e1c07ca243801ec36169a294f29468b65a90bf2e471e2e0303d. Commit 75c0116bfabbfef8d07c2afaebe558a096e2ad53 is pushed through Foundry open-pr and PR #66 reused. Foundry merged PR #66 after three exact-head success checks, AC proof-projected 3/3 and merge SHA bc25c344d7eaccfbe9758fd2ddd28c02232db36b; PAT-85 is done. Fresh live ADR-2 V2 read is identical to its earlier snapshot, proposed, with no mutation. Main integration is complete without conflict at 1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe. Targeted PAT-85 reread is done/AC 3/3/accepted/native done/aligned; PR #66 merge bc25c344d7eaccfbe9758fd2ddd28c02232db36b is REST-confirmed. Human Epic closures remain pending; no cell PASS is inferred.",
+      "historical_status": "in_progress",
+      "partial_evidence_boundary": "historical snapshot narrative retained verbatim; current assessment is journey_evidence and journey_classification",
+      "observed_host": {
+        "version": "2.1.285 current; 2.1.267 historical sessions",
+        "provider": "firstParty; claude.ai/Pro current",
+        "mode": "source --plugin-dir",
+        "requested": "sonnet-5.5 / medium",
+        "transmitted": "claude-sonnet-5-5 / medium",
+        "runtime_observed": "claude-sonnet-5-5; effort not exposed (unknown); no child agents"
+      },
+      "source_version": "Foundry 0.9.0 source; historical producer refs per stage; final integration 4559570ee7f8882a12f2d60236db1d79870c6bcd; no installed 1.0 claim",
+      "repository": "github.com/patobiskoto/foundry-v1-pat61-linear-sandbox",
+      "project": {
+        "id": "d3d412b6-1327-4bba-905b-01e4bb29797f",
+        "key": "PAT"
+      },
+      "assessment_method": "historical nominal journey plus explicit targeted impact observation; operator human closure is named, never attributed as an autonomous host mutation",
+      "journey_evidence": {
+        "fresh_repository_binding": {
+          "source": "historical synthetic bootstrap/host selection; final integration 4559570 (Claude native read, Codex existing binding retained)",
+          "coordinates": "github.com/patobiskoto/foundry-v1-pat61-linear-sandbox; project {'id': 'd3d412b6-1327-4bba-905b-01e4bb29797f', 'key': 'PAT'}; configuration sha256:e45ffccbcd795f39512acae828c2f8c84fff0b73d2faf418b5f4fddf7d8ee6c7",
+          "existing_proofs": "shared freshly created sandbox, independent cwd/binding selection; historical source loading documented in recipe; no fresh repository claimed on final replay; saved evidence: /tmp/pat61-final-native-linear-binding.json, /tmp/pat61-final-native-stream.jsonl"
+        },
+        "adr_create_and_evolve": {
+          "source": "Claude native create14b4f1802386806ebf2cc0ea1e47fff280fe3efa; PAT85 targeted recovery/evolution; Claude native integration read 4559570; authorized native Claude V2→V3 at 4f142e5ce4baacbdbff7d1486c4870126b1afc91 / Claude 2.1.285 Sonnet5.5 medium",
+          "coordinates": "PAT-ADR-0002 V0=95b3ab9e-72ee-454b-8178-0c6e014f0eb0; V1=d590fe2b-eb78-4297-9391-5be4e68d34f7; proposed V2; V3=b6a6f4aa-47a2-40db-a3b0-1cbb9f419128, sequence1→2, proposed; body sha256 348166568146ab9a6664724b695e21ea4dcb6a1d231970f3a1e357b63ded481a→1e7bf0a658406145d732fde1ce3f5f7cd6b8018b1ed951893f26bdf1f3bb4e55",
+          "existing_proofs": "composite evidence: native Claude create encountered renderer conflict; PAT85 provider-live recovery proves source_exact and idempotent replay0mutations; V2 chain/readback exists; final Claude independently reads exact proposed V2. The V2 mutation is not attributed to Claude without a native mutation stream; saved evidence: /tmp/pat61-linear-claude-graph-stream.jsonl, /tmp/pat61-linear-adr2-exact-read-diagnostic.json, /tmp/pat85-live-replay-report.json, /tmp/pat85-final-sandbox-adr2-v2.json, /tmp/pat61-final-native-linear-adr.json; PAT85 live-replay.py imports source in pat82-youtrack-delivery worktree, not the later4559570 root; coordinator mutation attribution is retained; V2 saved provider state is observation, not an invented invocation transcript; new native Claude Bash invocation of python3 /tmp/pat61-v3-native-helper.py performed normal Foundry CLI adr edit PAT-ADR-0002 V2→V3 and exact reread; only marker changed, proposed/title/relations/project and existing documents preserved. Exact host/effect observation (not receipt): pat-61-native-adr-evolution-observation.json sha256:6694e463f5e83907f19156d7d0808e292dad02d1573f4be208521ddddabd0b26; raw stream /tmp/pat61-v3-native-stream.jsonl sha256:a71cdf030d37c1b8d3adeadbe451c0ea4da846d15627f58ab7b81b9c96c49678. This adds native evolution evidence without reattributing historical V1→V2."
+        },
+        "epic_children_dependencies_and_grooming": {
+          "source": "Claude14b4f180 graph / Codex explicit Epic creation; integrated 4559570 after PAT92",
+          "coordinates": "PAT-84 -> PAT-78; PAT78 depends-onPAT77; historical PAT75 depends-onPAT74",
+          "existing_proofs": "reciprocal links; accepted PAT78 2/2 and PAT77 3/3; complete grooming; no required child reopen; saved evidence: /tmp/pat61-linear-claude-graph-stream.jsonl"
+        },
+        "start_resume_pr_review_ci_merge": {
+          "source": "82bf3e5e1475a85d57cab23d16f5c1c9f4726a20 / Claude source Sonnet historical",
+          "coordinates": "PAT78 PR3 head631bdbd10c21f8a0004b15546af1ed0c22ef41b2 / merge8772d63f26b58d866643103179a08b65c9d69540",
+          "existing_proofs": "native start/open/review/CI/merge accepted2/2; unrelated ADR acceptance defect fixed PAT79. PAT16 changed defaults, not historical code-host outcome; final native read sees accepted child; saved evidence: /tmp/pat61-final-native-linear-PAT-78.json"
+        },
+        "epic_closure_and_lifecycle_projection": {
+          "source": "human accepted operator closure; PAT92 merge5edae5165ffdc979407f79b2f4a1090000499f6d; integrated 4559570",
+          "coordinates": "PAT-84 linear:epic:cbf12439d7e5ca84868dcf38f9a1aea5bb3fc40cae12aa6dc907a6a3286564d7",
+          "existing_proofs": "authenticated graph; done/native done/aligned; original closure audit retained; 0/2 parent checkboxes not fabricated; historical projection failure superseded by actual repair/reread; saved evidence: /tmp/pat92-live-epic-readback.json, /tmp/pat92-live-groom.json, /tmp/pat61-final-native-linear-PAT-84.json"
+        },
+        "release_scope_and_ship_ios_bridge": {
+          "source": "per-host original release bridge; native Claude complete read14b4f180 and integrated 4559570",
+          "coordinates": "PAT61 sandbox v1: PAT77/78/80/81 accepted; shared Apple tagv1.0 SHAac36ccac6916b657932bf29949a0227ac43b742c",
+          "existing_proofs": "complete changelog/common bridge; existing operator scope-freeze for unavailable native Linear release closure; shared real Apple proof covers common Apple path only; saved evidence: /tmp/pat61-linear-claude-complete-changelog.json, /tmp/pat61-linear-claude-complete-bridge.json, /tmp/pat61-final-native-linear-changelog.json, /tmp/pat61-final-native-linear-bridge.json"
+        }
+      },
+      "journey_classification": {
+        "fresh_repository_binding": "passed",
+        "adr_create_and_evolve": "passed",
+        "epic_children_dependencies_and_grooming": "passed",
+        "start_resume_pr_review_ci_merge": "passed",
+        "epic_closure_and_lifecycle_projection": "passed",
+        "release_scope_and_ship_ios_bridge": "passed"
+      },
+      "current_limits": [
+        "source-mode qualification only; not installed1.0",
+        "historical source/host stages are not rerun or relabelled by final native read",
+        "runtime effort/quota unexposed remain unknown; not required provider success evidence",
+        "shared Apple proof does not replace per-cell tracker integration",
+        "Historical V1→V2 remains PAT85 coordinator recovery/edit, not native Claude; new authorized V2→V3 is native Claude at source4f142e5 with exact observation, not receipt; runtime effort/quota remain unknown"
+      ]
+    },
+    {
+      "id": "linear-codex",
+      "tracker": "linear",
+      "host": "codex",
+      "status": "passed",
+      "partial_evidence": "PAT-74 sandbox PR #1 merged at 855dd887f66c58a793c5bb782abacd33429383a4; PAT-77 sandbox PR #2 head b087948ac65f90b0ad30ac48bf0a795907f4d0cb merged at ecc85f449f9160730bc3b089edb2843dc287f159 with proof a5bdb9d43f7e248c93a6ef6da8288f26fbef03ddb24944342cc359488dd94da4; release scope and Ship-iOS bridge read PAT-77 accepted; synthetic proposed ADR PAT-ADR-0001 was created, edited and linked to PAT-77 with distinct version refs; supersession, Epic, full journey and TestFlight remain incomplete; PAT-80 preparation PR #4 head ae31cc841f3a3437d34fd3b168aaea5de938d543 merged by Foundry at 78dd8a22b2fb998f7cdeb86488fdf0783b975d01, AC 3/3, current review proof 7cc0febcf65975a37c2994324671dd17f0ed1fe5b6384db032956ed8d6443495, verify check-run success and human simulator validation; postmerge V1 bridge accepted={PAT-77,PAT-78,PAT-80}; dedicated Apple app 6818259217 and cloud product exist, discovery BUILD #1 fe6420a0-9d83-43f2-aa1c-147d832b3f6f created, COMPLETE/SUCCEEDED on exact merged source SHA 78dd8a22b2fb998f7cdeb86488fdf0783b975d01, no TestFlight proof or encryption declaration; tag-triggered PAT61 Release workflow cec1b3eb-fb7e-4718-b7d3-1d7d6d5e4220 read back with prefix v and ARCHIVE/APP_STORE_ELIGIBLE, UI internal TestFlight post-action selects group 86d551bd-ea34-4c7b-9523-e531d25ae9ef (zero members); discovery workflow disabled again; no release tag pushed; PAT-81 maintainer-confirmed export declaration preparation PR #5 exact head 204d807872e3c0977a135007a18f296cbc60b537 passed unsigned simulator build with compiled ITSAppUsesNonExemptEncryption bool false, independent proof 4d149c60c2e7bc34211e393db7e5ceb39c7b5ce4b59715ac913715bf4c70d49a and CI verify success, Foundry merge ac36ccac6916b657932bf29949a0227ac43b742c done AC 2/2. Ship-iOS published single tag v1.0 on this exact merged SHA; Release run #2 92286db6-7b83-45ca-96f8-ba45c814d8e7 read back PENDING with sourceCommit equal to merged SHA and GIT_REF_CHANGE. No successful archive/upload or physical device beta validation yet. App betaTesters API returns 403; no tester mutation performed. Fastlane baseline returned fallback 1 while Apple apps/builds was empty, not evidence of an uploaded build.; final Release run #2 COMPLETE/SUCCEEDED (archive and internal distribution actions both SUCCEEDED), finished 2026-10-01T18:44:07.447Z. Related build a3426daa-dfb8-4cbf-b3b6-7efd21b1ea64 version/build 1.0(2), VALID, APP_STORE_ELIGIBLE, usesNonExemptEncryption false, upload2026-10-01T18:42:00Z. Native ASC UI read back the exact build in PAT61 qualification interne, one invited tester (existing Account Holder added only to synthetic internal group), no public group/link or public submission. Physical-iPhone install/restart validation requested, still pending; no full cell PASS.; subsequent maintainer reply \"c'est bon\" explicitly validates physical iPhone installation, Hello World display and complete-close/relaunch without crash for exact TestFlight 1.0(2). Shared Apple beta gate satisfied; no public submission or full-cell PASS inferred. At source 14b4f1802386806ebf2cc0ea1e47fff280fe3efa, current qualification is blocked by the shared ADR-2 index; PAT-83 backlog Epic parents PAT-77 and awaits requested human verdict, so no closure proof is claimed. PAT-85 third review on exact 15b89c9 is BLOCK for the escaped-star preflight bypass; its later historical BLOCKs are preserved. PR #66 is now Foundry-merged at bc25c344d7eaccfbe9758fd2ddd28c02232db36b with three success checks and proof-projected AC 3/3; PAT-85 is done. Main integration is complete without conflict at 1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe; PAT-85 is done/accepted with REST-confirmed merge bc25c344d7eaccfbe9758fd2ddd28c02232db36b. Human Epic closures remain pending; no cell PASS is inferred.",
+      "historical_status": "in_progress",
+      "partial_evidence_boundary": "historical snapshot narrative retained verbatim; current assessment is journey_evidence and journey_classification",
+      "observed_host": {
+        "observed_at": "2026-10-03",
+        "executor": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+        "codex_cli_version": "0.159.2",
+        "chatgpt_app_version": "26.928.31416",
+        "chatgpt_build": "12553",
+        "mode": "source skill root",
+        "boundary": "current host readback; not a retrospective version claim for every historical command; PAT-15 qualification retained on original refs"
+      },
+      "source_version": "Foundry 0.9.0 source; historical producer refs per stage; final integration 4559570ee7f8882a12f2d60236db1d79870c6bcd; no installed 1.0 claim",
+      "repository": "github.com/patobiskoto/foundry-v1-pat61-linear-sandbox",
+      "project": {
+        "id": "d3d412b6-1327-4bba-905b-01e4bb29797f",
+        "key": "PAT"
+      },
+      "assessment_method": "historical nominal journey plus explicit targeted impact observation; operator human closure is named, never attributed as an autonomous host mutation",
+      "journey_evidence": {
+        "fresh_repository_binding": {
+          "source": "historical synthetic bootstrap/host selection; final integration 4559570 (Claude native read, Codex existing binding retained)",
+          "coordinates": "github.com/patobiskoto/foundry-v1-pat61-linear-sandbox; project {'id': 'd3d412b6-1327-4bba-905b-01e4bb29797f', 'key': 'PAT'}; configuration sha256:e45ffccbcd795f39512acae828c2f8c84fff0b73d2faf418b5f4fddf7d8ee6c7",
+          "existing_proofs": "shared freshly created sandbox, independent cwd/binding selection; historical source loading documented in recipe; no fresh repository claimed on final replay; saved evidence: /tmp/pat61-final-native-linear-binding.json"
+        },
+        "adr_create_and_evolve": {
+          "source": "historical Codex native create/edit/link witness documented in recipe",
+          "coordinates": "PAT-ADR-0001 V0=0424d248-6f2d-46c1-92ed-96aa9694b188; edit9468058c-d53e-4255-9464-cd6eebb67588; link67a77aae-d2b8-4133-8acd-e4fd78395a65",
+          "existing_proofs": "create/evolve and linkPAT77 exact; unrelated acceptance by later Claude PAT78 merge is historical incident fixed by PAT79, not a new synthetic product decision"
+        },
+        "epic_children_dependencies_and_grooming": {
+          "source": "Claude14b4f180 graph / Codex explicit Epic creation; integrated 4559570 after PAT92",
+          "coordinates": "PAT-83 -> PAT-77; PAT78 depends-onPAT77; historical PAT75 depends-onPAT74",
+          "existing_proofs": "reciprocal links; accepted PAT78 2/2 and PAT77 3/3; complete grooming; no required child reopen; saved evidence: /tmp/pat61-linear-codex-epic-create-result.txt"
+        },
+        "start_resume_pr_review_ci_merge": {
+          "source": "historical Codex nominal deliveries documented in recipe",
+          "coordinates": "PAT74 PR1 merge855dd887f66c58a793c5bb782abacd33429383a4; PAT77 PR2 headb087948ac65f90b0ad30ac48bf0a795907f4d0cb mergeecc85f449f9160730bc3b089edb2843dc287f159",
+          "existing_proofs": "proofa5bdb9d43f7e248c93a6ef6da8288f26fbef03ddb24944342cc359488dd94da4; verify success, accepted3/3; interrupted Claude open attempt followed by authorized Codex Foundry coordinator open is explicitly recorded; saved evidence: /tmp/pat61-final-native-linear-PAT-77.json"
+        },
+        "epic_closure_and_lifecycle_projection": {
+          "source": "human accepted operator closure; PAT92 merge5edae5165ffdc979407f79b2f4a1090000499f6d; integrated 4559570",
+          "coordinates": "PAT-83 linear:epic:68d62ab643e087354e76596c92627e5c890c9edcec9a7d61fb4d1184e0faeca5",
+          "existing_proofs": "authenticated graph; done/native done/aligned; original closure audit retained; 0/2 parent checkboxes not fabricated; historical projection failure superseded by actual repair/reread; saved evidence: /tmp/pat92-live-epic-readback.json, /tmp/pat92-live-groom.json, /tmp/pat61-final-native-linear-PAT-83.json"
+        },
+        "release_scope_and_ship_ios_bridge": {
+          "source": "per-host original release bridge; native Claude complete read14b4f180 and integrated 4559570",
+          "coordinates": "PAT61 sandbox v1: PAT77/78/80/81 accepted; shared Apple tagv1.0 SHAac36ccac6916b657932bf29949a0227ac43b742c",
+          "existing_proofs": "complete changelog/common bridge; existing operator scope-freeze for unavailable native Linear release closure; shared real Apple proof covers common Apple path only; saved evidence: /tmp/pat61-linear-claude-complete-changelog.json, /tmp/pat61-linear-claude-complete-bridge.json, /tmp/pat61-final-native-linear-changelog.json, /tmp/pat61-final-native-linear-bridge.json"
+        }
+      },
+      "journey_classification": {
+        "fresh_repository_binding": "passed",
+        "adr_create_and_evolve": "passed",
+        "epic_children_dependencies_and_grooming": "passed",
+        "start_resume_pr_review_ci_merge": "passed",
+        "epic_closure_and_lifecycle_projection": "passed",
+        "release_scope_and_ship_ios_bridge": "passed"
+      },
+      "current_limits": [
+        "source-mode qualification only; not installed1.0",
+        "historical source/host stages are not rerun or relabelled by final native read",
+        "runtime effort/quota unexposed remain unknown; not required provider success evidence",
+        "shared Apple proof does not replace per-cell tracker integration"
+      ]
+    },
+    {
+      "id": "ghprojects-claude",
+      "tracker": "ghprojects",
+      "host": "claude-code",
+      "status": "passed",
+      "partial_evidence": "Claude Code 2.1.267 loaded the exact pre-publication source package through --plugin-dir at 8a4bbaecb5834f13f69fc9c5a954784020569344 and executed Foundry resume/start/open-pr/merge-pr with Eiffel/Maigret. P61R-6 PR #7 base 43d31bfd5b32649b556ce24fdaa1ac3de8a362e3 first failed quality because README claimed an unchanged marker despite b06af3a containing it; README-only correction head afb8f906b43baf55e0b2fc8fc59ad443ec68749e received generation-2 AC pass/quality mergeable proof 97386b4f642f65f17124b838c16fd2d1ee7e54dc104b5877153acb22d4dffd07, verify-witness success and empty legacy statuses, then Foundry merge a523f170c5ee553299f02a0a40a22799f77801ab. Fresh P61R-6 read is done/aligned/accepted AC 2/2. ADR-3 remains proposed with no frame citation. One same-intent partial-create retry and one review correction consume budget 2/2. Listed costs by invocation are 0.6163695 USD preflight, 1.9711668 USD delivery, 1.9255275 USD review continuation and 3.054777 USD final correction, total 7.5678408 USD across four invocations; none is invoice or quota. Review continuation ended error_max_budget_usd after provider merge/receipt. At dacb802, experimental ADR P61R-ADR-0008 is proposed V2. P61R-9 recovered from partial item_readback by exact-intent reconciliation, is parent of P61R-6, and fresh groom plus bridge scope 6 accepted read back; human closure remains pending. Independent Epic-9 preview confirms P61R-6 as the one required child and no required dependencies; native host max_turns occurred after successful script effects. The Foundry-generated sandbox marker is intentionally uncommitted; native Issue 6 stays open while Project state is done with qualified accepted receipt. Native phases total 2.8801295 USD under 3 USD; final max_turns occurred after script effects. Official installation/upgrade remains PAT-62 post-publication, and no PASS is inferred.",
+      "historical_status": "in_progress",
+      "partial_evidence_boundary": "historical snapshot narrative retained verbatim; current assessment is journey_evidence and journey_classification",
+      "observed_host": {
+        "version": "2.1.285 current; 2.1.267 historical sessions",
+        "provider": "firstParty; claude.ai/Pro current",
+        "mode": "source --plugin-dir",
+        "requested": "sonnet-5.5 / medium",
+        "transmitted": "claude-sonnet-5-5 / medium",
+        "runtime_observed": "claude-sonnet-5-5; effort not exposed (unknown); no child agents"
+      },
+      "source_version": "Foundry 0.9.0 source; historical producer refs per stage; final integration 4559570ee7f8882a12f2d60236db1d79870c6bcd; no installed 1.0 claim",
+      "repository": "github.com/patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox",
+      "project": {
+        "id": "PVT_kwHOABroCc4BlYLD",
+        "key": "P61R"
+      },
+      "assessment_method": "historical nominal journey plus explicit targeted impact observation; operator human closure is named, never attributed as an autonomous host mutation",
+      "journey_evidence": {
+        "fresh_repository_binding": {
+          "source": "historical synthetic bootstrap/host selection; final integration 4559570 (Claude native read, Codex existing binding retained)",
+          "coordinates": "github.com/patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox; project {'id': 'PVT_kwHOABroCc4BlYLD', 'key': 'P61R'}; configuration sha256:52a4894c90867a0c2e7f7b149684715df8236aefa4863ba99211de1430b3a188",
+          "existing_proofs": "shared freshly created sandbox, independent cwd/binding selection; historical source loading documented in recipe; no fresh repository claimed on final replay; saved evidence: /tmp/pat61-final-native-ghprojects-binding.json, /tmp/pat61-final-native-stream.jsonl"
+        },
+        "adr_create_and_evolve": {
+          "source": "dacb80232ef9bc1c09d5718bae3528e885ea63b4 / Claude2.1.267 native",
+          "coordinates": "P61R-ADR-0008 / ref8 / proposed V1→V2",
+          "existing_proofs": "unique same-intent creation reconciliation and native exact expected/current edit; ADR3 Codex evidence preserved; final native reread exact V2; saved evidence: /tmp/pat61-ghprojects-claude-graph-stream.jsonl, /tmp/pat61-ghprojects-claude-finish-adr8-current.json, /tmp/pat61-final-native-ghprojects-adr.json"
+        },
+        "epic_children_dependencies_and_grooming": {
+          "source": "dacb802 Claude graph/recovery; reread 4559570",
+          "coordinates": "P61R9 -> P61R6; P61R5 depends-onP61R6 (not required closed child)",
+          "existing_proofs": "unique Epic recovered after item_readback; complete groom; P61R5 remains Backlog; accepted P61R6 2/2; dependent5 is not promoted as terminal; saved evidence: /tmp/pat61-ghprojects-claude-recovery-stream.jsonl, /tmp/pat61-ghprojects-claude-recovery-groom.json, /tmp/pat61-final-native-ghprojects-groom.json, /tmp/pat61-final-native-ghprojects-P61R-9.json"
+        },
+        "start_resume_pr_review_ci_merge": {
+          "source": "8a4bbaecb5834f13f69fc9c5a954784020569344 / Claude2.1.267 native Eiffel/Maigret",
+          "coordinates": "P61R6 PR7 corrected head afb8f906b43baf55e0b2fc8fc59ad443ec68749e mergea523f170c5ee553299f02a0a40a22799f77801ab",
+          "existing_proofs": "proof97386b4f642f65f17124b838c16fd2d1ee7e54dc104b5877153acb22d4dffd07 generation2; verify-witnesssuccess and legacyempty; accepted2/2; two historical retries exhausted; saved evidence: /tmp/pat61-gh-claude-delivery-stream.jsonl, /tmp/pat61-gh-claude-correction-stream.jsonl, /tmp/pat61-final-native-ghprojects-P61R-6.json"
+        },
+        "epic_closure_and_lifecycle_projection": {
+          "source": "actual operator human accepted closure; native integrated 4559570",
+          "coordinates": "P61R9 github:epic:e2a46fb61b2ea34ecdb1cf829fe8406455a80fa7a2586f71d8b9a7d93a7aca39",
+          "existing_proofs": "exact accepted sole required childP61R6; dependenciesempty; done/native done/aligned; native Issue6 open and Projectdone preserved as distinct facts; saved evidence: /tmp/pat61-final-native-ghprojects-P61R-9.json"
+        },
+        "release_scope_and_ship_ios_bridge": {
+          "source": "dacb802 native common bridge; reread 4559570",
+          "coordinates": "PAT61 Claude receipt qualification milestone2 / only P61R6 accepted",
+          "existing_proofs": "scope_count1/unfinished0/unavailable0; native repository milestone close is operator action; no new tag/Apple effect; saved evidence: /tmp/pat61-ghprojects-claude-recovery-changelog.json, /tmp/pat61-ghprojects-claude-recovery-bridge.json, /tmp/pat61-final-native-ghprojects-changelog.json, /tmp/pat61-final-native-ghprojects-bridge.json"
+        }
+      },
+      "journey_classification": {
+        "fresh_repository_binding": "passed",
+        "adr_create_and_evolve": "passed",
+        "epic_children_dependencies_and_grooming": "passed",
+        "start_resume_pr_review_ci_merge": "passed",
+        "epic_closure_and_lifecycle_projection": "passed",
+        "release_scope_and_ship_ios_bridge": "passed"
+      },
+      "current_limits": [
+        "source-mode qualification only; not installed1.0",
+        "historical source/host stages are not rerun or relabelled by final native read",
+        "runtime effort/quota unexposed remain unknown; not required provider success evidence",
+        "shared Apple proof does not replace per-cell tracker integration"
+      ]
+    },
+    {
+      "id": "ghprojects-codex",
+      "tracker": "ghprojects",
+      "host": "codex",
+      "status": "passed",
+      "partial_evidence": "Historical P61G-1 remained unresolved in project #9 after its bounded retry, and that budget stays untouched. Isolated P61R recovery used private repository patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox and Project #10 PVT_kwHOABroCc4BlYLD. The P61R-1 delivery ran in source mode at producer HEAD 662df7fc66fafd4e5cc5b53c10aad63d9eea25a1, not installed-plugin parity: same-intent replay completed its existing native issue/item, then Foundry start/open-pr/review/CI/merge delivered PR #2 head 67c5db9caec373d50afec7e2052b206a4f3b0c42 and merge 43d31bfd5b32649b556ce24fdaa1ac3de8a362e3. P61R-1 read done/aligned and accepted AC 2/2. At f743f2e1a355657434907b29f6ab1b2bd8d62899, experimental P61R-ADR-0003 remained proposed after its bounded V1-to-V2 roundtrip. At f56776486ccba307b3a3e71f26f201db28108f29, explicit human accepted verdict authorized close-epic P61R-4; its then-fresh native and normalized readback was done/aligned with the single audit comment 5963150172 marker github:epic:9ba37bf81a564a36cc437dde2d78409bb6e43aec900b5af48a5306d319f6f088, unique accepted child P61R-1 and no dependencies. Epic P61R-4 kept Markdown AC 0/2 and acceptance_status null. At that same observed closure/release snapshot, repository milestone PAT61 sandbox v1 #1/id18273978 contained only P61R-1, and the Foundry changelog plus Ship-iOS foundry-v1 bridge read scope_count=1, accepted=1, deviated=0, unfinished=0, unavailable=0; the milestone was then closed. At source 41d6866b48780fd3cb3bf386b4ecac66031b9c63, synthetic P61R-5 native 5684847992/item PVTI_lAHOABroCc4BlYLDzg-PUMA was created after partial_create:item_readback, unique native read and same-intent resume. Foundry linked P61R-5 depends-on P61R-1; fresh P61R-5 diff was links only and common-write replay observed REST_write=0 and GraphQL_mutation=0. This reciprocal link changed the closed Epic child snapshot: related-Epic P61R-1, profile groom and P61R-4 now refuse TrackerConflictError GitHub Epic graph changed after closure. No audit was replaced, state forced or link removed. The fail-closed guard is expected; Foundry has no unlink command. Maintainer-authorized native cleanup removed only P61R-5 to P61R-1 (native Issue id 5668442786): before/after REST reads preserve every other property and show blocked_by/blocking empty. Fresh Foundry Epic read is native/normalized done and projection aligned with the original single audit intact; groom snapshot has three issues (one active, two historical), no truncation or pagination. P61R-5 remains backlog AC 0/2 without accepted. At 8a4bbaecb5834f13f69fc9c5a954784020569344, Codex updated P61R-5 body to target P61R-6, linked P61R-5 depends-on P61R-6 and P61R-6 blocks P61R-5; strict replay is identical before/after with REST_write=0 and GraphQL_mutation=0. Groom snapshot has four issues, connected P61R-5/P61R-6 and three historical P61R-1/P61R-4/P61R-6, with no truncation, next page, cycle or unavailable; Epic P61R-4 stays aligned. At clean source f9f420f, Foundry linked ADR-3 to P61R-5; temporary native archive only of item PVTI_lAHOABroCc4BlYLDzg-PUMA made P61R-5 unavailable while P61R-6 remained done/accepted, and query adrs/query adr 3 failed closed with typed AdrIssueUnavailableError and adrs status adr_issue_unavailable for ADR-3 to P61R-5. No ADR body was deleted or written while unknown. First restore received GitHub internal error; after exact archived read, one same-item restore succeeded and restored fields/content/coordinates exactly. This adverse case and 108 conformance passes/3051 deselected at f9f420f alone do not promote a cell. Together with the six journey_evidence entries, GitHub Projects × Codex is passed on P61R; no tag, application publication or new Apple effect is claimed.",
+      "journey_evidence": {
+        "fresh_repository_binding": {
+          "source": "historical synthetic bootstrap/host selection; final integration 4559570 (Claude native read, Codex existing binding retained)",
+          "coordinates": "github.com/patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox; project {'id': 'PVT_kwHOABroCc4BlYLD', 'key': 'P61R'}; configuration sha256:52a4894c90867a0c2e7f7b149684715df8236aefa4863ba99211de1430b3a188",
+          "existing_proofs": "shared freshly created sandbox, independent cwd/binding selection; historical source loading documented in recipe; no fresh repository claimed on final replay; saved evidence: /tmp/pat61-final-native-ghprojects-binding.json"
+        },
+        "adr_create_and_evolve": {
+          "source": "f743f2e / f9f420f",
+          "coordinates": "P61R-ADR-0003 ref 3; P61R-5 item PVTI_lAHOABroCc4BlYLDzg-PUMA",
+          "existing_proofs": "V1-to-V2 readback; typed AdrIssueUnavailableError during archive; restored_exactly=true; files /tmp/p61r-adr-created-oct2.json, /tmp/p61r-adr-edited-oct2.json, /tmp/p61r-adr-unavailable-live-observation.json"
+        },
+        "epic_children_dependencies_and_grooming": {
+          "source": "f567764 / 8a4bbaec",
+          "coordinates": "P61R-4 -> P61R-1; P61R-5 depends-on P61R-6; P61R-6 blocks P61R-5",
+          "existing_proofs": "P61R-4 audit 5963150172; groom snapshot four issues, no cycle, no unavailable"
+        },
+        "start_resume_pr_review_ci_merge": {
+          "source": "662df7",
+          "coordinates": "P61R-1 PR #2 head 67c5db9caec373d50afec7e2052b206a4f3b0c42; merge 43d31bfd5b32649b556ce24fdaa1ac3de8a362e3",
+          "existing_proofs": "proof 471bb8495cd7ef40542ebfafaa8f8824aa0c3b4e2bdd0cacdfea49d4e9873ae7; verify-witness success; accepted AC 2/2"
+        },
+        "epic_closure_and_lifecycle_projection": {
+          "source": "f567764 and post-cleanup read",
+          "coordinates": "P61R-4 audit github:epic:9ba37bf81a564a36cc437dde2d78409bb6e43aec900b5af48a5306d319f6f088",
+          "existing_proofs": "explicit human accepted verdict; native/normalized done; projection aligned; original audit intact"
+        },
+        "release_scope_and_ship_ios_bridge": {
+          "source": "f567764",
+          "coordinates": "PAT61 sandbox v1 milestone #1/id18273978; P61R-1 only",
+          "existing_proofs": "changelog and foundry-v1 bridge scope_count=1, accepted=1, deviated=0, unfinished=0, unavailable=0; native_state closed"
+        }
+      },
+      "observed_host": {
+        "observed_at": "2026-10-03",
+        "executor": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+        "codex_cli_version": "0.159.2",
+        "chatgpt_app_version": "26.928.31416",
+        "chatgpt_build": "12553",
+        "mode": "source skill root",
+        "boundary": "current host readback; not a retrospective version claim for every historical command; PAT-15 qualification retained on original refs"
+      },
+      "historical_status": "passed",
+      "partial_evidence_boundary": "historical snapshot narrative retained verbatim; current assessment is journey_evidence and journey_classification",
+      "source_version": "Foundry 0.9.0 source; historical producer refs per stage; final integration 4559570ee7f8882a12f2d60236db1d79870c6bcd; no installed 1.0 claim",
+      "repository": "github.com/patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox",
+      "project": {
+        "id": "PVT_kwHOABroCc4BlYLD",
+        "key": "P61R"
+      },
+      "assessment_method": "historical nominal journey plus explicit targeted impact observation; operator human closure is named, never attributed as an autonomous host mutation",
+      "journey_classification": {
+        "fresh_repository_binding": "passed",
+        "adr_create_and_evolve": "passed",
+        "epic_children_dependencies_and_grooming": "passed",
+        "start_resume_pr_review_ci_merge": "passed",
+        "epic_closure_and_lifecycle_projection": "passed",
+        "release_scope_and_ship_ios_bridge": "passed"
+      },
+      "current_limits": [
+        "source-mode qualification only; not installed1.0",
+        "historical source/host stages are not rerun or relabelled by final native read",
+        "runtime effort/quota unexposed remain unknown; not required provider success evidence",
+        "shared Apple proof does not replace per-cell tracker integration"
+      ]
+    }
+  ],
+  "adversarial_cases": [
+    "repository_switch_same_session",
+    "near_name_or_number",
+    "foreign_product_adr",
+    "contradictory_global_provider_configuration",
+    "active_tracker_credentials_lost",
+    "unavailable_adr",
+    "registry_drift",
+    "archived_old_tracker",
+    "configuration_rollback"
+  ],
+  "pass_condition": "all six bounded tracker/host journeys have actual provider evidence for every required stage; historical nominal host executions plus explicitly justified targeted integration/impact observations; adverse cases fail closed and required human validations recorded; independent review decides final PASS",
+  "forbidden_inference": [
+    "a PAT-68 fake-transport pass makes a real cell pass",
+    "a reusable provider proof makes the other host pass",
+    "an archived binding may be reactivated as a recipe shortcut",
+    "a Ship-iOS mock proves an Apple provider action"
+  ],
+  "historical_post_PAT16_epic_checkpoint": {
+    "human_verdict": "accepted for five proposed graphs",
+    "closures": {
+      "P61Y-5": {
+        "state": "done",
+        "normalized_state": "done",
+        "native_state": "done",
+        "projection_status": "native-only",
+        "acceptance_status": "unknown",
+        "ac_done": 0,
+        "ac_total": 2,
+        "version": 1791040505066,
+        "audit_marker": "foundry-epic-closure.v1:0a6436cb01d7ed44cf5555a400de59d7ca62c01ba4e5ac0c5213e8712ab3d100"
+      },
+      "P61Y-7": {
+        "state": "done",
+        "normalized_state": "done",
+        "native_state": "done",
+        "projection_status": "native-only",
+        "acceptance_status": "unknown",
+        "ac_done": 0,
+        "ac_total": 2,
+        "version": 1791040513815,
+        "audit_marker": "foundry-epic-closure.v1:f3f74a1b6e819b099132c6826040d9d163791443182287744a2bace8d4f4cc27"
+      },
+      "P61R-9": {
+        "state": "done",
+        "normalized_state": "done",
+        "native_state": "done",
+        "projection_status": "aligned",
+        "acceptance_status": null,
+        "ac_done": 0,
+        "ac_total": 2,
+        "version": 209517521855469712
+      },
+      "PAT-83": {
+        "closure": "valid authenticated Epic audit; existing intent completed",
+        "audit_id": "linear:epic:68d62ab643e087354e76596c92627e5c890c9edcec9a7d61fb4d1184e0faeca5",
+        "closed_parent_version": 1791040570737,
+        "native_state": "done",
+        "observed_state": null,
+        "projection_status": "unknown",
+        "get_issue_error": "TrackerConflictError: Linear native state changed outside lifecycle",
+        "ac_done": 0,
+        "ac_total": 2
+      },
+      "PAT-84": {
+        "closure": "valid authenticated Epic audit; existing intent completed",
+        "audit_id": "linear:epic:cbf12439d7e5ca84868dcf38f9a1aea5bb3fc40cae12aa6dc907a6a3286564d7",
+        "closed_parent_version": 1791040663566,
+        "native_state": "done",
+        "observed_state": null,
+        "projection_status": "unknown",
+        "get_issue_error": "TrackerConflictError: Linear native state changed outside lifecycle",
+        "ac_done": 0,
+        "ac_total": 2
+      }
+    },
+    "boundary": "all five closure effects completed; Linear ordinary lifecycle rejects valid non-code Epic audit, a current projection regression; no cell promotion",
+    "projection_regression": {
+      "issue_id": "PAT-92",
+      "state": "in-progress",
+      "type": "Bug",
+      "priority": "P1",
+      "estimate": 2,
+      "ac_total": 4,
+      "parent": "PAT-51",
+      "branch": "fix/pat-92-reconnaître-la-clôture-auditable-des",
+      "worktree": "/Users/pato/.codex/worktrees/linear-epic-projection/patolabs-plugins",
+      "boundary": "tracked and started only; no repair or delivery inferred",
+      "creation_readback": "one issue confirmed; native Linear auto-linked literal linear.py and removed terminal newline; no recreation"
+    }
+  },
+  "historical_post_PAT16_replay_plan": {
+    "status": "planned_not_executed; remaining PAT-61 budget/dispatch authority must be reconciled before launch",
+    "source_head": "83ca100f6a23fe15cf9e4a4f2313c0bfbb507b5c",
+    "affected_cells": [
+      "youtrack-claude",
+      "linear-claude",
+      "ghprojects-claude"
+    ],
+    "resources": {
+      "youtrack": "existing P61Y sandbox, ADR-2, P61Y-4/P61Y-6, Epics P61Y-5/P61Y-7, fresh release scope 4/6",
+      "linear": "existing PAT synthetic sandbox, ADR-2, PAT-77/PAT-78, Epics PAT-83/PAT-84, release scope 77/78/80/81",
+      "ghprojects": "existing P61R private recovery sandbox/Project #10, ADR-8, P61R-6/P61R-9, release scope 6"
+    },
+    "operations": [
+      "one source-mode readonly Claude parent per tracker; explicit cwd and --plugin-dir; no child dispatch",
+      "record host/provider/access and source digest before any call; resolve local role plans without provider dispatch",
+      "query binding, ADR index/detail, named issues and Epic projections, complete profile groom, populated changelog and readonly Ship-iOS bridge; compare exact coordinates and receipts; no mutations",
+      "record requested/transmitted/observed model and effort separately, stream completion, usage completeness, truncation and unknowns; stop on mismatch or unavailable",
+      "compare retained original E2E proofs; source readonly replay covers integration reading only, not a fresh autonomous start/PR/review/merge journey"
+    ],
+    "identity": {
+      "parent_requested": "sonnet-5.5 / medium",
+      "parent_expected_transmitted": "claude-sonnet-5-5 / medium",
+      "parent_observed": "unknown until actual replay; self-report is not evidence",
+      "child_plans_only": {
+        "scout": "haiku-4.5 -> claude-haiku-4-5-20251001; effort null/N-A, no effort transmitted",
+        "implementer": "sonnet-5.5 -> claude-sonnet-5-5; medium",
+        "reviewer": "opus-5.5 -> claude-opus-5-5; high",
+        "architect": "opus-5.5 -> claude-opus-5-5; high"
+      },
+      "boundary": "local plans demonstrate requested/transmitted intent only; PAT-16 native observations remain at original refs; no new child identity inferred"
+    },
+    "budget": {
+      "proposal_only": true,
+      "max_parents": 3,
+      "max_parallel": 1,
+      "max_turns_per_parent": 12,
+      "max_list_price_usd_per_parent": 3,
+      "max_list_price_usd_total": 9,
+      "retries": 0,
+      "child_dispatches": 0,
+      "extra_credits_or_api": false,
+      "authority": "not a grant; consume only reconciled remaining PAT-61 allowance; stop if unavailable or exceeded",
+      "exhausted": "PAT-16 seven parents/six children and four Codex qualification calls remain exhausted; ordinary implementation route grants no qualification budget"
+    },
+    "codex_impact": "24 shared-routing plus 108 conformance and 3390 public passes at integrated source are offline regression evidence; Codex defaults/qualification proofs remain unchanged; no new Codex qualification calls",
+    "remaining_gaps": [
+      "fresh Claude integration replay on three trackers",
+      "fresh autonomous E2E segments absent from historical cells are not supplied by readonly replay",
+      "PAT-92 Linear Epic projection regression blocks ordinary get_issue despite authenticated closure audits",
+      "remaining adverse cases, migration and per-cell required journey audit",
+      "global PAT-61 current issue AC 0/9; no PASS; official clean install/upgrade remains PAT-62 after publication"
+    ]
+  },
+  "post_integration_observation": {
+    "file": "pat-61-post-integration-observation.json",
+    "sha256": "e0873851fca1594193628e81466d8a7b1b9f3313b62da259ae8b7b44ae8272d5",
+    "status": "completed",
+    "boundary": "exact copy of actual observation, not a receipt; one parent sequentially called three provider helpers in one session",
+    "budget_status": "phase completed/exhausted; 1 parent, 12 turns max, 3 USD list max, 0 retries/children/API credits; 4 observed turns and 0.0502504 USD list, not invoice; does not renew previous budgets"
+  },
+  "post_PAT92_delivery": {
+    "pr": "https://github.com/patobiskoto/patolabs-plugins/pull/71",
+    "merge_sha": "5edae5165ffdc979407f79b2f4a1090000499f6d",
+    "ac": "4/4",
+    "human_validation": "actual maintainer C’est bon",
+    "readback_files": [
+      "/tmp/pat92-live-epic-readback.json",
+      "/tmp/pat92-live-groom.json"
+    ],
+    "scope": "authenticated Epic audits project done/aligned; pending-vs-reopen predecessor limit preserved"
+  },
+  "final_assessment": {
+    "proposal": "PASS with documented limits, subject to independent acceptance-criteria review, exact-branch tests/CI and Foundry merge; not delivered PAT61 or releasedV1",
+    "required_stage_count": 36,
+    "required_stages_supported": 36,
+    "core_behavior_gaps": [],
+    "current_tracker_state": "in-progress; AC0/9 before this documentation review",
+    "report": "pat-61-final-qualification-report.md",
+    "interpretation": "Six bound host integrations retain explicit historical/operator/shared attribution. Linear × Claude now includes authorized native V2→V3 edit and exact reread at source4f142e5; historical V1→V2 remains coordinator-attributed. This corrects the proposed AC1/AC6 evidence; only fresh independent review may rule on all nine AC, followed by exact-branch CI and Foundry merge."
+  },
+  "saved_evidence_digests": {
+    "/tmp/p61r-adr-created-oct2.json": "168b11b3f077f426977ec809bb85b099bf493e5c9a2eb2269b57720c275b8870",
+    "/tmp/p61r-adr-edited-oct2.json": "bed125bef6868ec9f697a3687eafc5a83200588e13c262c36a856fdebcfbe877",
+    "/tmp/p61r-adr-unavailable-live-observation.json": "487b4abfe81d0948aa9c192f7ffe6dccc54c29d126c3a9b6393d34052a4eb145",
+    "/tmp/p61r-after-authorized-cleanup-groom.json": "22dec4df5c0d21cbc1378676fef038ba7c6b8843708845bf7cee861fecd781f5",
+    "/tmp/p61r5-to6-replay-observation.json": "7803d6b447ef33afe4e881d8dfede9d4d0b7af21696be185ae0609b276f262cc",
+    "/tmp/pat61-final-native-ghprojects-P61R-6.json": "89c26f1453adcad4997694d3cdef70d848c9a3259c14cf0898c8d0eb286a5f32",
+    "/tmp/pat61-final-native-ghprojects-P61R-9.json": "01d1a672802622c6df17c2bb2363b89c4214b8a9955dc66eb5ee54d0759aa33f",
+    "/tmp/pat61-final-native-ghprojects-adr.json": "715c66c42d06f382260070cca31a3377044f5dfb932906e53003dab2d446ad80",
+    "/tmp/pat61-final-native-ghprojects-adrs.json": "9c7b92728b061a7f45457d7ce873c30ee4b577b0ac431ada1c71ba34efcb9194",
+    "/tmp/pat61-final-native-ghprojects-binding.json": "16056c9a743689be3556fcdac68acf7c0f5dfefa7dbb4a7259606a1af5e810d9",
+    "/tmp/pat61-final-native-ghprojects-bridge.json": "057d81084405fd3f515dbabae0fb0f996a42d053b229bbc90b2e822937e58748",
+    "/tmp/pat61-final-native-ghprojects-changelog.json": "20bc5059466315bcf05d5de1110421c44efaedd10d43051051f1b4a447b17c53",
+    "/tmp/pat61-final-native-ghprojects-groom.json": "e4ae83687b3eafb8163f60851e74d52d6d59058a7bf00c72631be84e97d96c43",
+    "/tmp/pat61-final-native-ghprojects-summary.json": "b32ae68ee0f8dfd00aa1a6cee352643440c107273736d90768a9ddf1754641e8",
+    "/tmp/pat61-final-native-linear-PAT-77.json": "638c10175d9c7f285960c429fd0f7abf3d200fdd345a5b379a075bac9b7ec74c",
+    "/tmp/pat61-final-native-linear-PAT-78.json": "e0bc102d042063b20f90b250c39cd4b24979e07c9c30815838743b2034ddafa9",
+    "/tmp/pat61-final-native-linear-PAT-83.json": "39201992ca9df909325776cee9ef37852ba647c354c9a48ef41f9eda331ad3e8",
+    "/tmp/pat61-final-native-linear-PAT-84.json": "7de8d9440ae25436686269cf99caa8b56e8b4e12040250bbc921b6b86f30e654",
+    "/tmp/pat61-final-native-linear-adr.json": "8c84696999bd3d0673214443ec2bbae7cf64052ee2dfa09ff871f732939f49fd",
+    "/tmp/pat61-final-native-linear-adrs.json": "f98cc26fee867120c7193d851f6b64445f7d33b9c97623de0ff8e278ee52d145",
+    "/tmp/pat61-final-native-linear-binding.json": "c8136128cb09d6dd59c3e68cf7ac147610862710f738233ccf331959a19c31c7",
+    "/tmp/pat61-final-native-linear-bridge.json": "01800b23d8740e220d94ff3310d6bff1b6a14f8bc5b79003f5b8db44cff4a9b0",
+    "/tmp/pat61-final-native-linear-changelog.json": "6815ed61a1005b1526b71e7ff0f7afb727db990c518da7d49d8c534450cd8832",
+    "/tmp/pat61-final-native-linear-groom.json": "df251189ef732440b502c0b04f5a3545034db34def9b5f0341da170798790a93",
+    "/tmp/pat61-final-native-linear-summary.json": "0970e3644985dc5d7671f513b40959e22697e7c20babe428ab924d4b472ceb4f",
+    "/tmp/pat61-final-native-observation.json": "e0873851fca1594193628e81466d8a7b1b9f3313b62da259ae8b7b44ae8272d5",
+    "/tmp/pat61-final-native-read-helper.py": "2684991ab0acd34f2cc5833993005f18be6936c4cb67afe22a2a7c31cc0294ba",
+    "/tmp/pat61-final-native-result.json": "d8b2ba8ade6bd073c20a43d0e520ff65e4ce33f6bc32ca9c8a7534ad8149c5cc",
+    "/tmp/pat61-final-native-stream.jsonl": "541639a2d07613b4b4161b216d7274b7817769af1db359d414ba87ea6464b1a4",
+    "/tmp/pat61-final-native-youtrack-P61Y-4.json": "e03e097848d2efb234ca9dc7247fc1534184a391bc2da8897094d3ee9af94a99",
+    "/tmp/pat61-final-native-youtrack-P61Y-5.json": "bba1495447a10eeabbaf180d9dd224ee5ba689a6d443567cd0641c7529a778b3",
+    "/tmp/pat61-final-native-youtrack-P61Y-6.json": "d2d955f69b954db22e1ac4df413bba3565ecede3c15e8d9fdfb314e501e00699",
+    "/tmp/pat61-final-native-youtrack-P61Y-7.json": "e2eb6d550aa76ed9567c3bb59dfb6541feed3611adec0257af2d115b25b9816a",
+    "/tmp/pat61-final-native-youtrack-adr.json": "f55421874d61e27091f100611e23d8dd7f61139af7cb9a36ae72435ed4f6b0d5",
+    "/tmp/pat61-final-native-youtrack-adrs.json": "6579227ddb6cddd49ef7e6fa96cbde3ebf0e5c67487195064bd46087cd2405e6",
+    "/tmp/pat61-final-native-youtrack-binding.json": "874030908cd32b8c0d84827ed10971703d7f35145f08538b7e511cc16e8bc47f",
+    "/tmp/pat61-final-native-youtrack-bridge.json": "3790a8618f82cf81838885ac9d0bed2cd4099be4fed0f711fba82a736b9fa144",
+    "/tmp/pat61-final-native-youtrack-changelog.json": "de1ee708c8f2e90da59d216f948670a5608ca71ec536736e18be28fe9cc3b979",
+    "/tmp/pat61-final-native-youtrack-groom.json": "a362cbdf11a30defe8efcf9863ad4e2db0fbbdfa07cbff9aae439342fbd07f59",
+    "/tmp/pat61-final-native-youtrack-summary.json": "d7b3b5d5859a535b66de8b28dc8090be85a0a5b25837268c72c353806c2a323c",
+    "/tmp/pat61-final-prerequisite-readback.json": "b6f07ea5d1c5efc8e2947044f55dd0a3f6bbd7beeff5780f8612326368485717",
+    "/tmp/pat61-final-revalidation-report.json": "a86a6f8f603ff6d9a6cbdde57c2ed20195f0a7738cd36b68114a92c12979e9d1",
+    "/tmp/pat61-gh-claude-correction-stream.jsonl": "6051e5ffea453a205a742bdfd339bfa932c05c7d736e1aee474541e5c25e854f",
+    "/tmp/pat61-gh-claude-delivery-stream.jsonl": "592bc79f603ca00c4d4a55f0e5162f495e236e9a5a30c375a52987dfa6f30cca",
+    "/tmp/pat61-ghprojects-claude-finish-adr8-current.json": "eafbb23523dd9d89f3981093bfe2687d2d8fdfd2b0d63423e6112bd6603daa97",
+    "/tmp/pat61-ghprojects-claude-graph-stream.jsonl": "1f33b3cc3e94192d896119bbb030588aefca42bb972d0f66e1d5c538010a7ca6",
+    "/tmp/pat61-ghprojects-claude-recovery-bridge.json": "886cbed4733fd3ce2becf61a0aebf4e1fa146287a195669cb261ac61697c731f",
+    "/tmp/pat61-ghprojects-claude-recovery-changelog.json": "366317e1875915a5409b2607b1175be8b92755e7ac42d0ab3a6d68b7f0eb130b",
+    "/tmp/pat61-ghprojects-claude-recovery-groom.json": "da35573bf1689cf47cf5b36a5d9e3e9b1ff77d13ecca4ebbd4535582d4077bd2",
+    "/tmp/pat61-ghprojects-claude-recovery-stream.jsonl": "c89ae1735f69810248c313d57f977bb120319f0f38a028b997f8c3f3fbebdbd1",
+    "/tmp/pat61-linear-adr2-exact-read-diagnostic.json": "4638a8a44831d5524428ab9fe5545fead8f93f239fbf458268e957b6aaad15c5",
+    "/tmp/pat61-linear-claude-complete-bridge.json": "8e34d21fc15ee279beb67813cde88374ebb6d517069caef1580d67009b7fc6bd",
+    "/tmp/pat61-linear-claude-complete-changelog.json": "9e3b87fc8828ce3a8dd82fb9a1c7c8a1b30a6cb9dbb9ac3a4a286b3cc1aede34",
+    "/tmp/pat61-linear-claude-graph-stream.jsonl": "bcb04313ff805b5c48a5a1f60b8b4987ca356f640b8b251d77e1c66e00831596",
+    "/tmp/pat61-linear-codex-epic-create-result.txt": "b17640a34ce338875c1659d551248712f6584fc01fb44b57450cecd80aca6b7b",
+    "/tmp/pat61-physical-beta-confirmed.md": "aaa498d2fa15cc68facaf6b302144413450243ae98e9ff79a36df81ff67e712a",
+    "/tmp/pat61-youtrack-claude-finish-adr2-after.txt": "f6cf5982567ea2924f425bfe676cefb7ad1d6aa474cbebd9d2ed9591082c0b8c",
+    "/tmp/pat61-youtrack-claude-finish-adr2-before.txt": "5f82cac779db83f5edc1db2d4fb73c59aa03fb6d079974d7c8310ba4640d26a2",
+    "/tmp/pat61-youtrack-claude-finish-bridge.json": "ff71b0f6a056cd76d4d2a33f23c2b8f3b240f905f9b4174877b1eade2e761d52",
+    "/tmp/pat61-youtrack-claude-finish-stream.jsonl": "37ee95348f4aa18ff08db02eb41c936fe1ba4f32bd3760ca26c445995f9567d7",
+    "/tmp/pat61-youtrack-claude-fresh-adr-create.out": "4945e8ee4d612ed850a1ff053f74398c2557567b8fc34c99d4ff58109630801d",
+    "/tmp/pat61-youtrack-claude-fresh-merge.out": "de405ffe853e047aa9c660dfbf4504a523ab707d132b904906c9e22b8680d394",
+    "/tmp/pat61-youtrack-claude-fresh-postmerge.json": "000ae65cbc9badd7f537fbcffcde4b6eea67cce718f259257c29331471b83906",
+    "/tmp/pat61-youtrack-claude-fresh-reviewproof.json": "4b8ff90228e928e7827dad37cb5a7aeafcc0147bce594d6631f010a47277f70e",
+    "/tmp/pat61-youtrack-claude-fresh-stream.jsonl": "0ce42921ad632e1b34c67fbd028de9b6ff0abab33ea4c70a797cd097da56ef40",
+    "/tmp/pat61-youtrack-codex-dependency-replay-final.json": "8b896a66f0a55b430549500f7ca323831cc0dba347428e3179fb5c11e72ae771",
+    "/tmp/pat64-cutover-qualification-manifest.json": "a19a0f64bebd0792fedbb211f9d0c3f9d3f16aebf42f1de77e8ffd30d83c9f8f",
+    "/tmp/pat85-final-sandbox-adr2-v2.json": "560747ba4efd58bb2a96c2054fdc5b2e267a687ef3da70bc7db837a9919846b1",
+    "/tmp/pat85-live-replay-report.json": "8973e789796900bad8855869b82c0eba6d44df4d5d19e6bd3c107df765074316",
+    "/tmp/pat92-live-epic-readback.json": "8973fd86805b184e13312a341ec37cb5c80f3a27c6218bd8ffb8b8caef8b5166",
+    "/tmp/pat92-live-groom.json": "c33e863b6c405e4361b77c9453cba11476f3225b571428e4f0a2d7e5beb3ac4a",
+    "/tmp/pat85-sandbox-adr2-v1.json": "a80858d1c13a17ebd6f26eb6f3d41397662e0cba667be209882a46dbac12b6bc",
+    "/tmp/pat85-sandbox-adr2-v2.json": "560747ba4efd58bb2a96c2054fdc5b2e267a687ef3da70bc7db837a9919846b1",
+    "/tmp/pat85-live-replay.py": "1ae5c8273b6873a92c30ff68d382e2f29c287847fbdff764cb0e1194d3492d53",
+    "/tmp/p61y2-review-outcomes-3dc3419.json": "6a0018aeec325bf936db73cc576f129b440e17ae9dc5cc08326cc77b4b4a7efa",
+    "/tmp/p61y1-review-outcomes.json": "a2a881832a668393d8f47e7c9d31aff14f4f27b1bb4bb344f23ae1a8a65896c7"
+  },
+  "native_adr_evolution_observation": {
+    "file": "pat-61-native-adr-evolution-observation.json",
+    "sha256": "6694e463f5e83907f19156d7d0808e292dad02d1573f4be208521ddddabd0b26",
+    "source_head": "4f142e5ce4baacbdbff7d1486c4870126b1afc91",
+    "boundary": "byte-exact copy of actual authorized native host/effect observation, not receipt; adds only Linear × Claude ADR V2→V3 evidence; historical producer refs and V1→V2 attribution preserved",
+    "budget_status": "completed/exhausted; 1 parent, 12 turns max, 3 USD catalogue max, 0 children/retries/additional API credits; success 2 turns and 0.0277176 USD catalogue, not invoice; no further native calls authorized"
+  },
+  "historical_blocked_review": {
+    "proof_id": "4349771b741ceabb46506a2b59c84470b6fa562221a58547a3094d49af6fb5ca",
+    "issue": "PAT-61",
+    "diff_hash": "608e5bc3f9092d5412574187bd42fd6471c5f4d32f6034b2c4976819901f31f7",
+    "generation": 1,
+    "outcomes": [
+      {
+        "id": "ac-1",
+        "digest": "e52242fc26003f35070892c2f89aa61a34474d2517a727e4a50b83d7d9689a25",
+        "verdict": "not_covered"
+      },
+      {
+        "id": "ac-2",
+        "digest": "387415ecb642b1105e9aa1a64448daa975c2380eef2c7e45732b837cd62428c0",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-3",
+        "digest": "ca51af3aa4f3b9444055d5ff0b8cb96522bd187f030ce04d1814ab6bfddd0e0b",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-4",
+        "digest": "f2c357a1cff97627baed56b13c56bba6bf4725702faeec3ce03905d2ec0e332a",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-5",
+        "digest": "581e5b645a249626fb8eba6fe89e9d13f426c75e146ccf72e3e52d8f0711eb3f",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-6",
+        "digest": "ba6f58d89efb4e9f9a451b869872c84c326039b61466ac18613b0baf07baf9bc",
+        "verdict": "contradicted"
+      },
+      {
+        "id": "ac-7",
+        "digest": "e49dab19e9d2030c5af0ddee3704d6666df64540b6917ac49e3f6f7a9ecfc336",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-8",
+        "digest": "e6118f5ea2bbff77842afd457f98f1f01ea6f9ee2a860e3fb0fd22a0d8bb4717",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-9",
+        "digest": "5012c76e365a4e36804aa965536d017ed97fbf4286f5b506f0958cc5cd35260c",
+        "verdict": "pass"
+      }
+    ],
+    "quality": "blocked",
+    "boundary": "terminal BLOCK on prior diff: AC1 not_covered and AC6 contradicted; retained as history, not superseded by a proposed assessment; fresh review/CI/Foundry merge required",
+    "acceptance_snapshot_ac_digest": "f9a2ffabc545ab54942de27ebebde7395ef06659e161e8010432882e1edcbc30",
+    "saved_file_digests": {
+      "/tmp/pat61-final-acceptance-snapshot.json": "898c8dd33cce8d4351eabf1a8fe181e8c21190cd9d26212f12718bfb219b1158",
+      "/tmp/pat61-final-review-outcomes.json": "3c11fb989a9e3837922fb69e26e725d61f0afcee9ecffe02e1bc9a4ebbe09bc1",
+      "/tmp/pat61-final-review-proof-result.txt": "a8dbe072a8d8ecac32ca55412899d55e1f52072720dfe397fdf5ab2a4c436a58"
+    }
+  }
+}
