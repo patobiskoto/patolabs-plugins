@@ -188,6 +188,9 @@ def linear_markdown_body_readback(body):
                 source_line = f"* {source_line[2:]}"
         rendered.append(source_line)
     rendered_body = "".join(rendered)
+    rendered_body = linear_module._linear_strong_trailing_inline_code_readback(
+        rendered_body
+    )
     if hashlib.sha256(body.encode()).hexdigest() == linear_module._PAT_72_SOURCE_SHA256:
         assert body.count(linear_module._PAT_72_BLANK_LINE_FRAGMENT) == 1
         assert rendered_body.count(linear_module._PAT_72_BLANK_LINE_FRAGMENT) == 1
@@ -6776,6 +6779,294 @@ def test_linear_adr_pat71_observed_multiline_readback_recovers_missing_witness(
     assert len(document_creates) == 1
     assert document_creates[0]["input"]["id"] == witness_id
     assert all("documentUpdate" not in query for query, _ in wire.calls)
+
+
+def test_linear_adr_pat85_strong_inline_code_readback_replays_only_witness(tracker):
+    """The PAT-61 bytes move strong's close before its final inline code."""
+    instance, wire = tracker
+    source = (
+        "## Alternatives\n\n"
+        "- **Modifier `PAT-ADR-0001`** — écartée.\n"
+        "- **Accepter l'ADR pour tester la transition `accepted`** — écartée."
+    )
+    observed = (
+        "## Alternatives\n\n"
+        "* **Modifier** `PAT-ADR-0001` — écartée.\n"
+        "* **Accepter l'ADR pour tester la transition** `accepted` — écartée."
+    )
+    assert linear_module._linear_markdown_readback_body(source) == observed
+    linear_module._preflight_adr_body_readback(source)
+
+    created = instance.create_adr(PROJECT, "PAT-85 native bytes", source)
+    document_id = created.ref
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    assert wire.documents[document_id]["content"].endswith(observed)
+    initial_witness = linear_module._parse_adr_witness(
+        wire.documents[witness_id], instance._binding(PROJECT)
+    )
+    assert base64.b64decode(initial_witness["source_body"]) == source.encode()
+
+    # The original PAT-61-shaped slot survives unchanged while exact replay fills
+    # only its missing witness, and a second replay is a no-op.
+    original = copy.deepcopy(wire.documents[document_id])
+    del wire.documents[witness_id]
+    wire.calls.clear()
+    recovered = instance.create_adr(PROJECT, "PAT-85 native bytes", source)
+    assert recovered.ref == document_id
+    assert wire.documents[document_id] == original
+    creates = [
+        variables["input"]["id"]
+        for query, variables in wire.calls
+        if "FoundryLinearAdrDocumentCreate" in query
+    ]
+    assert creates == [witness_id]
+    before = copy.deepcopy(wire.documents)
+    instance.create_adr(PROJECT, "PAT-85 native bytes", source)
+    assert wire.documents == before
+
+    updated = recovered.body.replace("## Alternatives", "## Alternatives V2")
+    assert instance.update_body(recovered, recovered.body, updated, project=PROJECT)
+    latest = instance.list_adrs(PROJECT)[0]
+    assert latest.body.endswith(updated.partition("\n-->\n\n")[2])
+    latest_witness = linear_module._parse_adr_witness(
+        wire.documents[
+            linear_module._adr_witness_id(PROJECT.id, recovered.id, 1)
+        ],
+        instance._binding(PROJECT),
+    )
+    assert base64.b64decode(latest_witness["source_body"]) == (
+        updated.partition("\n-->\n\n")[2].encode()
+    )
+
+
+@pytest.mark.parametrize("marker", ("**", "__"))
+def test_linear_adr_pat85_consumed_strong_close_cannot_reopen(tracker, marker):
+    instance, wire = tracker
+    source = f"{marker}a!{marker}? `c` x{marker}"
+    assert linear_module._paired_delimiters(source, marker) == [(0, 4)]
+    assert linear_module._linear_markdown_readback_body(source) == source
+    linear_module._preflight_adr_body_readback(source)
+
+    created = instance.create_adr(PROJECT, "PAT-85 consumed close", source)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    assert wire.documents[created.ref]["content"].endswith(source)
+    witness = linear_module._parse_adr_witness(
+        wire.documents[witness_id], instance._binding(PROJECT)
+    )
+    assert base64.b64decode(witness["source_body"]) == source.encode()
+    before = copy.deepcopy(wire.documents)
+    instance.create_adr(PROJECT, "PAT-85 consumed close", source)
+    assert wire.documents == before
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        "# **A `B`**",
+        "   ### **A `B`** ###",
+        "**A `B`**\n---",
+        "**A `B`**\n===",
+        "**A `B`**\ncontinuation\n---",
+        "prefix\n**A `B`**\ncontinuation\n===",
+        "| **A `B`** |",
+        "| **A `B`** |\n| --- |",
+        "**A `B`**\n:---:",
+    ),
+)
+def test_linear_adr_pat85_block_context_refuses_before_write(tracker, body):
+    instance, wire = tracker
+    with pytest.raises(
+        TrackerConflictError, match="unsupported Markdown serialization"
+    ):
+        instance.create_adr(PROJECT, "PAT-85 block context", body)
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+def test_linear_adr_pat85_literal_block_markers_and_separate_heading_stay_text():
+    source = "`# | ---` **Modifier `PAT`**\n\nSeparate heading\n---"
+    observed = "`# | ---` **Modifier** `PAT`\n\nSeparate heading\n---"
+    assert linear_module._linear_markdown_readback_body(source) == observed
+    linear_module._preflight_adr_body_readback(source)
+
+
+def test_linear_adr_pat85_ignores_literal_strong_marker_before_qualified_span(
+    tracker,
+):
+    """A literal ``**`` in code cannot mask the later qualified source span."""
+    instance, wire = tracker
+    source = "`**` **Modifier `PAT`** preflights then stays unchanged."
+    observed = "`**` **Modifier** `PAT` preflights then stays unchanged."
+
+    assert linear_module._linear_markdown_readback_body(source) == observed
+    linear_module._preflight_adr_body_readback(source)
+
+    created = instance.create_adr(PROJECT, "PAT-85 literal delimiter", source)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    assert wire.documents[created.ref]["content"].endswith(observed)
+    witness = linear_module._parse_adr_witness(
+        wire.documents[witness_id], instance._binding(PROJECT)
+    )
+    assert base64.b64decode(witness["source_body"]) == source.encode()
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        "**Only `code` x**",
+        "**Two `code` and `other`**",
+        "**Nested *text* `code`**",
+        "**Multi ``code``**",
+        "**<em>Modifier</em> `PAT`**",
+        "**Modifier <https://example.invalid> `PAT`**",
+        "**Modifier &amp; `PAT`**",
+        r"**Modifier \\! `PAT`**",
+    ),
+)
+def test_linear_adr_pat85_unqualified_strong_code_refuses_before_write(tracker, body):
+    instance, wire = tracker
+    with pytest.raises(
+        TrackerConflictError, match="unsupported Markdown serialization"
+    ):
+        instance.create_adr(PROJECT, "PAT-85 unsupported", body)
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        r"\***Modifier `PAT`**",
+        r"**Modifier `PAT`\***",
+        r"\***Modifier `PAT`\***",
+    ),
+)
+def test_linear_adr_pat85_escaped_run_residual_refuses_before_write(tracker, body):
+    instance, wire = tracker
+
+    with pytest.raises(
+        TrackerConflictError, match="unsupported Markdown serialization"
+    ):
+        instance.create_adr(PROJECT, "PAT-85 escaped delimiter run", body)
+
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        r"\**Modifier `PAT`**",
+        r"\***Modifier PAT**",
+    ),
+)
+def test_linear_adr_pat85_preserves_literal_or_ordinary_escaped_runs(source):
+    assert linear_module._linear_markdown_readback_body(source) == source
+    linear_module._preflight_adr_body_readback(source)
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        'prefix <span title="**A `B`**">x</span>',
+        '<span title="**A `B`**">x</span>',
+        '[**A `B`**](https://example.invalid)',
+        '[outer **A `B`** outer](https://example.invalid)',
+        '*outer **A `B`** outer*',
+        '__A `B`__',
+        '__`B` A__',
+        '**A `B`** [sibling](https://example.invalid)',
+        '<em>sibling</em> **A `B`**',
+    ),
+)
+def test_linear_adr_pat85_outer_context_refuses_before_write(tracker, body):
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown serialization"):
+        instance.create_adr(PROJECT, "PAT-85 outer context", body)
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+@pytest.mark.parametrize("indentation", ("    ", "\t", " \t", "   \t", "        ", "\t "))
+@pytest.mark.parametrize("prefix", ("", "paragraph\n\n"))
+def test_linear_adr_pat85_indented_code_refuses_before_write(tracker, indentation, prefix):
+    instance, wire = tracker
+    body = f"{prefix}{indentation}**Modifier `PAT`**"
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown serialization"):
+        instance.create_adr(PROJECT, "PAT-85 indented code", body)
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+@pytest.mark.parametrize("prefix", ("-     ", "*     ", "+     ", "1.     ", "3)     ", "- \t    ", "  -     "))
+def test_linear_adr_pat85_list_indented_code_refuses_before_write(tracker, prefix):
+    instance, wire = tracker
+    body = f"{prefix}**Modifier `PAT`**"
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown serialization"):
+        instance.create_adr(PROJECT, "PAT-85 list indented code", body)
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+def test_linear_adr_pat85_preserves_qualified_plain_surroundings_and_literal_code():
+    source = '`<span>[_~**]` **Modifier `PAT`** puis `accepted` et **Accepter `PAT`**'
+    observed = '`<span>[_~**]` **Modifier** `PAT` puis `accepted` et **Accepter** `PAT`'
+    assert linear_module._linear_markdown_readback_body(source) == observed
+    linear_module._preflight_adr_body_readback(source)
+
+
+@pytest.mark.parametrize("separator", ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"))
+@pytest.mark.parametrize("position", ("before", "code"))
+def test_linear_adr_pat85_line_separators_refuse_before_write(tracker, separator, position):
+    instance, wire = tracker
+    body = (
+        f"**Modifier{separator}X `PAT`**"
+        if position == "before"
+        else f"**Modifier `PAT{separator}X`**"
+    )
+
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown serialization"):
+        instance.create_adr(PROJECT, "PAT-85 line separator", body)
+
+    assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
+    fenced = f"```text\n{body}\n```"
+    assert linear_module._linear_markdown_readback_body(fenced) == fenced
+    linear_module._preflight_adr_body_readback(fenced)
+
+
+def test_linear_adr_pat85_rejects_hostile_strong_code_divergence(tracker):
+    instance, wire = tracker
+    source = "**Modifier `PAT-ADR-0001`**"
+    created = instance.create_adr(PROJECT, "PAT-85 hostile", source)
+    wire.documents[created.ref]["content"] = wire.documents[created.ref][
+        "content"
+    ].replace("**Modifier** `PAT-ADR-0001`", "**Modifier** `other`", 1)
+    before = copy.deepcopy(wire.documents)
+    with pytest.raises(LinearTrackerError, match="invalid_response"):
+        instance.create_adr(PROJECT, "PAT-85 hostile", source)
+    assert wire.documents == before
 
 
 def test_linear_pat72_digest_pinned_blank_line_readback_recovers_only_witness(
