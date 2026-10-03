@@ -17,7 +17,7 @@ sur ce SHA, mais il n'est jamais une cellule de cette matrice.
 
 Avant publication, l'opérateur relève le SHA du checkout, les versions affichées de
 Foundry et du host, ainsi que le digest du package effectivement chargé. La preuve live
-nomme la racine absolue, le SHA et ce digest: au témoin courant, le package
+nomme la racine absolue, le SHA et ce digest: au témoin historique, le package
 `plugins/foundry` du worktree `pat68-resume` est au SHA
 `8a4bbaecb5834f13f69fc9c5a954784020569344`, digest
 `426240efcb9d560964d0ffb5df5cdde0d5c9dc5491f416bb6a45d78b2671e117`, 257 fichiers
@@ -26,13 +26,23 @@ suivis et version `0.9.0`. Claude Code charge explicitement cette source par
 pas prouver un cache installé ni une version 1.0. Une installation propre ou upgrade
 par les gestionnaires officiels des deux hôtes, sans édition de cache, avec version
 réellement chargée, reste le gate post-publication de PAT-62.
-Le checkpoint final intégré est `1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe` après
+Le checkpoint intégré historique est `1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe` après
 `84cfaa6` puis merge de `origin/main`, sans conflit. Foundry reste 0.9.0 prépublication,
 257 fichiers; SHA256(`git archive --format=tar HEAD plugins/foundry`) =
 `b4a6b872e056fb7575db9551462cb5e86082d72960f162e5426200902ac225cd`.
-Les validations actuelles sur ce HEAD sont 3215 tests publics (10 désélectionnés) et
+Les validations historiques sur ce HEAD sont 3215 tests publics (10 désélectionnés) et
 108 de conformité (3128 désélectionnés). C'est un checkpoint source/conformité: il ne
 refait ni les parcours historiques, ni l'installation officielle, ni une CI PAT-61.
+Le checkpoint source courant après PAT-16 est
+`83ca100f6a23fe15cf9e4a4f2313c0bfbb507b5c`, racine absolue
+`/Users/pato/.codex/worktrees/pat68-resume/patolabs-plugins/plugins/foundry` :
+Foundry `0.9.0`, 347 fichiers suivis, SHA256 du même archive Git
+`51305c194ebcb5ec8810986fc24dad2cc08488f95a26ee1a8f60a0663dabe9d5`.
+Les logs de ce checkpoint donnent 3390 publics/10 désélectionnés,
+108 conformité/3303 désélectionnés et 24 contrôles partagés de routage.
+Ces résultats sont des observations déterministes ; aucune CI PAT-61, installation
+1.0 ou exécution fournisseur sur ce HEAD n'en est déduite.
+
 `adapter_baseline_sha` identifie seulement le merge de PAT-68 à partir duquel cette
 recette a été préparée. Cette précondition est importante ici : au préflight du 1er
 octobre 2026, Claude Code et Codex affichaient Foundry 0.9.0, mais des fichiers installés
@@ -650,3 +660,93 @@ PAT-61. Les cellules YouTrack restent toutefois `blocked` faute de parcours comp
 et, pour Claude Code, faute de parité de distribution installée et de démarrage
 autonome. Les autres cellules conservent leurs états observés; aucune des six ne
 devient `passed`.
+
+
+## Intégration PAT-16 et replay Claude à préparer
+
+PAT-16 est livré : PR [#70](https://github.com/patobiskoto/patolabs-plugins/pull/70),
+merge `c8c4073ca45656b46050418f187f26bf4cccb767`, `done`, 16/16 AC, `accepted`.
+La review de livraison porte sur `07b0e8dc964eb18777b95270b5dade4e78e25afb`, preuve
+`ddecc855512bb2ed19d1267905dae0acbaea312ec8e7140889bde0a8f15e7573`.
+La [promotion humaine](pat-16-claude-default-promotion.md) et le
+[handoff](pat-16-pat61-handoff.md) restent attachés à leurs moments d'origine,
+comme les observations natives et leurs échecs. Leurs mentions de livraison pendante
+sont historiques ; aucune ancienne preuve n'est réétiquetée sur le checkpoint intégré.
+PAT-61 est relu `in-progress`, AC 0/9 ; son bilan global reste `blocked`.
+
+Le mainteneur a accepté explicitement les cinq graphes Epic présentés. Les seules
+clôtures finales incluses dans ce checkpoint sont P61Y-5 et P61Y-7 : `done` natif
+et normalisé, `projection_status=native-only`, AC 0/2, `acceptance_status=unknown`.
+Leurs audits append-only sont respectivement
+`foundry-epic-closure.v1:0a6436cb01d7ed44cf5555a400de59d7ca62c01ba4e5ac0c5213e8712ab3d100`
+et `foundry-epic-closure.v1:f3f74a1b6e819b099132c6826040d9d163791443182287744a2bace8d4f4cc27`.
+P61Y-5 couvre l'enfant accepté P61Y-4 ; P61Y-7 couvre P61Y-6 et sa dépendance
+acceptée P61Y-4. Les critères du parent ne sont pas artificiellement cochés.
+P61R-9 est ensuite relu `done` natif/normalisé et `aligned`, AC 0/2.
+PAT-83 a subi une interruption, puis sa reprise de même intention a terminé ;
+PAT-84 a également terminé. `get_epic_closure` authentifie leurs graphes et audits
+`linear:epic:68d62ab643e087354e76596c92627e5c890c9edcec9a7d61fb4d1184e0faeca5`
+et `linear:epic:cbf12439d7e5ca84868dcf38f9a1aea5bb3fc40cae12aa6dc907a6a3286564d7`.
+Les cinq effets de clôture sont donc réalisés, mais `get_issue` de PAT-83/PAT-84
+refuse `TrackerConflictError: Linear native state changed outside lifecycle` ;
+`observe_issue` donne `state=null`, `native_state=done`, `projection_status=unknown`.
+C'est un bug actuel de projection du lifecycle général sur l'audit Epic non-code,
+pas une clôture inconnue ni une autorité de forcer les états. La régression est suivie par PAT-92, `in-progress`, Bug/P1/2 points, 4 AC,
+parent PAT-51, démarrée sur `fix/pat-92-reconnaître-la-clôture-auditable-des` dans
+`/Users/pato/.codex/worktrees/linear-epic-projection/patolabs-plugins`.
+La relecture de création confirme un seul PAT-92 ; Linear a auto-lié le littéral
+`linear.py` et retiré le newline terminal, divergence conservée sans recréation.
+Aucune réparation ni livraison n'est encore démontrée ; les cellules Linear ne passent pas.
+Les tableaux et récits antérieurs restent les observations de leurs snapshots ;
+ce complément actualise les effets sans promouvoir les cellules.
+
+L'impact PAT-16 porte sur les défauts et la transmission de profils Claude. Les
+preuves de livraison et Apple antérieures restent utilisables à leur SHA d'origine,
+mais ne prouvent pas les trois parcours Claude avec ces nouveaux défauts. Côté Codex,
+les défauts et preuves PAT-14/PAT-15 sont conservés ; les 24 contrôles partagés,
+108 tests de conformité et 3390 tests publics couvrent la régression offline au
+checkpoint intégré, sans nouvelle qualification native Codex.
+
+Le replay minimal proposé est une session Claude en lecture seule par tracker,
+séquentielle, depuis chaque checkout de sable déjà autorisé, avec `--plugin-dir`
+pointant explicitement sur le package source ci-dessus. Le préflight relève de nouveau
+la version hôte (PAT-16 observait 2.1.285), le fournisseur et l'accès souscription
+(PAT-16 observait firstParty/Pro), le SHA/digest et le binding exact. Une valeur
+indisponible reste `unknown` ; aucune parité avec le cache installé n'est inférée.
+
+| Chemin | Ressources existantes et lectures bornées |
+| --- | --- |
+| YouTrack × Claude | P61Y : index/détail ADR-2, P61Y-4/P61Y-6, Epics P61Y-5/P61Y-7, grooming complet, changelog et bridge du scope frais 4/6 |
+| Linear × Claude | PAT synthétique : index/détail ADR-2, PAT-77/PAT-78, Epics PAT-83/PAT-84, grooming complet, changelog et bridge scope 77/78/80/81 |
+| GitHub Projects × Claude | P61R privé/Project #10 : index/détail ADR-8, P61R-6/P61R-9, grooming complet, changelog et bridge du scope 6 |
+
+Le parent demandé est `sonnet-5.5`/`medium` ; la valeur attendue au transport est
+`claude-sonnet-5-5`/`medium`. Capturer séparément la demande, la transmission et les
+observations runtime disponibles ; une auto-déclaration de modèle n'est pas une
+observation native. Les plans locaux de rôles doivent donner scout `haiku-4.5` →
+`claude-haiku-4-5-20251001`, effort `null`/N-A sans transmission, implémenteur
+`sonnet-5.5` → `claude-sonnet-5-5`/`medium`, reviewer et architecte `opus-5.5` →
+`claude-opus-5-5`/`high`. Ces plans ne dispatchent aucun enfant et ne prouvent pas
+son identité observée. Les identités PAT-16 restent seulement ses observations
+natives à `a17bf3d` et `ec662ec`.
+
+Dans chaque session, autoriser uniquement les lectures nécessaires : binding,
+`query adrs`, `query adr`, `query issue`, `query profile groom`, `query changelog`
+et bridge Ship-iOS en lecture seule. Capturer les coordonnées, receipts existants,
+projections, pagination/troncature, fin du stream et complétude d'usage. Arrêter sur
+mismatch, indisponibilité ou plafond. Aucune création, édition, acceptation ADR,
+clôture, changement de lien, PR, merge, tag, appel Apple ou modification de cache.
+Ce replay prouve au mieux la lecture d'intégration Claude après routage ; il ne
+remplace pas un start/reprise/PR/review/merge autonome frais encore absent, ni les
+cas adverses/migration non couverts. L'audit E2E de chaque cellule reste requis.
+
+Borne proposée, non exécutée et sans autorisation implicite : trois parents au total,
+concurrence un, 12 tours maximum par parent, plafond catalogue 3 USD par parent et
+9 USD cumulé, zéro reprise et zéro enfant, aucun crédit supplémentaire/API.
+Avant lancement, le coordinateur doit rapprocher cette proposition du budget PAT-61
+restant et de son autorité de dispatch ; leur solde n'est pas établi par ce dossier.
+Les sept parents/six enfants PAT-16 et les quatre appels de qualification Codex restent
+épuisés. Le routage ordinaire d'implémentation n'ouvre aucun nouveau slot de recette.
+Si le reliquat ne couvre pas ce plan, rapporter l'ambiguïté sans lancer ni élargir.
+PAT-92 (projection Epic Linear), les gaps E2E/adverses/migration et ce replay demeurent
+ouverts ; PAT-62 conserve l'installation propre/upgrade après publication.

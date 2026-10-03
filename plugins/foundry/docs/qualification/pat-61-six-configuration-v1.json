@@ -7,11 +7,165 @@
     "unknown": "blocks PASS; it must not be projected as success"
   },
   "current_checkpoint": {
-    "head": "1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe",
-    "integration": "doc 84cfaa6 followed by conflict-free merge origin/main",
-    "plugin": "Foundry 0.9.0 pre-publication; 257 files; sha256(git archive --format=tar HEAD plugins/foundry)=b4a6b872e056fb7575db9551462cb5e86082d72960f162e5426200902ac225cd",
-    "validation": "3215 public passed, 10 deselected; 108 conformance passed, 3128 deselected",
-    "boundary": "source/conformance checkpoint only; does not rerun historical journeys, official installation, or PAT-61 CI"
+    "head": "83ca100f6a23fe15cf9e4a4f2313c0bfbb507b5c",
+    "integration": "PAT-16 PR #70 merged at c8c4073ca45656b46050418f187f26bf4cccb767; integrated source checkpoint, not provider replay",
+    "plugin": "Foundry 0.9.0 source; 347 tracked files; sha256(git archive --format=tar HEAD plugins/foundry)=51305c194ebcb5ec8810986fc24dad2cc08488f95a26ee1a8f60a0663dabe9d5",
+    "root": "/Users/pato/.codex/worktrees/pat68-resume/patolabs-plugins",
+    "validation": "3390 public passed, 10 deselected; 108 conformance passed, 3303 deselected; 24 shared-routing passed",
+    "boundary": "source/conformance checkpoint only; historical journeys keep original refs; no PAT-61 CI, provider replay or installed 1.0 parity inferred"
+  },
+  "historical_source_checkpoints": [
+    {
+      "head": "1ee3f0aeb34256131bdf4f3d4c4c4d66f5e057fe",
+      "integration": "doc 84cfaa6 followed by conflict-free merge origin/main",
+      "plugin": "Foundry 0.9.0 pre-publication; 257 files; sha256(git archive --format=tar HEAD plugins/foundry)=b4a6b872e056fb7575db9551462cb5e86082d72960f162e5426200902ac225cd",
+      "validation": "3215 public passed, 10 deselected; 108 conformance passed, 3128 deselected",
+      "boundary": "source/conformance checkpoint only; does not rerun historical journeys, official installation, or PAT-61 CI"
+    }
+  ],
+  "post_PAT16_delivery": {
+    "pr": "https://github.com/patobiskoto/patolabs-plugins/pull/70",
+    "merge_sha": "c8c4073ca45656b46050418f187f26bf4cccb767",
+    "reviewed_head": "07b0e8dc964eb18777b95270b5dade4e78e25afb",
+    "proof_id": "ddecc855512bb2ed19d1267905dae0acbaea312ec8e7140889bde0a8f15e7573",
+    "state": "done",
+    "ac_done": 16,
+    "ac_total": 16,
+    "acceptance_status": "accepted",
+    "promotion": "human-approved source defaults; historical PAT-16 handoff/native files keep their original pending/failure statuses",
+    "evidence": [
+      "pat-16-pat61-handoff.md",
+      "pat-16-claude-default-promotion.md",
+      "pat-16-native-frontmatter-observations.json",
+      "pat-16-native-complement-observations.json"
+    ]
+  },
+  "post_PAT16_epic_checkpoint": {
+    "human_verdict": "accepted for five proposed graphs",
+    "closures": {
+      "P61Y-5": {
+        "state": "done",
+        "normalized_state": "done",
+        "native_state": "done",
+        "projection_status": "native-only",
+        "acceptance_status": "unknown",
+        "ac_done": 0,
+        "ac_total": 2,
+        "version": 1791040505066,
+        "audit_marker": "foundry-epic-closure.v1:0a6436cb01d7ed44cf5555a400de59d7ca62c01ba4e5ac0c5213e8712ab3d100"
+      },
+      "P61Y-7": {
+        "state": "done",
+        "normalized_state": "done",
+        "native_state": "done",
+        "projection_status": "native-only",
+        "acceptance_status": "unknown",
+        "ac_done": 0,
+        "ac_total": 2,
+        "version": 1791040513815,
+        "audit_marker": "foundry-epic-closure.v1:f3f74a1b6e819b099132c6826040d9d163791443182287744a2bace8d4f4cc27"
+      },
+      "P61R-9": {
+        "state": "done",
+        "normalized_state": "done",
+        "native_state": "done",
+        "projection_status": "aligned",
+        "acceptance_status": null,
+        "ac_done": 0,
+        "ac_total": 2,
+        "version": 209517521855469712
+      },
+      "PAT-83": {
+        "closure": "valid authenticated Epic audit; existing intent completed",
+        "audit_id": "linear:epic:68d62ab643e087354e76596c92627e5c890c9edcec9a7d61fb4d1184e0faeca5",
+        "closed_parent_version": 1791040570737,
+        "native_state": "done",
+        "observed_state": null,
+        "projection_status": "unknown",
+        "get_issue_error": "TrackerConflictError: Linear native state changed outside lifecycle",
+        "ac_done": 0,
+        "ac_total": 2
+      },
+      "PAT-84": {
+        "closure": "valid authenticated Epic audit; existing intent completed",
+        "audit_id": "linear:epic:cbf12439d7e5ca84868dcf38f9a1aea5bb3fc40cae12aa6dc907a6a3286564d7",
+        "closed_parent_version": 1791040663566,
+        "native_state": "done",
+        "observed_state": null,
+        "projection_status": "unknown",
+        "get_issue_error": "TrackerConflictError: Linear native state changed outside lifecycle",
+        "ac_done": 0,
+        "ac_total": 2
+      }
+    },
+    "boundary": "all five closure effects completed; Linear ordinary lifecycle rejects valid non-code Epic audit, a current projection regression; no cell promotion",
+    "projection_regression": {
+      "issue_id": "PAT-92",
+      "state": "in-progress",
+      "type": "Bug",
+      "priority": "P1",
+      "estimate": 2,
+      "ac_total": 4,
+      "parent": "PAT-51",
+      "branch": "fix/pat-92-reconnaître-la-clôture-auditable-des",
+      "worktree": "/Users/pato/.codex/worktrees/linear-epic-projection/patolabs-plugins",
+      "boundary": "tracked and started only; no repair or delivery inferred",
+      "creation_readback": "one issue confirmed; native Linear auto-linked literal linear.py and removed terminal newline; no recreation"
+    }
+  },
+  "post_PAT16_replay_plan": {
+    "status": "planned_not_executed; remaining PAT-61 budget/dispatch authority must be reconciled before launch",
+    "source_head": "83ca100f6a23fe15cf9e4a4f2313c0bfbb507b5c",
+    "affected_cells": [
+      "youtrack-claude",
+      "linear-claude",
+      "ghprojects-claude"
+    ],
+    "resources": {
+      "youtrack": "existing P61Y sandbox, ADR-2, P61Y-4/P61Y-6, Epics P61Y-5/P61Y-7, fresh release scope 4/6",
+      "linear": "existing PAT synthetic sandbox, ADR-2, PAT-77/PAT-78, Epics PAT-83/PAT-84, release scope 77/78/80/81",
+      "ghprojects": "existing P61R private recovery sandbox/Project #10, ADR-8, P61R-6/P61R-9, release scope 6"
+    },
+    "operations": [
+      "one source-mode readonly Claude parent per tracker; explicit cwd and --plugin-dir; no child dispatch",
+      "record host/provider/access and source digest before any call; resolve local role plans without provider dispatch",
+      "query binding, ADR index/detail, named issues and Epic projections, complete profile groom, populated changelog and readonly Ship-iOS bridge; compare exact coordinates and receipts; no mutations",
+      "record requested/transmitted/observed model and effort separately, stream completion, usage completeness, truncation and unknowns; stop on mismatch or unavailable",
+      "compare retained original E2E proofs; source readonly replay covers integration reading only, not a fresh autonomous start/PR/review/merge journey"
+    ],
+    "identity": {
+      "parent_requested": "sonnet-5.5 / medium",
+      "parent_expected_transmitted": "claude-sonnet-5-5 / medium",
+      "parent_observed": "unknown until actual replay; self-report is not evidence",
+      "child_plans_only": {
+        "scout": "haiku-4.5 -> claude-haiku-4-5-20251001; effort null/N-A, no effort transmitted",
+        "implementer": "sonnet-5.5 -> claude-sonnet-5-5; medium",
+        "reviewer": "opus-5.5 -> claude-opus-5-5; high",
+        "architect": "opus-5.5 -> claude-opus-5-5; high"
+      },
+      "boundary": "local plans demonstrate requested/transmitted intent only; PAT-16 native observations remain at original refs; no new child identity inferred"
+    },
+    "budget": {
+      "proposal_only": true,
+      "max_parents": 3,
+      "max_parallel": 1,
+      "max_turns_per_parent": 12,
+      "max_list_price_usd_per_parent": 3,
+      "max_list_price_usd_total": 9,
+      "retries": 0,
+      "child_dispatches": 0,
+      "extra_credits_or_api": false,
+      "authority": "not a grant; consume only reconciled remaining PAT-61 allowance; stop if unavailable or exceeded",
+      "exhausted": "PAT-16 seven parents/six children and four Codex qualification calls remain exhausted; ordinary implementation route grants no qualification budget"
+    },
+    "codex_impact": "24 shared-routing plus 108 conformance and 3390 public passes at integrated source are offline regression evidence; Codex defaults/qualification proofs remain unchanged; no new Codex qualification calls",
+    "remaining_gaps": [
+      "fresh Claude integration replay on three trackers",
+      "fresh autonomous E2E segments absent from historical cells are not supplied by readonly replay",
+      "PAT-92 Linear Epic projection regression blocks ordinary get_issue despite authenticated closure audits",
+      "remaining adverse cases, migration and per-cell required journey audit",
+      "global PAT-61 current issue AC 0/9; no PASS; official clean install/upgrade remains PAT-62 after publication"
+    ]
   },
   "budget": {
     "nominal_paths_per_cell": 1,
