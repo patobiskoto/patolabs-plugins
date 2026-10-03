@@ -381,7 +381,7 @@
     "authorized_spend_usd": 0,
     "paid_trials_authorized": false
   },
-  "promotion": "blocked pending explicit human approval of contract and proposed ADR, deterministic qualification, authorized campaign, independent review, exact-SHA CI, and per-host rollback proof",
+  "promotion": "contract and PAT-ADR-0010 approved; blocked pending deterministic qualification including the four approved but unexecuted native smoke slots, independent review, exact-SHA CI, and per-host rollback proof; the optional paid historical benchmark has zero authorized spend and requires separate signed authority",
   "adr_index": {
     "read_at": "2026-10-03",
     "entries": [
@@ -603,7 +603,7 @@
       }
     ]
   },
-  "artifact_kind": "sanitized observation and proposed contract; not a Foundry receipt or attestation",
+  "artifact_kind": "sanitized observation and approved contract; not a Foundry receipt or attestation",
   "accepted_adr": {
     "id": "PAT-ADR-0010",
     "status": "accepted",

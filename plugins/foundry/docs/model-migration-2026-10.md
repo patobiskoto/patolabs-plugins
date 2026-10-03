@@ -34,8 +34,9 @@ confirment `missing_relations`. Les mentions textuelles restent consultables,
 mais aucune relation Linear native n'est inventée. Distinguer aussi le digest
 du corps source (`source_body_sha256`) de celui de l'enveloppe/version Linear :
 ils attestent des objets différents. Les versions historiques non accessibles
-restent une lacune déclarée. La préparation ne change aucun statut accepté. Une proposition distincte sera
-créée dans Linear avant validation humaine, sans acceptation implicite.
+restent une lacune déclarée. Cet état de préparation n'avait changé aucun statut
+accepté. La décision distincte a depuis été enregistrée dans Linear comme
+PAT-ADR-0010 et explicitement approuvée par le mainteneur le 3 octobre 2026.
 
 Il n'existe aucun repli opérationnel vers YouTrack : l'archive reste seulement
 lisible et les preuves terminales qui y vivent restent historiques, avec leur
@@ -59,11 +60,11 @@ post-write audit mentionné dans les notes historiques (artefact non relu ici). 
 relations are unknown, not empty. This is why raw unchecked boxes in an issue
 body are neither proof of failure nor a delivery verdict.
 
-FOUNDRY-ADR-0006/0008 are amended only by the proposed decision for candidate
-qualification and a per-host default promotion. ADR-0019 remains the policy for
-ordinary role-local comparison and promotion. ADR-0020--0022 govern only the
-separate FOUNDRY-140 full escalation pipeline and are not silently imported
-into the ordinary comparison.
+FOUNDRY-ADR-0006/0008 are amended only by the accepted PAT-ADR-0010 decision
+for candidate qualification and a per-host default promotion. ADR-0019 remains
+the policy for ordinary role-local comparison and promotion. ADR-0020--0022
+govern only the separate FOUNDRY-140 full escalation pipeline and are not
+silently imported into the ordinary comparison.
 
 The historical corpus is `model-routing-pilot-results-v1.md`, frozen P-01--P-10:
 for example P-02 is `FOUNDRY-14`, Codex implementer

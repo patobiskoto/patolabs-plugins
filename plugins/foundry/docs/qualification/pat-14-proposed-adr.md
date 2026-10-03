@@ -1,7 +1,8 @@
 # Proposed ADR — bounded Codex GPT-6 qualification and promotion
 
-> PAT-ADR-0010: proposed in Linear, awaiting explicit human approval.
-> This file is a review copy; Linear remains authoritative.
+> PAT-ADR-0010: accepted in Linear after explicit human approval on 3 October 2026.
+> This file is a review copy; Linear remains authoritative. Proposal-era wording
+> below is historical and does not mean approval is pending.
 
 ## Context
 
