@@ -1006,10 +1006,14 @@ def _linear_strong_trailing_inline_code_readback(fragment: str) -> str:
     silently accepted.
     """
     replacements = []
-    for strong_start, strong_end in _paired_delimiters(fragment, "**"):
+    strong_ranges = (
+        _paired_delimiters(fragment, "**") + _paired_delimiters(fragment, "__")
+    )
+    for strong_start, strong_end in strong_ranges:
+        marker = fragment[strong_start : strong_start + 2]
         if not (
-            _is_emphasis_opener(fragment, strong_start, "**")
-            and _is_emphasis_closer(fragment, strong_end, "**")
+            _is_emphasis_opener(fragment, strong_start, marker)
+            and _is_emphasis_closer(fragment, strong_end, marker)
         ):
             continue
         strong_end += 2
@@ -1032,8 +1036,25 @@ def _linear_strong_trailing_inline_code_readback(fragment: str) -> str:
         replacements.append(
             (strong_start, strong_end, f"**{match['before']}** {match['code']}")
         )
+    # Qualify the surrounding line too: a matching-looking span in HTML or
+    # another Markdown construct is not the observed simple strong/code form.
+    # Mask literal code and every qualified span before inspecting its context.
+    context = list(_masked_backtick_spans(fragment, preserve_newlines=True))
+    for start, end, _ in replacements:
+        context[start:end] = "x" * (end - start)
+    offset = 0
+    for line in fragment.splitlines(keepends=True):
+        end = offset + len(line)
+        if line.startswith("* "):
+            # The already-qualified list conversion runs before this pass.
+            context[offset] = "x"
+        if any(offset <= start < end for start, _, _ in replacements) and any(
+            character in "*_~[]<>&\\" for character in context[offset:end]
+        ):
+            raise ValueError("unsupported strong inline-code Markdown in ADR body")
+        offset = end
     rendered = fragment
-    for start, end, replacement in reversed(replacements):
+    for start, end, replacement in sorted(replacements, reverse=True):
         rendered = f"{rendered[:start]}{replacement}{rendered[end:]}"
     return rendered
 

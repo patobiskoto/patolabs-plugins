@@ -217,7 +217,14 @@ or mask, a later qualified strong/code span. An escape consumes only its first m
 residual markers in the same run remain active and any resulting strong/code span
 outside the exact profile is refused before a provider write. The same-line profile
 excludes every separator recognized by Python `splitlines()` from both the leading
-text and the code fragment, including CR and Unicode line separators. Fenced code remains
+text and the code fragment, including CR and Unicode line separators. On a line
+containing this form, surrounding text must also be unmarked: after literal inline
+code and qualified spans are masked, `*`, `_`, `~`, `[`, `]`, `<`, `>`, `&` and `\`
+are conservatively unqualified. This refuses HTML attributes, wrapping marks, link
+labels and marked siblings instead of interpreting their contents as the observed
+form. The already-qualified leading `* ` list marker is preserved. Strong/code
+written with `__` is unqualified too. Plain surrounding text,
+literal inline code and multiple qualified spans remain supported. Fenced code remains
 byte-exact. This is
 source-to-readback only: the witness retains
 the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or globally
