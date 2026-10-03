@@ -276,6 +276,26 @@ def test_whitelist_rejects_unknown_model_and_sensitive_free_fields(tmp_path):
     assert not (tmp_path / "telemetry" / "journal.ndjson").exists()
 
 
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        ("gpt-6-luna", "low"),
+        ("gpt-6.1-sol", "medium"),
+        ("gpt-6-astra", "high"),
+    ],
+)
+def test_gpt6_models_are_public_telemetry_vocabulary_with_null_metrics(model, effort):
+    event = _invocation()
+    event.update({"model": model, "effort": effort})
+    clean = validate_event(_raw(event))
+    assert clean["model"] == model
+    assert clean["usage"] == {
+        "input_tokens": {"value": None, "provenance": "unknown"},
+        "output_tokens": {"value": None, "provenance": "unknown"},
+        "total_tokens": {"value": None, "provenance": "unknown"},
+    }
+
+
 def test_project_model_and_effort_survive_write_and_export(
     tmp_path, monkeypatch, capsys,
 ):

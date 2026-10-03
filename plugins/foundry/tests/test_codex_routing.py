@@ -177,6 +177,42 @@ def test_codex_roles_receive_the_resolved_explicit_spawn(
     ))
 
 
+def test_unqualified_gpt6_candidate_example_is_explicit_without_changing_defaults(tmp_path):
+    config = tmp_path / ".foundry" / "model-routing.json"
+    config.parent.mkdir()
+    config.write_text(
+        (PLUGIN_ROOT / "examples" / "codex-gpt-6-candidates.json").read_text(),
+        encoding="utf-8",
+    )
+    expected = {
+        "scout": ("gpt-6-luna", "low"),
+        "implementer": ("gpt-6.1-sol", "medium"),
+        "reviewer": ("gpt-6.1-sol", "high"),
+        "architect": ("gpt-6.1-sol", "max"),
+    }
+    for role, (model, effort) in expected.items():
+        plan = codex_spawn_plan(
+            role, _packet(), root=tmp_path,
+            review_claim=_review_claim(tmp_path, role.encode()) if role == "reviewer" else None,
+        )
+        assert (plan["spawn"]["model"], plan["spawn"]["reasoning_effort"]) == (model, effort)
+        assert plan["route"]["sources"] == {
+            "tier": "default", "model": "project", "effort": "project",
+        }
+
+    fallback = codex_spawn_plan(
+        "implementer", _packet(), root=tmp_path, available_models={"gpt-6-luna"},
+    )
+    assert (fallback["route"]["selected_tier"], fallback["spawn"]["model"]) == (
+        "economy", "gpt-6-luna",
+    )
+    with pytest.raises(RoutingUnavailableError, match="Aucun modèle disponible"):
+        codex_spawn_plan(
+            "implementer", _packet(), root=tmp_path,
+            available_models={"gpt-5.6-terra"},
+        )
+
+
 def test_codex_user_request_wins_over_project_policy(tmp_path):
     config = tmp_path / ".foundry" / "model-routing.json"
     config.parent.mkdir()

@@ -91,7 +91,7 @@ inside that one scope. For example, a six-level family can expose `xhigh` while 
         "version": 1,
         "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
         "inadmissible": {
-          "ultra": "automatic task delegation is inadmissible pending a Foundry ADR"
+          "ultra": "automatic task delegation is inadmissible by PAT-ADR-0010"
         }
       }
     }
@@ -99,7 +99,7 @@ inside that one scope. For example, a six-level family can expose `xhigh` while 
 }
 ```
 
-`ultra` is inadmissible by default pending the separate delegation-authority ADR.
+`ultra` is inadmissible by PAT-ADR-0010.
 Unknown efforts name both the rejected level and the levels accepted by the relevant
 scope. Claude host translations are also declarative: `claude_models` may map a new
 canonical policy model to its Agent wire alias; a missing translation fails explicitly.

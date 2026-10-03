@@ -14,7 +14,7 @@ from typing import Mapping
 
 
 ULTRA_INADMISSIBLE_REASON = (
-    "automatic task delegation is inadmissible pending a Foundry ADR"
+    "automatic task delegation is inadmissible by PAT-ADR-0010"
 )
 
 # These identifiers cross the telemetry boundary.  Keep the vocabulary open to

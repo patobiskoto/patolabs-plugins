@@ -122,6 +122,14 @@ le verdict de cette coordonnée est `inconclusif`, et non « candidat confirmé 
 `gpt-5.6-sol`/`high`, apex `gpt-5.6-sol`/`max`. Un identifiant historique reste
 tel quel ; aucune configuration, trace ou override GPT-5.6 n'est réécrit.
 
+[`examples/codex-gpt-6-candidates.json`](../examples/codex-gpt-6-candidates.json)
+est la configuration de candidats PAT-15 reproductible : Luna/low pour economy,
+Sol 6.1/medium pour balanced, Sol 6.1/high pour frontier et Sol 6.1/max pour
+apex. Elle n'est pas chargée automatiquement et ne modifie donc aucun défaut
+livré. Chaque candidat reste non qualifié jusqu'aux quatre smokes natifs, à la
+revue indépendante, à la CI du SHA exact et à la preuve de rollback exigés par
+PAT-ADR-0010.
+
 Le resolver applique, pour un tier, la précédence demande explicite de
 l'utilisateur, rôle/mapping du projet, puis défaut Foundry. Un mapping projet
 est champ par champ : `model` et `effort` peuvent provenir de sources
@@ -133,10 +141,13 @@ promotion.
 
 Les efforts sont ordonnés seulement dans `(hôte, famille, version de
 politique)`. Le code actuel déclare le scope Codex `default` v1 (`low`,
-`medium`, `high`, `xhigh`, `max`) et `gpt-6` v1 avec la même liste plus
-`ultra`. `ultra` est explicitement inadmissible pour la délégation, même dans
-ce scope, par FOUNDRY-ADR-0013 ; `none` est non applicable à la délégation
-actuelle parce qu'il n'est dans aucun scope Codex déclaré. Une option d'effort absente hérite du mapping ; un effort demandé inconnu
+`medium`, `high`, `xhigh`, `max`) et, séparément, les scopes `gpt-6-luna`,
+`gpt-6.1-sol` et `gpt-6-astra` v1 avec la même liste plus `ultra`. Il n'existe
+pas de scope générique `gpt-6` : une capacité d'une famille ne rend donc pas
+un effort valide pour un autre modèle. `ultra` est explicitement inadmissible
+pour la délégation, même dans ces scopes, par PAT-ADR-0010 ; `none` est non
+applicable à la délégation actuelle parce qu'il n'est dans aucun scope Codex
+déclaré. Une option d'effort absente hérite du mapping ; un effort demandé inconnu
 ou inadmissible échoue avec son scope et les niveaux acceptés : il ne
 devient jamais `low`. Les niveaux ne sont pas comparables d'une famille ou d'un
 hôte à l'autre.
@@ -150,11 +161,12 @@ final. Aucun fallback intergénérationnel, changement de gate ou accès suppos�
 n'est inféré hors de ce chemin déclaré.
 
 Il n'y a pas de `.foundry/model-routing.json` dans ce dépôt aujourd'hui.
-Avant M2, l'ajout des candidats devra déclarer leurs mappings, scopes et
-vocabulaire de télémétrie de façon cohérente. Le préfixe `gpt-6` sélectionne
-actuellement un scope d'effort ; il ne déclare pas une identité de télémétrie.
-`telemetry.KNOWN_MODELS` ne contient aujourd'hui que les modèles GPT-5.6 et
-Claude livrés. Lors de la préparation d'une invocation Codex, la façade ajoute
+Cette tranche déclare les mappings candidats, scopes et vocabulaire de
+télémétrie de façon cohérente. Un scope explicite par modèle (`gpt-6-luna`,
+`gpt-6.1-sol` ou `gpt-6-astra`) sélectionne actuellement son effort ; il ne
+déclare pas une identité de télémétrie. `telemetry.KNOWN_MODELS` contient les
+modèles GPT-5.6, Claude et les trois identifiants GPT-6 déclarés. Lors de la
+préparation d'une invocation Codex, la façade ajoute
 toutefois le `route.model` déjà résolu à son vocabulaire d'observation : une
 demande directe hors gate peut donc conserver son modèle GPT-6 résolu sans une
 déclaration projet qui en serait l'unique source. Ce complément ne déclare pas
