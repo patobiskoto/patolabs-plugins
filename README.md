@@ -23,6 +23,12 @@ codex plugin add ship-ios@patolabs
 The skill names are identical. Invoke them as `/foundry:frame` in Claude Code and
 `$foundry:frame` in Codex (same rule for `ship-ios`).
 
+**Release candidate prepared on 2026-10-03:** Foundry **1.0.0** on both hosts,
+compatible with Ship-iOS **0.3.0**. Publication and official clean-install/upgrade
+readbacks remain pending; a source manifest is not an installed-version proof.
+See the [release notes and six-configuration matrix](plugins/foundry/docs/release-1.0.0.md)
+and the [per-repository setup and upgrade guide](plugins/foundry/docs/migration-1.0.0.md).
+
 ## Public scope
 
 This repository is published under [Apache-2.0](LICENSE). It is maintained by the
@@ -33,16 +39,20 @@ the product backlog is kept out of this repository.
 To report a vulnerability, use [GitHub private vulnerability reporting](SECURITY.md).
 Do not disclose security details in a pull request, commit, or public discussion.
 
-Foundry ships YouTrack, DevHubTracker, and a fail-closed Linear issue adapter, plus the
-GitHub code-host adapter. Linear requires explicit repository/team/project/workflow-state/
-label/milestone IDs and resolves them only from the actual checkout's canonical Git
-remote. It supports strict reads, issue creation, and non-replacing relations/comments.
-Existing-issue field, state, parent, body, and AC replacement remain unavailable without
-provider CAS. Foundry's PR lifecycle is instead represented by deterministic append-only
-Linear comments: Foundry queries project the proven state, PR link and AC result while
-the native Linear fields remain untouched. A complete cockpit Evidence Plane envelope
-can be journaled but has no state, AC or merge authority. Linear stores Foundry ADRs as
-versioned, witness-bound project Documents; atomic Epic closure remains unavailable.
+Foundry V1 covers YouTrack, Linear, and **private personal GitHub Projects bound to a
+private repository**, with the GitHub code-host adapter. Public/organization Projects
+and GitHub Apps are unqualified. DevHubTracker remains an optional adapter outside this
+V1 matrix. Each checkout selects one explicit tracker/project binding by its canonical
+Git remote. The fail-closed Linear issue adapter requires explicit repository/team/project/
+state/type/label/milestone IDs selected from the actual checkout's canonical Git
+remote. Linear supports bounded grooming of fields, body and parent; its delivery
+state, PR and AC authority use deterministic append-only receipts, with targeted native
+state synchronization. Native AC checkbox replacement remains unavailable. Linear ADRs
+are versioned, witness-bound project Documents; GitHub ADRs use reserved Issue supports
+and integrity-checked version comments. Epic closure is audited and non-atomic on the
+three V1 trackers. Bounded detection does not exclude an external overwrite between
+the fresh read and write (S1→S2). A cockpit Evidence Plane envelope is advisory and
+has no state, AC or merge authority.
 This repository itself is bound to Linear (project PAT) for issues and ADRs; the
 historical YouTrack project is designated a read-only origin archive (see the cutover
 incident record in `plugins/foundry/docs/linear-cutover-operations.json`). ChatGPT MCP activation
@@ -52,7 +62,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | Guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution with YouTrack/DevHubTracker or an append-only projected Linear lifecycle. Judgment in the skills, invariants in the code. |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Candidate 1.0.0. |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog
@@ -72,8 +82,8 @@ plugins/
 ```
 
 Each plugin keeps its own `version`, `CHANGELOG`, and lifecycle — the monorepo unifies
-distribution, not versioning. See `plugins/foundry/docs/adr/FOUNDRY-ADR-0004` for why this
-is a monorepo (and what it deliberately does not change).
+distribution, not versioning, per accepted FOUNDRY-ADR-0004/0005 (retrievable through
+`query adr <ADR-ID>` from this bound checkout).
 
 ## Develop
 

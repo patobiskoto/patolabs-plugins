@@ -1,7 +1,7 @@
 {
   "name": "foundry",
-  "description": "Idea to merge: guided framing, ADRs, precise issues, value-first roadmap, and a gated delivery loop over pluggable tracker and code-host adapters.",
-  "version": "0.9.0",
+  "description": "Idea to merge with YouTrack, Linear, or qualified private personal GitHub Projects and the GitHub code-host. Bounded writes, versioned ADRs, and proof-bound delivery.",
+  "version": "1.0.0",
   "author": {
     "name": "pato"
   },
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Foundry",
     "shortDescription": "Frame, plan, execute, and merge with durable project memory.",
-    "longDescription": "Turn rough ideas into ADR-backed issues, sequence work by value, and run a gated issue-to-merge delivery loop over YouTrack, DevHubTracker, or a Linear append-only lifecycle projection and GitHub with Lupin, Eiffel, Maigret, and Vauban. Linear never replaces existing issue fields and keeps ADRs as versioned, witness-bound project Documents; its native board-state sync and atomic Epic closure remain unavailable to Foundry.",
+    "longDescription": "Frame ADR-backed issues and deliver through review, exact-SHA CI and human gates with Lupin, Eiffel, Maigret, and Vauban. V1 covers YouTrack, Linear, and private personal GitHub Projects bound to a private repository. Bounded grooming writes and audited non-atomic Epic closure claim no provider CAS or concurrency exclusion. Linear uses an append-only lifecycle projection with targeted native state synchronization and witness-bound project Documents; native AC checkbox replacement remains unavailable. DevHubTracker remains optional outside the V1 qualification matrix.",
     "developerName": "patolabs",
     "category": "Productivity",
     "capabilities": [

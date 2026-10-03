@@ -1,7 +1,7 @@
 {
   "name": "foundry",
-  "description": "The foundation: idea → guided brainstorm → ADRs + precise issues → value-first roadmap → gated execution with YouTrack, DevHubTracker, or a Linear append-only lifecycle projection and code-hosts. Linear never replaces existing issue fields and keeps ADRs as versioned, witness-bound project Documents; its native board-state sync and atomic Epic closure remain unavailable to Foundry. Delegated identities: Lupin, Eiffel, Maigret, and Vauban.",
-  "version": "0.9.0",
+  "description": "Idea to merge with YouTrack, Linear, or qualified private personal GitHub Projects and the GitHub code-host. Bounded grooming writes and audited non-atomic Epic closure; no provider CAS or concurrency exclusion claimed. Linear uses an append-only lifecycle projection with targeted native state synchronization and witness-bound project Documents; native AC checkbox replacement remains unavailable. DevHubTracker remains optional outside the V1 qualification matrix. Delegated identities: Lupin, Eiffel, Maigret, and Vauban.",
+  "version": "1.0.0",
   "author": { "name": "pato" },
   "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/foundry",
   "repository": "https://github.com/patobiskoto/patolabs-plugins",
@@ -50,7 +50,7 @@
     "FOUNDRY_TRACKER": {
       "type": "string",
       "title": "Tracker provider",
-      "description": "youtrack (default) | devhub | linear (checkout-bound reads/create, append-only projected lifecycle and versioned ADR Documents; no existing-field replacement, native board-state sync or atomic Epic closure) | ghprojects (stub)",
+      "description": "youtrack (default) | linear | ghprojects (qualified private personal Project and private repository only) | devhub (optional, outside V1 qualification). Explicit checkout binding selects one tracker. V1 supports bounded writes and audited non-atomic Epic closure; Linear lifecycle and AC authority remain proof-bound.",
       "default": "youtrack"
     },
     "FOUNDRY_CODEHOST": {
@@ -62,7 +62,7 @@
     "FOUNDRY_CLAUDE_AVAILABLE_MODELS": {
       "type": "string",
       "title": "Available Claude routing models",
-      "description": "Optional canonical CSV, e.g. haiku-4.5,sonnet-5,opus-5,fable-5"
+      "description": "Optional canonical CSV, e.g. haiku-4.5,sonnet-5.5,opus-5.5. Declared availability does not prove account access or runtime identity."
     },
     "FOUNDRY_LOCAL_SCOUT_ENABLED": {
       "type": "string",
@@ -90,7 +90,7 @@
     "FOUNDRY_LOCAL_SCOUT_CLOUD_FALLBACK": {
       "type": "string",
       "title": "Legacy cloud fallback authorization",
-      "description": "Deprecated 0.x compatibility alias: 0 or 1. Migrate to FOUNDRY_LOCAL_SCOUT_ON_FAILURE before 1.0. A legacy 1 remains effective when Claude injects the canonical manifest default error.",
+      "description": "Deprecated compatibility alias retained in 1.0: 0 or 1. Prefer FOUNDRY_LOCAL_SCOUT_ON_FAILURE. A legacy 1 remains effective when Claude injects the canonical manifest default error.",
       "default": "0"
     },
     "FOUNDRY_LOCAL_SCOUT_ON_FAILURE": {
