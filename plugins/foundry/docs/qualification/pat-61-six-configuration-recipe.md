@@ -776,9 +776,43 @@ d’impact explicite. **ADR Linear × Claude est composite : création Claude,
 récupération/évolution PAT-85 par coordinateur, relecture exacte Claude** ; aucune
 mutation V2 Claude n’est inventée. Aucun nouveau start/PR/merge sous les défauts
 PAT-16 n’est affirmé : leur qualification native et le replay de lecture sont
-distincts. Ces limites doivent être jugées explicitement par la revue indépendante
-contre les neuf AC. Source 0.9.0 n’est pas installation 1.0 ; PAT-62 conserve les
+distincts. Cette attribution V1→V2 reste historique. Le complément natif V2→V3
+ci-dessous actualise l’étape courante ; la revue indépendante doit juger les neuf AC.
+Source 0.9.0 n’est pas installation 1.0 ; PAT-62 conserve les
 vérifications officielles après publication. Le suivi tracker reste 0/9 avant revue.
 
 Documentation R5 : manifeste de recette actualisé, observation réelle copiée avec
 digests et bilan final des 36 étapes ; les snapshots historiques sont préservés.
+
+## Complément natif autorisé après le BLOCK AC1/AC6
+
+La revue du diff `608e5bc3f9092d5412574187bd42fd6471c5f4d32f6034b2c4976819901f31f7`
+a rendu AC1 `not_covered`, AC6 `contradicted` et qualité `blocked` ; preuve terminale
+`4349771b741ceabb46506a2b59c84470b6fa562221a58547a3094d49af6fb5ca`, génération 1.
+Ce BLOCK est conservé dans le manifeste, avec les neuf outcomes et leurs digests.
+
+Après autorisation explicite « Ok go » du mainteneur, un seul parent natif Claude
+2.1.285, source `4f142e5ce4baacbdbff7d1486c4870126b1afc91` / Foundry 0.9.0, a
+appelé une fois `python3 /tmp/pat61-v3-native-helper.py`. Le helper a exécuté le
+CLI Foundry `adr edit PAT-ADR-0002` sur le sandbox Linear puis relu exactement le
+corps attendu : seul le marqueur V2→V3 change. Le statut `proposed`, titre, relations,
+projet et anciens documents sont conservés ; ref `d590fe2b-eb78-4297-9391-5be4e68d34f7`
+→ `b6a6f4aa-47a2-40db-a3b0-1cbb9f419128`, séquence 1→2. La récupération V1→V2
+PAT-85 reste attribuée au coordinateur.
+
+La [copie exacte de l’observation native](pat-61-native-adr-evolution-observation.json),
+SHA256 `6694e463f5e83907f19156d7d0808e292dad02d1573f4be208521ddddabd0b26`,
+est une observation, pas un receipt. Elle conserve les digests des commandes,
+readbacks, helper, runner, autorisation et stream brut `/tmp/pat61-v3-native-stream.jsonl`
+(SHA256 `a71cdf030d37c1b8d3adeadbe451c0ea4da846d15627f58ab7b81b9c96c49678`).
+Demandé Sonnet5.5/medium, transmis `claude-sonnet-5-5`/medium ; modèle runtime
+observé `claude-sonnet-5-5`, effort runtime non exposé et quota non observé.
+Succès natif en deux tours, 0.0277176 USD catalogue, sans assertion de facture.
+Le budget distinct 1 parent / 12 tours / 3 USD catalogue / 0 enfant / 0 reprise /
+0 crédit API additionnel est achevé et épuisé ; aucun budget historique n’est renouvelé.
+
+Les six cellules/36 étapes restent un PASS proposé, désormais avec une évolution
+ADR native Linear × Claude identifiée. Nouvelle revue indépendante, CI du commit
+exact et merge Foundry restent requis ; aucune livraison PAT-61, release Foundry 1.0
+ou installation officielle n’est déclarée. Documentation R5 : recette, manifeste,
+bilan et observation actualisés pour ce complément.

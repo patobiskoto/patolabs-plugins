@@ -242,9 +242,9 @@
           "existing_proofs": "shared freshly created sandbox, independent cwd/binding selection; historical source loading documented in recipe; no fresh repository claimed on final replay; saved evidence: /tmp/pat61-final-native-linear-binding.json, /tmp/pat61-final-native-stream.jsonl"
         },
         "adr_create_and_evolve": {
-          "source": "Claude native create14b4f1802386806ebf2cc0ea1e47fff280fe3efa; PAT85 targeted recovery/evolution; Claude native integration read 4559570",
-          "coordinates": "PAT-ADR-0002 V0=95b3ab9e-72ee-454b-8178-0c6e014f0eb0; V1=d590fe2b-eb78-4297-9391-5be4e68d34f7; proposed V2",
-          "existing_proofs": "composite evidence: native Claude create encountered renderer conflict; PAT85 provider-live recovery proves source_exact and idempotent replay0mutations; V2 chain/readback exists; final Claude independently reads exact proposed V2. The V2 mutation is not attributed to Claude without a native mutation stream; saved evidence: /tmp/pat61-linear-claude-graph-stream.jsonl, /tmp/pat61-linear-adr2-exact-read-diagnostic.json, /tmp/pat85-live-replay-report.json, /tmp/pat85-final-sandbox-adr2-v2.json, /tmp/pat61-final-native-linear-adr.json; PAT85 live-replay.py imports source in pat82-youtrack-delivery worktree, not the later4559570 root; coordinator mutation attribution is retained; V2 saved provider state is observation, not an invented invocation transcript"
+          "source": "Claude native create14b4f1802386806ebf2cc0ea1e47fff280fe3efa; PAT85 targeted recovery/evolution; Claude native integration read 4559570; authorized native Claude V2→V3 at 4f142e5ce4baacbdbff7d1486c4870126b1afc91 / Claude 2.1.285 Sonnet5.5 medium",
+          "coordinates": "PAT-ADR-0002 V0=95b3ab9e-72ee-454b-8178-0c6e014f0eb0; V1=d590fe2b-eb78-4297-9391-5be4e68d34f7; proposed V2; V3=b6a6f4aa-47a2-40db-a3b0-1cbb9f419128, sequence1→2, proposed; body sha256 348166568146ab9a6664724b695e21ea4dcb6a1d231970f3a1e357b63ded481a→1e7bf0a658406145d732fde1ce3f5f7cd6b8018b1ed951893f26bdf1f3bb4e55",
+          "existing_proofs": "composite evidence: native Claude create encountered renderer conflict; PAT85 provider-live recovery proves source_exact and idempotent replay0mutations; V2 chain/readback exists; final Claude independently reads exact proposed V2. The V2 mutation is not attributed to Claude without a native mutation stream; saved evidence: /tmp/pat61-linear-claude-graph-stream.jsonl, /tmp/pat61-linear-adr2-exact-read-diagnostic.json, /tmp/pat85-live-replay-report.json, /tmp/pat85-final-sandbox-adr2-v2.json, /tmp/pat61-final-native-linear-adr.json; PAT85 live-replay.py imports source in pat82-youtrack-delivery worktree, not the later4559570 root; coordinator mutation attribution is retained; V2 saved provider state is observation, not an invented invocation transcript; new native Claude Bash invocation of python3 /tmp/pat61-v3-native-helper.py performed normal Foundry CLI adr edit PAT-ADR-0002 V2→V3 and exact reread; only marker changed, proposed/title/relations/project and existing documents preserved. Exact host/effect observation (not receipt): pat-61-native-adr-evolution-observation.json sha256:6694e463f5e83907f19156d7d0808e292dad02d1573f4be208521ddddabd0b26; raw stream /tmp/pat61-v3-native-stream.jsonl sha256:a71cdf030d37c1b8d3adeadbe451c0ea4da846d15627f58ab7b81b9c96c49678. This adds native evolution evidence without reattributing historical V1→V2."
         },
         "epic_children_dependencies_and_grooming": {
           "source": "Claude14b4f180 graph / Codex explicit Epic creation; integrated 4559570 after PAT92",
@@ -280,7 +280,7 @@
         "historical source/host stages are not rerun or relabelled by final native read",
         "runtime effort/quota unexposed remain unknown; not required provider success evidence",
         "shared Apple proof does not replace per-cell tracker integration",
-        "ADR evolution composite explicitly distinguishes native Claude create/read from PAT85 coordinator recovery/edit; no claim of native Claude V2 mutation"
+        "Historical V1→V2 remains PAT85 coordinator recovery/edit, not native Claude; new authorized V2→V3 is native Claude at source4f142e5 with exact observation, not receipt; runtime effort/quota remain unknown"
       ]
     },
     {
@@ -666,7 +666,7 @@
     "core_behavior_gaps": [],
     "current_tracker_state": "in-progress; AC0/9 before this documentation review",
     "report": "pat-61-final-qualification-report.md",
-    "interpretation": "Nine AC require six bound host integrations and explicit impact analysis; no new host-exclusive provider mutation, supersession or autonomous fresh start mandate. Operator closures/shared Apple and named source recovery are explicit composite evidence, not transferred host runtime proofs."
+    "interpretation": "Six bound host integrations retain explicit historical/operator/shared attribution. Linear × Claude now includes authorized native V2→V3 edit and exact reread at source4f142e5; historical V1→V2 remains coordinator-attributed. This corrects the proposed AC1/AC6 evidence; only fresh independent review may rule on all nine AC, followed by exact-branch CI and Foundry merge."
   },
   "saved_evidence_digests": {
     "/tmp/p61r-adr-created-oct2.json": "168b11b3f077f426977ec809bb85b099bf493e5c9a2eb2269b57720c275b8870",
@@ -745,5 +745,73 @@
     "/tmp/pat85-live-replay.py": "1ae5c8273b6873a92c30ff68d382e2f29c287847fbdff764cb0e1194d3492d53",
     "/tmp/p61y2-review-outcomes-3dc3419.json": "6a0018aeec325bf936db73cc576f129b440e17ae9dc5cc08326cc77b4b4a7efa",
     "/tmp/p61y1-review-outcomes.json": "a2a881832a668393d8f47e7c9d31aff14f4f27b1bb4bb344f23ae1a8a65896c7"
+  },
+  "native_adr_evolution_observation": {
+    "file": "pat-61-native-adr-evolution-observation.json",
+    "sha256": "6694e463f5e83907f19156d7d0808e292dad02d1573f4be208521ddddabd0b26",
+    "source_head": "4f142e5ce4baacbdbff7d1486c4870126b1afc91",
+    "boundary": "byte-exact copy of actual authorized native host/effect observation, not receipt; adds only Linear × Claude ADR V2→V3 evidence; historical producer refs and V1→V2 attribution preserved",
+    "budget_status": "completed/exhausted; 1 parent, 12 turns max, 3 USD catalogue max, 0 children/retries/additional API credits; success 2 turns and 0.0277176 USD catalogue, not invoice; no further native calls authorized"
+  },
+  "historical_blocked_review": {
+    "proof_id": "4349771b741ceabb46506a2b59c84470b6fa562221a58547a3094d49af6fb5ca",
+    "issue": "PAT-61",
+    "diff_hash": "608e5bc3f9092d5412574187bd42fd6471c5f4d32f6034b2c4976819901f31f7",
+    "generation": 1,
+    "outcomes": [
+      {
+        "id": "ac-1",
+        "digest": "e52242fc26003f35070892c2f89aa61a34474d2517a727e4a50b83d7d9689a25",
+        "verdict": "not_covered"
+      },
+      {
+        "id": "ac-2",
+        "digest": "387415ecb642b1105e9aa1a64448daa975c2380eef2c7e45732b837cd62428c0",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-3",
+        "digest": "ca51af3aa4f3b9444055d5ff0b8cb96522bd187f030ce04d1814ab6bfddd0e0b",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-4",
+        "digest": "f2c357a1cff97627baed56b13c56bba6bf4725702faeec3ce03905d2ec0e332a",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-5",
+        "digest": "581e5b645a249626fb8eba6fe89e9d13f426c75e146ccf72e3e52d8f0711eb3f",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-6",
+        "digest": "ba6f58d89efb4e9f9a451b869872c84c326039b61466ac18613b0baf07baf9bc",
+        "verdict": "contradicted"
+      },
+      {
+        "id": "ac-7",
+        "digest": "e49dab19e9d2030c5af0ddee3704d6666df64540b6917ac49e3f6f7a9ecfc336",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-8",
+        "digest": "e6118f5ea2bbff77842afd457f98f1f01ea6f9ee2a860e3fb0fd22a0d8bb4717",
+        "verdict": "pass"
+      },
+      {
+        "id": "ac-9",
+        "digest": "5012c76e365a4e36804aa965536d017ed97fbf4286f5b506f0958cc5cd35260c",
+        "verdict": "pass"
+      }
+    ],
+    "quality": "blocked",
+    "boundary": "terminal BLOCK on prior diff: AC1 not_covered and AC6 contradicted; retained as history, not superseded by a proposed assessment; fresh review/CI/Foundry merge required",
+    "acceptance_snapshot_ac_digest": "f9a2ffabc545ab54942de27ebebde7395ef06659e161e8010432882e1edcbc30",
+    "saved_file_digests": {
+      "/tmp/pat61-final-acceptance-snapshot.json": "898c8dd33cce8d4351eabf1a8fe181e8c21190cd9d26212f12718bfb219b1158",
+      "/tmp/pat61-final-review-outcomes.json": "3c11fb989a9e3837922fb69e26e725d61f0afcee9ecffe02e1bc9a4ebbe09bc1",
+      "/tmp/pat61-final-review-proof-result.txt": "a8dbe072a8d8ecac32ca55412899d55e1f52072720dfe397fdf5ab2a4c436a58"
+    }
   }
 }

@@ -2,7 +2,7 @@
 
 **Verdict proposé : PASS avec limites documentées.** Les 36 étapes requises ont des observations réelles identifiées. Ce verdict concerne la recette source bornée ; PAT-61 reste `in-progress`, AC 0/9 au readback antérieur à cette revue. Il ne vaut ni livraison, ni CI PAT-61, ni release V1.
 
-Le [manifeste](pat-61-six-configuration-v1.json) porte les coordonnées détaillées, la classification de chaque étape et les SHA256 des fichiers sauvegardés. Les `partial_evidence` sont conservés verbatim comme histoire. Les récits de blocage antérieurs ne décrivent pas la classification courante. L’[observation native](pat-61-post-integration-observation.json) est une copie exacte de `/tmp/pat61-final-native-observation.json`, sans nouveau receipt.
+Le [manifeste](pat-61-six-configuration-v1.json) porte les coordonnées détaillées, la classification de chaque étape et les SHA256 des fichiers sauvegardés. Les `partial_evidence` sont conservés verbatim comme histoire. Les récits de blocage antérieurs ne décrivent pas la classification courante. L’[observation native intégrée](pat-61-post-integration-observation.json) conserve la copie exacte de `/tmp/pat61-final-native-observation.json`. Le [complément ADR natif](pat-61-native-adr-evolution-observation.json) ajoute la copie exacte de `/tmp/pat61-v3-native-observation.json` ; aucun de ces fichiers n’est un receipt.
 
 ## Identité et périmètre
 
@@ -31,7 +31,7 @@ B = binding neuf/sélection ; A = ADR création/évolution ; G = Epic/enfants/d�
 | ghprojects-claude | passed | passed | passed | passed | passed | passed |
 | ghprojects-codex | passed | passed | passed | passed | passed | passed |
 
-La ligne Linear × Claude comporte une limite matérielle d’attribution : **la création V1 est native Claude, la récupération et l’évolution V2 appartiennent aux observations PAT-85 du coordinateur, puis Claude relit le V2 exact à 4559570**. Aucun stream natif Claude d’`adr edit` V2 n’est connu. Le PASS proposé porte sur l’intégration réelle de ce parcours réparé ; il ne certifie pas une mutation V2 autonome Claude. La revue indépendante doit juger explicitement cette composition contre les neuf AC. La recette n’ajoute pas un mandat de nouvelle campagne, de supersession ou de redémarrage autonome intégral.
+La ligne Linear × Claude conserve l’attribution historique : **création V1 native Claude, récupération/évolution V1→V2 PAT-85 par coordinateur, puis relecture native du V2 exact à 4559570**. Le complément explicitement autorisé ajoute maintenant **l’évolution native Claude V2→V3 et sa relecture exacte à source 4f142e5**. Le Bash natif a appelé une fois le helper exécutant le CLI normal Foundry `adr edit PAT-ADR-0002` ; seul le marqueur change, avec statut `proposed`, titre, relations, projet et anciens documents conservés. La nouvelle évolution est attribuée à Claude ; la récupération antérieure garde son producteur. Le PASS reste proposé pour une nouvelle revue indépendante des neuf AC.
 
 | Cellule / étape | Coordonnées réelles et attribution | Source / host |
 | --- | --- | --- |
@@ -48,7 +48,7 @@ La ligne Linear × Claude comporte une limite matérielle d’attribution : **la
 | youtrack-codex / C | P61Y-5 audit foundry-epic-closure.v1:0a6436cb01d7ed44cf5555a400de59d7ca62c01ba4e5ac0c5213e8712ab3d100 | actual operator human accepted closure after PAT-16; final authenticated native Claude read 4559570 |
 | youtrack-codex / R | PAT61 fresh receipt qualification: P61Y-4/P61Y-6 accepted only | fresh receipts after PAT82; per-host historical bridge; final Claude integration4559570 |
 | linear-claude / B | github.com/patobiskoto/foundry-v1-pat61-linear-sandbox; project {'id': 'd3d412b6-1327-4bba-905b-01e4bb29797f', 'key': 'PAT'}; configuration sha256:e45ffccbcd795f39512acae828c2f8c84fff0b73d2faf418b5f4fddf7d8ee6c7 | historical synthetic bootstrap/host selection; final integration 4559570 (Claude native read, Codex existing binding retained) |
-| linear-claude / A | PAT-ADR-0002 V0=95b3ab9e-72ee-454b-8178-0c6e014f0eb0; V1=d590fe2b-eb78-4297-9391-5be4e68d34f7; proposed V2 | Claude native create14b4f1802386806ebf2cc0ea1e47fff280fe3efa; PAT-85 targeted recovery/evolution; Claude native integration read 4559570 |
+| linear-claude / A | PAT-ADR-0002 V0=95b3ab9e-72ee-454b-8178-0c6e014f0eb0; V1=d590fe2b-eb78-4297-9391-5be4e68d34f7; proposed V2→V3 ref b6a6f4aa-47a2-40db-a3b0-1cbb9f419128, séquence1→2 | Claude native create14b4f1802386806ebf2cc0ea1e47fff280fe3efa; PAT-85 targeted recovery/evolution; Claude native integration read 4559570; authorized native Claude edit/reread4f142e5 |
 | linear-claude / G | PAT-84 -> PAT-78; PAT-78 depends-onPAT-77; historical PAT-75 depends-onPAT-74 | Claude14b4f180 graph / Codex explicit Epic creation; integrated 4559570 after PAT92 |
 | linear-claude / D | PAT-78 PR3 head631bdbd10c21f8a0004b15546af1ed0c22ef41b2 / merge8772d63f26b58d866643103179a08b65c9d69540 | 82bf3e5e1475a85d57cab23d16f5c1c9f4726a20 / Claude source Sonnet historical |
 | linear-claude / C | PAT-84 linear:epic:cbf12439d7e5ca84868dcf38f9a1aea5bb3fc40cae12aa6dc907a6a3286564d7 | human accepted operator closure; PAT92 merge5edae5165ffdc979407f79b2f4a1090000499f6d; integrated 4559570 |
@@ -74,7 +74,7 @@ La ligne Linear × Claude comporte une limite matérielle d’attribution : **la
 
 ## Analyse d’impact et limites
 
-- **B / A** : les bindings ne changent pas et sont indépendamment relus dans la même session Claude, un helper par cwd. L’évolution ADR est prouvée sur ses références d’origine et son corps terminal, avec l’attribution composite Linear détaillée ci-dessus. Aucun support ADR expérimental n’est promu. PAT-79 corrige l’acceptation synthétique étrangère, PAT-85 corrige les refus de transport : les incidents et huit BLOCK restent historiques, pas effacés.
+- **B / A** : les bindings ne changent pas et sont indépendamment relus dans la même session Claude, un helper par cwd. L’évolution ADR est prouvée sur ses références d’origine et son corps terminal, avec l’attribution historique Linear et le nouvel edit natif V2→V3 détaillés ci-dessus. Aucun support ADR expérimental n’est promu. PAT-79 corrige l’acceptation synthétique étrangère, PAT-85 corrige les refus de transport : les incidents et huit BLOCK restent historiques, pas effacés.
 - **G / C** : les liens ont été préparés avant les cinq clôtures réellement acceptées par le mainteneur. La session finale authentifie l’audit et compare exactement enfants/dépendances au snapshot courant. PAT-92 merge `5edae5165ffdc979407f79b2f4a1090000499f6d` corrige la projection Linear ; ses readbacks et groom sont sauvegardés. Parents AC0/2 et acceptation parent inconnue ne sont pas maquillés en receipts code. YouTrack reste `native-only`, Linear/GitHub `aligned`. La limite de prédécesseur pending/reopen PAT-92 reste documentée.
 - **D** : les nominales propres à chaque hôte sont conservées : Claude P61Y-6/PAT-78/P61R-6, Codex P61Y-1/2 puis reçu neuf4, PAT-74/77 et P61R-1. Le replay final est une lecture d’intégration, pas un nouveau start/PR/merge ni une preuve fraîche des enfants Eiffel/Maigret. PAT-16 a qualifié les profils natifs et leur promotion sur ses refs ; ses observations ne sont pas déplacées. PAT-15 conserve les profils Codex ; 24 contrôles partagés couvrent l’impact code commun, sans prétendre à une nouvelle exécution fournisseur Codex.
 - **R** : les scopes exacts acceptés sont YouTrack4/6, Linear77/78/80/81 et GitHub6 ; les bridges par hôte d’origine et les trois relectures natives finales sont nommés. YouTrack historique2/3 demeure `unavailable`, sans backfill. `native_capability=unavailable` pour fermeture release YouTrack/Linear correspond au contrat opérateur `record-scope-freeze` avec relecture de scope ; aucun état natif fermé n’est inventé. GitHub expose la fermeture du milestone par opérateur.
@@ -86,18 +86,55 @@ La ligne Linear × Claude comporte une limite matérielle d’attribution : **la
 
 | AC | Preuve / qualification |
 | --- | --- |
-| 1 : six parcours | 36 entrées ci-dessus et `journey_evidence`, attribution historique/composite explicite. |
+| 1 : six parcours | 36 entrées ci-dessus et `journey_evidence`, avec création historique et évolution native V2→V3 Linear × Claude ; couverture proposée après correction du BLOCK, soumise à nouvelle revue. |
 | 2 : conformité | Log `/tmp/pat61-final-integrated-conformance.log` :108 passed/3333 désélectionnés à 4559570 ; 24 shared-routing passed. Public 3418 / 10 exclus à f67fd35, code identique ; la validation locale finale ci-dessous couvre le contenu documentaire proposé avant revue. Aucun de ces tests n’est une preuve provider ou CI PAT-61. |
 | 3 : adversaires | Les neuf observations du tableau de la recette sont conservées avec leurs limites : changement de cwd même session, collisions coordonnées, ADR étrangère, global contradictoire, tokens isolés absents, ADR liée à item archivé/restauré exactement, dérive marqueur, ancien tracker archivé, rollback octets. Ce sont des opérations réelles bornées et des préflights locaux, pas des tentatives de mutations dangereuses effectivement exécutées. |
 | 4 : prérequis / migration | `/tmp/pat61-final-prerequisite-readback.json` :17 prérequis terminaux/AC complètes/accepted. Revalidation PAT-20/42/43/44/45/46/47/48 plus68 et merges exacts dans `/tmp/pat61-final-revalidation-report.json`. Les désaccords natifs historiques restent explicitement conservés. Cutover PAT-64 manifeste phase activated, copie ADR/source issues verified, source YouTrack P64Q archivée/cible GitHub P64G sélectionnée ; aucun état inconnu des relations/acceptation converti en vide. |
 | 5 : Apple | Intégration tracker propre aux six parcours, effets internes bornés à l’app de test et validation iPhone déjà reçue ; chemin commun mutualisé. |
-| 6 : bilan sans capacité inconnue promue | PASS proposé avec limites matérielles ci-dessus ; aucune capacité cœur absente démontrée ; référence aux risques résiduels des contrats existants, aucun receipt créé. |
+| 6 : bilan sans capacité inconnue promue | PASS proposé après complément natif AC1 ; BLOCK précédent conservé, sans verdict frais inventé. Effort runtime/quota inconnus, source 0.9.0 et limites ci-dessus préservés ; aucun receipt créé. |
 | 7 : PAT-15/PAT-16 | Livraisons acceptées et promotions humaines relues ; PAT-16 PR70 mergec8c4073… et preuve ddecc855… dans le manifeste/handoff. Informations modèle/effort séparées, inconnu préservé. |
 | 8 : replay / impact | Observation source 4559570 nativeClaude 2.1.285, trois helpers séquentiels couvrant les trois trackers dans une seule session ; analyse par étape ci-dessus. Contrôles Codex partagés sans nouvelle campagne. |
 | 9 : code versus installation | Source 0.9.0 ; aucun cache édité ou prétendu1.0. PAT-62 garde publication puis install/upgrade officiel. |
 
-**Aucun comportement requis réellement absent n’a été identifié dans ce périmètre composite.** La limite d’attribution ADR Linear × Claude et l’absence d’un nouveau cycle mutable sous les défauts PAT-16 sont visibles à la revue : les trois lectures natives finales et la qualification native PAT-16 ne sont pas présentées comme ce cycle. Restent les gates de livraison PAT-61 : revue indépendante, validations/tests et CI exacts, puis merge Foundry.
+**Évaluation proposée : les 36 étapes disposent désormais de preuves identifiées, dont l’évolution ADR native Linear × Claude V2→V3.** Le BLOCK AC1/AC6 antérieur reste historique ; seul un nouveau verdict indépendant peut valider cette correction. Les autres étapes gardent leurs producteurs historiques et les trois lectures intégrées ne deviennent pas un nouveau cycle mutable sous les défauts PAT-16. Restent les gates de livraison PAT-61 : revue indépendante, validations/tests et CI exacts, puis merge Foundry.
 
 ## Validation locale finale avant commit
 
 Sur le contenu proposé (parent `4559570`, sans changement de code runtime) : recette3passed ; suite publique Foundry3421passed/10deselected ; conformité108passed/3334deselected ; contrat routing11passed ; Ship-iOS35passed/11subtests ; catalogue19tests et validateur dual-runtime verts ; Ruff et `git diff --check` verts. Logs locaux `/tmp/pat61-final-{public,conformance,routing,shipios,catalogue,ruff}.log`. Ces tests ne créent aucune preuve fournisseur. La review et la CI porteront sur le commit final de la PR, pas sur une réattribution des observations historiques.
+
+## Correction AC1/AC6 et historique de revue
+
+La revue précédente reste BLOCK : AC1 `not_covered`, AC6 `contradicted`, AC2–5/7–9
+`pass`, qualité `blocked`. Sa preuve terminale
+`4349771b741ceabb46506a2b59c84470b6fa562221a58547a3094d49af6fb5ca` est liée au
+diff `608e5bc3f9092d5412574187bd42fd6471c5f4d32f6034b2c4976819901f31f7`,
+génération 1 ; les neuf outcomes/digests sont conservés dans le manifeste. Le snapshot
+AC a pour digest `f9a2ffabc545ab54942de27ebebde7395ef06659e161e8010432882e1edcbc30`.
+
+Le complément source `4f142e5ce4baacbdbff7d1486c4870126b1afc91`, Claude 2.1.285,
+Foundry 0.9.0, est lié à l’observation exacte par SHA256
+`6694e463f5e83907f19156d7d0808e292dad02d1573f4be208521ddddabd0b26`.
+Le corps ADR relu évolue de SHA256
+`348166568146ab9a6664724b695e21ea4dcb6a1d231970f3a1e357b63ded481a` vers
+`1e7bf0a658406145d732fde1ce3f5f7cd6b8018b1ed951893f26bdf1f3bb4e55`.
+Le stream brut et les readbacks/helper/runner/autorisation sont pointés avec leurs
+digests dans l’observation. Demandé Sonnet5.5/medium, transmis
+`claude-sonnet-5-5`/medium, modèle runtime observé `claude-sonnet-5-5` ; effort runtime
+non exposé et quota non observé restent inconnus. Succès en 2 tours, 0.0277176 USD
+catalogue, pas facture. Budget distinct autorisé : 1 parent / 12 tours / 3 USD catalogue /
+0 enfant / 0 reprise / 0 crédit API additionnel achevé et épuisé ; aucune invocation
+supplémentaire ni renouvellement historique. Cette observation ajoute uniquement
+l’évolution ADR Linear × Claude, sans effet sur les autres trackers, Epics, Apple
+ou parcours PR historiques.
+
+Validation locale du complément documentaire sur parent `4f142e5` :
+`pytest -q tests/test_pat61_real_qualification_recipe.py` — 4 passed ; Ruff du test
+et `git diff --check` verts. La copie native est byte-identique au fichier source ;
+les six `partial_evidence`, les digests historiques et l’ancienne observation sont
+identiques à HEAD. Ces contrôles ne remplacent pas la nouvelle revue ni la CI.
+
+Validation locale du complément avant commit (parent4f142e5, runtime inchangé) :
+4tests de recette,3422tests publics/10exclus,108conformité/3335désélectionnés,
+11routing, Ruff et diffcheck verts. Logs `/tmp/pat61-v3-{public,conformance,routing,ruff}.log`.
+La CI et la revue doivent porter sur le commit corrigé exact ; cette validation
+locale ne remplace pas ces gates ni les preuves natives.
