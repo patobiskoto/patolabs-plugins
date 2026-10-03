@@ -1039,8 +1039,9 @@ The repository CI runs `tests/test_routing_contract.py` as an explicit invocatio
 For every logical role it verifies the resolved provider model, effort/profile, Claude
 turn cap and frontmatter tool boundary, plus the Codex fresh-context descriptor, host
 capability role, and injected role contract. It also
-proves that provider models and turn caps are absent from agent frontmatter, so project
-overrides still reach the actual invocation. The broader routing suites cover mappings,
+proves that generic capability templates carry no provider model or turn cap, while
+versioned profiles carry the exact declared model ID and role turn caps remain injected
+at launch. Project mappings select the corresponding profile without rewriting its pin. The broader routing suites cover mappings,
 field-level precedence, host overrides, ordinary and gate fallback, exact-diff review
 deduplication, persistent escalation, ceilings, and concurrent counter updates.
 
@@ -1133,3 +1134,9 @@ For a direct Haiku request inherited from a non-economy tier, choose the economy
 or a project Haiku mapping with `effort: null`; an explicit user effort remains rejected.
 Both the compatibility DevHub runner and isolated campaign runner omit `--effort` for
 Haiku, including historical requested `low`. Other models retain their resolved effort.
+
+Custom `claude_models` translations to a Haiku alias or supported full Haiku pin use
+the same effort rules as built-in Haiku identities: null or historical requested low
+is non-applicable; every explicit user effort is rejected and no gate floor is lowered.
+The declared policy name and its provenance stay intact; only effort validation uses
+the effective target. This does not certify a custom alias's native version.

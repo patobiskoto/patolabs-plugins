@@ -457,3 +457,10 @@ surfaces are updated here and in `model-routing.md`; offline terminal-snapshot/d
 semantics are updated in `cost-attribution.md`; R7 source pointers are updated in
 byte-identical AGENTS.md/CLAUDE.md. Historical corpus files, pricing, roles, tool caps,
 Codex mappings and the passive telemetry schema are unchanged.
+
+The final delivery review at 5f02a85 recorded proof cc14e164… as blocked: custom
+project declarations pointing to Haiku did not preserve null-effort/user-effort rules.
+The correction validates the translated target without replacing the policy model
+name; hook regressions cover alias/full/dated targets, null and legacy low, explicit
+user efforts and gate floors. `model-routing.md` also corrects the CI frontmatter
+summary. Native qualification is not replayed and the explicit promotion is pending.

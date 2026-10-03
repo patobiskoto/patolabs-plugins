@@ -494,7 +494,8 @@ class RoutingPolicy:
                 target = ModelTarget(target.model, user.effort.strip())
                 sources["effort"] = "user"
             scope = scope_for(host, target.model, self.effort_scopes)
-            haiku = host == "claude" and target.model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001")
+            effective_model = self.claude_models.get(target.model, target.model) if host == "claude" else target.model
+            haiku = host == "claude" and effective_model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001")
             if haiku:
                 if target.effort not in (None, "low") or user.effort is not None:
                     raise RoutingConfigError(

@@ -165,3 +165,39 @@ def test_offline_native_reader_preserves_new_identity_usage_and_unpriced_cost(tm
     row = cost_record(rows[0], load_price_grid(PRICE_GRID_PATH))
     assert row["model"] == wire
     assert row["cost_micros"] is None and row["cost_provenance"] == "unavailable"
+
+
+@pytest.mark.parametrize("wire", ["haiku", "claude-haiku-4-5", "claude-haiku-4-5-20251001"])
+@pytest.mark.parametrize("requested", [None, "low"])
+def test_project_haiku_translation_uses_model_specific_effort_rules(tmp_path, wire, requested):
+    path = tmp_path / ".foundry/model-routing.json"
+    path.parent.mkdir()
+    data = {"claude_models": {"project-haiku": wire}, "mappings": {"claude": {
+        "economy": {"model": "project-haiku", "effort": requested},
+        "frontier": {"model": "project-haiku", "effort": None},
+    }}}
+    path.write_text(json.dumps(data))
+    updated, context = hook.route_tool_input(
+        {"subagent_type": "foundry:scout", "prompt": packet()}, cwd=tmp_path, environ={},
+    )
+    visible = json.loads(context.removeprefix("Foundry Claude route: "))
+    assert visible["model"] == "project-haiku"
+    assert visible["effort"] == requested
+    assert visible["effort_parameters"] == {
+        "requested": requested, "transmitted": None, "status": "not_applicable", "observed": None,
+    }
+    assert updated["max_turns"] == 10
+    assert "effort" not in updated
+    assert "none" in updated["subagent_type"]
+    if wire == "haiku":
+        assert updated["model"] == wire
+    else:
+        assert "model" not in updated
+    for effort in ("low", "high"):
+        explicit = 'FOUNDRY_ROUTE_REQUEST=' + json.dumps({"effort": effort}) + '\n' + packet()
+        with pytest.raises(RoutingConfigError, match="non applicable"):
+            hook.route_tool_input({"subagent_type": "foundry:scout", "prompt": explicit},
+                                 cwd=tmp_path, environ={})
+    with pytest.raises(RoutingConfigError, match="plancher"):
+        hook.route_tool_input({"subagent_type": "foundry:reviewer", "prompt": packet()},
+                             cwd=tmp_path, environ={})
