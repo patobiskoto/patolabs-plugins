@@ -213,7 +213,9 @@ this transformation. Literal uses of those three character classes are conservat
 unqualified too; fenced content containing them remains byte-exact.
 Strong delimiters are recognized only when they are active Markdown delimiters: an
 escaped marker or a marker inside an inline-code span is literal and cannot pair with,
-or mask, a later qualified strong/code span. An escape consumes only its first marker;
+or mask, a later qualified strong/code span. A delimiter consumed as a closing pair
+cannot also open another span; an unpaired trailing marker stays literal. An escape
+consumes only its first marker;
 residual markers in the same run remain active and any resulting strong/code span
 outside the exact profile is refused before a provider write. The same-line profile
 excludes every separator recognized by Python `splitlines()` from both the leading

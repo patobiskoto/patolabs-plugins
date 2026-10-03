@@ -6839,6 +6839,26 @@ def test_linear_adr_pat85_strong_inline_code_readback_replays_only_witness(track
     )
 
 
+@pytest.mark.parametrize("marker", ("**", "__"))
+def test_linear_adr_pat85_consumed_strong_close_cannot_reopen(tracker, marker):
+    instance, wire = tracker
+    source = f"{marker}a!{marker}? `c` x{marker}"
+    assert linear_module._paired_delimiters(source, marker) == [(0, 4)]
+    assert linear_module._linear_markdown_readback_body(source) == source
+    linear_module._preflight_adr_body_readback(source)
+
+    created = instance.create_adr(PROJECT, "PAT-85 consumed close", source)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    assert wire.documents[created.ref]["content"].endswith(source)
+    witness = linear_module._parse_adr_witness(
+        wire.documents[witness_id], instance._binding(PROJECT)
+    )
+    assert base64.b64decode(witness["source_body"]) == source.encode()
+    before = copy.deepcopy(wire.documents)
+    instance.create_adr(PROJECT, "PAT-85 consumed close", source)
+    assert wire.documents == before
+
+
 def test_linear_adr_pat85_ignores_literal_strong_marker_before_qualified_span(
     tracker,
 ):

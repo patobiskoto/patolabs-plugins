@@ -768,7 +768,7 @@ def _paired_delimiters(fragment: str, delimiter: str) -> list[tuple[int, int]]:
         can_close = _is_emphasis_closer(fragment, position, delimiter)
         if can_close and openers:
             pairs.append((openers.pop(), position))
-        if can_open:
+        elif can_open:
             openers.append(position)
     return pairs
 
