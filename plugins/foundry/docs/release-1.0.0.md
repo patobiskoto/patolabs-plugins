@@ -1,6 +1,6 @@
 # Foundry 1.0.0 — release candidate, 2026-10-03
 
-**Prepared, not yet published or verified installed.** Both host manifests declare
+**Prepared, not yet publicly published or verified installed from the public Git marketplace.** Both host manifests declare
 `1.0.0`. Ship-iOS retains its independent `0.3.0` version: this release changes no
 bridge, skill, template or App Store API. The versionless marketplace catalogues
 continue to point at `./plugins/foundry` and `./plugins/ship-ios`.
@@ -122,6 +122,28 @@ invented cross-generation fallback. `ultra` remains inadmissible for Codex deleg
 Haiku remains effort-free. Main conversations and personal restrictions are not
 reconfigured. See [model routing](model-routing.md) and the
 [migration contract](model-migration-2026-10.md).
+
+## Prepublication official-manager observation
+
+The [PAT-62 install observation](qualification/pat-62-install-observation.json)
+records official-manager installation/replacement and zero-model-turn loader reads
+on this machine. Candidate source `c9089a13be5a69bd1ffb0feb5fc2472c2b00c445`
+was installed clean and upgraded from the compatible exact baseline `16cdaa0a…`,
+on Claude Code 2.1.285 and PATH Codex 0.155.1. Both manifests at the actually
+resolved roots reported 1.0.0; installed CLI selection, doctor and both route
+reads passed. This is a separate local qualification marketplace, not publication
+or a public Git installation. Claude resolves its official local source directly;
+Codex resolves its installed cache. The original `patolabs` installations remain
+0.9.0 and the temporary package/marketplace were removed through the managers.
+
+A fresh immutable archive of exact baseline `16cdaa0a…` was reinstalled as 0.9.0
+and observed through both loaders and probes. Configuration, registry and marker
+hashes were unchanged. This tests compatible package rollback, not restoration
+of older model defaults or an earlier public 0.9 release; receipts and tracker data
+were not modified. Diagnostics and the local catalogue limitations are preserved
+in the observation. No model/API turn or renewed historical qualification budget
+was used. Canonical Git marketplace installation/upgrade, public source/ref and
+desktop loaded-version readbacks remain open postpublication checks.
 
 ## Release phases and evidence still required
 

@@ -1,0 +1,303 @@
+{
+  "schema": "foundry.pat-62-install-observation.v1",
+  "observation_not_receipt": true,
+  "date": "2026-10-03",
+  "marketplace": "patolabs-pat62-qualification",
+  "marketplace_source": "private local temporary wrapper; official catalogue schemas; plugin bytes from Git archive",
+  "baseline_ref": "16cdaa0a3f172a1549fa9fde3f82995c23f7878c",
+  "candidate_ref": "c9089a13be5a69bd1ffb0feb5fc2472c2b00c445",
+  "public_publication_verified": false,
+  "public_git_installation_verified": false,
+  "observations": [
+    {
+      "phase": "baseline_readback",
+      "host": "claude",
+      "binary": "/opt/homebrew/bin/claude",
+      "binary_version": "2.1.285 (Claude Code)",
+      "version": "0.9.0",
+      "loaded_root": "/tmp/pat62-install-qualification/marketplace/plugins/foundry",
+      "loaded_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+      "loaded_skills_count": 16,
+      "model_turns_started": 0,
+      "probes": {
+        "selection": {
+          "returncode": 0
+        },
+        "doctor": {
+          "returncode": 0
+        },
+        "claude_routes": {
+          "returncode": 0
+        },
+        "codex_routes": {
+          "returncode": 0
+        }
+      },
+      "tracker": "linear",
+      "project": "PAT",
+      "qualification": "local marketplace official manager only; public Git source not installed"
+    },
+    {
+      "phase": "baseline_readback",
+      "host": "codex",
+      "binary": "/opt/homebrew/bin/codex",
+      "binary_version": "codex-cli 0.155.1",
+      "version": "0.9.0",
+      "loaded_root": "/Users/pato/.codex/plugins/cache/patolabs-pat62-qualification/foundry/0.9.0",
+      "loaded_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+      "loaded_skills_count": 16,
+      "model_turns_started": 0,
+      "probes": {
+        "selection": {
+          "returncode": 0
+        },
+        "doctor": {
+          "returncode": 0
+        },
+        "claude_routes": {
+          "returncode": 0
+        },
+        "codex_routes": {
+          "returncode": 0
+        }
+      },
+      "tracker": "linear",
+      "project": "PAT",
+      "qualification": "local marketplace official manager only; public Git source not installed"
+    },
+    {
+      "phase": "upgrade",
+      "host": "claude",
+      "binary": "/opt/homebrew/bin/claude",
+      "binary_version": "2.1.285 (Claude Code)",
+      "version": "1.0.0",
+      "loaded_root": "/tmp/pat62-install-qualification/marketplace/plugins/foundry",
+      "loaded_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+      "loaded_skills_count": 16,
+      "model_turns_started": 0,
+      "probes": {
+        "selection": {
+          "returncode": 0
+        },
+        "doctor": {
+          "returncode": 0
+        },
+        "claude_routes": {
+          "returncode": 0
+        },
+        "codex_routes": {
+          "returncode": 0
+        }
+      },
+      "tracker": "linear",
+      "project": "PAT",
+      "qualification": "local marketplace official manager only; public Git source not installed"
+    },
+    {
+      "phase": "upgrade",
+      "host": "codex",
+      "binary": "/opt/homebrew/bin/codex",
+      "binary_version": "codex-cli 0.155.1",
+      "version": "1.0.0",
+      "loaded_root": "/Users/pato/.codex/plugins/cache/patolabs-pat62-qualification/foundry/1.0.0",
+      "loaded_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+      "loaded_skills_count": 16,
+      "model_turns_started": 0,
+      "probes": {
+        "selection": {
+          "returncode": 0
+        },
+        "doctor": {
+          "returncode": 0
+        },
+        "claude_routes": {
+          "returncode": 0
+        },
+        "codex_routes": {
+          "returncode": 0
+        }
+      },
+      "tracker": "linear",
+      "project": "PAT",
+      "qualification": "local marketplace official manager only; public Git source not installed"
+    },
+    {
+      "phase": "clean_install",
+      "host": "claude",
+      "binary": "/opt/homebrew/bin/claude",
+      "binary_version": "2.1.285 (Claude Code)",
+      "version": "1.0.0",
+      "loaded_root": "/tmp/pat62-install-qualification/marketplace/plugins/foundry",
+      "loaded_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+      "loaded_skills_count": 16,
+      "model_turns_started": 0,
+      "probes": {
+        "selection": {
+          "returncode": 0
+        },
+        "doctor": {
+          "returncode": 0
+        },
+        "claude_routes": {
+          "returncode": 0
+        },
+        "codex_routes": {
+          "returncode": 0
+        }
+      },
+      "tracker": "linear",
+      "project": "PAT",
+      "qualification": "local marketplace official manager only; public Git source not installed"
+    },
+    {
+      "phase": "clean_install",
+      "host": "codex",
+      "binary": "/opt/homebrew/bin/codex",
+      "binary_version": "codex-cli 0.155.1",
+      "version": "1.0.0",
+      "loaded_root": "/Users/pato/.codex/plugins/cache/patolabs-pat62-qualification/foundry/1.0.0",
+      "loaded_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+      "loaded_skills_count": 16,
+      "model_turns_started": 0,
+      "probes": {
+        "selection": {
+          "returncode": 0
+        },
+        "doctor": {
+          "returncode": 0
+        },
+        "claude_routes": {
+          "returncode": 0
+        },
+        "codex_routes": {
+          "returncode": 0
+        }
+      },
+      "tracker": "linear",
+      "project": "PAT",
+      "qualification": "local marketplace official manager only; public Git source not installed"
+    },
+    {
+      "phase": "rollback",
+      "host": "claude",
+      "binary": "/opt/homebrew/bin/claude",
+      "binary_version": "2.1.285 (Claude Code)",
+      "version": "0.9.0",
+      "loaded_root": "/tmp/pat62-install-qualification/marketplace/snapshots/16cdaa0a3f172a1549fa9fde3f82995c23f7878c/plugins/foundry",
+      "loaded_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+      "loaded_skills_count": 16,
+      "model_turns_started": 0,
+      "probes": {
+        "selection": {
+          "returncode": 0
+        },
+        "doctor": {
+          "returncode": 0
+        },
+        "claude_routes": {
+          "returncode": 0
+        },
+        "codex_routes": {
+          "returncode": 0
+        }
+      },
+      "tracker": "linear",
+      "project": "PAT",
+      "qualification": "local marketplace official manager only; public Git source not installed"
+    },
+    {
+      "phase": "rollback",
+      "host": "codex",
+      "binary": "/opt/homebrew/bin/codex",
+      "binary_version": "codex-cli 0.155.1",
+      "version": "0.9.0",
+      "loaded_root": "/Users/pato/.codex/plugins/cache/patolabs-pat62-qualification/foundry/0.9.0",
+      "loaded_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+      "loaded_skills_count": 16,
+      "model_turns_started": 0,
+      "probes": {
+        "selection": {
+          "returncode": 0
+        },
+        "doctor": {
+          "returncode": 0
+        },
+        "claude_routes": {
+          "returncode": 0
+        },
+        "codex_routes": {
+          "returncode": 0
+        }
+      },
+      "tracker": "linear",
+      "project": "PAT",
+      "qualification": "local marketplace official manager only; public Git source not installed"
+    }
+  ],
+  "rollback_scope": "Package downgrade to exact compatible prepublication baseline 0.9 plus configuration preservation; not historical public 0.9, not model default rollback",
+  "configuration_preserved": true,
+  "registry_preserved": true,
+  "marker_preserved": true,
+  "original_checkout_five_files_preserved": true,
+  "tracker_mutations": 0,
+  "model_turns": 0,
+  "temporary_plugin_and_marketplace_removed_officially": true,
+  "limitations": [
+    "Claude official local marketplace loader reads the registered local source, not installed cache; native loader diagnostics verified and cache CLI bytes compared. Public Git/cache loaded readback remains pending.",
+    "Codex marketplace upgrade is Git-only and refused the local source. Official remove/add replacement, native skills/list forceReload and installed CLI probes succeeded; public Git catalogue upgrade remains pending.",
+    "First helper had an incorrect expected Claude cache path and then an incorrect Codex manager path field. Bounded local diagnostics corrected the observation helper; no product code or provider data changed.",
+    "Initial rollback export overlay could leave candidate release documents in the local wrapper. No exact rollback claimed from that overlay; final rollback uses a fresh immutable Git archive snapshot and official reinstall/readback.",
+    "Candidate upgrade probe process was still returning while identical-version clean replacement began. No differing runtime bytes introduced; clean-install and exact rollback phases were separately observed after manager completion. No atomic concurrent manager guarantee claimed.",
+    "No desktop executor reload or new model/profile qualification; PATH Codex 0.155.1 distinct from earlier embedded 0.159.2.",
+    "Shared configuration hashes cover config.env, registry.json and current checkout marker only; no whole-provider database preservation claim."
+  ],
+  "saved_evidence_digests": {
+    "/tmp/pat62-baseline-corrected-claude-readback.json": "c46cdc7bdcfbacb16160abf92bd3c769896dcf01ae31fc5b77db2f7dd091e87d",
+    "/tmp/pat62-baseline-corrected-claude-selection.json": "45561844229af9a6c9f6f8ce70e96907befde0825e1c4ab8b1c06217f4ce6b15",
+    "/tmp/pat62-baseline-corrected-claude-doctor.json": "7988c8b7290f67b5b0fcb2348234bc49e30d36a52f11d4bc461608aae36ae8f8",
+    "/tmp/pat62-baseline-corrected-claude-claude_routes.json": "d19509644af5294eebc6c072340cfb1b3bb6f3ddba63c76f8a0447a626977201",
+    "/tmp/pat62-baseline-corrected-claude-codex_routes.json": "54fb61281bbfdd93c4fe05bf1d979569f8dff3aa1e84d0b18460df9bb4461498",
+    "/tmp/pat62-baseline-corrected-codex-readback.json": "772f7b567b7da532518fd8e75c430ccd440562fa7dfaa4212d0609a728db850b",
+    "/tmp/pat62-baseline-corrected-codex-selection.json": "45561844229af9a6c9f6f8ce70e96907befde0825e1c4ab8b1c06217f4ce6b15",
+    "/tmp/pat62-baseline-corrected-codex-doctor.json": "7988c8b7290f67b5b0fcb2348234bc49e30d36a52f11d4bc461608aae36ae8f8",
+    "/tmp/pat62-baseline-corrected-codex-claude_routes.json": "d19509644af5294eebc6c072340cfb1b3bb6f3ddba63c76f8a0447a626977201",
+    "/tmp/pat62-baseline-corrected-codex-codex_routes.json": "54fb61281bbfdd93c4fe05bf1d979569f8dff3aa1e84d0b18460df9bb4461498",
+    "/tmp/pat62-candidate-upgrade-claude-readback.json": "ec700a3818be3423d8906f77b1ee77204f8defb32dd24ac06bc469b3e303bf20",
+    "/tmp/pat62-candidate-upgrade-claude-selection.json": "45561844229af9a6c9f6f8ce70e96907befde0825e1c4ab8b1c06217f4ce6b15",
+    "/tmp/pat62-candidate-upgrade-claude-doctor.json": "1f513826327316a99c49d2c54679fc8a7296ff5d99c0739f6aac2b874c008c9e",
+    "/tmp/pat62-candidate-upgrade-claude-claude_routes.json": "d19509644af5294eebc6c072340cfb1b3bb6f3ddba63c76f8a0447a626977201",
+    "/tmp/pat62-candidate-upgrade-claude-codex_routes.json": "54fb61281bbfdd93c4fe05bf1d979569f8dff3aa1e84d0b18460df9bb4461498",
+    "/tmp/pat62-candidate-upgrade-codex-readback.json": "9922fdab26296f9649e9f1269b29a714c67be08b698ece446c9b6c2baf0e24ab",
+    "/tmp/pat62-candidate-upgrade-codex-selection.json": "45561844229af9a6c9f6f8ce70e96907befde0825e1c4ab8b1c06217f4ce6b15",
+    "/tmp/pat62-candidate-upgrade-codex-doctor.json": "89dc9bb329699011d67e3c6fb6fd1addbc87c0dcdf3bb703bc25017d5e2d2e2c",
+    "/tmp/pat62-candidate-upgrade-codex-claude_routes.json": "d19509644af5294eebc6c072340cfb1b3bb6f3ddba63c76f8a0447a626977201",
+    "/tmp/pat62-candidate-upgrade-codex-codex_routes.json": "54fb61281bbfdd93c4fe05bf1d979569f8dff3aa1e84d0b18460df9bb4461498",
+    "/tmp/pat62-candidate-clean-claude-readback.json": "4daa99c67b68075b79b091801c020d5460e3fb6400298b9f49e3b4e9d9e2328a",
+    "/tmp/pat62-candidate-clean-claude-selection.json": "45561844229af9a6c9f6f8ce70e96907befde0825e1c4ab8b1c06217f4ce6b15",
+    "/tmp/pat62-candidate-clean-claude-doctor.json": "7988c8b7290f67b5b0fcb2348234bc49e30d36a52f11d4bc461608aae36ae8f8",
+    "/tmp/pat62-candidate-clean-claude-claude_routes.json": "d19509644af5294eebc6c072340cfb1b3bb6f3ddba63c76f8a0447a626977201",
+    "/tmp/pat62-candidate-clean-claude-codex_routes.json": "54fb61281bbfdd93c4fe05bf1d979569f8dff3aa1e84d0b18460df9bb4461498",
+    "/tmp/pat62-candidate-clean-codex-readback.json": "bd88cab571e7ceb152f7d3219940789a9425da1009dc6e70dbc78b4b860f0cea",
+    "/tmp/pat62-candidate-clean-codex-selection.json": "45561844229af9a6c9f6f8ce70e96907befde0825e1c4ab8b1c06217f4ce6b15",
+    "/tmp/pat62-candidate-clean-codex-doctor.json": "7988c8b7290f67b5b0fcb2348234bc49e30d36a52f11d4bc461608aae36ae8f8",
+    "/tmp/pat62-candidate-clean-codex-claude_routes.json": "d19509644af5294eebc6c072340cfb1b3bb6f3ddba63c76f8a0447a626977201",
+    "/tmp/pat62-candidate-clean-codex-codex_routes.json": "54fb61281bbfdd93c4fe05bf1d979569f8dff3aa1e84d0b18460df9bb4461498",
+    "/tmp/pat62-rollback-exact-claude-readback.json": "06b09ca253bd553081f2599557428cf0916d728e5fbbdbc160c560fdbb4f71a3",
+    "/tmp/pat62-rollback-exact-claude-selection.json": "45561844229af9a6c9f6f8ce70e96907befde0825e1c4ab8b1c06217f4ce6b15",
+    "/tmp/pat62-rollback-exact-claude-doctor.json": "7988c8b7290f67b5b0fcb2348234bc49e30d36a52f11d4bc461608aae36ae8f8",
+    "/tmp/pat62-rollback-exact-claude-claude_routes.json": "d19509644af5294eebc6c072340cfb1b3bb6f3ddba63c76f8a0447a626977201",
+    "/tmp/pat62-rollback-exact-claude-codex_routes.json": "54fb61281bbfdd93c4fe05bf1d979569f8dff3aa1e84d0b18460df9bb4461498",
+    "/tmp/pat62-rollback-exact-codex-readback.json": "ac1c1d4fcff19a17d854e408423913c57b2e7327569e4a7ae24fcf723e7b726c",
+    "/tmp/pat62-rollback-exact-codex-selection.json": "45561844229af9a6c9f6f8ce70e96907befde0825e1c4ab8b1c06217f4ce6b15",
+    "/tmp/pat62-rollback-exact-codex-doctor.json": "7988c8b7290f67b5b0fcb2348234bc49e30d36a52f11d4bc461608aae36ae8f8",
+    "/tmp/pat62-rollback-exact-codex-claude_routes.json": "d19509644af5294eebc6c072340cfb1b3bb6f3ddba63c76f8a0447a626977201",
+    "/tmp/pat62-rollback-exact-codex-codex_routes.json": "54fb61281bbfdd93c4fe05bf1d979569f8dff3aa1e84d0b18460df9bb4461498",
+    "/tmp/pat62-claude-candidate-upgrade.json": "6e3921039c185467c4f0f70c5290e110702a6e3bb76ae2018851af8ef1b3e7df",
+    "/tmp/pat62-codex-candidate-upgrade.json": "67abdea8c69f6b3ca0be4ad5634c8f068c6e313da9039c5856767ce7255ea34a",
+    "/tmp/pat62-claude-clean-install.json": "ba657885390a281659565f7a73e7a36da179a520e8a7b5ebd7542e0213f1ca48",
+    "/tmp/pat62-codex-clean-install.json": "67abdea8c69f6b3ca0be4ad5634c8f068c6e313da9039c5856767ce7255ea34a",
+    "/tmp/pat62-claude-rollback-exact-install.json": "ba657885390a281659565f7a73e7a36da179a520e8a7b5ebd7542e0213f1ca48",
+    "/tmp/pat62-codex-rollback-exact-install.json": "483e41735d4b46380c911a8146ab60a996e1c15851b260012441451436989f3b",
+    "/tmp/pat62-host-config-preservation.json": "5c6793374896622f6f892d8dccff1354a9aab82bd51377cc906e5c410d136002"
+  }
+}

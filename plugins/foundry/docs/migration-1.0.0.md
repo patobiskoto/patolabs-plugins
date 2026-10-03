@@ -192,7 +192,7 @@ The rollback evidence is deliberately bounded:
 | Restore a compatible repository config/marker/policy snapshot | PAT-61 adversarial recipe: exact saved bytes restored after drift preflight; archive remains readable/non-writable | Local configuration restoration, no official package downgrade |
 | Deliberately restore GPT-5.6 routing | PAT-15 `test_codex_rollback.py`, explicit [rollback example](../examples/codex-gpt-5.6-rollback.json), 13 checks after promotion | Current source resolution/floors/history; old models must still be accessible |
 | Restore Claude policy absence or an exact historical pin | PAT-16 isolated policy rollback/readback and existing regression tests | After promotion, absence selects new defaults; old Sonnet/Opus/Fable are not newly qualified |
-| Reinstall an older packaged Foundry | No official downgrade observation claimed | Unqualified/unavailable until an exact compatible trusted source, gates and operational readback exist |
+| Restore the exact compatible prepublication 0.9 baseline `16cdaa0a…` package | PAT-62 official local manager reinstall and zero-turn loader/doctor/route reads on both CLI hosts | Temporary local marketplace only; keeps promoted model defaults, not an earlier public 0.9 release |
 
 For configuration rollback, pause affected work, compare the saved binding's tracker,
 canonical repository/project, marker schema and archive tombstones against the current
@@ -215,6 +215,8 @@ manifest number does not prove its reader/guard capabilities. A trustworthy exac
 source and qualified compatibility are required for any source/package rollback;
 there is no verified older public release pin asserted here. Releases below 0.9.0
 do not read the repository marker and are forbidden for a Linear-bound repository.
-The 1.0.0 preparation certifies configuration rollback at the scopes above, not a
-successful official downgrade installation. Extended benchmark PAT-17 and V1.1
+The [PAT-62 observation](qualification/pat-62-install-observation.json) adds a
+successful compatible local-package downgrade, with configuration/registry/marker
+byte preservation and no tracker mutation. It does not certify rollback to any
+arbitrary historical public package. Public Git upgrade and loaded ref remain pending. Extended benchmark PAT-17 and V1.1
 PAT-18/PAT-19 remain separate work.
