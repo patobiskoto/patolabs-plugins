@@ -26,7 +26,7 @@ def test_pat61_recipe_has_exactly_the_six_real_tracker_host_cells():
         "youtrack-codex": "blocked",
         "linear-claude": "in_progress",
         "linear-codex": "in_progress",
-        "ghprojects-claude": "not_run",
+        "ghprojects-claude": "in_progress",
         "ghprojects-codex": "in_progress",
     }
     assert all(

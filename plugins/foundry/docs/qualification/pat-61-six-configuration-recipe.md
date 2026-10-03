@@ -16,8 +16,12 @@ sur ce SHA, mais il n'est jamais une cellule de cette matrice.
 
 Avant publication, l'opérateur relève le SHA du checkout, les versions affichées de
 Foundry et du host, ainsi que le digest du package effectivement chargé. La preuve live
-nomme la racine absolue, le SHA et ce digest: Claude Code charge explicitement la source
-par `--plugin-dir`; Codex résout la racine du skill. Ce parcours pré-merge ne prétend
+nomme la racine absolue, le SHA et ce digest: au témoin courant, le package
+`plugins/foundry` du worktree `pat68-resume` est au SHA
+`8a4bbaecb5834f13f69fc9c5a954784020569344`, digest
+`426240efcb9d560964d0ffb5df5cdde0d5c9dc5491f416bb6a45d78b2671e117`, 257 fichiers
+suivis et version `0.9.0`. Claude Code charge explicitement cette source par
+`--plugin-dir`; Codex résout la racine du skill. Ce parcours pré-merge ne prétend
 pas prouver un cache installé ni une version 1.0. Une installation propre ou upgrade
 par les gestionnaires officiels des deux hôtes, sans édition de cache, avec version
 réellement chargée, reste le gate post-publication de PAT-62.
@@ -134,8 +138,8 @@ aucune cellule E2E ne devient `passed` sur la base de cette préparation.
 | YouTrack × Codex | P61Y et dépôt privé de sable | `blocked` | P61Y-1/PR #1 et P61Y-2/PR #2 ont été mergées via Foundry avec CI et review. PAT-82 ajoute P61Y-4/PR #4, reçu neuf `accepted`; P61Y-2 et P61Y-3 restent `unavailable` sans backfill. Le scope ne peut donc pas se clore; Epic, parcours Codex complet et preuve Apple de la cellule restent à faire. |
 | Linear × Claude Code | projet PAT synthétique et dépôt privé de sable | `in_progress` | Claude Code/Sonnet a démarré PAT-78 et, via les skills Foundry, ouvert la PR #3, obtenu une review indépendante et mergé avec CI verte. Le scope de release lit PAT-78 `accepted`. Le merge a aussi accepté à tort l'ADR synthétique non citée PAT-ADR-0001 ; PAT-79 a corrigé ce défaut sans réécrire l'incident. Le reste du parcours et Apple restent sans preuve. |
 | Linear × Codex | projet PAT synthétique et dépôt privé de sable | `in_progress` | PAT-74/PR #1 et PAT-77/PR #2 mergées avec CI et review ; scope release et bridge lisent PAT-77 `accepted` ; ADR test créée/éditée/liée. Supersession, Epic, adversaires restants et Apple restent à faire. |
-| GitHub Projects × Claude Code | dépôt privé et Project personnel privé synthétiques | `not_run` | GHQUAL-13/PR #14 qualifie le lifecycle common sur Claude ; GHQUAL-15 qualifie la clôture. C'est une base réutilisable, pas une cellule PAT-61 complète. |
-| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge. Au source exécuté `f743f2e`, le roundtrip ADR P61R-ADR-0003 est `proposed` (V1→V2 relu). Au source `f567764`, le verdict humain `accepted` a permis `close-epic` sur P61R-4, alors aligné avec son unique commentaire d'audit; le scope et le bridge Ship-iOS relisaient P61R-1 seul, `accepted`, dans le milestone natif fermé `PAT61 sandbox v1`. Au source `41d6866`, P61R-5 a été lié à P61R-1 et le garde fail-closed a refusé la projection Epic. Le mainteneur a ensuite autorisé le cleanup natif ciblé de ce seul lien: les relectures fraîches restaurent P61R-4 `done`/aligné et le graphe sans dépendance. P61R-5 reste backlog, AC 0/2, sans acceptation; le graphe non vide, le parcours hôte complet, la parité installée et les adversaires restent à qualifier. |
+| GitHub Projects × Claude Code | P61R, dépôt privé et Project personnel privé #10 | `in_progress` | Claude Code 2.1.267 a chargé le package source exact par `--plugin-dir` et exécuté `resume`, `start`, `open-pr` et `merge-pr` Foundry, avec Eiffel/Maigret. P61R-6/PR #7 a été mergée après une correction README seule et une review fraîche. Le parcours demeure partiel: ADR-3 est `proposed`, aucune frame ne la cite, l'installation officielle post-publication reste PAT-62 et aucun PASS n'est inféré. |
+| GitHub Projects × Codex | P61R, dépôt privé `patobiskoto/foundry-v1-pat61-ghprojects-recovery-sandbox` et Project personnel privé #10 | `in_progress` | La reprise isolée autorisée a résolu P61R-1 sans seconde création, puis a parcouru start/open-pr/review/CI/merge. Au source exécuté `f743f2e`, le roundtrip ADR P61R-ADR-0003 est `proposed` (V1→V2 relu). Au source `f567764`, le verdict humain `accepted` a permis `close-epic` sur P61R-4, alors aligné avec son unique commentaire d'audit; le scope et le bridge Ship-iOS relisaient P61R-1 seul, `accepted`, dans le milestone natif fermé `PAT61 sandbox v1`. Après le cleanup historique P61R-5→P61R-1, Codex a qualifié P61R-5→P61R-6: `depends-on`/`blocks` réciproques, rejeu sans write, groom complet sans cycle ni unavailable. Epic P61R-4 reste inchangé et aligné; P61R-5 reste backlog, AC 0/2, sans acceptation. Le parcours complet, la parité installée et les adversaires restent à qualifier. |
 
 GHQUAL et P64G peuvent être relus comme ressources historiques uniquement. P64Q et
 l'ancien binding FOUNDRY sont archivés : ils ne sont pas réactivés et ne constituent pas
@@ -476,8 +480,9 @@ budget général.
 Le registre Foundry a conservé les coordonnées existantes du sandbox P61R
 (owner, numéro et `canonical_repo`) et ajouté seulement le mapping `release_ids`; son
 digest est `sha256:c3324282086529bcb24a024173e978ab2fe9b54e26d70c52d441ea90c03a6869`.
-Le marqueur `.foundry/tracker.json` généré dans le sandbox reste volontairement local,
-non commité et non poussé. L'opérateur a créé le milestone natif de dépôt
+Au snapshot `f567764`, le marqueur `.foundry/tracker.json` généré dans le sandbox était
+volontairement local, non commité et non poussé. Il a ensuite été commité dans
+`b06af3a` et intégré à la PR #7. L'opérateur a créé le milestone natif de dépôt
 `PAT61 sandbox v1` (#1, id `18273978`), puis a assigné uniquement P61R-1. Sa relecture
 confirme le changement ciblé de milestone et le changement automatique de `updated_at`;
 toutes les autres propriétés non ciblées sont préservées.
@@ -520,6 +525,40 @@ relit trois issues (une active, deux historiques), sans troncature ni pagination
 P61R-5 reste `backlog`, AC 0/2, sans `accepted`. GitHub Projects × Codex revient donc
 à `in_progress`, jamais `passed`: un graphe de dépendances non vide, le parcours hôte
 complet, la parité installée et les adversaires restent à qualifier.
+
+### Témoins supplémentaires GitHub Projects
+
+Au SHA `8a4bbaecb5834f13f69fc9c5a954784020569344`, Claude Code 2.1.267 a chargé le
+package source décrit en précondition via `--plugin-dir`, puis exécuté les parcours
+Foundry `resume`, `start`, `open-pr` et `merge-pr`, avec Eiffel et Maigret. P61R-6/PR
+#7, basée sur `43d31bfd5b32649b556ce24fdaa1ac3de8a362e3`, a d'abord été bloquée en
+qualité: le README disait le marker inchangé alors que le commit `b06af3a` le contenait.
+La correction README seule, head `afb8f906b43baf55e0b2fc8fc59ad443ec68749e`, a reçu la
+review fraîche génération 2, AC `pass`, qualité `mergeable`, preuve
+`97386b4f642f65f17124b838c16fd2d1ee7e54dc104b5877153acb22d4dffd07`; `verify-witness`
+est `success`, les statuts legacy sont vides, puis Foundry a mergé
+`a523f170c5ee553299f02a0a40a22799f77801ab`. La relecture post-merge donne P61R-6
+`done`/aligné/accepté AC 2/2. ADR-3 reste `proposed` et aucune frame ne la cite. Une
+reprise `partial_create` de même intention et une correction review consomment le budget
+2/2. Les quatre invocations listent 0,6163695 USD (préflight), 1,9711668 USD
+(delivery), 1,9255275 USD (continuation review) et 3,054777 USD (dernière invocation de
+correction), soit 7,5678408 USD au total; ce ne sont ni une facture ni un quota. Le
+premier hôte a atteint 35 tours, puis la continuation review a été bloquée; la correction
+s'est terminée `error_max_budget_usd` après merge et reçu fournisseur. Le checkout local
+`main` à `b06af3a` a été conservé par renommage
+`local-p61r-release-binding-b06af3a`; le nouveau `main` suit `origin/main` et la feature
+est conservée.
+
+Après ce nettoyage, Codex a modifié le body de P61R-5 pour cibler P61R-6 plutôt que
+P61R-1, puis a créé `P61R-5 depends-on P61R-6` et son lien réciproque
+`P61R-6 blocks P61R-5`. Le rejeu strict est identique avant/après et n'observe aucune
+écriture (`REST_write=0`, `GraphQL_mutation=0`). Le groom relit quatre éléments, dont le
+composant connecté P61R-5/P61R-6 et trois historiques (P61R-1, P61R-4, P61R-6), sans
+troncature, next page, cycle ni `unavailable`. Epic P61R-4 reste inchangé et aligné.
+Cette preuve de graphe Codex ne transforme aucune cellule en `passed`; l'installation ou
+l'upgrade officiel des deux hôtes reste le gate PAT-62 post-publication. Le scope YouTrack
+historique `unavailable` reste tel quel; un nouveau scope ne pourra être testé plus tard
+qu'avec des receipts qualifiés.
 
 
 Au HEAD `0f175af`, la suite de conformité passe : 108 tests, 3031 deselected.
