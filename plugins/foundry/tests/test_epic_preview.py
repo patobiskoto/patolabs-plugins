@@ -214,7 +214,7 @@ def test_high_risk_enforces_frontier_implementer_and_risk_gate(routing_policy):
     eligible = result["classifications"]["eligible"][0]
     implementer = next(model for model in eligible["models"] if model["role"] == "implementer")
     assert implementer == {
-        "role": "implementer", "tier": "frontier", "model": "gpt-5.6-sol",
+        "role": "implementer", "tier": "frontier", "model": "gpt-6.1-sol",
         "effort": "high", "minimum_tier": "frontier", "minimum_source": "issue_risk",
     }
     assert any(gate["gate"] == "risk_review" for gate in result["classifications"]["human_gates"])

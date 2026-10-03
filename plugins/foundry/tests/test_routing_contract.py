@@ -105,10 +105,10 @@ def test_claude_xhigh_route_uses_a_shipped_profile_through_the_real_hook(tmp_pat
 @pytest.mark.parametrize(
     ("role", "agent_type", "model", "effort"),
     [
-        ("scout", "explorer", "gpt-5.6-luna", "low"),
-        ("implementer", "worker", "gpt-5.6-terra", "medium"),
-        ("reviewer", "reviewer", "gpt-5.6-sol", "high"),
-        ("architect", "default", "gpt-5.6-sol", "max"),
+        ("scout", "explorer", "gpt-6-luna", "low"),
+        ("implementer", "worker", "gpt-6.1-sol", "medium"),
+        ("reviewer", "reviewer", "gpt-6.1-sol", "high"),
+        ("architect", "default", "gpt-6.1-sol", "max"),
     ],
 )
 def test_ci_validates_resolved_codex_invocation(role, agent_type, model, effort, tmp_path):
@@ -150,7 +150,7 @@ def test_minimal_project_override_example_is_executable(tmp_path):
     }
     route = RoutingPolicy.load(tmp_path).resolve("implementer", "codex")
     assert route.selected_tier == "frontier"
-    assert route.model == "gpt-5.6-sol"
+    assert route.model == "gpt-6.1-sol"
     assert route.effort == "high"
 
 

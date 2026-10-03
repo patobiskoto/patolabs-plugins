@@ -1,9 +1,13 @@
 # Model routing contract
 
-The proposed 2026 Codex migration is documented separately in
-[model-migration-2026-10.md](model-migration-2026-10.md). It is a preparation
-contract only: this page's GPT-5.6 defaults remain the production baseline until
-the required ADR and per-host qualification/promotion gates have been satisfied.
+The Codex defaults in this revision apply the urgent V1 technical promotion
+accepted by PAT-ADR-0010 and PAT-14. The four completed native observations,
+verified explicit rollback and remaining delivery gates are recorded in the
+[PAT-15 qualification report](qualification/pat-15-codex-qualification-v1.md).
+Independent review and exact-SHA CI of the final delivery revision are required
+before merge; this report does not claim that revision is already released.
+Full economic and cross-host qualification remains in PAT-17. See
+[model-migration-2026-10.md](model-migration-2026-10.md).
 
 Foundry routes delegated work through semantic roles rather than provider model names.
 The shared deterministic contract lives in `tooling/foundry/routing.py` and
@@ -15,20 +19,38 @@ reproducing precedence, fallback, or escalation logic.
 The levels, from cheapest to strongest, are `economy`, `balanced`, `frontier`, and
 `apex`. Defaults are scout=economy, implementer=balanced, coordinator=balanced,
 reviewer=frontier, and architect=apex. The provider mappings implement
-FOUNDRY-ADR-0006.
+FOUNDRY-ADR-0006, amended for Codex by accepted PAT-ADR-0010.
 
 | Tier | Claude Code | Codex | Default role / minimum gate |
 |---|---|---|---|
-| `economy` | Haiku 4.5 / low | GPT-5.6 Luna / low | scout |
-| `balanced` | Sonnet 5 / medium | GPT-5.6 Terra / medium | implementer, coordinator |
-| `frontier` | Opus 5 / high | GPT-5.6 Sol / high | reviewer minimum |
-| `apex` | Fable 5 / high | GPT-5.6 Sol / max | architect minimum |
+| `economy` | Haiku 4.5 / low | GPT-6 Luna / low | scout |
+| `balanced` | Sonnet 5 / medium | GPT-6.1 Sol / medium | implementer, coordinator |
+| `frontier` | Opus 5 / high | GPT-6.1 Sol / high | reviewer minimum |
+| `apex` | Fable 5 / high | GPT-6.1 Sol / max | architect minimum |
 
 The recommended primary coordinator for ordinary feature/fix/chore work is the balanced
-profile: Sonnet 5 / medium in Claude Code or GPT-5.6 Terra / medium in Codex. This is
+profile: Sonnet 5 / medium in Claude Code or GPT-6.1 Sol / medium in Codex. This is
 operator guidance, not an enforceable main-conversation setting. Frontier is appropriate
 when the main loop must absorb a disclosed no-subagent fallback or genuinely
 cross-cutting risk; apex remains reserved for explicit architecture decisions.
+
+The [explicit GPT-5.6 rollback example](../examples/codex-gpt-5.6-rollback.json)
+reproduces the Codex mapping at `7adc33793cc04dfd5102f1e11a5d47cb6ecc9cd0`
+(0.9 reference). An operator can apply its `mappings.codex` section to the
+project policy after preserving existing configuration; this is a deliberate
+per-project rollback, never an implicit cross-generation fallback. The offline
+verifier is `PYTHONPATH=plugins/foundry/tooling pytest -q
+plugins/foundry/tests/test_codex_rollback.py` from the repository root. It verifies
+resolution, gate floors, declared fallback, persistent escalation and historical
+proof preservation in the current runtime. It does not reinstall a plugin or
+claim CI on a rollback commit. An actual release rollback still requires CI on
+its exact SHA and an operational readback. Astra remains an explicit motivated
+escalation, and Claude mappings are unchanged.
+
+Documentation status (PAT-15): updated for `DEFAULT_MAPPINGS`, recommended primary
+profile and the explicit rollback example. Model/effort scope and delegation
+restrictions retain their documented contract; no automatic main-conversation
+configuration is introduced.
 
 ## Model, effort, and context are separate
 
@@ -91,7 +113,7 @@ inside that one scope. For example, a six-level family can expose `xhigh` while 
         "version": 1,
         "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
         "inadmissible": {
-          "ultra": "automatic task delegation is inadmissible pending a Foundry ADR"
+          "ultra": "automatic task delegation is inadmissible by PAT-ADR-0010"
         }
       }
     }
@@ -99,7 +121,7 @@ inside that one scope. For example, a six-level family can expose `xhigh` while 
 }
 ```
 
-`ultra` is inadmissible by default pending the separate delegation-authority ADR.
+`ultra` is inadmissible by PAT-ADR-0010.
 Unknown efforts name both the rejected level and the levels accepted by the relevant
 scope. Claude host translations are also declarative: `claude_models` may map a new
 canonical policy model to its Agent wire alias; a missing translation fails explicitly.

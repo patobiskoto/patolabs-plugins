@@ -104,13 +104,34 @@ def test_gate_floor_missing_from_custom_scope_is_an_explicit_configuration_error
         RoutingPolicy.load(tmp_path).resolve("reviewer", "claude")
 
 
-def test_default_routes_and_gate_floors_are_unchanged(tmp_path):
+def test_current_default_routes_preserve_gate_floors(tmp_path):
     policy = RoutingPolicy.load(tmp_path)
     assert (policy.resolve("implementer", "codex").model,
-            policy.resolve("implementer", "codex").effort) == ("gpt-5.6-terra", "medium")
+            policy.resolve("implementer", "codex").effort) == ("gpt-6.1-sol", "medium")
     reviewer = policy.resolve("reviewer", "codex")
     assert (reviewer.selected_tier, reviewer.gate_floor, reviewer.gate_effort_floor) == (
         "frontier", "frontier", "high",
     )
     with pytest.raises(RoutingConfigError, match="gate 'reviewer'.*reçu : 'low'"):
         policy.resolve("reviewer", "codex", user=UserRouteRequest(effort="low"))
+
+
+def test_gpt6_scopes_are_model_specific_and_keep_ultra_closed(tmp_path):
+    scopes = DEFAULT_EFFORT_SCOPES["codex"]
+    assert set(scopes) == {"default", "gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"}
+    assert scopes["gpt-6-luna"].levels == ("low", "medium", "high", "xhigh", "max", "ultra")
+    assert "none" not in scopes["gpt-6-luna"].levels
+
+    config = tmp_path / ".foundry" / "model-routing.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({
+        "mappings": {"codex": {"balanced": {
+            "model": "gpt-6.1-sol", "effort": "medium",
+        }}},
+    }), encoding="utf-8")
+    policy = RoutingPolicy.load(tmp_path)
+    assert policy.resolve("implementer", "codex").model == "gpt-6.1-sol"
+    with pytest.raises(RoutingConfigError, match="inconnu.*low, medium, high, xhigh, max, ultra"):
+        policy.resolve("implementer", "codex", user=UserRouteRequest(effort="none"))
+    with pytest.raises(RoutingConfigError, match="inadmissible.*PAT-ADR-0010"):
+        policy.resolve("implementer", "codex", user=UserRouteRequest(effort="ultra"))

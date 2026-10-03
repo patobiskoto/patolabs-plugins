@@ -41,6 +41,7 @@ SEVERITIES = ("info", "warning", "error", "blocking")
 KNOWN_MODELS = frozenset({
     "haiku-4.5", "sonnet-5", "opus-5", "fable-5",
     "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol",
+    "gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra",
 })
 # These are labels shipped with Foundry, rather than caller-selected identifiers.
 PRICE_TABLE_IDS = ("foundry-public-v1",)

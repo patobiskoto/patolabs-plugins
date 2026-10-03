@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mappings": {
+    "codex": {
+      "economy": {"model": "gpt-6-luna", "effort": "low"},
+      "balanced": {"model": "gpt-6.1-sol", "effort": "medium"},
+      "frontier": {"model": "gpt-6.1-sol", "effort": "high"},
+      "apex": {"model": "gpt-6.1-sol", "effort": "max"}
+    }
+  }
+}
