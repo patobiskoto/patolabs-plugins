@@ -809,6 +809,28 @@ Foundry's write discipline, not provider-enforced immutability. Non-code Epic cl
 uses PAT-ADR-0006 bounded detection: an exact audit and one targeted parent State write,
 with the residual S1→S2 race explicitly retained; it is not provider-atomic.
 
+A valid non-code Epic closure audit supplies terminal **state** authority to
+`get_issue`, `observe_issue`, `query issue`, backlog and the groom profile, as well
+as `get_epic_closure` and exact `close-epic` replay. Reads verify the canonical
+receipt and deterministic comment ID, project/parent coordinates, accepted human
+verdict and procedure digest, actual Epic type and AC snapshot, advanced parent
+version and native `done`, and the complete current children/transitive dependency
+graph with its qualified acceptance evidence. A prior `in-progress` lifecycle
+receipt remains valid; it does not require a synthetic code review or merge.
+The resulting Epic has `state=done`, `native_state=done`, and
+`projection_status=aligned`; its AC remain incomplete and its code acceptance
+remains `unknown`, with no artificial PR. These reads perform no writes.
+
+Malformed, duplicate, foreign or stale audits and changed validation/type/graph
+coordinates supply no terminal authority: strict reads refuse them, while
+observation/backlog expose `unknown`. A native Done without a qualifying audit
+retains the existing code lifecycle refusal/disagreement behavior. A non-Done
+parent never receives Epic terminal authority. An exact pending audit at its
+original predecessor can still resume; the current snapshot and audit alone
+cannot distinguish an interrupted closure from a later reopen to that same
+predecessor. A different predecessor is refused. This retains the existing
+bounded guarantee rather than claiming provider CAS or a new history guarantee.
+
 The provider implementation was first proven without activating a real workspace.
 FOUNDRY-159 then activated `github.com/patobiskoto/patolabs-plugins` on Linear after a
 selective live migration and provider readback. The versioned manifest and credential-

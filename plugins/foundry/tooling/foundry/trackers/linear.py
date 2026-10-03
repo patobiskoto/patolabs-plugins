@@ -22,6 +22,7 @@ from datetime import datetime
 import hashlib
 import json
 import re
+import threading
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -1953,6 +1954,7 @@ class LinearTracker(Tracker):
         if not isinstance(self.token, str) or not self.token:
             raise ValueError("credential Linear invalid")
         self._transport = transport
+        self._epic_closure_reads = threading.local()
         self._active_project: Project | None = None
 
     def migration_attribute_exceptions(
@@ -2902,7 +2904,10 @@ class LinearTracker(Tracker):
         *,
         pending_operation: str | None = None,
         allow_current_disagreement: bool = False,
+        epic_closure: EpicClosureOutcome | None = None,
     ) -> dict:
+        # Only the fully verified non-code Epic audit supplies this terminal
+        # authority. Historical code receipts still undergo all normal checks.
         comments = _connection(raw.get("comments"), "lifecycle.comments")
         rows: dict[str, list[tuple[dict, str]]] = {}
         for comment in comments:
@@ -2921,12 +2926,12 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
         if not rows:
             done_state_id = self._binding(self._project())["state_ids"]["done"]
-            if native_state_id == done_state_id:
+            if native_state_id == done_state_id and epic_closure is None:
                 raise TrackerConflictError(
                     "Linear native state changed outside lifecycle"
                 )
             return {
-                "state": None,
+                "state": "done" if epic_closure is not None else None,
                 "pr_url": None,
                 "acceptance_complete": False,
                 "acceptance_override": None,
@@ -3123,10 +3128,12 @@ class LinearTracker(Tracker):
             pending_operation=pending_operation,
             acceptance_complete=acceptance_complete or acceptance_override is not None,
             done=done,
-            allow_current_disagreement=allow_current_disagreement,
+            allow_current_disagreement=(
+                allow_current_disagreement or epic_closure is not None
+            ),
         )
         return {
-            "state": projected_state,
+            "state": "done" if epic_closure is not None else projected_state,
             "pr_url": (done or review or {}).get("pr_url"),
             "in_progress": in_progress,
             "acceptance_by_generation": acceptance_by_generation,
@@ -3451,6 +3458,7 @@ class LinearTracker(Tracker):
         project: Project | None = None,
         *,
         observe_lifecycle: bool = False,
+        project_epic_closure: bool = True,
     ) -> Issue:
         project = project or self._project()
         binding = self._binding(project)
@@ -3540,10 +3548,21 @@ class LinearTracker(Tracker):
         done = 0
         native_state = state_by_id[state["id"]]
         try:
+            epic_closure = None
+            if project_epic_closure and any(
+                isinstance(row.get("body"), str)
+                and row["body"].startswith("Foundry Epic closure audit (append-only).")
+                for row in _connection(raw.get("comments"), "epic-closure.comments")
+            ):
+                if native_state == "done":
+                    epic_closure = self._verified_epic_closure(raw, project)
+                else:
+                    self._closure_from_raw(raw, project, require_done=False)
             lifecycle = self._lifecycle_projection(
                 raw["identifier"],
                 raw,
                 allow_current_disagreement=observe_lifecycle,
+                epic_closure=epic_closure,
             )
             projection_status = (
                 "native-only" if lifecycle["state"] is None
@@ -4839,7 +4858,7 @@ class LinearTracker(Tracker):
         matches = []
         for row in issue.comments:
             text = row.get("text") if isinstance(row, dict) else None
-            if not isinstance(text, str) or not text.startswith("Foundry Epic closure audit (append-only).\n"):
+            if not isinstance(text, str) or not text.startswith("Foundry Epic closure audit (append-only)."):
                 continue
             lines = text.splitlines()
             try:
@@ -4867,6 +4886,8 @@ class LinearTracker(Tracker):
         if not matches:
             return None
         receipt, audit_id = matches[0]
+        if type(receipt.parent_version) is not int or receipt.parent_version <= 0:
+            raise TrackerConflictError("audit de clôture Linear version invalide")
         if (
             receipt.project_key != project.key
             or receipt.project_id != project.id
@@ -4897,7 +4918,9 @@ class LinearTracker(Tracker):
         state = raw.get("state")
         if not isinstance(identifier, str) or not isinstance(state, dict):
             raise LinearTrackerError("epic-closure.readback", None, "invalid_response")
-        issue = self._to_issue(raw, project, observe_lifecycle=True)
+        issue = self._to_issue(
+            raw, project, observe_lifecycle=True, project_epic_closure=False,
+        )
         issue.comments = [
             {"text": row.get("body")}
             for row in _connection(raw.get("comments"), "epic-closure.comments")
@@ -4906,33 +4929,82 @@ class LinearTracker(Tracker):
             "done" if state.get("id") == self._binding(project)["state_ids"]["done"]
             else issue.state
         )
-        return self._closure_from_issue(issue, project, require_done=require_done)
+        native_done = state.get("id") == self._binding(project)["state_ids"]["done"]
+        outcome = self._closure_from_issue(
+            issue, project, require_done=require_done and native_done,
+        )
+        if outcome is not None:
+            if not native_done and (
+                issue.native_state != outcome.receipt.parent_state
+                or issue.version is None
+                or issue.version < outcome.receipt.parent_version
+            ):
+                raise TrackerConflictError(
+                    "audit pending Linear séparé de son prédécesseur original"
+                )
+            for row in _connection(raw.get("comments"), "epic-closure.comments"):
+                if isinstance(row.get("body"), str) and row["body"].startswith(
+                    "Foundry Epic closure audit (append-only)."
+                ):
+                    if row.get("id") != self._epic_closure_audit(outcome.receipt)[2]:
+                        raise TrackerConflictError("audit de clôture Linear id invalide")
+            from foundry.write import _validate_epic_parent, _validate_epic_outcome
+            try:
+                _validate_epic_parent(issue, bounded=True)
+                if outcome.receipt.human_verdict != "accepted":
+                    raise SystemExit("verdict Epic absent ou invalide")
+                _validate_epic_outcome(
+                    outcome, project=project, parent=issue, expected=None,
+                )
+            except (SystemExit, AttributeError, TypeError, ValueError) as exc:
+                raise TrackerConflictError("audit de clôture Linear invalide") from exc
+            if require_done and not native_done:
+                raise TrackerConflictError("audit de clôture Linear sans parent clôturé")
+        return outcome
 
     def get_epic_closure(self, project: Project, parent_id: str) -> EpicClosureOutcome | None:
         self.validate_issue_binding(project, parent_id)
         binding = self._activate(project)
         raw = self._read_raw(parent_id)
         self._assert_issue_project(raw, binding)
-        outcome = self._closure_from_raw(raw, project)
-        if outcome is None:
-            return None
-        from foundry.write import bounded_epic_graph_snapshot
+        return self._verified_epic_closure(raw, project)
 
+    def _verified_epic_closure(
+        self, raw: dict, project: Project,
+    ) -> EpicClosureOutcome | None:
+        """Read-only terminal authority shared by ordinary reads and Epic replay."""
+        # A malformed child/parent cycle must not recurse through normalization.
+        active = getattr(self._epic_closure_reads, "active", set())
+        parent_id = raw.get("identifier")
+        if parent_id in active:
+            raise TrackerConflictError("graphe Epic Linear cyclique")
+        self._epic_closure_reads.active = active
+        active.add(parent_id)
         try:
-            parent = self._to_issue(raw, project, observe_lifecycle=True)
-            current, dependencies = bounded_epic_graph_snapshot(
-                self, project, parent,
-            )
-        except (SystemExit, TrackerConflictError) as exc:
-            raise TrackerConflictError(
-                "graphe Epic Linear divergent au rejeu"
-            ) from exc
-        if (
-            current != outcome.receipt.children
-            or dependencies != outcome.receipt.dependencies
-        ):
-            raise TrackerConflictError("graphe Epic Linear divergent au rejeu")
-        return outcome
+            outcome = self._closure_from_raw(raw, project)
+            if outcome is None:
+                return None
+            from foundry.write import bounded_epic_graph_snapshot
+            try:
+                parent = self._to_issue(
+                    raw, project, observe_lifecycle=True, project_epic_closure=False,
+                )
+                self._lifecycle_projection(parent_id, raw, epic_closure=outcome)
+                current, dependencies = bounded_epic_graph_snapshot(
+                    self, project, parent,
+                )
+            except (SystemExit, TrackerConflictError) as exc:
+                raise TrackerConflictError(
+                    "graphe Epic Linear divergent au rejeu"
+                ) from exc
+            if (
+                current != outcome.receipt.children
+                or dependencies != outcome.receipt.dependencies
+            ):
+                raise TrackerConflictError("graphe Epic Linear divergent au rejeu")
+            return outcome
+        finally:
+            active.remove(parent_id)
 
     def get_pending_epic_closure(
         self, project: Project, parent_id: str,
