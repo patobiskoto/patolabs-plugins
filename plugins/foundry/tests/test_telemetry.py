@@ -1071,9 +1071,9 @@ def test_concurrent_process_consumers_win_exactly_once(tmp_path, kind):
     ("available", "overrides", "fallbacks", "override_count"),
     [
         (None, (), 0, 0),
-        ({"gpt-5.6-luna"}, (), 1, 0),
+        ({"gpt-6-luna"}, (), 1, 0),
         (None, ("profile.model",), 0, 1),
-        ({"gpt-5.6-luna"}, ("profile.model",), 1, 1),
+        ({"gpt-6-luna"}, ("profile.model",), 1, 1),
     ],
 )
 def test_route_signals_count_actual_fallbacks_and_only_override_warnings(
@@ -1616,16 +1616,16 @@ def test_enabled_observation_preserves_gate_plan_retry_and_host_result(tmp_path,
     monkeypatch.delenv("FOUNDRY_DATA", raising=False)
     disabled = codex_spawn_plan(
         "reviewer", packet, root=tmp_path, review_claim=claim,
-        available_models={"gpt-5.6-sol"},
+        available_models={"gpt-6.1-sol"},
     )
     monkeypatch.setenv("FOUNDRY_DATA", str(data_dir))
     first = codex_spawn_plan(
         "reviewer", packet, root=tmp_path, review_claim=claim,
-        available_models={"gpt-5.6-sol"},
+        available_models={"gpt-6.1-sol"},
     )
     second = codex_spawn_plan(
         "reviewer", packet, root=tmp_path, review_claim=claim,
-        available_models={"gpt-5.6-sol"},
+        available_models={"gpt-6.1-sol"},
     )
     for observed in (first, second):
         observed = dict(observed)

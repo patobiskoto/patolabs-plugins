@@ -104,10 +104,10 @@ def test_gate_floor_missing_from_custom_scope_is_an_explicit_configuration_error
         RoutingPolicy.load(tmp_path).resolve("reviewer", "claude")
 
 
-def test_default_routes_and_gate_floors_are_unchanged(tmp_path):
+def test_current_default_routes_preserve_gate_floors(tmp_path):
     policy = RoutingPolicy.load(tmp_path)
     assert (policy.resolve("implementer", "codex").model,
-            policy.resolve("implementer", "codex").effort) == ("gpt-5.6-terra", "medium")
+            policy.resolve("implementer", "codex").effort) == ("gpt-6.1-sol", "medium")
     reviewer = policy.resolve("reviewer", "codex")
     assert (reviewer.selected_tier, reviewer.gate_floor, reviewer.gate_effort_floor) == (
         "frontier", "frontier", "high",

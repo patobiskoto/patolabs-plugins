@@ -146,10 +146,10 @@ def _pollute_technical_review_binding(store, issue, diff_hash, claimed_at):
 @pytest.mark.parametrize(
     ("role", "agent_type", "model", "effort"),
     [
-        ("scout", "explorer", "gpt-5.6-luna", "low"),
-        ("implementer", "worker", "gpt-5.6-terra", "medium"),
-        ("reviewer", "reviewer", "gpt-5.6-sol", "high"),
-        ("architect", "default", "gpt-5.6-sol", "max"),
+        ("scout", "explorer", "gpt-6-luna", "low"),
+        ("implementer", "worker", "gpt-6.1-sol", "medium"),
+        ("reviewer", "reviewer", "gpt-6.1-sol", "high"),
+        ("architect", "default", "gpt-6.1-sol", "max"),
     ],
 )
 def test_codex_roles_receive_the_resolved_explicit_spawn(
@@ -177,7 +177,7 @@ def test_codex_roles_receive_the_resolved_explicit_spawn(
     ))
 
 
-def test_unqualified_gpt6_candidate_example_is_explicit_without_changing_defaults(tmp_path):
+def test_gpt6_example_explicitly_pins_current_codex_profiles(tmp_path):
     config = tmp_path / ".foundry" / "model-routing.json"
     config.parent.mkdir()
     config.write_text(
@@ -240,9 +240,9 @@ def test_codex_user_request_wins_over_project_policy(tmp_path):
 def test_codex_availability_fallback_is_visible_and_gate_safe(tmp_path):
     ordinary = codex_spawn_plan(
         "implementer", _packet(), root=tmp_path,
-        available_models={"gpt-5.6-luna"},
+        available_models={"gpt-6-luna"},
     )
-    assert ordinary["spawn"]["model"] == "gpt-5.6-luna"
+    assert ordinary["spawn"]["model"] == "gpt-6-luna"
     assert ordinary["route"]["selected_tier"] == "economy"
     assert ordinary["route"]["warnings"][0]["code"] == "MODEL_FALLBACK_DOWN"
 
@@ -264,7 +264,7 @@ def test_codex_availability_fallback_is_visible_and_gate_safe(tmp_path):
     with pytest.raises(RoutingUnavailableError, match="gate 'reviewer'"):
         codex_spawn_plan(
             "reviewer", _packet(), root=tmp_path,
-            available_models={"gpt-5.6-luna", "gpt-5.6-terra"},
+            available_models={"gpt-6-luna"},
             review_claim=_review_claim(tmp_path, b"unavailable gate"),
         )
 
@@ -401,7 +401,7 @@ def test_f111_legacy_review_waits_for_resolved_route_before_migration(
     with pytest.raises(RoutingUnavailableError, match="gate 'reviewer'"):
         codex_review_plan(
             _packet(), root=tmp_path, base=BASE_SHA,
-            available_models={"gpt-5.6-luna", "gpt-5.6-terra"},
+            available_models={"gpt-6-luna"},
             state_dir=state, issue_id="FOUNDRY-111",
         )
 
@@ -925,7 +925,7 @@ def test_codex_duplicate_short_circuits_routing_and_packet_preflight(monkeypatch
         "this packet is intentionally incomplete",
         root=tmp_path,
         base=BASE_SHA,
-        available_models={"gpt-5.6-luna", "gpt-5.6-terra"},
+        available_models={"gpt-6-luna"},
         state_dir=state,
         issue_id="FOUNDRY-42",
     )
@@ -999,7 +999,7 @@ def test_codex_plan_cli_emits_executable_spawn_descriptor(tmp_path, capsys, monk
         "agent_type": "worker",
         "fork_turns": "none",
         "message": plan["spawn"]["message"],
-        "model": "gpt-5.6-terra",
+        "model": "gpt-6.1-sol",
         "reasoning_effort": "medium",
     }
     assert re.fullmatch(r"foundry_eiffel_[0-9a-f]{16}", plan["spawn"]["task_name"])
@@ -1293,7 +1293,7 @@ def test_codex_reviewer_cli_spawns_the_explicit_recovered_owner(
         **recovered, "root": str(tmp_path), "base": BASE_SHA,
     }
     assert plan["spawn"]["agent_type"] == "reviewer"
-    assert plan["spawn"]["model"] == "gpt-5.6-sol"
+    assert plan["spawn"]["model"] == "gpt-6.1-sol"
     assert plan["spawn"]["reasoning_effort"] == "high"
     assert recovered["claim_id"] in plan["spawn"]["message"]
     assert claimed_review_diff(

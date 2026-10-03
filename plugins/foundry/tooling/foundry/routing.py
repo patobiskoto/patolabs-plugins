@@ -68,10 +68,10 @@ DEFAULT_MAPPINGS = {
         "apex": ModelTarget("fable-5", "high"),
     },
     "codex": {
-        "economy": ModelTarget("gpt-5.6-luna", "low"),
-        "balanced": ModelTarget("gpt-5.6-terra", "medium"),
-        "frontier": ModelTarget("gpt-5.6-sol", "high"),
-        "apex": ModelTarget("gpt-5.6-sol", "max"),
+        "economy": ModelTarget("gpt-6-luna", "low"),
+        "balanced": ModelTarget("gpt-6.1-sol", "medium"),
+        "frontier": ModelTarget("gpt-6.1-sol", "high"),
+        "apex": ModelTarget("gpt-6.1-sol", "max"),
     },
 }
 

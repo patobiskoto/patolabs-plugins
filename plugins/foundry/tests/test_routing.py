@@ -171,10 +171,10 @@ def test_semantic_levels_roles_and_host_mappings_are_the_adr_contract(tmp_path):
             "apex": ("fable-5", "high"),
         },
         "codex": {
-            "economy": ("gpt-5.6-luna", "low"),
-            "balanced": ("gpt-5.6-terra", "medium"),
-            "frontier": ("gpt-5.6-sol", "high"),
-            "apex": ("gpt-5.6-sol", "max"),
+            "economy": ("gpt-6-luna", "low"),
+            "balanced": ("gpt-6.1-sol", "medium"),
+            "frontier": ("gpt-6.1-sol", "high"),
+            "apex": ("gpt-6.1-sol", "max"),
         },
     }
 
@@ -242,7 +242,7 @@ def test_non_gate_fallback_goes_down_and_is_visible(tmp_path):
     policy = RoutingPolicy.load(tmp_path)
 
     route = policy.resolve(
-        "implementer", "codex", available_models={"gpt-5.6-luna"},
+        "implementer", "codex", available_models={"gpt-6-luna"},
     )
 
     assert (route.requested_tier, route.selected_tier) == ("balanced", "economy")
@@ -257,11 +257,11 @@ def test_explicit_user_effort_survives_model_fallback(tmp_path):
         "implementer",
         "codex",
         user=UserRouteRequest(effort="max"),
-        available_models={"gpt-5.6-luna"},
+        available_models={"gpt-6-luna"},
     )
 
     assert (route.selected_tier, route.model, route.effort) == (
-        "economy", "gpt-5.6-luna", "max",
+        "economy", "gpt-6-luna", "max",
     )
     assert route.sources == {"tier": "fallback", "model": "default", "effort": "user"}
 

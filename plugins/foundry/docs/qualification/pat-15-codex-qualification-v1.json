@@ -1,0 +1,200 @@
+{
+  "artifact_kind": "qualification report; imported native observations, not a receipt, proof or attestation",
+  "issue": "PAT-15",
+  "observed_on": "2026-10-03",
+  "authority": "accepted PAT-ADR-0010 and PAT-14; urgent Codex-only V1 technical tranche",
+  "frozen_review_coordinates": {
+    "base_sha": "7adc33793cc04dfd5102f1e11a5d47cb6ecc9cd0",
+    "head_sha": "edd5b16c088c5f609f07c8eaff8cf4fca447b4f9",
+    "diff_sha256": "2ebb406139b4e146937bc58b92011725ee8e99a9edf9cae2676eef58a9db9314"
+  },
+  "canonical_normal_review": {
+    "proof_id": "69aba1bfdf2b13d13111ca17a5fe208a577bedfb787ddaa789f34f5b502bd745",
+    "quality": "mergeable",
+    "old_contract_ac9": "not_covered",
+    "scope": "frozen head only; preserved historical proof; updated contract and final diff require fresh review"
+  },
+  "bounded_native_observations": [
+    {
+      "slot_id": "economy-scout",
+      "requested_route": {
+        "role": "scout",
+        "selected_tier": "economy",
+        "model": "gpt-6-luna",
+        "effort": "low"
+      },
+      "transmitted_launch": {
+        "model": "gpt-6-luna",
+        "reasoning_effort": "low"
+      },
+      "host_observed_execution": {
+        "model": "gpt-6-luna",
+        "effort": "low",
+        "provenance": "host_reported"
+      },
+      "status": "passed",
+      "fixture_sha256": "sha256:0d22127864a391b4fa21451e2f85144ddf425bbda40e1b527f776acda7396bd8",
+      "verifier_verdict": "pass",
+      "host_return_classification": "completed/none",
+      "host_mode": null,
+      "host_mode_status": "unavailable",
+      "native_context_count": 1,
+      "tokens": null,
+      "api_cost": null,
+      "isolated_subscription_quota": null
+    },
+    {
+      "slot_id": "balanced-implementer",
+      "requested_route": {
+        "role": "implementer",
+        "selected_tier": "balanced",
+        "model": "gpt-6.1-sol",
+        "effort": "medium"
+      },
+      "transmitted_launch": {
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "medium"
+      },
+      "host_observed_execution": {
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "provenance": "host_reported"
+      },
+      "status": "passed",
+      "fixture_sha256": "sha256:71bdccb8f575f1049fa00f1fc2ab6ba89d655be178c869ac7c190839e4fe2330",
+      "verifier_verdict": "pass",
+      "host_return_classification": "completed/none",
+      "host_mode": null,
+      "host_mode_status": "unavailable",
+      "native_context_count": 1,
+      "result_sha256": "sha256:63098273a7aaa630762d6f145dfcf9c61c8c9b290c6ebeb2a05fea5854ccb476",
+      "verifier_exit_code": 0,
+      "tokens": null,
+      "api_cost": null,
+      "isolated_subscription_quota": null
+    },
+    {
+      "slot_id": "frontier-reviewer",
+      "requested_route": {
+        "role": "reviewer",
+        "selected_tier": "frontier",
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "transmitted_launch": {
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "high"
+      },
+      "host_observed_execution": {
+        "model": "gpt-6.1-sol",
+        "effort": "high",
+        "provenance": "host_reported"
+      },
+      "status": "passed",
+      "fixture_sha256": "sha256:2ebb406139b4e146937bc58b92011725ee8e99a9edf9cae2676eef58a9db9314",
+      "verifier_verdict": "pass",
+      "host_return_classification": "completed/none",
+      "host_mode": null,
+      "host_mode_status": "unavailable",
+      "native_context_count": 1,
+      "tokens": null,
+      "api_cost": null,
+      "isolated_subscription_quota": null
+    },
+    {
+      "slot_id": "apex-architect",
+      "requested_route": {
+        "role": "architect",
+        "selected_tier": "apex",
+        "model": "gpt-6.1-sol",
+        "effort": "max"
+      },
+      "transmitted_launch": {
+        "model": "gpt-6.1-sol",
+        "reasoning_effort": "max"
+      },
+      "host_observed_execution": {
+        "model": "gpt-6.1-sol",
+        "effort": "max",
+        "provenance": "host_reported"
+      },
+      "status": "passed",
+      "fixture_sha256": "sha256:a58c6508ab419fce84413952fc9eea558c173c8feaf35e66da0142e60e1fd18f",
+      "verifier_verdict": "pass",
+      "host_return_classification": "completed/none",
+      "host_mode": null,
+      "host_mode_status": "unavailable",
+      "native_context_count": 1,
+      "tokens": null,
+      "api_cost": null,
+      "isolated_subscription_quota": null
+    }
+  ],
+  "qualification_dispatches": 4,
+  "qualification_retries": 0,
+  "new_qualification_dispatches_authorized": 0,
+  "host_mode": null,
+  "host_mode_status": "unavailable",
+  "consumption": {
+    "tokens": null,
+    "api_cost": null,
+    "isolated_subscription_quota": null,
+    "subscription_savings": null,
+    "useful_capacity_gain": null,
+    "accountwide_snapshot_after_slot3": {
+      "weekly_used_percent": 19,
+      "additional_credits_available": false,
+      "before_baseline": null,
+      "attribution": "unavailable; accountwide snapshot is not campaign consumption"
+    },
+    "qualification_authority": "subscription included; zero API/additional-credit authority; no paid comparison executed",
+    "offline_reader": {
+      "cost": null,
+      "cost_provenance": "unavailable",
+      "reason": "gpt-6-luna and gpt-6.1-sol have no price in the offline reader",
+      "paired_session_comparisons": 0,
+      "session_position_data": "unavailable",
+      "scope": "offline observation, no new invocation; no session IDs or native log paths exported"
+    }
+  },
+  "rollback": {
+    "reference_sha": "7adc33793cc04dfd5102f1e11a5d47cb6ecc9cd0",
+    "reference_version": "0.9",
+    "example": "examples/codex-gpt-5.6-rollback.json",
+    "old_mapping_match": "exact AST comparison with reference routing.py passed before promotion edit",
+    "offline_verifier": "tests/test_codex_rollback.py",
+    "before_edit": "8 passed",
+    "after_edit": "13 passed (eight rollback checks plus five old-only account refusal checks)",
+    "scope": "explicit project override resolution, gate floors, declared fallback, persistent escalation, historical proof bytes and review deduplication",
+    "real_reinstallation": false,
+    "rollback_commit_ci": null
+  },
+  "delivery_status": {
+    "implementation": "Codex default change in working tree; not merged or released",
+    "final_head_independent_review": "pending",
+    "final_head_exact_sha_ci": "pending",
+    "merge": "pending",
+    "full_pat17_qualification": "deferred; no economic or cross-host qualification claim"
+  },
+  "limits": [
+    "Each smoke proves only its bounded mechanical technical task and observed host identity/effort, not general capability or economic quality.",
+    "Mode was unavailable for every slot; no Standard or Fast claim, comparison or aggregation.",
+    "Frozen native smoke and prior review digests do not validate the final delivery diff.",
+    "Later ordinary implementation and delivery review are not a fifth qualification slot.",
+    "Main conversation is not automatically reconfigured; Claude unchanged; Astra not a default; historical artifacts unchanged."
+  ],
+  "local_validation": {
+    "source_head": "edd5b16c088c5f609f07c8eaff8cf4fca447b4f9",
+    "scope": "uncommitted implementation tree, not final-head CI or acceptance proof",
+    "targeted_tests": {
+      "command": "PYTHONPATH=plugins/foundry/tooling pytest -q plugins/foundry/tests/test_codex_rollback.py plugins/foundry/tests/test_routing.py plugins/foundry/tests/test_codex_routing.py plugins/foundry/tests/test_routing_contract.py plugins/foundry/tests/test_effort_scopes.py plugins/foundry/tests/test_escalation.py plugins/foundry/tests/test_doctor.py plugins/foundry/tests/test_local_scout.py",
+      "result": "653 passed, 1 deselected",
+      "exit_code": 0
+    },
+    "rollback_before_edit": "8 passed",
+    "rollback_after_edit": "13 passed",
+    "ruff": "passed for changed Python files",
+    "python_compile": "routing.py and effort_policy.py passed",
+    "diff_whitespace": "git diff --check passed"
+  }
+}

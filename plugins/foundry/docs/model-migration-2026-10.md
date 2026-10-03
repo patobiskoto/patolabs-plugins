@@ -83,13 +83,18 @@ planchers et plafond existant d'escalade restent inchangés. Le tableau sépare
 la politique candidate de la capacité documentée et de la possibilité réelle
 d'invocation.
 
-| Rôle / tier | Codex production actuel | Candidat PAT-14 | Effort candidat | État |
+| Rôle / tier | Ancien mapping (rollback) | Défaut de cette révision | Effort | Observation native |
 |---|---|---|---|---|
-| Lupin, scout / economy | `gpt-5.6-luna` | `gpt-6-luna` | `low` | à qualifier |
-| Eiffel, implementer / balanced | `gpt-5.6-terra` | `gpt-6.1-sol` | `medium` | à qualifier |
-| coordinateur / balanced | `gpt-5.6-terra` par défaut | `gpt-6.1-sol` | `medium` | baseline opérateur observée, aucune promotion par ce ticket |
-| Maigret, reviewer / frontier | `gpt-5.6-sol` | `gpt-6.1-sol` | `high` | à qualifier ; comparer Astra seulement sur escalade motivée |
-| Vauban, architect / apex | `gpt-5.6-sol` | `gpt-6.1-sol` | `max` | à qualifier ; Astra seulement sur escalade motivée |
+| Lupin, scout / economy | `gpt-5.6-luna` | `gpt-6-luna` | `low` | smoke terminé, identité hôte observée |
+| Eiffel, implementer / balanced | `gpt-5.6-terra` | `gpt-6.1-sol` | `medium` | smoke terminé, identité hôte observée |
+| coordinateur / balanced | `gpt-5.6-terra` | `gpt-6.1-sol` | `medium` | recommandation ; conversation principale non reconfigurée |
+| Maigret, reviewer / frontier | `gpt-5.6-sol` | `gpt-6.1-sol` | `high` | revue native du SHA gelé terminée ; nouvelle revue du diff final requise |
+| Vauban, architect / apex | `gpt-5.6-sol` | `gpt-6.1-sol` | `max` | smoke terminé, identité hôte observée |
+
+Statut de cette révision : implémentation de la promotion technique Codex autorisée,
+avec revue indépendante et CI du SHA final encore requises avant merge. Le
+[rapport PAT-15](qualification/pat-15-codex-qualification-v1.md) conserve les
+coordonnées gelées et les limites ; il ne clôt pas PAT-17.
 
 Claude Code est préservé : Haiku 4.5/low, Sonnet 5/medium, Opus 5/high et
 Fable 5/high ne sont ni reconfigurés ni qualifiés dans cette tranche (PAT-16
@@ -117,18 +122,24 @@ le verdict de cette coordonnée est `inconclusif`, et non « candidat confirmé 
 
 ## Sémantique de compatibilité
 
-`DEFAULT_MAPPINGS` est la baseline actuelle : Codex economy
-`gpt-5.6-luna`/`low`, balanced `gpt-5.6-terra`/`medium`, frontier
-`gpt-5.6-sol`/`high`, apex `gpt-5.6-sol`/`max`. Un identifiant historique reste
+`DEFAULT_MAPPINGS` dans cette révision déclare Codex economy
+`gpt-6-luna`/`low`, balanced `gpt-6.1-sol`/`medium`, frontier
+`gpt-6.1-sol`/`high`, apex `gpt-6.1-sol`/`max`. Un identifiant historique reste
 tel quel ; aucune configuration, trace ou override GPT-5.6 n'est réécrit.
 
 [`examples/codex-gpt-6-candidates.json`](../examples/codex-gpt-6-candidates.json)
-est la configuration de candidats PAT-15 reproductible : Luna/low pour economy,
-Sol 6.1/medium pour balanced, Sol 6.1/high pour frontier et Sol 6.1/max pour
-apex. Elle n'est pas chargée automatiquement et ne modifie donc aucun défaut
-livré. Chaque candidat reste non qualifié jusqu'aux quatre smokes natifs, à la
-revue indépendante, à la CI du SHA exact et à la preuve de rollback exigés par
-PAT-ADR-0010.
+reste une configuration explicite reproductible des quatre profils, désormais
+identiques aux défauts de cette révision. Elle n'est pas chargée automatiquement.
+Les quatre smokes autorisés sont terminés ; la livraison du nouveau diff suit
+les gates ordinaires de revue et CI exacte, sans cinquième slot de qualification.
+
+[`examples/codex-gpt-5.6-rollback.json`](../examples/codex-gpt-5.6-rollback.json)
+reproduit exactement le mapping Codex de `7adc33793cc04dfd5102f1e11a5d47cb6ecc9cd0`
+(référence 0.9). Son application explicite au projet est vérifiée avant puis après
+modification des défauts par `tests/test_codex_rollback.py` : les overrides anciens
+restent prioritaires, les planchers et escalades persistent, aucune preuve n'est
+réécrite. Cette vérification est locale et mécanique ; elle n'est ni une
+réinstallation réelle ni une preuve de CI sur un SHA de rollback.
 
 Le resolver applique, pour un tier, la précédence demande explicite de
 l'utilisateur, rôle/mapping du projet, puis défaut Foundry. Un mapping projet
@@ -337,3 +348,11 @@ Codex bornée et une promotion par hôte selon ce contrat. Il ne contourne pas
 ADR-0008 ou ADR-0019 et n'élargit pas Claude, Astra, l'autorité de campagne ni
 la promotion automatique. Les preuves déterministes, le smoke natif, la revue,
 la CI exacte et le rollback restent les gates avant tout changement de défaut.
+
+## Statuts documentaires PAT-15
+
+- `DEFAULT_MAPPINGS` Codex et recommandation coordinateur : mis à jour ici et dans `model-routing.md`.
+- Exemple de rollback GPT-5.6 : ajouté, version de référence et vérification locale documentées.
+- Rapport de qualification : ajouté avec observations natives, digests gelés et limites économiques.
+- Commentaire d'autorité `ultra` : corrigé vers PAT-ADR-0010 ; la restriction publique existante ne change pas.
+- CLI, précédence, scopes, télémétrie, gates et autorités : aucun nouveau comportement public dans cette phase ; les contrats déjà documentés demeurent applicables.
