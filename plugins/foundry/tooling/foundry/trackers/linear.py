@@ -753,8 +753,13 @@ def _paired_delimiters(fragment: str, delimiter: str) -> list[tuple[int, int]]:
     pairs = []
     start = 0
     while (position := fragment.find(delimiter, start)) >= 0:
+        if _is_escaped(fragment, position):
+            # A Markdown escape consumes only the first punctuation character.
+            # Resume inside the run so residual markers remain visible.
+            start = position + 1
+            continue
         start = position + len(delimiter)
-        if _is_escaped(fragment, position) or any(
+        if any(
             code_start <= position < code_end + length
             for code_start, code_end, length in code_spans
         ):
