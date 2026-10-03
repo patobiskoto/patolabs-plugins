@@ -3,12 +3,12 @@
     "kind": "migration",
     "manifest_digest": "sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77"
   },
-  "configuration_digest": "sha256:c61c12688c7139b4095f7dc502b4aa57c314be0527e8418f1723051e9bce9051",
+  "configuration_digest": "sha256:9a0663007b847679e79bc82beabbf061e19c750518fd75767d3e847f3e2de6df",
   "project": {
     "id": "aeb77381-f8aa-48d3-a2a5-e6b2d2773007",
     "key": "PAT"
   },
-  "registry_binding_digest": "sha256:2a246a2ce50803d1b8ff7f0aa6a2dac383cb5f5d6860b50e08613066e07b037e",
+  "registry_binding_digest": "sha256:6b3819b130685642f7c6d2a3bb04b342690916f4c342f6ae0051b60379d412cf",
   "repository": "github.com/patobiskoto/patolabs-plugins",
   "tracker": "linear",
   "version": 2
