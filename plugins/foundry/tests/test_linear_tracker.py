@@ -6839,6 +6839,26 @@ def test_linear_adr_pat85_strong_inline_code_readback_replays_only_witness(track
     )
 
 
+def test_linear_adr_pat85_ignores_literal_strong_marker_before_qualified_span(
+    tracker,
+):
+    """A literal ``**`` in code cannot mask the later qualified source span."""
+    instance, wire = tracker
+    source = "`**` **Modifier `PAT`** preflights then stays unchanged."
+    observed = "`**` **Modifier** `PAT` preflights then stays unchanged."
+
+    assert linear_module._linear_markdown_readback_body(source) == observed
+    linear_module._preflight_adr_body_readback(source)
+
+    created = instance.create_adr(PROJECT, "PAT-85 literal delimiter", source)
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    assert wire.documents[created.ref]["content"].endswith(observed)
+    witness = linear_module._parse_adr_witness(
+        wire.documents[witness_id], instance._binding(PROJECT)
+    )
+    assert base64.b64decode(witness["source_body"]) == source.encode()
+
+
 @pytest.mark.parametrize(
     "body",
     (

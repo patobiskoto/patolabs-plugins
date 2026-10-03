@@ -747,13 +747,25 @@ _RAW_INLINE_HTML = re.compile(r"<(?:/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>])|[!?])")
 
 
 def _paired_delimiters(fragment: str, delimiter: str) -> list[tuple[int, int]]:
-    """Return adjacent delimiter pairs; unpaired markers are ordinary text."""
-    positions = []
+    """Return active delimiter pairs; literals and unpaired markers stay text."""
+    code_spans = _paired_backtick_delimiters(fragment)
+    openers: list[int] = []
+    pairs = []
     start = 0
     while (position := fragment.find(delimiter, start)) >= 0:
-        positions.append(position)
         start = position + len(delimiter)
-    return list(zip(positions[::2], positions[1::2]))
+        if _is_escaped(fragment, position) or any(
+            code_start <= position < code_end + length
+            for code_start, code_end, length in code_spans
+        ):
+            continue
+        can_open = _is_emphasis_opener(fragment, position, delimiter)
+        can_close = _is_emphasis_closer(fragment, position, delimiter)
+        if can_close and openers:
+            pairs.append((openers.pop(), position))
+        if can_open:
+            openers.append(position)
+    return pairs
 
 
 def _paired_backtick_delimiters(fragment: str) -> list[tuple[int, int, int]]:

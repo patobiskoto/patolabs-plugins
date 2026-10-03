@@ -207,7 +207,10 @@ unpadded single-backtick code span, `**plain text \`code\`**`, is read back as
 `**plain text** \`code\``. The leading text and code are plain (no nested marks,
 links, or additional code spans); a code-only or multi-backtick strong/code span, or
 any other valid strong/code arrangement is unqualified and fails before a provider write.
-Fenced code remains byte-exact. This is source-to-readback only: the witness retains
+Strong delimiters are recognized only when they are active Markdown delimiters: an
+escaped marker or a marker inside an inline-code span is literal and cannot pair with,
+or mask, a later qualified strong/code span. Fenced code remains byte-exact. This is
+source-to-readback only: the witness retains
 the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or globally
 normalized. Exact replay of an unwitnessed deterministic version may create only its
 missing witness after the existing project/id/title/envelope/body/previous-link checks;
