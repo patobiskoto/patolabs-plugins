@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
 import pytest
 
-from foundry import write
+from foundry import query, write
 from foundry.models import Project, TransitionContext
 from foundry.trackers.base import TrackerConflictError
 from foundry.trackers.linear import LinearTracker, LinearTrackerError
@@ -42,7 +43,7 @@ class FaithfulLinearWire(LinearWire):
         return result
 
 
-def _linear_graph(*, acceptance="proof", dependency=False):
+def _linear_graph(*, acceptance="proof", dependency=False, transitive=False):
     wire = FaithfulLinearWire()
     project = Project(
         key=PROJECT.key,
@@ -96,6 +97,17 @@ def _linear_graph(*, acceptance="proof", dependency=False):
             "issue": {"id": extra["id"], "identifier": "LIN-3"},
         }])
         deliver("LIN-3")
+        if transitive:
+            leaf = copy.deepcopy(extra)
+            leaf.update({"id": "00000000-0000-4000-8000-000000000004",
+                         "identifier": "LIN-4", "comments": connection([]),
+                         "state": {"id": STATE_IDS["in-progress"], "name": "In progress"}})
+            wire.issues["LIN-4"] = leaf
+            wire.issues["LIN-3"]["inverseRelations"] = connection([{
+                "type": "blocks",
+                "issue": {"id": leaf["id"], "identifier": "LIN-4"},
+            }])
+            deliver("LIN-4")
     return tracker, wire, project
 
 
@@ -118,6 +130,147 @@ def test_linear_bounded_close_roundtrips_through_graphql_and_replays(monkeypatch
     assert sum("foundry-epic-closure.v1" in item["body"] for item in wire.comments.values()) == 1
     # Two setup transitions belong to the child; replay adds no parent update.
     assert sum("FoundryLinearIssueUpdate" in call[0] for call in wire.calls) == 3
+
+
+@pytest.mark.parametrize("started", (False, True))
+def test_linear_closed_epic_is_aligned_in_normal_read_paths(monkeypatch, started):
+    tracker, wire, project = _linear_graph(dependency=True, transitive=True)
+    if started:
+        tracker.set_state("LIN-1", "in-progress", project=project)
+        wire.issues["LIN-1"]["updatedAt"] = "2026-09-20T10:01:30Z"
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    closed = write.close_epic(
+        tracker, "LIN-1", human_verdict="accepted", issued_at=1_800_000_000_000,
+        nonce="nonce_1234567890abcdef",
+    )
+    # The normalization's compact comment view must not truncate the authority.
+    wire.issues["LIN-1"]["comments"]["nodes"].extend(
+        {"id": f"free-note-{i}", "body": "Ordinary note"} for i in range(12)
+    )
+    before = len(wire.calls)
+    for parent in (tracker.get_issue("LIN-1"), tracker.observe_issue("LIN-1")):
+        assert (parent.state, parent.normalized_state, parent.native_state,
+                parent.projection_status) == ("done", "done", "done", "aligned")
+        assert (parent.ac_done, parent.ac_total, parent.pr_url) == (0, 1, None)
+        assert parent.acceptance_status == "unknown"
+        assert parent.acceptance_source is None
+        assert parent.acceptance_coordinates is None
+    monkeypatch.setattr(query.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(query, "_project", lambda _tracker: project)
+    monkeypatch.setattr(query, "_adr_index_or_capability", lambda *_args: [])
+    assert query.issue("LIN-1")["issue"]["state"] == "done"
+    backlog = query.backlog("done")
+    assert next(row for row in backlog["issues"] if row["id"] == "LIN-1")["state"] == "done"
+    groom = query.profile("groom")
+    assert not any(row["id"] == "LIN-1" for row in groom["issues"])
+    assert next(row for row in groom["historical_index"] if row["id"] == "LIN-1")["state"] == "done"
+    replay = write.close_epic(tracker, "LIN-1", human_verdict="accepted")
+    assert replay.receipt == closed.receipt
+    assert replay.replayed
+    assert not any("Create" in document or "Update" in document
+                   for document, _args in wire.calls[before:])
+
+
+@pytest.mark.parametrize("corruption", (
+    "missing", "malformed", "duplicate", "comment-id", "foreign-parent",
+    "foreign-project", "verdict", "timestamp", "nonce", "receipt-type",
+    "receipt-ac", "receipt-version", "receipt-version-string", "receipt-type-null",
+    "timestamp-bool", "predecessor", "parent-type", "reopened",
+    "procedure", "child-version", "child-reopened", "child-added",
+    "dependency-version", "transitive-version", "dependency-removed",
+    "historical-lifecycle", "hierarchy-cycle",
+))
+def test_linear_epic_terminal_projection_rejects_invalid_authority(monkeypatch, corruption):
+    tracker, wire, project = _linear_graph(dependency=True, transitive=True)
+    tracker.set_state("LIN-1", "in-progress", project=project)
+    wire.issues["LIN-1"]["updatedAt"] = "2026-09-20T10:01:30Z"
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    closed = write.close_epic(
+        tracker, "LIN-1", human_verdict="accepted", issued_at=1_800_000_000_000,
+        nonce="nonce_1234567890abcdef",
+    )
+    parent = wire.issues["LIN-1"]
+    rows = parent["comments"]["nodes"]
+    audit = next(row for row in rows if "Foundry Epic closure audit" in row["body"])
+    changes = {
+        "foreign-parent": {"parent_id": "LIN-999"},
+        "foreign-project": {"project_id": "foreign"},
+        "verdict": {"human_verdict": "rejected"},
+        "timestamp": {"issued_at": -1},
+        "nonce": {"nonce": "invalid"},
+        "receipt-type": {"parent_type": "Task"},
+        "receipt-ac": {"parent_ac_done": 1},
+        "receipt-version": {"parent_version": closed.closed_parent_version},
+        "receipt-version-string": {"parent_version": "invalid"},
+        "receipt-type-null": {"parent_type": None},
+        "timestamp-bool": {"issued_at": True},
+        "predecessor": {"parent_state": "done"},
+    }
+    if corruption in changes:
+        receipt = replace(closed.receipt, **changes[corruption])
+        _id, audit["body"], audit["id"] = tracker._epic_closure_audit(receipt)
+    elif corruption == "missing":
+        rows.remove(audit)
+    elif corruption == "malformed":
+        audit["body"] += "\nextra"
+    elif corruption == "duplicate":
+        rows.append(copy.deepcopy(audit))
+    elif corruption == "comment-id":
+        audit["id"] = "foreign-comment"
+    elif corruption == "parent-type":
+        parent["labels"] = connection([])
+    elif corruption == "reopened":
+        parent["state"] = {"id": STATE_IDS["blocked"], "name": "Blocked"}
+    elif corruption == "procedure":
+        parent["description"] = "- [ ] Changed procedure"
+    elif corruption == "child-reopened":
+        wire.issues["LIN-2"]["state"] = {"id": STATE_IDS["review"], "name": "Review"}
+    elif corruption == "child-added":
+        parent["children"]["nodes"].append({"id": wire.issues["LIN-3"]["id"], "identifier": "LIN-3"})
+    elif corruption in {"child-version", "dependency-version", "transitive-version"}:
+        target = {"child-version": "LIN-2", "dependency-version": "LIN-3", "transitive-version": "LIN-4"}[corruption]
+        wire.issues[target]["updatedAt"] = "2026-09-20T10:03:00Z"
+    elif corruption == "dependency-removed":
+        wire.issues["LIN-3"]["inverseRelations"] = connection([])
+    elif corruption == "historical-lifecycle":
+        next(row for row in rows if '"operation":"state-in-progress"' in row["body"])["body"] += "invalid"
+    else:
+        parent["children"] = connection([{"id": parent["id"], "identifier": "LIN-1"}])
+    before = len(wire.calls)
+    with pytest.raises(TrackerConflictError):
+        tracker.get_issue("LIN-1")
+    observed = tracker.observe_issue("LIN-1")
+    expected_state = "in-progress" if corruption == "missing" else None
+    expected_status = "disagreement" if corruption == "missing" else "unknown"
+    assert observed.state == expected_state
+    assert observed.normalized_state == expected_state
+    assert observed.projection_status == expected_status
+    assert observed.ac_done == 0
+    searched = next(row for row in tracker.search(project) if row.id == "LIN-1")
+    assert searched.state == expected_state and searched.projection_status == expected_status
+    monkeypatch.setattr(query.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(query, "_project", lambda _tracker: project)
+    assert not any(row["id"] == "LIN-1" for row in query.backlog("done")["issues"])
+    if corruption != "missing":
+        with pytest.raises(TrackerConflictError):
+            tracker.get_epic_closure(project, "LIN-1")
+        with pytest.raises(TrackerConflictError):
+            write.close_epic(tracker, "LIN-1", human_verdict="accepted")
+    assert not any("Create" in document or "Update" in document
+                   for document, _args in wire.calls[before:])
+
+
+def test_linear_manual_code_done_supplies_no_terminal_authority():
+    tracker, wire, project = _linear_graph()
+    wire.issues["LIN-2"]["comments"] = connection([])
+    before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="outside lifecycle"):
+        tracker.get_issue("LIN-2")
+    observed = tracker.observe_issue("LIN-2")
+    assert observed.state is None and observed.projection_status == "unknown"
+    assert observed.ac_done == 0 and observed.acceptance_status == "unknown"
+    assert not any("Create" in document or "Update" in document
+                   for document, _args in wire.calls[before:])
 
 
 def test_linear_epic_without_own_validation_criteria_refuses_before_effect(monkeypatch):
