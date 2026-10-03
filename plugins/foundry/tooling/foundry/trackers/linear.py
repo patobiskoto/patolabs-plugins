@@ -738,7 +738,7 @@ _MULTILINE_BOLD = re.compile(
 # transformation: both parts are plain and the code span is non-empty.
 _STRONG_TRAILING_INLINE_CODE = re.compile(
     r"(?<![A-Za-z0-9_*\\])\*\*(?![\s*])"
-    r"(?P<before>[^*`_~\[\]\n]+?)(?<!\s) "
+    r"(?P<before>[^*`_~\[\]<>\\&\n]+?)(?<!\s) "
     r"(?P<code>`(?![\s`])[^`\n]+(?<!\s)`)"
     r"\*\*(?![A-Za-z0-9_*])"
 )

@@ -6866,6 +6866,10 @@ def test_linear_adr_pat85_ignores_literal_strong_marker_before_qualified_span(
         "**Two `code` and `other`**",
         "**Nested *text* `code`**",
         "**Multi ``code``**",
+        "**<em>Modifier</em> `PAT`**",
+        "**Modifier <https://example.invalid> `PAT`**",
+        "**Modifier &amp; `PAT`**",
+        r"**Modifier \\! `PAT`**",
     ),
 )
 def test_linear_adr_pat85_unqualified_strong_code_refuses_before_write(tracker, body):
@@ -6875,6 +6879,7 @@ def test_linear_adr_pat85_unqualified_strong_code_refuses_before_write(tracker, 
     ):
         instance.create_adr(PROJECT, "PAT-85 unsupported", body)
     assert wire.documents == {}
+    assert all("mutation " not in document for document, _ in wire.calls)
 
     fenced = f"```text\n{body}\n```"
     assert linear_module._linear_markdown_readback_body(fenced) == fenced

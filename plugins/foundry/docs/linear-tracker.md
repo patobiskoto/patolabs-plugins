@@ -207,6 +207,10 @@ unpadded single-backtick code span, `**plain text \`code\`**`, is read back as
 `**plain text** \`code\``. The leading text and code are plain (no nested marks,
 links, or additional code spans); a code-only or multi-backtick strong/code span, or
 any other valid strong/code arrangement is unqualified and fails before a provider write.
+The leading-text profile also excludes angle brackets, ampersands, and backslashes, so
+inline HTML, angle-bracket links, entity references, and Markdown escapes cannot enter
+this transformation. Literal uses of those three character classes are conservatively
+unqualified too; fenced content containing them remains byte-exact.
 Strong delimiters are recognized only when they are active Markdown delimiters: an
 escaped marker or a marker inside an inline-code span is literal and cannot pair with,
 or mask, a later qualified strong/code span. Fenced code remains byte-exact. This is
