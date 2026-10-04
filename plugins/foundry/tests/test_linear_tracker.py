@@ -191,14 +191,39 @@ def linear_markdown_body_readback(body):
             if len(thematic) < 3 or set(thematic) != {"-"}:
                 source_line = f"* {source_line[2:]}"
         rendered.append(source_line)
-    # Observed (PAT-94): a blank line between two one-line top-level ordered
-    # items is dropped by Linear, outside fenced code only.
+    # Observed (PAT-94): in a top-level ordered list that starts at 1, counts up
+    # by 1 and holds one-line items spaced by one empty line, Linear drops the
+    # empty lines (outside fenced code only).  Nothing else is observed.
+    orig = list(rendered)
+    def item_number(position):
+        match = re.fullmatch(r"([0-9]+)\. [^ \t\n][^\n]*\n?", orig[position])
+        return int(match[1]) if match and str(int(match[1])) == match[1] else None
+
+    def spaced_from_one(position):
+        # orig[position] is an item; walk back "item, blank, item, ..." to 1.
+        while True:
+            value = item_number(position)
+            if value is None or position in fenced_lines:
+                return False
+            if value == 1:
+                return position == 0 or orig[position - 1] == "\n"
+            if (
+                position < 2
+                or orig[position - 1] != "\n"
+                or position - 1 in fenced_lines
+                or item_number(position - 2) != value - 1
+            ):
+                return False
+            position -= 2
+
     for number in range(1, len(rendered) - 1):
         if (
-            rendered[number] == "\n"
+            orig[number] == "\n"
             and number not in fenced_lines
-            and re.fullmatch(r"[0-9]+\. [^\n]+\n", rendered[number - 1])
-            and re.match(r"[0-9]+\. [^\n]+", rendered[number + 1])
+            and orig[number - 1].endswith("\n")
+            and "\r" not in orig[number - 1]
+            and item_number(number + 1) == (item_number(number - 1) or -2) + 1
+            and spaced_from_one(number - 1)
         ):
             rendered[number] = ""
     rendered_body = "".join(rendered)
@@ -9010,30 +9035,107 @@ def test_linear_adr_pat94_fenced_ordered_list_stays_literal():
     assert linear_module._linear_markdown_readback_body(body) == body
 
 
-@pytest.mark.parametrize(
-    "hostile",
-    [
-        pytest.param("1. a\n   - sub\n\n2. b", id="ordered-sub-items"),
-        pytest.param("1. a\n   - sub\n2. b", id="ordered-tight-sub-items"),
-        pytest.param("- a\n\n- b", id="spaced-bullets"),
-        pytest.param("* a\n\n* b", id="spaced-star-bullets"),
-        pytest.param("1. a\n\n   continued\n\n2. b", id="continuation-paragraph"),
-        pytest.param("1. a\n\n   continued", id="trailing-continuation"),
-        pytest.param("- a\n\n  continued", id="bullet-continuation"),
-        pytest.param("1. a\ncontinued\n\n2. b", id="lazy-continuation"),
-        pytest.param("1. a\n\n\n2. b", id="two-blank-lines"),
-        pytest.param("1) a\n\n2) b", id="paren-delimiter"),
-        pytest.param("1. a\n2. b\n\n3. c", id="mixed-tight-and-spaced"),
-        pytest.param("1. a\n\n2. b\n3. c", id="mixed-spaced-and-tight"),
-        pytest.param("1. a\n\n 2. b", id="indented-second-item"),
-        pytest.param("1. a\n\n2.  b", id="wide-marker-space"),
-    ],
-)
+HOSTILE_LISTS = [
+    pytest.param("1. a\n   - sub\n\n2. b", id="ordered-sub-items"),
+    pytest.param("1. a\n   - sub\n2. b", id="ordered-tight-sub-items"),
+    pytest.param("- a\n\n- b", id="spaced-bullets"),
+    pytest.param("* a\n\n* b", id="spaced-star-bullets"),
+    pytest.param("- a\n  * sub\n\n- b", id="bullet-star-sub-list"),
+    pytest.param("- a\n  1. sub\n\n- b", id="bullet-ordered-sub-list"),
+    pytest.param("- a\n  continued\n\n- b", id="bullet-continuation-line"),
+    pytest.param("1. a\n\n   continued\n\n2. b", id="continuation-paragraph"),
+    pytest.param("1. a\n\n   continued", id="trailing-continuation"),
+    pytest.param("- a\n\n  continued", id="bullet-continuation"),
+    pytest.param("1. a\ncontinued\n\n2. b", id="lazy-continuation"),
+    pytest.param("1. a\n\n\n2. b", id="two-blank-lines"),
+    pytest.param("1) a\n\n2) b", id="paren-delimiter"),
+    pytest.param("1. a\n2. b\n\n3. c", id="mixed-tight-and-spaced"),
+    pytest.param("1. a\n\n2. b\n3. c", id="mixed-spaced-and-tight"),
+    pytest.param("1. a\n\n 2. b", id="indented-second-item"),
+    pytest.param("1. a\n\n2.  b", id="wide-marker-space"),
+    pytest.param("1. a\x0c\n\n2. b", id="formfeed-separator"),
+    pytest.param("1. a\x0b\n\n2. b", id="vertical-tab-separator"),
+    pytest.param("1. a\x1c\n\n2. b", id="file-separator"),
+    pytest.param("1. a\x85\n\n2. b", id="next-line-separator"),
+    pytest.param("1. a\u2028\n\n2. b", id="line-separator"),
+    pytest.param("1. a\r\n\r\n2. b", id="crlf"),
+    pytest.param("1. a\r\n\n2. b", id="crlf-then-lf"),
+    pytest.param("1. a\n\n1. b", id="renumbered-same"),
+    pytest.param("3. a\n\n7. b", id="renumbered-gap"),
+    pytest.param("2. a\n\n3. b", id="non-one-start"),
+    pytest.param("0. a\n\n1. b", id="zero-start"),
+    pytest.param("Intro\n2. a\n\n3. b", id="paragraph-adjacent-first-item"),
+    pytest.param("Intro\n1. a\n\n2. b", id="paragraph-adjacent-one"),
+    pytest.param("1. a\n\n  code\n\n2. b", id="indented-code-continuation"),
+    pytest.param("1. a\n\n    code\n\n2. b", id="indented-code-four"),
+    pytest.param("1. a\n\n```\ncode\n```\n\n2. b", id="fence-between-items"),
+    pytest.param("1. a\n```\ncode\n```\n2. b", id="glued-fence-between-items"),
+]
+# Bodies the pre-PAT-94 model already accepted on the read path: they stay
+# readable as stored Documents, only the NEW-body preflight refuses them.
+STORED_READABLE_LISTS = [
+    "1. a\n   - sub\n\n2. b",
+    "1. a\n   - sub\n2. b",
+    "- a\n\n- b",
+    "- a\n  * sub\n\n- b",
+    "- a\n  1. sub\n\n- b",
+    "1. a\n\n   continued\n\n2. b",
+    "1. a\ncontinued\n\n2. b",
+    "1. a\n\n\n2. b",
+    "1) a\n\n2) b",
+    "1. a\n2. b\n\n3. c",
+    "1. a\n\n  code\n\n2. b",
+    "1. a\n\n```\ncode\n```\n\n2. b",
+]
+
+
+@pytest.mark.parametrize("hostile", HOSTILE_LISTS)
 def test_linear_adr_pat94_refuses_unmodelled_list_before_any_write(tracker, hostile):
     instance, wire = tracker
-    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
-        linear_module._preflight_adr_body_readback(hostile)
-    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
-        instance.create_adr(PROJECT, "PAT-94 hostile", hostile)
+    for attempt in (
+        lambda: linear_module._preflight_adr_body_readback(hostile),
+        lambda: instance.create_adr(PROJECT, "PAT-94 hostile", hostile),
+    ):
+        with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+            attempt()
+        assert "unsupported list Markdown" in str(raised.value.__cause__)
     assert wire.documents == {}
     assert not [q for q, _ in wire.calls if "documentCreate" in q]
+
+
+@pytest.mark.parametrize("body", STORED_READABLE_LISTS)
+def test_linear_adr_pat94_stored_document_read_path_is_not_strict(
+    tracker, monkeypatch, body
+):
+    instance, wire = tracker
+    # Non-strict model never raises and leaves unrecognised shapes untouched
+    # (only the pre-PAT-94 top-level dash conversion applies).
+    rendered = linear_module._linear_markdown_readback_body(body)
+    expected = "\n".join(
+        f"* {line[2:]}" if line.startswith("- ") else line for line in body.split("\n")
+    )
+    assert rendered == expected
+    with pytest.raises(ValueError, match="unsupported list Markdown"):
+        linear_module._linear_markdown_readback_body(body, strict=True)
+    # A Document stored before the strict preflight existed still reads back.
+    with monkeypatch.context() as patch:
+        patch.setattr(linear_module, "_preflight_adr_body_readback", lambda *a, **k: None)
+        created = instance.create_adr(PROJECT, "PAT-94 stored", body)
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+    content = wire.documents[created.ref]["content"]
+    assert content.endswith(rendered)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "1. a\n\n2. b\n\n3. c",
+        "Intro\n\n1. a\n\n2. b",
+        "## H\n\n1. a\n\n2. b\n\ntext\n\n1. x\n\n2. y",
+        "```\nx\n```\n1. a\n\n2. b",
+    ],
+)
+def test_linear_adr_pat94_observed_form_is_recognised_in_both_modes(body):
+    lenient = linear_module._linear_markdown_readback_body(body)
+    assert lenient == linear_module._linear_markdown_readback_body(body, strict=True)
+    assert lenient.count("\n\n") < body.count("\n\n")
