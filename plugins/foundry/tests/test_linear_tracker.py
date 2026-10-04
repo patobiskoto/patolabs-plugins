@@ -6690,6 +6690,7 @@ def test_linear_adr_native_readback_accepts_only_observed_marker_escape(tracker)
 )
 def test_linear_adr_readback_rewrites_only_top_level_dash_lists(
     tracker,
+    monkeypatch,
     opening_fence,
     closing_fence,
 ):
@@ -6737,11 +6738,21 @@ def test_linear_adr_readback_rewrites_only_top_level_dash_lists(
     assert not linear_module._adr_readback_content_matches(hostile, canonical)
 
     instance, wire = tracker
-    created = instance.create_adr(
-        PROJECT,
-        "Fenced literal",
-        source_body,
-    )
+    # PAT-94: a dash list, an empty line, then a star list has no observed
+    # rendering (re-read as one loose list), so a NEW body of this shape is
+    # refused before any write; a stored Document of it stays readable.
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "Fenced literal", source_body)
+    assert wire.documents == {}
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            linear_module, "_preflight_adr_body_readback", lambda *a, **k: None
+        )
+        created = instance.create_adr(
+            PROJECT,
+            "Fenced literal",
+            source_body,
+        )
     binding = instance._binding(PROJECT)
     raw = wire.documents[created.ref]
     assert raw["content"].endswith(provider_body)
@@ -8992,16 +9003,14 @@ PAT94_OBSERVED = (
     "3. third step\n\n"
     "Closing paragraph."
 )
+# The pre-PAT-94 model output of the same source, which an older stored
+# Document may hold.
+PAT94_LEGACY = PAT94_SOURCE.replace("- bullet", "* bullet")
 
 
 def test_linear_adr_pat94_spaced_ordered_list_readback_replays_only_witness(tracker):
     instance, wire = tracker
     assert linear_module._linear_markdown_readback_body(PAT94_SOURCE) == PAT94_OBSERVED
-    # Deterministic: the rendering is stable and never re-tightened further.
-    assert (
-        linear_module._linear_markdown_readback_body(PAT94_SOURCE)
-        == linear_module._linear_markdown_readback_body(PAT94_SOURCE)
-    )
     linear_module._preflight_adr_body_readback(PAT94_SOURCE)
 
     created = instance.create_adr(PROJECT, "PAT-94 spaced list", PAT94_SOURCE)
@@ -9033,26 +9042,113 @@ def test_linear_adr_pat94_spaced_ordered_list_readback_replays_only_witness(trac
 def test_linear_adr_pat94_fenced_ordered_list_stays_literal():
     body = "```text\n1. a\n\n2. b\n```"
     assert linear_module._linear_markdown_readback_body(body) == body
+    linear_module._preflight_adr_body_readback(body)
+
+
+# Exact readback of the one observed form, identical in both modes.
+PAT94_OBSERVED_FORMS = [
+    pytest.param("1. a\n\n2. b\n\n3. c", "1. a\n2. b\n3. c", id="three-items"),
+    pytest.param("Intro\n\n1. a\n\n2. b", "Intro\n\n1. a\n2. b", id="after-paragraph"),
+    pytest.param(
+        "## H\n\n1. a\n\n2. b\n\ntext\n\n1. x\n\n2. y",
+        "## H\n\n1. a\n2. b\n\ntext\n\n1. x\n2. y",
+        id="two-lists",
+    ),
+    pytest.param(
+        "1. **Bold** step\n\n2. `code` step\n\n## Next",
+        "1. **Bold** step\n2. `code` step\n\n## Next",
+        id="inline-markup-heading-after",
+    ),
+    pytest.param(
+        "".join(f"{n}. item\n\n" for n in range(1, 10)),
+        "".join(f"{n}. item\n" for n in range(1, 10)) + "\n",
+        id="nine-items",
+    ),
+]
+
+
+@pytest.mark.parametrize(("body", "observed"), PAT94_OBSERVED_FORMS)
+def test_linear_adr_pat94_observed_form_is_recognised_in_both_modes(body, observed):
+    assert linear_module._linear_markdown_readback_body(body) == observed
+    assert (
+        linear_module._linear_markdown_readback_body(body, strict=True) == observed
+    )
+    # Idempotent: the rendering is already tight, so neither mode changes it.
+    assert linear_module._linear_markdown_readback_body(observed) == observed
+    assert (
+        linear_module._linear_markdown_readback_body(observed, strict=True)
+        == observed
+    )
+
+
+@pytest.mark.parametrize(
+    "tight",
+    [
+        "1. a\n2. b\n3. c",
+        "- a\n- b\n\nText",
+        "1. a\n   - detail\n2. b",
+        "* a\n  continued\n* b",
+        "> 1. a\n> 2. b",
+        "1. a\n```\ncode\n```\n2. b",
+        "1. a\n\n```\ncode\n```\n\n2. b",
+        "    code\n\n    more code",
+        "* * *\n\n- a",
+        "- a\n\n* * *",
+    ],
+)
+def test_linear_adr_pat94_no_blank_line_in_a_list_context_is_never_changed(tight):
+    assert linear_module._linear_observed_list_blank_lines(tight, strict=True) == set()
+    linear_module._preflight_adr_body_readback(tight)
+    assert len(linear_module._linear_markdown_readback_bodies(tight)) == 1
+
+
+def test_linear_adr_pat94_thematic_break_with_line_ending_is_not_an_item():
+    # N4: the line ending is not part of the thematic-break test.
+    body = "- a\n\n* * *\n\n- - -\n\nText"
+    assert linear_module._linear_observed_list_blank_lines(body, strict=True) == set()
 
 
 HOSTILE_LISTS = [
     pytest.param("1. a\n   - sub\n\n2. b", id="ordered-sub-items"),
-    pytest.param("1. a\n   - sub\n2. b", id="ordered-tight-sub-items"),
     pytest.param("- a\n\n- b", id="spaced-bullets"),
     pytest.param("* a\n\n* b", id="spaced-star-bullets"),
+    pytest.param("- a\n\n* b", id="dash-then-star"),
+    pytest.param("* a\n\n- b", id="star-then-dash"),
+    pytest.param("- a\n\n+ b", id="dash-then-plus"),
+    pytest.param("1. a\n\n1) b", id="dot-then-paren"),
+    pytest.param("- x\n\n1. a\n\n2. b", id="bullet-then-observed-form"),
+    pytest.param("1. - a\n\n2. - b", id="nested-bullet-items"),
+    pytest.param("1. 1. x\n\n2. y", id="nested-ordered-item"),
+    pytest.param("1. 2) x\n\n2. y", id="nested-paren-item"),
+    pytest.param("1. > q\n\n2. y", id="blockquote-item"),
+    pytest.param("1. ```\n\n2. y", id="fence-item"),
+    pytest.param("1. # h\n\n2. y", id="heading-item"),
+    pytest.param("1. ***\n\n2. y", id="thematic-item"),
+    pytest.param("1. [a]: /x\n\n2. y", id="link-definition-item"),
+    pytest.param("> 1. a\n>\n> 2. b", id="list-in-blockquote"),
+    pytest.param("> 1. a\n\n> 2. b", id="list-across-blockquotes"),
     pytest.param("- a\n  * sub\n\n- b", id="bullet-star-sub-list"),
     pytest.param("- a\n  1. sub\n\n- b", id="bullet-ordered-sub-list"),
     pytest.param("- a\n  continued\n\n- b", id="bullet-continuation-line"),
     pytest.param("1. a\n\n   continued\n\n2. b", id="continuation-paragraph"),
     pytest.param("1. a\n\n   continued", id="trailing-continuation"),
     pytest.param("- a\n\n  continued", id="bullet-continuation"),
+    pytest.param("- a\n\n    code", id="indented-code-after-list"),
     pytest.param("1. a\ncontinued\n\n2. b", id="lazy-continuation"),
+    pytest.param("1. a\n\n2. b\ncontinued", id="lazy-continuation-last"),
     pytest.param("1. a\n\n\n2. b", id="two-blank-lines"),
+    pytest.param("1. a\n \n2. b", id="whitespace-blank-line"),
+    pytest.param("Intro\n \n1. a\n\n2. b", id="whitespace-blank-before"),
+    pytest.param("1. a\n\n2. b\n\t\nText", id="whitespace-blank-after"),
+    # Form feed is not a CommonMark line ending: `text` continues item `a`.
+    pytest.param("- a\n\x0c\ntext\n\n- c", id="formfeed-is-not-a-blank-line"),
     pytest.param("1) a\n\n2) b", id="paren-delimiter"),
     pytest.param("1. a\n2. b\n\n3. c", id="mixed-tight-and-spaced"),
     pytest.param("1. a\n\n2. b\n3. c", id="mixed-spaced-and-tight"),
     pytest.param("1. a\n\n 2. b", id="indented-second-item"),
+    pytest.param(" 1. a\n\n 2. b", id="indented-list"),
     pytest.param("1. a\n\n2.  b", id="wide-marker-space"),
+    pytest.param("1. a \n\n2. b", id="trailing-space"),
     pytest.param("1. a\x0c\n\n2. b", id="formfeed-separator"),
     pytest.param("1. a\x0b\n\n2. b", id="vertical-tab-separator"),
     pytest.param("1. a\x1c\n\n2. b", id="file-separator"),
@@ -9064,28 +9160,17 @@ HOSTILE_LISTS = [
     pytest.param("3. a\n\n7. b", id="renumbered-gap"),
     pytest.param("2. a\n\n3. b", id="non-one-start"),
     pytest.param("0. a\n\n1. b", id="zero-start"),
+    pytest.param("01. a\n\n02. b", id="zero-padded"),
     pytest.param("Intro\n2. a\n\n3. b", id="paragraph-adjacent-first-item"),
     pytest.param("Intro\n1. a\n\n2. b", id="paragraph-adjacent-one"),
+    pytest.param("```\nx\n```\n1. a\n\n2. b", id="fence-glued-before"),
+    pytest.param("1. a\n\n2. b\n```\nx\n```", id="fence-glued-after"),
     pytest.param("1. a\n\n  code\n\n2. b", id="indented-code-continuation"),
     pytest.param("1. a\n\n    code\n\n2. b", id="indented-code-four"),
-    pytest.param("1. a\n\n```\ncode\n```\n\n2. b", id="fence-between-items"),
-    pytest.param("1. a\n```\ncode\n```\n2. b", id="glued-fence-between-items"),
-]
-# Bodies the pre-PAT-94 model already accepted on the read path: they stay
-# readable as stored Documents, only the NEW-body preflight refuses them.
-STORED_READABLE_LISTS = [
-    "1. a\n   - sub\n\n2. b",
-    "1. a\n   - sub\n2. b",
-    "- a\n\n- b",
-    "- a\n  * sub\n\n- b",
-    "- a\n  1. sub\n\n- b",
-    "1. a\n\n   continued\n\n2. b",
-    "1. a\ncontinued\n\n2. b",
-    "1. a\n\n\n2. b",
-    "1) a\n\n2) b",
-    "1. a\n2. b\n\n3. c",
-    "1. a\n\n  code\n\n2. b",
-    "1. a\n\n```\ncode\n```\n\n2. b",
+    pytest.param("1. a\n\n   ```\n   code\n   ```\n\n2. b", id="indented-fence-item"),
+    pytest.param(
+        "".join(f"{n}. item\n\n" for n in range(1, 11)), id="ten-items"
+    ),
 ]
 
 
@@ -9101,41 +9186,300 @@ def test_linear_adr_pat94_refuses_unmodelled_list_before_any_write(tracker, host
         assert "unsupported list Markdown" in str(raised.value.__cause__)
     assert wire.documents == {}
     assert not [q for q, _ in wire.calls if "documentCreate" in q]
+    # Not strict: never refused for its list shape, and left exactly as the
+    # pre-PAT-94 model renders it (the observed form is not applied inside it).
+    legacy = linear_module._linear_markdown_readback_body(
+        hostile, observed_lists=False
+    )
+    assert linear_module._linear_markdown_readback_body(hostile) == legacy
+    assert linear_module._linear_markdown_readback_bodies(hostile) == (legacy,)
+    linear_module._preflight_adr_body_readback(hostile, new_body=False)
 
 
-@pytest.mark.parametrize("body", STORED_READABLE_LISTS)
-def test_linear_adr_pat94_stored_document_read_path_is_not_strict(
+# Bodies the pre-PAT-94 model accepted and the strict new-body preflight
+# refuses; the fake provider renders them exactly as the pre-PAT-94 model.
+STORED_REFUSED_LISTS = [
+    "1. a\n   - detail\n\n2. b",
+    "- a\n\n- b",
+    "- a\n  * sub\n\n- b",
+    "1. a\n\n   continued\n\n2. b",
+    "1. a\n\n\n2. b",
+    "1) a\n\n2) b",
+    "1. a\n2. b\n\n3. c",
+]
+
+
+def _store_pre_pat94(instance, monkeypatch, title, body):
+    """Create a Document as before PAT-94: without the strict list preflight."""
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, title, body)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            linear_module,
+            "_linear_observed_list_blank_lines",
+            lambda body, *, strict: set(),
+        )
+        return instance.create_adr(PROJECT, title, body)
+
+
+@pytest.mark.parametrize("body", STORED_REFUSED_LISTS)
+def test_linear_adr_pat94_stored_refused_body_keeps_its_whole_lifecycle(
     tracker, monkeypatch, body
 ):
     instance, wire = tracker
-    # Non-strict model never raises and leaves unrecognised shapes untouched
-    # (only the pre-PAT-94 top-level dash conversion applies).
-    rendered = linear_module._linear_markdown_readback_body(body)
-    expected = "\n".join(
-        f"* {line[2:]}" if line.startswith("- ") else line for line in body.split("\n")
+    stored = _store_pre_pat94(instance, monkeypatch, "PAT-94 stored", body)
+    other = instance.create_adr(PROJECT, "PAT-94 replacement", "replacement")
+    assert wire.documents[stored.ref]["content"].endswith(
+        linear_module._linear_markdown_readback_body(body, observed_lists=False)
     )
-    assert rendered == expected
-    with pytest.raises(ValueError, match="unsupported list Markdown"):
-        linear_module._linear_markdown_readback_body(body, strict=True)
-    # A Document stored before the strict preflight existed still reads back.
+
+    # Interrupted create: the replay recovers only the missing witness.
+    witness_id = linear_module._adr_witness_id(PROJECT.id, stored.id, 0)
+    del wire.documents[witness_id]
+    assert instance.create_adr(PROJECT, "PAT-94 stored", body).ref == stored.ref
+    assert witness_id in wire.documents
+
+    # Status, link and supersession reuse the stored body: not strict.
+    instance.set_adr_status(stored, "accepted", project=PROJECT)
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    linked = instance.link_adr_issue(current[stored.id], "LIN-2", project=PROJECT)
+    assert linked.body.endswith(body)
+    instance.set_adr_status(other, "accepted", project=PROJECT)
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+    final = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert final[stored.id].status == "superseded"
+    assert final[stored.id].body.endswith(body)
+
+
+def test_linear_adr_pat94_interrupted_status_on_stored_refused_body_recovers(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    stored = _store_pre_pat94(instance, monkeypatch, "PAT-94 stored", "- a\n\n- b")
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(f"[Foundry ADR witness] {stored.id} / v0001"):
+            raise OSError("status witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.set_adr_status(stored, "accepted", project=PROJECT)
+    instance._transport = original
+    instance.set_adr_status(stored, "accepted", project=PROJECT)
+    [recovered] = instance.list_adrs(PROJECT)
+    assert recovered.status == "accepted"
+
+
+def test_linear_adr_pat94_changed_body_is_new_and_strict(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "PAT-94 edit", "original")
+    header = created.body.removesuffix("original")
+    before = copy.deepcopy(wire.documents)
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.update_body(created, created.body, header + "- a\n\n- b", PROJECT)
+    assert wire.documents == before
+    assert instance.update_body(created, created.body, header + PAT94_SOURCE, PROJECT)
+    [edited] = instance.list_adrs(PROJECT)
+    assert edited.body.endswith(PAT94_SOURCE)
+
+
+def test_linear_adr_pat94_new_historical_import_is_strict(tracker):
+    instance, wire = tracker
+    body = "- a\n\n- b"
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0099",
+            title="Historical",
+            body=body,
+            historical_status="accepted",
+            source_ref="youtrack:adr:SRC-ADR-0099",
+            source_created=None,
+            source_updated=None,
+            expected_source_sha256=hashlib.sha256(body.encode()).hexdigest(),
+            supersedes=(),
+            superseded_by=None,
+            issue_refs=(),
+        )
+    assert wire.documents == {}
+
+
+def test_linear_adr_pat94_probe_pinned_batch_migration_is_not_strict(
+    tracker, monkeypatch
+):
+    # The batch pins the complete provider bytes by a qualification probe, so
+    # the strict new-body list whitelist does not apply; replay is a no-op.
+    instance, wire = tracker
+    monkeypatch.setattr(instance, "verify_project_identity", lambda _project: True)
+    project = Project(
+        PROJECT.key,
+        PROJECT.id,
+        {
+            **PROJECT.extra,
+            "migration_identity_profile": "foundry-linear-deterministic-v1",
+            "migration_adr_qualification_project_id": QUALIFICATION_PROJECT_ID,
+        },
+    )
+    source = {
+        "kind": "adr",
+        "id": "LIN-ADR-0045",
+        "title": "Spaced bullets",
+        "body": "- a\n\n- b",
+        "status": "accepted",
+        "source_ref": "youtrack:adr:SRC-ADR-0045",
+        "relations": {"supersedes": [], "superseded_by": None, "issues": []},
+        "source_created": 1,
+        "source_updated": 2,
+    }
+    instance.migration_preflight(project, (source,))
+    qualification = instance.migration_qualify_adrs(project, (source,))
+    imported = instance.migration_import_adrs(
+        project, (source,), qualification=qualification,
+    )
+    after_first = copy.deepcopy(wire.documents)
+    assert instance.migration_import_adrs(
+        project, (source,), qualification=qualification,
+    ) == imported
+    assert wire.documents == after_first
+
+
+def test_linear_adr_pat94_read_accepts_either_rendering_of_the_observed_form(tracker):
+    # N1: a Document stored with the pre-PAT-94 rendering stays readable.
+    header = '{"id":"PAT-ADR-0001"}'
+    canonical = f"{linear_module._ADR_HEADER}{header}\n-->\n\n{PAT94_SOURCE}"
+    provider_header = f"{linear_module._ADR_HEADER}{header}\n\\-->\n\n"
+    assert linear_module._linear_adr_readback_contents(canonical) == (
+        provider_header + PAT94_OBSERVED,
+        provider_header + PAT94_LEGACY,
+    )
+    assert linear_module._linear_adr_readback_content(canonical) == (
+        provider_header + PAT94_OBSERVED
+    )
+    for stored in (PAT94_OBSERVED, PAT94_LEGACY):
+        assert linear_module._adr_readback_content_matches(
+            provider_header + stored, canonical
+        )
+    hostile = PAT94_OBSERVED.replace("2. second step\n", "2. second step\n\n")
+    assert not linear_module._adr_readback_content_matches(
+        provider_header + hostile, canonical
+    )
+
+
+def test_linear_adr_pat94_stored_legacy_rendering_lists_and_mutates(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "PAT-94 legacy", PAT94_SOURCE)
+    # Replace the stored version by the pre-PAT-94 rendering, re-witnessed.
+    binding = instance._binding(PROJECT)
+    raw = wire.documents[created.ref]
+    metadata, _ = linear_module._parse_adr_document(
+        raw, binding, source_body=PAT94_SOURCE
+    )
+    raw["content"] = raw["content"].removesuffix(PAT94_OBSERVED) + PAT94_LEGACY
+    witness = linear_module._adr_witness_document(binding, metadata, raw, PAT94_SOURCE)
+    wire.documents[witness["id"]]["content"] = linear_markdown_readback(
+        witness["content"]
+    )
+    [listed] = instance.list_adrs(PROJECT)
+    assert listed.body.endswith(PAT94_SOURCE)
+    instance.set_adr_status(listed, "accepted", project=PROJECT)
+    [accepted] = instance.list_adrs(PROJECT)
+    assert accepted.status == "accepted"
+
+
+def _interrupt_witness(instance, wire, prefix):
+    original = wire.__call__
+
+    def interrupt(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(f"[Foundry ADR witness] {prefix}"):
+            raise OSError("witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    return original
+
+
+@pytest.mark.parametrize("interrupted", ["replacement", "source"])
+def test_linear_adr_pat94_interrupted_supersession_of_stored_bodies_recovers(
+    tracker, monkeypatch, interrupted
+):
+    instance, wire = tracker
+    stored = _store_pre_pat94(instance, monkeypatch, "PAT-94 source", "- a\n\n- b")
+    other = _store_pre_pat94(instance, monkeypatch, "PAT-94 other", "1) a\n\n2) b")
+    instance.set_adr_status(stored, "accepted", project=PROJECT)
+    instance.set_adr_status(other, "accepted", project=PROJECT)
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    target = other.id if interrupted == "replacement" else stored.id
+    original = _interrupt_witness(instance, wire, f"{target} / v0002")
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+    instance._transport = original
+    instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+    final = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert final[stored.id].status == "superseded"
+    assert final[other.id].body.endswith("1) a\n\n2) b")
+
+
+def test_linear_adr_pat94_import_appends_to_stored_refused_body(tracker, monkeypatch):
+    instance, wire = tracker
+    stored = _store_pre_pat94(instance, monkeypatch, "PAT-94 stored", "- a\n\n- b")
+    instance.set_adr_status(stored, "accepted", project=PROJECT)
+    instance.import_adr(
+        PROJECT,
+        adr_id="LIN-ADR-0099",
+        title="Historical",
+        body="old",
+        historical_status="accepted",
+        source_ref="youtrack:adr:SRC-ADR-0099",
+        source_created=None,
+        source_updated=None,
+        expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+        supersedes=(stored.id,),
+        superseded_by=None,
+        issue_refs=(),
+    )
+    final = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert final[stored.id].status == "superseded"
+    assert final[stored.id].body.endswith("- a\n\n- b")
+
+
+def test_linear_adr_pat94_interrupted_import_of_stored_body_replays(
+    tracker, monkeypatch
+):
+    instance, wire = tracker
+    body = "- a\n\n- b"
+    request = dict(
+        adr_id="LIN-ADR-0098",
+        title="Historical",
+        body=body,
+        historical_status="accepted",
+        source_ref="youtrack:adr:SRC-ADR-0098",
+        source_created=None,
+        source_updated=None,
+        expected_source_sha256=hashlib.sha256(body.encode()).hexdigest(),
+        supersedes=(),
+        superseded_by=None,
+        issue_refs=(),
+    )
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.import_adr(PROJECT, **request)
     with monkeypatch.context() as patch:
-        patch.setattr(linear_module, "_preflight_adr_body_readback", lambda *a, **k: None)
-        created = instance.create_adr(PROJECT, "PAT-94 stored", body)
-    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
-    content = wire.documents[created.ref]["content"]
-    assert content.endswith(rendered)
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "1. a\n\n2. b\n\n3. c",
-        "Intro\n\n1. a\n\n2. b",
-        "## H\n\n1. a\n\n2. b\n\ntext\n\n1. x\n\n2. y",
-        "```\nx\n```\n1. a\n\n2. b",
-    ],
-)
-def test_linear_adr_pat94_observed_form_is_recognised_in_both_modes(body):
-    lenient = linear_module._linear_markdown_readback_body(body)
-    assert lenient == linear_module._linear_markdown_readback_body(body, strict=True)
-    assert lenient.count("\n\n") < body.count("\n\n")
+        # The version slot was written before PAT-94; only its witness is lost.
+        patch.setattr(
+            linear_module,
+            "_linear_observed_list_blank_lines",
+            lambda body, *, strict: set(),
+        )
+        original = _interrupt_witness(instance, wire, "LIN-ADR-0098 / v0000")
+        with pytest.raises(LinearTrackerError, match="transport_error"):
+            instance.import_adr(PROJECT, **request)
+        instance._transport = original
+    with pytest.raises(TrackerConflictError, match="witness is missing"):
+        instance.list_adrs(PROJECT)
+    imported = instance.import_adr(PROJECT, **request)
+    assert imported.body.endswith(body)
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == ["LIN-ADR-0098"]

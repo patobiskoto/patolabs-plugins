@@ -271,31 +271,45 @@ normalized. Exact replay of an unwitnessed deterministic version may create only
 missing witness after the existing project/id/title/envelope/body/previous-link checks;
 it never rewrites the surviving Document.
 PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document:
-outside fenced code, a top-level ordered list that starts at `1`, increments by exactly
-1, and whose items are one line each (`N. text`, one space after the dot, flush left,
-first item at the start of a block, not glued to a preceding paragraph line) separated
-by exactly one empty line is read back with those empty lines removed
-(`1. a\n\n2. b` becomes `1. a\n2. b`). The model is forward only and deterministic: it
-drops only those blank lines and never infers a source from a readback; the witness
-stays the sole source recovery. The refusals below apply only to the write-side
-preflight of a NEW body, before any provider write, so no orphan Document is left:
-a spaced list of the same bullet marker (a bullet list was not observed to be
-tightened), including one whose item holds a sub-list of another marker or a
-continuation line; a spaced ordered list with the `)` delimiter, extra padding,
-indentation, two or more empty lines, a tight/spaced mix, renumbering (`1.`, `1.`),
-a start other than `1`, or a first item glued to a paragraph; sub-items or continuation
-lines (indented or lazy) under an ordered item; a code block (indented or fenced)
-between two ordered items; and any candidate containing `\r` or a non-LF line
-separator (CRLF behaviour of Linear is unknown). A different marker kind after an empty
-line (`- a`, empty line, `* b`) is a distinct list. Read and verify of an already stored
-Document (`list_adrs`, ADR chain, exact replay, migration verification) is not strict:
-it behaves as before PAT-94 and additionally recognises the observed tightened form, so
-stored bodies the earlier model accepted stay readable; byte-exact verification against
-the canonical or the recognised readback is unchanged. Replay of `adr create` with the
-exact title and body finds the existing slot, validates it with this model and creates
-only the missing witness; a second replay is a no-op. Still unobserved and not
-modelled: Linear's behaviour for CRLF, other list shapes, and the exact tightening of
-a list ending right before a fenced block.
+outside fenced code, a top-level ordered list numbered `1.` to at most `9.` (+1 per
+item, one space after the dot, flush left), whose items are one plain LF line each
+(item text that would itself open block syntax -- a nested list marker, heading,
+quote, fence, HTML, table, thematic break or link reference definition -- is not
+plain) separated by exactly one empty LF line, preceded by the start of the body or
+empty LF lines and followed by the end of the body or empty LF lines and a non-list
+block, is read back with those separating empty lines removed (`1. a\n\n2. b` becomes
+`1. a\n2. b`). The model is forward only and deterministic: it drops only those blank
+lines and never infers a source from a readback; the witness stays the sole source
+recovery. Line endings and blank lines follow CommonMark (`\n`, `\r\n`, `\r`; a blank
+line holds only spaces or tabs), so a form feed or U+2028 never creates a blank line.
+The adapter decides by whitelist, not by listing refused shapes. A *list blank line* is
+an empty line between a block holding a list-item-like line (`-`, `*`, `+`, `N.` or
+`N)`, any indentation, also inside a blockquote) or its indented continuation, and a
+following block that starts with a list-item-like or indented line. A body whose
+rendering is not yet proven (a *new body*) is refused before any provider write, with
+cause `unsupported list Markdown`, when it holds a list blank line outside the exact form
+above: spaced bullets of any marker, different markers or delimiters after an empty line
+(`- a`, empty line, `* b`), sub-items, continuation paragraphs or indented code after an
+empty line, lazy continuations, two or more empty lines, a whitespace-only or `>` blank
+line, a tight/spaced mix, renumbering, a start other than `1`, ten or more items, a first
+item glued to a paragraph or a fenced block, a last item glued to a fenced block, a list
+inside a blockquote, `\r` or a non-LF separator in an item. A body with no list blank
+line keeps the pre-PAT-94 model unchanged, including tight lists with sub-items.
+New body: the version-0 body of `adr create` and of a single historical `import_adr` whose
+slot does not exist yet, and the changed body of a body edit. Every other write re-uses a
+body whose rendering is already proven and keeps only the pre-PAT-94 refusals: a status
+change, an issue link and both supersession versions (the stored, verified previous
+body, checked by its SHA-256); the recovery of an interrupted create, status, link, edit,
+supersession or historical import (an existing exact slot); and the migration batch
+(`migration_preflight`, batch plan and import), whose slot bytes a qualification probe
+pins before any write. Reads and verification (`list_adrs`, ADR chain, exact replay,
+batch verification) are never strict and are additive: a stored Document matches if it
+equals the canonical bytes, the PAT-94 rendering or the pre-PAT-94 model output, so a
+Document stored before PAT-94 stays readable. Replay of `adr create` with the exact title
+and body finds the existing slot and creates only the missing witness; a second replay
+is a no-op. Still unobserved and not modelled: Linear's rendering of spaced bullet lists,
+of CRLF line endings, of ordered lists of ten or more items, of every refused shape
+above, and of any block following the observed form other than the observed heading.
 `FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
 SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
 and its existing Linear Document content SHA-256
