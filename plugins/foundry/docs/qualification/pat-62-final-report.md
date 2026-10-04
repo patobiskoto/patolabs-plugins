@@ -14,7 +14,7 @@ GitHub Release « Foundry 1.0.0 — Ship-iOS 0.3.0 compatible » : publiée le 2
 ## Preuve avant fusion (inchangée)
 
 - **Qualification source PAT-61** : [bilan final](pat-61-final-qualification-report.md), PR #72, 9/9 AC acceptés, 36 étapes réelles. Réutilisée telle quelle, non rejouée ; ses refs producteur restent en source 0.9.0.
-- **Installation locale PAT-62** : [observation](pat-62-install-observation.json), marketplace local temporaire, installation propre et mise à niveau 0.9.0 → 1.0.0 (candidat `c9089a13…`, base `16cdaa0a…`), retour arrière exact, Claude Code 2.1.285 et Codex 0.155.1, zéro tour de modèle. `public_git_installation_verified=false` : ce n'est pas une installation publique.
+- **Installation locale PAT-62** : [observation](pat-62-install-observation.json), marketplace local temporaire, installation propre et mise à niveau 0.9.0 → 1.0.0 (candidat `c9089a13…`, base `16cdaa0a…`), retour arrière exact **vers la base de pré-publication `16cdaa0a…`, pas vers une version 0.9 publique**, Claude Code 2.1.285 et Codex 0.155.1, zéro tour de modèle. `public_git_installation_verified=false` : ce n'est pas une installation publique.
 
 ## Couverture des six configurations
 
@@ -34,12 +34,13 @@ Source : [pat-93-post-publication-observation.json](pat-93-post-publication-obse
 
 ## Limites optionnelles et non observé
 
-1. **Mise à niveau 0.9.0 → 1.0.0 en source publique : non reproductible.** Le dépôt public n'expose que `main` et le tag `foundry-v1.0.0` ; aucun ref 0.9.0, et le gestionnaire refuse un SHA (`Remote branch <sha> not found in upstream origin`). Publier un ref pour l'occasion n'a pas été fait. Restent comme preuves : la vraie mise à niveau de l'installation Claude du mainteneur le 2026-10-03 (`lastUpdated` 17:41:30Z, sans relevé public préalable) et la mise à niveau locale PAT-62 (marketplace local, `public_git_installation_verified=false`).
+1. **Mise à niveau 0.9.0 → 1.0.0 en source publique : non reproductible.** Le dépôt public n'expose que `main` et le tag `foundry-v1.0.0` ; aucun ref 0.9.0, et le gestionnaire Claude refuse un SHA (`Remote branch <sha> not found in upstream origin`) ; le refus côté Codex n'a pas été essayé. Publier un ref pour l'occasion n'a pas été fait. Restent comme preuves : la mise à jour réelle de l'installation Claude du mainteneur le 2026-10-03 (`lastUpdated` 17:41:30Z), dont **la version de départ n'a pas été relevée** (`installedAt` 2026-09-25 précède la publication 0.9.0 du 2026-09-26, donc un départ en 0.9.0 n'est pas établi), et la mise à niveau locale PAT-62 (marketplace local, `public_git_installation_verified=false`).
 2. Aucun tour de modèle Claude ou Codex n'a chargé les plugins : toutes les vérifications ont exécuté la CLI ou le pont installés directement (zéro tour sur les deux hôtes).
 3. Ship-iOS 0.3.0 a été observé installé dans les installations **isolées** ; il reste absent des installations réelles du mainteneur sur cette machine.
 4. Le changelog `v1.0.0` de ce dépôt est vide : la paire installée est prouvée sur son chemin de capacité, pas sur un changelog peuplé.
 5. Deux points orange environnementaux, pas des défauts de release : `core.hooksPath` pointe vers un répertoire de hooks global (le pre-push R1 local n'est pas actif sur cette machine) ; les hooks de routage et de garde sont documentés fail-open.
-6. Le niveau d'effort runtime non exposé par l'hôte reste `unknown`, comme dans PAT-61.
+6. Binaire Codex : la vérification a utilisé le binaire du PATH (`codex-cli 0.155.1`), pas l'exécuteur embarqué 0.159.2 relevé par PAT-61 ; la forme courte `codex plugin marketplace add patobiskoto/patolabs-plugins` documentée dans les README n'a pas été exercée (l'URL Git complète l'a été).
+7. Le niveau d'effort runtime non exposé par l'hôte reste `unknown`, comme dans PAT-61.
 
 ## Résiduel explicitement hors V1
 

@@ -140,7 +140,8 @@ The historical qualified pair is Ship-iOS 0.3.0 with Foundry source 0.9.0 at the
 recorded PAT-60/PAT-61 producer refs. **Foundry 1.0.0 is published (tag `foundry-v1.0.0`) and compatible
 with Ship-iOS 0.3.0; a clean install of the public source on Claude Code and Codex
 reads back Foundry 1.0.0 + Ship-iOS 0.3.0, and the changelog bridge runs from both
-installed pairs (see the Foundry 1.0.0 final report for the limits).** The bridge/API are unchanged, so Ship-iOS keeps its independent 0.3.0
+installed pairs (see the [Foundry 1.0.0 final report](../foundry/docs/qualification/pat-62-final-report.md)
+for the limits).** The bridge/API are unchanged, so Ship-iOS keeps its independent 0.3.0
 version. The [release matrix](../foundry/docs/release-1.0.0.md) records the six source
 configurations and their limits. Compatibility with an installed Foundry requires its
 V1 selection and `foundry.release-scope.v1` changelog capabilities to pass the same

@@ -84,10 +84,11 @@
   "PAT-51 (Epic) stays open until the maintainer's close-epic verdict"
  ],
  "not_observed": [
-  "public-source upgrade 0.9.0 -> 1.0.0: not reproducible without a public 0.9.0 ref (see isolated_public_install.upgrade_from_0_9_0). The only upgrade evidence are the real 2026-10-03 upgrade of the maintainer's Claude installation (lastUpdated 2026-10-03T17:41:30Z, no pre-upgrade public readback exists) and the local-marketplace upgrade in pat-62-install-observation.json (public_git_installation_verified=false there)",
+  "public-source upgrade 0.9.0 -> 1.0.0: not reproducible without a public 0.9.0 ref (see isolated_public_install.upgrade_from_0_9_0). The only upgrade evidence are the real 2026-10-03 update of the maintainer's Claude installation (lastUpdated 2026-10-03T17:41:30Z; its starting version was NOT recorded: installedAt 2026-09-25T21:40:06Z precedes the 0.9.0 publication of 2026-09-26, so a 0.9.0 start is not established) and the local-marketplace upgrade in pat-62-install-observation.json (public_git_installation_verified=false there; its rollback went to the pre-publication baseline 16cdaa0a, not to a public 0.9 release)",
   "Codex or Claude model turn that loads the plugins: every check ran the installed CLI or bridge directly; zero model turns on both hosts",
   "Ship-iOS installed on the maintainer's own hosts: the pair was observed in isolated installs, not in the maintainer's real installations (Ship-iOS is absent from them)",
-  "a populated release changelog through the installed pair: the v1.0.0 scope of this repository is empty"
+  "a populated release changelog through the installed pair: the v1.0.0 scope of this repository is empty",
+  "Codex binary and short marketplace form: the Codex checks used the PATH binary codex-cli 0.155.1, not the embedded desktop executor 0.159.2 recorded by PAT-61, and only the full Git URL form of `codex plugin marketplace add` was exercised, not the short `patobiskoto/patolabs-plugins` form documented in the READMEs; a Codex refusal of a commit-SHA ref was not tried"
  ],
  "isolated_public_install": {
   "authorization": "explicit maintainer authorization in chat, 2026-10-04",
