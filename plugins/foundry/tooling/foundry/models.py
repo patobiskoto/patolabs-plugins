@@ -193,6 +193,19 @@ class EpicClosureDependency:
 
 
 @dataclass(frozen=True)
+class EpicClosureOverride:
+    """One node a human accepted under its audited override (PAT-ADR-0014).
+
+    The node's own acceptance status stays ``override``; this only attests that
+    the maintainer accepted that gap for this one closure.
+    """
+
+    node_id: str
+    receipt_digest: str  # sha256 of the node's canonical override coordinates
+    reason: str          # the public reason code of the override receipt
+
+
+@dataclass(frozen=True)
 class EpicClosureReceipt:
     """Provider-neutral closure snapshot; each adapter enforces its declared gate."""
 
@@ -215,6 +228,9 @@ class EpicClosureReceipt:
     parent_state: str | None = None
     dependencies: tuple[EpicClosureDependency, ...] = ()
     parent_validation_digest: str | None = None
+    # PAT-ADR-0014 (Linear only): nodes accepted under a valid override receipt.
+    # Omitted from the wire when empty so historical audits keep their digest.
+    accepted_overrides: tuple[EpicClosureOverride, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         # DevHub's atomic v1 receipt predates PAT-69 and is a byte-stable public
@@ -240,7 +256,10 @@ class EpicClosureReceipt:
                 "issued_at": self.issued_at,
                 "nonce": self.nonce,
             }
-        return asdict(self)
+        value = asdict(self)
+        if not self.accepted_overrides:
+            del value["accepted_overrides"]
+        return value
 
 
 @dataclass(frozen=True)

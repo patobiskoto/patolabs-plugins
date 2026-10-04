@@ -35,6 +35,7 @@ from foundry.models import (
     EpicClosureChild,
     EpicClosureDependency,
     EpicClosureOutcome,
+    EpicClosureOverride,
     EpicClosureReceipt,
     Issue,
     Link,
@@ -50,6 +51,7 @@ from foundry.trackers.base import (
     AdrUnavailableError,
     IssueUnavailableError,
     Tracker,
+    TrackerBindingError,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
     ReleaseScopeUnavailableError,
@@ -321,7 +323,7 @@ class LinearTrackerError(RuntimeError):
         super().__init__(f"Linear {operation} -> {rendered_status} ({code})")
 
 
-class LinearBindingError(RuntimeError):
+class LinearBindingError(TrackerBindingError):
     """A credential-free explicit binding validation failure."""
 
     def __init__(self, code: str):
@@ -2168,6 +2170,7 @@ class LinearTracker(Tracker):
     acceptance_override_projection_supported = True
     cockpit_evidence_projection_supported = True
     bounded_epic_closure_supported = True
+    epic_override_closure_supported = True
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })
@@ -3852,6 +3855,8 @@ class LinearTracker(Tracker):
                     "native_state_id": overridden.get("native_state_id"),
                     "reason": overridden.get("reason"),
                     "review_generation": overridden.get("review_generation"),
+                    # PAT-ADR-0014: bind the exact diff the override was granted for.
+                    **{key: overridden.get(key) for key in _AC_OVERRIDE_BOUND_KEYS},
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -5109,6 +5114,10 @@ class LinearTracker(Tracker):
                     **raw,
                     "children": tuple(EpicClosureChild(**x) for x in raw["children"]),
                     "dependencies": dependencies,
+                    "accepted_overrides": tuple(
+                        EpicClosureOverride(**x)
+                        for x in raw.get("accepted_overrides", ())
+                    ),
                 })
             except (IndexError, KeyError, TypeError, ValueError):
                 raise TrackerConflictError("audit de clôture Linear malformé") from None
@@ -5227,6 +5236,9 @@ class LinearTracker(Tracker):
                 self._lifecycle_projection(parent_id, raw, epic_closure=outcome)
                 current, dependencies = bounded_epic_graph_snapshot(
                     self, project, parent,
+                    accept_overrides=frozenset(
+                        item.node_id for item in outcome.receipt.accepted_overrides
+                    ),
                 )
             except (SystemExit, TrackerConflictError) as exc:
                 raise TrackerConflictError(
@@ -5291,10 +5303,13 @@ class LinearTracker(Tracker):
         try:
             children, dependencies = bounded_epic_graph_snapshot(
                 self, project, parent,
+                accept_overrides=frozenset(
+                    item.node_id for item in receipt.accepted_overrides
+                ),
             )
         except SystemExit as exc:
             raise TrackerConflictError(
-                "graphe Epic Linear divergent avant écriture"
+                f"graphe Epic Linear divergent avant écriture : {exc}"
             ) from exc
         if (((observed is None and parent.version != receipt.parent_version)
                 or (observed is not None and (
@@ -5354,6 +5369,9 @@ class LinearTracker(Tracker):
                 )
                 closed_children, closed_dependencies = bounded_epic_graph_snapshot(
                     self, project, closed_parent,
+                    accept_overrides=frozenset(
+                        item.node_id for item in receipt.accepted_overrides
+                    ),
                 )
             except (SystemExit, TrackerConflictError) as exc:
                 raise TrackerConflictError(

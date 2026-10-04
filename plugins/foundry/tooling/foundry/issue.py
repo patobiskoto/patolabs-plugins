@@ -940,18 +940,30 @@ def close_epic(issue_id, flags=()):
                     if flag.startswith("--human-verdict=")]
         if len(verdicts) > 1:
             raise SystemExit("⛔ Clôture Epic refusée : verdict humain ambigu.")
+        waivers = [flag.removeprefix("--accept-override=") for flag in flags
+                   if flag.startswith("--accept-override=")]
+        if len(waivers) > 1:
+            raise SystemExit("⛔ Clôture Epic refusée : --accept-override ambigu.")
         outcome = write.close_epic(
             tracker, issue_id, human_verdict=verdicts[0] if verdicts else None,
+            accept_overrides=(
+                write.parse_accept_overrides(waivers[0]) if waivers else None
+            ),
         )
     except EpicClosureUnavailableError:
         raise SystemExit(
             f"⛔ Clôture Epic indisponible pour le tracker {tracker.name} : "
             "aucune capacité de clôture auditée n'est qualifiée."
         ) from None
-    except TrackerConflictError:
+    except TrackerConflictError as exc:
+        # Never mask the real cause (PAT-95): name it, with its direct cause.
+        cause = str(exc) or type(exc).__name__
+        if exc.__cause__ is not None and str(exc.__cause__):
+            cause += f" <- {exc.__cause__}"
         raise SystemExit(
-            "⛔ Clôture Epic refusée : le parent, ses preuves ou son graphe complet a changé. "
-            "Recharge le graphe puis relance la commande."
+            f"⛔ Clôture Epic refusée. Cause : {cause}\n"
+            "Si le parent, ses preuves ou son graphe complet a changé (ou si une lecture "
+            "a échoué), recharge le graphe puis relance la commande."
         ) from None
     except SystemExit:
         raise
@@ -960,6 +972,9 @@ def close_epic(issue_id, flags=()):
             " --human-verdict=accepted"
             if getattr(tracker, "bounded_epic_closure_supported", False)
             else ""
+        )
+        verdict_flag += "".join(
+            f" {flag}" for flag in sorted(flags) if flag.startswith("--accept-override=")
         )
         raise SystemExit(
             f"⛔ Clôture Epic interrompue pour {issue_id}. Relance exactement "
@@ -991,7 +1006,8 @@ if __name__ == "__main__":
     flags = {a for a in rest if a.startswith("--")}
     reason_flags = {flag for flag in flags if flag.startswith("--ac-override-reason=")}
     epic_verdict_flags = (
-        {flag for flag in flags if flag.startswith("--human-verdict=")}
+        {flag for flag in flags
+         if flag.startswith(("--human-verdict=", "--accept-override="))}
         if cmd == "close-epic" else set()
     )
     unknown = flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags - epic_verdict_flags
