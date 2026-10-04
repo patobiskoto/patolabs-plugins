@@ -885,6 +885,30 @@ The resulting Epic has `state=done`, `native_state=done`, and
 `projection_status=aligned`; its AC remain incomplete and its code acceptance
 remains `unknown`, with no artificial PR. These reads perform no writes.
 
+**Epic with nodes delivered under an override (PAT-ADR-0014, PAT-95).** `close-epic`
+refuses a node whose acceptance is only a typed `acceptance-override` receipt. The
+refusal now lists every graph node (required children and transitive dependencies)
+whose proof is not positive, with its cause (valid override, unknown proof, zero
+criteria, non-terminal, dropped, foreign project, or a read that raises such as
+`Linear native state changed outside lifecycle`), read-only, and no longer hides the
+real cause behind the generic message. The maintainer may then run
+`close-epic <EPIC-ID> --human-verdict=accepted --accept-override=ID[,ID...]` with the
+exact nominative list (no wildcard, no duplicate, upper-case ids, never without the
+`accepted` verdict; validated before any provider read). Only a terminal node whose
+sole insufficiency is a valid override receipt is waivable; unknown or incomplete
+proof, zero criteria, non-terminal, dropped, foreign-project nodes, an absent,
+malformed, other-generation or other-diff override receipt, and any node added,
+reopened or changed since the graph read stay refused. The same fresh graph read that
+the closure binds validates the list. The append-only audit then also binds, per
+waived node, its id, the sha256 of its canonical override coordinates (reason,
+generation and the PR/head/base/review digest) and its reason code, so the
+deterministic audit id derives from the set: an exact replay converges without a
+second audit, a different (or missing) set is refused, and a pending audit is only
+resumed with its exact set. The node's own acceptance stays `override`; the Epic's AC
+stay incomplete and its code acceptance `unknown`. This is neither a CAS nor an
+acceptance: PAT-ADR-0006's bounded detection, non-transactional write and residual
+S1→S2 risk are unchanged. Other trackers refuse the flag.
+
 Malformed, duplicate, foreign or stale audits and changed validation/type/graph
 coordinates supply no terminal authority: strict reads refuse them, while
 observation/backlog expose `unknown`. A native Done without a qualifying audit

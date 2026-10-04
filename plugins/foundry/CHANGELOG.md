@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Added (PAT-95, PAT-ADR-0014): `close-epic` on Linear accepts the nominative flag
+  `--accept-override=ID[,ID...]` (only with `--human-verdict=accepted`) to close an Epic
+  whose nodes were delivered under a valid typed `acceptance-override` receipt. Refusals
+  now list every non-positive graph node with its cause (read-only) instead of the first
+  one, and the generic refusal no longer hides the real cause. The closure receipt binds,
+  per waived node, its id, override-receipt digest and reason code (receipts without
+  waiver keep their exact historical bytes); exact replay converges, a different set is
+  refused, nodes stay `override`, the flag is neither CAS nor acceptance. YouTrack,
+  GitHub Projects and DevHub refuse it. New public surface: the flag and
+  `Tracker.epic_override_closure_supported`.
 - Fixed (PAT-94): the Linear ADR readback model now recognises the one observed rewrite
   of a spaced top-level ordered list (`1.` to at most `9.`, +1 per item, one plain LF
   line per item, one empty LF line between items: those empty lines are removed). By

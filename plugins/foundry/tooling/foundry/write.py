@@ -19,6 +19,7 @@ from foundry.models import (
     EpicClosureChild,
     EpicClosureDependency,
     EpicClosureOutcome,
+    EpicClosureOverride,
     EpicClosureReceipt,
     Issue,
     Project,
@@ -32,6 +33,7 @@ from foundry.routing import (
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     EpicClosureUnavailableError,
+    TrackerBindingError,
     TrackerConflictError,
 )
 
@@ -50,6 +52,11 @@ EPIC_CHILD_TERMINAL_STATES = frozenset({"done", "dropped"})
 _EPIC_HUMAN_VERDICT = "accepted"
 _SAFE_RECEIPT_NONCE = re.compile(r"[A-Za-z0-9_-]{16,128}")
 _SAFE_AUDIT_ID = re.compile(r"[A-Za-z0-9._:-]{1,160}")
+# PAT-ADR-0014: nominative waiver of nodes delivered under an audited override.
+_EPIC_OVERRIDE_SOURCE = "linear-acceptance-override"
+_EPIC_OVERRIDE_REASON = re.compile(r"[a-z0-9_-]{3,80}\Z")
+_EPIC_OVERRIDE_BOUND_KEYS = ("pr_url", "head_sha", "base_sha", "review_digest")
+_EPIC_NODE_ID = re.compile(r"[A-Z][A-Z0-9]{0,15}-[1-9][0-9]{0,8}\Z")
 
 
 def validate_state(state: str) -> str:
@@ -455,7 +462,76 @@ def _validate_epic_parent(parent, *, bounded: bool = False) -> None:
         )
 
 
-def _bounded_epic_node(issue: Issue, *, role: str, tracker=None) -> EpicClosureChild:
+def parse_accept_overrides(raw) -> tuple[str, ...]:
+    """Validate the nominative ``--accept-override`` list; no provider read here.
+
+    Accepts one comma-separated string or an iterable of ids.  Empty list, empty
+    element, duplicate, wildcard, lowercase or any non-canonical id is refused.
+    """
+    items = raw.split(",") if isinstance(raw, str) else list(raw)
+    if not items:
+        raise SystemExit(
+            "Clôture Epic refusée : --accept-override exige au moins un identifiant."
+        )
+    bad = [
+        item for item in items
+        if not isinstance(item, str) or _EPIC_NODE_ID.match(item) is None
+    ]
+    if bad:
+        raise SystemExit(
+            "Clôture Epic refusée : --accept-override n'accepte que des identifiants "
+            "exacts (ex. PAT-10, sans joker ni élément vide) ; refusé : "
+            + ", ".join(repr(item) for item in bad) + "."
+        )
+    duplicated = sorted({item for item in items if items.count(item) > 1})
+    if duplicated:
+        raise SystemExit(
+            "Clôture Epic refusée : --accept-override contient des doublons : "
+            + ", ".join(duplicated) + "."
+        )
+    return tuple(sorted(items))
+
+
+def _epic_override_evidence(node) -> tuple[str, str] | None:
+    """Return (receipt digest, reason code) of a node's valid override, else None.
+
+    A node is only ever waivable when it is terminal with criteria and carries a
+    complete typed override coordinate bound to one review generation and diff.
+    """
+    if (
+        getattr(node, "acceptance_status", None) != "override"
+        or getattr(node, "acceptance_source", None) != _EPIC_OVERRIDE_SOURCE
+        or type(node.ac_total) is not int
+        or node.ac_total <= 0
+        or not isinstance(node.acceptance_coordinates, str)
+    ):
+        return None
+    try:
+        coordinates = json.loads(node.acceptance_coordinates)
+    except (TypeError, ValueError):
+        return None
+    if (
+        not isinstance(coordinates, dict)
+        or set(coordinates) != {
+            "native_state_id", "reason", "review_generation",
+            *_EPIC_OVERRIDE_BOUND_KEYS,
+        }
+        or not isinstance(coordinates["reason"], str)
+        or _EPIC_OVERRIDE_REASON.match(coordinates["reason"]) is None
+        or type(coordinates["review_generation"]) is not int
+        or any(
+            not isinstance(coordinates[key], str) or not coordinates[key]
+            for key in ("native_state_id", *_EPIC_OVERRIDE_BOUND_KEYS)
+        )
+    ):
+        return None
+    digest = hashlib.sha256(node.acceptance_coordinates.encode("utf-8")).hexdigest()
+    return digest, coordinates["reason"]
+
+
+def _bounded_epic_node(
+    issue: Issue, *, role: str, tracker=None, waivable: frozenset = frozenset(),
+) -> EpicClosureChild:
     """Build one strictly accepted graph coordinate for PAT-ADR-0006."""
     if issue.state == "dropped":
         raise SystemExit(
@@ -473,15 +549,30 @@ def _bounded_epic_node(issue: Issue, *, role: str, tracker=None) -> EpicClosureC
     version = _exact_positive_version(observed_version, f"version {role}")
     ac_done = _exact_nonnegative_int(issue.ac_done, f"AC {role} satisfaites")
     ac_total = _exact_nonnegative_int(issue.ac_total, f"AC {role} totales")
-    if ac_total == 0 or ac_done != ac_total:
-        raise SystemExit(
-            f"Clôture Epic refusée : la preuve AC de {role} {issue.id} est inconnue."
-        )
-    if issue.acceptance_status != "accepted":
-        qualifier = "dérogée" if issue.acceptance_status == "override" else "inconnue"
-        raise SystemExit(
-            f"Clôture Epic refusée : la preuve de {role} {issue.id} est {qualifier}."
-        )
+    if issue.id in waivable:
+        # PAT-ADR-0014: the human named this node; its ONLY insufficiency may be a
+        # valid typed override receipt.  Anything else stays a closed failure.
+        if _epic_override_evidence(issue) is None:
+            if ac_total == 0:
+                cause = "aucun critère d'acceptation"
+            elif issue.acceptance_status == "accepted":
+                cause = "preuve positive : le nœud est accepté, pas dérogé"
+            else:
+                cause = "reçu d'override absent, invalide ou preuve inconnue"
+            raise SystemExit(
+                f"Clôture Epic refusée : --accept-override {issue.id} "
+                f"({role}) inacceptable : {cause}."
+            )
+    else:
+        if ac_total == 0 or ac_done != ac_total:
+            raise SystemExit(
+                f"Clôture Epic refusée : la preuve AC de {role} {issue.id} est inconnue."
+            )
+        if issue.acceptance_status != "accepted":
+            qualifier = "dérogée" if issue.acceptance_status == "override" else "inconnue"
+            raise SystemExit(
+                f"Clôture Epic refusée : la preuve de {role} {issue.id} est {qualifier}."
+            )
     if (
         not isinstance(issue.acceptance_source, str)
         or not issue.acceptance_source
@@ -505,12 +596,15 @@ def _bounded_epic_node(issue: Issue, *, role: str, tracker=None) -> EpicClosureC
 
 def bounded_epic_graph_snapshot(
     tracker, project: Project, parent: Issue,
+    accept_overrides: frozenset = frozenset(),
 ) -> tuple[tuple[EpicClosureChild, ...], tuple[EpicClosureDependency, ...]]:
     """Read the complete required-child/dependency graph in canonical order.
 
     This is the one canonical builder used by the write preflight, provider S1,
-    readback and replay.  It has no write side effect.
+    readback and replay.  It has no write side effect.  ``accept_overrides`` is
+    the exact nominative PAT-ADR-0014 waiver set; empty keeps the historical rule.
     """
+    waivable = frozenset(accept_overrides)
     child_ids = [
         relation.target for relation in parent.links if relation.type == "parent-of"
     ]
@@ -538,7 +632,9 @@ def bounded_epic_graph_snapshot(
         return cache[issue_id]
 
     children = tuple(
-        _bounded_epic_node(fetch(child_id), role="enfant", tracker=tracker)
+        _bounded_epic_node(
+            fetch(child_id), role="enfant", tracker=tracker, waivable=waivable,
+        )
         for child_id in child_ids
     )
     edges: list[EpicClosureDependency] = []
@@ -565,7 +661,9 @@ def bounded_epic_graph_snapshot(
             target = fetch(target_id)
             edges.append(EpicClosureDependency(
                 source_id=source.id,
-                target=_bounded_epic_node(target, role="dépendance", tracker=tracker),
+                target=_bounded_epic_node(
+                    target, role="dépendance", tracker=tracker, waivable=waivable,
+                ),
             ))
             if target_id not in expanded:
                 visit(target, (*path, target_id))
@@ -578,6 +676,170 @@ def bounded_epic_graph_snapshot(
     if len({(edge.source_id, edge.target.id) for edge in ordered}) != len(ordered):
         raise SystemExit("Clôture Epic refusée : graphe de dépendances dupliqué.")
     return children, ordered
+
+
+def epic_receipt_overrides(
+    children: tuple[EpicClosureChild, ...],
+    dependencies: tuple[EpicClosureDependency, ...],
+) -> tuple[EpicClosureOverride, ...]:
+    """Bind every node accepted under an override: id, receipt digest, reason."""
+    found: dict[str, EpicClosureOverride] = {}
+    nodes = (*children, *(edge.target for edge in dependencies))
+    for node in nodes:
+        if node.acceptance_status != "override":
+            continue
+        evidence = _epic_override_evidence(node)
+        if evidence is None:
+            raise SystemExit(
+                f"Clôture Epic refusée : reçu d'override de {node.id} invalide."
+            )
+        item = EpicClosureOverride(node.id, evidence[0], evidence[1])
+        if found.setdefault(node.id, item) != item:
+            raise SystemExit(
+                f"Clôture Epic refusée : coordonnées d'override contradictoires pour {node.id}."
+            )
+    return tuple(found[key] for key in sorted(found))
+
+
+def epic_graph_diagnostic(
+    tracker, project: Project, parent: Issue, accept: frozenset = frozenset(),
+) -> list[dict]:
+    """List EVERY graph node whose acceptance proof is not positive (read-only).
+
+    Walks the same required-child + transitive-dependency graph as the snapshot but
+    never stops at the first cause: a node whose read raises is reported with that
+    cause (it cannot be traversed further).  No provider write is ever issued.
+    """
+    nodes: dict[str, dict] = {}
+    seen: set[str] = {parent.id}
+    cache: dict[str, Issue] = {parent.id: parent}
+
+    def add(issue_id: str, role: str, code: str, cause: str) -> None:
+        nodes.setdefault(
+            issue_id,
+            {"id": issue_id, "role": role, "code": code, "cause": cause,
+             "waivable": code == "override"},
+        )
+
+    def read(issue_id: str, role: str) -> Issue | None:
+        if issue_id in cache:
+            return cache[issue_id]
+        try:
+            tracker.validate_issue_binding(project, parent.id, issue_id)
+        except Exception as exc:
+            add(issue_id, role, "foreign-project",
+                f"hors projet ou binding invalide ({type(exc).__name__}: {exc})")
+            return None
+        try:
+            issue = tracker.get_issue(issue_id)
+        except Exception as exc:
+            add(issue_id, role, "read-error",
+                f"lecture impossible ({type(exc).__name__}: {exc})")
+            return None
+        if getattr(issue, "id", None) != issue_id:
+            add(issue_id, role, "read-error", "identité du nœud contradictoire")
+            return None
+        cache[issue_id] = issue
+        return issue
+
+    def classify(issue: Issue, role: str) -> None:
+        if issue.state == "dropped":
+            add(issue.id, role, "dropped", "dérogé (dropped), jamais acceptable")
+        elif issue.state != "done":
+            add(issue.id, role, "non-terminal", f"n'est pas terminal (état {issue.state})")
+        elif type(issue.ac_total) is not int or issue.ac_total <= 0:
+            add(issue.id, role, "zero-criteria", "aucun critère d'acceptation")
+        elif (
+            issue.acceptance_status == "accepted"
+            and issue.ac_done == issue.ac_total
+            and issue.acceptance_source
+            and issue.acceptance_coordinates
+        ):
+            return
+        else:
+            evidence = _epic_override_evidence(issue)
+            if evidence is not None:
+                add(issue.id, role, "override",
+                    f"terminal sous reçu d'override valide (raison {evidence[1]}) ; "
+                    "acceptable seulement nominativement par --accept-override")
+            else:
+                add(issue.id, role, "unknown",
+                    "preuve d'acceptation inconnue ou incomplète, ou reçu d'override invalide")
+
+    def visit(issue: Issue, role: str) -> None:
+        if issue.id != parent.id:
+            classify(issue, role)
+        for relation in issue.links:
+            if relation.type != "depends-on" or not isinstance(relation.target, str):
+                continue
+            if relation.target in seen:
+                continue
+            seen.add(relation.target)
+            target = read(relation.target, "dépendance")
+            if target is not None:
+                visit(target, "dépendance")
+
+    child_ids = sorted(
+        {relation.target for relation in parent.links
+         if relation.type == "parent-of" and isinstance(relation.target, str)}
+    )
+    seen.update(child_ids)
+    children = [(cid, read(cid, "enfant")) for cid in child_ids]
+    visit(parent, "parent")
+    for cid, child in children:
+        if child is not None:
+            visit(child, "enfant")
+    for item in nodes.values():
+        item["named"] = item["id"] in accept
+    report = sorted(nodes.values(), key=lambda item: item["id"])
+    for item in report:
+        item["total"] = len(seen) - 1
+    return report
+
+
+def format_epic_diagnostic(report: list[dict]) -> str:
+    if not report:
+        return ""
+    lines = [
+        f"Nœuds du graphe sans preuve d'acceptation positive ({len(report)} "
+        f"sur {report[0]['total']}) :"
+    ]
+    for item in report:
+        flag = " [nommé]" if item["named"] else ""
+        lines.append(f"  - {item['id']} ({item['role']}){flag} : {item['cause']}")
+    waivable = [item["id"] for item in report if item["waivable"]]
+    if waivable and len(waivable) == len(report):
+        lines.append(
+            "Seuls des reçus d'override valides bloquent : le mainteneur peut les attester "
+            "nommément par --human-verdict=accepted --accept-override=" + ",".join(waivable)
+            + " (ni CAS ni acceptation)."
+        )
+    return "\n".join(lines)
+
+
+def _snapshot_with_diagnostic(
+    tracker, project: Project, parent: Issue, accept: frozenset,
+):
+    """Build the graph snapshot; on refusal, append the complete read-only diagnostic."""
+    try:
+        return bounded_epic_graph_snapshot(tracker, project, parent, accept)
+    except (SystemExit, TrackerConflictError, TrackerBindingError) as exc:
+        try:
+            text = format_epic_diagnostic(
+                epic_graph_diagnostic(tracker, project, parent, accept)
+            )
+        except Exception:
+            text = ""
+        if not text:
+            raise
+        message = f"{exc}\n{text}"
+        if isinstance(exc, TrackerBindingError):
+            raise SystemExit(
+                f"Clôture Epic refusée : nœud hors projet ou binding invalide ({exc}).\n{text}"
+            ) from None
+        if isinstance(exc, SystemExit):
+            raise SystemExit(message) from None
+        raise TrackerConflictError(message) from None
 
 
 def _validate_epic_outcome(
@@ -633,6 +895,27 @@ def _validate_epic_outcome(
     ):
         raise SystemExit("Clôture Epic refusée : prédécesseur ou verdict invalide.")
 
+    waivers: dict[str, EpicClosureOverride] = {}
+    if type(receipt.accepted_overrides) is not tuple:
+        raise SystemExit("Clôture Epic refusée : dérogations du reçu invalides.")
+    for item in receipt.accepted_overrides:
+        if (
+            not bounded_receipt
+            or type(item) is not EpicClosureOverride
+            or not isinstance(item.node_id, str)
+            or _EPIC_NODE_ID.match(item.node_id) is None
+            or not isinstance(item.receipt_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", item.receipt_digest) is None
+            or not isinstance(item.reason, str)
+            or _EPIC_OVERRIDE_REASON.match(item.reason) is None
+            or item.node_id in waivers
+        ):
+            raise SystemExit("Clôture Epic refusée : dérogation du reçu invalide.")
+        waivers[item.node_id] = item
+    if list(waivers) != sorted(waivers):
+        raise SystemExit("Clôture Epic refusée : dérogations non canoniques.")
+    waived_seen: set[str] = set()
+
     def validate_node(child: EpicClosureChild, label: str) -> None:
         if (
             type(child) is not EpicClosureChild
@@ -644,6 +927,22 @@ def _validate_epic_outcome(
         _exact_positive_version(child.version, f"version {label} du reçu")
         _exact_nonnegative_int(child.ac_done, f"AC {label} satisfaites du reçu")
         _exact_nonnegative_int(child.ac_total, f"AC {label} totales du reçu")
+        if child.id in waivers:
+            evidence = _epic_override_evidence(child)
+            if (
+                child.state != "done"
+                or evidence is None
+                or evidence != (waivers[child.id].receipt_digest, waivers[child.id].reason)
+            ):
+                raise SystemExit(
+                    f"Clôture Epic refusée : dérogation de {child.id} incohérente avec son reçu d'override."
+                )
+            waived_seen.add(child.id)
+            return
+        if child.acceptance_status == "override" and bounded_receipt:
+            raise SystemExit(
+                f"Clôture Epic refusée : {child.id} dérogé sans attestation nominative."
+            )
         if child.ac_done != child.ac_total:
             raise SystemExit(f"Clôture Epic refusée : AC {label} incomplètes ou inconnues.")
         if bounded_receipt:
@@ -686,6 +985,11 @@ def _validate_epic_outcome(
         raise SystemExit("Clôture Epic refusée : graphe de dépendances non canonique.")
     if any(source not in known_nodes for source in adjacency):
         raise SystemExit("Clôture Epic refusée : source de dépendance étrangère.")
+    if waived_seen != set(waivers):
+        raise SystemExit(
+            "Clôture Epic refusée : dérogation nommée absente du graphe du reçu : "
+            + ", ".join(sorted(set(waivers) - waived_seen)) + "."
+        )
 
     def reject_cycle(node: str, path: frozenset[str]) -> None:
         if node in path:
@@ -723,6 +1027,7 @@ def close_epic(
     issued_at: int | None = None,
     nonce: str | None = None,
     human_verdict: str | None = None,
+    accept_overrides=None,
 ) -> EpicClosureOutcome:
     """Close one non-code Epic through its qualified audited capability.
 
@@ -742,6 +1047,20 @@ def close_epic(
         raise SystemExit(
             "Clôture Epic refusée : verdict humain explicite `accepted` requis."
         )
+    # PAT-ADR-0014: validated before any provider read, fail closed off Linear.
+    accepted_ids: tuple[str, ...] = ()
+    if accept_overrides is not None:
+        accepted_ids = parse_accept_overrides(accept_overrides)
+        if human_verdict != _EPIC_HUMAN_VERDICT:
+            raise SystemExit(
+                "Clôture Epic refusée : --accept-override exige --human-verdict=accepted."
+            )
+        if not bounded or not getattr(tracker, "epic_override_closure_supported", False):
+            raise SystemExit(
+                "Clôture Epic refusée : --accept-override n'est qualifié que pour Linear "
+                f"(tracker {tracker.name})."
+            )
+    requested = frozenset(accepted_ids)
     project = _epic_closure_project(tracker)
     tracker.validate_issue_binding(project, parent_id)
     try:
@@ -776,6 +1095,13 @@ def close_epic(
         if outcome.closed_parent_version != parent.version:
             raise SystemExit(
                 "Clôture Epic refusée : version de reprise contradictoire."
+            )
+        recorded = tuple(item.node_id for item in outcome.receipt.accepted_overrides)
+        if recorded != accepted_ids:
+            raise SystemExit(
+                "Clôture Epic refusée : ensemble --accept-override différent du reçu "
+                f"déjà écrit (reçu : {', '.join(recorded) or 'aucun'} ; "
+                f"demandé : {', '.join(accepted_ids) or 'aucun'})."
             )
         return EpicClosureOutcome(
             receipt=outcome.receipt,
@@ -812,8 +1138,16 @@ def close_epic(
                 raise TrackerConflictError(
                     "audit pending contradictoire avec le prédécesseur original"
                 )
-            children, dependencies = bounded_epic_graph_snapshot(
-                tracker, project, parent,
+            pending_ids = tuple(item.node_id for item in pending.accepted_overrides)
+            if pending_ids != accepted_ids:
+                raise SystemExit(
+                    "Clôture Epic refusée : audit en attente avec un autre ensemble "
+                    f"--accept-override (audit : {', '.join(pending_ids) or 'aucun'} ; "
+                    f"demandé : {', '.join(accepted_ids) or 'aucun'}). "
+                    "Relance avec l'ensemble exact de l'audit."
+                )
+            children, dependencies = _snapshot_with_diagnostic(
+                tracker, project, parent, requested,
             )
             if (
                 pending.children != children
@@ -831,10 +1165,18 @@ def close_epic(
             )
 
     dependencies: tuple[EpicClosureDependency, ...] = ()
+    overrides: tuple[EpicClosureOverride, ...] = ()
     if bounded:
-        children, dependencies = bounded_epic_graph_snapshot(
-            tracker, project, parent,
+        children, dependencies = _snapshot_with_diagnostic(
+            tracker, project, parent, requested,
         )
+        overrides = epic_receipt_overrides(children, dependencies)
+        missing = requested - {item.node_id for item in overrides}
+        if missing:
+            raise SystemExit(
+                "Clôture Epic refusée : --accept-override désigne des identifiants "
+                "hors du graphe de l'Epic : " + ", ".join(sorted(missing)) + "."
+            )
     else:
         child_ids = []
         for relation in parent.links:
@@ -897,6 +1239,7 @@ def close_epic(
         parent_validation_digest=(
             epic_parent_validation_digest(parent) if bounded else None
         ),
+        accepted_overrides=overrides,
     )
     outcome = tracker.close_epic(project, receipt)
     return _validate_epic_outcome(

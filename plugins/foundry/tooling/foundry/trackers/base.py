@@ -69,6 +69,10 @@ class BodyUpdateUnavailableError(RuntimeError):
     """The active tracker cannot perform a bounded body replacement."""
 
 
+class TrackerBindingError(RuntimeError):
+    """A deterministic issue-to-project binding refusal (never a transient failure)."""
+
+
 class TrackerConflictError(RuntimeError):
     """A provider version/body changed before a bounded tracker mutation."""
 
@@ -130,6 +134,9 @@ class Tracker(ABC):
     # PAT-ADR-0006's bounded S1-S5 closure.  This is deliberately distinct from
     # the DevHub provider transaction advertised by ``epic_closure_supported``.
     bounded_epic_closure_supported: bool = False
+    # PAT-ADR-0014: only Linear is qualified to close an Epic whose nodes were
+    # delivered under an audited acceptance override, by explicit nominative flag.
+    epic_override_closure_supported: bool = False
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
     epic_subgraph_supported: bool = False
