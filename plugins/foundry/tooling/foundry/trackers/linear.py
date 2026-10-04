@@ -1231,10 +1231,176 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     return rendered
 
 
+# PAT-94: Linear re-serializes a loose list.  One form is observed; see
+# `_linear_observed_list_blank_lines`.  A list-item-like line has any marker and
+# any indentation; a thematic break (`* * *`, `- - -`) is not one.
+_LIST_LIKE = re.compile(r"[ \t]*(?:[*+-]|[0-9]+[.)])(?:[ \t]|$)")
+_THEMATIC_BREAK = re.compile(r" {0,3}([*_-])[ \t]*(?:\1[ \t]*){2,}")
+_BLOCKQUOTE_PREFIX = re.compile(r"(?: {0,3}> ?)+")
+_OBSERVED_ORDERED_ITEM = re.compile(r"([1-9])\. ([^ \t\n][^\n]*)\n?")
+# Item text that would itself open block syntax (a nested list, heading, quote,
+# fence, HTML, table, thematic break or link reference definition) is not plain.
+_NOT_PLAIN_ITEM_TEXT = re.compile(
+    r"[*+-](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$)|#{1,6}(?:[ \t]|$)|[>|<]|`{3}|~{3}"
+    r"|([*_-])[ \t]*(?:\1[ \t]*){2,}$|\[[^\]]*\]:"
+)
+_NON_LF_SEPARATORS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+
+# CommonMark line endings only: `str.splitlines` also breaks on form feed, U+2028
+# and others, which would invent blank lines Linear's parser does not see.
+_COMMONMARK_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z")
+
+
+def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
+    """Return the offsets of the empty lines Linear drops from the observed form.
+
+    Observed (PAT-94, native PAT-ADR-0014): a top-level ordered list `1. ` to at
+    most `9. `, numbered from 1 by +1, one plain LF line per item, items separated
+    by exactly one empty LF line, preceded by the start of the body or empty LF
+    lines and followed by the end of the body or empty LF lines and a non-list
+    block, is read back with the separating empty lines removed.  ``strict``
+    accepts it only with at most one empty line on each side (PAT-72: Linear
+    collapses two empty lines after a list item).
+
+    Whitelist: a blank line in a list context -- after a block holding a
+    list-item-like line (also inside a blockquote) or its indented continuation,
+    before a block starting with a list-item-like or indented line -- has an
+    unobserved rendering unless it lies inside that exact form.  So has a gap of
+    two or more empty lines before or after a list-context paragraph.  ``strict``
+    refuses either, naming the first offending 1-based CommonMark line; otherwise
+    they are left untouched, as before PAT-94.  A body with neither is never
+    refused here.  Lines and blank lines are CommonMark ones (only spaces or
+    tabs); fenced code is one opaque block.  Forward only: a source is never
+    recovered from a rendering.
+    """
+    lines = _COMMONMARK_LINE.findall(body)
+    offsets = [0]
+    for source_line in lines:
+        offsets.append(offsets[-1] + len(source_line))
+    blocks: list[tuple[int, bool]] = []  # (first line, fenced)
+    fence = None
+    for number, source_line in enumerate(lines):
+        line = source_line.rstrip("\r\n")
+        if fence is not None:
+            if _markdown_fence_closing(line, *fence):
+                fence = None
+            continue
+        fence = _markdown_fence_opening(line)
+        blocks.append((number, fence is not None))
+
+    def content(block: int) -> str:
+        line = lines[blocks[block][0]].rstrip("\r\n")
+        quote = _BLOCKQUOTE_PREFIX.match(line)
+        return line[quote.end() :] if quote else line
+
+    def is_item(block: int) -> bool:
+        text = content(block)
+        return (
+            not blocks[block][1]
+            and _LIST_LIKE.match(text) is not None
+            and _THEMATIC_BREAK.fullmatch(text) is None
+        )
+
+    def is_lf_gap(gap: list[int]) -> bool:
+        return all(lines[blocks[block][0]] == "\n" for block in gap)
+
+    leading: list[int] = []
+    paragraphs: list[list[int]] = []
+    gaps: list[list[int]] = []  # gaps[k]: blank blocks after paragraphs[k]
+    for block, (_, fenced) in enumerate(blocks):
+        if not fenced and not content(block).strip(" \t"):
+            (gaps[-1] if paragraphs else leading).append(block)
+        elif paragraphs and not gaps[-1]:
+            paragraphs[-1].append(block)
+        else:
+            paragraphs.append([block])
+            gaps.append([])
+
+    risky = []  # risky[k]: blank lines between paragraphs k and k + 1 are in a list
+    listed = []  # listed[k]: paragraph k is in a list context
+    in_list = False
+    for index, paragraph in enumerate(paragraphs):
+        indented = content(paragraph[0])[:1] in (" ", "\t")
+        if index:
+            risky.append(in_list and (is_item(paragraph[0]) or indented))
+        in_list = any(is_item(block) for block in paragraph) or (indented and in_list)
+        listed.append(in_list)
+
+    def observed_item(index: int, number: int) -> bool:
+        if len(paragraphs[index]) != 1:
+            return False
+        line_number, fenced = blocks[paragraphs[index][0]]
+        line = lines[line_number]
+        match = _OBSERVED_ORDERED_ITEM.fullmatch(line)
+        return (
+            not fenced
+            and match is not None
+            and match[1] == str(number)
+            and _NOT_PLAIN_ITEM_TEXT.match(match[2]) is None
+            and match[2][-1] not in " \t"
+            and _NON_LF_SEPARATORS.isdisjoint(line)
+        )
+
+    drops: set[int] = set()
+    covered: set[int] = set()
+    start = 0
+    while start < len(paragraphs):
+        last = start
+        while (
+            observed_item(start, 1)
+            and last + 1 < len(paragraphs)
+            and len(gaps[last]) == 1
+            and is_lf_gap(gaps[last])
+            and observed_item(last + 1, last - start + 2)
+        ):
+            last += 1
+        if (
+            last > start
+            and (start == 0 or not risky[start - 1])
+            and (last + 1 == len(paragraphs) or not risky[last])
+            and is_lf_gap((leading if start == 0 else gaps[start - 1]) + gaps[last])
+        ):
+            covered.update(range(start, last))
+            drops.update(
+                offsets[blocks[gaps[index][0]][0]] for index in range(start, last)
+            )
+        start = last + 1
+    if strict:
+        # Uncovered list blank lines, and every gap of two or more empty lines
+        # next to a list-context paragraph: PAT-72 shows Linear collapsing such a
+        # gap after a list item, so even the observed form is accepted only with
+        # at most one empty line on each side.
+        offending = [
+            gaps[index][0] for index, risk in enumerate(risky)
+            if risk and index not in covered
+        ]
+        offending.extend(
+            gap[0]
+            for gap, beside in [
+                (leading, listed[:1]),
+                *((gap, listed[index : index + 2]) for index, gap in enumerate(gaps)),
+            ]
+            if len(gap) > 1 and any(beside)
+        )
+        if offending:
+            line = blocks[min(offending)][0] + 1
+            raise ValueError(f"unsupported list Markdown in ADR body (line {line})")
+    return drops
+
+
 def _linear_markdown_readback_body(
-    body: str, *, allow_foundry_adr_0001: bool = False
+    body: str,
+    *,
+    allow_foundry_adr_0001: bool = False,
+    strict: bool = False,
+    observed_lists: bool = True,
 ) -> str:
-    """Model only closed, observed Linear Markdown serializations."""
+    """Model only closed, observed Linear Markdown serializations.
+
+    ``observed_lists=False`` is the pre-PAT-94 model: a Document stored before
+    PAT-94 may hold that rendering.  ``strict`` refuses every list blank line
+    outside the one observed form (`_linear_observed_list_blank_lines`).
+    """
     if allow_foundry_adr_0001:
         qualified = _linear_foundry_adr_0001_v1_readback(body)
         if qualified is not None:
@@ -1242,6 +1408,11 @@ def _linear_markdown_readback_body(
     qualified = _linear_foundry_adr_0012_v1_readback(body)
     if qualified is not None:
         return qualified
+    drops = (
+        _linear_observed_list_blank_lines(body, strict=strict)
+        if observed_lists or strict
+        else set()
+    )
     rendered = []
     nonfenced = []
 
@@ -1251,7 +1422,11 @@ def _linear_markdown_readback_body(
             nonfenced.clear()
 
     fence = None
+    offset = 0
     for source_line in body.splitlines(keepends=True):
+        offset += len(source_line)
+        if offset - len(source_line) in drops:
+            continue
         line = source_line.removesuffix("\n").removesuffix("\r")
         if fence is not None:
             flush_nonfenced()
@@ -1285,27 +1460,77 @@ def _linear_markdown_readback_body(
     return rendered_body if qualified is None else qualified
 
 
-def _preflight_adr_body_readback(
+def _linear_markdown_readback_bodies(
     body: str, *, allow_foundry_adr_0001: bool = False
-) -> None:
-    """Refuse a body with an unmodelled Linear rendering before any write."""
+) -> tuple[str, ...]:
+    """Every body rendering a read accepts: PAT-94 first, then pre-PAT-94.
+
+    Additive: a Document stored with the pre-PAT-94 model output stays readable,
+    and the pre-PAT-94 refusals still raise.  Never strict.
+    """
+    legacy = _linear_markdown_readback_body(
+        body, allow_foundry_adr_0001=allow_foundry_adr_0001, observed_lists=False
+    )
     try:
-        _linear_markdown_readback_body(
+        observed = _linear_markdown_readback_body(
             body, allow_foundry_adr_0001=allow_foundry_adr_0001
         )
+    except ValueError:
+        return (legacy,)
+    return (observed,) if observed == legacy else (observed, legacy)
+
+
+def _preflight_adr_body_readback(
+    body: str, *, allow_foundry_adr_0001: bool = False, new_body: bool = True
+) -> None:
+    """Refuse a body with an unmodelled Linear rendering before any write.
+
+    Every body keeps the pre-PAT-94 refusals.  A ``new_body`` (the fail-closed
+    default) also gets the strict PAT-94 list whitelist.  Callers pass
+    ``new_body=False`` only when the body's Linear rendering is already proven:
+    it is the exact body of the stored previous version whose bytes the model
+    verifies (`_is_stored_adr_body`), of an existing exact slot being recovered,
+    or of a batch import whose provider bytes a qualification probe pins.
+    """
+    try:
+        _linear_markdown_readback_body(
+            body, allow_foundry_adr_0001=allow_foundry_adr_0001, observed_lists=False
+        )
+        if new_body:
+            _linear_markdown_readback_body(
+                body, allow_foundry_adr_0001=allow_foundry_adr_0001, strict=True
+            )
     except ValueError as exc:
         raise TrackerConflictError(
             "Linear ADR body has unsupported Markdown serialization"
         ) from exc
 
 
-def _linear_adr_readback_content(content: str) -> str:
-    """Return the sole provider serialization accepted beside canonical bytes.
+def _is_stored_adr_body(previous: tuple[dict, dict], body: str) -> bool:
+    """Whether ``body`` is the stored ``previous`` body with a model-proven rendering.
+
+    The SHA-256 alone is not enough: the stored bytes of a probe-qualified
+    historical version 0 may be proven by the probe only, while the next version
+    is verified by the closed model.  Only stored bytes the model itself accepts
+    for this body prove its rendering; anything else is a new body (fail closed).
+    """
+    metadata, raw = previous
+    return (
+        metadata["body_sha256"] == hashlib.sha256(body.encode()).hexdigest()
+        and isinstance(raw, dict)
+        and _adr_readback_content_matches(
+            raw.get("content"), _adr_document_content(metadata, body)
+        )
+    )
+
+
+def _linear_adr_readback_contents(content: str) -> tuple[str, ...]:
+    """Return the provider serializations accepted beside canonical bytes.
 
     Linear escapes the closing delimiter of an HTML comment in Markdown readback.
     Keep compatibility pinned to the observed deterministic header transformation:
-    JSON brackets, the marker delimiter, and top-level dash list markers outside
-    fenced code only.
+    JSON brackets, the marker delimiter, and the closed body model outside fenced
+    code only (`_linear_markdown_readback_bodies`).
     """
     if content.startswith(_ADR_HEADER):
         payload = content[len(_ADR_HEADER) :]
@@ -1317,15 +1542,22 @@ def _linear_adr_readback_content(content: str) -> str:
         except json.JSONDecodeError as exc:
             raise ValueError("canonical ADR metadata is invalid") from exc
         encoded = encoded.replace("[", "\\[").replace("]", "\\]")
-        body = _linear_markdown_readback_body(
-            body,
-            allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+        return tuple(
+            f"{_ADR_HEADER}{encoded}\n\\-->\n\n{rendered}"
+            for rendered in _linear_markdown_readback_bodies(
+                body,
+                allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+            )
         )
-        return f"{_ADR_HEADER}{encoded}\n\\-->\n\n{body}"
     if content.startswith(_ADR_WITNESS_HEADER) and content.endswith("\n-->"):
         suffix = "\n-->"
-        return f"{content[:-len(suffix)]}\n\\-->"
+        return (f"{content[:-len(suffix)]}\n\\-->",)
     raise ValueError("canonical ADR content is invalid")
+
+
+def _linear_adr_readback_content(content: str) -> str:
+    """Return the predicted provider serialization (PAT-94 rendering first)."""
+    return _linear_adr_readback_contents(content)[0]
 
 
 def _adr_qualification_probe_title(adr_id: str, kind: str, content: str) -> str:
@@ -1356,7 +1588,7 @@ def _adr_readback_content_matches(observed: object, canonical: str) -> bool:
         return True
     try:
         return (
-            observed == _linear_adr_readback_content(canonical)
+            observed in _linear_adr_readback_contents(canonical)
             or _is_qualified_historical_readback(observed, canonical)
         )
     except ValueError:
@@ -2059,12 +2291,15 @@ class LinearTracker(Tracker):
             base = self._migration_adr_batch_records(adrs)
             if len({record["adr_id"] for record in base}) != len(base):
                 raise TrackerConflictError("identité ADR source de migration dupliquée")
+            # Linear imports this corpus only as a batch whose complete
+            # provider bytes a qualification probe pins before any write.
             for record in base:
                 _preflight_adr_body_readback(
                     record["body"],
                     allow_foundry_adr_0001=(
                         record["adr_id"] == _FOUNDRY_ADR_0001_ID
                     ),
+                    new_body=False,
                 )
         profile = {
             "kind": "linear-deterministic-identity-v1",
@@ -5316,7 +5551,8 @@ class LinearTracker(Tracker):
         ]
         other_chains = _adr_chain(remaining, binding)
         self._validate_adr_graph(other_chains, binding)
-        self._create_adr_document(binding, metadata, body)
+        # The surviving exact slot already proves this body's rendering.
+        self._create_adr_document(binding, metadata, body, new_body=False)
         return True
 
     def _validate_adr_graph(
@@ -5444,10 +5680,12 @@ class LinearTracker(Tracker):
         self, binding: dict, metadata: dict, body: str,
         *, readback_content: str | None = None,
         witness_readback: str | None = None,
+        new_body: bool = True,
     ) -> dict:
         _preflight_adr_body_readback(
             body,
             allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+            new_body=new_body,
         )
         doc_id = _adr_document_id(
             binding["project_id"], metadata["id"], metadata["sequence"]
@@ -5571,7 +5809,8 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear ADR witness is not the missing slot")
         hypothetical = _adr_chain([*documents, witness], binding)
         self._validate_adr_graph(hypothetical, binding)
-        self._create_adr_document(binding, metadata, body)
+        # The exact version slot exists: only its witness is written.
+        self._create_adr_document(binding, metadata, body, new_body=False)
         _, fresh = self._adr_snapshot(project)
         if fresh[metadata["id"]][-1][0] != metadata:
             raise TrackerConflictError("Linear ADR witness recovery diverged")
@@ -5847,12 +6086,19 @@ class LinearTracker(Tracker):
         )
 
     def _append_adr_versions(self, project, changes):
-        for _previous, metadata, body in changes:
+        # Only a changed body is new: an unchanged one is the stored previous
+        # version's body, whose rendering is proven if the model verifies it.
+        new_bodies = [
+            not _is_stored_adr_body(previous, body)
+            for previous, _metadata, body in changes
+        ]
+        for (_previous, metadata, body), new_body in zip(changes, new_bodies):
             _preflight_adr_body_readback(
                 body,
                 allow_foundry_adr_0001=(
                     _is_foundry_adr_0001_profile_chain(metadata)
                 ),
+                new_body=new_body,
             )
         binding, chains = self._adr_snapshot(project)
         for previous, metadata, _body in changes:
@@ -5861,8 +6107,8 @@ class LinearTracker(Tracker):
                 or chains[metadata["id"]][-1][1]["id"] != previous[1]["id"]
             ):
                 raise TrackerConflictError("Linear ADR changed before version append")
-        for _previous, metadata, body in changes:
-            self._create_adr_document(binding, metadata, body)
+        for (_previous, metadata, body), new_body in zip(changes, new_bodies):
+            self._create_adr_document(binding, metadata, body, new_body=new_body)
         _, fresh = self._adr_snapshot(project)
         result = {}
         for _previous, metadata, _body in changes:
@@ -6205,7 +6451,7 @@ class LinearTracker(Tracker):
             "origin": {"kind": "native"},
             "relations": {"supersedes": [], "superseded_by": None, "issues": []},
         }
-        self._create_adr_document(binding, metadata, body)
+        self._create_adr_document(binding, metadata, body, new_body=True)
         _, fresh = self._adr_snapshot(project)
         if metadata["id"] not in fresh or fresh[metadata["id"]][-1][0] != metadata:
             raise TrackerConflictError("Linear ADR creation diverged")
@@ -6253,6 +6499,7 @@ class LinearTracker(Tracker):
         _preflight_adr_body_readback(
             body,
             allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+            new_body=not _is_stored_adr_body(versions[-1], body),
         )
         # The comment is a deterministic reciprocal slot. If a process stops after
         # this write but before the version append, the exact call can reuse it.
@@ -6393,9 +6640,13 @@ class LinearTracker(Tracker):
             ):
                 raise ValueError("Linear ADR batch record invalid")
             # Unsupported source Markdown is refused before any probe read or
-            # write, exactly as for a native ADR.
+            # write.  The batch pins the complete provider bytes of each slot by
+            # a qualification probe (or an existing exact slot), so the strict
+            # new-body list whitelist does not apply.
             _preflight_adr_body_readback(
-                body, allow_foundry_adr_0001=adr_id == _FOUNDRY_ADR_0001_ID
+                body,
+                allow_foundry_adr_0001=adr_id == _FOUNDRY_ADR_0001_ID,
+                new_body=False,
             )
             seen_ids.add(adr_id)
             canonical_refs, native_ids = self._canonicalize_adr_issue_refs(
@@ -6758,6 +7009,7 @@ class LinearTracker(Tracker):
                 entry["body"],
                 readback_content=None if entry["recovery_only"] else version_content,
                 witness_readback=witness_content,
+                new_body=False,
             )
         _, fresh = self._adr_snapshot(project)
         return [
@@ -7077,9 +7329,14 @@ class LinearTracker(Tracker):
                     (related_metadata, related_candidate)
                 )
             self._validate_adr_graph(hypothetical, binding)
+        # Only a version 0 slot that does not exist yet carries a new body; the
+        # existing exact slot and the interrupted slot already have a proven
+        # rendering, an unchanged related body only if the model verifies it.
+        new_body = adr_id not in chains
         _preflight_adr_body_readback(
             body,
             allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
+            new_body=new_body,
         )
         if interrupted_pair is not None:
             _preflight_adr_body_readback(
@@ -7087,13 +7344,21 @@ class LinearTracker(Tracker):
                 allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(
                     interrupted_pair[0]
                 ),
+                new_body=False,
             )
-        for _previous, related_metadata, related_body in changes:
+        related_new = [
+            not _is_stored_adr_body(previous, related_body)
+            for previous, _related_metadata, related_body in changes
+        ]
+        for (_previous, related_metadata, related_body), related_is_new in zip(
+            changes, related_new
+        ):
             _preflight_adr_body_readback(
                 related_body,
                 allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(
                     related_metadata
                 ),
+                new_body=related_is_new,
             )
         for issue_id in canonical_issue_refs:
             self._create_adr_issue_link(
@@ -7102,11 +7367,15 @@ class LinearTracker(Tracker):
         if interrupted_pair is not None:
             interrupted_metadata, interrupted_body, _raw = interrupted_pair
             self._create_adr_document(
-                binding, interrupted_metadata, interrupted_body
+                binding, interrupted_metadata, interrupted_body, new_body=False
             )
-        self._create_adr_document(binding, metadata, body)
-        for _previous, related_metadata, related_body in changes:
-            self._create_adr_document(binding, related_metadata, related_body)
+        self._create_adr_document(binding, metadata, body, new_body=new_body)
+        for (_previous, related_metadata, related_body), related_is_new in zip(
+            changes, related_new
+        ):
+            self._create_adr_document(
+                binding, related_metadata, related_body, new_body=related_is_new
+            )
         _, fresh = self._adr_snapshot(project)
         if fresh[adr_id][-1][0] != metadata:
             raise TrackerConflictError("Linear ADR import diverged after write")
@@ -7334,11 +7603,18 @@ class LinearTracker(Tracker):
         hypothetical = _adr_chain(hypothetical_documents, binding)
         self._validate_adr_graph(hypothetical, binding)
 
+        # Supersession never changes a body: each is new only when its stored
+        # rendering is not verified by the model (`_is_stored_adr_body`).
+        source_new = not _is_stored_adr_body(source[-1], source_body)
+        replacement_new = not _is_stored_adr_body(
+            replacement_previous, replacement_body
+        )
         _preflight_adr_body_readback(
             source_body,
             allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(
                 source_metadata
             ),
+            new_body=source_new,
         )
         if dangling_side == "replacement":
             _preflight_adr_body_readback(
@@ -7346,11 +7622,15 @@ class LinearTracker(Tracker):
                 allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(
                     replacement_metadata
                 ),
+                new_body=replacement_new,
             )
             self._create_adr_document(
-                binding, replacement_metadata, replacement_body
+                binding, replacement_metadata, replacement_body,
+                new_body=replacement_new,
             )
-        self._create_adr_document(binding, source_metadata, source_body)
+        self._create_adr_document(
+            binding, source_metadata, source_body, new_body=source_new
+        )
         _, fresh = self._adr_snapshot(project)
         if (
             fresh[adr.id][-1][0] != source_metadata
