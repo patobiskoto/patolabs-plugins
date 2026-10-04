@@ -1,0 +1,150 @@
+{
+ "schema": "foundry.pat-93-post-publication-observation.v1",
+ "observation_not_receipt": true,
+ "date": "2026-10-04",
+ "scope": "zero model turns; maintainer machine. Part 1 (installed_copies, integrity, installed_cli_probes) is read-only. Part 2 (isolated_public_install) performed a network download of the public repository into temporary CLAUDE_CONFIG_DIR / CODEX_HOME directories, authorized by the maintainer on 2026-10-04; the maintainer's real ~/.claude and ~/.codex installations were not modified (re-read after the run).",
+ "release": {
+  "name": "Foundry 1.0.0 — Ship-iOS 0.3.0 compatible",
+  "tag": "foundry-v1.0.0",
+  "target_commitish": "400fe7450c9a583410973a5f08abf767c9501252",
+  "target_is": "merge of PR #73 (PAT-62)",
+  "published_at": "2026-10-03T17:40:19Z",
+  "draft": false,
+  "prerelease": false,
+  "url": "https://github.com/patobiskoto/patolabs-plugins/releases/tag/foundry-v1.0.0"
+ },
+ "manifests_at_tag": {
+  "plugins/foundry/.claude-plugin/plugin.json": "1.0.0",
+  "plugins/foundry/.codex-plugin/plugin.json": "1.0.0",
+  "plugins/ship-ios/.claude-plugin/plugin.json": "0.3.0",
+  "plugins/ship-ios/.codex-plugin/plugin.json": "0.3.0"
+ },
+ "installed_copies": {
+  "claude": {
+   "binary_version": "Claude Code 2.1.285",
+   "plugin": "foundry@patolabs",
+   "version": "1.0.0",
+   "git_commit_sha": "400fe7450c9a583410973a5f08abf767c9501252",
+   "installed_at": "2026-09-25T21:40:06Z",
+   "last_updated": "2026-10-03T17:41:30Z",
+   "seconds_after_release": 71,
+   "marketplace": "patolabs",
+   "marketplace_source": "github patobiskoto/patolabs-plugins",
+   "marketplace_last_updated": "2026-10-03T17:41:29Z",
+   "install_path": "~/.claude/plugins/cache/patolabs/foundry/1.0.0"
+  },
+  "codex": {
+   "binary_version": "codex-cli 0.155.1",
+   "plugin": "foundry@patolabs",
+   "version": "1.0.0",
+   "marketplace": "patolabs",
+   "marketplace_source": "https://github.com/patobiskoto/patolabs-plugins.git",
+   "install_path": "~/.codex/plugins/cache/patolabs/foundry/1.0.0"
+  }
+ },
+ "integrity": {
+  "tooling_foundry_cli_sha256": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+  "same_at_tag_claude_cache_and_codex_cache": true,
+  "tree_diff_tag_vs_each_cache": "no difference ignoring __pycache__, except a .in_use marker present only in the Claude cache"
+ },
+ "installed_cli_probes": {
+  "method": "installed copy of the CLI run directly with python3 from the patolabs-plugins checkout, FOUNDRY_TRACKER unset; applied to the Claude-installed and to the Codex-installed copy",
+  "registry_selection_require_v1": {
+   "returncode": 0,
+   "mode": "v1",
+   "activation": "migration",
+   "tracker": "linear",
+   "project_id": "aeb77381-f8aa-48d3-a2a5-e6b2d2773007",
+   "project": "PAT",
+   "repository": "github.com/patobiskoto/patolabs-plugins",
+   "configuration_digest": "sha256:9a0663007b847679e79bc82beabbf061e19c750518fd75767d3e847f3e2de6df"
+  },
+  "doctor": {
+   "returncode": 0,
+   "tracker": "linear",
+   "mode": "v1",
+   "codehost": "github",
+   "issues_in_patolabs_plugins_project": 80,
+   "issues_in_sandbox": 8,
+   "claude_default_routes": "scout haiku-4.5; implementer/coordinator sonnet-5.5 medium; reviewer/architect opus-5.5 high",
+   "codex_default_routes": "scout gpt-6-luna low; implementer/coordinator/reviewer gpt-6.1-sol; architect gpt-6.1-sol max",
+   "orange_items_environmental_not_release_defects": [
+    "core.hooksPath on this machine points to a global privacy hook directory, not plugins/foundry/.githooks: the local R1 pre-push hook is not active here",
+    "routing and guard hooks are documented fail-open"
+   ]
+  },
+  "model_turns_started": 0
+ },
+ "pre_publication_evidence_kept_separate": {
+  "pat_62_install_observation": "qualification/pat-62-install-observation.json (local marketplace, public_git_installation_verified=false, unchanged)",
+  "pat_61_final_qualification": "qualification/pat-61-final-qualification-report.md (PR #72, 9/9 AC accepted, 36 steps / 6 configurations, reused not re-run)"
+ },
+ "lifecycle_notes": [
+  "PAT-62 was closed under an audited human override with 0/8 AC checked; this observation does not rewrite or reopen it",
+  "PAT-51 (Epic) stays open until the maintainer's close-epic verdict"
+ ],
+ "not_observed": [
+  "public-source upgrade 0.9.0 -> 1.0.0: not reproducible without a public 0.9.0 ref (see isolated_public_install.upgrade_from_0_9_0). The only upgrade evidence are the real 2026-10-03 update of the maintainer's Claude installation (lastUpdated 2026-10-03T17:41:30Z; its starting version was NOT recorded: installedAt 2026-09-25T21:40:06Z precedes the 0.9.0 publication of 2026-09-26, so a 0.9.0 start is not established) and the local-marketplace upgrade in pat-62-install-observation.json (public_git_installation_verified=false there; its rollback went to the pre-publication baseline 16cdaa0a, not to a public 0.9 release)",
+  "Codex or Claude model turn that loads the plugins: every check ran the installed CLI or bridge directly; zero model turns on both hosts",
+  "Ship-iOS installed on the maintainer's own hosts: the pair was observed in isolated installs, not in the maintainer's real installations (Ship-iOS is absent from them)",
+  "a populated release changelog through the installed pair: the v1.0.0 scope of this repository is empty",
+  "Codex binary and short marketplace form: the Codex checks used the PATH binary codex-cli 0.155.1, not the embedded desktop executor 0.159.2 recorded by PAT-61, and only the full Git URL form of `codex plugin marketplace add` was exercised, not the short `patobiskoto/patolabs-plugins` form documented in the READMEs; a Codex refusal of a commit-SHA ref was not tried"
+ ],
+ "isolated_public_install": {
+  "authorization": "explicit maintainer authorization in chat, 2026-10-04",
+  "method": "official managers only, no cache edit: `claude plugin marketplace add patobiskoto/patolabs-plugins`, `claude plugin install foundry@patolabs`, `claude plugin install ship-ios@patolabs` with CLAUDE_CONFIG_DIR set to a temporary directory; `codex plugin marketplace add https://github.com/patobiskoto/patolabs-plugins.git`, `codex plugin add foundry@patolabs`, `codex plugin add ship-ios@patolabs` with CODEX_HOME set to a temporary directory",
+  "binaries": {
+   "claude": "2.1.285 (Claude Code)",
+   "codex": "codex-cli 0.155.1"
+  },
+  "claude": {
+   "foundry": {
+    "version": "1.0.0",
+    "gitCommitSha": "400fe7450c9a583410973a5f08abf767c9501252"
+   },
+   "ship_ios": {
+    "version": "0.3.0",
+    "gitCommitSha": "400fe7450c9a583410973a5f08abf767c9501252"
+   },
+   "marketplace_source": {
+    "source": "github",
+    "repo": "patobiskoto/patolabs-plugins"
+   },
+   "clone_transport": "HTTPS (SSH not configured)"
+  },
+  "codex": {
+   "foundry": {
+    "version": "1.0.0",
+    "status": "installed, enabled"
+   },
+   "ship_ios": {
+    "version": "0.3.0",
+    "status": "installed, enabled"
+   },
+   "marketplace_source": "https://github.com/patobiskoto/patolabs-plugins.git",
+   "marketplace_checkout_head": "400fe7450c9a583410973a5f08abf767c9501252"
+  },
+  "integrity": {
+   "foundry_cli_sha256_tag_and_both_installs": "c0aaa7de71daad9e018d385ffa1d3bc82be0bdb532d2dddd0222f6669a2fcee1",
+   "tree_diff_vs_tag": "plugins/foundry and plugins/ship-ios trees identical to the tag foundry-v1.0.0 in both installs, ignoring __pycache__ and the .in_use marker (Claude only)",
+   "foundry_skills_count_claude": 16,
+   "ship_ios_skills_claude": [
+    "release",
+    "setup"
+   ]
+  },
+  "cli_probes": {
+   "registry_selection_require_v1": "rc 0 on both installs: mode v1, tracker linear, project PAT, configuration_digest sha256:9a0663007b847679e79bc82beabbf061e19c750518fd75767d3e847f3e2de6df",
+   "doctor": "rc 0 on both installs: tracker=linear mode=v1 codehost=github, repo -> project PAT"
+  },
+  "installed_pair_bridge": {
+   "command": "python3 <installed ship-ios>/scripts/changelog_bridge.py v1.0.0 --repo <patolabs-plugins checkout> --foundry-cli <installed foundry>/tooling/foundry_cli.py --require-v1-binding",
+   "result": "rc 0 on both hosts' installed pairs: contract ship-ios.foundry-changelog-bridge.v1, mode foundry-v1, foundry_version 1.0.0, project PAT, release v1.0.0 (release_id fad607be-a833-46e0-a60e-db1f97fece36), scope_count 0, counts accepted/deviated/unfinished/unavailable all 0",
+   "limit": "the v1.0.0 release scope of this repository is genuinely empty (unavailable=0); this proves the installed pair's capability path, not a populated changelog"
+  },
+  "upgrade_from_0_9_0": {
+   "observed": false,
+   "reason": "the public repository exposes only `main` and the tag `foundry-v1.0.0`; there is no 0.9.0 tag or branch and the managers refuse a commit SHA as a ref (claude: 'Remote branch <sha> not found in upstream origin'). A public 0.9.0 state cannot be installed without publishing a ref, which was deliberately not done."
+  }
+ }
+}

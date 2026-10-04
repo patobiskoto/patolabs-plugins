@@ -2,11 +2,13 @@
 
 ## Unreleased
 
-- Documentation compatibility note, 2026-10-03: Ship-iOS retains 0.3.0 with the
-  prepared Foundry 1.0.0 candidate. PAT-61's accepted six-configuration source
-  qualification retains its original Foundry 0.9.0 producer refs; official published
-  installation/upgrade readbacks remain pending. No bridge/API, template or App
-  Store behavior changes; see the [Foundry release matrix](../foundry/docs/release-1.0.0.md).
+- Documentation compatibility note, 2026-10-03, updated 2026-10-04: Ship-iOS retains
+  0.3.0 with the published Foundry 1.0.0 (2026-10-03). PAT-61's accepted
+  six-configuration source qualification retains its original Foundry 0.9.0 producer
+  refs; the official installed Foundry↔Ship-iOS pair was read back from a clean public
+  install on both hosts on 2026-10-04 (limits in the final report). No bridge/API,
+  template or App Store behavior changes; see the [Foundry release matrix](../foundry/docs/release-1.0.0.md) (frozen as shipped) and the
+  [Foundry 1.0.0 final report](../foundry/docs/qualification/pat-62-final-report.md).
 
 ## 0.3.0 — 2026-09-30
 

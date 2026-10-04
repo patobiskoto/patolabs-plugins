@@ -19,10 +19,12 @@ fields, body and parent under PAT-ADR-0006's bounded detection guarantee, includ
 residual S1→S2 race and absence of CAS or exclusion. Switching to another tracker or
 code-host later remains an adapter change, not a rewrite.
 
-**1.0.0 candidate prepared on 2026-10-03; publication and official installation
-verification pending.** The [release notes](docs/release-1.0.0.md) distinguish the
-accepted PAT-61 source qualification from the remaining release effects, and give the
-Foundry 1.0.0 ↔ Ship-iOS 0.3.0 compatibility matrix. The
+**1.0.0 published on 2026-10-03 (tag `foundry-v1.0.0`).** The [release notes](docs/release-1.0.0.md)
+distinguish the accepted PAT-61 source qualification from the remaining release effects, and
+give the Foundry 1.0.0 ↔ Ship-iOS 0.3.0 compatibility matrix; they are frozen as shipped in
+the tag, so their "candidate" wording is superseded by the
+[final report](docs/qualification/pat-62-final-report.md) and the
+[post-publication observation](docs/qualification/pat-93-post-publication-observation.json). The
 [setup and migration guide](docs/migration-1.0.0.md) covers a first repository, 0.9.0
 upgrades, legacy YouTrack binding, loaded-version verification and bounded rollback.
 
