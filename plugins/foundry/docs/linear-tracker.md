@@ -270,6 +270,22 @@ the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or gl
 normalized. Exact replay of an unwitnessed deterministic version may create only its
 missing witness after the existing project/id/title/envelope/body/previous-link checks;
 it never rewrites the surviving Document.
+PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document:
+outside fenced code, top-level ordered items (`N. text`, one line each, one space after
+the dot, flush left) separated by exactly one empty line are read back with that empty
+line removed (`1. a\n\n2. b` becomes `1. a\n2. b`). The model is forward only and
+deterministic: it drops only those blank lines and never infers a source from a
+readback; the witness stays the sole source recovery. Every other list shape that
+Linear may rewrite and no observation covers is refused before any provider write, so
+no orphan Document is left: a spaced list of the same bullet marker (a bullet list was
+not observed to be tightened), a spaced ordered list with the `)` delimiter, extra
+padding, indentation, two or more empty lines or a tight/spaced mix, sub-items or
+continuation lines (indented or lazy) under an ordered item, and an indented
+continuation paragraph after any list item. A different marker kind after an empty line
+(`- a`, empty line, `* b`) is a distinct list and keeps its earlier behaviour. Lists
+interrupted by a fenced block are scanned per fence-free segment. Replay of `adr create`
+with the exact title and body finds the existing slot, validates it with this model and
+creates only the missing witness; a second replay is a no-op.
 `FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
 SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
 and its existing Linear Document content SHA-256

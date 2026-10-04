@@ -6,6 +6,7 @@ import base64
 import copy
 import hashlib
 import json
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -156,6 +157,7 @@ def linear_markdown_body_readback(body):
         )
         return rendered
     rendered = []
+    fenced_lines = set()
     fence = None
     for source_line in body.splitlines(keepends=True):
         line = source_line.removesuffix("\n").removesuffix("\r")
@@ -164,6 +166,7 @@ def linear_markdown_body_readback(body):
         if fence is not None:
             marker, opening_length = fence
             length = len(candidate) - len(candidate.lstrip(marker))
+            fenced_lines.add(len(rendered))
             rendered.append(source_line)
             if (
                 indentation <= 3
@@ -178,6 +181,7 @@ def linear_markdown_body_readback(body):
             info = candidate[length:]
             if length >= 3 and not (marker == "`" and "`" in info):
                 fence = (marker, length)
+                fenced_lines.add(len(rendered))
                 rendered.append(source_line)
                 continue
         if indentation <= 3 and candidate.startswith("<"):
@@ -187,6 +191,16 @@ def linear_markdown_body_readback(body):
             if len(thematic) < 3 or set(thematic) != {"-"}:
                 source_line = f"* {source_line[2:]}"
         rendered.append(source_line)
+    # Observed (PAT-94): a blank line between two one-line top-level ordered
+    # items is dropped by Linear, outside fenced code only.
+    for number in range(1, len(rendered) - 1):
+        if (
+            rendered[number] == "\n"
+            and number not in fenced_lines
+            and re.fullmatch(r"[0-9]+\. [^\n]+\n", rendered[number - 1])
+            and re.match(r"[0-9]+\. [^\n]+", rendered[number + 1])
+        ):
+            rendered[number] = ""
     rendered_body = "".join(rendered)
     rendered_body = linear_module._linear_strong_trailing_inline_code_readback(
         rendered_body
@@ -8927,3 +8941,99 @@ def test_linear_pat16_adr13_hostile_recovery_has_no_mutation(tracker, change):
         instance.create_adr(project, title, source)
     assert wire.documents == before
     assert all("mutation " not in q for q, _ in wire.calls)
+
+
+PAT94_SOURCE = (
+    "## Context\n\n"
+    "Intro paragraph.\n\n"
+    "- bullet one\n"
+    "- bullet two\n\n"
+    "## Steps\n\n"
+    "1. first step\n\n"
+    "2. second step\n\n"
+    "3. third step\n\n"
+    "Closing paragraph."
+)
+# Synthetic bytes shaped like the Linear readback observed for a spaced ordered
+# list: blank lines between top-level one-line ordered items are removed.
+PAT94_OBSERVED = (
+    "## Context\n\n"
+    "Intro paragraph.\n\n"
+    "* bullet one\n"
+    "* bullet two\n\n"
+    "## Steps\n\n"
+    "1. first step\n"
+    "2. second step\n"
+    "3. third step\n\n"
+    "Closing paragraph."
+)
+
+
+def test_linear_adr_pat94_spaced_ordered_list_readback_replays_only_witness(tracker):
+    instance, wire = tracker
+    assert linear_module._linear_markdown_readback_body(PAT94_SOURCE) == PAT94_OBSERVED
+    # Deterministic: the rendering is stable and never re-tightened further.
+    assert (
+        linear_module._linear_markdown_readback_body(PAT94_SOURCE)
+        == linear_module._linear_markdown_readback_body(PAT94_SOURCE)
+    )
+    linear_module._preflight_adr_body_readback(PAT94_SOURCE)
+
+    created = instance.create_adr(PROJECT, "PAT-94 spaced list", PAT94_SOURCE)
+    document_id = created.ref
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    assert wire.documents[document_id]["content"].endswith(PAT94_OBSERVED)
+
+    original = copy.deepcopy(wire.documents[document_id])
+    del wire.documents[witness_id]
+    wire.calls.clear()
+    recovered = instance.create_adr(PROJECT, "PAT-94 spaced list", PAT94_SOURCE)
+    assert recovered.ref == document_id
+    assert wire.documents[document_id] == original
+    creates = [
+        variables["input"]["id"]
+        for query, variables in wire.calls
+        if "FoundryLinearAdrDocumentCreate" in query
+    ]
+    assert creates == [witness_id]
+    assert all("documentUpdate" not in query for query, _ in wire.calls)
+    before = copy.deepcopy(wire.documents)
+    wire.calls.clear()
+    instance.create_adr(PROJECT, "PAT-94 spaced list", PAT94_SOURCE)
+    assert wire.documents == before
+    assert not [q for q, _ in wire.calls if "FoundryLinearAdrDocumentCreate" in q]
+    assert [adr.id for adr in instance.list_adrs(PROJECT)] == [created.id]
+
+
+def test_linear_adr_pat94_fenced_ordered_list_stays_literal():
+    body = "```text\n1. a\n\n2. b\n```"
+    assert linear_module._linear_markdown_readback_body(body) == body
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        pytest.param("1. a\n   - sub\n\n2. b", id="ordered-sub-items"),
+        pytest.param("1. a\n   - sub\n2. b", id="ordered-tight-sub-items"),
+        pytest.param("- a\n\n- b", id="spaced-bullets"),
+        pytest.param("* a\n\n* b", id="spaced-star-bullets"),
+        pytest.param("1. a\n\n   continued\n\n2. b", id="continuation-paragraph"),
+        pytest.param("1. a\n\n   continued", id="trailing-continuation"),
+        pytest.param("- a\n\n  continued", id="bullet-continuation"),
+        pytest.param("1. a\ncontinued\n\n2. b", id="lazy-continuation"),
+        pytest.param("1. a\n\n\n2. b", id="two-blank-lines"),
+        pytest.param("1) a\n\n2) b", id="paren-delimiter"),
+        pytest.param("1. a\n2. b\n\n3. c", id="mixed-tight-and-spaced"),
+        pytest.param("1. a\n\n2. b\n3. c", id="mixed-spaced-and-tight"),
+        pytest.param("1. a\n\n 2. b", id="indented-second-item"),
+        pytest.param("1. a\n\n2.  b", id="wide-marker-space"),
+    ],
+)
+def test_linear_adr_pat94_refuses_unmodelled_list_before_any_write(tracker, hostile):
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        linear_module._preflight_adr_body_readback(hostile)
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "PAT-94 hostile", hostile)
+    assert wire.documents == {}
+    assert not [q for q, _ in wire.calls if "documentCreate" in q]

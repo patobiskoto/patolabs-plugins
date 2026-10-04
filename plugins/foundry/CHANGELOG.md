@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed (PAT-94): the Linear ADR readback model now recognises the one observed
+  rewrite of a spaced top-level ordered list (blank lines between one-line items are
+  removed) and the preflight refuses, before any write, the neighbouring unmodelled
+  list shapes (spaced bullets, ordered sub-items, continuation paragraphs), so a replay
+  of an interrupted `adr create` recovers only the missing witness.
 - Documentation only, 2026-10-04: Foundry 1.0.0 is published (tag `foundry-v1.0.0`,
   2026-10-03). The frozen 1.0.0 entry and release documents below keep their shipped
   "candidate" wording; the published state, installed-copy readbacks and the items not

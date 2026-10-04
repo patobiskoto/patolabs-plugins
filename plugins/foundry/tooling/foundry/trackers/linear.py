@@ -1231,6 +1231,96 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     return rendered
 
 
+_LIST_ITEM = re.compile(r"^( {0,3})([*+-]|[0-9]{1,9}[.)])(?:[ \t]|$)")
+_STRICT_ORDERED_ITEM = re.compile(r"^[0-9]{1,9}\. [^ \t]")
+
+
+def _linear_list_item(line: str) -> re.Match[str] | None:
+    match = _LIST_ITEM.match(line)
+    if match is None:
+        return None
+    if match[2] in "*+-" and len(set(line.replace(" ", "").replace("\t", ""))) == 1:
+        # `* * *` and `- - -` are thematic breaks, not list items.
+        if len(line.replace(" ", "").replace("\t", "")) >= 3:
+            return None
+    return match
+
+
+def _linear_list_kind(item: re.Match[str] | None) -> str:
+    marker = item[2] if item is not None else ""
+    return marker if marker in ("*", "+", "-") else f"ordered{marker[-1:]}"
+
+
+def _linear_tighten_spaced_ordered_lists(lines: list[str]) -> list[str]:
+    """Model the one observed Linear list rewrite and refuse its siblings.
+
+    Observed: top-level ordered items of one line each, separated by exactly
+    one blank line, are returned with that blank line removed.  Every other
+    list shape that holds a blank line (spaced bullets, sub-items, continuation
+    paragraphs, other delimiters, wider gaps, mixed tight/spaced items) or an
+    ordered item with sub-items or continuation lines has no observation and is
+    refused.  One way only: the source is never recovered from the rendering.
+    """
+    paragraphs: list[tuple[int, int]] = []  # [start, end) of non-blank runs
+    index = 0
+    while index < len(lines):
+        if not lines[index].strip():
+            index += 1
+            continue
+        start = index
+        while index < len(lines) and lines[index].strip():
+            index += 1
+        paragraphs.append((start, index))
+
+    def bare(number: int) -> str:
+        return lines[number].rstrip("\r\n")
+
+    def strict_ordered(number: int) -> bool:
+        return _STRICT_ORDERED_ITEM.match(bare(number)) is not None
+
+    drop: set[int] = set()
+    for position, (start, end) in enumerate(paragraphs):
+        items = [n for n in range(start, end) if _linear_list_item(lines[n])]
+        first = items[0] if items else end
+        ordered_seen = False
+        for number in range(first, end):
+            item = _linear_list_item(lines[number])
+            if ordered_seen and (item is None or lines[number][:1] in " \t"):
+                # Sub-items or continuation lines under an ordered item.
+                raise ValueError("unsupported list Markdown in ADR body")
+            ordered_seen = ordered_seen or (
+                item is not None and item[2][0].isdigit()
+            )
+        if not items:
+            continue
+        if position + 1 >= len(paragraphs):
+            continue
+        next_start, next_end = paragraphs[position + 1]
+        blanks = list(range(end, next_start))
+        following = lines[next_start]
+        next_item = _linear_list_item(following)
+        if next_item is None and following[:1] not in " \t":
+            continue  # a plain paragraph ends the list
+        if next_item is not None and following[:1] not in " \t":
+            # A different marker or delimiter starts a distinct list.
+            if _linear_list_kind(next_item) != _linear_list_kind(
+                _linear_list_item(lines[items[-1]])
+            ):
+                continue
+        recognised = (
+            end - first == 1
+            and next_end - next_start == 1
+            and strict_ordered(end - 1)
+            and strict_ordered(next_start)
+            and len(blanks) == 1
+            and bare(blanks[0]) == ""
+        )
+        if not recognised:
+            raise ValueError("unsupported list Markdown in ADR body")
+        drop.add(blanks[0])
+    return [line for number, line in enumerate(lines) if number not in drop]
+
+
 def _linear_markdown_readback_body(
     body: str, *, allow_foundry_adr_0001: bool = False
 ) -> str:
@@ -1247,6 +1337,13 @@ def _linear_markdown_readback_body(
 
     def flush_nonfenced() -> None:
         if nonfenced:
+            nonfenced[:] = _linear_tighten_spaced_ordered_lists(nonfenced)
+            for position, source_line in enumerate(nonfenced):
+                if source_line.startswith("- "):
+                    thematic = source_line.rstrip("\r\n").replace(" ", "")
+                    thematic = thematic.replace("\t", "")
+                    if len(thematic) < 3 or set(thematic) != {"-"}:
+                        nonfenced[position] = f"* {source_line[2:]}"
             rendered.append(_linear_nonfenced_markdown_readback("".join(nonfenced)))
             nonfenced.clear()
 
@@ -1268,10 +1365,6 @@ def _linear_markdown_readback_body(
         candidate = line.lstrip(" ")
         if len(line) - len(candidate) <= 3 and candidate.startswith("<"):
             raise ValueError("ambiguous raw HTML block in ADR body")
-        if source_line.startswith("- "):
-            thematic = line.replace(" ", "").replace("\t", "")
-            if len(thematic) < 3 or set(thematic) != {"-"}:
-                source_line = f"* {source_line[2:]}"
         nonfenced.append(source_line)
     flush_nonfenced()
     rendered_body = "".join(rendered)
