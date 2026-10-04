@@ -887,13 +887,21 @@ remains `unknown`, with no artificial PR. These reads perform no writes.
 
 **Epic with nodes delivered under an override (PAT-ADR-0014, PAT-95).** `close-epic`
 refuses a node whose acceptance is only a typed `acceptance-override` receipt. The
-refusal now lists every graph node (required children and transitive dependencies)
-whose proof is not positive, with its cause (valid override, unknown proof, zero
-criteria, non-terminal, dropped, foreign project, or a read that raises such as
-`Linear native state changed outside lifecycle`), read-only, and no longer hides the
-real cause behind the generic message. The maintainer may then run
+refusal raised by the fresh graph read now lists the graph nodes (required children and
+transitive dependencies) whose proof is not positive, with the cause of each (valid
+override, unknown proof, zero criteria, non-terminal, dropped, `foreign-project` for a
+binding refusal only, `binding-error` for a configuration error, or `read-error` for a
+read that raises, such as `Linear native state changed outside lifecycle` or a transient
+transport failure), read-only, and no longer hides the real cause behind the generic
+message. A node that cannot be read is not traversed: the list is then a lower bound, no
+attestation is suggested, and re-running is the first thing to try (never edit
+parents/links for a `read-error`). The list is not carried by a replay of an already
+closed Epic, a pending-audit refusal, a provider refusal after the read, an unknown
+named id raised alone, or a transport error during the snapshot itself. The diagnostic
+reads each node at most twice. The maintainer may then run
 `close-epic <EPIC-ID> --human-verdict=accepted --accept-override=ID[,ID...]` with the
-exact nominative list (no wildcard, no duplicate, upper-case ids, never without the
+exact nominative list (no wildcard, no duplicate, ids matching
+`[A-Z][A-Z0-9]{0,15}-[1-9][0-9]{0,8}`, never without the
 `accepted` verdict; validated before any provider read). Only a terminal node whose
 sole insufficiency is a valid override receipt is waivable; unknown or incomplete
 proof, zero criteria, non-terminal, dropped, foreign-project nodes, an absent,
@@ -905,8 +913,11 @@ generation and the PR/head/base/review digest) and its reason code, so the
 deterministic audit id derives from the set: an exact replay converges without a
 second audit, a different (or missing) set is refused, and a pending audit is only
 resumed with its exact set. The node's own acceptance stays `override`; the Epic's AC
-stay incomplete and its code acceptance `unknown`. This is neither a CAS nor an
-acceptance: PAT-ADR-0006's bounded detection, non-transactional write and residual
+stay incomplete and its code acceptance `unknown`. Observable change: for a node under
+override, `query issue` `acceptance_coordinates` now also carries `pr_url`, `head_sha`,
+`base_sha` and `review_digest` (the diff the override was granted for); no persisted
+receipt or replay path compared the former shorter coordinates (override nodes always
+refused closure before PAT-95). This is neither a CAS nor an acceptance: PAT-ADR-0006's bounded detection, non-transactional write and residual
 S1→S2 risk are unchanged. Other trackers refuse the flag.
 
 Malformed, duplicate, foreign or stale audits and changed validation/type/graph

@@ -961,9 +961,9 @@ def close_epic(issue_id, flags=()):
         if exc.__cause__ is not None and str(exc.__cause__):
             cause += f" <- {exc.__cause__}"
         raise SystemExit(
-            "⛔ Clôture Epic refusée : le parent, ses preuves ou son graphe complet a changé. "
-            f"Cause : {cause}\n"
-            "Recharge le graphe puis relance la commande."
+            f"⛔ Clôture Epic refusée. Cause : {cause}\n"
+            "Si le parent, ses preuves ou son graphe complet a changé (ou si une lecture "
+            "a échoué), recharge le graphe puis relance la commande."
         ) from None
     except SystemExit:
         raise

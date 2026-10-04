@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from dataclasses import replace
 
@@ -11,10 +12,13 @@ import pytest
 from foundry import issue as issue_cli
 from foundry import write
 from foundry.models import EpicClosureReceipt, Issue, Link
-from foundry.trackers.base import Tracker, TrackerConflictError
+from foundry.trackers import linear as linear_module
+from foundry.trackers.base import (
+    IssueUnavailableError, Tracker, TrackerBindingError, TrackerConflictError,
+)
 from foundry.trackers.devhub import DevHubTracker
 from foundry.trackers.ghprojects import GitHubProjectsTracker
-from foundry.trackers.linear import LinearTracker
+from foundry.trackers.linear import LinearBindingError, LinearTracker
 from foundry.trackers.youtrack import YouTrackTracker
 
 from test_epic_closure_transports import (  # noqa: F401  (autouse intent isolation)
@@ -153,9 +157,11 @@ def test_diagnostic_reports_foreign_project_non_terminal_and_zero_criteria(monke
         )
     }
     assert report["LIN-2"] == "override"
-    assert report["LIN-3"] in {"non-terminal", "read-error"}
-    # LIN-4 is only reachable through the read-failing LIN-3 when the latter raises;
-    # classify the pure node-level causes directly as well.
+    # A native state edit outside the lifecycle makes the node's read raise: the exact
+    # cause is a read-error (never a foreign project) and LIN-4, below it, is untraversed.
+    assert report["LIN-3"] == "read-error"
+    assert "LIN-4" not in report
+    # Classify the pure node-level causes directly as well.
     base = dict(id="N-1", title="", state="done", ac_total=2, ac_done=0, version=3)
     cases = {
         "dropped": Issue(**{**base, "state": "dropped"}),
@@ -267,6 +273,16 @@ def test_receipt_without_waiver_keeps_its_historical_wire_shape(monkeypatch):
     closed = write.close_epic(tracker, "LIN-1", human_verdict="accepted", **COORDS)
     assert "accepted_overrides" not in closed.receipt.to_dict()
     assert "accepted_overrides" not in _audits(wire)[0]["body"]
+    # Golden values computed on the pre-PAT-95 code (HEAD~1): byte-identical shape.
+    canonical = json.dumps(
+        closed.receipt.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    )
+    assert hashlib.sha256(canonical.encode("ascii")).hexdigest() == (
+        "b8c7c7ecad8a1d0cb43b2d32f80a75b58b3275378bdcd73293f5ee07a44e7ad5"
+    )
+    assert closed.audit_id == (
+        "linear:epic:7956f03232777f24d87df1e7ca31b8ecca2c060cb7f7e10020e1801b0fa57a0a"
+    )
     assert closed.receipt.accepted_overrides == ()
     # A plain rerun after a plain closure still converges.
     assert write.close_epic(tracker, "LIN-1", human_verdict="accepted").replayed
@@ -341,7 +357,7 @@ def test_hostile_named_node_is_accepted_not_overridden(monkeypatch):
 
 def test_hostile_unnamed_override_node_still_refused(monkeypatch):
     tracker, wire, _project = _graph(monkeypatch, dependency=True)
-    wire.issues["LIN-3"]  # LIN-3 stays accepted; name nothing for LIN-2
+    # LIN-3 stays accepted; name nothing for LIN-2
     before = len(wire.calls)
     with pytest.raises(SystemExit, match="LIN-2"):
         write.close_epic(tracker, "LIN-1", human_verdict="accepted", **COORDS)
@@ -473,6 +489,206 @@ def test_forged_receipt_set_is_refused_by_the_validator(monkeypatch):
             replace(closed, receipt=no_waiver), project=project, parent=parent,
             expected=None,
         )
+
+
+# --- PAT-95 review: read failures are never a foreign project ----------------
+
+def _fail_reads(tracker, wire, issue_id, *, from_read=1, exc=OSError("boom")):
+    """Fail the provider issue read of one node from its ``from_read``-th read on."""
+    original = wire.__call__
+    reads = {"n": 0}
+
+    def transport(document, variables):
+        if document == linear_module._ISSUE_QUERY and variables.get("id") == issue_id:
+            reads["n"] += 1
+            if reads["n"] >= from_read:
+                raise exc
+        return original(document, variables)
+
+    tracker._transport = transport
+    return reads
+
+
+@pytest.mark.parametrize("from_read", (1, 2))
+def test_transport_failure_is_a_read_error_never_a_foreign_project(monkeypatch, from_read):
+    # from_read=1: validate_issue_binding (the first provider read on Linear) fails;
+    # from_read=2: validate passes and get_issue's own read fails.
+    tracker, wire, project = _graph(monkeypatch, dependency=True, transitive=True)
+    parent = tracker.get_issue("LIN-1")
+    _fail_reads(tracker, wire, "LIN-3", from_read=from_read)
+    report = write.epic_graph_diagnostic(tracker, project, parent)
+    by_id = {item["id"]: item for item in report}
+    assert by_id["LIN-3"]["code"] == "read-error"
+    assert by_id["LIN-3"]["waivable"] is False
+    cause = by_id["LIN-3"]["cause"]
+    assert "LinearTrackerError" in cause and "transport_error" in cause
+    assert "NON parcouru" in cause and "relancer" in cause and "borne basse" in cause
+    assert "hors projet" not in cause
+    # The sub-graph below LIN-3 (LIN-4) was not traversed, so the count is a lower bound.
+    assert "LIN-4" not in by_id and by_id["LIN-3"]["total"] == 2  # real graph has 3
+    assert all(item["incomplete"] for item in report)
+    text = write.format_epic_diagnostic(report)
+    assert "borne basse" in text and "Diagnostic incomplet" in text
+    assert "--accept-override=" not in text
+
+
+def test_unavailable_issue_is_a_read_error(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch, dependency=True)
+    parent = tracker.get_issue("LIN-1")
+    original = tracker.validate_issue_binding
+
+    def validate(project_arg, *ids):
+        if ids == ("LIN-3",):
+            raise IssueUnavailableError("LIN-3")
+        return original(project_arg, *ids)
+
+    tracker.validate_issue_binding = validate
+    item = next(
+        i for i in write.epic_graph_diagnostic(tracker, project, parent) if i["id"] == "LIN-3"
+    )
+    assert item["code"] == "read-error" and "IssueUnavailableError" in item["cause"]
+
+
+def test_refusal_with_a_read_error_names_it_and_never_suggests_a_waiver(monkeypatch):
+    tracker, wire, _project = _graph(monkeypatch, dependency=True)
+    _fail_reads(tracker, wire, "LIN-3", from_read=1)
+    # The snapshot refuses on LIN-2 (unnamed override) before reaching LIN-3.
+    with pytest.raises(SystemExit) as excinfo:
+        write.close_epic(tracker, "LIN-1", human_verdict="accepted", **COORDS)
+    message = str(excinfo.value)
+    assert "LIN-3 (dépendance)" in message and "lecture impossible" in message
+    assert "NON parcouru" in message and "relancer" in message
+    assert "hors projet" not in message
+    assert "--accept-override=LIN-2" not in message  # no attestation advice when incomplete
+    assert not _audits(wire)
+
+
+def test_read_error_node_can_never_be_waived_or_accepted(monkeypatch):
+    tracker, wire, _project = _graph(monkeypatch, dependency=True)
+    _fail_reads(tracker, wire, "LIN-3", from_read=1)
+    before = len(wire.calls)
+    # LIN-3 is named, yet unreadable: the strict snapshot cannot accept it either.
+    with pytest.raises(Exception):
+        _close(tracker, ("LIN-2", "LIN-3"))
+    assert not _writes(wire, before)
+    assert not _audits(wire)
+
+
+def test_foreign_and_configuration_binding_errors_are_distinguished():
+    parent = Issue(id="P-1", title="", links=[Link("parent-of", "outward", "N-1")])
+
+    class _Tracker:
+        def __init__(self, exc):
+            self.exc = exc
+
+        def validate_issue_binding(self, *_a):
+            raise self.exc
+
+    cases = {
+        "foreign-project": (LinearBindingError("issue_outside_binding"), ValueError("x"),
+                            TrackerBindingError("plain")),
+        "binding-error": (LinearBindingError("state_id_unmapped"),),
+    }
+    for code, excs in cases.items():
+        for exc in excs:
+            report = write.epic_graph_diagnostic(_Tracker(exc), None, parent)
+            assert [(i["id"], i["code"]) for i in report] == [("N-1", code)]
+            assert report[0]["incomplete"] and not report[0]["waivable"]
+    report = write.epic_graph_diagnostic(
+        _Tracker(LinearBindingError("state_id_unmapped")), None, parent,
+    )
+    assert "pas un nœud étranger" in report[0]["cause"]
+
+
+def test_snapshot_binding_configuration_error_is_not_labelled_foreign(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch)
+    original = tracker.validate_issue_binding
+
+    def validate(project_arg, *ids):
+        if ids == ("LIN-1", "LIN-2"):
+            raise LinearBindingError("state_id_unmapped")
+        return original(project_arg, *ids)
+
+    tracker.validate_issue_binding = validate
+    parent = tracker.get_issue("LIN-1")
+    with pytest.raises(SystemExit) as excinfo:
+        write._snapshot_with_diagnostic(tracker, project, parent, frozenset())
+    assert "pas un nœud étranger" in str(excinfo.value)
+    assert "nœud hors projet" not in str(excinfo.value).split("\n", 1)[0]
+
+
+def test_diagnostic_reads_each_node_at_most_twice(monkeypatch):
+    # Before: validate_issue_binding(parent, node) re-read the parent + the node, then
+    # get_issue read the node again = 3 provider issue reads per node.  Now: 2.
+    tracker, wire, project = _graph(monkeypatch, dependency=True, transitive=True)
+    parent = tracker.get_issue("LIN-1")
+    counts: dict[str, int] = {}
+    original = wire.__call__
+
+    def transport(document, variables):
+        if document == linear_module._ISSUE_QUERY:
+            counts[variables["id"]] = counts.get(variables["id"], 0) + 1
+        return original(document, variables)
+
+    tracker._transport = transport
+    write.epic_graph_diagnostic(tracker, project, parent)
+    assert counts == {"LIN-2": 2, "LIN-3": 2, "LIN-4": 2}
+
+
+def test_unknown_named_id_is_named_even_when_the_snapshot_fails_elsewhere(monkeypatch):
+    tracker, wire, _project = _graph(monkeypatch, dependency=True)
+    # LIN-2 (unnamed override) fails the snapshot first; LIN-9 is not in the graph.
+    before = len(wire.calls)
+    with pytest.raises(SystemExit) as excinfo:
+        _close(tracker, ("LIN-9",))
+    message = str(excinfo.value)
+    assert "LIN-2" in message and "hors du graphe de l'Epic : LIN-9" in message
+    assert not _writes(wire, before) and not _audits(wire)
+
+
+def test_suggestion_only_for_a_complete_all_waivable_unnamed_diagnostic():
+    def item(code, *, named=False, incomplete=False):
+        return {"id": "N-1", "role": "enfant", "code": code, "cause": "c",
+                "waivable": code == "override", "named": named,
+                "incomplete": incomplete, "total": 1}
+
+    assert "--accept-override=N-1" in write.format_epic_diagnostic([item("override")])
+    assert "--accept-override" not in write.format_epic_diagnostic(
+        [item("override", named=True)])
+    assert "--accept-override" not in write.format_epic_diagnostic(
+        [item("override", incomplete=True)])
+    assert "--accept-override" not in write.format_epic_diagnostic([item("unknown")])
+
+
+def test_cli_refusal_puts_the_cause_before_the_change_hint(monkeypatch):
+    class Boom:
+        name = "fixture"
+
+    monkeypatch.setattr(issue_cli.foundry, "tracker", lambda: Boom())
+
+    def raise_conflict(*_a, **_k):
+        raise TrackerConflictError("real cause text")
+
+    monkeypatch.setattr(issue_cli.write, "close_epic", raise_conflict)
+    with pytest.raises(SystemExit) as excinfo:
+        issue_cli.close_epic("LIN-1", flags={"--human-verdict=accepted"})
+    first_line = str(excinfo.value).splitlines()[0]
+    assert "Cause : real cause text" in first_line and "a changé" not in first_line
+
+
+def test_lost_override_receipt_over_the_linear_transport_is_never_waivable(monkeypatch):
+    # The fake refuses a native state edit outside the lifecycle (including a "dropped"
+    # one), so the transport-level image of an incomplete proof is a raising read: it is
+    # a read-error, never an override.  The dropped/zero-criteria/unknown node
+    # classification itself stays covered by the unit tests above.
+    tracker, wire, project = _graph(monkeypatch, dependency=True)
+    wire.issues["LIN-2"]["comments"]["nodes"] = [
+        row for row in wire.issues["LIN-2"]["comments"]["nodes"]
+        if ":acceptance-override:" not in row["body"]
+    ]
+    report = write.epic_graph_diagnostic(tracker, project, tracker.get_issue("LIN-1"))
+    assert [(i["id"], i["code"]) for i in report] == [("LIN-2", "read-error")]
+    assert not report[0]["waivable"]
 
 
 # --- AC 5 : Linear only ------------------------------------------------------

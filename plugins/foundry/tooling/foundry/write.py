@@ -701,15 +701,16 @@ def epic_receipt_overrides(
     return tuple(found[key] for key in sorted(found))
 
 
-def epic_graph_diagnostic(
-    tracker, project: Project, parent: Issue, accept: frozenset = frozenset(),
-) -> list[dict]:
-    """List EVERY graph node whose acceptance proof is not positive (read-only).
+# Causes for which a node could not be read/validated: its sub-graph was NOT traversed,
+# so the diagnostic is then only a lower bound of the blocking nodes.
+_UNTRAVERSED_CODES = frozenset({"foreign-project", "binding-error", "read-error"})
+_FOREIGN_BINDING_CODES = frozenset({None, "issue_outside_binding"})
 
-    Walks the same required-child + transitive-dependency graph as the snapshot but
-    never stops at the first cause: a node whose read raises is reported with that
-    cause (it cannot be traversed further).  No provider write is ever issued.
-    """
+
+def _epic_graph_walk(
+    tracker, project: Project, parent: Issue, accept: frozenset = frozenset(),
+) -> tuple[list[dict], frozenset]:
+    """Walk the graph read-only; return (report, ids of every graph node met)."""
     nodes: dict[str, dict] = {}
     seen: set[str] = {parent.id}
     cache: dict[str, Issue] = {parent.id: parent}
@@ -724,20 +725,32 @@ def epic_graph_diagnostic(
     def read(issue_id: str, role: str) -> Issue | None:
         if issue_id in cache:
             return cache[issue_id]
+        # The parent binding was already validated by close_epic: validate the node
+        # alone (one provider read on Linear) instead of re-reading the parent each time.
         try:
-            tracker.validate_issue_binding(project, parent.id, issue_id)
+            tracker.validate_issue_binding(project, issue_id)
+        except (TrackerBindingError, ValueError) as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, ValueError) or getattr(exc, "code", None) in _FOREIGN_BINDING_CODES:
+                add(issue_id, role, "foreign-project",
+                    f"hors projet ou binding invalide ({detail}) ; "
+                    "sous-graphe sous ce nœud non parcouru")
+            else:
+                add(issue_id, role, "binding-error",
+                    f"erreur de binding/configuration, pas un nœud étranger ({detail}) ; "
+                    "sous-graphe sous ce nœud non parcouru")
+            return None
         except Exception as exc:
-            add(issue_id, role, "foreign-project",
-                f"hors projet ou binding invalide ({type(exc).__name__}: {exc})")
+            add(issue_id, role, "read-error", _read_error_cause(exc))
             return None
         try:
             issue = tracker.get_issue(issue_id)
         except Exception as exc:
-            add(issue_id, role, "read-error",
-                f"lecture impossible ({type(exc).__name__}: {exc})")
+            add(issue_id, role, "read-error", _read_error_cause(exc))
             return None
         if getattr(issue, "id", None) != issue_id:
-            add(issue_id, role, "read-error", "identité du nœud contradictoire")
+            add(issue_id, role, "read-error",
+                "identité du nœud contradictoire ; sous-graphe sous ce nœud non parcouru")
             return None
         cache[issue_id] = issue
         return issue
@@ -789,26 +802,62 @@ def epic_graph_diagnostic(
     for cid, child in children:
         if child is not None:
             visit(child, "enfant")
+    incomplete = any(item["code"] in _UNTRAVERSED_CODES for item in nodes.values())
     for item in nodes.values():
         item["named"] = item["id"] in accept
+        item["incomplete"] = incomplete
     report = sorted(nodes.values(), key=lambda item: item["id"])
     for item in report:
         item["total"] = len(seen) - 1
-    return report
+    return report, frozenset(seen - {parent.id})
+
+
+def _read_error_cause(exc: Exception) -> str:
+    return (
+        f"lecture impossible ({type(exc).__name__}: {exc}) ; sous-graphe sous ce nœud "
+        "NON parcouru (décompte = borne basse) ; relancer la commande en premier "
+        "(erreur possiblement transitoire), sans modifier les liens du graphe"
+    )
+
+
+def epic_graph_diagnostic(
+    tracker, project: Project, parent: Issue, accept: frozenset = frozenset(),
+) -> list[dict]:
+    """List the graph nodes whose acceptance proof is not positive (read-only).
+
+    Walks the same required-child + transitive-dependency graph as the snapshot but
+    never stops at the first cause.  A node that cannot be read or validated is
+    reported with that cause and its sub-graph is NOT traversed: every item then
+    carries ``incomplete`` and the list is a lower bound.  ``foreign-project`` is
+    reserved for a deterministic binding refusal (``TrackerBindingError`` or
+    ``ValueError``); every other failure is a ``read-error``.  No provider write.
+    """
+    return _epic_graph_walk(tracker, project, parent, accept)[0]
 
 
 def format_epic_diagnostic(report: list[dict]) -> str:
     if not report:
         return ""
+    incomplete = any(item.get("incomplete") for item in report)
     lines = [
         f"Nœuds du graphe sans preuve d'acceptation positive ({len(report)} "
-        f"sur {report[0]['total']}) :"
+        f"sur {report[0]['total']}{', borne basse' if incomplete else ''}) :"
     ]
     for item in report:
         flag = " [nommé]" if item["named"] else ""
         lines.append(f"  - {item['id']} ({item['role']}){flag} : {item['cause']}")
+    if incomplete:
+        lines.append(
+            "Diagnostic incomplet : au moins un nœud n'a pas pu être lu ou validé, son "
+            "sous-graphe n'a pas été parcouru ; les nœuds listés bloquent, d'autres "
+            "peuvent bloquer en dessous. Aucune attestation ne peut en être déduite."
+        )
+        return "\n".join(lines)
     waivable = [item["id"] for item in report if item["waivable"]]
-    if waivable and len(waivable) == len(report):
+    if (
+        waivable and len(waivable) == len(report)
+        and not all(item["named"] for item in report)
+    ):
         lines.append(
             "Seuls des reçus d'override valides bloquent : le mainteneur peut les attester "
             "nommément par --human-verdict=accepted --accept-override=" + ",".join(waivable)
@@ -824,19 +873,28 @@ def _snapshot_with_diagnostic(
     try:
         return bounded_epic_graph_snapshot(tracker, project, parent, accept)
     except (SystemExit, TrackerConflictError, TrackerBindingError) as exc:
+        text = ""
         try:
-            text = format_epic_diagnostic(
-                epic_graph_diagnostic(tracker, project, parent, accept)
-            )
+            report, graph_ids = _epic_graph_walk(tracker, project, parent, accept)
+            text = format_epic_diagnostic(report)
+            if not any(item.get("incomplete") for item in report):
+                unknown = sorted(accept - graph_ids)
+                if unknown:
+                    text += ("\n" if text else "") + (
+                        "--accept-override désigne des identifiants hors du graphe de "
+                        "l'Epic : " + ", ".join(unknown) + "."
+                    )
         except Exception:
             text = ""
         if not text:
             raise
         message = f"{exc}\n{text}"
         if isinstance(exc, TrackerBindingError):
-            raise SystemExit(
-                f"Clôture Epic refusée : nœud hors projet ou binding invalide ({exc}).\n{text}"
-            ) from None
+            if getattr(exc, "code", None) in _FOREIGN_BINDING_CODES:
+                label = "nœud hors projet ou binding invalide"
+            else:
+                label = "erreur de binding/configuration (pas un nœud étranger)"
+            raise SystemExit(f"Clôture Epic refusée : {label} ({exc}).\n{text}") from None
         if isinstance(exc, SystemExit):
             raise SystemExit(message) from None
         raise TrackerConflictError(message) from None

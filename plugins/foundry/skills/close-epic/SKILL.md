@@ -34,8 +34,14 @@ The list is exact (no wildcard, duplicate, empty or lower-case id) and requires
 node whose sole insufficiency is a valid typed override receipt is waivable. Unknown or
 incomplete proof, zero criteria, a non-terminal, dropped or foreign-project node, an
 absent, malformed, other-generation or other-diff override receipt, and any node
-added, reopened or changed since the graph read still refuse. Every refusal lists all
-non-positive nodes with their cause, read-only. The receipt also binds each waived
+added, reopened or changed since the graph read still refuse. A refusal raised by the
+fresh graph read (a node's proof, a changed graph, a foreign or invalid node) lists the
+non-positive nodes with their cause, read-only; a replay of an already closed Epic, a
+pending-audit refusal, a provider refusal after the read, a named id outside the graph
+raised on its own, and a transport error during the snapshot do not carry that list. The
+list is a lower bound when a node could not be read (`read-error`: its sub-graph was not
+traversed; re-run first, do not edit links) and then never suggests an attestation.
+`foreign-project` means a binding refusal only. The receipt also binds each waived
 node's id, override-receipt digest and reason code; replay with the same set
 converges, a different set is refused, and each node stays `override` (never
 accepted). The flag is neither a CAS nor an acceptance. YouTrack, GitHub Projects and
