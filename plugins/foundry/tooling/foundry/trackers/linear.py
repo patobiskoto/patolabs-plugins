@@ -1258,16 +1258,20 @@ def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
     most `9. `, numbered from 1 by +1, one plain LF line per item, items separated
     by exactly one empty LF line, preceded by the start of the body or empty LF
     lines and followed by the end of the body or empty LF lines and a non-list
-    block, is read back with the separating empty lines removed.
+    block, is read back with the separating empty lines removed.  ``strict``
+    accepts it only with at most one empty line on each side (PAT-72: Linear
+    collapses two empty lines after a list item).
 
     Whitelist: a blank line in a list context -- after a block holding a
     list-item-like line (also inside a blockquote) or its indented continuation,
     before a block starting with a list-item-like or indented line -- has an
-    unobserved rendering unless it lies inside that exact form.  ``strict``
-    refuses it; otherwise it is left untouched, as before PAT-94.  A body with no
-    such blank line is never refused here.  Lines and blank lines are CommonMark
-    ones (only spaces or tabs); fenced code is one opaque block.  Forward only: a
-    source is never recovered from a rendering.
+    unobserved rendering unless it lies inside that exact form.  So has a gap of
+    two or more empty lines before or after a list-context paragraph.  ``strict``
+    refuses either, naming the first offending 1-based CommonMark line; otherwise
+    they are left untouched, as before PAT-94.  A body with neither is never
+    refused here.  Lines and blank lines are CommonMark ones (only spaces or
+    tabs); fenced code is one opaque block.  Forward only: a source is never
+    recovered from a rendering.
     """
     lines = _COMMONMARK_LINE.findall(body)
     offsets = [0]
@@ -1313,12 +1317,14 @@ def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
             gaps.append([])
 
     risky = []  # risky[k]: blank lines between paragraphs k and k + 1 are in a list
+    listed = []  # listed[k]: paragraph k is in a list context
     in_list = False
     for index, paragraph in enumerate(paragraphs):
         indented = content(paragraph[0])[:1] in (" ", "\t")
         if index:
             risky.append(in_list and (is_item(paragraph[0]) or indented))
         in_list = any(is_item(block) for block in paragraph) or (indented and in_list)
+        listed.append(in_list)
 
     def observed_item(index: int, number: int) -> bool:
         if len(paragraphs[index]) != 1:
@@ -1359,10 +1365,26 @@ def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
                 offsets[blocks[gaps[index][0]][0]] for index in range(start, last)
             )
         start = last + 1
-    if strict and any(
-        risk and index not in covered for index, risk in enumerate(risky)
-    ):
-        raise ValueError("unsupported list Markdown in ADR body")
+    if strict:
+        # Uncovered list blank lines, and every gap of two or more empty lines
+        # next to a list-context paragraph: PAT-72 shows Linear collapsing such a
+        # gap after a list item, so even the observed form is accepted only with
+        # at most one empty line on each side.
+        offending = [
+            gaps[index][0] for index, risk in enumerate(risky)
+            if risk and index not in covered
+        ]
+        offending.extend(
+            gap[0]
+            for gap, beside in [
+                (leading, listed[:1]),
+                *((gap, listed[index : index + 2]) for index, gap in enumerate(gaps)),
+            ]
+            if len(gap) > 1 and any(beside)
+        )
+        if offending:
+            line = blocks[min(offending)][0] + 1
+            raise ValueError(f"unsupported list Markdown in ADR body (line {line})")
     return drops
 
 
@@ -1466,9 +1488,9 @@ def _preflight_adr_body_readback(
     Every body keeps the pre-PAT-94 refusals.  A ``new_body`` (the fail-closed
     default) also gets the strict PAT-94 list whitelist.  Callers pass
     ``new_body=False`` only when the body's Linear rendering is already proven:
-    it is the exact body of the stored, verified previous version, of an existing
-    exact slot being recovered, or of a batch import whose provider bytes a
-    qualification probe pins.
+    it is the exact body of the stored previous version whose bytes the model
+    verifies (`_is_stored_adr_body`), of an existing exact slot being recovered,
+    or of a batch import whose provider bytes a qualification probe pins.
     """
     try:
         _linear_markdown_readback_body(
@@ -1485,8 +1507,21 @@ def _preflight_adr_body_readback(
 
 
 def _is_stored_adr_body(previous: tuple[dict, dict], body: str) -> bool:
-    """Whether ``body`` is exactly the body of the stored ``previous`` version."""
-    return previous[0]["body_sha256"] == hashlib.sha256(body.encode()).hexdigest()
+    """Whether ``body`` is the stored ``previous`` body with a model-proven rendering.
+
+    The SHA-256 alone is not enough: the stored bytes of a probe-qualified
+    historical version 0 may be proven by the probe only, while the next version
+    is verified by the closed model.  Only stored bytes the model itself accepts
+    for this body prove its rendering; anything else is a new body (fail closed).
+    """
+    metadata, raw = previous
+    return (
+        metadata["body_sha256"] == hashlib.sha256(body.encode()).hexdigest()
+        and isinstance(raw, dict)
+        and _adr_readback_content_matches(
+            raw.get("content"), _adr_document_content(metadata, body)
+        )
+    )
 
 
 def _linear_adr_readback_contents(content: str) -> tuple[str, ...]:
@@ -6051,8 +6086,8 @@ class LinearTracker(Tracker):
         )
 
     def _append_adr_versions(self, project, changes):
-        # Only a changed body is new: an unchanged one is the stored, verified
-        # previous version's body, whose rendering is already proven.
+        # Only a changed body is new: an unchanged one is the stored previous
+        # version's body, whose rendering is proven if the model verifies it.
         new_bodies = [
             not _is_stored_adr_body(previous, body)
             for previous, _metadata, body in changes
@@ -7295,8 +7330,8 @@ class LinearTracker(Tracker):
                 )
             self._validate_adr_graph(hypothetical, binding)
         # Only a version 0 slot that does not exist yet carries a new body; the
-        # existing exact slot, the interrupted slot and the unchanged related
-        # bodies already have a proven rendering.
+        # existing exact slot and the interrupted slot already have a proven
+        # rendering, an unchanged related body only if the model verifies it.
         new_body = adr_id not in chains
         _preflight_adr_body_readback(
             body,
@@ -7568,7 +7603,8 @@ class LinearTracker(Tracker):
         hypothetical = _adr_chain(hypothetical_documents, binding)
         self._validate_adr_graph(hypothetical, binding)
 
-        # Supersession never changes a body: both are stored, verified bodies.
+        # Supersession never changes a body: each is new only when its stored
+        # rendering is not verified by the model (`_is_stored_adr_body`).
         source_new = not _is_stored_adr_body(source[-1], source_body)
         replacement_new = not _is_stored_adr_body(
             replacement_previous, replacement_body

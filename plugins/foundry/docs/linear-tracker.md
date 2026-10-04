@@ -270,46 +270,70 @@ the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or gl
 normalized. Exact replay of an unwitnessed deterministic version may create only its
 missing witness after the existing project/id/title/envelope/body/previous-link checks;
 it never rewrites the surviving Document.
-PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document:
-outside fenced code, a top-level ordered list numbered `1.` to at most `9.` (+1 per
-item, one space after the dot, flush left), whose items are one plain LF line each
-(item text that would itself open block syntax -- a nested list marker, heading,
-quote, fence, HTML, table, thematic break or link reference definition -- is not
-plain) separated by exactly one empty LF line, preceded by the start of the body or
-empty LF lines and followed by the end of the body or empty LF lines and a non-list
-block, is read back with those separating empty lines removed (`1. a\n\n2. b` becomes
-`1. a\n2. b`). The model is forward only and deterministic: it drops only those blank
-lines and never infers a source from a readback; the witness stays the sole source
-recovery. Line endings and blank lines follow CommonMark (`\n`, `\r\n`, `\r`; a blank
-line holds only spaces or tabs), so a form feed or U+2028 never creates a blank line.
-The adapter decides by whitelist, not by listing refused shapes. A *list blank line* is
-an empty line between a block holding a list-item-like line (`-`, `*`, `+`, `N.` or
-`N)`, any indentation, also inside a blockquote) or its indented continuation, and a
-following block that starts with a list-item-like or indented line. A body whose
+PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document: outside
+fenced code, a top-level ordered list numbered `1.` to at most `9.` (+1 per item, one
+space after the dot, flush left), whose items are one plain LF line each (item text that
+would itself open block syntax -- a nested list marker, heading, quote, fence, HTML,
+table, thematic break or link reference definition -- is not plain) separated by exactly
+one empty LF line, preceded by the start of the body or empty LF lines and followed by
+the end of the body or empty LF lines and a non-list block, is read back with those
+separating empty lines removed (`1. a\n\n2. b` becomes `1. a\n2. b`). The block that
+follows the form is assumed to keep its own bytes (an identity assumption, observed only
+for a heading), not refused. The model is forward only and deterministic: it drops only
+those blank lines and never infers a source from a readback; the witness stays the sole
+source recovery. Line endings and blank lines follow CommonMark (`\n`, `\r\n`, `\r`; a
+blank line holds only spaces or tabs), so a form feed or U+2028 never creates a blank
+line. The adapter decides by whitelist, not by listing refused shapes. A *list blank
+line* is an empty line between a block holding a list-item-like line (`-`, `*`, `+`,
+`N.` or `N)`, any indentation, also inside a blockquote) or its indented continuation,
+and a following block that starts with a list-item-like or indented line. A body whose
 rendering is not yet proven (a *new body*) is refused before any provider write, with
-cause `unsupported list Markdown`, when it holds a list blank line outside the exact form
-above: spaced bullets of any marker, different markers or delimiters after an empty line
-(`- a`, empty line, `* b`), sub-items, continuation paragraphs or indented code after an
-empty line, lazy continuations, two or more empty lines, a whitespace-only or `>` blank
-line, a tight/spaced mix, renumbering, a start other than `1`, ten or more items, a first
-item glued to a paragraph or a fenced block, a last item glued to a fenced block, a list
+cause `unsupported list Markdown in ADR body (line N)` (stable prefix
+`unsupported list Markdown`; `N` is the first offending 1-based CommonMark line), when
+it holds a list blank line outside the exact form above, or a gap of two or more empty
+lines just before or after a list-context paragraph (a paragraph holding a
+list-item-like line, or its indented continuation), at the start or end of the body too:
+`PAT-72` shows Linear collapsing `\n\n\n` after a list item to `\n\n`, so a new body
+uses the observed form only with at most one empty line on each side. Refused shapes
+include spaced bullets of any marker, different markers or delimiters after an empty
+line (`- a`, empty line, `* b`), sub-items, continuation paragraphs or indented code
+after an empty line, lazy continuations, two or more empty lines between items or next
+to a list (`- a`, two empty lines, `Text`), a whitespace-only or `>` blank line, a
+tight/spaced mix, renumbering, a start other than `1`, ten or more items, a first item
+glued to a paragraph or a fenced block, a last item glued to a fenced block, a list
 inside a blockquote, `\r` or a non-LF separator in an item. A body with no list blank
-line keeps the pre-PAT-94 model unchanged, including tight lists with sub-items.
-New body: the version-0 body of `adr create` and of a single historical `import_adr` whose
-slot does not exist yet, and the changed body of a body edit. Every other write re-uses a
-body whose rendering is already proven and keeps only the pre-PAT-94 refusals: a status
-change, an issue link and both supersession versions (the stored, verified previous
-body, checked by its SHA-256); the recovery of an interrupted create, status, link, edit,
-supersession or historical import (an existing exact slot); and the migration batch
-(`migration_preflight`, batch plan and import), whose slot bytes a qualification probe
-pins before any write. Reads and verification (`list_adrs`, ADR chain, exact replay,
-batch verification) are never strict and are additive: a stored Document matches if it
-equals the canonical bytes, the PAT-94 rendering or the pre-PAT-94 model output, so a
-Document stored before PAT-94 stays readable. Replay of `adr create` with the exact title
-and body finds the existing slot and creates only the missing witness; a second replay
-is a no-op. Still unobserved and not modelled: Linear's rendering of spaced bullet lists,
-of CRLF line endings, of ordered lists of ten or more items, of every refused shape
-above, and of any block following the observed form other than the observed heading.
+line and no such gap keeps the pre-PAT-94 model unchanged, including tight lists with
+sub-items; outside a list context, consecutive empty lines are left exactly as before.
+New body: the version-0 body of `adr create` and of a single historical `import_adr`
+whose slot does not exist yet, and the changed body of a body edit. Every other write
+re-uses a body whose rendering is already proven and keeps only the pre-PAT-94 refusals:
+a status change, an issue link, both supersession versions and a related version
+appended by `import_adr` (also when recovering an interrupted supersession pair), when
+the body is the stored previous body (same SHA-256) *and* the closed model itself
+verifies the stored Document bytes for it; the recovery of an interrupted create,
+status, link, edit or historical import (an existing exact slot); and the migration
+batch (`migration_preflight`, batch plan and import), whose slot bytes a qualification
+probe pins before any write. A historical version 0 whose stored bytes only the
+migration probe proves (the model does not predict them) is not proof for its next
+version, which the model verifies: that unchanged body is a new body there, so a status
+change, link, supersession (either side, also its interrupted-pair recovery) or
+`import_adr` relation on such an ADR whose body holds a list shape outside the whitelist
+is refused before any write. This is a deliberate fail-closed trade-off: without it, the
+next version would be written and then refused by verification, leaving an orphan
+Document. The strict check covers list shapes only: such a body without one is still
+written and verified by the model, as before PAT-94. Whether any real stored ADR is in
+that case is not known by the adapter; such an ADR can change status, links or
+supersession only after a body edit (itself a strict new body). Reads and verification
+(`list_adrs`, ADR chain, exact replay, batch verification) are never strict and are
+additive: a stored Document matches if it equals the canonical bytes, the PAT-94
+rendering or the pre-PAT-94 model output, so a Document stored before PAT-94 stays
+readable. Replay of `adr create` with the exact title and body finds the existing slot
+and creates only the missing witness; a second replay is a no-op. Still unobserved and
+not modelled: Linear's rendering of spaced bullet lists, of CRLF line endings, of
+ordered lists of ten or more items, of every refused shape above, of any block following
+the observed form other than the observed heading (assumed unchanged, see above), and of
+a fenced block between ordered items (`1. a`, empty line, fence, empty line, `2. b`):
+`2.` then starts a new list, accepted and assumed unchanged.
 `FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
 SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
 and its existing Linear Document content SHA-256

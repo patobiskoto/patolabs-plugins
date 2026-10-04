@@ -9196,6 +9196,79 @@ def test_linear_adr_pat94_refuses_unmodelled_list_before_any_write(tracker, host
     linear_module._preflight_adr_body_readback(hostile, new_body=False)
 
 
+# PAT-72 shows Linear collapsing two empty lines after a list item: next to a
+# list-context paragraph, a gap of two or more empty lines is refused for a new
+# body (cause names the first offending line); not strict, it is left as before.
+PAT94_MULTI_BLANK_LISTS = [
+    pytest.param("1. a\n\n2. b\n\n\nText", "1. a\n2. b\n\n\nText", 4, id="form-then-two"),
+    pytest.param("Intro\n\n\n1. a\n\n2. b", "Intro\n\n\n1. a\n2. b", 2, id="two-then-form"),
+    pytest.param("\n\n1. a\n\n2. b", "\n\n1. a\n2. b", 1, id="two-leading-then-form"),
+    pytest.param("1. a\n\n2. b\n\n\n", "1. a\n2. b\n\n\n", 4, id="form-then-two-trailing"),
+    pytest.param("1. a\n2. b\n\n\n\nText", "1. a\n2. b\n\n\n\nText", 3, id="tight-then-three"),
+    pytest.param("- a\n\n\nText", "* a\n\n\nText", 2, id="bullet-then-two"),
+    pytest.param("* a\n* b\n\n\nText", "* a\n* b\n\n\nText", 3, id="bullets-then-two"),
+    pytest.param("Text\n\n\n- a", "Text\n\n\n* a", 2, id="two-then-bullet"),
+    pytest.param("- a\n\n\n", "* a\n\n\n", 2, id="bullet-then-two-trailing"),
+    pytest.param("> - a\n>\n>\n> t", "> - a\n>\n>\n> t", 2, id="quoted-bullet-then-two"),
+]
+
+
+@pytest.mark.parametrize(("body", "not_strict", "line"), PAT94_MULTI_BLANK_LISTS)
+def test_linear_adr_pat94_refuses_multi_blank_gap_beside_a_list(
+    tracker, body, not_strict, line
+):
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+        instance.create_adr(PROJECT, "PAT-94 multi blank", body)
+    assert str(raised.value.__cause__) == (
+        f"unsupported list Markdown in ADR body (line {line})"
+    )
+    assert wire.documents == {}
+    assert not [q for q, _ in wire.calls if "documentCreate" in q]
+    assert linear_module._linear_markdown_readback_body(body) == not_strict
+    linear_module._preflight_adr_body_readback(body, new_body=False)
+
+
+@pytest.mark.parametrize(
+    ("body", "rendered"),
+    [
+        ("Para\n\n\nText", "Para\n\n\nText"),
+        ("## H\n\n\n\nText\n\n\n", "## H\n\n\n\nText\n\n\n"),
+        (
+            "Intro\n\n1. a\n\n2. b\n\nText\n\n\nMore",
+            "Intro\n\n1. a\n2. b\n\nText\n\n\nMore",
+        ),
+        (
+            "1. a\n\n2. b\n\n```\nx\n```\n\n\nText",
+            "1. a\n2. b\n\n```\nx\n```\n\n\nText",
+        ),
+        ("- a\n\n```\n- x\n\n\n```", "* a\n\n```\n- x\n\n\n```"),
+    ],
+)
+def test_linear_adr_pat94_multi_blank_gap_outside_a_list_is_unchanged(body, rendered):
+    linear_module._preflight_adr_body_readback(body)
+    assert linear_module._linear_markdown_readback_body(body, strict=True) == rendered
+    assert linear_module._linear_markdown_readback_body(body) == rendered
+
+
+@pytest.mark.parametrize(
+    ("body", "line"),
+    [
+        ("- a\n\n- b", 2),
+        ("x\n\n- a\n\n- b", 4),
+        ("1. a\n\n2. b\n\n3. c\n\n   d", 2),
+        ("1. a\n\n\n2. b", 2),
+        ("1. a\r\n\r\n2. b", 2),
+    ],
+)
+def test_linear_adr_pat94_refusal_names_the_first_offending_line(body, line):
+    with pytest.raises(TrackerConflictError) as raised:
+        linear_module._preflight_adr_body_readback(body)
+    cause = str(raised.value.__cause__)
+    assert cause.startswith("unsupported list Markdown")
+    assert cause == f"unsupported list Markdown in ADR body (line {line})"
+
+
 # Bodies the pre-PAT-94 model accepted and the strict new-body preflight
 # refuses; the fake provider renders them exactly as the pre-PAT-94 model.
 STORED_REFUSED_LISTS = [
@@ -9345,6 +9418,152 @@ def test_linear_adr_pat94_probe_pinned_batch_migration_is_not_strict(
         project, (source,), qualification=qualification,
     ) == imported
     assert wire.documents == after_first
+
+
+def _tight_spaced_bullets_readback(content):
+    """An unobserved provider rendering of spaced bullets, pinned only by a probe."""
+    rendered = linear_markdown_readback(content)
+    if content.startswith(linear_module._ADR_HEADER):
+        return rendered.replace("* a\n\n* b", "* a\n* b")
+    return rendered
+
+
+def _import_probe_pinned_spaced_bullets(instance, wire, render):
+    body = "- a\n\n- b"
+    record = {
+        "adr_id": "LIN-ADR-0049", "title": "Probe-pinned bullets", "body": body,
+        "historical_status": "accepted", "source_ref": "YT-A-49",
+        "source_created": 1, "source_updated": 2,
+        "expected_source_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "supersedes": (), "superseded_by": None, "issue_refs": (),
+    }
+    (qualified,) = _qualify_batch(instance, wire, (record,), render=render)
+    original = wire.__call__
+
+    def provider(document, variables):
+        response = original(document, variables)
+        if "FoundryLinearAdrDocumentCreate" in document and "errors" not in response:
+            observed = render(variables["input"]["content"])
+            wire.documents[variables["input"]["id"]]["content"] = observed
+            response["data"]["documentCreate"]["document"]["content"] = observed
+        return response
+
+    instance._transport = provider
+    [historical] = instance.import_adr_batch(PROJECT, (qualified,))
+    return historical, body
+
+
+def _change_probe_pinned_adr(instance, historical, native, change):
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    if change == "status":
+        instance.set_adr_status(current[historical.id], "deprecated", project=PROJECT)
+    elif change == "link":
+        instance.link_adr_issue(current[historical.id], "LIN-2", project=PROJECT)
+    elif change == "supersede-source":
+        instance.supersede_adr(current[historical.id], native.id, project=PROJECT)
+    elif change == "supersede-replacement":
+        instance.supersede_adr(current[native.id], historical.id, project=PROJECT)
+    else:
+        instance.import_adr(
+            PROJECT,
+            adr_id="LIN-ADR-0099",
+            title="Historical successor",
+            body="old",
+            historical_status="accepted",
+            source_ref="youtrack:adr:SRC-ADR-0099",
+            source_created=None,
+            source_updated=None,
+            expected_source_sha256=hashlib.sha256(b"old").hexdigest(),
+            supersedes=(historical.id,),
+            superseded_by=None,
+            issue_refs=(),
+        )
+
+
+PAT94_PROBE_PINNED_CHANGES = [
+    "status", "link", "supersede-source", "supersede-replacement", "import-supersedes",
+]
+
+
+@pytest.mark.parametrize("change", PAT94_PROBE_PINNED_CHANGES)
+def test_linear_adr_pat94_probe_only_rendering_does_not_prove_next_version(
+    tracker, change
+):
+    # B2: the stored version 0 bytes are proven by the migration probe only;
+    # the next version is verified by the closed model, which does not predict
+    # them.  Its unchanged body is new: strict, refused before any write.
+    instance, wire = tracker
+    native = instance.create_adr(PROJECT, "Native replacement", "replacement")
+    instance.set_adr_status(native, "accepted", project=PROJECT)
+    historical, body = _import_probe_pinned_spaced_bullets(
+        instance, wire, _tight_spaced_bullets_readback
+    )
+    assert wire.documents[historical.ref]["content"].endswith("\n\n* a\n* b")
+    _, chains = instance._adr_snapshot(PROJECT)
+    assert not linear_module._is_stored_adr_body(chains[historical.id][-1], body)
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    wire.calls.clear()
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+        _change_probe_pinned_adr(instance, historical, native, change)
+    assert str(raised.value.__cause__).startswith("unsupported list Markdown")
+    assert (wire.documents, wire.comments) == before
+    assert not [q for q, _ in wire.calls if "Create" in q]
+
+
+def test_linear_adr_pat94_probe_only_rendering_refuses_supersession_recovery(
+    tracker, monkeypatch
+):
+    # An interrupted pair (replacement written, source not) left by an older
+    # adapter: the recovery's source write is new too, refused before any write.
+    instance, wire = tracker
+    native = instance.create_adr(PROJECT, "Native replacement", "replacement")
+    instance.set_adr_status(native, "accepted", project=PROJECT)
+    historical, _body = _import_probe_pinned_spaced_bullets(
+        instance, wire, _tight_spaced_bullets_readback
+    )
+    provider = instance._transport
+    source_slot = linear_module._adr_document_id(PROJECT.id, historical.id, 1)
+
+    def interrupt_source(document, variables):
+        if variables.get("input", {}).get("id") == source_slot:
+            raise OSError("source version interrupted")
+        return provider(document, variables)
+
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    with monkeypatch.context() as patch:
+        patch.setattr(linear_module, "_is_stored_adr_body", lambda *_args: True)
+        instance._transport = interrupt_source
+        with pytest.raises(LinearTrackerError, match="transport_error"):
+            instance.supersede_adr(current[historical.id], native.id, project=PROJECT)
+    instance._transport = provider
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    wire.calls.clear()
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+        instance.supersede_adr(current[historical.id], native.id, project=PROJECT)
+    assert str(raised.value.__cause__).startswith("unsupported list Markdown")
+    assert (wire.documents, wire.comments) == before
+    assert not [q for q, _ in wire.calls if "Create" in q]
+
+
+@pytest.mark.parametrize("change", PAT94_PROBE_PINNED_CHANGES)
+def test_linear_adr_pat94_model_verified_probe_pinned_body_keeps_its_lifecycle(
+    tracker, change
+):
+    # The same body whose stored bytes the model also verifies is proven.
+    instance, wire = tracker
+    native = instance.create_adr(PROJECT, "Native replacement", "replacement")
+    instance.set_adr_status(native, "accepted", project=PROJECT)
+    historical, body = _import_probe_pinned_spaced_bullets(
+        instance, wire, linear_markdown_readback
+    )
+    _, chains = instance._adr_snapshot(PROJECT)
+    assert linear_module._is_stored_adr_body(chains[historical.id][-1], body)
+    _change_probe_pinned_adr(instance, historical, native, change)
+    _, chains = instance._adr_snapshot(PROJECT)
+    assert len(chains[historical.id]) == 2
+    assert {adr.id: adr for adr in instance.list_adrs(PROJECT)}[
+        historical.id
+    ].body.endswith(body)
 
 
 def test_linear_adr_pat94_read_accepts_either_rendering_of_the_observed_form(tracker):

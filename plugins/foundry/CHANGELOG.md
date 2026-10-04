@@ -2,16 +2,23 @@
 
 ## Unreleased
 
-- Fixed (PAT-94): the Linear ADR readback model now recognises the one observed
-  rewrite of a spaced top-level ordered list (`1.` to at most `9.`, +1 per item, one
-  plain LF line per item, one empty LF line between items: those empty lines are
-  removed). By whitelist, a new ADR body (create, body edit, single historical import)
-  holding any other empty line in a list context is refused before any write with
-  cause `unsupported list Markdown`. Status changes, links, supersessions, recovery of
-  interrupted writes and the probe-pinned migration batch re-use a proven rendering and
-  keep the pre-PAT-94 checks only. Reads accept the canonical bytes, the PAT-94 rendering
-  or the pre-PAT-94 model output. A replay of an interrupted `adr create` recovers only
-  the missing witness.
+- Fixed (PAT-94): the Linear ADR readback model now recognises the one observed rewrite
+  of a spaced top-level ordered list (`1.` to at most `9.`, +1 per item, one plain LF
+  line per item, one empty LF line between items: those empty lines are removed). By
+  whitelist, a new ADR body (create, body edit, single historical import) holding any
+  other empty line in a list context, or two or more empty lines just before or after a
+  list-context paragraph (`PAT-72`: Linear collapses them after a list item), is refused
+  before any write with cause `unsupported list Markdown`, followed by the first
+  offending line number. Status changes, links, supersessions and `import_adr` relations
+  re-use the stored previous body without the strict check only when the closed model
+  verifies its stored bytes; a historical version 0 whose bytes only the migration probe
+  proves is checked as a new body, so such an ADR with an unmodelled list shape is
+  refused before any write instead of leaving an orphan Document; an interrupted
+  supersession pair is recovered under the same rule. Other recoveries of an interrupted
+  write (an existing exact slot) and the probe-pinned migration batch keep the
+  pre-PAT-94 checks only. Reads accept the canonical bytes, the PAT-94 rendering or the
+  pre-PAT-94 model output. A replay of an interrupted `adr create` recovers only the
+  missing witness.
 - Documentation only, 2026-10-04: Foundry 1.0.0 is published (tag `foundry-v1.0.0`,
   2026-10-03). The frozen 1.0.0 entry and release documents below keep their shipped
   "candidate" wording; the published state, installed-copy readbacks and the items not
