@@ -23,11 +23,13 @@ codex plugin add ship-ios@patolabs
 The skill names are identical. Invoke them as `/foundry:frame` in Claude Code and
 `$foundry:frame` in Codex (same rule for `ship-ios`).
 
-**Release candidate prepared on 2026-10-03:** Foundry **1.0.0** on both hosts,
-compatible with Ship-iOS **0.3.0**. Publication and official clean-install/upgrade
-readbacks remain pending; a source manifest is not an installed-version proof.
-See the [release notes and six-configuration matrix](plugins/foundry/docs/release-1.0.0.md)
-and the [per-repository setup and upgrade guide](plugins/foundry/docs/migration-1.0.0.md).
+**Published on 2026-10-03:** Foundry **1.0.0** on both hosts (tag `foundry-v1.0.0`),
+compatible with Ship-iOS **0.3.0**. The [release notes](plugins/foundry/docs/release-1.0.0.md)
+and the [setup and upgrade guide](plugins/foundry/docs/migration-1.0.0.md) are frozen
+as shipped in the tag and still read "candidate"; the published state, the
+clean-install and installed-pair readbacks on Claude Code and Codex, and what is not
+observed (a public 0.9.0 → 1.0.0 upgrade, a model turn loading the plugins) are in the
+[final report](plugins/foundry/docs/qualification/pat-62-final-report.md).
 
 ## Public scope
 
@@ -62,7 +64,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Candidate 1.0.0. |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. 1.0.0 (published). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog

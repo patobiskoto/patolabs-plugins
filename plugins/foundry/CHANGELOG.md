@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Documentation only, 2026-10-04: Foundry 1.0.0 is published (tag `foundry-v1.0.0`,
+  2026-10-03). The frozen 1.0.0 entry and release documents below keep their shipped
+  "candidate" wording; the published state, installed-copy readbacks and the items not
+  yet observed are in the
+  [final report](docs/qualification/pat-62-final-report.md) and the
+  [post-publication observation](docs/qualification/pat-93-post-publication-observation.json).
+
 ## 1.0.0 — 2026-10-03
 
 Prepared release candidate; publication, official installation/upgrade and loaded
