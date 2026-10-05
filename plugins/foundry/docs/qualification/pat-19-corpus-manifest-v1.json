@@ -1,0 +1,1437 @@
+{
+  "schema": "foundry.local-first-corpus-manifest.v1",
+  "snapshot_sha256": "d4c60420e1616692dca6f9c39b93c3e313a5c8a07d473a6c6004d404d24f3b18",
+  "seed": "pat-19-protocol-v1",
+  "algorithm": "sha256-rank-v1",
+  "criteria": {
+    "max_changed_lines": 300
+  },
+  "draw": {
+    "seed": "pat-19-protocol-v1",
+    "algorithm": "sha256-rank-v1",
+    "eligible_count": 13,
+    "comparison": [
+      26,
+      38,
+      25,
+      42,
+      33,
+      37
+    ],
+    "screening": [
+      30,
+      83,
+      27,
+      24,
+      48,
+      19
+    ],
+    "replacement_queue": [
+      81
+    ],
+    "excluded": [
+      {
+        "pr": 1,
+        "issue": "FOUNDRY-154",
+        "changed_lines": 19,
+        "reasons": [
+          "no_source_code_under_plugins_foundry",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests"
+        ]
+      },
+      {
+        "pr": 2,
+        "issue": "FOUNDRY-156",
+        "changed_lines": 341,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry"
+        ]
+      },
+      {
+        "pr": 3,
+        "issue": "FOUNDRY-155",
+        "changed_lines": 137,
+        "reasons": [
+          "no_source_code_under_plugins_foundry",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests",
+          "topic:authority"
+        ]
+      },
+      {
+        "pr": 4,
+        "issue": "FOUNDRY-157",
+        "changed_lines": 1828,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 5,
+        "issue": "FOUNDRY-160",
+        "changed_lines": 285,
+        "reasons": [
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 7,
+        "issue": "FOUNDRY-162",
+        "changed_lines": 510,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 8,
+        "issue": "FOUNDRY-70",
+        "changed_lines": 1630,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 9,
+        "issue": "FOUNDRY-165",
+        "changed_lines": 812,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 10,
+        "issue": "FOUNDRY-161",
+        "changed_lines": 1267,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 11,
+        "issue": "FOUNDRY-163",
+        "changed_lines": 1102,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 12,
+        "issue": "PAT-10",
+        "changed_lines": 1708,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation",
+          "topic:data_migration"
+        ]
+      },
+      {
+        "pr": 13,
+        "issue": "PAT-12",
+        "changed_lines": 58,
+        "reasons": [
+          "documentation_only",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests"
+        ]
+      },
+      {
+        "pr": 14,
+        "issue": "PAT-21",
+        "changed_lines": 474,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry",
+          "topic:gates_evaluation",
+          "topic:authority"
+        ]
+      },
+      {
+        "pr": 15,
+        "issue": "PAT-24",
+        "changed_lines": 774,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry",
+          "topic:sensitive_concurrency"
+        ]
+      },
+      {
+        "pr": 16,
+        "issue": "PAT-26",
+        "changed_lines": 693,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 17,
+        "issue": "PAT-22",
+        "changed_lines": 6244,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 18,
+        "issue": "PAT-27",
+        "changed_lines": 293,
+        "reasons": [
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 20,
+        "issue": "PAT-29",
+        "changed_lines": 681,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 21,
+        "issue": "PAT-30",
+        "changed_lines": 1695,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 22,
+        "issue": "PAT-31",
+        "changed_lines": 1122,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 23,
+        "issue": "PAT-32",
+        "changed_lines": 96,
+        "reasons": [
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 28,
+        "issue": "PAT-37",
+        "changed_lines": 1386,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 29,
+        "issue": "PAT-38",
+        "changed_lines": 1194,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 31,
+        "issue": "PAT-23",
+        "changed_lines": 416,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:data_migration"
+        ]
+      },
+      {
+        "pr": 32,
+        "issue": "PAT-40",
+        "changed_lines": 1195,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 34,
+        "issue": "PAT-49",
+        "changed_lines": 989,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 35,
+        "issue": "PAT-50",
+        "changed_lines": 578,
+        "reasons": [
+          "over_300_changed_lines",
+          "documentation_only",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests",
+          "topic:data_migration"
+        ]
+      },
+      {
+        "pr": 36,
+        "issue": "PAT-42",
+        "changed_lines": 364,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 39,
+        "issue": "PAT-53",
+        "changed_lines": 1414,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry"
+        ]
+      },
+      {
+        "pr": 40,
+        "issue": "PAT-71",
+        "changed_lines": 858,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 41,
+        "issue": "PAT-52",
+        "changed_lines": 132,
+        "reasons": [
+          "documentation_only",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests"
+        ]
+      },
+      {
+        "pr": 43,
+        "issue": "PAT-54",
+        "changed_lines": 3020,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 44,
+        "issue": "PAT-70",
+        "changed_lines": 373,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 45,
+        "issue": "PAT-43",
+        "changed_lines": 728,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 46,
+        "issue": "PAT-46",
+        "changed_lines": 110,
+        "reasons": [
+          "no_source_code_under_plugins_foundry",
+          "topic:data_migration"
+        ]
+      },
+      {
+        "pr": 47,
+        "issue": "PAT-47",
+        "changed_lines": 557,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 49,
+        "issue": "PAT-55",
+        "changed_lines": 1934,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 50,
+        "issue": "PAT-73",
+        "changed_lines": 317,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry",
+          "topic:authority"
+        ]
+      },
+      {
+        "pr": 51,
+        "issue": "PAT-20",
+        "changed_lines": 151,
+        "reasons": [
+          "no_source_code_under_plugins_foundry"
+        ]
+      },
+      {
+        "pr": 52,
+        "issue": "PAT-56",
+        "changed_lines": 2183,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 53,
+        "issue": "PAT-65",
+        "changed_lines": 347,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests"
+        ]
+      },
+      {
+        "pr": 54,
+        "issue": "PAT-57",
+        "changed_lines": 1650,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 55,
+        "issue": "PAT-66",
+        "changed_lines": 2752,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 56,
+        "issue": "PAT-58",
+        "changed_lines": 2405,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 57,
+        "issue": "PAT-59",
+        "changed_lines": 1716,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:sensitive_concurrency"
+        ]
+      },
+      {
+        "pr": 58,
+        "issue": "PAT-60",
+        "changed_lines": 978,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests"
+        ]
+      },
+      {
+        "pr": 59,
+        "issue": "PAT-67",
+        "changed_lines": 2683,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 60,
+        "issue": "PAT-69",
+        "changed_lines": 3640,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 61,
+        "issue": "PAT-64",
+        "changed_lines": 5012,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:data_migration"
+        ]
+      },
+      {
+        "pr": 62,
+        "issue": "PAT-68",
+        "changed_lines": 1510,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 63,
+        "issue": "PAT-76",
+        "changed_lines": 314,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 64,
+        "issue": "PAT-79",
+        "changed_lines": 269,
+        "reasons": [
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 65,
+        "issue": "PAT-82",
+        "changed_lines": 1212,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 66,
+        "issue": "PAT-85",
+        "changed_lines": 448,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 67,
+        "issue": "PAT-14",
+        "changed_lines": 1199,
+        "reasons": [
+          "over_300_changed_lines",
+          "documentation_only",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests",
+          "topic:data_migration"
+        ]
+      },
+      {
+        "pr": 68,
+        "issue": "PAT-15",
+        "changed_lines": 688,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 69,
+        "issue": "PAT-86",
+        "changed_lines": 705,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 70,
+        "issue": "PAT-16",
+        "changed_lines": 3429,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:gates_evaluation"
+        ]
+      },
+      {
+        "pr": 71,
+        "issue": "PAT-92",
+        "changed_lines": 301,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 72,
+        "issue": "PAT-61",
+        "changed_lines": 2504,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry"
+        ]
+      },
+      {
+        "pr": 73,
+        "issue": "PAT-62",
+        "changed_lines": 905,
+        "reasons": [
+          "over_300_changed_lines",
+          "no_source_code_under_plugins_foundry",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests"
+        ]
+      },
+      {
+        "pr": 74,
+        "issue": "PAT-93",
+        "changed_lines": 267,
+        "reasons": [
+          "documentation_only",
+          "no_tests_under_plugins_foundry",
+          "no_protected_tests"
+        ]
+      },
+      {
+        "pr": 75,
+        "issue": "PAT-94",
+        "changed_lines": 1206,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 76,
+        "issue": "PAT-95",
+        "changed_lines": 1327,
+        "reasons": [
+          "over_300_changed_lines",
+          "topic:authority"
+        ]
+      },
+      {
+        "pr": 77,
+        "issue": "PAT-104",
+        "changed_lines": 148,
+        "reasons": [
+          "no_source_code_under_plugins_foundry"
+        ]
+      },
+      {
+        "pr": 78,
+        "issue": "PAT-98",
+        "changed_lines": 542,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 79,
+        "issue": "PAT-99",
+        "changed_lines": 403,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 80,
+        "issue": "PAT-100",
+        "changed_lines": 1121,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 82,
+        "issue": "PAT-102",
+        "changed_lines": 185,
+        "reasons": [
+          "manual:authority: PAT-102 settles the review residuals of PAT-95, the human-override waiver that decides who may close an Epic (protocol section 3: authentication or authority)"
+        ]
+      },
+      {
+        "pr": 84,
+        "issue": "PAT-103",
+        "changed_lines": 613,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      },
+      {
+        "pr": 85,
+        "issue": "PAT-106",
+        "changed_lines": 1092,
+        "reasons": [
+          "over_300_changed_lines"
+        ]
+      }
+    ]
+  },
+  "comparison": [
+    {
+      "issue": "PAT-35",
+      "pr": 26,
+      "title": "[PAT-35] fix: Refuser le rejeu batch ADR si une version a disparu mais son témoin subsiste",
+      "base_sha": "a3f4e7f511b4a505fba024db592d0c51bdfcf215",
+      "head_sha": "3a96eadf0bdb4059c7a51745f64c889d4af3dd37",
+      "pr_head_sha": "6e75df3e6fa7d8d1b6705b00c0e326c36722583f",
+      "changed_lines": 42,
+      "protected_tests_count": 1,
+      "acceptance_criteria": "# Refuser le rejeu batch ADR si une version a disparu mais son témoin subsiste\n\n## Objectif\n\nCorriger le blocage de revue PAT-22 (preuve 82fad6f42b6330ec10803e9491866ba11d14c5b895ec94378b467749d5e536bf) : `import_adr_batch()` peut recréer une version disparue extérieurement alors que son témoin existe, masquant ainsi une altération.\n\n## Critères d’acceptation\n\n- [ ] Le préflight batch distingue strictement version absente + témoin présent d’un effet Foundry interrompu ; il classe cet état comme conflit avant toute écriture.\n- [ ] Le rejeu exact d’un batch achevé refuse ce conflit sans `DocumentCreate` ni `CommentCreate`, sans altérer le témoin ou les autres versions.\n- [ ] Une régression fake-transport supprime seulement la version d’un batch importé, conserve le témoin, puis prouve le refus et zéro effet externe supplémentaire.\n- [ ] Les chemins de reprise légitimes version présente + témoin absent restent conformes au contrat documenté, sans ouvrir de réparation du cas inverse.\n- [ ] Documentation précise, suite publique/Ruff verts, revue indépendante sur diff exact, CI verte et merge via Foundry avant la reprise de PAT-22.\n\n## Périmètre\n\nCorrectif borné à la prévalidation du batch ADR et à ses tests/docs, sur PR empilée sur PAT-22. Aucun import réel, aucun cutover PAT-10 et aucune écriture YouTrack.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_linear_historical_batch_refuses_orphan_witness_before_effect"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-45",
+      "pr": 38,
+      "title": "[PAT-45] fix: Aligner doctor sur le chemin du hook pre-push du monorepo",
+      "base_sha": "04fe0e9a011aab79bc0bf269ac4b24be0041b458",
+      "head_sha": "eae7231a89a7ba0a8ab726b0e84363fdeed5265d",
+      "pr_head_sha": "0d59f24ae2cefe7beccd17befb43dc063270187d",
+      "changed_lines": 229,
+      "protected_tests_count": 1,
+      "acceptance_criteria": "# Aligner doctor sur le chemin du hook pre-push du monorepo\n\n## Contexte\n\n`doctor` n'accepte que `core.hooksPath=.githooks`, alors que ce dépôt documente et versionne son hook sous `plugins/foundry/.githooks` (règle R1 du contrat). Une configuration conforme au contrat apparaît donc en orange, avec une commande de correction qui pointe vers un dossier inexistant.\n\n## Critères d’acceptation\n\n- [ ] `doctor` reconnaît comme sain le chemin de hook documenté par le dépôt, sans assouplir le diagnostic des dépôts consommateurs.\n- [ ] La commande de correction proposée pointe vers un dossier qui existe.\n- [ ] Tests et documentation ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans [PAT-51](https://linear.app/patolabs/issue/PAT-51/v100-foundry-et-ship-ios-portables-sur-youtrack-linear-et-github), phase M1, priorité Medium et estimation inchangées. Correctif borné du diagnostic ; ne pas le transformer en refonte de doctor. Sa livraison est requise par la recette finale [PAT-61](https://linear.app/patolabs/issue/PAT-61/v1-m4-prouver-le-parcours-foundry-et-ship-ios-sur-3-trackers-2-hotes).\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_doctor.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "file",
+          "nodes": [
+            "test_doctor_accepts_absolute_hooks_path_matching_toplevel_candidate",
+            "test_doctor_accepts_crlf_terminated_local_hook_path",
+            "test_doctor_accepts_monorepo_hook_dir_as_healthy",
+            "test_doctor_falls_back_to_monorepo_hook_dir_in_fix_command",
+            "test_doctor_falls_back_to_repository_when_toplevel_resolution_fails",
+            "test_doctor_preserves_surrounding_spaces_in_local_hook_path",
+            "test_doctor_rejects_known_candidate_missing_hook_file",
+            "test_doctor_reports_correct_local_hook_path_as_healthy",
+            "test_doctor_reports_incorrect_local_hook_path_as_actionable_warning",
+            "test_doctor_reports_missing_local_hook_path_as_actionable_warning",
+            "test_doctor_resolves_healthy_hook_from_a_subdirectory",
+            "test_doctor_treats_empty_local_hook_path_as_missing"
+          ],
+          "helper_changed": [
+            "_make_hook",
+            "_make_runner"
+          ],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-34",
+      "pr": 25,
+      "title": "[PAT-34] fix: Refuser les collisions de références ADR du frame avant toute écriture",
+      "base_sha": "ebd77b9229b487440dbc9cf904ddfb38aad6392e",
+      "head_sha": "a3f4e7f511b4a505fba024db592d0c51bdfcf215",
+      "pr_head_sha": "24cc1eaeaa1c2bae60198246763f6572714f54ea",
+      "changed_lines": 132,
+      "protected_tests_count": 3,
+      "acceptance_criteria": "# Refuser les collisions de références ADR du frame avant toute écriture\n\n## Objectif\n\nEmpêcher `frame.materialize` de résoudre silencieusement une référence `constrained_by` vers la mauvaise ADR lorsqu’un titre entrant entre en collision avec un index, un autre titre ou un ID d’ADR existante. Défaut bloquant constaté dans la revue PAT-22 (preuve 4632d64c68e51a99ff2e08cf5c5753e99521d269290c0b9c742281f805cf7a5d).\n\n## Critères d’acceptation\n\n- [ ] Le préflight construit une résolution non ambiguë de toutes les ADR entrantes et existantes avant le premier write ; les clés utilisées pour `constrained_by` sont stables jusqu’au lien effectif.\n- [ ] Un titre entrant égal à un index stringifié, un titre dupliqué ou un ID existant est refusé avant toute création d’ADR, epic, issue ou commentaire.\n- [ ] Les références valides par index et par titre conservent l’identité attendue ; plusieurs liens ADR↔issue aboutissent chacun à la bonne décision.\n- [ ] Les tests fake-transport reproduisent les collisions et prouvent zéro effet ; ils couvrent le chemin nominal mixte et la réciprocité.\n- [ ] Documentation ciblée de la forme des références, revue indépendante, CI verte sur le head exact et merge via Foundry avant reprise de PAT-22.\n\n## Périmètre\n\nCorrectif du frame sur la branche PAT-22 par PR empilée. Aucun changement de statut ADR, de règle de migration PAT-23 ou de gate de merge. Les échecs provider non déterministes après préflight restent non atomiques.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_linear_frame_materializes_native_reciprocal_adr_issue_link",
+            "test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write",
+            "test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-44",
+      "pr": 42,
+      "title": "[PAT-44] chore: Documenter et outiller la reprise après dérive du binding d'un dépôt basculé",
+      "base_sha": "6befb22bda22b3024046624f42fab8f35c86cb98",
+      "head_sha": "2c1239cf4581fbf3f478020bd59677b38bb3615c",
+      "pr_head_sha": "b9db8f5c124c2b51d73960e65073a80c907f4b0f",
+      "changed_lines": 98,
+      "protected_tests_count": 4,
+      "acceptance_criteria": "# Documenter et outiller la reprise après dérive du binding d'un dépôt basculé\n\n## Contexte\n\nRevue de PR #12 (PAT-10). Toute modification de l'entrée de registre Linear d'un dépôt basculé casse `registry_binding_digest` : `tracker()`, `resolve()` et `registry cutover` refusent alors, et même `open-pr` devient impossible. La seule issue est de restaurer l'entrée exacte à la main. Le message de `register()` renvoie à un « rollback explicite » qui n'existe pas. Autres écarts : le marqueur `.foundry/tracker.json`, générique et prioritaire sur `FOUNDRY_TRACKER`, n'est décrit que dans la doc Linear ; `resolve()` refuse aussi les binding actifs sous deux providers ; une lecture via alias archivé renvoie un message qui parle d'écriture.\n\n## Critères d’acceptation\n\n- [ ] Procédure de reprise documentée, et opération outillée ou message corrigé pour rétablir un binding cohérent sans double écriture.\n- [ ] Le marqueur et la précédence sur `FOUNDRY_TRACKER` sont documentés dans la configuration générale du plugin, ainsi que le refus des binding ambigus.\n- [ ] Message de lecture via alias archivé corrigé ; tests ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans [PAT-51](https://linear.app/patolabs/issue/PAT-51/v100-foundry-et-ship-ios-portables-sur-youtrack-linear-et-github), phase M1, priorité High. Livrer la reprise bornée définie ci-dessus avant [PAT-54](https://linear.app/patolabs/issue/PAT-54/v1-m1-generaliser-le-binding-par-depot-et-le-bootstrap-des-trois) (bootstrap/binding multi-tracker). La généralisation aux trois trackers et aux nouveaux dépôts reste dans [PAT-54](https://linear.app/patolabs/issue/PAT-54/v1-m1-generaliser-le-binding-par-depot-et-le-bootstrap-des-trois) : pas d'extension implicite des critères de ce ticket. Aucune modification de [PAT-42](https://linear.app/patolabs/issue/PAT-42/garder-la-garde-r1-fermee-quand-le-marqueur-tracker-ou-le-registre-du) en cours d'exécution.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_registry_sharing.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_alias_registration_cannot_replace_an_archive_tombstone",
+            "test_archived_alias_error_directs_reads_to_a_live_archive_alias",
+            "test_generic_registration_cannot_remove_an_archive_tombstone",
+            "test_registry_digest_drift_requires_exact_approved_recovery"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-41",
+      "pr": 33,
+      "title": "[PAT-41] fix: Garder query issue lisible quand l’index ADR Linear est en conflit, sans le présenter comme vide",
+      "base_sha": "8b128c57ba876d294ae107c5665975a9d67595de",
+      "head_sha": "37606adcc40cfdb32f82bfbc605003e4069a96fb",
+      "pr_head_sha": "e84d19be9f66cef66faa9c34c252f0255c1b9848",
+      "changed_lines": 262,
+      "protected_tests_count": 6,
+      "acceptance_criteria": "# Garder query issue lisible quand l’index ADR Linear est en conflit, sans le présenter comme vide\n\n## Contexte\n\nL’import PAT-23 s’est arrêté après la version v0 de FOUNDRY-ADR-0001, sans témoin. L’index ADR Linear échoue donc fermé (`TrackerConflictError: Linear ADR version witness is missing`), comme l’exige PAT-ADR-0002. Mais `query issue` embarque cet index dans son champ `adrs` et propage l’erreur : toute lecture d’issue du projet PAT échoue. `merge-pr`, `open-pr`, `start-issue`, `resume-issue` et `intake` lisent l’issue par `query issue`, ce qui bloque le merge de PAT-40, seul correctif capable de compléter ce témoin (cycle).\n\n## Critères d’acceptation\n\n- [ ] `query issue` projette un `TrackerConflictError` levé par l’index ADR embarqué comme état explicite et distinct (par ex. `{\"status\": \"conflict\", \"tracker\": …, \"reason\": …}`), jamais comme liste vide ni comme capacité indisponible ; les autres erreurs (transport, binding, payload invalide) continuent de propager.\n- [ ] `query adr <ID>`, `query adrs`, `frame`, et toutes les écritures ADR restent fail-closed sur ce même conflit ; aucune réparation ni normalisation à la lecture.\n- [ ] `merge-pr` (et tout skill qui promeut des ADR citées) refuse de conclure « aucune ADR proposée à accepter » quand `adrs` est en conflit : l’acceptation reste bloquée et le skill l’indique explicitement.\n- [ ] Tests sur faux transport : issue lisible avec index en conflit, index vide réel distinct, capacité indisponible distincte, erreur de transport toujours propagée, `query adrs` toujours en échec.\n- [ ] Documentation ([AGENTS.md#R5](<http://AGENTS.md#R5>)) mise à jour, revue indépendante et CI sur SHA exact vertes. Aucune écriture Linear ADR, aucun import, aucune écriture YouTrack dans ce ticket.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "file",
+          "nodes": [
+            "test_query_adrs_adr_and_frame_stay_fail_closed_on_real_missing_witness",
+            "test_query_issue_projects_real_transport_missing_witness_as_conflict",
+            "test_query_issue_propagates_real_transport_failure_on_adr_listing",
+            "test_query_issue_real_transport_empty_adr_index_is_an_empty_list"
+          ],
+          "helper_changed": [
+            "_bind_query_registry",
+            "_witness_document_id"
+          ],
+          "module_level_changed": false
+        },
+        {
+          "path": "plugins/foundry/tests/test_pure.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_issue_genuine_empty_adr_index_stays_an_empty_list",
+            "test_issue_projects_adr_capability_unavailable_distinct_from_conflict",
+            "test_issue_projects_embedded_adr_index_conflict_as_distinct_status",
+            "test_issue_propagates_unexpected_adr_index_error",
+            "test_query_adrs_still_fails_closed_on_embedded_index_conflict"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-48",
+      "pr": 37,
+      "title": "[PAT-48] fix: Projeter l'indisponibilité d'une ADR de l'index embarqué dans query issue",
+      "base_sha": "6a2f5ac35fa243a9819e1c613ef01692c0fb83e1",
+      "head_sha": "04fe0e9a011aab79bc0bf269ac4b24be0041b458",
+      "pr_head_sha": "6ae1c4de817c57e133b8df03e9a394d0f50ef7bb",
+      "changed_lines": 124,
+      "protected_tests_count": 2,
+      "acceptance_criteria": "# Projeter l'indisponibilité d'une ADR de l'index embarqué dans query issue\n\n## Contexte\n\nRevue de PR #33 (PAT-41). `query issue` projette un conflit d'index ADR en état explicite, mais une cible de supersession manquante lève `AdrUnavailableError` et rend encore toute lecture d'issue impossible.\n\n## Critères d’acceptation\n\n- [ ] Cette erreur d'intégrité de l'index embarqué est projetée comme état explicite distinct, jamais comme index vide ; `query adr` et `query adrs` restent fail-closed.\n- [ ] Tests sur faux transport ; documentation ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans [PAT-51](https://linear.app/patolabs/issue/PAT-51/v100-foundry-et-ship-ios-portables-sur-youtrack-linear-et-github), phase M1, priorité relevée de Low à High : une erreur d'index ADR ne doit pas rendre tout le backlog illisible. Conserver exactement la distinction d'erreurs et le refus fermé des lectures ADR définis ci-dessus. Correctif indépendant et borné, requis par [PAT-61](https://linear.app/patolabs/issue/PAT-61/v1-m4-prouver-le-parcours-foundry-et-ship-ios-sur-3-trackers-2-hotes) ; estimation inchangée.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_pure.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status",
+            "test_query_adrs_still_fails_closed_on_unavailable_adr"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    }
+  ],
+  "screening": [
+    {
+      "issue": "PAT-39",
+      "pr": 30,
+      "title": "[PAT-39] fix: Qualifier le rendu des chevrons de l’ADR historique 0012 avant import Linear",
+      "base_sha": "7db48eb7d8163ed90678ba1e659c649600e96c55",
+      "head_sha": "8b128c57ba876d294ae107c5665975a9d67595de",
+      "pr_head_sha": "3a48914adea80c7169c77f77955b99b43a02dfa5",
+      "changed_lines": 203,
+      "protected_tests_count": 1,
+      "acceptance_criteria": "# Qualifier le rendu des chevrons de l’ADR historique 0012 avant import Linear\n\n## Contexte\n\nLe manifeste gelé PAT-23 contient les 27 ADR source, dont FOUNDRY-ADR-0012 avec trois lignes de placeholder commençant par `<`. Le contrat accepté PAT-ADR-0002 préserve les octets source exacts et refuse les transformations Markdown non qualifiées avant tout effet. Le préflight actuel bloque donc cet ADR ; l’omettre contredirait la migration complète PAT-ADR-0001.\n\n## Critères d’acceptation\n\n- [ ] Le comportement réel de Linear pour le corps exact de FOUNDRY-ADR-0012 est qualifié par une sonde bornée sans titre/slot ADR faisant autorité ; les octets envoyés et relus, IDs et digests sont conservés sans exposer de secret.\n- [ ] L’adaptateur accepte uniquement une représentation démontrée et déterministe de ces lignes à chevrons, ou un encodage lisible explicitement versionné ; le corps source reconstruit reste byte-exact et le Document reste compréhensible. Les autres HTML/blocs ambigus échouent fermés.\n- [ ] Avant toute écriture de version ou de commentaire réciproque, les créations, imports, liens et rejeux contrôlent la représentation ; un échec n’ajoute aucun effet durable et ne rend pas l’index ADR illisible.\n- [ ] Le faux transport couvre l’ADR 0012 byte-exact, les variantes hostiles, les collisions, les interruptions et le readback ; les témoins existants PAT-ADR-0001/0002 restent lisibles.\n- [ ] Documentation, recette publique, Ruff, revue indépendante et CI sur le SHA exact sont verts. Aucun des 27 ADR historiques n’est importé, aucun write YouTrack ni bascule PAT-10 dans ce ticket.\n\nCette issue est un prérequis technique de PAT-23, non une réouverture des décisions PAT-ADR-0001 ou PAT-ADR-0002.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "file",
+          "nodes": [
+            "test_linear_profile_preserves_exact_source_witness",
+            "test_linear_profile_recovery_rejects_source_collision_before_effects"
+          ],
+          "helper_changed": [
+            "_synthetic_profile_body",
+            "_synthetic_profile_kwargs",
+            "_synthetic_profile_readback",
+            "linear_markdown_body_readback"
+          ],
+          "module_level_changed": true
+        }
+      ]
+    },
+    {
+      "issue": "PAT-101",
+      "pr": 83,
+      "title": "[PAT-101] chore: Solder les résiduels de la revue de PAT-94 (préflight des listes d'ADR)",
+      "base_sha": "f740bebe48f8940fb09b087e70ac713f18c1f62a",
+      "head_sha": "58d3df8d1a2a27a6e00f86bf02db1da4ecd2e885",
+      "pr_head_sha": "92877f3d2bb2b608de66c582c6144d4fb069096a",
+      "changed_lines": 220,
+      "protected_tests_count": 7,
+      "acceptance_criteria": "# Solder les résiduels de la revue de PAT-94 (préflight des listes d'ADR)\n\n## Critères d'acceptation\n\n- [ ] Un corps commençant par une ligne vide avant une liste (`\"\\n1. a\\n\\n2. b\"`, `\"\\n- a\"`) est traité comme un écart de tête adjacent à une liste (le Document ajoute déjà une ligne vide avant le corps) ; test hostile.\n- [ ] Les éléments numérotés à case à cocher (`1. [ ] a`, `1. [x] a`) ne sont pas des éléments « plain » ; test.\n- [ ] La reprise d'une paire de supersession interrompue dérive `new_body` du slot existant déjà validé par le modèle ; test : une reprise qui n'écrit que le témoin n'est pas refusée à tort.\n- [ ] Les profils épinglés PAT-72, PAT-86 et PAT-16 sont appliqués avant le contrôle strict, ou une raison documentée justifie l'ordre actuel ; test d'un nouvel ADR identique à une source épinglée.\n- [ ] Le commentaire du test PAT-37/38 est précisé ; documentation, CHANGELOG et statut R5 à jour ; revue indépendante et CI verte sur SHA exact.\n\n## Contraintes\n\nPAT-ADR-0002 (seules les transformations explicitement reconnues sont acceptées, la source n'est jamais déduite du rendu), PAT-ADR-0014, AGENTS.md R5. Sources : commentaires de résiduels sur PAT-94 et PAT-95.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_linear_adr_pat101_bracket_text_that_is_no_checkbox_stays_plain",
+            "test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused",
+            "test_linear_adr_pat101_leading_blank_line_without_a_list_is_accepted",
+            "test_linear_adr_pat101_pat86_and_pat16_sources_pass_strict_before_and_after_profiles",
+            "test_linear_adr_pat101_pinned_pat72_profile_applies_before_the_strict_check",
+            "test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot",
+            "test_linear_adr_pat101_task_items_are_not_plain"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-36",
+      "pr": 27,
+      "title": "[PAT-36] fix: Refuser le rejeu batch ADR après suppression d’un commentaire réciproque",
+      "base_sha": "3a96eadf0bdb4059c7a51745f64c889d4af3dd37",
+      "head_sha": "9fb276be297009ca373d08b2ae21ba8a72ce5d95",
+      "pr_head_sha": "729e87e48ca9415604a0b1b7b3e4e89e0cd6a1b9",
+      "changed_lines": 150,
+      "protected_tests_count": 3,
+      "acceptance_criteria": "# Refuser le rejeu batch ADR après suppression d’un commentaire réciproque\n\n## Objectif\n\nCorriger le blocage PAT-22 (preuve 34d11e2d1b4252e46c3d2601df59ac9ad66e8538368c895c057a1eb5481229f1) : après un batch ADR achevé, la suppression externe d’un commentaire réciproque ADR↔issue est masquée par un rejeu qui le recrée.\n\n## Critères d’acceptation\n\n- [ ] Le préflight batch distingue une relation jamais créée d’une relation déjà matérialisée par une version Document durable ; il refuse un commentaire réciproque manquant dans ce second cas avant tout effet.\n- [ ] Rejouer à l’identique un batch achevé dont un seul commentaire ADR↔issue a été supprimé échoue fermement, sans `CommentCreate`, `DocumentCreate` ni modification des autres objets.\n- [ ] Une régression fake-transport couvre la suppression isolée après batch complet et prouve zéro effet sur refus.\n- [ ] Une interruption légitime avant les Documents peut encore compléter les commentaires manquants selon l’ordre d’écriture attesté, sans autoriser la réparation après matérialisation.\n- [ ] Contrat documenté, recette CI/Ruff verte, revue indépendante sur le diff exact et merge Foundry empilé avant la reprise de PAT-22.\n\n## Périmètre\n\nPréflight/rejeu de `import_adr_batch`, tests et documentation. Pas d’import réel, de double tracker, de cutover PAT-10 ni d’écriture YouTrack.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_linear_historical_batch_recovers_missing_comment_before_documents",
+            "test_linear_historical_batch_refuses_comment_deleted_after_validation",
+            "test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-33",
+      "pr": 24,
+      "title": "[PAT-33] fix: Refuser les ADR obsolètes avant création d’une issue par frame",
+      "base_sha": "e70d50dd0fe4eec20a3ec3a0255df670891550aa",
+      "head_sha": "ebd77b9229b487440dbc9cf904ddfb38aad6392e",
+      "pr_head_sha": "3a81b8dcb2d0191fbae7ca8cc8e922de1e95a960",
+      "changed_lines": 182,
+      "protected_tests_count": 5,
+      "acceptance_criteria": "# Refuser les ADR obsolètes avant création d’une issue par frame\n\n## Objectif\n\nEmpêcher `frame.materialize` de créer une issue Linear partiellement liée lorsque `constrained_by` contient une ADR existante mais `deprecated` ou `superseded`. Correctif borné du défaut bloquant constaté dans la revue PAT-22 (preuve 433a5ffc16c64c769590628689e9d4e5a0f61964b74bcf8d6c7d585e8ad42504).\n\n## Critères d’acceptation\n\n- [ ] Le préflight lit et valide le statut de toutes les ADR référencées avant la première création d’issue ; seuls les statuts liables passent.\n- [ ] Une ADR `deprecated` ou `superseded`, seule ou mêlée à des ADR valides, est refusée sans création d’issue ni lien partiel.\n- [ ] Les ADR inconnues, hors projet ou dont le statut est illisible restent refusées fermées sans effet.\n- [ ] Un chemin nominal avec plusieurs ADR liables crée l’issue et tous les liens réciproques attendus.\n- [ ] Tests de régression sur faux transport, documentation ciblée si surface publiée touchée, revue indépendante et CI sur le head exact avant merge.\n\n## Périmètre\n\nNe change ni les statuts ADR, ni la politique de migration PAT-23, ni les gates de PAT-22. Les éventuels échecs non prédictibles après préflight restent fail-closed et nécessitent une reprise contrôlée.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_linear_frame_materializes_native_reciprocal_adr_issue_link",
+            "test_linear_frame_rejects_accepted_incoming_adr_before_first_write",
+            "test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write",
+            "test_linear_frame_rejects_terminal_existing_adr_before_first_write",
+            "test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-72",
+      "pr": 48,
+      "title": "[PAT-72] fix: Reconnaître le rendu Linear des lignes vides et reprendre PAT-ADR-0006 sans réécriture",
+      "base_sha": "1f8658e4e0d13e02ecc92bd790e0df539a040829",
+      "head_sha": "9603302cc1b04d04e603256465beb9c011166250",
+      "pr_head_sha": "485a03242481d33beea91a4f0f8ff3fb6eaf2f70",
+      "changed_lines": 292,
+      "protected_tests_count": 1,
+      "acceptance_criteria": "# Reconnaître le rendu Linear des lignes vides et reprendre PAT-ADR-0006 sans réécriture\n\n## Contexte\n\nPendant l’ajout mainteneur à PAT-ADR-0006, Linear a sérialisé deux lignes vides consécutives hors code comme une seule. Le préflight actuel accepte le corps mais le readback fermé refuse le Document v1 créé ; son témoin est absent. Ne pas réécrire ni supprimer ce Document. Cas distinct des constructions inline traitées par PAT-71 et des successions historiques PAT-47.\n\n## Critères d’acceptation\n\n- [ ] La transformation de lignes vides hors code observée est modélisée à sens unique et bornée ; les octets source restent exacts dans les témoins. Les lignes vides dans les blocs de code et les transformations inconnues restent protégées.\n- [ ] Tests sur faux transport : préflight, Document/témoin, corruption, interruption et rejeu exact sans double Document ni réécriture.\n- [ ] Rejouer l’edit exact PAT-ADR-0006 pour créer uniquement son témoin manquant, vérifier le corps complet et l’intégrité de l’index, puis permettre son acceptation explicitement autorisée.\n- [ ] Documentation spécifique, review indépendante et CI verte sur SHA exact.\n\n## Contraintes\n\nPAT-ADR-0002 et FOUNDRY-ADR-0001 sont autoritaires. Aucun redesign ADR, aucune fabrication de témoin, aucun changement du tracker actif, aucune qualification globale des rendus inconnus. L’index actuel échoue sur ce seul témoin manquant : garder ce refus normal pendant le diagnostic et la correction. Le Document survivant et la source exacte sont disponibles en snapshots locaux.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "file",
+          "nodes": [
+            "test_linear_pat72_digest_pinned_blank_line_readback_recovers_only_witness",
+            "test_linear_pat72_interrupted_edit_replays_only_sequence_one_witness",
+            "test_linear_pat72_recovery_refuses_corruption_and_retries_interrupted_witness"
+          ],
+          "helper_changed": [
+            "linear_markdown_body_readback"
+          ],
+          "module_level_changed": false
+        }
+      ]
+    },
+    {
+      "issue": "PAT-28",
+      "pr": 19,
+      "title": "[PAT-28] chore: Tolérer le passage Linear Backlog vers In Progress après une PR déjà attestée",
+      "base_sha": "3e2c66b614b0c88c07b3d75892125711fa4e16f1",
+      "head_sha": "772bb0baa0f142830c4195edd9a90773d3f5072e",
+      "pr_head_sha": "1ceaf0b71148bc0154c87321593a082516a62fe3",
+      "changed_lines": 153,
+      "protected_tests_count": 5,
+      "acceptance_criteria": "# Tolérer le passage Linear Backlog vers In Progress après une PR déjà attestée\n\n## Constat\n\nLe 24 septembre 2026, après l'ouverture Foundry de la PR #18 pour PAT-27, l'intégration GitHub de Linear a déplacé le statut natif de Backlog vers In Progress environ dix secondes après le reçu lifecycle state-review. Le reçu porte native_state_id=460f66ac-bb2a-448d-ae41-588b3b275892 (Backlog), alors que Linear exposait 49aa24ba-848c-4ccf-87c3-35569ad000ec (In Progress). `query issue PAT-27` échouait avec `Linear native state changed outside lifecycle`. Une réparation bornée a remis seulement l'état natif de PAT-27 sur Backlog et rétabli la projection Foundry review. PR #18 reste ouverte. PAT-26 a sécurisé merge vers Done ; ce cas start après review est distinct.\n\n## Objectif\n\nFaire correspondre le validateur Linear au contrat documenté de dérive native `backlog/ready -> in-progress` après un reçu `state-review` durable, sans transformer ce mouvement en preuve de revue, d'AC ou de merge.\n\n## Critères d'acceptation\n\n- [ ] Le test reproduit l'ordre réel : reçu `state-review` durable sur Backlog, puis mutation native `In Progress` différée par l'intégration GitHub, sans opération Foundry pendante.\n- [ ] La lecture Foundry reste `review` et conserve PR, head/base et AC du reçu ; aucun reçu n'est réécrit ou fabriqué.\n- [ ] Seule cette dérive monotone est tolérée ; `Done`, `Blocked`, autre projet, mauvais état source ou absence de reçu adéquat échouent fermés.\n- [ ] Le rejeu d'ouverture PR, la revue exacte et le merge relisent les coordonnées courantes sans contourner CI, AC ni protections anti-course.\n- [ ] Documentation et recette de réparation bornée indiquent le comportement avant/après et l'absence de CAS Linear, avec preuves sur doubles et sans écriture YouTrack.\n\n## Contraintes\n\nFOUNDRY-ADR-0001 et FOUNDRY-ADR-0026 restent actifs. Ne pas rouvrir PAT-26 ni élargir PAT-27. Réparer l'adaptateur, pas le ticket PAT-27 par exception permanente.\n",
+      "ac_source": "tracker_issue",
+      "protected_tests": [
+        {
+          "path": "plugins/foundry/tests/test_linear_tracker.py",
+          "status": "M",
+          "kind": "test",
+          "selection": "nodes",
+          "nodes": [
+            "test_linear_review_receipt_refuses_non_start_native_drift",
+            "test_linear_review_receipt_refuses_start_drift_from_non_backlog_source",
+            "test_linear_review_receipt_tolerates_only_delayed_native_start_automation",
+            "test_linear_start_drift_does_not_relax_project_binding",
+            "test_linear_start_drift_without_durable_review_receipt_fails_closed"
+          ],
+          "helper_changed": [],
+          "module_level_changed": false
+        }
+      ]
+    }
+  ],
+  "discarded_at_verification": [],
+  "verification": [
+    {
+      "pr": 19,
+      "issue": "PAT-28",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_review_receipt_refuses_non_start_native_drift",
+          "tests/test_linear_tracker.py::test_linear_review_receipt_refuses_start_drift_from_non_backlog_source",
+          "tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation",
+          "tests/test_linear_tracker.py::test_linear_start_drift_does_not_relax_project_binding",
+          "tests/test_linear_tracker.py::test_linear_start_drift_without_durable_review_receipt_fails_closed"
+        ],
+        "passed": 9,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_review_receipt_refuses_non_start_native_drift",
+          "tests/test_linear_tracker.py::test_linear_review_receipt_refuses_start_drift_from_non_backlog_source",
+          "tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation",
+          "tests/test_linear_tracker.py::test_linear_start_drift_does_not_relax_project_binding",
+          "tests/test_linear_tracker.py::test_linear_start_drift_without_durable_review_receipt_fails_closed"
+        ],
+        "passed": 5,
+        "failed": 4,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 24,
+      "issue": "PAT-33",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_frame_materializes_native_reciprocal_adr_issue_link",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_accepted_incoming_adr_before_first_write",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_terminal_existing_adr_before_first_write",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write"
+        ],
+        "passed": 10,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_frame_materializes_native_reciprocal_adr_issue_link",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_accepted_incoming_adr_before_first_write",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_terminal_existing_adr_before_first_write",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write"
+        ],
+        "passed": 1,
+        "failed": 9,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 25,
+      "issue": "PAT-34",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_frame_materializes_native_reciprocal_adr_issue_link",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id"
+        ],
+        "passed": 5,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_frame_materializes_native_reciprocal_adr_issue_link",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write",
+          "tests/test_linear_tracker.py::test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id"
+        ],
+        "passed": 1,
+        "failed": 4,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 26,
+      "issue": "PAT-35",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_orphan_witness_before_effect"
+        ],
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_orphan_witness_before_effect"
+        ],
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 27,
+      "issue": "PAT-36",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_historical_batch_recovers_missing_comment_before_documents",
+          "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_comment_deleted_after_validation",
+          "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect"
+        ],
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_historical_batch_recovers_missing_comment_before_documents",
+          "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_comment_deleted_after_validation",
+          "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect"
+        ],
+        "passed": 1,
+        "failed": 2,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 30,
+      "issue": "PAT-39",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py"
+        ],
+        "passed": 163,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py"
+        ],
+        "passed": 161,
+        "failed": 2,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 33,
+      "issue": "PAT-41",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py",
+          "tests/test_pure.py::test_issue_genuine_empty_adr_index_stays_an_empty_list",
+          "tests/test_pure.py::test_issue_projects_adr_capability_unavailable_distinct_from_conflict",
+          "tests/test_pure.py::test_issue_projects_embedded_adr_index_conflict_as_distinct_status",
+          "tests/test_pure.py::test_issue_propagates_unexpected_adr_index_error",
+          "tests/test_pure.py::test_query_adrs_still_fails_closed_on_embedded_index_conflict"
+        ],
+        "passed": 172,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py",
+          "tests/test_pure.py::test_issue_genuine_empty_adr_index_stays_an_empty_list",
+          "tests/test_pure.py::test_issue_projects_adr_capability_unavailable_distinct_from_conflict",
+          "tests/test_pure.py::test_issue_projects_embedded_adr_index_conflict_as_distinct_status",
+          "tests/test_pure.py::test_issue_propagates_unexpected_adr_index_error",
+          "tests/test_pure.py::test_query_adrs_still_fails_closed_on_embedded_index_conflict"
+        ],
+        "passed": 170,
+        "failed": 2,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 37,
+      "issue": "PAT-48",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_pure.py::test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status",
+          "tests/test_pure.py::test_query_adrs_still_fails_closed_on_unavailable_adr"
+        ],
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_pure.py::test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status",
+          "tests/test_pure.py::test_query_adrs_still_fails_closed_on_unavailable_adr"
+        ],
+        "passed": 1,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 38,
+      "issue": "PAT-45",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_doctor.py"
+        ],
+        "passed": 36,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_doctor.py"
+        ],
+        "passed": 27,
+        "failed": 9,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 42,
+      "issue": "PAT-44",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_registry_sharing.py::test_alias_registration_cannot_replace_an_archive_tombstone",
+          "tests/test_registry_sharing.py::test_archived_alias_error_directs_reads_to_a_live_archive_alias",
+          "tests/test_registry_sharing.py::test_generic_registration_cannot_remove_an_archive_tombstone",
+          "tests/test_registry_sharing.py::test_registry_digest_drift_requires_exact_approved_recovery"
+        ],
+        "passed": 4,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_registry_sharing.py::test_alias_registration_cannot_replace_an_archive_tombstone",
+          "tests/test_registry_sharing.py::test_archived_alias_error_directs_reads_to_a_live_archive_alias",
+          "tests/test_registry_sharing.py::test_generic_registration_cannot_remove_an_archive_tombstone",
+          "tests/test_registry_sharing.py::test_registry_digest_drift_requires_exact_approved_recovery"
+        ],
+        "passed": 0,
+        "failed": 4,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 48,
+      "issue": "PAT-72",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py"
+        ],
+        "passed": 345,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py"
+        ],
+        "passed": 223,
+        "failed": 122,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    },
+    {
+      "pr": 83,
+      "issue": "PAT-101",
+      "with_merged_diff": {
+        "verdict": "ACCEPTED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_bracket_text_that_is_no_checkbox_stays_plain",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_without_a_list_is_accepted",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_pat86_and_pat16_sources_pass_strict_before_and_after_profiles",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_pinned_pat72_profile_applies_before_the_strict_check",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain"
+        ],
+        "passed": 18,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 0,
+        "note": null
+      },
+      "without_merged_diff": {
+        "verdict": "REFUSED",
+        "selected": [
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_bracket_text_that_is_no_checkbox_stays_plain",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_without_a_list_is_accepted",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_pat86_and_pat16_sources_pass_strict_before_and_after_profiles",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_pinned_pat72_profile_applies_before_the_strict_check",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot",
+          "tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain"
+        ],
+        "passed": 7,
+        "failed": 11,
+        "errors": 0,
+        "skipped": 0,
+        "pytest_exit_code": 1,
+        "note": null
+      },
+      "discarded_reason": null
+    }
+  ]
+}
