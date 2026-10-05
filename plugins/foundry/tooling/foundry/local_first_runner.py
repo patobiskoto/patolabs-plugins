@@ -34,7 +34,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Collection, Mapping, Sequence
 
 from foundry import cost_attribution as ca
 from foundry import local_first_corpus as lfc
@@ -68,6 +68,12 @@ READ_ONLY_COMMANDS = frozenset({
 _SECRET_NAME = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|SSH_AUTH_SOCK|^FOUNDRY_)", re.I)
 _PLACEHOLDER = re.compile(r"\{(\w+)\}")
 _ID = re.compile(r"^[A-Za-z0-9._-]+$")
+STREAM_FORMATS = ("none", "omp-json", "claude-stream-json")
+# Tool names that would let a cloud arm start another agent (a second, unread transcript).
+SUBAGENT_TOOLS = ("Agent", "Task")
+# A value of a driver ``env_set`` that looks like a secret name is accepted only when it is one of these
+# documented placeholders for a local endpoint that needs no key.
+_PLACEHOLDER_VALUES = frozenset({"local-endpoint-no-key"})
 
 
 class RunnerError(RuntimeError):
@@ -80,6 +86,20 @@ class EnvelopeError(RunnerError):
 
 class CapReached(RunnerError):
     """An envelope ceiling is reached: the campaign stops."""
+
+
+class CandidateFault(RunnerError):
+    """The arm itself left the bundle in a state the launcher refuses to run git on (git surface
+    changed, tree still moving). Not a launcher failure: the attempt is refused, never void."""
+
+
+class ToolsetRefused(RunnerError):
+    """A cloud record refused on the ``init`` tool set of its stream; carries the contamination audit
+    of the same stream, recorded alongside the refusal."""
+
+    def __init__(self, reason: str, contamination: Sequence[str]):
+        super().__init__(reason)
+        self.contamination = list(contamination)
 
 
 class PreflightRefused(RunnerError):
@@ -120,16 +140,101 @@ def load_campaign(path: Path) -> dict[str, Any]:
         for env_name in driver.get("env_allow", []):
             if _SECRET_NAME.search(env_name):
                 raise RunnerError(f"{path}: driver {name} may not forward {env_name}")
+        _check_driver_pins(path, name, driver)
     deny = (data.get("isolation") or {}).get("deny_read_home", DEFAULT_HOME_DENY)
     if not isinstance(deny, dict) or set(deny) != {"local", "cloud"} or not all(
             isinstance(v, list) and all(isinstance(x, str) and x and not x.startswith("/")
                                         and ".." not in Path(x).parts for x in v)
             for v in deny.values()):
         raise RunnerError(f"{path}: isolation.deny_read_home needs relative lists for local and cloud")
+    iso = data.get("isolation") or {}
+    if type(iso.get("deny_home_by_default", True)) is not bool:
+        raise RunnerError(f"{path}: isolation.deny_home_by_default must be a boolean")
+    allow = iso.get("allow_read_home", [])
+    if not isinstance(allow, list) or not all(
+            isinstance(x, str) and x and not x.startswith("/") and ".." not in Path(x).parts for x in allow):
+        raise RunnerError(f"{path}: isolation.allow_read_home needs a list of relative home entries")
+    _check_cloud_bash_deny(path, data)
     for cid, cand in data["candidates"].items():
         if not _ID.match(cid) or not isinstance(cand.get("model"), str):
             raise RunnerError(f"{path}: candidate {cid} needs an id and a model")
+        for key, kind in (("min_context", int), ("lm_studio_key", str), ("quantization", str)):
+            if key in cand and (type(cand[key]) is not kind or not cand[key] or cand[key] is True):
+                raise RunnerError(f"{path}: candidate {cid}: {key} must be a non-empty {kind.__name__}")
     return data
+
+
+def _check_driver_pins(path: Path, name: str, driver: Mapping[str, Any]) -> None:
+    """What a pinned driver must declare (PAT-111): a local driver is always sandboxed, an
+    unsandboxed cloud driver says why, a verified real driver names its evidence, a verified Claude
+    log layout comes with the stream that lets the launcher assert no sub-agent tool exists."""
+    kind, fake = driver["kind"], bool(driver.get("fake"))
+    if "sandbox" in driver:
+        if type(driver["sandbox"]) is not bool:
+            raise RunnerError(f"{path}: driver {name}: sandbox must be a boolean")
+        if driver["sandbox"] is False:
+            if kind in LOCAL_KINDS:
+                raise RunnerError(f"{path}: local driver {name} cannot run unsandboxed")
+            if not (isinstance(driver.get("sandbox_reason"), str) and driver["sandbox_reason"].strip()):
+                raise RunnerError(f"{path}: unsandboxed driver {name} needs a sandbox_reason")
+    if (driver.get("stream") or {}).get("format", "none") not in STREAM_FORMATS:
+        raise RunnerError(f"{path}: driver {name}: unknown stream format")
+    if driver.get("verified") is True and not fake and not (
+            isinstance(driver.get("evidence"), str) and driver["evidence"].strip()):
+        raise RunnerError(f"{path}: driver {name} is verified without evidence (the proof of its trial)")
+    log = driver.get("session_log") or {}
+    if (kind in ("cloud_implementer", "cloud_reviewer") and not fake and log.get("layout_verified") is True
+            and (driver.get("stream") or {}).get("format") != "claude-stream-json"):
+        raise RunnerError(f"{path}: driver {name} declares a verified log layout without the "
+                          "claude-stream-json stream: the no-sub-agent assertion needs the init event")
+    for key, value in (driver.get("env_set") or {}).items():
+        if not isinstance(key, str) or not isinstance(value, str) or key.startswith("FOUNDRY_"):
+            raise RunnerError(f"{path}: driver {name}: bad env_set entry {key}")
+        if _SECRET_NAME.search(key) and value not in _PLACEHOLDER_VALUES:
+            raise RunnerError(f"{path}: driver {name} may not set {key} to anything but a placeholder")
+    spec = driver.get("executable")
+    if spec is not None and not (isinstance(spec, dict) and all(
+            isinstance(spec.get(k), str) and spec[k] for k in ("env", "placeholder", "package", "version"))):
+        raise RunnerError(f"{path}: driver {name}: executable needs env, placeholder, package, version")
+    allowed = driver.get("allowed_tools")
+    if allowed is not None and not (isinstance(allowed, list) and all(isinstance(t, str) for t in allowed)):
+        raise RunnerError(f"{path}: driver {name}: allowed_tools must be a list of tool names")
+    if (kind in ("cloud_implementer", "cloud_reviewer") and not fake and driver.get("verified") is True
+            and not allowed):
+        raise RunnerError(f"{path}: verified cloud driver {name} needs allowed_tools (the init-event allowlist)")
+    traj = driver.get("trajectory")
+    if traj is not None and not (isinstance(traj, dict) and isinstance(traj.get("file"), str)
+                                 and isinstance(traj.get("steps_path"), list)
+                                 and all(isinstance(k, str) for k in traj["steps_path"])):
+        raise RunnerError(f"{path}: driver {name}: trajectory needs a file and a steps_path list")
+    dirs = driver.get("make_dirs")
+    if dirs is not None and not (isinstance(dirs, list) and all(isinstance(d, str) for d in dirs)):
+        raise RunnerError(f"{path}: driver {name}: make_dirs must be a list of paths")
+
+
+def _check_cloud_bash_deny(path: Path, data: Mapping[str, Any]) -> None:
+    """``cloud_bash_deny`` (best-effort Bash permission rules, kept as data) must be literally part of
+    the ``--disallowedTools`` of every real Claude driver: the pinned argv is what runs."""
+    rules = data.get("cloud_bash_deny")
+    cloud = {name: d for name, d in data["drivers"].items()
+             if d["kind"] in ("cloud_implementer", "cloud_reviewer") and not d.get("fake")
+             and (d.get("stream") or {}).get("format") == "claude-stream-json"}
+    if rules is None:
+        if cloud:
+            raise RunnerError(f"{path}: real cloud drivers need cloud_bash_deny (the Bash permission rules)")
+        return
+    if not isinstance(rules, list) or not rules or not all(
+            isinstance(r, str) and re.fullmatch(r"Bash\(.+\)", r) for r in rules):
+        raise RunnerError(f"{path}: cloud_bash_deny must be a non-empty list of Bash(...) rules")
+    for name, driver in cloud.items():
+        argv = driver["argv"]
+        if "--disallowedTools" not in argv:
+            raise RunnerError(f"{path}: driver {name} has no --disallowedTools")
+        denied = argv[argv.index("--disallowedTools") + 1:]
+        missing = [r for r in rules if r not in denied]
+        if missing:
+            raise RunnerError(f"{path}: driver {name}: cloud_bash_deny rule(s) missing from "
+                              f"--disallowedTools: {', '.join(missing)}")
 
 
 def _check_driver_usable(driver_id: str, driver: Mapping[str, Any], dry_run: bool) -> None:
@@ -186,13 +291,21 @@ class Ledger:
         self.mode, self.caps, self.now, self.dry_run = mode, envelope["caps"], now, dry_run
         self.path = Path(state_dir) / f"ledger-{envelope['campaign_id']}.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        expected = {"envelope_sha256": envelope["sha256"], **(provenance or {})}
+        self.launch = 1  # this launcher's rank in the campaign: keeps attempt names unique across launches
         if self.path.exists():  # a dry run and a real run never share a ledger (nor a cap)
             for entry in _read_jsonl(self.path):
                 if bool(entry.get("dry_run", False)) != dry_run:
                     raise RunnerError(f"{self.path} holds {'real' if dry_run else 'dry-run'} entries: "
                                       "refusing to mix dry-run and real records")
-        self.append("session_started", mode=mode,
-                    **{"envelope_sha256": envelope["sha256"], **(provenance or {})})
+                if entry.get("kind") == "session_started":
+                    self.launch += 1
+                    for key, value in expected.items():  # before any claim or reservation
+                        if entry.get(key) != value:
+                            raise RunnerError(f"{self.path} was written under another {key}: the "
+                                              "campaign, manifest and envelope cannot change after the "
+                                              "first launch (new campaign id and envelope needed)")
+        self.append("session_started", mode=mode, **expected)
 
     def append(self, kind: str, **fields: Any) -> None:
         line = json.dumps({"kind": kind, "at": self.now(), "dry_run": self.dry_run, **fields},
@@ -302,10 +415,55 @@ def machine_snapshot(run: Callable[[Sequence[str]], str | None],
             "unknown": unknown}
 
 
+def _loaded_quantization(item: Mapping[str, Any]) -> str | None:
+    quant = item.get("quantization")
+    if isinstance(quant, Mapping):
+        quant = quant.get("name")
+    return quant.strip().lower() if isinstance(quant, str) and quant.strip() else None
+
+
+def _loaded_context(item: Mapping[str, Any]) -> int | None:
+    for key in ("contextLength", "context_length"):
+        if type(item.get(key)) is int:
+            return item[key]
+    return None
+
+
+def _check_loaded_instance(item: Mapping[str, Any], candidate: Mapping[str, Any],
+                           refusals: list[str], facts: dict[str, Any]) -> None:
+    """The loaded instance must be the declared candidate: model key, quantization and a context at
+    least the frozen one (LM Studio ignores the requested ``-c`` for some builds: the value it
+    really loaded is read, never assumed). An absent value refuses (unknown is not a pass)."""
+    context, quant = _loaded_context(item), _loaded_quantization(item)
+    facts["loaded_context_length"], facts["loaded_quantization"] = context, quant
+    facts["loaded_model_key"] = item.get("modelKey")
+    minimum = candidate.get("min_context")
+    if minimum is not None:
+        if context is None:
+            refusals.append("loaded_context_unknown")
+        elif context < minimum:
+            refusals.append(f"loaded_context_below_minimum:{context}<{minimum}")
+    wanted_quant = candidate.get("quantization")
+    if wanted_quant is not None:
+        if quant is None:
+            refusals.append("loaded_quantization_unknown")
+        elif quant != wanted_quant.strip().lower():
+            refusals.append(f"loaded_quantization_differs:{quant}!={wanted_quant}")
+    wanted_key = candidate.get("lm_studio_key")
+    if wanted_key is not None:
+        if item.get("modelKey") is None:
+            refusals.append("loaded_model_key_unknown")
+        elif item["modelKey"] != wanted_key:
+            refusals.append(f"loaded_model_key_differs:{item['modelKey']}!={wanted_key}")
+
+
 def preflight(campaign: Mapping[str, Any], expected_model: str,
               run: Callable[[Sequence[str]], str | None] = default_run,
-              disk_free_gib: Callable[[], float] | None = None) -> dict[str, Any]:
-    """Machine facts against the frozen coordinates; refuses on any difference. Loads nothing."""
+              disk_free_gib: Callable[[], float] | None = None,
+              candidate: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Machine facts against the frozen coordinates; refuses on any difference. Loads nothing.
+    ``candidate`` (its entry of the campaign) adds the loaded-instance checks: context length,
+    quantization and model key read from ``lms ps --json``."""
     frozen, refusals = campaign["frozen_machine"], []
     facts: dict[str, Any] = {}
 
@@ -336,13 +494,16 @@ def preflight(campaign: Mapping[str, Any], expected_model: str,
     if loaded:
         try:
             items = json.loads(loaded)
-            ids = sorted({str(i.get("identifier") or i.get("modelKey")) for i in items})
+            by_id = {str(i.get("identifier") or i.get("modelKey")): i for i in items}
+            ids = sorted(by_id)
         except (ValueError, AttributeError, TypeError):
             refusals.append("lms_ps_unparseable")
         else:
             facts["loaded_models"] = ids
             if expected_model not in ids:
                 refusals.append("expected_model_not_loaded")
+            elif candidate:
+                _check_loaded_instance(by_id[expected_model], candidate, refusals, facts)
             refusals.extend(f"other_model_loaded:{i}" for i in ids if i != expected_model)
     facts.pop("loaded_models_raw")
     free = disk_free_gib() if disk_free_gib else shutil.disk_usage(Path.home()).free / 2**30
@@ -356,13 +517,18 @@ def preflight(campaign: Mapping[str, Any], expected_model: str,
 def dry_run_facts(campaign: Mapping[str, Any], expected_model: str) -> Callable[[Sequence[str]], str]:
     """Canned machine facts matching the frozen coordinates (dry run only; no command is run)."""
     frozen = campaign["frozen_machine"]
+    declared = next((c for c in campaign["candidates"].values() if c["model"] == expected_model), {})
+    loaded = {"identifier": expected_model,
+              **({"modelKey": declared["lm_studio_key"]} if "lm_studio_key" in declared else {}),
+              **({"contextLength": declared["min_context"]} if "min_context" in declared else {}),
+              **({"quantization": declared["quantization"]} if "quantization" in declared else {})}
     answers = {
         ("sysctl", "-n", "machdep.cpu.brand_string"): f"Apple {frozen['chip_contains']}",
         ("sysctl", "-n", "hw.memsize"): str(frozen["memory_gib"] * 2**30),
         ("sw_vers", "-productVersion"): frozen["os_version"],
         ("lms", "version"): frozen["lm_studio_version_contains"],
         ("lms", "runtime", "ls"): frozen["mlx_runtime_contains"],
-        ("lms", "ps", "--json"): json.dumps([{"identifier": expected_model}]),
+        ("lms", "ps", "--json"): json.dumps([loaded]),
         ("sysctl", "-n", "vm.swapusage"): "total = 1024.00M  used = 100.00M  free = 924.00M",
         ("memory_pressure",): "System-wide memory free percentage: 80%",
         ("ps", "-axo", "rss=,command="): ""}
@@ -376,9 +542,25 @@ def _sb(path: str | Path) -> str:
     return f'"{real}"'
 
 
-def sandbox_profile(*, writable: Sequence[Path], deny_read: Sequence[Path], network: str) -> str:
+def _metadata_ancestors(paths: Sequence[Path], home: Path) -> list[Path]:
+    """Every directory from ``home`` down to (and excluding) each path inside it: a process must be able
+    to ``stat`` them to reach what it may read (only their metadata, never their content or listing)."""
+    found: dict[str, Path] = {}
+    for path in paths:
+        real = Path(os.path.realpath(path))
+        if real != home and home in real.parents:
+            for parent in (home, *reversed([p for p in real.parents if home in p.parents])):
+                found.setdefault(str(parent), parent)
+    return list(found.values())
+
+
+def sandbox_profile(*, writable: Sequence[Path], deny_read: Sequence[Path], network: str,
+                    deny_home: Path | None = None, allow_read: Sequence[Path] = ()) -> str:
     """sandbox-exec profile: file writes only under ``writable``, no read of ``deny_read``, and
-    (``network == "loopback"``) no network except loopback."""
+    (``network == "loopback"``) no network except loopback. With ``deny_home`` (the user's REAL home)
+    every file read under it is denied first, then only ``writable`` and ``allow_read`` are allowed
+    back (and the metadata of their ancestors up to the home); ``deny_read`` comes last, so it still
+    wins: the explicit list is a second layer."""
     for root in writable:  # a denied read path around a writable root would break the arm silently
         for denied in deny_read:
             real_w, real_d = Path(os.path.realpath(root)), Path(os.path.realpath(denied))
@@ -388,6 +570,14 @@ def sandbox_profile(*, writable: Sequence[Path], deny_read: Sequence[Path], netw
     lines = ["(version 1)", "(allow default)", "(deny file-write*)",
              "(allow file-write* " + " ".join(f"(subpath {_sb(p)})" for p in writable)
              + ' (literal "/dev/null") (literal "/dev/dtracehelper") (literal "/dev/tty"))']
+    if deny_home is not None:
+        home = Path(os.path.realpath(deny_home))
+        keep = [*writable, *allow_read]
+        lines.append(f"(deny file-read* (subpath {_sb(home)}))")
+        lines.append("(allow file-read* " + " ".join(f"(subpath {_sb(p)})" for p in keep) + ")")
+        ancestors = _metadata_ancestors(keep, home)
+        if ancestors:
+            lines.append("(allow file-read-metadata " + " ".join(f"(literal {_sb(p)})" for p in ancestors) + ")")
     if deny_read:
         lines.append("(deny file-read* " + " ".join(f"(subpath {_sb(p)})" for p in deny_read) + ")")
     if network == "loopback":
@@ -408,8 +598,9 @@ def read_deny_list(*, repo: Path, home: str | Path, state_dir: Path, input_paths
     """Paths a candidate may not read: every checkout and worktree of this repository, the state
     directory, the parent directory of each launcher input (envelope, campaign, snapshot,
     manifest), and the sensitive entries of the user's real home (configuration, plugin cache,
-    SSH/GPG/AWS, keychains). Explicit deny list on top of ``(allow default)``: not a default-deny of
-    the home (not verifiable without running the harness; PAT-109)."""
+    SSH/GPG/AWS, keychains). For a local driver this explicit list is the SECOND layer, on top of the
+    default denial of the whole real home (``Runner._home_policy``); for the audit it names what a cloud
+    arm (no sandbox, no read denial) must not touch."""
     names = (isolation or DEFAULT_HOME_DENY)["local" if kind in LOCAL_KINDS else "cloud"]
     paths = [*lfc._checkout_roots(repo), *_worktrees(repo), Path(state_dir),
              *(Path(p).resolve().parent for p in input_paths), *(Path(home) / n for n in names)]
@@ -440,13 +631,15 @@ def sandbox_available() -> bool:
     return sys.platform == "darwin" and shutil.which("sandbox-exec") is not None
 
 
-def sandbox_text(driver: Mapping[str, Any], writable: Sequence[Path], deny_read: Sequence[Path]) -> str:
+def sandbox_text(driver: Mapping[str, Any], writable: Sequence[Path], deny_read: Sequence[Path],
+                 deny_home: Path | None = None, allow_read: Sequence[Path] = ()) -> str:
     """The profile of one driver, or a ``RunnerError`` when isolation cannot be enforced. Pure: the
     runner calls it before any claim or reservation, so a configuration error costs nothing."""
     if not sandbox_available():
         raise RunnerError("sandbox-exec is unavailable: isolation cannot be enforced")
     return sandbox_profile(writable=list(writable), deny_read=list(deny_read),
-                           network=driver.get("network", "loopback"))
+                           network=driver.get("network", "loopback"), deny_home=deny_home,
+                           allow_read=list(allow_read))
 
 
 # ------------------------------------------------------------------------- stream parsing
@@ -457,18 +650,26 @@ class StreamStats:
     def __init__(self, stream: Mapping[str, Any] | None):
         self.stream = stream or {"format": "none"}
         self.known = self.stream.get("format") == "omp-json"
+        self.claude = self.stream.get("format") == "claude-stream-json"
+        self.init_tools: list[str] | None = None  # tool names of the host ``system/init`` event
         self.steps = 0 if self.known else None
         self.tokens: dict[str, int] | None = {"input": 0, "output": 0, "reasoning": 0} if self.known else None
         self.speeds: dict[str, list[float]] = {"prefill": [], "generation": []}
 
     def feed(self, line: str) -> None:
-        if not self.known:
+        if not (self.known or self.claude):
             return
         try:
             event = json.loads(line)
         except ValueError:
             return
         if not isinstance(event, dict):
+            return
+        if self.claude:
+            tools = event.get("tools")
+            if (event.get("type") == "system" and event.get("subtype") == "init"
+                    and self.init_tools is None and isinstance(tools, list)):
+                self.init_tools = [t for t in tools if isinstance(t, str)]
             return
         if event.get("type") == "tool_execution_start":
             self.steps += 1
@@ -484,11 +685,27 @@ class StreamStats:
                     if isinstance(usage.get(key), (int, float)):
                         self.speeds[kind].append(float(usage[key]))
 
+    def steps_from_file(self, path: str, keys: Sequence[str]) -> None:
+        """Steps of a harness that writes a trajectory file instead of an event stream (read once the
+        process has ended: the step bound cannot be imposed while it runs)."""
+        try:
+            value: Any = json.loads(Path(path).read_text(encoding="utf-8"))
+            for key in keys:
+                value = value[key]
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            return
+        if type(value) is int and value >= 0:
+            self.steps = value
+
     def summary(self) -> dict[str, Any]:
         unknown: dict[str, str] = {}
         out: dict[str, Any] = {"steps": self.steps, "stream_tokens": self.tokens}
-        if not self.known:
-            unknown["steps"] = unknown["stream_tokens"] = "stream format exposes no events"
+        if self.steps is None:
+            unknown["steps"] = "stream format exposes no events"
+        if self.tokens is None:
+            unknown["stream_tokens"] = "stream format exposes no events"
+        if self.claude:
+            out["init_tools"] = self.init_tools
         for kind in ("prefill", "generation"):
             values = self.speeds[kind]
             out[f"{kind}_tokens_per_second"] = round(sum(values) / len(values), 2) if values else None
@@ -543,7 +760,8 @@ def _substitute(template: str, values: Mapping[str, str]) -> str:
 def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, workdir: Path,
                    scratch: Path, stream_log: Path, max_seconds: float, max_steps: int | None,
                    sandbox: bool, deny_read: Sequence[Path], extra_write: Sequence[Path] = (),
-                   host_env: Mapping[str, str] | None = None) -> dict[str, Any]:
+                   host_env: Mapping[str, str] | None = None, deny_home: Path | None = None,
+                   allow_read: Sequence[Path] = ()) -> dict[str, Any]:
     """Run one arm command: process group killed at ``max_seconds`` (and at ``max_steps`` when
     the event stream exposes steps), stdin closed, whitelisted environment, optional sandbox."""
     host_env = os.environ if host_env is None else host_env
@@ -557,14 +775,17 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
             target = home / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(_substitute(content, values), encoding="utf-8")
+    env.update({k: _substitute(v, values) for k, v in (driver.get("env_set") or {}).items()})
+    for rel_dir in driver.get("make_dirs") or []:  # e.g. the harness's own configuration directory
+        Path(_substitute(rel_dir, values)).mkdir(parents=True, exist_ok=True)
     argv = [_substitute(a, values) for a in driver["argv"]]
     profile_dir = None
     if sandbox:
-        sandbox_text(driver, [workdir, scratch, *extra_write], deny_read)  # refuse before any file
+        sandbox_text(driver, [workdir, scratch, *extra_write], deny_read, deny_home, allow_read)  # no file yet
         profile_dir = Path(os.path.realpath(tempfile.mkdtemp(prefix="foundry-sb-")))
         profile = profile_dir / "profile.sb"  # it names every denied path: the arm may not read it
         profile.write_text(sandbox_text(driver, [workdir, scratch, *extra_write],
-                                        [*deny_read, profile_dir]), encoding="utf-8")
+                                        [*deny_read, profile_dir], deny_home, allow_read), encoding="utf-8")
         argv = ["sandbox-exec", "-f", str(profile), *argv]
     stats = StreamStats(driver.get("stream"))
     state = {"step_limit": False, "timed_out": False}
@@ -606,20 +827,774 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
                     "wall_seconds": round(time.monotonic() - started, 3), "start_error": str(exc)[:200],
                     "stream": stats.summary(), "launcher_kill": False}
     finally:
-        if proc is not None:  # whatever was started is killed and reaped, however the call ends
-            _kill_group(proc)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                proc.wait(timeout=10)
-        _restore_handlers(previous)
-        if profile_dir is not None:
-            shutil.rmtree(profile_dir, ignore_errors=True)
+        gate["defer"] = True  # a signal during the cleanup is noted and raised once it is complete
+        try:
+            if proc is not None:  # whatever was started is killed and reaped, however the call ends
+                _kill_group(proc)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=10)
+        finally:
+            try:
+                if profile_dir is not None:
+                    shutil.rmtree(profile_dir, ignore_errors=True)
+            finally:
+                _restore_handlers(previous)
+                _deliver(gate)  # never masked: raised after the handlers are back
     code = proc.returncode
+    trajectory = driver.get("trajectory")
+    if trajectory:
+        stats.steps_from_file(_substitute(trajectory["file"], values), trajectory["steps_path"])
+        if max_steps is not None and stats.steps is not None and stats.steps > max_steps:
+            state["step_limit"] = True  # a posteriori: the harness's own bound did not hold the arm
     launcher_kill = state["timed_out"] or state["step_limit"]
     return {"exit_code": code if code is not None and code >= 0 else None,
             "signal": -code if code is not None and code < 0 else None,
             "timed_out": state["timed_out"], "step_limit_hit": state["step_limit"],
             "launcher_kill": launcher_kill, "start_error": None,
             "wall_seconds": round(time.monotonic() - started, 3), "stream": stats.summary()}
+
+
+# ---------------------------------------------------- pinned harness and transcript checks (PAT-111)
+
+def tool_allowlist_refusal(driver: Mapping[str, Any], stream_summary: Mapping[str, Any]) -> str | None:
+    """Why a cloud arm's record must be refused: the host ``system/init`` event of the stream does not
+    prove the arm's tool set. With ``allowed_tools`` declared (the pinned cloud drivers: Bash, Edit,
+    Read, Write) the init tools must be a subset of it, so a new host version that adds a tool (web,
+    sub-agent, workflow...) is refused rather than trusted; without it only a sub-agent tool
+    (``Agent``/``Task``) is refused. A sub-agent transcript would be missed by the token reading (one
+    file per session id). ``None`` when proven or when the driver is not a Claude stream driver."""
+    if (driver.get("stream") or {}).get("format") != "claude-stream-json":
+        return None
+    tools = stream_summary.get("init_tools")
+    if tools is None:
+        return "no system/init event in the stream: cannot assert the arm's tool set"
+    allowed = driver.get("allowed_tools")
+    if allowed is not None:
+        extra = sorted(set(tools) - set(allowed))
+        return f"tool(s) outside the allowlist available to the arm: {', '.join(extra)}" if extra else None
+    found = sorted(set(tools) & set(SUBAGENT_TOOLS))
+    return f"sub-agent tool available to the arm: {', '.join(found)}" if found else None
+
+
+def installed_version(executable: Path, package: str) -> str | None:
+    """Version of ``package`` installed in the virtual environment of ``executable`` (read from its
+    ``dist-info``; the harness is never run to ask). ``None`` when absent or ambiguous."""
+    dist = re.sub(r"[-_.]+", "_", package).lower()
+    found = {d.name[len(dist) + 1:-len(".dist-info")]
+             for d in Path(executable).parent.parent.glob(f"lib/python*/site-packages/{dist}-*.dist-info")}
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def resolve_executable(driver: Mapping[str, Any], host_env: Mapping[str, str]) -> dict[str, str] | None:
+    """The harness executable of a driver that takes it from an operator variable (no absolute path
+    is committed): it must be an absolute path to an executable file whose installed package has the
+    pinned version. The path is returned for the argv; the record keeps only the variable name and the
+    version."""
+    spec = driver.get("executable")
+    if not spec:
+        return None
+    value = host_env.get(spec["env"])
+    if not value or not os.path.isabs(value):
+        raise RunnerError(f"{spec['env']} must hold the absolute path of the harness executable")
+    path = Path(value)
+    if not (path.is_file() and os.access(path, os.X_OK)):
+        raise RunnerError(f"{spec['env']} does not name an executable file")
+    version = installed_version(path, spec["package"])
+    if version != spec["version"]:
+        raise RunnerError(f"{spec['package']} installed for {spec['env']} is {version or 'unknown'}, "
+                          f"the pinned version is {spec['version']}")
+    return {"placeholder": spec["placeholder"], "path": str(path), "env": spec["env"],
+            "package": spec["package"], "version": version}
+
+
+_PATH_KEYS = frozenset({"path", "file_path", "notebook_path", "cwd", "directory", "dir", "file",
+                        "filename", "paths", "file_paths"})
+# Tools whose ``pattern`` argument is a path glob (Claude ``Glob``, omp ``find``), not a text pattern.
+_GLOB_TOOLS = frozenset({"glob", "find"})
+_PATH_TOKEN = re.compile(r"(?:~|\$\{?HOME\}?|(?<![\w.~$}/])/|(?<![\w.~$}/])\.\.?/)[^\s'\"`;|&<>(),]*")
+
+
+def _path_tokens(text: str) -> list[str]:
+    """Path-like tokens of free text, minus a token made only of slashes (``/``, ``//``): that is the
+    division / floor-division operator of code, not a path."""
+    return [t for t in _PATH_TOKEN.findall(text) if t.strip("/")]
+
+
+def _tool_calls(lines: Sequence[str]) -> list[tuple[str, Any]]:
+    """Every tool call of a stream: Claude ``tool_use`` blocks of assistant messages and omp
+    ``tool_execution_start`` events, as ``(tool name, arguments)``."""
+    calls: list[tuple[str, Any]] = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "tool_execution_start":
+            calls.append((str(event.get("toolName")), event.get("args")))
+        elif event.get("type") == "assistant" and isinstance(event.get("message"), dict):
+            for block in event["message"].get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    calls.append((str(block.get("name")), block.get("input")))
+    return calls
+
+
+def _strings(value: Any, key: str | None = None) -> list[tuple[str | None, str]]:
+    if isinstance(value, str):
+        return [(key, value)]
+    if isinstance(value, Mapping):
+        return [x for k, v in value.items() for x in _strings(v, str(k))]
+    if isinstance(value, list):
+        return [x for v in value for x in _strings(v, key)]
+    return []
+
+
+def _within(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+# ---- command audit (best effort: the stream shows the command line, not what a script does)
+_COMMAND_KEYS = frozenset({"command", "cmd"})
+_ASSIGNMENT = re.compile(r"^\w+=")
+_WRAPPERS = frozenset({"env", "sudo", "command", "exec", "nohup", "time", "nice", "xargs", "timeout",
+                       "builtin"})
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash"})
+_KEYWORDS = frozenset({"{", "!", "if", "then", "else", "elif", "do", "while", "until"})  # before a command
+# A heredoc fed to one of these (``bash <<EOF``, ``cat <<EOF | sh``, ``source /dev/stdin <<EOF``) is RUN.
+_HEREDOC_RUNNERS = _SHELLS | {"source", ".", "eval"}
+# Executables a cloud arm has no business running (tracker, merge, network, other agents, keychain).
+FORBIDDEN_EXECUTABLES = frozenset({"gh", "curl", "wget", "claude", "codex", "omp", "ssh", "scp", "nc",
+                                   "security", "open", "npm"})
+FORBIDDEN_GIT = frozenset({"push", "remote", "clone", "fetch", "pull"})
+_WORD_BREAK = " \t\n;&|()"  # a ``#`` right after one of these (or at the start) opens a comment
+_HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^'\n]*'|\"[^\"\n]*\"|\\?[^\s;&|<>()'\"`]+)+)")
+_QUOTED_PIECES = re.compile(r"[\s'\"`;|&()]+")
+_REDIRECTION = re.compile(r"^\d*(?:<<<|<<-?|>>|<>|>\||[<>])&?")
+
+
+def _closing(text: str, start: int) -> int:
+    """Index of the ``)`` that closes a ``$(`` whose content starts at ``start`` (quotes skipped),
+    or ``len(text)`` when it is never closed."""
+    depth, i = 1, start
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            i += 1
+        elif ch in "'\"":
+            end = text.find(ch, i + 1)
+            i = len(text) if end < 0 else end
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return len(text)
+
+
+def _segments(command: str) -> list[list[tuple[str, str]]]:
+    """Simple command segments of a shell command line, split on ``&& || ; | & ( )`` and newlines
+    OUTSIDE quotes only (``grep -E "claude|codex" src`` is one segment), a ``#`` comment dropped. Each
+    word is ``(neutral, raw)``: ``raw`` has its quotes removed; ``neutral`` also has what the shell does
+    NOT expand neutralised for the path audit (a ``~`` inside quotes, a ``$`` inside single quotes
+    become ``_``). A ``$(...)`` or a backquoted command, unquoted or inside double quotes, is run: its
+    own segments come first. Not a shell parser: a command built at run time or hidden in a script is
+    not seen."""
+    segments: list[list[tuple[str, str]]] = []
+    words: list[tuple[str, str]] = []
+    neutral: list[str] = []
+    raw: list[str] = []
+    started = False
+    i, n = 0, len(command)
+
+    def end_word() -> None:
+        nonlocal started
+        if started:
+            words.append(("".join(neutral), "".join(raw)))
+        neutral.clear()
+        raw.clear()
+        started = False
+
+    def end_segment() -> None:
+        nonlocal words
+        end_word()
+        if words:
+            segments.append(words)
+        words = []
+
+    def add(ch: str, quote: str | None) -> None:
+        nonlocal started
+        started = True
+        raw.append(ch)
+        neutral.append("_" if quote and (ch == "~" or (ch == "$" and quote == "'")) else ch)
+
+    while i < n:
+        ch = command[i]
+        if ch in " \t":
+            end_word()
+        elif ch in "\n;&|()":
+            end_segment()
+        elif ch == "#" and not started:
+            newline = command.find("\n", i)
+            i = n if newline < 0 else newline
+            continue
+        elif ch == "\\":
+            if i + 1 < n and command[i + 1] != "\n":
+                add(command[i + 1], "\\")
+            i += 2
+            continue
+        elif ch == "'":
+            end = command.find("'", i + 1)
+            end = n if end < 0 else end
+            for c in command[i + 1:end]:
+                add(c, "'")
+            started = True
+            i = end + 1
+            continue
+        elif command.startswith("$(", i):
+            end = _closing(command, i + 2)
+            segments += _segments(command[i + 2:end])
+            started = True
+            i = end + 1
+            continue
+        elif ch == "`":
+            end = command.find("`", i + 1)
+            end = n if end < 0 else end
+            segments += _segments(command[i + 1:end])
+            started = True
+            i = end + 1
+            continue
+        elif ch == '"':
+            started = True
+            j = i + 1
+            while j < n and command[j] != '"':
+                c = command[j]
+                if c == "\\" and j + 1 < n:
+                    if command[j + 1] in '$`"\\':
+                        add(command[j + 1], '"')
+                    elif command[j + 1] != "\n":
+                        add(c, '"')
+                        add(command[j + 1], '"')
+                    j += 2
+                    continue
+                if command.startswith("$(", j):
+                    end = _closing(command, j + 2)
+                    segments += _segments(command[j + 2:end])
+                    j = end + 1
+                    continue
+                if c == "`":
+                    end = command.find("`", j + 1)
+                    end = n if end < 0 else end
+                    segments += _segments(command[j + 1:end])
+                    j = end + 1
+                    continue
+                add(c, '"')
+                j += 1
+            i = j + 1
+            continue
+        else:
+            add(ch, None)
+        i += 1
+    end_segment()
+    return segments
+
+
+def _strip_wrappers(tokens: Sequence[str]) -> list[str]:
+    """Drop leading ``VAR=value``, ``env``, ``sudo``, ``command``, ``exec``, ``nohup``, ``time``,
+    ``nice``, ``xargs``, ``timeout`` and their options, and the shell keywords that precede a command
+    (``{``, ``!``, ``if``, ``then``, ``else``, ``elif``, ``do``, ``while``, ``until``)."""
+    rest = list(tokens)
+    while rest:
+        if _ASSIGNMENT.match(rest[0]) or rest[0] in _KEYWORDS:
+            rest.pop(0)
+        elif os.path.basename(rest[0].lstrip("\\({")) in _WRAPPERS:
+            wrapper = os.path.basename(rest.pop(0).lstrip("\\({"))
+            while rest and (rest[0].startswith("-") or _ASSIGNMENT.match(rest[0]) or (
+                    wrapper == "timeout" and re.fullmatch(r"[\d.]+[smhd]?", rest[0]))):
+                rest.pop(0)
+        else:
+            break
+    return rest
+
+
+def _unwrapped(segment: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``segment`` without its wrappers (decided on the raw words)."""
+    raw = [r for _, r in segment]
+    return list(segment[len(raw) - len(_strip_wrappers(raw)):])
+
+
+def _shell_script(raw: Sequence[str]) -> str | None:
+    """The script a ``sh|bash|zsh|dash -c <script>`` segment (wrappers stripped) runs, else ``None``."""
+    if not raw or os.path.basename(raw[0].lstrip("\\({")) not in _SHELLS:
+        return None
+    for n, arg in enumerate(raw[1:], 1):
+        if arg.startswith("-") and "c" in arg[1:]:
+            return raw[n + 1] if n + 1 < len(raw) else ""
+    return None
+
+
+def _forbidden_commands(command: str) -> list[str]:
+    """The forbidden executables the command line runs (after wrappers, descending into ``sh -c``)."""
+    found: list[str] = []
+    for segment in _segments(command):
+        rest = [r for _, r in _unwrapped(segment)]
+        if not rest:
+            continue
+        script = _shell_script(rest)
+        if script is not None:  # the script is a command line, with its own heredocs
+            stripped, executed = _without_heredocs(script)
+            found += [x for text in (stripped, *executed) for x in _forbidden_commands(text)]
+        elif (label := _forbidden_label(rest)) is not None:
+            found.append(label)
+    return found
+
+
+def _forbidden_label(rest: Sequence[str]) -> str | None:
+    """The forbidden executable a segment (wrappers stripped) starts with, or ``None``."""
+    exe, args = os.path.basename(rest[0].lstrip("\\({")), list(rest[1:])
+    if exe in FORBIDDEN_EXECUTABLES:
+        return exe
+    if exe == "git":
+        skip = False
+        for arg in args:
+            if skip:
+                skip = False
+            elif arg in ("-C", "-c", "--git-dir", "--work-tree", "--namespace"):
+                skip = True
+            elif not arg.startswith("-"):
+                return f"git {arg}" if arg in FORBIDDEN_GIT else None
+        return None
+    if re.fullmatch(r"python[\d.]*", exe) and "-m" in args[:-1]:
+        module = args[args.index("-m") + 1]
+        if module.startswith("http"):
+            return "python -m http"
+        if module == "pip" and "install" in args:
+            return "pip install"
+    if exe in ("pip", "pip3") and "install" in args:
+        return "pip install"
+    return None
+
+
+def _heredoc_end(command: str, start: int, delimiter: str, tabs: bool) -> tuple[int, int] | None:
+    """``(start of the delimiter line, end of it)`` of a heredoc body that starts at ``start``, or
+    ``None`` when no line closes it."""
+    pos = start
+    while True:
+        newline = command.find("\n", pos)
+        end = len(command) if newline < 0 else newline
+        line = command[pos:end]
+        if (line.lstrip("\t") if tabs else line) == delimiter:
+            return pos, (end if newline < 0 else end + 1)
+        if newline < 0:
+            return None
+        pos = newline + 1
+
+
+def _substitutions(body: str) -> list[str]:
+    """The commands a heredoc body with an UNQUOTED delimiter runs when the shell expands it: every
+    ``$(...)`` and backquoted command (an escaped ``\\$`` stays literal)."""
+    found, i = [], 0
+    while i < len(body):
+        if body[i] == "\\":
+            i += 2
+            continue
+        if body.startswith("$(", i):
+            end = _closing(body, i + 2)
+            found.append(body[i + 2:end])
+            i = end + 1
+            continue
+        if body[i] == "`":
+            end = body.find("`", i + 1)
+            end = len(body) if end < 0 else end
+            found.append(body[i + 1:end])
+            i = end + 1
+            continue
+        i += 1
+    return found
+
+
+def _runs_heredoc(line: str) -> bool:
+    """Whether a segment of the line that holds a ``<<`` feeds its input to a shell (``bash <<EOF``,
+    ``sh -s <<EOF``, ``cat <<EOF | bash``, ``source /dev/stdin <<EOF``)."""
+    for segment in _segments(line):
+        rest = [r for _, r in _unwrapped(segment)]
+        if rest and os.path.basename(rest[0].lstrip("\\({")) in _HEREDOC_RUNNERS \
+                and _shell_script(rest) is None:
+            return True
+    return False
+
+
+def _without_heredocs(command: str) -> tuple[str, list[str]]:
+    """The command line without its heredoc bodies and ``#`` comments, and the bodies a shell RUNS.
+    The shell never runs nor expands a heredoc body given to ``cat``, ``python3 -`` or ``tee`` (a test
+    file that lists ``"gh pr merge 12"``, a doc that names ``~/.config/foundry``): it is text. A body
+    fed to a shell (see ``_runs_heredoc``) is returned to be audited as a command line. A ``<<`` inside
+    quotes or arithmetic (``$((1 << 2))``) is not a heredoc; a heredoc whose delimiter line never comes
+    is kept as it is (audited). With an UNQUOTED delimiter (``<<EOF``) the shell expands the body: its
+    ``$(...)`` and backquoted commands are returned too (``_substitutions``)."""
+    out: list[str] = []
+    executed: list[str] = []
+    stack: list[str] = []  # open contexts: ' " $( ( ` ((
+    pending: list[tuple[str, bool, bool]] = []  # (delimiter, ``<<-``, quoted delimiter)
+    line_start, i, n = 0, 0, len(command)
+    while i < n:
+        ch = command[i]
+        top = stack[-1] if stack else ""
+        if top == "'":
+            if ch == "'":
+                stack.pop()
+        elif top == "((":
+            if command.startswith("))", i):
+                stack.pop()
+                out.append("))")
+                i += 2
+                continue
+        elif ch == "\\" and i + 1 < n:
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        elif command.startswith("$((", i):
+            stack.append("((")
+            out.append("$((")
+            i += 3
+            continue
+        elif command.startswith("$(", i):
+            stack.append("$(")
+            out.append("$(")
+            i += 2
+            continue
+        elif ch == "`":
+            if top == "`":
+                stack.pop()
+            else:
+                stack.append("`")
+        elif top == '"':
+            if ch == '"':
+                stack.pop()
+        elif ch in "'\"":
+            stack.append(ch)
+        elif command.startswith("((", i) and (i == 0 or command[i - 1] in _WORD_BREAK):
+            stack.append("((")
+            out.append("((")
+            i += 2
+            continue
+        elif ch == "(":
+            stack.append("(")
+        elif ch == ")":
+            if top in ("(", "$("):
+                stack.pop()
+        elif ch == "#" and (i == 0 or command[i - 1] in _WORD_BREAK):
+            newline = command.find("\n", i)
+            i = n if newline < 0 else newline
+            continue
+        elif command.startswith("<<<", i):  # a here-string: its word is on the line, no body
+            out.append("<<<")
+            i += 3
+            continue
+        elif command.startswith("<<", i) and (match := _HEREDOC.match(command, i)):
+            word = re.sub(r"['\"\\]", "", match.group(2))
+            pending.append((word, match.group(1) == "-", word != match.group(2)))
+            out.append(match.group(0))
+            i = match.end()
+            continue
+        elif ch == "\n" and pending:
+            out.append("\n")
+            holding, start = "".join(out[line_start:]), i + 1
+            bodies: list[str] = []
+            for delimiter, tabs, quoted in pending:
+                found = _heredoc_end(command, start, delimiter, tabs)
+                if found is None:  # never closed: what follows stays audited as commands
+                    break
+                bodies.append(command[start:found[0]])
+                if not quoted:  # ``<<EOF``: the shell runs the body's ``$(...)`` and backquotes
+                    executed += _substitutions(bodies[-1])
+                start = found[1]
+            pending = []
+            if holding.rstrip().endswith("|"):  # ``cat <<EOF |`` <body> ``bash``: the pipe goes on after
+                holding += command[start:].split("\n", 1)[0]
+            if _runs_heredoc(holding):
+                executed += bodies
+            i = start
+            line_start = len(out)
+            continue
+        out.append(ch)
+        if ch == "\n" and not stack:
+            line_start = len(out)
+        i += 1
+    return "".join(out), executed
+
+
+def _pathlike(token: str) -> bool:
+    if token and not token.strip("/"):
+        return False  # ``/``, ``//``: an operator, not a path (unless a reader takes it, see below)
+    return token.startswith(("~", "$HOME", "${HOME}", "/")) or token in (".", "..") or "/" in token
+
+
+# Executables that, given a bare ``/``, walk or read the filesystem root (``find / -name x``).
+_ROOT_READERS = frozenset({"find", "rg", "ls", "du", "tree", "cat"})
+
+
+def _reads_root(tokens: Sequence[str]) -> bool:
+    """Whether a bare ``/`` in this segment (wrappers stripped) is a path: an argument of ``find``,
+    ``rg``, ``ls``, ``du``, ``tree``, ``cat`` or of a recursive ``grep`` (``-r``/``-R``)."""
+    if not tokens:
+        return False
+    exe = os.path.basename(tokens[0].lstrip("\\({"))
+    if exe in ("grep", "egrep", "fgrep"):
+        return any(t in ("--recursive", "--dereference-recursive")
+                   or (t.startswith("-") and not t.startswith("--") and ("r" in t or "R" in t))
+                   for t in tokens[1:])
+    return exe in _ROOT_READERS
+
+
+def _unquoted_expansions(command: str) -> str:
+    """The command with what the shell does NOT expand neutralised for the path audit: a ``~`` inside
+    single or double quotes and a ``$`` inside single quotes become ``_`` (``grep -rn '~/.claude' .``
+    searches the text ``~/.claude``, it reads nothing under the home). An unquoted ``~`` or ``$HOME``
+    and a ``$HOME`` inside double quotes are kept (``cat ~/.config/x`` stays an access). Expects the
+    command without its heredoc bodies (``_without_heredocs``)."""
+    out, quote, escaped = [], None, False
+    for ch in command:
+        if escaped:
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            escaped = True
+        elif quote is None and ch in "'\"":
+            quote = ch
+        elif ch == quote:
+            quote = None
+        elif quote is not None and (ch == "~" or (ch == "$" and quote == "'")):
+            ch = "_"
+        out.append(ch)
+    return "".join(out)
+
+
+def _expand(token: str, home: str) -> str | None:
+    """``~``, ``$HOME`` and ``${HOME}`` as the home directory; ``~user`` is not expanded (``None``)."""
+    if token.startswith("${HOME}"):
+        return home + token[len("${HOME}"):]
+    if token.startswith("$HOME"):
+        return home + token[len("$HOME"):]
+    if token == "~" or token.startswith("~/"):
+        return home + token[1:]
+    return None if token.startswith("~") else token
+
+
+def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bool]]:
+    """Every path a command line names, resolved against the working directory the line has at that
+    point (``cd`` is followed): ``find ~``, ``cd ~ && cat .claude/x``, ``src/../../..`` included; a bare
+    ``/`` only as an argument of a filesystem reader (``find / -name x``, see ``_reads_root``); the
+    script of a ``sh -c`` is read the same way. The flag says the path was RELATIVE to the bundle (an
+    honest arm never climbs out of it). ``home`` is what ``~`` and ``$HOME`` mean for the arm. Expects
+    the command without its heredoc bodies (``_without_heredocs``)."""
+    cwd, out = bundle, []
+
+    def resolve(token: str) -> tuple[Path, bool] | None:
+        expanded = _expand(token, home)
+        if expanded is None:
+            return None
+        relative = not os.path.isabs(expanded) and cwd == bundle
+        return Path(os.path.realpath(expanded if os.path.isabs(expanded) else cwd / expanded)), relative
+
+    def walk(text: str, depth: int = 0) -> None:
+        nonlocal cwd
+        for segment in _segments(text):
+            words = _unwrapped(segment)
+            tokens = [w for w, _ in words]
+            script = _shell_script([r for _, r in words])
+            if script is not None and depth < 8:
+                stripped, executed = _without_heredocs(script)
+                for text in (stripped, *executed):
+                    walk(text, depth + 1)
+                continue
+            if tokens and os.path.basename(tokens[0]) == "cd":
+                target = next((t for t in tokens[1:] if not t.startswith("-")), "~")
+                found = resolve(target)
+                if found is not None:
+                    out.append(found)
+                    cwd = found[0]
+                continue
+            root_reader = _reads_root(tokens)
+            for word in tokens:  # a quoted word is also read piece by piece (``python3 -c "open('../x')"``)
+                for token in dict.fromkeys([word, *_QUOTED_PIECES.split(word)]):
+                    token = _REDIRECTION.sub("", token)
+                    if token.startswith("-"):
+                        token = token.partition("=")[2]
+                    if token and (_pathlike(token) or (root_reader and not token.strip("/"))) \
+                            and (found := resolve(token)) is not None:
+                        out.append(found)
+
+    walk(command)
+    return out
+
+
+def _result_token(token: str) -> str:
+    """A path token of result text without a ``file.py:12:`` location suffix or a trailing ``:``/``.``."""
+    return re.sub(r":\d+(?::\d+)?:?$", "", token).rstrip(":.")
+
+
+def base_literals(bundle: Path, home: str) -> frozenset[str]:
+    """Literal absolute paths under the real ``home`` that the bundle's OWN files contain (a qualification
+    doc of the base that records ``/Users/<u>/.codex/worktrees/...``), with the token shapes of the
+    tool-result scan. Read with ``git grep`` on the bundle as built, BEFORE any arm runs (and before a
+    previous attempt's patch is applied): the arm cannot add to it. Such a path shown in a tool RESULT is
+    the text of a bundle file, not an access (``audit_transcript``)."""
+    prefixes = list(dict.fromkeys(p.rstrip("/") + "/" for p in (str(home), os.path.realpath(home)) if p))
+    patterns = [arg for prefix in prefixes for arg in ("-e", prefix)]
+    out = _git_in(bundle, "grep", "-I", "-h", "-F", *patterns, ok=(0, 1))
+    found = set()
+    for line in out.decode("utf-8", "replace").splitlines():
+        for token in _path_tokens(line):
+            token = _result_token(token)
+            if token.startswith(tuple(prefixes)):
+                found.add(token)
+    return frozenset(found)
+
+
+def _tool_results(lines: Sequence[str]) -> list[str]:
+    """Text of every tool result a stream exposes (Claude ``tool_result`` blocks of user messages,
+    omp ``tool_execution_end`` events)."""
+    texts: list[str] = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "user" and isinstance(event.get("message"), dict):
+            content = event["message"].get("content")
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    texts += [t for _, t in _strings(block.get("content"))]
+        elif event.get("type") in ("tool_execution_end", "tool_execution_update"):
+            texts += [t for _, t in _strings(event.get("result"))]
+    return texts
+
+
+def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive: Sequence[Path],
+                     home: str, arm_home: str | None = None,
+                     own_session: tuple[str, str] | None = None,
+                     literals: Collection[str] = frozenset(),
+                     sandbox_denied: tuple[str, Sequence[str], Sequence[str]] | None = None) -> list[str]:
+    """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
+    arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
+    commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
+    ``content``, Grep ``pattern``...) is not an access. Paths (relative ones resolved against the bundle,
+    or against the directory of a ``cd``) that fall among ``sensitive`` (plugin cache and the rest of the
+    user's configuration, other checkouts of this repository, the launcher's own files); for a path key
+    or a Bash command also any path that resolves to the real home or below it, to a directory that
+    contains a sensitive path, or to an ancestor of the bundle (``find ~``, ``src/../../..``). In a
+    command, ``~`` and ``$HOME`` are expanded only where the shell expands them (``grep -rn '~/.claude'
+    .`` is clean, ``cat ~/.config/x`` is not), and to ``arm_home``, the HOME the arm really had (the
+    isolated one, inside the attempt directory, for a local arm; the real ``home`` by default). A
+    heredoc body is text unless a shell runs it, a ``#`` comment is text, and a separator inside quotes
+    does not split a command (``grep -E "claude|codex" src``): see ``_without_heredocs`` and
+    ``_segments``. ``tool_result:<path>`` for a LITERAL absolute path under a sensitive root that a tool
+    RESULT shows (``~``/``$HOME`` in result text are not expanded: a file of the bundle that mentions
+    ``~/.claude`` is text, not an access); ``command:<label>`` for a Bash command that runs a forbidden
+    executable (see ``FORBIDDEN_EXECUTABLES``, ``git push|remote|clone|fetch|pull``, ``python -m http``,
+    ``pip install``). ``own_session`` (``(projects_dir, session_id)``, a cloud arm) allows the arm's OWN
+    session directory ``<projects_dir>/*/<session_id>/``, where Claude Code saves a tool output too large
+    for the stream (the result names it, the arm then reads it); another session's directory stays a
+    hit. ``literals`` (``base_literals``): a path whose literal text is one of them is not flagged in a tool
+    RESULT (the arm read a bundle file that mentions it); path keys and commands that name it still are.
+    ``sandbox_denied`` (``(home, allowed, denied)``, a LOCAL arm run under the deny-home profile): a path
+    the arm's own sandbox made unreadable (under ``home`` and outside ``allowed``, or under an entry of
+    the explicit ``denied`` list) is a BLOCKED attempt, not an access, and is not flagged: the read
+    failed (EPERM), nothing reached the arm. Commands, climbs out of the bundle to readable places and
+    readable paths are audited as before. A cloud arm has no such sandbox: never passed for it.
+    Best effort on a command line (a path or a command built at run time, or run by a script, is
+    not seen). A non-empty result makes the attempt ``contaminated``. ``~`` shows as the home directory
+    in the result. Known limit: a token made only of slashes (``/``, ``//``) is the division operator of
+    code, not a path, EXCEPT as an argument of a filesystem reader (``find``, ``grep -r``, ``rg``, ``ls``,
+    ``du``, ``tree``, ``cat``): ``find / -name x -exec cat {} +`` is flagged, while a bare ``/`` reaching
+    the shell any other way (``echo / | xargs ls``, a script) is not seen."""
+    try:
+        lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise RunnerError(f"transcript unreadable, it cannot be audited: {exc}") from None
+    bundle_real, home_real = Path(os.path.realpath(bundle)), Path(os.path.realpath(home))
+    tilde = os.path.realpath(arm_home) if arm_home is not None else str(home_real)
+    allowed = [bundle_real, Path(os.path.realpath(scratch))]
+    roots = [Path(os.path.realpath(p)) for p in sensitive]
+    projects: Path | None = None
+    if own_session is not None and own_session[1]:
+        expanded = _expand(own_session[0], str(home_real))
+        projects = Path(os.path.realpath(os.path.expanduser(own_session[0]) if expanded is None else expanded))
+
+    walled: tuple[Path, list[Path], list[Path]] | None = None
+    if sandbox_denied is not None:
+        walled = (Path(os.path.realpath(sandbox_denied[0])),
+                  [Path(os.path.realpath(p)) for p in sandbox_denied[1]],
+                  [Path(os.path.realpath(p)) for p in sandbox_denied[2]])
+
+    def blocked(path: Path) -> bool:  # the local sandbox refused this read: an attempt, not an access
+        if walled is None:
+            return False
+        w_home, w_allow, w_deny = walled
+        return (any(_within(path, d) for d in w_deny)
+                or (_within(path, w_home) and not any(_within(path, a) for a in w_allow)))
+
+    def permitted(path: Path) -> bool:
+        if any(_within(path, a) for a in allowed) or blocked(path):
+            return True
+        if projects is None or path == projects or projects not in path.parents:
+            return False
+        parts = path.relative_to(projects).parts
+        return len(parts) >= 2 and parts[1] == own_session[1]
+
+    def shown(path: Path) -> str:
+        return str(path).replace(str(home_real), "~", 1)
+
+    hits: dict[str, None] = {}
+    commands: dict[str, None] = {}
+
+    def consider(path: Path, broad: bool, relative: bool = False) -> None:
+        if permitted(path):
+            return
+        if any(_within(path, r) for r in roots) or relative or (broad and (
+                _within(path, home_real) or _within(bundle_real, path)
+                or any(_within(r, path) for r in roots))):
+            hits[shown(path)] = None
+
+    for name, args in _tool_calls(lines):
+        path_keys = _PATH_KEYS | ({"pattern"} if name.lower() in _GLOB_TOOLS else frozenset())
+        for key, text in _strings(args):
+            if key in _COMMAND_KEYS:
+                stripped, executed = _without_heredocs(text)
+                scripts = [stripped, *executed]  # a body a shell runs is a command line too
+                tokens = [t for script in scripts for t in _path_tokens(_unquoted_expansions(script))]
+            elif key in path_keys:
+                tokens = _path_tokens(text) + [text.strip()]
+            else:  # text the arm writes or searches (Edit, Write, Grep pattern...): not an access
+                continue
+            for token in tokens:
+                token = _expand(token, tilde)
+                if token is not None:
+                    consider(Path(os.path.realpath(token if os.path.isabs(token) else bundle / token)),
+                             key in path_keys, key in path_keys and not os.path.isabs(token))
+            if key in _COMMAND_KEYS:
+                for script in scripts:
+                    for path, relative in _command_paths(script, bundle_real, tilde):
+                        consider(path, True, relative)
+                    for found in _forbidden_commands(script):
+                        commands[f"command:{found}"] = None
+    seen: dict[str, None] = {}
+    for text in _tool_results(lines):
+        for token in _path_tokens(text):
+            token = _result_token(token)  # ``file.py:12:`` locations
+            if token in literals:  # the text of a bundle file (``base_literals``), not an access
+                continue
+            if os.path.isabs(token):  # a literal path only: ``~``/``$HOME`` in text are not expanded
+                path = Path(os.path.realpath(token))
+                if any(_within(path, r) for r in roots) and not permitted(path):
+                    seen[f"tool_result:{shown(path)}"] = None
+    return [*sorted(hits), *sorted(seen), *sorted(commands)]
 
 
 # --------------------------------------------------------------------- premium tokens
@@ -676,9 +1651,10 @@ def config_digest(data: Any) -> str:
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def _attempt_key(path: str, pr: Any, task_set: Any, candidate: Any, segment: str, attempt: int
-                 ) -> tuple:
-    return (path, pr, task_set, candidate, segment, attempt)
+def _attempt_key(path: str, pr: Any, task_set: Any, candidate: Any, segment: str, attempt: int,
+                 replay: int = 0) -> tuple:
+    """The key of one RECORD: the logical attempt plus 1 when the record is the replay of a void one."""
+    return (path, pr, task_set, candidate, segment, attempt, replay)
 
 
 def _merge_models(into: dict[str, dict[str, int | None]], more: Mapping[str, Mapping[str, Any]]) -> None:
@@ -702,7 +1678,8 @@ class Runner:
                  disk_free_gib: Callable[[], float] | None = None,
                  host_env: Mapping[str, str] | None = None, now: Callable[[], float] = time.time,
                  today: Callable[[], dt.date] = dt.date.today, input_paths: Sequence[Path] = (),
-                 provenance: Mapping[str, Any] | None = None):
+                 provenance: Mapping[str, Any] | None = None, require_screening: bool = True,
+                 screening_campaign: str | None = None):
         if mode not in MODES:
             raise RunnerError(f"unknown mode {mode!r}")
         self.repo, self.campaign, self.envelope = Path(repo).resolve(), campaign, envelope
@@ -710,6 +1687,7 @@ class Runner:
         self.mode, self.dry_run, self.sandbox = mode, dry_run, sandbox
         self.run, self.disk_free_gib, self.host_env = run, disk_free_gib, host_env
         self.today, self.input_paths = today, [Path(p) for p in input_paths]
+        self.require_screening, self.screening_campaign = require_screening, screening_campaign
         self.preflight_run = preflight_run or (lambda _candidate: run)
         if lfc.inside_developer_checkout(self.repo, self.work_root):
             raise RunnerError("work root is inside the developer checkout")
@@ -721,28 +1699,39 @@ class Runner:
                            "envelope_sha256": envelope["sha256"]}
         self.results_path = self.state_dir / f"results-{envelope['campaign_id']}.jsonl"
         self.seen = self._scan_results()  # refuses a mixed or foreign state before anything starts
+        self.prior_ledger: list[dict[str, Any]] = []
         if sandbox:  # a configuration error must cost nothing: checked before any claim or reservation
             for driver in campaign["drivers"].values():
-                if mode == "compare" or driver["kind"] in LOCAL_KINDS:
-                    sandbox_text(driver, [self.work_root, *_extra_write(driver)], self._deny_read(driver))
+                if (mode == "compare" or driver["kind"] in LOCAL_KINDS) and driver.get("sandbox", True):
+                    sandbox_text(driver, [self.work_root, *_extra_write(driver)], self._deny_read(driver),
+                                 *self._home_policy(driver))
         self.sessions: list[str] = []  # session id of every cloud execution reserved in the ledger
+        self.audited: dict[str, list[str]] = {}  # contamination found in each audited cloud execution
         self.work_root.mkdir(parents=True, exist_ok=True)
         self.ledger = Ledger(self.state_dir, envelope, mode, now, dry_run=dry_run,
                              provenance=self.provenance)
+        self.prior_ledger = _read_jsonl(self.ledger.path)  # what the earlier launches left (resume)
         self.counter = 0
+        self.launch = self.ledger.launch
+        self.gate: dict[str, Any] = {"defer": False, "pending": None}  # see ``_signals``
+        self.unrecorded: dict[str, Any] | None = None  # a settled local attempt not yet in the results
+        self.emitted: set[tuple] = set()
         self.stopped: str | None = None
         self.handed: set[Path] = set()
         self.guards: dict[Path, tuple[str, dict[str, str | None]]] = {}
+        self.literals: dict[Path, frozenset[str]] = {}  # ``base_literals`` of each bundle handed out
 
     # ---- bookkeeping
     def _scan_results(self) -> set[tuple]:
-        """Attempt keys already recorded. A relaunch is REFUSED to replay one of them (no resume: a
-        new campaign id, hence a new envelope, is needed), and results written in dry-run mode, under
+        """Attempt keys already recorded (see ``_local_state`` and ``_cloud_resume`` for what a relaunch
+        resumes: a recorded key is never claimed again). Results written in dry-run mode, under
         another campaign config, manifest or envelope never share a file with this run."""
         seen: set[tuple] = set()
+        self.prior_records: list[dict[str, Any]] = []
         if not self.results_path.exists():
             return seen
-        for rec in _read_jsonl(self.results_path):
+        self.prior_records = _read_jsonl(self.results_path)
+        for rec in self.prior_records:
             if bool(rec.get("dry_run", False)) != self.dry_run:
                 raise RunnerError(f"{self.results_path} holds {'real' if self.dry_run else 'dry-run'} "
                                   "records: refusing to mix dry-run and real records")
@@ -755,21 +1744,109 @@ class Runner:
         return seen
 
     def _claim(self, path: str, task: Mapping[str, Any], task_set: str, candidate: str | None,
-               segment: str, attempt: int) -> None:
-        key = _attempt_key(path, task["pr"], task_set, candidate, segment, attempt)
+               segment: str, attempt: int, replay: int = 0) -> None:
+        key = _attempt_key(path, task["pr"], task_set, candidate, segment, attempt, replay)
         if key in self.seen:
             raise RunnerError(f"attempt already recorded (no second chance, no replay): {key}")
         self.seen.add(key)
+
+    def _local_state(self, path: str, task: Mapping[str, Any], task_set: str, candidate: str,
+                     segment: str, attempt: int) -> tuple[str, Any]:
+        """What a relaunch does with a local attempt: ``decided`` (a record carries a judge verdict:
+        never replayed, whatever happened afterwards), ``replay`` (cut before any verdict, tried once:
+        a void record, or an ``attempt_started`` with no record and no settlement; the second element
+        is the ``replay_of`` to record), ``undecided`` (cut twice, or settled with no record, so a
+        verdict may have been received: never replayed) or ``fresh``."""
+        base = (path, task["pr"], task_set, candidate, segment, attempt)
+        recs = [r for r in self.prior_records
+                if r.get("record_type") == "attempt" and _logical_key(r) == base]
+        for rec in recs:
+            if rec.get("judge"):
+                return "decided", rec
+        starts = [e for e in self.prior_ledger if e.get("kind") == "attempt_started" and
+                  (e.get("path"), e.get("pr"), e.get("set"), e.get("candidate"), e.get("segment"),
+                   e.get("attempt")) == base]
+        if not recs and not starts:
+            return "fresh", None
+        if max(len(recs), len(starts)) > 1 or (recs and recs[0].get("outcome") not in LOST_OUTCOMES):
+            return "undecided", None
+        name = starts[0].get("attempt_dir") if starts else None
+        if recs:
+            outcome, reason = recs[0]["outcome"], recs[0].get("reason")
+        elif any(e.get("kind") == "settled" and not e.get("cloud") and e.get("attempt_dir") == name
+                 for e in self.prior_ledger):
+            return "undecided", None
+        else:
+            outcome, reason = "hard_kill", "attempt_started without settlement"
+        return "replay", {"attempt": attempt, "attempt_dir": name, "outcome": outcome, "reason": reason}
+
+    def _cloud_resume(self, prior: Sequence[Mapping[str, Any]], first_attempt: int
+                      ) -> dict[str, Any] | None:
+        """Cloud path already started by an earlier launch: ``None`` (nothing to play: it ended, or
+        cannot be continued: the patch and the findings of a round are not kept, so only a first
+        round cut before any verdict is replayed, once), else the ``replay_of`` of that round. A void
+        round keeps its cost; a cap still applies to the replay (an unmeasured spend stops it)."""
+        last = first_attempt + self.campaign["bounds"]["max_correction_rounds"]
+        if any(r["outcome"] in ("accepted", "review_unreadable", "contaminated") or
+               (r["attempt"] == last and r["outcome"] in ("review_block", "judge_refused"))
+               for r in prior):
+            return None
+        first = prior[0]
+        if len(prior) != 1 or first["attempt"] != first_attempt or first.get("judge") \
+                or first["outcome"] not in LOST_OUTCOMES:
+            return None
+        self.ledger.check(cloud=True)
+        return {"attempt": first_attempt, "attempt_dir": None, "outcome": first["outcome"],
+                "reason": first.get("reason"), "cloud_sessions": list(first["cloud_sessions"])}
+
+    def _audited_since(self, mark: int) -> list[str]:
+        """Contamination found by the audits of the cloud executions reserved since ``mark``."""
+        return list(dict.fromkeys(c for sid in self.sessions[mark:] for c in self.audited.get(sid, [])))
 
     def _emit(self, record: dict[str, Any]) -> dict[str, Any]:
         record = {"schema": RESULT_SCHEMA, "campaign_id": self.envelope["campaign_id"],
                   "mode": self.mode, "dry_run": self.dry_run, **self.provenance, **record}
         self.results_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.results_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())  # the record is the anti-replay guard: it must survive a crash
+        with self._critical():  # a signal never cuts the write: it is raised once the record is on disk
+            with self.results_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())  # the record is the anti-replay guard: it must survive a crash
+            if record.get("record_type") == "attempt":
+                self.emitted.add(_record_key(record))
+                if self.unrecorded is not None and _record_key(self.unrecorded) == _record_key(record):
+                    self.unrecorded = None
         return record
+
+    # ---- signals
+    @contextlib.contextmanager
+    def _signals(self):
+        """SIGTERM, SIGHUP and Ctrl-C become an exception (``SystemExit(128 + n)`` /
+        ``KeyboardInterrupt``) for the WHOLE call, not only while a driver runs, so the paths that
+        already record an interruption (``interrupted`` record, ``stop``) cover the bundle build, the
+        judge, the log reading and the record writing too. The exact previous handlers are put back."""
+        previous = _install_term_handlers(self.gate)
+        try:
+            yield
+        finally:
+            self.gate["defer"] = True
+            try:
+                _restore_handlers(previous)
+            finally:
+                _deliver(self.gate)
+
+    @contextlib.contextmanager
+    def _critical(self):
+        """A signal received inside is noted and raised when the block ends (never dropped, never
+        raised in the middle of a ledger or results write)."""
+        outer = self.gate["defer"]
+        self.gate["defer"] = True
+        try:
+            yield
+        finally:
+            self.gate["defer"] = outer
+            if not outer:
+                _deliver(self.gate)
 
     def _driver(self, driver_id: str) -> Mapping[str, Any]:
         driver = self.campaign["drivers"].get(driver_id)
@@ -785,14 +1862,80 @@ class Runner:
             input_paths=self.input_paths, kind=driver["kind"],
             isolation=(self.campaign.get("isolation") or {}).get("deny_read_home"))
 
-    def _bundle(self, task: Mapping[str, Any], label: str, patch: bytes | None = None
-                ) -> tuple[Path, Path]:
+    def _home_policy(self, driver: Mapping[str, Any], exe: Mapping[str, str] | None = None
+                     ) -> tuple[Path | None, list[Path]]:
+        """``(deny_home, allow_read)`` of a LOCAL driver: every read under the user's real home is denied
+        (``isolation.deny_home_by_default``, default true) except the entries of
+        ``isolation.allow_read_home`` (empty by default) and the root of the harness executable's
+        environment when it lives in the home. A cloud driver never gets it (AGENTS.md R6)."""
+        iso = self.campaign.get("isolation") or {}
+        if driver["kind"] not in LOCAL_KINDS or not iso.get("deny_home_by_default", True):
+            return None, []
+        env = os.environ if self.host_env is None else self.host_env
+        home = Path(env.get("HOME") or Path.home())
+        allow = [home / rel for rel in iso.get("allow_read_home", [])]
+        if exe:
+            binary = Path(exe["path"])
+            allow += [binary.parent.parent, Path(os.path.realpath(binary)).parent.parent]
+        return home, allow
+
+    def _sandboxed(self, driver: Mapping[str, Any]) -> bool:
+        """A local driver is always sandboxed (refused at load otherwise); a cloud driver may declare
+        ``sandbox: false`` with its reason (Claude Code cannot authenticate under sandbox-exec)."""
+        return self.sandbox and driver.get("sandbox", True)
+
+    def _executable(self, driver: Mapping[str, Any]) -> dict[str, str] | None:
+        env = os.environ if self.host_env is None else self.host_env
+        return resolve_executable(driver, env)
+
+    def _check_harness(self, driver_id: str) -> None:
+        """A harness executable that cannot be resolved is refused before any claim or spend."""
+        self._executable(self._driver(driver_id))
+
+    def _audit(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
+               session_id: str | None = None, exe: Mapping[str, str] | None = None) -> list[str]:
+        """Contamination audit of one arm's tool calls, on the stream the launcher kept. Always against
+        the strictest list (the one of a local arm): a cloud arm keeps ``~/.claude`` for its identity,
+        but reading anything there (the plugin cache holds the merged tests) is a contamination, except
+        its OWN session directory (``session_log.projects_dir``/*/<session id>/: Claude Code's saved tool
+        outputs). A local arm's ``~`` is its isolated HOME (``isolated_environment``), not the real one.
+        A literal real-home path that the bundle's own files contain (``base_literals``, computed when the
+        bundle was built) is not flagged in a tool result."""
+        home = self._home()
+        sensitive = read_deny_list(
+            repo=self.repo, home=home, state_dir=self.state_dir, input_paths=self.input_paths,
+            kind="local_harness", isolation=(self.campaign.get("isolation") or {}).get("deny_read_home"))
+        isolated = driver.get("home", "isolated") == "isolated"
+        own = None
+        if session_id and not isolated:
+            own = ((driver.get("session_log") or {}).get("projects_dir", "~/.claude/projects"), session_id)
+        walled = None
+        if driver["kind"] in LOCAL_KINDS and self._sandboxed(driver):  # what its sandbox made unreadable
+            deny_home, allow = self._home_policy(driver, exe)
+            if deny_home is not None:
+                walled = (str(deny_home), [str(p) for p in allow], [str(p) for p in self._deny_read(driver)])
+        return audit_transcript(stream_log, bundle=bundle, scratch=scratch, sensitive=sensitive, home=home,
+                                arm_home=str(scratch / "home") if isolated else None, own_session=own,
+                                literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled)
+
+    def _home(self) -> str:
+        """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""
+        env = os.environ if self.host_env is None else self.host_env
+        return str(env.get("HOME") or Path.home())
+
+    def _attempt_name(self, task: Mapping[str, Any], label: str) -> str:
+        """Unique across the launches of one campaign (the launch rank comes from the ledger): a
+        relaunch never overwrites the stream log of an attempt a previous launcher left."""
+        self.counter += 1
+        return f"attempt-l{self.launch:02d}-{self.counter:04d}-pr{task['pr']}-{label}"
+
+    def _bundle(self, task: Mapping[str, Any], label: str, patch: bytes | None = None,
+                name: str | None = None) -> tuple[Path, Path]:
         """A FRESH bundle for one attempt (a judged bundle is never handed back to a candidate)
         and its attempt directory (scratch). The statement carries the launcher footer, identical
         for every arm. The patch (a previous attempt) is applied to the index so that
         ``git diff HEAD`` shows every change, new files included."""
-        self.counter += 1
-        attempt_dir = self.work_root / f"attempt-{self.counter:04d}-pr{task['pr']}-{label}"
+        attempt_dir = self.work_root / (name or self._attempt_name(task, label))
         bundle = lfc.build_bundle(self.repo, task, attempt_dir / "bundle")
         try:
             statement = bundle / "TASK.md"
@@ -802,12 +1945,14 @@ class Runner:
             _git_in(bundle, "commit", "-q", "--amend", "--no-edit", "--no-verify")
             root = _git_in(bundle, "rev-parse", "HEAD").decode().strip()
             self.guards[bundle] = (root, _git_surface(bundle))
+            self.literals[bundle] = base_literals(bundle, self._home())  # before any patch or arm
             if patch:
                 _apply_patch(bundle, patch)
             if lfc.is_judged(bundle) or bundle in self.handed:
                 raise RunnerError("refusing to hand a judged or reused bundle to a candidate")
         except BaseException:  # nothing is left on disk when the bundle cannot be prepared
             self.guards.pop(bundle, None)
+            self.literals.pop(bundle, None)
             lfc.remove_bundle(bundle)
             shutil.rmtree(attempt_dir, ignore_errors=True)
             raise
@@ -816,18 +1961,44 @@ class Runner:
 
     def _discard(self, bundle: Path, attempt_dir: Path) -> None:
         self.guards.pop(bundle, None)
+        self.literals.pop(bundle, None)
         lfc.remove_bundle(bundle)
         shutil.rmtree(attempt_dir, ignore_errors=True)
 
     def _patch_of(self, bundle: Path) -> bytes:
         """The candidate's change against the ROOT commit recorded at construction (a candidate
         that commits still yields its patch), after checking that the arm left nothing running and
-        did not touch the git configuration or attributes that git would honour."""
+        did not touch the git configuration or attributes that git would honour. Called only AFTER the
+        arm ran: any git failure or ``OSError`` here (a stale ``.git/index.lock`` left by the killed arm,
+        an empty nested repository, an unreadable file) is the arm's doing, a ``CandidateFault``."""
         root, surface = self.guards[bundle]
         _wait_quiescent(bundle, self.quiescent_wait)
-        if _git_surface(bundle) != surface:
-            raise RunnerError("bundle git configuration or attributes changed: refusing to run git on it")
-        return _capture_patch(bundle, root)
+        try:
+            changed = _git_surface(bundle) != surface
+        except (RunnerError, OSError) as exc:  # the arm replaced ``.git`` or made a file unreadable
+            raise CandidateFault(str(exc)) from None
+        if changed:
+            raise CandidateFault("bundle git configuration or attributes changed: refusing to run git on it")
+        try:
+            return _capture_patch(bundle, root)
+        except (RunnerError, OSError) as exc:
+            raise CandidateFault(f"bundle unreadable by git: {exc}") from None
+
+    def _judge(self, task: Mapping[str, Any], bundle: Path) -> dict[str, Any]:
+        """``lfc.judge``, where an ``OSError`` on the bundle's own content (a file the arm made
+        unreadable, a bytecode file it made undeletable) is the arm's doing: a ``REFUSED`` verdict
+        (``candidate_fault``), never a void attempt. Any other ``OSError`` (the launcher's environment)
+        propagates and leaves the attempt void."""
+        try:
+            return lfc.judge(self.repo, task, bundle)
+        except OSError as exc:
+            real = Path(os.path.realpath(bundle))
+            name = Path(os.path.realpath(exc.filename)) if isinstance(exc.filename, str) else None
+            if name is None or not _within(name, real):
+                raise
+            rel = name.relative_to(real).as_posix()
+            return _fault_verdict(CandidateFault(
+                f"the judge cannot handle the bundle content: {type(exc).__name__} on {rel}: {exc.strerror}"))
 
     def _values(self, bundle: Path, attempt_dir: Path, **extra: str) -> dict[str, str]:
         b = self.campaign["bounds"]
@@ -845,90 +2016,145 @@ class Runner:
     def _tool_error(self, task: Mapping[str, Any], path: str, segment: str, attempt: int,
                     task_set: str, exc: BaseException, *, wall: float = 0.0, sessions: Sequence[str] = (),
                     by_role: Mapping[str, Any] | None = None, by_model: Mapping[str, Any] | None = None,
-                    local: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                    local: Mapping[str, Any] | None = None,
+                    replay_of: Mapping[str, Any] | None = None, judge: Mapping[str, Any] | None = None,
+                    review: Mapping[str, Any] | None = None, contamination: Sequence[str] = ()
+                    ) -> dict[str, Any] | None:
         """A tool failure or an interruption (Ctrl-C, SIGTERM, any other exception) is recorded as
-        such, never as a verdict, before the campaign stops. An interrupted attempt has an unknown
-        cost (``billing_total`` null), like any record whose cloud executions were not all read."""
+        such, never as a new verdict, before the campaign stops. An interrupted attempt has an unknown
+        cost (``billing_total`` null), like any record whose cloud executions were not all read. A cut
+        that comes AFTER a verdict (``judge``) or a review keeps them on the record: the attempt is then
+        decided and a relaunch never replays it (no second chance after a verdict). ``contamination``
+        already found by an audit of the attempt (a cut right after it) makes the record ``contaminated``,
+        never replayed, like a refusal that carries one."""
         status = _cut(exc)
         reason = (str(exc) or type(exc).__name__)[:200] if status == "tool_error" \
             else f"{type(exc).__name__}: {exc}"[:200]
         by_role = dict(by_role or {})
-        return self._emit({
+        record = {
             "record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
             "segment": segment, "attempt": attempt, "outcome": status, "status": status,
-            "reason": reason, "judge": None, "accepted": None,
+            "reason": reason, "judge": dict(judge) if judge else None, "accepted": None,
             "local_outcome": status if segment == "local" else None,
-            "review": {"rounds": 0, "verdicts": []}, "wall_seconds": round(wall, 3),
+            "review": dict(review) if review else {"rounds": 0, "verdicts": []},
+            "wall_seconds": round(wall, 3),
             "cloud_executions": len(sessions), "cloud_sessions": list(sessions),
             "premium": {"by_role": {r: _classes(t) for r, t in by_role.items()},
                         "by_model": dict(by_model or {}),
                         "billing_total": None if status == "interrupted"
                         else _record_total(by_role, sessions)},
             "local": ({"ended_by_external_signal": False, **local} if local else None),
-            "machine": None, "unknown": {status: reason}})
+            "machine": None, "unknown": {status: reason},
+            **({"replay_of": dict(replay_of)} if replay_of else {})}
+        found = list(dict.fromkeys([*contamination, *(getattr(exc, "contamination", None) or [])]))
+        if found:  # refused or cut AND contaminated: never replayed either
+            record.update(contaminated=True, outcome="contaminated", contamination=_contamination(found))
+            record["unknown"]["contaminated"] = _CONTAMINATED
+        if _record_key(record) in self.emitted:  # the attempt reached the results just before the cut
+            return None
+        return self._emit(record)
 
     # ---- one local attempt (screen, path N, first step of path C)
     def local_attempt(self, task: Mapping[str, Any], candidate_id: str, driver_id: str,
-                      path: str, attempt: int = 0, task_set: str = "") -> tuple[dict[str, Any], bytes]:
+                      path: str, attempt: int = 0, task_set: str = "",
+                      replay_of: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], bytes]:
         driver = self._driver(driver_id)
         if driver["kind"] not in LOCAL_KINDS:
             raise RunnerError(f"{driver_id} is not a local harness")
+        exe = self._executable(driver)  # refused before any claim, reservation or file
         self.ledger.check(cloud=False)
-        self._claim(path, task, task_set, candidate_id, "local", attempt)
+        self._claim(path, task, task_set, candidate_id, "local", attempt, 1 if replay_of else 0)
         bounds = self.campaign["bounds"]
         model = self.campaign["candidates"][candidate_id]["model"]
-        execution, started = None, None
+        execution, started, verdict = None, None, None
+        contamination: list[str] = []
+        hold = contextlib.ExitStack()  # once a verdict exists, a signal waits until the attempt is settled
+        name = self._attempt_name(task, f"{path}-local-{candidate_id}")
+        self.ledger.append("attempt_started", attempt_dir=name, path=path, pr=task["pr"],
+                           set=task_set, candidate=candidate_id, segment="local", attempt=attempt)
         try:
-            bundle, attempt_dir = self._bundle(task, f"{path}-local-{candidate_id}")
+            bundle, attempt_dir = self._bundle(task, "", name=name)
             try:
-                values = self._values(bundle, attempt_dir, model=model)
+                values = self._values(bundle, attempt_dir, model=model,
+                                      **({exe["placeholder"]: exe["path"]} if exe else {}))
                 values["prompt"] = self._prompt("implement", values)
                 before = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
                 budget = min(bounds["local_max_seconds"], max(self.ledger.remaining_seconds(), 0))
+                deny_home, allow_read = self._home_policy(driver, exe)
                 started = time.monotonic()
+                stream_log = (self.state_dir / "streams"
+                              / f"{self.envelope['campaign_id']}-{attempt_dir.name}.jsonl")
                 execution = execute_driver(
                     driver, values, workdir=bundle, scratch=attempt_dir / "scratch",
-                    stream_log=self.state_dir / "streams" / f"{self.envelope['campaign_id']}-"
-                                                             f"{attempt_dir.name}.jsonl",
-                    max_seconds=budget, max_steps=bounds["local_max_steps"], sandbox=self.sandbox,
-                    deny_read=self._deny_read(driver), host_env=self.host_env)
+                    stream_log=stream_log,
+                    max_seconds=budget, max_steps=bounds["local_max_steps"],
+                    sandbox=self._sandboxed(driver),
+                    deny_read=self._deny_read(driver), host_env=self.host_env,
+                    deny_home=deny_home, allow_read=allow_read)
                 after = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
-                patch = self._patch_of(bundle)
-                verdict = lfc.judge(self.repo, task, bundle)
+                with self._critical():  # a signal right after the audit never loses its result
+                    contamination = self._audit(stream_log, bundle, attempt_dir / "scratch", driver,
+                                                exe=exe)
+                try:
+                    patch = self._patch_of(bundle)
+                except CandidateFault as fault:  # the arm's doing: refused, never void and replayed
+                    patch, verdict = b"", _fault_verdict(fault)
+                else:
+                    verdict = self._judge(task, bundle)
+                hold.enter_context(self._critical())  # no gap between the try and the settle below
             finally:
                 self._discard(bundle, attempt_dir)
         except BaseException as exc:  # tool failure or interruption: time is counted, the attempt
-            wall = 0.0                # is recorded and can never be replayed (no second chance)
-            if started is not None:
-                wall = execution["wall_seconds"] if execution else time.monotonic() - started
-                self.ledger.settle(cloud=False, seconds=wall, premium_tokens=None,
+            with hold, self._critical():  # is recorded; a verdict already received is kept on it,
+                                          # so the attempt is decided and never replayed
+                wall = 0.0
+                if started is not None:
+                    wall = execution["wall_seconds"] if execution else time.monotonic() - started
+                self.ledger.settle(cloud=False, seconds=wall, premium_tokens=None, attempt_dir=name,
                                    **({"interrupted": True} if _cut(exc) == "interrupted" else {}))
-            self._tool_error(task, path, "local", attempt, task_set, exc, wall=wall,
-                             local={"harness": driver_id, "harness_kind": driver["kind"],
-                                    "candidate": candidate_id})
+                self._tool_error(task, path, "local", attempt, task_set, exc, wall=wall,
+                                 local={"harness": driver_id, "harness_kind": driver["kind"],
+                                        "candidate": candidate_id}, replay_of=replay_of,
+                                 judge=_judge_summary(verdict) if verdict else None,
+                                 contamination=contamination)
             raise
-        self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None)
-        stream = execution["stream"]
-        unknown = {f"local.{k}": v for k, v in stream["unknown"].items()}
-        unknown.update({f"machine.{k}": v for k, v in {**before["unknown"], **after["unknown"]}.items()})
-        local = {"harness": driver_id, "harness_kind": driver["kind"], "candidate": candidate_id,
-                 "max_seconds": round(budget, 3), "nominal_max_seconds": bounds["local_max_seconds"],
-                 "max_steps": bounds["local_max_steps"],
-                 "steps": stream["steps"], "stream_tokens": stream["stream_tokens"],
-                 "prefill_tokens_per_second": stream["prefill_tokens_per_second"],
-                 "generation_tokens_per_second": stream["generation_tokens_per_second"],
-                 "timed_out": execution["timed_out"], "step_limit_hit": execution["step_limit_hit"],
-                 "exit_code": execution["exit_code"], "signal": execution["signal"],
-                 "ended_by_external_signal": execution["signal"] is not None
-                 and not execution["launcher_kill"], "start_error": execution["start_error"]}
-        record = {"record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
-                  "segment": "local", "attempt": attempt, "judge": _judge_summary(verdict),
-                  "local_outcome": "accepted" if verdict["verdict"] == "ACCEPTED" else "refused",
-                  "accepted": None, "review": {"rounds": 0, "verdicts": []},
-                  "wall_seconds": execution["wall_seconds"], "cloud_executions": 0,
-                  "cloud_sessions": [],
-                  "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
-                  "machine": {"before": _strip(before), "after": _strip(after)}, "unknown": unknown}
+        with hold, self._critical():  # settled and registered as unrecorded together (see ``_stop``)
+            self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None,
+                               attempt_dir=name)
+            stream = execution["stream"]
+            unknown = {f"local.{k}": v for k, v in stream["unknown"].items()}
+            unknown.update({f"machine.{k}": v
+                            for k, v in {**before["unknown"], **after["unknown"]}.items()})
+            local = {"harness": driver_id, "harness_kind": driver["kind"], "candidate": candidate_id,
+                     "max_seconds": round(budget, 3), "nominal_max_seconds": bounds["local_max_seconds"],
+                     "max_steps": bounds["local_max_steps"],
+                     "steps": stream["steps"], "stream_tokens": stream["stream_tokens"],
+                     "prefill_tokens_per_second": stream["prefill_tokens_per_second"],
+                     "generation_tokens_per_second": stream["generation_tokens_per_second"],
+                     "timed_out": execution["timed_out"], "step_limit_hit": execution["step_limit_hit"],
+                     "exit_code": execution["exit_code"], "signal": execution["signal"],
+                     "ended_by_external_signal": execution["signal"] is not None
+                     and not execution["launcher_kill"], "start_error": execution["start_error"],
+                     **({"harness_executable": {k: exe[k] for k in ("env", "package", "version")}}
+                        if exe else {})}
+            if contamination:  # undecided for this path, never accepted; the verdict stays on record
+                unknown["contaminated"] = _CONTAMINATED
+            if execution["step_limit_hit"]:  # over the 40-step bound: never accepted
+                unknown["local.step_limit"] = "the step bound was exceeded: the attempt is refused"
+            record = {"record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
+                      "segment": "local", "attempt": attempt, "judge": _judge_summary(verdict),
+                      "local_outcome": ("contaminated" if contamination else
+                                        "accepted" if verdict["verdict"] == "ACCEPTED"
+                                        and not execution["step_limit_hit"] else "refused"),
+                      **({"contaminated": True, "contamination": _contamination(contamination),
+                          "outcome": "contaminated"} if contamination else {}),
+                      "accepted": None, "review": {"rounds": 0, "verdicts": []},
+                      "wall_seconds": execution["wall_seconds"], "cloud_executions": 0,
+                      "cloud_sessions": [],
+                      "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
+                      "machine": {"before": _strip(before), "after": _strip(after)}, "unknown": unknown,
+                      **({"replay_of": dict(replay_of)} if replay_of else {})}
+            self.unrecorded = record  # until ``_emit`` writes it, an interruption writes it as interrupted
         return record, patch
 
     # ---- one cloud execution
@@ -952,23 +2178,27 @@ class Runner:
         values["prompt"] = self._prompt(prompt_key, values)
         extra = _extra_write(driver)
         deny = self._deny_read(driver)
-        if self.sandbox:  # a profile that cannot be generated must not burn a reservation
+        if self._sandboxed(driver):  # a profile that cannot be generated must not burn a reservation
             sandbox_text(driver, [bundle, scratch, *extra], deny)
         budget = min(self.campaign["bounds"]["cloud_max_seconds"],
                      max(self.ledger.remaining_seconds(), 0))
-        self.ledger.reserve_cloud(role, session_id)  # cap checked, then recorded, then run
-        self.sessions.append(session_id)  # every reserved execution is named by a result record
+        reserved = False
         started = time.monotonic()
         try:
+            with self._critical():  # a signal here is raised at the end of the block: inside the try
+                self.ledger.reserve_cloud(role, session_id)  # cap checked, then recorded, then run
+                reserved = True
+                self.sessions.append(session_id)  # every reserved execution is named by a record
+            stream_log = self.state_dir / "streams" / f"{self.envelope['campaign_id']}-{session_id}.jsonl"
             execution = execute_driver(
-                driver, values, workdir=bundle, scratch=scratch,
-                stream_log=self.state_dir / "streams" / f"{self.envelope['campaign_id']}-"
-                                                         f"{session_id}.jsonl",
-                max_seconds=budget, max_steps=None, sandbox=self.sandbox, deny_read=deny,
+                driver, values, workdir=bundle, scratch=scratch, stream_log=stream_log,
+                max_seconds=budget, max_steps=None, sandbox=self._sandboxed(driver), deny_read=deny,
                 extra_write=extra, host_env=self.host_env)
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
-            self.ledger.settle(cloud=True, seconds=time.monotonic() - started, premium_tokens=None,
-                               session_id=session_id, interrupted=True)
+            if reserved:
+                with self._critical():
+                    self.ledger.settle(cloud=True, seconds=time.monotonic() - started,
+                                       premium_tokens=None, session_id=session_id, interrupted=True)
             raise
         by_model: dict[str, dict[str, int | None]] = {}
         tokens, reason = premium_tokens(session_id, driver.get("session_log") or {}, by_model)
@@ -976,16 +2206,26 @@ class Runner:
                            premium_tokens=billing_total(tokens), session_id=session_id)
         execution["session_id"] = session_id
         execution["by_model"] = by_model if tokens is not None else {}
+        refusal = tool_allowlist_refusal(driver, execution["stream"])
+        with self._critical():  # refused or not; a signal right after the audit never loses its result
+            execution["contamination"] = self._audit(stream_log, bundle, scratch, driver, session_id)
+            self.audited[session_id] = execution["contamination"]
+        if refusal:  # money is settled above; the record is refused (a tool error, never a verdict)
+            raise ToolsetRefused(refusal, execution["contamination"])
         return execution, tokens, reason
 
     def _review(self, task: Mapping[str, Any], patch: bytes, label: str
                 ) -> tuple[str | None, str, dict[str, Any], dict[str, int | None] | None, str | None]:
         """Independent review of ``patch`` on a fresh bundle: ``(verdict, findings, ...)``. An
-        unreadable review is ``None`` (unknown), never a failed one."""
+        unreadable review is ``None`` (unknown), never a failed one. The patch's ``.claude/`` files are
+        not applied to the reviewer's bundle (the reviewer's host would load them as its project
+        settings); ``execution["review_excluded"]`` names them."""
+        patch, excluded = _without_claude_dirs(patch)
         bundle, attempt_dir = self._bundle(task, f"{label}-review", patch)
         try:
             execution, tokens, reason = self.cloud_execution(
                 "reviewer", REVIEWER_DRIVER, bundle, attempt_dir, "review")
+            execution["review_excluded"] = excluded
             verdict, findings = None, ""
             with contextlib.suppress(OSError, ValueError, AttributeError):
                 data = json.loads((attempt_dir / "scratch" / "review.json").read_text("utf-8"))
@@ -1003,9 +2243,16 @@ class Runner:
         records: list[dict[str, Any]] = []
         patch: bytes | None = None
         feedback: str | None = None
+        prior = [r for r in self.prior_records if r.get("record_type") == "attempt"
+                 and (r["path"], r["task"]["pr"], r["task"].get("set"), r.get("segment")) ==
+                 (path, task["pr"], task_set, segment)]
+        replay = self._cloud_resume(prior, first_attempt) if prior else None
+        if prior and replay is None:
+            return records
         for index in range(self.campaign["bounds"]["max_correction_rounds"] + 1):
             role = "implementer" if index == 0 else "corrector"
-            self._claim(path, task, task_set, None, segment, first_attempt + index)
+            again = replay if index == 0 else None
+            self._claim(path, task, task_set, None, segment, first_attempt + index, 1 if again else 0)
             by_role: dict[str, Any] = {}
             models: dict[str, dict[str, int | None]] = {}
             unknown: dict[str, str] = {}
@@ -1026,7 +2273,12 @@ class Runner:
                     "cloud_sessions": spent,
                     "premium": {"by_role": {r: _classes(t) for r, t in by_role.items()},
                                 "by_model": models, "billing_total": _record_total(by_role, spent)},
-                    "local": None, "machine": None, "unknown": unknown}))
+                    "local": None, "machine": None, "unknown": unknown,
+                    **({"contaminated": True, "contamination": _contamination(state["contamination"])}
+                       if state.get("contamination") else {}),
+                    **({"review_excluded": state["review_excluded"]} if state.get("review_excluded")
+                       else {}),
+                    **({"replay_of": again} if again else {})}))
 
             try:
                 bundle, attempt_dir = self._bundle(task, f"{path}-{role}{index}", patch)
@@ -1039,14 +2291,26 @@ class Runner:
                     _merge_models(models, execution["by_model"])
                     if tokens is None:
                         unknown[f"premium.{role}"] = reason or "unknown"
-                    patch = self._patch_of(bundle)
-                    verdict = lfc.judge(self.repo, task, bundle)
+                    fault: CandidateFault | None = None
+                    try:
+                        patch = self._patch_of(bundle)
+                    except CandidateFault as exc:  # the arm's doing: refused, the round is judged
+                        fault = exc
+                    if execution["contamination"]:  # undecided for this path: no verdict, no review
+                        state["contamination"] = execution["contamination"]
+                        state["outcome"] = "contaminated"
+                        unknown["contaminated"] = _CONTAMINATED
+                    elif fault is not None:
+                        verdict = _fault_verdict(fault)
+                    else:
+                        verdict = self._judge(task, bundle)
                 finally:
                     self._discard(bundle, attempt_dir)
-                if verdict["verdict"] == "ACCEPTED":
+                if verdict and verdict["verdict"] == "ACCEPTED":
                     review, findings, rev_exec, rev_tokens, rev_reason = self._review(
                         task, patch, f"{path}-{index}")
                     state["seconds"] += rev_exec["wall_seconds"]
+                    state["review_excluded"] = rev_exec.get("review_excluded")
                     by_role["reviewer"] = rev_tokens
                     _merge_models(models, rev_exec["by_model"])
                     if rev_tokens is None:
@@ -1057,18 +2321,25 @@ class Runner:
                     state["accepted"] = {"PASS": True, "BLOCK": False, None: None}[review]
                     if review is None:
                         unknown["review"] = "review_unreadable"
+                    if rev_exec["contamination"]:  # the review itself touched sensitive paths
+                        state.update(contamination=rev_exec["contamination"], outcome="contaminated",
+                                     accepted=None)
+                        unknown["contaminated"] = "the reviewer's " + _CONTAMINATED[len("the arm's "):]
+                emit()  # inside the try: a cut before or after the write never loses the record
             except CapReached:  # the cut round is recorded even when nothing was spent in it: the
                 state["outcome"] = "stopped_by_cap"  # task is not decided (never a refusal)
                 emit()
                 raise
             except BaseException as exc:  # tool failure, Ctrl-C, SIGTERM, anything: never silent
-                records.append(self._tool_error(
+                self._tool_error(  # a verdict or a review already received stays on the record
                     task, path, segment, first_attempt + index, task_set, exc, wall=state["seconds"],
-                    sessions=self.sessions[mark:], by_role=by_role, by_model=models))
+                    sessions=self.sessions[mark:], by_role=by_role, by_model=models, replay_of=again,
+                    judge=_judge_summary(verdict) if verdict else None,
+                    review={"rounds": len(state["rounds"]), "verdicts": state["rounds"]}
+                    if state["rounds"] else None, contamination=self._audited_since(mark))
                 raise
-            emit()
             outcome = state["outcome"]
-            if outcome in ("accepted", "review_unreadable"):
+            if outcome in ("accepted", "review_unreadable", "contaminated"):
                 break
             feedback = (findings if outcome == "review_block" else
                         "The mechanical acceptance check refused the change: "
@@ -1080,13 +2351,41 @@ class Runner:
     # ---- path C
     def hybrid_path(self, task: Mapping[str, Any], candidate_id: str, harness_id: str,
                     task_set: str = "") -> list[dict[str, Any]]:
-        local, patch = self.local_attempt(task, candidate_id, harness_id, "C", 0, task_set)
+        state, info = self._local_state("C", task, task_set, candidate_id, "local", 0)
+        if state in ("decided", "undecided"):  # the local attempt is never replayed; only a takeover left
+            # a takeover is owed after a refused local attempt, a blocked review or a contaminated LOCAL
+            # attempt; a contaminated REVIEW leaves the task undecided with no takeover (as at first launch)
+            if state == "decided" and (info.get("outcome") in ("local_refused", "review_block") or (
+                    info.get("outcome") == "contaminated" and info.get("local_outcome") == "contaminated")):
+                return self.cloud_path(task, "C", task_set, segment="takeover", first_attempt=1)
+            return []
+        local, patch = self.local_attempt(task, candidate_id, harness_id, "C", 0, task_set, info)
         records = [local]
         takeover = local["local_outcome"] != "accepted"
         if not takeover:
             mark = len(self.sessions)
             try:
                 review, _, rev_exec, rev_tokens, rev_reason = self._review(task, patch, "C-0")
+                total = billing_total(rev_tokens)
+                local["review"] = {"rounds": 1, "verdicts": [review]}
+                local["cloud_executions"], local["cloud_sessions"] = 1, self.sessions[mark:]
+                local["wall_seconds"] = round(local["wall_seconds"] + rev_exec["wall_seconds"], 3)
+                if rev_exec.get("review_excluded"):
+                    local["review_excluded"] = rev_exec.get("review_excluded")
+                local["premium"] = {"by_role": {"reviewer": _classes(rev_tokens)},
+                                    "by_model": rev_exec["by_model"], "billing_total": total}
+                if rev_tokens is None:
+                    local["unknown"]["premium.reviewer"] = rev_reason or "unknown"
+                local["accepted"] = {"PASS": True, "BLOCK": False, None: None}[review]
+                local["outcome"] = {"PASS": "accepted", "BLOCK": "review_block",
+                                    None: "review_unreadable"}[review]
+                if review is None:
+                    local["unknown"]["review"] = "review_unreadable"
+                if rev_exec["contamination"]:  # the review touched sensitive paths: undecided
+                    local.update(contaminated=True, accepted=None, outcome="contaminated",
+                                 contamination=_contamination(rev_exec["contamination"]))
+                    local["unknown"]["contaminated"] = "the reviewer's " + _CONTAMINATED[len("the arm's "):]
+                takeover = review == "BLOCK" and not rev_exec["contamination"]
             except BaseException as exc:  # cap, tool failure or interruption during the review
                 cut, spent = _cut(exc), self.sessions[mark:]
                 local.update(outcome=cut, cloud_sessions=spent, cloud_executions=len(spent))
@@ -1095,24 +2394,15 @@ class Runner:
                     local["unknown"][cut] = local["reason"]
                 if spent or cut == "interrupted":  # a started review of unread cost: never 0
                     local["premium"]["billing_total"] = None
+                found = self._audited_since(mark) or getattr(exc, "contamination", None)
+                if found:  # a review that touched paths, refused or cut after its audit
+                    local.update(contaminated=True, accepted=None, outcome="contaminated",
+                                 contamination=_contamination(found))
+                    local["unknown"]["contaminated"] = "the reviewer's " + _CONTAMINATED[len("the arm's "):]
                 self._emit(local)
                 raise
-            total = billing_total(rev_tokens)
-            local["review"] = {"rounds": 1, "verdicts": [review]}
-            local["cloud_executions"], local["cloud_sessions"] = 1, self.sessions[mark:]
-            local["wall_seconds"] = round(local["wall_seconds"] + rev_exec["wall_seconds"], 3)
-            local["premium"] = {"by_role": {"reviewer": _classes(rev_tokens)},
-                                "by_model": rev_exec["by_model"], "billing_total": total}
-            if rev_tokens is None:
-                local["unknown"]["premium.reviewer"] = rev_reason or "unknown"
-            local["accepted"] = {"PASS": True, "BLOCK": False, None: None}[review]
-            local["outcome"] = {"PASS": "accepted", "BLOCK": "review_block",
-                                None: "review_unreadable"}[review]
-            if review is None:
-                local["unknown"]["review"] = "review_unreadable"
-            takeover = review == "BLOCK"
         else:
-            local["outcome"] = "local_refused"
+            local["outcome"] = "contaminated" if local.get("contaminated") else "local_refused"
         self._emit(local)
         if takeover:  # a failed local attempt is neither a failure nor an escalation (ADR-0015)
             records += self.cloud_path(task, "C", task_set, segment="takeover", first_attempt=1)
@@ -1121,7 +2411,8 @@ class Runner:
     # ---- orchestration
     def preflight(self, candidate_id: str) -> dict[str, Any]:
         model = self.campaign["candidates"][candidate_id]["model"]
-        result = preflight(self.campaign, model, self.preflight_run(candidate_id), self.disk_free_gib)
+        result = preflight(self.campaign, model, self.preflight_run(candidate_id), self.disk_free_gib,
+                           self.campaign["candidates"][candidate_id])
         self.ledger.append("preflight", candidate=candidate_id, ok=result["ok"],
                            refusals=result["refusals"])
         if not result["ok"]:
@@ -1133,23 +2424,30 @@ class Runner:
         """Local attempts only (candidate x task) and the judge: no cloud, ever. The machine
         preflight is re-run before every task."""
         out = []
-        try:
-            for candidate_id in candidate_ids:
-                for task in tasks:
-                    self.preflight(candidate_id)
-                    record, _ = self.local_attempt(task, candidate_id, harness_id, "S", 0, "screening")
-                    record["accepted"] = record["local_outcome"] == "accepted"
-                    out.append(self._emit(record))
-        except PreflightRefused:
-            raise
-        except CapReached as exc:
-            self._stop(f"cap_reached:{exc}")
-        except (RunnerError, lfc.CorpusError) as exc:
-            self._stop(f"tool_error:{str(exc)[:160]}")
-            raise
-        except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
-            self._stop(f"interrupted:{type(exc).__name__}")
-            raise
+        self._check_harness(harness_id)  # an unresolvable harness executable costs nothing
+        with self._signals():  # the WHOLE call: an interruption anywhere leaves a record and a stop
+            try:
+                for candidate_id in candidate_ids:
+                    for task in tasks:
+                        state, info = self._local_state("S", task, "screening", candidate_id, "local", 0)
+                        if state in ("decided", "undecided"):
+                            continue  # resume: a decided task is never replayed, an undecided one stays so
+                        self.preflight(candidate_id)
+                        record, _ = self.local_attempt(task, candidate_id, harness_id, "S", 0, "screening",
+                                                       info)
+                        record["accepted"] = (None if record.get("contaminated")
+                                              else record["local_outcome"] == "accepted")
+                        out.append(self._emit(record))
+            except PreflightRefused:
+                raise
+            except CapReached as exc:
+                self._stop(f"cap_reached:{exc}", exc)
+            except (RunnerError, lfc.CorpusError) as exc:
+                self._stop(f"tool_error:{str(exc)[:160]}", exc)
+                raise
+            except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
+                self._stop(f"interrupted:{type(exc).__name__}", exc)
+                raise
         return out
 
     def compare(self, tasks: Sequence[Mapping[str, Any]], candidate_id: str,
@@ -1159,57 +2457,139 @@ class Runner:
         local_ok = local_fail = 0
         premium = {"A": 0, "C": 0}
         premium_known = {"A": True, "C": True}
+        for rec in self.prior_records:  # a resume keeps the counts the early-stop rules rely on
+            if rec.get("record_type") != "attempt" or rec["task"].get("set") != "comparison" \
+                    or rec["task"]["pr"] not in {t["pr"] for t in tasks}:
+                continue
+            if rec["path"] == "C" and rec["segment"] == "local" and rec.get("outcome") not in LOST_OUTCOMES:
+                local_ok += rec["local_outcome"] == "accepted"
+                local_fail += rec["local_outcome"] != "accepted"
+            if rec["path"] in premium:
+                total = rec["premium"]["billing_total"]
+                premium_known[rec["path"]] &= total is not None
+                premium[rec["path"]] += total or 0
         needs_local = bool({"C", "N"} & set(paths))  # A and B alone never need the local model
-        try:
-            for done, task in enumerate(tasks, 1):
-                if needs_local:
-                    self.preflight(candidate_id)
-                for path in paths:
-                    if path == "A" or path == "B":
-                        recs = self.cloud_path(task, path, "comparison")
-                    elif path == "C":
-                        recs = self.hybrid_path(task, candidate_id, harness_id, "comparison")
-                        first = recs[0]
-                        local_ok += first["local_outcome"] == "accepted"
-                        local_fail += first["local_outcome"] != "accepted"
-                    else:  # N: the same local attempt under the neutral harness, no cloud
-                        rec, _ = self.local_attempt(task, candidate_id, "neutral_harness", "N", 0,
-                                                    "comparison")
-                        rec["accepted"] = rec["local_outcome"] == "accepted"
-                        recs = [self._emit(rec)]
-                    out += recs
-                    if path in premium:
-                        for rec in recs:
-                            total = rec["premium"]["billing_total"]
-                            premium_known[path] &= total is not None
-                            premium[path] += total or 0
-                remaining = len(tasks) - done
-                rules = self.campaign["rules"]["comparison"]
-                if "C" in paths and local_ok + remaining < rules["min_local_successes"]:
-                    return self._stopped(out, "fewer_than_min_local_successes")
-                if ("C" in paths and "A" in paths and premium_known["A"] and premium_known["C"]
-                        and premium["C"] >= premium["A"] > 0):
-                    return self._stopped(out, "premium_c_not_below_a")
-        except PreflightRefused:
-            raise
-        except CapReached as exc:
-            self._stop(f"cap_reached:{exc}")
-        except (RunnerError, lfc.CorpusError) as exc:
-            self._stop(f"tool_error:{str(exc)[:160]}")
-            raise
-        except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
-            self._stop(f"interrupted:{type(exc).__name__}")
-            raise
+        if needs_local:  # refused before any claim or reservation
+            self._check_selected(candidate_id)
+            for harness in dict.fromkeys(([harness_id] if "C" in paths else [])
+                                         + (["neutral_harness"] if "N" in paths else [])):
+                self._check_harness(harness)
+        with self._signals():  # the WHOLE call: an interruption anywhere leaves a record and a stop
+            try:
+                for done, task in enumerate(tasks, 1):
+                    if needs_local:
+                        self.preflight(candidate_id)
+                    for path in paths:
+                        if path == "A" or path == "B":
+                            recs = self.cloud_path(task, path, "comparison")
+                        elif path == "C":
+                            recs = self.hybrid_path(task, candidate_id, harness_id, "comparison")
+                            first = recs[0] if recs else None
+                            if first and first["segment"] == "local":
+                                local_ok += first["local_outcome"] == "accepted"
+                                local_fail += first["local_outcome"] != "accepted"
+                        else:  # N: the same local attempt under the neutral harness, no cloud
+                            state, info = self._local_state("N", task, "comparison", candidate_id,
+                                                            "local", 0)
+                            if state in ("decided", "undecided"):
+                                continue
+                            rec, _ = self.local_attempt(task, candidate_id, "neutral_harness", "N", 0,
+                                                        "comparison", info)
+                            rec["accepted"] = (None if rec.get("contaminated")
+                                               else rec["local_outcome"] == "accepted")
+                            recs = [self._emit(rec)]
+                        out += recs
+                        if path in premium:
+                            for rec in recs:
+                                total = rec["premium"]["billing_total"]
+                                premium_known[path] &= total is not None
+                                premium[path] += total or 0
+                    remaining = len(tasks) - done
+                    rules = self.campaign["rules"]["comparison"]
+                    if "C" in paths and local_ok + remaining < rules["min_local_successes"]:
+                        return self._stopped(out, "fewer_than_min_local_successes")
+                    if ("C" in paths and "A" in paths and premium_known["A"] and premium_known["C"]
+                            and premium["C"] >= premium["A"] > 0):
+                        return self._stopped(out, "premium_c_not_below_a")
+            except PreflightRefused:
+                raise
+            except CapReached as exc:
+                self._stop(f"cap_reached:{exc}", exc)
+            except (RunnerError, lfc.CorpusError) as exc:
+                self._stop(f"tool_error:{str(exc)[:160]}", exc)
+                raise
+            except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
+                self._stop(f"interrupted:{type(exc).__name__}", exc)
+                raise
         return out
+
+    def _check_selected(self, candidate_id: str) -> None:
+        """The compared candidate must be the one the pre-registered screening rule selected. The
+        screening results are those of THIS campaign id (same state directory and file). When there are
+        none, a comparison of a local candidate (C or N) is refused, unless ``screening_campaign`` names
+        another campaign id whose results (read-only, same campaign config, same dry-run nature) hold a
+        completed screening that selected this candidate."""
+        attempts = [r for r in self.prior_records if r.get("record_type") == "attempt"]
+        if not any(r["path"] == "S" for r in attempts):
+            if not self.require_screening:
+                return
+            attempts = self._foreign_screening()
+        screening = _report_screening(self.campaign["rules"]["screening"], attempts)
+        if screening["selected"] != candidate_id:
+            raise RunnerError(f"candidate {candidate_id} is not the one the screening selected "
+                              f"({screening['selected']}: {screening['reason']})")
+
+    def _foreign_screening(self) -> list[dict[str, Any]]:
+        """The attempts of the screening named by ``--screening-campaign`` (read, never written)."""
+        other = self.screening_campaign
+        if not other:
+            raise RunnerError(
+                f"no screening results under campaign id {self.envelope['campaign_id']}: a comparison of a "
+                "local candidate needs them, or --screening-campaign <id> naming a completed screening")
+        if not _ID.match(other) or other == self.envelope["campaign_id"]:
+            raise RunnerError(f"--screening-campaign {other!r} must be another plain campaign id")
+        path = self.state_dir / f"results-{other}.jsonl"
+        if not path.is_file():
+            raise RunnerError(f"no screening results at {path.name} in the state directory")
+        records = _read_jsonl(path)
+        attempts = [r for r in records if r.get("record_type") == "attempt"]
+        if not any(r["path"] == "S" for r in attempts):
+            raise RunnerError(f"{path.name} holds no screening attempt")
+        for rec in records:
+            if bool(rec.get("dry_run", False)) != self.dry_run or rec.get("campaign_id") != other or (
+                    rec.get("campaign_sha256") != self.provenance["campaign_sha256"]):
+                raise RunnerError(f"{path.name} was not produced under this campaign config and nature "
+                                  "(dry-run or real): its screening cannot select a candidate here")
+        return attempts
 
     def _stopped(self, out: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
         self._stop(reason)
         return out
 
-    def _stop(self, reason: str) -> None:
-        self.stopped = reason
-        self.ledger.append("stopped", reason=reason)
-        self._emit({"record_type": "stop", "reason": reason})
+    def _stop(self, reason: str, exc: BaseException | None = None) -> None:
+        """Record the stop. A settled local attempt that no record names yet is written first, as
+        ``interrupted`` (its result is not trusted once the call was cut). A second signal received
+        meanwhile is raised after both writes, never swallowed."""
+        with self._critical():
+            if exc is not None:
+                self._flush_unrecorded(exc)
+            self.stopped = reason
+            self.ledger.append("stopped", reason=reason)
+            self._emit({"record_type": "stop", "reason": reason})
+
+    def _flush_unrecorded(self, exc: BaseException) -> None:
+        record, self.unrecorded = self.unrecorded, None
+        if record is None:
+            return
+        status = _cut(exc)
+        reason = (str(exc) or type(exc).__name__)[:200] if status == "tool_error" \
+            else f"{type(exc).__name__}: {exc}"[:200]
+        record.update(outcome="contaminated" if record.get("contaminated") else status, status=status,
+                      reason=reason, accepted=None)  # a contamination found is never lost by the cut
+        record["unknown"][status] = reason
+        if status == "interrupted":
+            record["premium"] = {**record["premium"], "billing_total": None}
+        self._emit(record)
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -1243,18 +2623,26 @@ def _record_total(by_role: Mapping[str, Any], sessions: Sequence[str]) -> int | 
 
 
 def _record_key(rec: Mapping[str, Any]) -> tuple:
+    return (*_logical_key(rec), 1 if rec.get("replay_of") else 0)
+
+
+def _logical_key(rec: Mapping[str, Any]) -> tuple:
+    """The attempt a record is about: a void record and its replay share it."""
     return _attempt_key(rec["path"], rec["task"]["pr"], rec["task"].get("set"),
                         (rec.get("local") or {}).get("candidate"), rec.get("segment", ""),
-                        rec.get("attempt", 0))
+                        rec.get("attempt", 0))[:6]
 
 
-def _git_in(bundle: Path, *args: str, stdin: bytes | None = None) -> bytes:
+def _git_in(bundle: Path, *args: str, stdin: bytes | None = None, ok: Sequence[int] = (0,)) -> bytes:
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_GLOBAL": os.devnull,
            "GIT_CONFIG_SYSTEM": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", **lfc.BUNDLE_AUTHOR}
     proc = subprocess.run(["git", "-C", str(bundle), *_GIT_NEUTRAL, *args], input=stdin,
                           capture_output=True, env=env, check=False)
-    if proc.returncode != 0:
-        raise RunnerError(f"git {args[0]} failed: {proc.stderr.decode('utf-8', 'replace')[:200]}")
+    if proc.returncode not in ok:
+        stderr = proc.stderr.decode("utf-8", "replace")
+        for prefix in (os.path.realpath(bundle), str(bundle)):  # an error names no work path
+            stderr = stderr.replace(prefix, "<bundle>")
+        raise RunnerError(f"git {args[0]} failed: {stderr[:200]}")
     return proc.stdout
 
 
@@ -1298,7 +2686,7 @@ def _wait_quiescent(bundle: Path, wait: float) -> None:
     before = _tree_signature(bundle)
     time.sleep(wait)
     if _tree_signature(bundle) != before:
-        raise RunnerError("bundle is not quiescent: a process of the arm may have outlived it")
+        raise CandidateFault("bundle is not quiescent: a process of the arm may have outlived it")
 
 
 def _capture_patch(bundle: Path, root: str) -> bytes:
@@ -1308,6 +2696,27 @@ def _capture_patch(bundle: Path, root: str) -> bytes:
     _git_in(bundle, "add", "-A", "-f", "--", ".", *_PATCH_EXCLUDES)
     return _git_in(bundle, "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", root,
                    "--", ".", *_PATCH_EXCLUDES)
+
+
+_DIFF_HEADER = re.compile(rb"^diff --git (.*)$", re.M)
+
+
+def _without_claude_dirs(patch: bytes) -> tuple[bytes, list[str]]:
+    """``patch`` minus every file section under a ``.claude/`` directory (at any depth, either side of
+    a rename), and the (post-image) paths of the dropped sections."""
+    starts = [m.start() for m in _DIFF_HEADER.finditer(patch)] if patch else []
+    if not starts:
+        return patch, []
+    kept, dropped = [patch[:starts[0]]], []
+    for begin, end in zip(starts, [*starts[1:], len(patch)]):
+        section = patch[begin:end]
+        header = _DIFF_HEADER.match(section).group(1)
+        if b"/.claude/" in header:
+            path = header.replace(b'"', b"").rsplit(b" b/", 1)[-1]
+            dropped.append(path.decode("utf-8", "replace"))
+        else:
+            kept.append(section)
+    return b"".join(kept), dropped
 
 
 def _apply_patch(bundle: Path, patch: bytes) -> None:
@@ -1322,6 +2731,22 @@ def _classes(tokens: Mapping[str, int | None] | None) -> dict[str, int | None] |
 
 def _task_ref(task: Mapping[str, Any], task_set: str) -> dict[str, Any]:
     return {"pr": task["pr"], "issue": task.get("issue"), "set": task_set}
+
+
+_CONTAMINATED = "the arm's tool calls touched sensitive paths or ran a forbidden command"
+
+
+def _contamination(items: Sequence[str]) -> dict[str, list[str]]:
+    """``audit_transcript`` hits as the record's ``paths`` and ``commands``."""
+    return {"paths": [i for i in items if not i.startswith("command:")],
+            "commands": [i[len("command:"):] for i in items if i.startswith("command:")]}
+
+
+def _fault_verdict(fault: BaseException) -> dict[str, Any]:
+    """The mechanical refusal of an attempt whose bundle the arm left unsafe to judge: the judge did
+    not run, and the attempt counts as refused (decided), never as a launcher failure."""
+    return {"verdict": "REFUSED", "passed": 0, "failed": 0, "errors": 0, "skipped": 0,
+            "note": f"candidate_fault: {fault}"[:200]}
 
 
 def _judge_summary(verdict: Mapping[str, Any]) -> dict[str, Any]:
@@ -1361,7 +2786,7 @@ def _sum_known(values: Sequence[float | int | None]) -> float | int | None:
 
 # Outcomes where the verdict of a task is not known (tool failure, unreadable review, cap stop,
 # interruption), and those where an attempt itself was lost.
-UNKNOWN_OUTCOMES = ("review_unreadable", "tool_error", "stopped_by_cap", "interrupted")
+UNKNOWN_OUTCOMES = ("review_unreadable", "tool_error", "stopped_by_cap", "interrupted", "contaminated")
 LOST_OUTCOMES = ("tool_error", "interrupted")
 
 
@@ -1381,6 +2806,8 @@ def _check_records(records: Sequence[Mapping[str, Any]], campaign_sha256: str | 
                           "under (campaign_sha256 mismatch): the rules cannot change after the fact")
     keys = [_record_key(r) for r in records if r.get("record_type") == "attempt"]
     duplicates = sorted({str(k) for k in keys if keys.count(k) > 1})
+    decided = [_logical_key(r) for r in records if r.get("record_type") == "attempt" and r.get("judge")]
+    duplicates += sorted({f"{k} (decided twice)" for k in decided if decided.count(k) > 1})
     if duplicates:
         raise RunnerError(f"results hold duplicated attempts: {', '.join(duplicates)}")
     return shas
@@ -1457,21 +2884,153 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
     attempts = [r for r in records if r.get("record_type") == "attempt"]
     stops = [r["reason"] for r in records if r.get("record_type") == "stop"]
     rules = campaign["rules"]
+    holes = _unsettled_starts(ledger)
+    replayed = {(r["replay_of"] or {}).get("attempt_dir") for r in attempts if r.get("replay_of")}
+    for hole in holes:  # a killed attempt a later launch replayed is no longer an open hole
+        hole["replayed"] = hole.get("attempt_dir") in replayed
+    open_holes = [h for h in holes if not h["replayed"]]
+    counted = {_logical_key(r) for r in attempts if r.get("outcome") not in LOST_OUTCOMES}
     out: dict[str, Any] = {"promotion": False, "stops": stops, "rules_applied": rules,
-                           "provenance": shas, "ledger": {"unknown_spent_work": unknown_work},
+                           "provenance": shas,
+                           "ledger": {"unknown_spent_work": unknown_work, "unsettled_starts": holes},
                            "dry_run": any(r.get("dry_run", False) for r in records),
-                           "screening": _report_screening(rules["screening"], attempts)}
+                           "void_attempts": _void_attempts(attempts, holes, ledger),
+                           "contaminated": [{"path": r["path"], "task": r["task"],
+                                             "candidate": (r.get("local") or {}).get("candidate"),
+                                             "segment": r.get("segment"), "attempt": r.get("attempt"),
+                                             "paths": (r.get("contamination") or {}).get("paths", []),
+                                             "commands": (r.get("contamination") or {}).get("commands", [])}
+                                            for r in attempts if r.get("contaminated")],
+                           "replays": [{"path": r["path"], "task": r["task"],
+                                        "candidate": (r.get("local") or {}).get("candidate"),
+                                        "segment": r.get("segment"), "attempt": r.get("attempt"),
+                                        "outcome": r.get("outcome"), "replay_of": r["replay_of"]}
+                                       for r in attempts if r.get("replay_of")],
+                           "screening": _report_screening(rules["screening"], attempts, len({
+                               (h["path"], h["pr"], h["candidate"], h["segment"], h["attempt"])
+                               for h in open_holes if h["kind"] == "attempt_started" and h["path"] == "S"
+                               and (h["path"], h["pr"], h["set"], h["candidate"], h["segment"],
+                                    h["attempt"]) not in counted}))}
+    out["screening"]["warnings"] = [h["warning"] for h in open_holes if h["mode"] == "screen"]
     comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
-    out["comparison"] = _report_comparison(rules["comparison"], comparison, stops, bool(unknown_work))
+    out["comparison"] = _report_comparison(rules["comparison"], comparison, stops, bool(unknown_work),
+                                           [h["warning"] for h in open_holes if h["mode"] == "compare"])
+    out["comparison"]["screening_selected"] = _check_compared_candidate(
+        out["screening"], attempts, comparison)
     return out
 
 
-def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _is_void(rec: Mapping[str, Any]) -> bool:
+    """Cut before any judge verdict (the only attempts a launcher may replay, once)."""
+    return not rec.get("judge") and rec.get("outcome") in LOST_OUTCOMES
+
+
+def _superseded(attempts: Sequence[Mapping[str, Any]]) -> set[int]:
+    """Void records whose attempt was later settled by another record (the replay): their cost
+    stays counted, but they no longer leave the task undecided."""
+    counted = {_logical_key(r) for r in attempts if r.get("outcome") not in LOST_OUTCOMES}
+    return {id(r) for r in attempts if _is_void(r) and _logical_key(r) in counted}
+
+
+def _void_attempts(attempts: Sequence[Mapping[str, Any]], holes: Sequence[Mapping[str, Any]],
+                   ledger: Sequence[Mapping[str, Any]] = ()) -> list[dict[str, Any]]:
+    """Every void attempt: the records cut before a verdict, the starts a hard kill left with no
+    record, and the cloud executions the ledger holds that no record names (a round killed after its
+    settlement, before its record: it is replayed without ``replay_of``, so ``replayed`` is unknown),
+    each with whether a replay record names it."""
+    replays = [r["replay_of"] for r in attempts if r.get("replay_of")]
+    out = [{"path": r["path"], "task": r["task"], "candidate": (r.get("local") or {}).get("candidate"),
+            "segment": r.get("segment"), "attempt": r.get("attempt"), "outcome": r["outcome"],
+            "reason": r.get("reason"), "cloud_sessions": r.get("cloud_sessions", []),
+            "replayed": any(x.get("attempt") == r.get("attempt") and x.get("outcome") == r["outcome"]
+                            and r.get("reason") == x.get("reason") for x in replays)}
+           for r in attempts if _is_void(r) and not r.get("replay_of")]
+    out += [{"path": h.get("path"), "task": {"pr": h.get("pr"), "set": h.get("set")},
+             "candidate": h.get("candidate"), "segment": h.get("segment"), "attempt": h.get("attempt"),
+             "outcome": "hard_kill", "reason": "attempt_started without settlement",
+             "attempt_dir": h["attempt_dir"], "cloud_sessions": [], "replayed": h["replayed"]}
+            for h in holes if h["kind"] == "attempt_started"]
+    named = {sid for r in attempts for sid in r.get("cloud_sessions", [])}
+    out += [{"path": None, "task": None, "candidate": None, "segment": None, "attempt": None,
+             "outcome": "hard_kill", "reason": "cloud_started without a result record",
+             "role": e.get("role"), "cloud_sessions": [e.get("session_id")], "replayed": None}
+            for e in ledger if e.get("kind") == "cloud_started" and e.get("session_id") not in named]
+    return out
+
+
+def _unsettled_starts(ledger: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Every local attempt start of the ledger without a ``settled`` of the same ``attempt_dir`` and
+    every passed machine preflight followed by no attempt start (the launcher was killed between
+    them) before the next preflight or session: a killed attempt writes neither record nor
+    settlement, and a relaunch may have replayed it. A preflight followed by a clean ``stopped`` is
+    not one. ``mode`` is the mode of the session that wrote the entry."""
+    settled = {e.get("attempt_dir") for e in ledger if e.get("kind") == "settled" and not e.get("cloud")}
+    out: list[dict[str, Any]] = []
+    mode: Any = None
+    window: dict[str, Any] | None = None
+
+    def close() -> None:
+        if window is not None and not window["attempts"]:
+            out.append({"kind": "preflight", "mode": window["mode"], "ledger_line": window["line"],
+                        "candidate": window["candidate"],
+                        "warning": f"preflight_without_attempt:{window['candidate']}"
+                                   f"@ledger_line_{window['line']}"})
+
+    for line, entry in enumerate(ledger, 1):
+        kind = entry.get("kind")
+        if kind in ("session_started", "preflight"):
+            close()
+            window = None
+        elif kind == "stopped":
+            window = None
+        if kind == "session_started":
+            mode = entry.get("mode")
+        elif kind == "preflight" and entry.get("ok") is True:
+            window = {"mode": mode, "line": line, "candidate": entry.get("candidate"), "attempts": False}
+        elif kind == "attempt_started":
+            if window is not None:
+                window["attempts"] = True
+            if entry.get("attempt_dir") not in settled:
+                out.append({"kind": "attempt_started", "mode": mode, "ledger_line": line,
+                            "attempt_dir": entry.get("attempt_dir"), "path": entry.get("path"),
+                            "candidate": entry.get("candidate"), "pr": entry.get("pr"),
+                            "set": entry.get("set"), "segment": entry.get("segment"),
+                            "attempt": entry.get("attempt"),
+                            "warning": f"attempt_started_without_settled:{entry.get('attempt_dir')}"})
+    close()
+    return out
+
+
+def _check_compared_candidate(screening: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
+                              comparison: Sequence[Mapping[str, Any]]) -> str:
+    """The local candidate of the comparison must be the one the screening selected under the
+    pre-registered rule: otherwise the comparison is refused. Without screening results in these
+    files the check cannot be done and the report says so (it never assumes)."""
+    compared = {(r.get("local") or {}).get("candidate") for r in comparison if r["path"] in ("C", "N")}
+    compared.discard(None)
+    if not any(r["path"] == "S" for r in attempts):
+        return "screening_results_not_available"
+    if compared and compared != {screening["selected"]}:
+        raise RunnerError(f"the compared candidate(s) {sorted(compared)} are not the one the screening "
+                          f"selected ({screening['selected']}: {screening['reason']})")
+    return screening["selected"] or "none_selected"
+
+
+def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
+                      killed: int = 0) -> dict[str, Any]:
     by_candidate: dict[str, list[Mapping[str, Any]]] = {}
-    lost = 0
+    undecided: dict[tuple, dict[str, Any]] = {}  # tasks with no decided record (cut, replay included)
+    gone = _superseded(attempts)
     for rec in attempts:
         if rec["path"] == "S" and rec.get("outcome") in LOST_OUTCOMES:
-            lost += 1  # a tool failure or an interruption is not a refusal: the result is unknown
+            if id(rec) not in gone:  # a tool failure or an interruption is not a refusal: unknown
+                undecided[_logical_key(rec)] = {
+                    "candidate": rec["local"]["candidate"], "pr": rec["task"]["pr"],
+                    "outcome": rec["outcome"], "replayed": bool(rec.get("replay_of"))}
+        elif rec["path"] == "S" and rec.get("contaminated"):  # touched sensitive paths: undecided
+            undecided[_logical_key(rec)] = {
+                "candidate": rec["local"]["candidate"], "pr": rec["task"]["pr"],
+                "outcome": "contaminated", "replayed": False}
         elif rec["path"] == "S":
             by_candidate.setdefault(rec["local"]["candidate"], []).append(rec)
     table = {}
@@ -1481,9 +3040,11 @@ def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, A
                       "total_seconds": round(sum(r["wall_seconds"] for r in recs), 3),
                       "peak_swap_used_mib": None if any(s is None for s in swaps) else max(swaps),
                       "harness": sorted({r["local"]["harness"] for r in recs})}
+    undecided_tasks = list(undecided.values())
+    lost = len(undecided_tasks) + killed
     complete = bool(table) and not lost and all(v["tasks"] == rule["tasks"] for v in table.values())
     selected, reason = None, "no_screening_results"
-    if table and not complete:  # never select before every candidate has a record for every task
+    if (table or undecided_tasks) and not complete:  # never select before every task has a record
         reason = "incomplete_screening"
     elif table:
         best = max(v["accepted"] for v in table.values())
@@ -1497,7 +3058,8 @@ def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, A
             winners = [c for c in tied if table[c]["total_seconds"] == fastest]
             selected, reason = (winners[0], "tie_broken_by_total_duration") if len(winners) == 1 \
                 else (None, "tie_not_resolved")
-    return {"candidates": table, "selected": selected, "reason": reason, "complete": complete}
+    return {"candidates": table, "selected": selected, "reason": reason, "complete": complete,
+            "undecided_tasks": undecided_tasks, "killed_not_replayed": killed}
 
 
 def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -1505,6 +3067,7 @@ def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     for rec in recs:
         tasks.setdefault(rec["task"]["pr"], []).append(rec)
     per_task = {}
+    gone = _superseded(recs)
     for pr, items in sorted(tasks.items()):
         accepted = any(r["accepted"] is True for r in items)
         models: dict[str, dict[str, int | None]] = {}
@@ -1512,25 +3075,30 @@ def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             _merge_models(models, r["premium"].get("by_model") or {})
         per_task[pr] = {
             "accepted": accepted,
-            "unknown": not accepted and any(r.get("outcome") in UNKNOWN_OUTCOMES for r in items),
+            "unknown": not accepted and any(r.get("outcome") in UNKNOWN_OUTCOMES for r in items
+                                            if id(r) not in gone),
             "premium_by_model": models,
+            "contaminated": not accepted and any(r.get("contaminated") for r in items),
             "review_rounds": sum(r["review"]["rounds"] for r in items),
             "wall_seconds": sum(r["wall_seconds"] for r in items),
             "cloud_executions": sum(r["cloud_executions"] for r in items),
             "premium_billing_tokens": _sum_known([r["premium"]["billing_total"] for r in items]),
             "local_attempt_ok": next((r["local_outcome"] == "accepted" for r in items
-                                      if r["segment"] == "local"
+                                      if r["segment"] == "local" and not r.get("contaminated")
                                       and r.get("outcome") not in LOST_OUTCOMES), None)}
     locals_ = [r for r in recs if r["segment"] == "local" and r.get("outcome") not in LOST_OUTCOMES]
-    lost = any(r["segment"] == "local" and r.get("outcome") in LOST_OUTCOMES for r in recs)
+    lost = any(r["segment"] == "local" and r.get("outcome") in LOST_OUTCOMES and id(r) not in gone
+               for r in recs)
     return {"tasks": per_task, "locals": locals_, "local_tool_error": lost}
 
 
 def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
-                       stops: Sequence[str], unknown_work: bool = False) -> dict[str, Any]:
+                       stops: Sequence[str], unknown_work: bool = False,
+                       warnings: Sequence[str] = ()) -> dict[str, Any]:
     arms = {p: _arm_totals([r for r in attempts if r["path"] == p]) for p in PATHS
             if any(r["path"] == p for r in attempts)}
-    out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None}
+    out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None,
+                           "warnings": list(warnings)}
     reference = arms.get("A")
     if reference is None:
         out["reason"] = "no_reference_path_A"
@@ -1544,8 +3112,9 @@ def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, 
         x_tasks = [arm["tasks"][t] for t in shared]
         failed = [t for t in x_tasks if not t["accepted"] and not t["unknown"]]
         undecided = [t for t in x_tasks if not t["accepted"] and t["unknown"]]
+        reference_contaminated = any(t["contaminated"] for t in a_tasks)  # no clean reference to compare to
         quality = ("unavailable" if not shared else "fail" if failed else "unavailable" if undecided
-                   else _verdict(sum(t["review_rounds"] for t in x_tasks)
+                   or reference_contaminated else _verdict(sum(t["review_rounds"] for t in x_tasks)
                                  <= sum(t["review_rounds"] for t in a_tasks), True))
         a_prem = _sum_known([t["premium_billing_tokens"] for t in a_tasks])
         x_prem = _sum_known([t["premium_billing_tokens"] for t in x_tasks])
@@ -1588,8 +3157,11 @@ def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, 
     out["complete"] = all(a["tasks_compared"] == expected for a in out["arms"].values()) and bool(out["arms"])
     if out["decision"] == "retained" and not out["complete"]:
         out["decision"] = "inconclusive"
-    if unknown_work or any(r.get("outcome") == "interrupted" for r in attempts):
-        out["decision"], out["recommendation"] = "inconclusive", None  # spent work is unknown
+    gone = _superseded(attempts)
+    if unknown_work or warnings or any(r.get("outcome") == "interrupted" and id(r) not in gone
+                                       for r in attempts):
+        # spent work is unknown, or a local attempt started and never settled (killed, possibly replayed)
+        out["decision"], out["recommendation"] = "inconclusive", None
     return out
 
 
@@ -1644,6 +3216,9 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             p.add_argument("--sandbox", action="store_true", help="also sandbox a dry run")
         if name == "compare":
             p.add_argument("--paths", default="A,B,C")
+            p.add_argument("--screening-campaign", default=None,
+                           help="campaign id of a completed screening (results read-only in --state-dir) "
+                                "when this campaign id holds none; C and N need one or the other")
     r = sub.add_parser("report")
     r.add_argument("--campaign", required=True)
     r.add_argument("--results", required=True,
@@ -1674,7 +3249,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             return 2
         model = campaign["candidates"][args.candidate]["model"]
         run = dry_run_facts(campaign, model) if args.dry_run else default_run
-        result = preflight(campaign, model, run, (lambda: 1e6) if args.dry_run else None)
+        result = preflight(campaign, model, run, (lambda: 1e6) if args.dry_run else None,
+                           campaign["candidates"][args.candidate])
         print(json.dumps(result, indent=2))
         return 0 if result["ok"] else 2
     mode = args.cmd
@@ -1698,6 +3274,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                          Path(args.manifest)],
             provenance={"campaign_sha256": hashlib.sha256(Path(args.campaign).read_bytes()).hexdigest(),
                         "manifest_sha256": hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()},
+            screening_campaign=getattr(args, "screening_campaign", None),
             sandbox=(not args.dry_run) or args.sandbox,
             run=(lambda _argv: None) if args.dry_run else default_run,
             preflight_run=(lambda cid: dry_run_facts(campaign, campaign["candidates"][cid]["model"]))

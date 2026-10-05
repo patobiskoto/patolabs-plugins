@@ -1,0 +1,899 @@
+{
+  "schema": "foundry.pat-19-preflight-evidence.v1",
+  "ticket": "PAT-111",
+  "date": "2026-10-05",
+  "note": "Real trials on a toy task (not the PAT-19 corpus), run by the coordinator on the maintainer's machine with the maintainer's confirmation of every model load and cloud call (PAT-111 AC8). Encoded here by the pinning change; the launcher never loads a model nor calls a cloud host in this ticket. No secret and no absolute path.",
+  "machine": {
+    "chip": "MacBook Pro M5 Pro",
+    "memory_gib": 64,
+    "os": "macOS 27.0.1"
+  },
+  "versions": {
+    "lm_studio": "0.4.25+1",
+    "mlx_engine": "1.11.0 nax",
+    "llama_cpp_engine": "2.51.0",
+    "claude_code": "2.1.285",
+    "omp": "18.4.10",
+    "mini_swe_agent": "2.4.6 (PyPI, isolated virtual environment)"
+  },
+  "context_length": {
+    "frozen_coordinate": 65536,
+    "finding": "LM Studio honoured the requested -c 65536 for the GGUF and for the Qwen3-Coder MLX build and ignored it for the Qwen3.8 and Qwen3.6 MLX builds, which loaded with 169728 (6-bit alias), 208384 (qwen/qwen3.8-27b 4-bit) and 262144 (qwen/qwen3.6-35b-a3b); see loaded_context_observed per candidate. The launcher therefore reads the loaded context from lms ps --json at preflight and refuses below 65536; it also checks the model key and the quantization of the loaded instance."
+  },
+  "candidates": {
+    "qwen3.8-27b-mlx-6bit": {
+      "lm_studio_key": "qwen3.8-27b-mlx-alias",
+      "hf_repo_provenance": "lmstudio-community/Qwen3.8-27B-MLX-6bit",
+      "engine": "mlx",
+      "quantization": "6bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen3.8-27b-mlx-alias",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen3.8-27b-mlx-alias",
+        "--parallel",
+        "1"
+      ],
+      "context_length_requested": 65536,
+      "file_sha256": {
+        "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "config.json": "f2490d237e42fc8418ee62b7416e360785b7de308f43d8f794ccf4f185bdeec9",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00005.safetensors": "39a48bfd79609b341f4ed420cdc92e3edce316cd3f5ef7db2dcd371f48c90588",
+        "model-00002-of-00005.safetensors": "d9011deb397afa986754a8abe3872b87a21c2bd6d7f9ed50bd8cba3890b782f9",
+        "model-00003-of-00005.safetensors": "760d392182ee77093df96328110596e230a9f4cab37febd70ae29173f7ff7e01",
+        "model-00004-of-00005.safetensors": "513fbeb37662c2b6020ebe4d61e5e9192f7abb5970aef0cd291b7a55f445c23e",
+        "model-00005-of-00005.safetensors": "6ed59540691cfb8f8adeaa186506d3fc44b0f0ce392c7caf59116bb6ae580c01",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "45fc17c8dd2474af6b493b52483c26c0584b0082d368c480f9fa611e73070040",
+        "tokenizer_config.json": "47a7a8371379b07650b22f3c8a78c32fed85c4e35ea88e3da0c4b7a7611e8082",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke_at_65536": {
+        "context_length": 65536,
+        "passed": true,
+        "wall_seconds": 104.0,
+        "tool_calls": 5,
+        "tools": {
+          "read": 2,
+          "edit": 2,
+          "bash": 1
+        },
+        "usage": {
+          "input": 39583,
+          "output": 491,
+          "reasoning": 124
+        },
+        "tests_tail": "3 passed in 0.00s",
+        "profile_sha256": "4157654baef2277235b496e5b37198f95766c38f9c6e9268d768497da33f3588"
+      },
+      "note": "Reached through the LM Studio model key qwen3.8-27b-mlx-alias: a folder of hard links (pat19-campaign/Qwen3.8-27B-MLX-6bit-alias) to the 6-bit files, because LM Studio groups the 4-bit and 6-bit variants under qwen/qwen3.8-27b and no CLI or API key selects the 6-bit variant.",
+      "loaded_context_observed_2026-10-05": {
+        "requested": 65536,
+        "loaded": 169728,
+        "also": "169728 with -c 32000 (earlier the same day)"
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "e93f02e9781938f10e5dfd25099e71824f87303dc62745d04ccfc17056b901e8",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 73.2,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "started_local_time": "22:53",
+        "loaded_instance_observed": {
+          "modelKey": "qwen3.8-27b-mlx-alias",
+          "quantization": {
+            "name": "6bit",
+            "bits": 6
+          },
+          "contextLength": 169728
+        },
+        "load": "lms load <lm_studio_key> -c 65536 --parallel 1 (pinned load_command; API identifier pat19-smoke and --ttl 1800 used for the trial only), confirmed by the maintainer, one model loaded at a time, unloaded after the trial"
+      }
+    },
+    "qwen3.8-27b-mlx-4bit": {
+      "lm_studio_key": "qwen/qwen3.8-27b",
+      "hf_repo_provenance": "lmstudio-community/Qwen3.8-27B-MLX-4bit",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen/qwen3.8-27b",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen/qwen3.8-27b",
+        "--parallel",
+        "1"
+      ],
+      "context_length_requested": 65536,
+      "file_sha256": {
+        "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "config.json": "14b65a0ee06517060a6bbd979bb1a8ff54e7b304b1a1f01d54344b88b8285e85",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00003.safetensors": "471a9a81b54dddbfef43e8a71960ca24ad3c727891c6b0750a9db9a214aab504",
+        "model-00002-of-00003.safetensors": "e7474b8f968f4078dfd4889925961c5b0da9939219b614dba08eb63c46590de7",
+        "model-00003-of-00003.safetensors": "1038989bed1346ecdb541a45c078df2aae99a9509f35bfd51e7a04802a5d8402",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "45fc17c8dd2474af6b493b52483c26c0584b0082d368c480f9fa611e73070040",
+        "tokenizer_config.json": "47a7a8371379b07650b22f3c8a78c32fed85c4e35ea88e3da0c4b7a7611e8082",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke_at_65536": {
+        "context_length": 65536,
+        "passed": true,
+        "wall_seconds": 63.3,
+        "tool_calls": 4,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1
+        },
+        "usage": {
+          "input": 31133,
+          "output": 344,
+          "reasoning": 75
+        },
+        "tests_tail": "3 passed in 0.00s",
+        "profile_sha256": "0e43d6c6d3d705b32c7dd11fe33f31d9a7cba731e1b53495e928b4dc94d9862a"
+      },
+      "note": "The selected variant of qwen/qwen3.8-27b must be the 4-bit one: the preflight refuses a loaded instance whose quantization is not 4bit.",
+      "loaded_context_observed_2026-10-05": {
+        "requested": 65536,
+        "loaded": 208384
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "ec47ec15dd5493002aeadad0883e9dc7608e228f3f8e90fb68e005d0bddb4bf1",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 45.6,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "note": "the first deny-home trial (ac-7), same profile generator"
+      }
+    },
+    "qwen3.6-35b-a3b-mlx-4bit": {
+      "lm_studio_key": "qwen/qwen3.6-35b-a3b",
+      "hf_repo_provenance": "lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen/qwen3.6-35b-a3b",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen/qwen3.6-35b-a3b",
+        "--parallel",
+        "1"
+      ],
+      "context_length_requested": 65536,
+      "file_sha256": {
+        "chat_template.jinja": "e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259",
+        "config.json": "a822a9e48b0aafbe3144ec37d4fb067e178ed96615ce6e4420b3149893cc5767",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00004.safetensors": "09f3e6ecb0b7af6e6a38bc8169a134c821b0924c2679b2bb8f4426ad38d032b8",
+        "model-00002-of-00004.safetensors": "31dcdb1c49eebdb1505bd14e3cb33f9cf900bd2546b638f2464694ae763a033f",
+        "model-00003-of-00004.safetensors": "3e66de06a1f03dade16a612a368cfce4a4c9caa4efd7d28185454384082cec03",
+        "model-00004-of-00004.safetensors": "a5d0cf03519c26f8b506df6b0ba60526e5c08c8cea22d0c21ce92950e58a5422",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1",
+        "tokenizer_config.json": "672488283cdbf3530ecd2e3f90da54f9998cbae6befb5b32877590f72c7a9b2c",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke_at_65536": {
+        "context_length": 65536,
+        "passed": true,
+        "wall_seconds": 28.5,
+        "tool_calls": 7,
+        "tools": {
+          "read": 3,
+          "edit": 2,
+          "write": 1,
+          "bash": 1
+        },
+        "usage": {
+          "input": 58084,
+          "output": 1086,
+          "reasoning": 142
+        },
+        "tests_tail": "3 passed in 0.00s",
+        "profile_sha256": "eac3fcb455b57298e7673bf15337aa0f175cf8d83a326ca17217c3d29d260385"
+      },
+      "loaded_context_observed_2026-10-05": {
+        "requested": 65536,
+        "loaded": 262144
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "2a9e6b9acc016302c7f2076e94d5b4c5110e04739c2ea451a3466dab1e879ff8",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 25.3,
+        "tools": {
+          "read": 3,
+          "edit": 4,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "started_local_time": "22:54",
+        "loaded_instance_observed": {
+          "modelKey": "qwen/qwen3.6-35b-a3b",
+          "quantization": {
+            "name": "4bit",
+            "bits": 4
+          },
+          "contextLength": 262144
+        },
+        "load": "lms load <lm_studio_key> -c 65536 --parallel 1 (pinned load_command; API identifier pat19-smoke and --ttl 1800 used for the trial only), confirmed by the maintainer, one model loaded at a time, unloaded after the trial"
+      }
+    },
+    "muse-glimmer-30b-gguf": {
+      "lm_studio_key": "muse-glimmer-30b",
+      "hf_repo_provenance": "lmstudio-community/Muse-Glimmer-30B-GGUF",
+      "engine": "llama.cpp",
+      "quantization": "Q4_K_M",
+      "load_command": [
+        "lms",
+        "load",
+        "muse-glimmer-30b",
+        "-c",
+        "65536",
+        "--identifier",
+        "muse-glimmer-30b",
+        "--parallel",
+        "1"
+      ],
+      "context_length_requested": 65536,
+      "file_sha256": {
+        "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf": "4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e",
+        "mmproj-Muse-Glimmer-30B-Q4_K_M.gguf": "f48b452316f9b213758e8659444029b961a24a07f99a1abb2a9f88b06f7c00c6"
+      },
+      "chat_template_sha256": null,
+      "generation_config_sha256": null,
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke_at_65536": {
+        "context_length": 65536,
+        "passed": true,
+        "wall_seconds": 91.3,
+        "tool_calls": 4,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1
+        },
+        "usage": {
+          "input": 30530,
+          "output": 648,
+          "reasoning": 335
+        },
+        "tests_tail": "3 passed in 0.00s",
+        "profile_sha256": "242df88cb20c0b26da20351f4c3ecf35d4fdf30605646ecb3a26692389c0942c"
+      },
+      "smoke_at_default_8192": {
+        "passed": false,
+        "context_length": 8192,
+        "exit_code": 1,
+        "wall_seconds": 361.3,
+        "tools": {
+          "read": 19,
+          "glob": 1
+        },
+        "usage": {
+          "input": 136770,
+          "output": 3093,
+          "reasoning": 404
+        },
+        "tests_pass": false,
+        "reason": "loops of reads without progress at the default 8192 context; passes at 65536"
+      },
+      "note": "Chat template embedded in the GGUF (covered by the file digest).",
+      "loaded_context_observed_2026-10-05": {
+        "requested": 65536,
+        "loaded": 65536,
+        "at_default": 8192
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "02ed3b285162a717c8e25ffcd68131f13e7d865b9d657c8a379f02d32ab9bdca",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 224.2,
+        "tools": {
+          "read": 3,
+          "edit": 1,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "started_local_time": "22:55",
+        "loaded_instance_observed": {
+          "modelKey": "muse-glimmer-30b",
+          "quantization": {
+            "name": "Q4_K_M",
+            "bits": 4
+          },
+          "contextLength": 65536
+        },
+        "load": "lms load <lm_studio_key> -c 65536 --parallel 1 (pinned load_command; API identifier pat19-smoke and --ttl 1800 used for the trial only), confirmed by the maintainer, one model loaded at a time, unloaded after the trial"
+      }
+    },
+    "qwen3-coder-30b-a3b-mlx-4bit": {
+      "lm_studio_key": "qwen3-coder-30b-a3b-instruct-mlx",
+      "hf_repo_provenance": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen3-coder-30b-a3b-instruct-mlx",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen3-coder-30b-a3b-instruct-mlx",
+        "--parallel",
+        "1"
+      ],
+      "context_length_requested": 65536,
+      "file_sha256": {
+        "chat_template.jinja": "672e747c77e990320152343b0a4951222e40de5645297905d89afba05586d827",
+        "config.json": "6fb72959ce0deb110c85627c09041cbcad46163c3802914ebefd02bbcf3304e6",
+        "generation_config.json": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d",
+        "model-00001-of-00004.safetensors": "961d4610b969fcf61b015f59654da6b12a158af5a1104be0fadd75268bd9535c",
+        "model-00002-of-00004.safetensors": "916440f8de7a85b62ae74711a36b7d59bf8b04101e85a23717287cbd60fdd193",
+        "model-00003-of-00004.safetensors": "02be309a7a17b0ab0e6df48e5d6070940e05492392a3501a629c7f21d18588e2",
+        "model-00004-of-00004.safetensors": "17701098bfd26cfe4d14e4ec96e3a483a6cfe3798d4c6586638beaab48c6bf51",
+        "tokenizer_config.json": "c8785e5cc844c31853fa42c926e80aa7659e6d3cb237dcbbe6071ae93917ade7"
+      },
+      "chat_template_sha256": "672e747c77e990320152343b0a4951222e40de5645297905d89afba05586d827",
+      "generation_config_sha256": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke_at_65536": {
+        "context_length": 65536,
+        "passed": true,
+        "wall_seconds": 42.2,
+        "tool_calls": 15,
+        "tools": {
+          "read": 4,
+          "edit": 3,
+          "bash": 7,
+          "write": 1
+        },
+        "usage": {
+          "input": 145478,
+          "output": 1118,
+          "reasoning": 0
+        },
+        "tests_tail": "3 passed in 0.00s",
+        "profile_sha256": "d8ca9beeea3e2a8f1bbcd463c51051dd0094173de7eba1cbc9c2bd5f645530c0"
+      },
+      "smoke_at_default_8192": {
+        "passed": false,
+        "context_length": 8192,
+        "exit_code": 1,
+        "wall_seconds": 225.3,
+        "tools": {
+          "read": 107,
+          "bash": 2,
+          "edit": 1
+        },
+        "usage": {
+          "input": 845514,
+          "output": 7703,
+          "reasoning": 0
+        },
+        "tests_pass": false,
+        "reason": "loops of reads without progress at the default 8192 context; passes at 65536"
+      },
+      "loaded_context_observed_2026-10-05": {
+        "requested": 65536,
+        "loaded": 65536,
+        "at_default": 8192
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "665a18ec3ec9da15915716ce9140dd287d26d9862b1a053b02f10d819e091ec1",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 17.9,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1,
+          "eval": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "started_local_time": "22:59",
+        "loaded_instance_observed": {
+          "modelKey": "qwen3-coder-30b-a3b-instruct-mlx",
+          "quantization": {
+            "name": "4bit",
+            "bits": 4
+          },
+          "contextLength": 65536
+        },
+        "load": "lms load <lm_studio_key> -c 65536 --parallel 1 (pinned load_command; API identifier pat19-smoke and --ttl 1800 used for the trial only), confirmed by the maintainer, one model loaded at a time, unloaded after the trial",
+        "observation": "the model also called omp's eval tool to print 'All tests pass' without running them; harmless here because the judge reruns the tests itself"
+      }
+    }
+  },
+  "unused_declared_candidate": {
+    "devstral-small-2-24b-gguf": "declared as the fallback of muse-glimmer-30b-gguf only if its tool calls failed the smoke test; they passed at 65536, so it is unused and was never loaded"
+  },
+  "drivers": {
+    "local_harness": {
+      "command": "omp -p --mode json --model lm-studio/{model} --cwd {workdir} --no-session --auto-approve --no-extensions --no-skills --no-rules --no-lsp --no-title --max-time {max_duration} {prompt}",
+      "version": "18.4.10",
+      "sandbox": "launcher local sandbox profile (loopback only, writes limited to bundle and attempt directory)",
+      "home": "isolated: the lm-studio provider is discovered from the isolated home, no home_files needed",
+      "max_time_accepted": "6m",
+      "read_deny": "explicit deny list (37 entries on the maintainer's machine: 17 home entries plus checkouts, state and input directories) and profile directory unreadable; verified working with the real harness. Default-deny of the whole home (isolation.deny_home_by_default true, allow_read_home empty) was then trial-run with the real omp: see deny_home_trial.",
+      "passed_candidates": [
+        "qwen3.8-27b-mlx-6bit",
+        "qwen3.8-27b-mlx-4bit",
+        "qwen3.6-35b-a3b-mlx-4bit",
+        "muse-glimmer-30b-gguf",
+        "qwen3-coder-30b-a3b-mlx-4bit"
+      ],
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny_home_by_default true, allow_read_home []",
+        "model": "Qwen3.8-27B MLX 4-bit, loaded by the operator",
+        "omp": "18.4.10",
+        "passed": true,
+        "wall_seconds": 45.6,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "result": "deny-home by default confirmed, no fallback to the explicit list needed"
+      }
+    },
+    "neutral_harness": {
+      "command": "{mini_bin} -m openai/{model} -c mini_textbased.yaml -c model.model_kwargs.api_base=http://127.0.0.1:1234/v1 -c model.cost_tracking=ignore_errors -c agent.step_limit={max_steps} -y --exit-immediately -o {scratch}/traj.json -t {prompt}",
+      "version": "mini-swe-agent 2.4.6",
+      "executable": "resolved from the operator variable PAT19_MINI_BIN (no committed absolute path)",
+      "environment": {
+        "MSWEA_GLOBAL_CONFIG_DIR": "{scratch}/mswea",
+        "MSWEA_CONFIGURED": "true",
+        "MSWEA_SILENT_STARTUP": "1",
+        "MSWEA_COST_TRACKING": "ignore_errors",
+        "OPENAI_API_BASE": "http://127.0.0.1:1234/v1",
+        "OPENAI_API_KEY": "local-endpoint-no-key (placeholder for the local server, not a secret)",
+        "LITELLM_LOCAL_MODEL_COST_MAP": "True (else LiteLLM tries to fetch a price map from the internet: blocked by the sandbox, about 20 s lost retrying)"
+      },
+      "sandbox": "launcher local sandbox profile",
+      "candidate_used": "qwen3.8-27b-mlx-6bit",
+      "passed": true,
+      "wall_seconds": 139.0,
+      "api_calls": 5,
+      "steps_source": "info.model_stats.api_calls of the trajectory file (read after the process ends); no event stream",
+      "profile_sha256": "7192135a900b5e9ebe27fb41df7ddcc7ec1556648c9608762e389e311b6f60b7",
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny_home_by_default true, allow_read_home []",
+        "model": "Qwen3.8-27B MLX 4-bit, loaded by the operator",
+        "mini_swe_agent": "2.4.6",
+        "extra": "-c agent.step_limit=40, LITELLM_LOCAL_MODEL_COST_MAP=True",
+        "status": "Submitted",
+        "api_calls": 8,
+        "toy_tests_pass": true,
+        "result": "deny-home by default confirmed; the step-limit flag was accepted"
+      },
+      "command_first_trial": "{mini_bin} -m openai/{model} -c mini_textbased.yaml -c model.model_kwargs.api_base=http://127.0.0.1:1234/v1 -c model.cost_tracking=ignore_errors -y --exit-immediately -o {scratch}/traj.json -t {prompt}",
+      "command_note": "command = the pinned argv of the campaign config, trial-run in the deny-home trial with max_steps 40; command_first_trial = the first trial's command, without the step limit"
+    },
+    "cloud_implementer_current": {
+      "command_tried": "claude -p {prompt} --session-id {session_id} --model claude-sonnet-5-5 --effort medium --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Agent --output-format stream-json --verbose",
+      "command_tried_note": "the command ACTUALLY run in the toy-task trial: `--disallowedTools Agent` only (the 29-name list was observed at the init event separately, see cloud_findings.init_tools_observation, with no model call)",
+      "pinned_final_argv": {
+        "disallowedTools": "the 29 tool names of cloud_findings.init_tools_observation.after.argv_disallow plus the 19 Bash rules of cloud_bash_deny in pat-19-campaign-v1.json (see the driver's argv there)",
+        "trial": {
+          "date": "2026-10-05",
+          "claude_code_version": "2.1.285",
+          "status": "TRIAL-RUN (final argv: 29 disallowed tools + 19 Bash deny rules, bypassPermissions, --setting-sources project,local --strict-mcp-config, no sandbox, R6 environment), toy task",
+          "init_tools": [
+            "Bash",
+            "Edit",
+            "Read",
+            "Write"
+          ],
+          "init_tools_note": "system/init announced exactly 4 tools (Bash, Edit, Read, Write)",
+          "model": "claude-sonnet-5-5",
+          "effort": "medium",
+          "passed": true,
+          "wall_seconds": 7.6,
+          "tools": {
+            "Bash": 3
+          },
+          "host_usage": {
+            "input_tokens": 8,
+            "cache_read_input_tokens": 21186,
+            "cache_creation_input_tokens": 3421,
+            "output_tokens": 355
+          },
+          "launcher_read": {
+            "input_tokens": 8,
+            "cached_input_tokens": 21186,
+            "cache_write_input_tokens": 3421,
+            "output_tokens": 355
+          },
+          "tokens_reconciled": true,
+          "host_list_price_usd": 0.0215
+        },
+        "claim": "pinned from a real trial on 2026-10-05 (Claude Code 2.1.285); the earlier command_tried entry and trial stay as history"
+      },
+      "trial": {
+        "label": "first trial, with --disallowedTools Agent only (command_tried), not the final pinned argv",
+        "role": "implement",
+        "model": "claude-sonnet-5-5",
+        "effort": "medium",
+        "exit_code": 0,
+        "wall_seconds": 11.6,
+        "num_turns": 7,
+        "tools": {
+          "Read": 3,
+          "Bash": 2,
+          "Edit": 1
+        },
+        "tests_pass": true,
+        "models_seen": [
+          "claude-sonnet-5-5"
+        ],
+        "host_usage": {
+          "input_tokens": 8,
+          "cache_read_input_tokens": 60608,
+          "cache_creation_input_tokens": 7734,
+          "output_tokens": 1127
+        },
+        "launcher_read": {
+          "input_tokens": 8,
+          "cached_input_tokens": 60608,
+          "cache_write_input_tokens": 7734,
+          "output_tokens": 1127
+        },
+        "host_list_price_usd": 0.054,
+        "tokens_reconciled": true
+      }
+    },
+    "cloud_implementer_economy": {
+      "note": "no --effort: Haiku 4.5 has a null effort",
+      "command_tried": "claude -p {prompt} --session-id {session_id} --model claude-haiku-4-5-20251001 --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Agent --output-format stream-json --verbose",
+      "command_tried_note": "the command ACTUALLY run in the toy-task trial: `--disallowedTools Agent` only (the 29-name list was observed at the init event separately, see cloud_findings.init_tools_observation, with no model call)",
+      "pinned_final_argv": {
+        "disallowedTools": "the 29 tool names of cloud_findings.init_tools_observation.after.argv_disallow plus the 19 Bash rules of cloud_bash_deny in pat-19-campaign-v1.json (see the driver's argv there)",
+        "trial": {
+          "date": "2026-10-05",
+          "claude_code_version": "2.1.285",
+          "status": "TRIAL-RUN (final argv: 29 disallowed tools + 19 Bash deny rules, bypassPermissions, --setting-sources project,local --strict-mcp-config, no sandbox, R6 environment), toy task",
+          "init_tools": [
+            "Bash",
+            "Edit",
+            "Read",
+            "Write"
+          ],
+          "init_tools_note": "system/init announced exactly 4 tools (Bash, Edit, Read, Write)",
+          "model": "claude-haiku-4-5-20251001",
+          "effort": null,
+          "passed": true,
+          "wall_seconds": 13.1,
+          "tools": {
+            "Read": 3,
+            "Edit": 1,
+            "Bash": 1
+          },
+          "host_usage": {
+            "input_tokens": 42,
+            "cache_read_input_tokens": 58627,
+            "cache_creation_input_tokens": 6876,
+            "output_tokens": 1195
+          },
+          "launcher_read": {
+            "input_tokens": 42,
+            "cached_input_tokens": 58627,
+            "cache_write_input_tokens": 6876,
+            "output_tokens": 1195
+          },
+          "tokens_reconciled": true,
+          "host_list_price_usd": 0.0256
+        },
+        "claim": "pinned from a real trial on 2026-10-05 (Claude Code 2.1.285); the earlier command_tried entry and trial stay as history"
+      },
+      "trial": {
+        "label": "first trial, with --disallowedTools Agent only (command_tried), not the final pinned argv",
+        "role": "implement",
+        "model": "claude-haiku-4-5-20251001",
+        "effort": null,
+        "exit_code": 0,
+        "wall_seconds": 16.3,
+        "num_turns": 6,
+        "tools": {
+          "Read": 3,
+          "Edit": 1,
+          "Bash": 1
+        },
+        "tests_pass": true,
+        "models_seen": [
+          "claude-haiku-4-5-20251001"
+        ],
+        "host_usage": {
+          "input_tokens": 42,
+          "cache_read_input_tokens": 102294,
+          "cache_creation_input_tokens": 9500,
+          "output_tokens": 1384
+        },
+        "launcher_read": {
+          "input_tokens": 42,
+          "cached_input_tokens": 102294,
+          "cache_write_input_tokens": 9500,
+          "output_tokens": 1384
+        },
+        "host_list_price_usd": 0.036,
+        "tokens_reconciled": true
+      }
+    },
+    "cloud_reviewer": {
+      "command_tried": "claude -p {prompt} --session-id {session_id} --model claude-opus-5-5 --effort high --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Agent --output-format stream-json --verbose",
+      "command_tried_note": "the command ACTUALLY run in the toy-task trial: `--disallowedTools Agent` only (the 29-name list was observed at the init event separately, see cloud_findings.init_tools_observation, with no model call)",
+      "pinned_final_argv": {
+        "disallowedTools": "the 29 tool names of cloud_findings.init_tools_observation.after.argv_disallow plus the 19 Bash rules of cloud_bash_deny in pat-19-campaign-v1.json (see the driver's argv there)",
+        "trial": {
+          "date": "2026-10-05",
+          "claude_code_version": "2.1.285",
+          "status": "TRIAL-RUN (final argv: 29 disallowed tools + 19 Bash deny rules, bypassPermissions, --setting-sources project,local --strict-mcp-config, no sandbox, R6 environment), toy task",
+          "init_tools": [
+            "Bash",
+            "Edit",
+            "Read",
+            "Write"
+          ],
+          "init_tools_note": "system/init announced exactly 4 tools (Bash, Edit, Read, Write)",
+          "model": "claude-opus-5-5",
+          "effort": "high",
+          "passed": true,
+          "wall_seconds": 17.1,
+          "tools": {
+            "Bash": 2,
+            "Write": 1
+          },
+          "host_usage": {
+            "input_tokens": 8,
+            "cache_read_input_tokens": 26472,
+            "cache_creation_input_tokens": 5880,
+            "output_tokens": 1333
+          },
+          "launcher_read": {
+            "input_tokens": 8,
+            "cached_input_tokens": 26472,
+            "cache_write_input_tokens": 5880,
+            "output_tokens": 1333
+          },
+          "tokens_reconciled": true,
+          "host_list_price_usd": 0.079,
+          "review_file_written": true,
+          "verdict": "PASS"
+        },
+        "claim": "pinned from a real trial on 2026-10-05 (Claude Code 2.1.285); the earlier command_tried entry and trial stay as history"
+      },
+      "trial": {
+        "label": "first trial, with --disallowedTools Agent only (command_tried), not the final pinned argv",
+        "role": "review",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "exit_code": 0,
+        "wall_seconds": 16.5,
+        "num_turns": 4,
+        "tools": {
+          "Bash": 3
+        },
+        "tests_pass": true,
+        "models_seen": [
+          "claude-opus-5-5"
+        ],
+        "host_usage": {
+          "input_tokens": 8,
+          "cache_read_input_tokens": 51654,
+          "cache_creation_input_tokens": 18407,
+          "output_tokens": 1216
+        },
+        "launcher_read": {
+          "input_tokens": 8,
+          "cached_input_tokens": 51654,
+          "cache_write_input_tokens": 18407,
+          "output_tokens": 1216
+        },
+        "host_list_price_usd": 0.182,
+        "tokens_reconciled": true,
+        "review_file": {
+          "verdict": "PASS",
+          "findings": [
+            "No blocking issues. The diff touches only src/calc.py: mean() now uses true division and raises ValueError on empty input, which is exactly what tests/test_calc.py requires. Verified by running `python3 -m pytest -q`: 3 passed.",
+            "Scope is compliant with TASK.md: tests are unmodified, and no test configuration files, virtual environments or installed packages were added (git status shows only src/calc.py modified).",
+            "Non-blocking note: `if not values` raises an ambiguous-truth-value error for numpy arrays and treats an exhausted generator as non-empty (then fails in len()); irrelevant for the list inputs the tests and task cover."
+          ]
+        }
+      }
+    }
+  },
+  "cloud_findings": {
+    "cloud_tool_set": "Cloud arms have only the built-in tools Read, Edit, Write and Bash (init event, 29-name list). Bash itself is unrestricted except for the best-effort cloud_bash_deny rules (command-prefix permission rules, evadable); web, sub-agent and workflow TOOLS are absent, but a shell can still reach the network. The local harness omp exposes its own tool set (read, edit, write, bash, glob seen in the smoke runs): this asymmetry between arms is recorded, not equalised.",
+    "sandbox": "Under sandbox-exec Claude Code could not authenticate: with the keychain read-denied it said 'Not logged in'; with the keychain allowed it got '401 OAuth access token has been revoked', after which the maintainer had to log in again in a terminal (cause not established; possibly the sandboxed or TMPDIR-overridden child). Decision: cloud drivers run WITHOUT sandbox-exec (sandbox: false with this reason), with the AGENTS.md R6 environment intact (HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER, the real TMPDIR) and the disposable bundle as working directory.",
+    "session_log_layout": "premium_tokens(session_id) read from <projects>/*/<session_id>.jsonl equals the host's own result.usage exactly for the three runs (input, cache read, cache write, output). Only one file named by the session id existed each time. layout_verified is set to true CONDITIONALLY on the launcher asserting from the stream's system/init event that no sub-agent tool (Agent, Task) is available.",
+    "tool_set_assertion": "The launcher refuses a cloud record unless the init event's tools are a subset of allowed_tools (Bash, Edit, Read, Write). The three smoke runs were made before this list existed (their init event listed Task among 25 tools); the allowlisted tool set below was observed at the init event only, with no model call.",
+    "init_tools_observation": {
+      "claude_code_version": "2.1.285",
+      "method": "stopped at the system/init event of the pinned argv, before any model call (no tokens spent)",
+      "before": {
+        "argv_disallow": "--disallowedTools Agent",
+        "tool_count": 25,
+        "init_tools": [
+          "Bash",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "DesignSync",
+          "Edit",
+          "EnterWorktree",
+          "ExitWorktree",
+          "ListAgents",
+          "Monitor",
+          "NotebookEdit",
+          "PushNotification",
+          "Read",
+          "RemoteTrigger",
+          "ReportFindings",
+          "ScheduleWakeup",
+          "SendMessage",
+          "Skill",
+          "Task",
+          "TaskStop",
+          "ToolSearch",
+          "WebFetch",
+          "WebSearch",
+          "Workflow",
+          "Write"
+        ],
+        "note": "--disallowedTools Agent did NOT remove Task from the init list"
+      },
+      "intermediate": {
+        "argv_disallow": "the 21 non-core names of the final list (ToolSearch included)",
+        "init_tools": [
+          "Artifact",
+          "ArtifactComments",
+          "ArtifactData",
+          "Bash",
+          "Edit",
+          "Read",
+          "SendFeedback",
+          "TaskCreate",
+          "TaskGet",
+          "TaskList",
+          "TaskUpdate",
+          "Write"
+        ],
+        "note": "disallowing ToolSearch surfaces its deferred tools"
+      },
+      "after": {
+        "argv_disallow": [
+          "Task",
+          "TaskStop",
+          "Workflow",
+          "SendMessage",
+          "ListAgents",
+          "Monitor",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "ScheduleWakeup",
+          "RemoteTrigger",
+          "PushNotification",
+          "WebFetch",
+          "WebSearch",
+          "Skill",
+          "DesignSync",
+          "EnterWorktree",
+          "ExitWorktree",
+          "ReportFindings",
+          "ToolSearch",
+          "NotebookEdit",
+          "Artifact",
+          "ArtifactComments",
+          "ArtifactData",
+          "SendFeedback",
+          "TaskCreate",
+          "TaskGet",
+          "TaskList",
+          "TaskUpdate"
+        ],
+        "init_tools": [
+          "Bash",
+          "Edit",
+          "Read",
+          "Write"
+        ]
+      }
+    },
+    "settings": "With --setting-sources project,local --strict-mcp-config only built-in plugins load (no user plugin hooks, no MCP server). Not verified: whether the user's global CLAUDE.md memory is still loaded (asymmetry with the local arm): a limit of the result.",
+    "cost_note": "Host-reported list prices are informative only, never an economy figure.",
+    "exposure": "Cloud arms are bare Claude Code (--setting-sources project,local --strict-mcp-config: no Foundry plugin, hook or agent definition, so not the Eiffel/Maigret definitions and no R1 guard on gh pr merge / git push) with --permission-mode bypassPermissions, the real home, an open network and the user's implicit credentials (git credential helper through the keychain, gh configuration, ~/.config/foundry). The launcher applies no read denial to them. A cloud arm could read merged solutions (gh pr view, git clone, curl), act on the real repository through gh, start another claude -p whose tokens are never read, or exfiltrate. Mitigations are best-effort only: cloud_bash_deny permission rules, a post-run audit of commands and paths (contaminated records), and the bundle having no remote. The maintainer explicitly accepted this residual exposure on 2026-10-05, with these mitigations.",
+    "contamination_audit_real_streams": {
+      "date": "2026-10-05",
+      "clean": [
+        "the 3 final cloud runs (after the fix)",
+        "the omp deny-home run",
+        "the 4 earlier local candidate runs"
+      ],
+      "false_positive_before_fix": "the Sonnet 5.5 run (3rd Bash call: a python heredoc editing src/calc.py with `return sum(values) / len(values)`) was flagged `/`: the division operator was read as the filesystem root, which contains the bundle. Reason for the fix: a token made only of slashes is not a path. Since review round 2 a bare `/` is a path again as an argument of find, grep -r/-R, rg, ls, du, tree or cat (`find / -name x -exec cat {} +` is flagged); the heredoc division stays clean. Known limit: a bare `/` reaching the shell any other way (a script, `echo / | xargs ls`) is not seen."
+    },
+    "control_trial_2026-10-05": {
+      "driver": "cloud_implementer_current (claude-sonnet-5-5, final pinned argv)",
+      "task": "toy task variant: a long Bash output and a test file written by a heredoc containing the strings 'gh pr merge 12' and '~/.config/foundry/registry.json'",
+      "result": "pass, 11.7 s, Bash x3, init announced 4 tools, launcher-read tokens equal the host's (input 8, cache read 21,558, cache write 3,727, output 538)",
+      "audit": "clean under the round-3 rules (heredoc body not read as a command or an access)",
+      "not_exercised": "the model piped the long output to wc -c, so Claude Code's persisted tool-output file (own session directory) was not exercised for real; it is covered by tests only"
+    }
+  },
+  "limits": [
+    "tokens of a neutral-harness run are unknown (no event stream)",
+    "the contamination audit does not read the neutral harness's trajectory (its tool calls are not parsed): mitigated by the deny-home sandbox profile of local arms",
+    "an unsandboxed cloud arm has the real home, an open network, the user's implicit credentials and no Foundry hook: it can read anything the user can (plugin cache whose tests were merged before release 1.0.0, repositories), call gh/curl/git, or start another agent; the launcher applies best-effort Bash deny rules and audits the arm's commands and paths after the run (contaminated records) instead of preventing it",
+    "the weights digests are recorded here and are not recomputed by the launcher",
+    "one toy task per driver: a trial proves the command works, it measures no quality",
+    "a token made only of slashes is the division operator for the contamination audit, except as an argument of find, grep -r/-R, rg, ls, du, tree or cat: a bare `/` reaching the shell another way (a script, `echo / | xargs ls`) is not flagged",
+    "Generation sampling parameters are not pinned: LM Studio's per-model defaults and each harness's defaults apply (the launcher passes no temperature, top_p, top_k, seed or max_tokens); their effective values were not recorded. A limit of the result."
+  ],
+  "lms_ps_json_observed": {
+    "date": "2026-10-05",
+    "note": "fields of `lms ps --json` observed with a loaded model on the maintainer's machine; the launcher reads them",
+    "fields": {
+      "modelKey": "string, the LM Studio model key (checked against lm_studio_key; absent refuses)",
+      "identifier": "string, the served identifier",
+      "quantization": {
+        "name": "string, e.g. 4bit",
+        "bits": "integer"
+      },
+      "contextLength": "integer, the loaded context (checked against min_context)"
+    }
+  }
+}

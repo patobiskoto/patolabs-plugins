@@ -1,7 +1,7 @@
 {
   "schema": "foundry.local-first-campaign.v1",
   "protocol": "pat-19-protocol-v1",
-  "note": "Frozen campaign config of the PAT-19 launcher (PAT-108). Changing a coordinate, a bound or a rule opens a protocol v2. Drivers with verified=false are refused by a real run: PAT-109's preflight must smoke-test and pin them (argv, flags, log location) before any real execution.",
+  "note": "Frozen campaign config of the PAT-19 launcher (PAT-108), pinned by PAT-111 from real toy-task trials (pat-19-preflight-2026-10-05.json, then by the final trials of 2026-10-05: final cloud argv, deny-home local profile and the harness step bound, all trial-run). Changing a coordinate, a bound or a rule opens a protocol v2. A driver with verified=false is refused by a real run; verified=true needs the evidence of its trial.",
   "frozen_machine": {
     "chip_contains": "M5 Pro",
     "memory_gib": 64,
@@ -19,7 +19,9 @@
     "note": "local bounds are protocol coordinates (20 min, 40 steps); cloud_max_seconds and max_correction_rounds are operational bounds chosen by PAT-108 (protocol: 'within the limit of Foundry escalations')"
   },
   "isolation": {
-    "note": "Launcher choice, not a protocol coordinate. Explicit read-deny list on top of an allow-default sandbox profile, relative to the REAL home of the user. A default-deny of the home (allowing only the harness's isolated home, bundle, attempt directory and tool installation paths) could not be verified without running the harness: PAT-109 should replace this list by that allow list once smoke-tested. Also denied, computed at launch: every checkout/worktree of this repository, the state directory, and the parent directory of --envelope/--campaign/--snapshot/--manifest (keep them apart from --work-root). Local arms: the whole configuration of the user. Cloud arms keep ~/.claude (Claude Code OAuth identity, AGENTS.md R6): the plugin cache there is NOT hidden from a cloud arm. Cloud arms also keep ~/.claude.json (Claude Code reads and writes it). The generated profile is itself denied to the arm. Not covered: '(allow default)' leaves Mach access to the security daemon, so denying Library/Keychains does not prevent a keychain query (PAT-109 precondition).",
+    "note": "Launcher choice, not a protocol coordinate. LOCAL drivers (sandbox-exec): reads under the user's REAL home are denied by default (deny_home_by_default, true), then only the entries of allow_read_home (relative to the home, empty by default) and the root of the harness executable's environment when it lives in the home are allowed back, plus the bundle and the attempt directory (outside the real home in a normal run); the explicit read-deny list below stays on top as a second layer (the last matching rule wins), together with every checkout/worktree of this repository, the state directory and the parent directory of --envelope/--campaign/--snapshot/--manifest (keep them apart from --work-root). Default-deny is unit-tested on the generated profile and was trial-run on 2026-10-05 with the real omp 18.4.10 and mini-swe-agent 2.4.6 (Qwen3.8-27B MLX 4-bit, allow_read_home empty): both passed, so deny_home_by_default stays true (explicit list exercised with the real local harness by PAT-111 as well). The CLOUD drivers run WITHOUT sandbox-exec (sandbox: false with its reason) and NO read denial applies to them: neither deny_home_by_default nor the cloud list below is enforced for them (kept as data for the audit); an unsandboxed cloud arm can read anything the user can (plugin cache, ~/.config, ~/.ssh, repositories), reach the network, and use the user's implicit credentials (git credential helper through the keychain, gh configuration, ~/.config/foundry), and runs without Foundry hooks (--setting-sources project,local: the R1 guard on gh pr merge / git push does not apply). What stands between a cloud arm and the tracker, secrets and merge is: the best-effort cloud_bash_deny rules, the post-run audit of commands and paths (a record whose tool calls ran a forbidden command or touched the plugin cache, another checkout, the user's configuration, the home or an ancestor of the bundle is `contaminated`, undecided, cost kept, never replayed), and the fact that the bundle has no remote. The generated profile is itself denied to a sandboxed arm. Not covered: '(allow default)' leaves Mach access to the security daemon, so denying Library/Keychains does not prevent a keychain query.",
+    "deny_home_by_default": true,
+    "allow_read_home": [],
     "deny_read_home": {
       "local": [
         ".claude",
@@ -59,6 +61,28 @@
       ]
     }
   },
+  "cloud_bash_deny": [
+    "Bash(gh:*)",
+    "Bash(git push:*)",
+    "Bash(git remote:*)",
+    "Bash(git clone:*)",
+    "Bash(git fetch:*)",
+    "Bash(git pull:*)",
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+    "Bash(claude:*)",
+    "Bash(codex:*)",
+    "Bash(omp:*)",
+    "Bash(ssh:*)",
+    "Bash(scp:*)",
+    "Bash(nc:*)",
+    "Bash(python3 -m http:*)",
+    "Bash(pip install:*)",
+    "Bash(npm:*)",
+    "Bash(security:*)",
+    "Bash(open:*)"
+  ],
+  "cloud_bash_deny_note": "Best-effort Bash permission rules added to --disallowedTools of the three cloud drivers (the loader refuses a real cloud driver whose argv lacks one of them). Claude Code matches a rule against the COMMAND PREFIX: they stop the direct use of the tracker, merge, network and other-agent tools (gh, git push/remote/clone/fetch/pull, curl, wget, claude, codex, omp, ssh, scp, nc, npm, pip install, python -m http, security, open). They are NOT a sandbox: a determined agent evades them (a script, an interpreter one-liner, a renamed binary, an alias, a path-qualified executable, a library call), and the cloud arm keeps the real home, an open network, the user's implicit credentials and bypassPermissions. The post-run audit (command and path audit, contaminated records) detects the direct shapes; it does not prevent anything.",
   "non_protocol_choices": {
     "min_free_disk_gib": {
       "not_a_protocol_coordinate": true,
@@ -76,6 +100,10 @@
     "premium_work_definition": {
       "not_a_protocol_coordinate": true,
       "rationale": "premium work = unweighted sum of the four billing token classes (input, cached input, cache write, output) over ALL models; a limit: an economy model's token weighs the same as a premium one, hence the per-model breakdown in the report, needed to judge path B honestly"
+    },
+    "economy_unavailable_when_a_compared_task_is_undecided": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the economy verdict is `unavailable` as soon as a compared task (of the path or of A) is not decided (cap, tool failure, interruption, unreadable review) or the ledger knows of spent work the results cannot attribute; the protocol states no rule for an undecided task, this is the launcher's conservative reading (a cut path has no complete cost, comparing it would look better than what was spent)"
     }
   },
   "statement_footer": "\n\n---\nLauncher note (identical for every arm): work only inside this repository. Do not create virtual environments, install packages or create node_modules in the tree; use the interpreter already on PATH. Do not create or edit test configuration files (conftest.py, pytest.ini, pyproject.toml, tox.ini, setup.cfg, sitecustomize.py, *.pth).\n",
@@ -105,7 +133,7 @@
       "network": "loopback",
       "env_allow": [],
       "home_files": {},
-      "note": "Smoke-tested on 2026-10-05 (protocol section 10). The event stream has tool_execution_start events (steps) and message_end events whose assistant message carries usage (input, output, reasoningTokens). Unconfirmed at PAT-108: the --max-time duration syntax (passed as {max_duration}, e.g. 20m; the launcher kills the process group at bounds.local_max_seconds regardless) and whether lm-studio needs provider settings in the isolated HOME (home_files).",
+      "note": "Pinned on 2026-10-05 (PAT-111) from real toy-task trials of the five candidates under the launcher's local sandbox profile (protocol section 10). stdin closed, HOME isolated: the lm-studio provider is discovered from the isolated home (no home_files). --max-time 6m was accepted. The event stream has tool_execution_start events (steps) and message_end events whose assistant message carries usage (input, output, reasoningTokens).",
       "stream": {
         "format": "omp-json",
         "speed_usage_keys": null
@@ -129,50 +157,86 @@
         "--max-time",
         "{max_duration}",
         "{prompt}"
-      ]
+      ],
+      "evidence": "pat-19-preflight-2026-10-05.json#drivers.local_harness",
+      "version": "omp 18.4.10"
     },
     "neutral_harness": {
       "kind": "neutral_harness",
-      "verified": false,
+      "verified": true,
       "home": "isolated",
       "network": "loopback",
       "env_allow": [],
       "home_files": {},
-      "note": "mini-swe-agent: not installed yet, version to pin. argv is a placeholder PAT-109's preflight must replace after a smoke test.",
+      "note": "mini-swe-agent 2.4.6 (PyPI, isolated virtual environment, not in the repository). The executable comes from the operator variable PAT19_MINI_BIN (an absolute path whose installed package must be 2.4.6). Pinned on 2026-10-05 from a real toy-task trial under the local sandbox profile. Steps are read from the trajectory after the process ends (info.model_stats.api_calls): the launcher cannot impose the step bound while it runs, only the time bound: the harness is told its own bound (`-c agent.step_limit={max_steps}`, 40, trial-run on 2026-10-05: 8 api_calls, Submitted) and the launcher marks `step_limit_hit` a posteriori, the attempt refused, when api_calls exceeds it. LITELLM_LOCAL_MODEL_COST_MAP avoids a price-map download the sandbox blocks (about 20 s lost). OPENAI_API_KEY is a placeholder for the local server, not a secret.",
       "stream": {
         "format": "none"
       },
       "argv": [
-        "mini",
-        "--task",
-        "{prompt}",
-        "--model",
-        "{model}",
-        "--cwd",
-        "{workdir}"
-      ]
+        "{mini_bin}",
+        "-m",
+        "openai/{model}",
+        "-c",
+        "mini_textbased.yaml",
+        "-c",
+        "model.model_kwargs.api_base=http://127.0.0.1:1234/v1",
+        "-c",
+        "model.cost_tracking=ignore_errors",
+        "-c",
+        "agent.step_limit={max_steps}",
+        "-y",
+        "--exit-immediately",
+        "-o",
+        "{scratch}/traj.json",
+        "-t",
+        "{prompt}"
+      ],
+      "evidence": "pat-19-preflight-2026-10-05.json#drivers.neutral_harness",
+      "version": "mini-swe-agent 2.4.6",
+      "executable": {
+        "env": "PAT19_MINI_BIN",
+        "placeholder": "mini_bin",
+        "package": "mini-swe-agent",
+        "version": "2.4.6"
+      },
+      "env_set": {
+        "MSWEA_GLOBAL_CONFIG_DIR": "{scratch}/mswea",
+        "MSWEA_CONFIGURED": "true",
+        "MSWEA_SILENT_STARTUP": "1",
+        "MSWEA_COST_TRACKING": "ignore_errors",
+        "OPENAI_API_BASE": "http://127.0.0.1:1234/v1",
+        "OPENAI_API_KEY": "local-endpoint-no-key",
+        "LITELLM_LOCAL_MODEL_COST_MAP": "True"
+      },
+      "make_dirs": [
+        "{scratch}/mswea"
+      ],
+      "trajectory": {
+        "file": "{scratch}/traj.json",
+        "steps_path": [
+          "info",
+          "model_stats",
+          "api_calls"
+        ]
+      }
     },
     "cloud_implementer_current": {
       "kind": "cloud_implementer",
-      "verified": false,
+      "verified": true,
       "home": "real",
       "network": "open",
       "env_allow": [],
-      "extra_write": [
-        "~/.claude",
-        "~/.claude.json"
-      ],
       "stream": {
-        "format": "none"
+        "format": "claude-stream-json"
       },
       "session_log": {
         "host": "claude",
         "projects_dir": "~/.claude/projects",
-        "layout_verified": false,
-        "layout_note": "Only <projects_dir>/*/<session>.jsonl is read. Whether the host stores subagent transcripts in separate files is unverified: premium tokens stay unknown until PAT-109 verifies the layout and sets layout_verified to true."
+        "layout_verified": true,
+        "layout_note": "Verified on 2026-10-05 (PAT-111): the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly for the three drivers, one file per session id. Conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools (Bash, Edit, Read, Write; so no sub-agent, workflow, web or scheduling tool): a record whose init event lists any other tool, or has none, is refused (tool_error)."
       },
-      "model": "sonnet",
-      "note": "Claude Code headless, current routed implementer profile (Sonnet 5.5, medium). Flags and session log location unverified; --session-id is how the launcher attaches the log.",
+      "model": "claude-sonnet-5-5",
+      "note": "Claude Code 2.1.285 headless, current routed implementer profile (Sonnet 5.5, effort medium). The first 2026-10-05 trial ran with `--disallowedTools Agent` only; the FINAL argv (29 tool names + the cloud_bash_deny rules) was then trial-run on the toy task on 2026-10-05 (init: exactly Bash, Edit, Read, Write) and passed, see the evidence. Bare Claude Code with the protocol's model and effort: no Foundry plugin, hook, agent definition (not the Eiffel or Maigret definitions), --permission-mode bypassPermissions, tools restricted to Read/Edit/Write/Bash with Bash otherwise unrestricted except for the best-effort deny rules.",
       "argv": [
         "claude",
         "-p",
@@ -181,31 +245,93 @@
         "{session_id}",
         "--model",
         "{model}",
+        "--effort",
+        "medium",
         "--permission-mode",
-        "acceptEdits"
+        "bypassPermissions",
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "Task",
+        "TaskStop",
+        "Workflow",
+        "SendMessage",
+        "ListAgents",
+        "Monitor",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        "RemoteTrigger",
+        "PushNotification",
+        "WebFetch",
+        "WebSearch",
+        "Skill",
+        "DesignSync",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ReportFindings",
+        "ToolSearch",
+        "NotebookEdit",
+        "Artifact",
+        "ArtifactComments",
+        "ArtifactData",
+        "SendFeedback",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "Bash(gh:*)",
+        "Bash(git push:*)",
+        "Bash(git remote:*)",
+        "Bash(git clone:*)",
+        "Bash(git fetch:*)",
+        "Bash(git pull:*)",
+        "Bash(curl:*)",
+        "Bash(wget:*)",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(omp:*)",
+        "Bash(ssh:*)",
+        "Bash(scp:*)",
+        "Bash(nc:*)",
+        "Bash(python3 -m http:*)",
+        "Bash(pip install:*)",
+        "Bash(npm:*)",
+        "Bash(security:*)",
+        "Bash(open:*)",
+        "--output-format",
+        "stream-json",
+        "--verbose"
+      ],
+      "evidence": "pat-19-preflight-2026-10-05.json#drivers.cloud_implementer_current",
+      "sandbox": false,
+      "sandbox_reason": "Claude Code cannot authenticate under sandbox-exec ('Not logged in' with the keychain denied, '401 OAuth access token has been revoked' with it allowed; cause not established). The arm runs unsandboxed with the AGENTS.md R6 environment intact (real HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER) in the disposable bundle; its tool calls are audited after the run. Consequences, not mitigated by the launcher: real home, open network, the user's implicit credentials, no Foundry hook (no R1 guard); see cloud_bash_deny and isolation.note.",
+      "allowed_tools": [
+        "Bash",
+        "Edit",
+        "Read",
+        "Write"
       ]
     },
     "cloud_implementer_economy": {
       "kind": "cloud_implementer",
-      "verified": false,
+      "verified": true,
       "home": "real",
       "network": "open",
       "env_allow": [],
-      "extra_write": [
-        "~/.claude",
-        "~/.claude.json"
-      ],
       "stream": {
-        "format": "none"
+        "format": "claude-stream-json"
       },
       "session_log": {
         "host": "claude",
         "projects_dir": "~/.claude/projects",
-        "layout_verified": false,
-        "layout_note": "Only <projects_dir>/*/<session>.jsonl is read. Whether the host stores subagent transcripts in separate files is unverified: premium tokens stay unknown until PAT-109 verifies the layout and sets layout_verified to true."
+        "layout_verified": true,
+        "layout_note": "Verified on 2026-10-05 (PAT-111): the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly for the three drivers, one file per session id. Conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools (Bash, Edit, Read, Write; so no sub-agent, workflow, web or scheduling tool): a record whose init event lists any other tool, or has none, is refused (tool_error)."
       },
-      "model": "haiku",
-      "note": "Claude Code headless, economy tier (Haiku 4.5). Unverified, same caveats.",
+      "model": "claude-haiku-4-5-20251001",
+      "note": "Claude Code 2.1.285 headless, economy tier (Haiku 4.5, null effort: no --effort). The first 2026-10-05 trial ran with `--disallowedTools Agent` only; the FINAL argv (29 tool names + the cloud_bash_deny rules) was then trial-run on the toy task on 2026-10-05 (init: exactly Bash, Edit, Read, Write) and passed, see the evidence. Bare Claude Code with the protocol's model and effort: no Foundry plugin, hook, agent definition (not the Eiffel or Maigret definitions), --permission-mode bypassPermissions, tools restricted to Read/Edit/Write/Bash with Bash otherwise unrestricted except for the best-effort deny rules.",
       "argv": [
         "claude",
         "-p",
@@ -215,30 +341,90 @@
         "--model",
         "{model}",
         "--permission-mode",
-        "acceptEdits"
+        "bypassPermissions",
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "Task",
+        "TaskStop",
+        "Workflow",
+        "SendMessage",
+        "ListAgents",
+        "Monitor",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        "RemoteTrigger",
+        "PushNotification",
+        "WebFetch",
+        "WebSearch",
+        "Skill",
+        "DesignSync",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ReportFindings",
+        "ToolSearch",
+        "NotebookEdit",
+        "Artifact",
+        "ArtifactComments",
+        "ArtifactData",
+        "SendFeedback",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "Bash(gh:*)",
+        "Bash(git push:*)",
+        "Bash(git remote:*)",
+        "Bash(git clone:*)",
+        "Bash(git fetch:*)",
+        "Bash(git pull:*)",
+        "Bash(curl:*)",
+        "Bash(wget:*)",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(omp:*)",
+        "Bash(ssh:*)",
+        "Bash(scp:*)",
+        "Bash(nc:*)",
+        "Bash(python3 -m http:*)",
+        "Bash(pip install:*)",
+        "Bash(npm:*)",
+        "Bash(security:*)",
+        "Bash(open:*)",
+        "--output-format",
+        "stream-json",
+        "--verbose"
+      ],
+      "evidence": "pat-19-preflight-2026-10-05.json#drivers.cloud_implementer_economy",
+      "sandbox": false,
+      "sandbox_reason": "Claude Code cannot authenticate under sandbox-exec ('Not logged in' with the keychain denied, '401 OAuth access token has been revoked' with it allowed; cause not established). The arm runs unsandboxed with the AGENTS.md R6 environment intact (real HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER) in the disposable bundle; its tool calls are audited after the run. Consequences, not mitigated by the launcher: real home, open network, the user's implicit credentials, no Foundry hook (no R1 guard); see cloud_bash_deny and isolation.note.",
+      "allowed_tools": [
+        "Bash",
+        "Edit",
+        "Read",
+        "Write"
       ]
     },
     "cloud_reviewer": {
       "kind": "cloud_reviewer",
-      "verified": false,
+      "verified": true,
       "home": "real",
       "network": "open",
       "env_allow": [],
-      "extra_write": [
-        "~/.claude",
-        "~/.claude.json"
-      ],
       "stream": {
-        "format": "none"
+        "format": "claude-stream-json"
       },
       "session_log": {
         "host": "claude",
         "projects_dir": "~/.claude/projects",
-        "layout_verified": false,
-        "layout_note": "Only <projects_dir>/*/<session>.jsonl is read. Whether the host stores subagent transcripts in separate files is unverified: premium tokens stay unknown until PAT-109 verifies the layout and sets layout_verified to true."
+        "layout_verified": true,
+        "layout_note": "Verified on 2026-10-05 (PAT-111): the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly for the three drivers, one file per session id. Conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools (Bash, Edit, Read, Write; so no sub-agent, workflow, web or scheduling tool): a record whose init event lists any other tool, or has none, is refused (tool_error)."
       },
-      "model": "opus",
-      "note": "Claude Code headless reviewer (Opus 5.5, high), identical for every arm. Unverified.",
+      "model": "claude-opus-5-5",
+      "note": "Claude Code 2.1.285 headless reviewer (Opus 5.5, effort high), identical for every arm. The first 2026-10-05 trial ran with `--disallowedTools Agent` only; the FINAL argv (29 tool names + the cloud_bash_deny rules) was then trial-run on the toy task on 2026-10-05 (init: exactly Bash, Edit, Read, Write) and passed, see the evidence. Bare Claude Code with the protocol's model and effort: no Foundry plugin, hook, agent definition (not the Eiffel or Maigret definitions), --permission-mode bypassPermissions, tools restricted to Read/Edit/Write/Bash with Bash otherwise unrestricted except for the best-effort deny rules.",
       "argv": [
         "claude",
         "-p",
@@ -247,37 +433,277 @@
         "{session_id}",
         "--model",
         "{model}",
+        "--effort",
+        "high",
         "--permission-mode",
-        "acceptEdits"
+        "bypassPermissions",
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "Task",
+        "TaskStop",
+        "Workflow",
+        "SendMessage",
+        "ListAgents",
+        "Monitor",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        "RemoteTrigger",
+        "PushNotification",
+        "WebFetch",
+        "WebSearch",
+        "Skill",
+        "DesignSync",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ReportFindings",
+        "ToolSearch",
+        "NotebookEdit",
+        "Artifact",
+        "ArtifactComments",
+        "ArtifactData",
+        "SendFeedback",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "Bash(gh:*)",
+        "Bash(git push:*)",
+        "Bash(git remote:*)",
+        "Bash(git clone:*)",
+        "Bash(git fetch:*)",
+        "Bash(git pull:*)",
+        "Bash(curl:*)",
+        "Bash(wget:*)",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(omp:*)",
+        "Bash(ssh:*)",
+        "Bash(scp:*)",
+        "Bash(nc:*)",
+        "Bash(python3 -m http:*)",
+        "Bash(pip install:*)",
+        "Bash(npm:*)",
+        "Bash(security:*)",
+        "Bash(open:*)",
+        "--output-format",
+        "stream-json",
+        "--verbose"
+      ],
+      "evidence": "pat-19-preflight-2026-10-05.json#drivers.cloud_reviewer",
+      "sandbox": false,
+      "sandbox_reason": "Claude Code cannot authenticate under sandbox-exec ('Not logged in' with the keychain denied, '401 OAuth access token has been revoked' with it allowed; cause not established). The arm runs unsandboxed with the AGENTS.md R6 environment intact (real HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER) in the disposable bundle; its tool calls are audited after the run. Consequences, not mitigated by the launcher: real home, open network, the user's implicit credentials, no Foundry hook (no R1 guard); see cloud_bash_deny and isolation.note.",
+      "allowed_tools": [
+        "Bash",
+        "Edit",
+        "Read",
+        "Write"
       ]
     }
   },
   "candidates": {
     "qwen3.8-27b-mlx-6bit": {
-      "model": "lmstudio-community/Qwen3.8-27B-MLX-6bit",
-      "engine": "mlx"
+      "model": "qwen3.8-27b-mlx-alias",
+      "lm_studio_key": "qwen3.8-27b-mlx-alias",
+      "engine": "mlx",
+      "quantization": "6bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.8-27B-MLX-6bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen3.8-27b-mlx-alias",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen3.8-27b-mlx-alias",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "config.json": "f2490d237e42fc8418ee62b7416e360785b7de308f43d8f794ccf4f185bdeec9",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00005.safetensors": "39a48bfd79609b341f4ed420cdc92e3edce316cd3f5ef7db2dcd371f48c90588",
+        "model-00002-of-00005.safetensors": "d9011deb397afa986754a8abe3872b87a21c2bd6d7f9ed50bd8cba3890b782f9",
+        "model-00003-of-00005.safetensors": "760d392182ee77093df96328110596e230a9f4cab37febd70ae29173f7ff7e01",
+        "model-00004-of-00005.safetensors": "513fbeb37662c2b6020ebe4d61e5e9192f7abb5970aef0cd291b7a55f445c23e",
+        "model-00005-of-00005.safetensors": "6ed59540691cfb8f8adeaa186506d3fc44b0f0ce392c7caf59116bb6ae580c01",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "45fc17c8dd2474af6b493b52483c26c0584b0082d368c480f9fa611e73070040",
+        "tokenizer_config.json": "47a7a8371379b07650b22f3c8a78c32fed85c4e35ea88e3da0c4b7a7611e8082",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit.deny_home_trial"
+      },
+      "note": "Reached through the LM Studio model key qwen3.8-27b-mlx-alias: a folder of hard links (pat19-campaign/Qwen3.8-27B-MLX-6bit-alias) to the 6-bit files, because LM Studio groups the 4-bit and 6-bit variants under qwen/qwen3.8-27b and no CLI or API key selects the 6-bit variant."
     },
     "qwen3.8-27b-mlx-4bit": {
-      "model": "lmstudio-community/Qwen3.8-27B-MLX-4bit",
-      "engine": "mlx"
+      "model": "qwen/qwen3.8-27b",
+      "lm_studio_key": "qwen/qwen3.8-27b",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.8-27B-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen/qwen3.8-27b",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen/qwen3.8-27b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "config.json": "14b65a0ee06517060a6bbd979bb1a8ff54e7b304b1a1f01d54344b88b8285e85",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00003.safetensors": "471a9a81b54dddbfef43e8a71960ca24ad3c727891c6b0750a9db9a214aab504",
+        "model-00002-of-00003.safetensors": "e7474b8f968f4078dfd4889925961c5b0da9939219b614dba08eb63c46590de7",
+        "model-00003-of-00003.safetensors": "1038989bed1346ecdb541a45c078df2aae99a9509f35bfd51e7a04802a5d8402",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "45fc17c8dd2474af6b493b52483c26c0584b0082d368c480f9fa611e73070040",
+        "tokenizer_config.json": "47a7a8371379b07650b22f3c8a78c32fed85c4e35ea88e3da0c4b7a7611e8082",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit.deny_home_trial"
+      },
+      "note": "The selected variant of qwen/qwen3.8-27b must be the 4-bit one: the preflight refuses a loaded instance whose quantization is not 4bit."
     },
     "qwen3.6-35b-a3b-mlx-4bit": {
-      "model": "lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit",
-      "engine": "mlx"
+      "model": "qwen/qwen3.6-35b-a3b",
+      "lm_studio_key": "qwen/qwen3.6-35b-a3b",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen/qwen3.6-35b-a3b",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen/qwen3.6-35b-a3b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259",
+        "config.json": "a822a9e48b0aafbe3144ec37d4fb067e178ed96615ce6e4420b3149893cc5767",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00004.safetensors": "09f3e6ecb0b7af6e6a38bc8169a134c821b0924c2679b2bb8f4426ad38d032b8",
+        "model-00002-of-00004.safetensors": "31dcdb1c49eebdb1505bd14e3cb33f9cf900bd2546b638f2464694ae763a033f",
+        "model-00003-of-00004.safetensors": "3e66de06a1f03dade16a612a368cfce4a4c9caa4efd7d28185454384082cec03",
+        "model-00004-of-00004.safetensors": "a5d0cf03519c26f8b506df6b0ba60526e5c08c8cea22d0c21ce92950e58a5422",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1",
+        "tokenizer_config.json": "672488283cdbf3530ecd2e3f90da54f9998cbae6befb5b32877590f72c7a9b2c",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit.deny_home_trial"
+      }
     },
     "muse-glimmer-30b-gguf": {
-      "model": "lmstudio-community/Muse-Glimmer-30B-GGUF",
-      "engine": "llama.cpp"
+      "model": "muse-glimmer-30b",
+      "lm_studio_key": "muse-glimmer-30b",
+      "engine": "llama.cpp",
+      "quantization": "Q4_K_M",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Muse-Glimmer-30B-GGUF",
+      "load_command": [
+        "lms",
+        "load",
+        "muse-glimmer-30b",
+        "-c",
+        "65536",
+        "--identifier",
+        "muse-glimmer-30b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf": "4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e",
+        "mmproj-Muse-Glimmer-30B-Q4_K_M.gguf": "f48b452316f9b213758e8659444029b961a24a07f99a1abb2a9f88b06f7c00c6"
+      },
+      "chat_template_sha256": null,
+      "generation_config_sha256": null,
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.muse-glimmer-30b-gguf",
+        "failed_at_default_8192": true,
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.muse-glimmer-30b-gguf.deny_home_trial"
+      },
+      "note": "Chat template embedded in the GGUF (covered by the file digest)."
+    },
+    "qwen3-coder-30b-a3b-mlx-4bit": {
+      "model": "qwen3-coder-30b-a3b-instruct-mlx",
+      "lm_studio_key": "qwen3-coder-30b-a3b-instruct-mlx",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen3-coder-30b-a3b-instruct-mlx",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen3-coder-30b-a3b-instruct-mlx",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "672e747c77e990320152343b0a4951222e40de5645297905d89afba05586d827",
+        "config.json": "6fb72959ce0deb110c85627c09041cbcad46163c3802914ebefd02bbcf3304e6",
+        "generation_config.json": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d",
+        "model-00001-of-00004.safetensors": "961d4610b969fcf61b015f59654da6b12a158af5a1104be0fadd75268bd9535c",
+        "model-00002-of-00004.safetensors": "916440f8de7a85b62ae74711a36b7d59bf8b04101e85a23717287cbd60fdd193",
+        "model-00003-of-00004.safetensors": "02be309a7a17b0ab0e6df48e5d6070940e05492392a3501a629c7f21d18588e2",
+        "model-00004-of-00004.safetensors": "17701098bfd26cfe4d14e4ec96e3a483a6cfe3798d4c6586638beaab48c6bf51",
+        "tokenizer_config.json": "c8785e5cc844c31853fa42c926e80aa7659e6d3cb237dcbbe6071ae93917ade7"
+      },
+      "chat_template_sha256": "672e747c77e990320152343b0a4951222e40de5645297905d89afba05586d827",
+      "generation_config_sha256": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3-coder-30b-a3b-mlx-4bit",
+        "failed_at_default_8192": true,
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3-coder-30b-a3b-mlx-4bit.deny_home_trial"
+      }
     },
     "devstral-small-2-24b-gguf": {
       "model": "lmstudio-community/Devstral-Small-2-24B-Instruct-2512-GGUF",
       "engine": "llama.cpp",
-      "note": "replaces Muse Glimmer only if its tool calls fail the smoke test"
-    },
-    "qwen3-coder-30b-a3b-mlx-4bit": {
-      "model": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit",
-      "engine": "mlx"
+      "unused": true,
+      "note": "declared fallback of muse-glimmer-30b-gguf, UNUSED: Muse passed the tool-call smoke test at 65536; never loaded, no key, quantization or digest recorded"
     }
   },
-  "candidates_note": "model = the identifier LM Studio will report for the loaded model; the HF path of the protocol is used until PAT-109's preflight records the real identifier, file, quantization and weights fingerprint."
+  "candidates_note": "model = the LM Studio model key, which is also the identifier the operator gives at load (lms load <key> -c 65536 --identifier <key> --parallel 1) and the name the harness sends; the HF repo of the protocol is kept as hf_repo_provenance. The operator loads, the launcher loads nothing. The preflight reads the loaded instance (lms ps --json) and refuses when its model key differs, its quantization differs or its context length is below min_context (65536, a frozen coordinate: LM Studio ignored -c for some MLX builds). File digests, chat-template digest and generation parameters are recorded here and in pat-19-preflight-2026-10-05.json; they are not recomputed by the launcher. Generation parameters are the server and harness defaults, not overridden."
 }

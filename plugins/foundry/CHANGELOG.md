@@ -2,6 +2,120 @@
 
 ## Unreleased
 
+- Fixed (PAT-111, review round 4): a local arm's read that its deny-home sandbox refused (real home outside
+  the allow list, or an explicitly denied path) is a blocked attempt, no longer a contamination
+  (`audit_transcript(sandbox_denied=...)`); a signal between the bundle discard and the settle of a judged
+  local attempt now waits for the record (the attempt is never replayed). Evidence: the four remaining
+  candidates passed the toy tool-call trial under the final deny-home profile on 2026-10-05
+  (`deny_home_trial` per candidate), plus one cloud control run (heredoc with `gh`/`~/.config` strings,
+  audit clean); sampling parameters are declared unpinned. Cloud-only gaps (a call refused by a
+  `cloud_bash_deny` rule still counts as contamination; interpreter heredoc bodies are not audited) are
+  documented, to be handled before the comparison.
+- Fixed (PAT-111, review round 3; fake arms only): the contamination audit no longer reads heredoc bodies given to
+  `cat`/`tee`/`python3 -` (a body a shell runs, and the `$(…)` of an unquoted-delimiter body, stay audited),
+  `#` comments or separators inside quotes as commands/paths, allows a cloud arm's own Claude Code session
+  directory (saved tool outputs), ignores in tool results only the real-home paths the bundle's own files
+  contain (`base_literals`, read at bundle build; PR 83's base), expands a local arm's `~` to its isolated HOME, and a cut after the audit keeps
+  the contamination on the record (never replayed); the docs no longer claim a cloud arm cannot touch the state files.
+- Fixed (PAT-111, review round 2; fake arms only, no real arm run): the contamination audit no longer
+  treats text as an access: only path arguments (`path`, `file_path`…, the `pattern` of a Glob/find tool) and
+  shell commands are read, not what an arm writes or searches (Edit/Write content, Grep pattern); a tool
+  result counts only for a LITERAL absolute path under a sensitive root (`~`/`$HOME` in result text are not
+  expanded), and in a command `~` inside quotes or `$HOME` inside single quotes is text
+  (`grep -rn '~/.claude' .` is clean; `cat ~/.config/…`, `ls ~/.claude/plugins` stay flagged). A bare `/` is a
+  path again as an argument of `find`, `grep -r/-R`, `rg`, `ls`, `du`, `tree`, `cat` (`find / -name x -exec cat
+  {} +` is flagged; the heredoc division stays clean). After the arm ran, a git failure taking the patch (stale
+  `.git/index.lock`, empty nested repository, unreadable file) or an `OSError` of the judge on a bundle file is
+  a `REFUSED` verdict (`candidate_fault`, error recorded, cost kept, never replayed) instead of a void,
+  replayable attempt; launcher/environment failures stay void. The reviewer's bundle no longer receives the
+  implementer's `.claude/` files (`review_excluded` on the record). A cloud record refused on its `init` tool
+  set is still audited (`outcome: contaminated` alongside the `tool_error` status, never replayed). Stated
+  limits: the neutral harness's trajectory is not audited (mitigated by the deny-home profile); a local arm can
+  signal the launcher (its profile starts from `(allow default)`; the void attempt is replayed at most once
+  and listed). Documentation status (AGENTS.md R5): `pat-19-launcher-v1.md` and
+  `pat-19-preflight-2026-10-05.json` updated; no CLI option of `foundry_cli.py`, product constant or routing
+  table changed.
+
+- Fixed (PAT-111, final real trials): the contamination audit no longer reads a token made only of slashes (`/`, `//`, the division operator of code) as the filesystem root: a legitimate Sonnet 5.5 run whose heredoc held `sum(values) / len(values)` was flagged `/` and would have been recorded `contaminated`. A bare `/` stays a path as an argument of a filesystem reader (see the review-round-2 entry). The final cloud argv (3 drivers) and the deny-home local profile (omp 18.4.10, mini-swe-agent 2.4.6 with `agent.step_limit=40`) are recorded as trial-run on 2026-10-05 in `pat-19-preflight-2026-10-05.json`; the audit is clean on those real streams.
+
+- Changed (PAT-111): launcher corrections left by the PAT-108 reviews in `foundry.local_first_runner`
+  (fake arms only; no real arm, no pinning, no `verified` flag changed). SIGTERM, SIGHUP and Ctrl-C are now
+  converted for the whole duration of `screen` and `compare` (bundle build, judge, log reading, record
+  writing included), not only while a driver runs: the cut attempt leaves an `interrupted` record and a
+  `stop`; ledger and results writes are never cut in two; a second signal is never masked; a signal in
+  the cleanup of a driver no longer skips the handler restoration or the profile removal; a settled local
+  attempt not yet written is recorded as `interrupted`. SIGKILL and power loss remain uncovered (stated in
+  `pat-19-launcher-v1.md`). The existing ledger is checked at start against the campaign, manifest and
+  envelope digests (a launch refused at preflight no longer lets a modified configuration or envelope
+  reuse the campaign id). The rule "economy unavailable as soon as a compared task is undecided" is
+  labelled a launcher choice (`non_protocol_choices`). Local attempts are ledgered (`attempt_started`);
+  `report` lists every attempt start or passed preflight without a settlement (`ledger.unsettled_starts`),
+  warns on the screening (`selected` stays) and makes the comparison `inconclusive`, and refuses a
+  comparison whose local candidate is not the one the screening selected (`compare` checks it at start
+  when the screening results are in the same state directory; without them the report says so).
+  Attempt names carry the launch rank, so a relaunch never overwrites the stream log of a killed attempt.
+  A relaunch of `screen`/`compare` under the same campaign id, envelope, config and manifest now
+  RESUMES (bounded rule validated by the maintainer on 2026-10-05, before any trial): decided attempts
+  (a judge verdict) are skipped and never replayed; an attempt cut before any verdict (`interrupted` or
+  `tool_error` without verdict, or an `attempt_started` with no settlement) is void and replayed once on a
+  fresh bundle, recorded with `replay_of`; cloud money and the ledger/results invariant are unchanged (a
+  void round keeps its cost, each session is named once); `report` lists `void_attempts` and `replays`
+  and gives no `selected` while a screening task stays undecided (`undecided_tasks`).
+
+- Changed (PAT-111, review round 1; fake arms only, no real arm run): (1) a cut AFTER a judge verdict or a
+  review (local and cloud) now keeps them on the interrupted record, so the attempt is decided and a relaunch
+  never replays it (no second chance after a verdict; a cut before the verdict stays void and is replayed
+  once); a failure caused by the candidate (git configuration or attributes changed, tree still moving) is a
+  `REFUSED` verdict (`candidate_fault`), not a void attempt; a cloud session killed after its settlement and
+  before its record is listed in `report.void_attempts`; a contaminated review of path C leaves the task
+  undecided with no takeover at first launch and at resume. (2) The unsandboxed cloud arms are documented for
+  what they are (bare Claude Code, `bypassPermissions`, real home, open network, implicit credentials, no
+  Foundry hook, not the Eiffel/Maigret definitions; the launcher protects neither the tracker, secrets nor
+  merge for them): 19 best-effort Bash permission deny rules (`cloud_bash_deny`, data in the campaign config,
+  literally in each cloud argv, enforced at load; command-prefix rules, evadable, not a sandbox); the
+  post-run audit now covers COMMANDS (`command:` labels, `contamination.commands`), tool results and path
+  resolution against the bundle with `cd` tracking (`find ~`, `cd ~ && cat .claude/x`, `src/../../..`); the
+  launcher doc and the protocol amendment note are rewritten accordingly and the maintainer's explicit
+  acceptance of the residual exposure (2026-10-05) is recorded. (3) Local arms now deny reads under the real home by default
+  (`isolation.deny_home_by_default`, true; `isolation.allow_read_home`, empty) with the explicit deny list kept
+  as a second layer; unit-tested on the generated profile and under a real `sandbox-exec` with a fake home,
+  then tried on 2026-10-05 with the real `omp` 18.4.10 and mini-swe-agent 2.4.6. Also: the preflight refuses a loaded instance with no `modelKey`; the
+  neutral harness is given `-c agent.step_limit={max_steps}` and `step_limit_hit` is also set a posteriori
+  (attempt refused); `compare` refuses a C/N comparison with no screening results under its campaign id unless
+  `--screening-campaign <id>` names a completed matching screening (read-only); the cloud evidence labels the
+  command actually tried first (`--disallowedTools Agent` only: 11.6 / 16.3 / 16.5 s) apart from the final
+  pinned argv, trial-run afterwards on 2026-10-05 (7.6 / 13.1 / 17.1 s). Documentation status (AGENTS.md R5): `pat-19-launcher-v1.md`, `pat-19-protocol-v1.md`,
+  `pat-19-preflight-2026-10-05.json` and the campaign config updated; no CLI option of `foundry_cli.py`,
+  product constant or routing table changed.
+
+- Changed (PAT-111, pinning): the five real drivers of the PAT-19 launcher and the five local candidates are
+  pinned in `docs/qualification/pat-19-campaign-v1.json` from real toy-task trials (not the corpus) made with
+  the maintainer's confirmation of every model load and cloud call; the evidence is committed, sanitised, as
+  `pat-19-preflight-2026-10-05.json`. Drivers now `verified: true` with an `evidence` reference (local omp
+  18.4.10, neutral mini-swe-agent 2.4.6, Claude Code 2.1.285 for the current implementer `claude-sonnet-5-5`,
+  the economy implementer `claude-haiku-4-5-20251001` and the reviewer `claude-opus-5-5`); a verified driver
+  without evidence is refused at load. New launcher checks in `foundry.local_first_runner`: the preflight
+  reads the loaded instance (`lms ps --json`) and refuses a context below the frozen 65,536, a different
+  quantization or model key; `sandbox: false` is accepted only for a cloud driver with a reason and refused for
+  any local driver (the cloud drivers run unsandboxed with the AGENTS.md R6 environment, real TMPDIR included,
+  because Claude Code cannot authenticate under sandbox-exec); a cloud record is refused (tool error, spend
+  kept in the ledger) unless the stream's `system/init` tools are a subset of the driver's `allowed_tools`
+  (`Bash`, `Edit`, `Read`, `Write`: observed at the init event of Claude Code 2.1.285 with a 29-name
+  `--disallowedTools` list; `--disallowedTools Agent` alone left 25 tools incl. `Task`, web and workflows), and `session_log.layout_verified` is now true on that condition (launcher reading equals the
+  host's own usage on three real runs); a post-run audit of every arm's tool calls marks a record
+  `contaminated` (undecided, never accepted, never replayed, listed in `report`) when it touched the plugin
+  cache, another checkout of this repository or the user's configuration; the neutral harness executable comes
+  from the operator variable `PAT19_MINI_BIN` at the pinned version, with its fixed environment, trajectory
+  steps and no committed path. Candidates carry LM Studio key, engine, quantization, weights and chat-template
+  digests, load command (`-c 65536`) and generation parameters (server defaults, not overridden); Devstral is
+  declared unused. Limits stated, not enforced: the cloud and local arms expose different tool sets (recorded,
+  not equalised), weights digests are recorded not recomputed; the `lms ps --json` fields (`modelKey`,
+  `identifier`, `quantization` {name, bits}, `contextLength`) were observed on 2026-10-05 and are recorded in the
+  evidence file (see the review-round-1 entry below for the default-deny of the home and the cloud
+  exposure). Documentation status
+  (AGENTS.md R5): `pat-19-launcher-v1.md` and `pat-19-protocol-v1.md` updated, no CLI option of
+  `foundry_cli.py`, product constant or routing table changed.
+
 - Added (PAT-108): the PAT-19 comparison launcher `foundry.local_first_runner`
   (`python3 -m foundry.local_first_runner {preflight,screen,compare,report}`, documented in
   `docs/qualification/pat-19-launcher-v1.md`, frozen config `docs/qualification/pat-19-campaign-v1.json`).
