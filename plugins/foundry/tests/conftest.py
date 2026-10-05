@@ -115,11 +115,17 @@ def _isolate_foundry_state(
 
 
 @pytest.fixture(autouse=True)
-def _no_linear_retry_sleep(monkeypatch: pytest.MonkeyPatch):
-    """PAT-98: Linear read retries never really sleep in tests; delays are recorded."""
+def _no_linear_retry_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
+    """PAT-98: Linear read retries never really sleep in tests; delays are recorded.
+
+    Opt-in integration tests keep the real `time.sleep`, as for `_isolate_foundry_state`.
+    """
     from foundry.trackers import linear
 
     delays: list[float] = []
+    if request.node.get_closest_marker("integration") is not None:
+        yield delays
+        return
     monkeypatch.setattr(linear, "_sleep", delays.append)
     yield delays
 
