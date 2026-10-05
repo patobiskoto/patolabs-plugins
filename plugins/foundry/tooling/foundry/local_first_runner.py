@@ -59,11 +59,14 @@ DEFAULT_HOME_DENY = {  # a cloud arm also keeps ``~/.claude.json`` (Claude Code 
 RULE_STOPS = ("fewer_than_min_local_successes", "premium_c_not_below_a")  # pre-registered early stops
 PROVENANCE_KEYS = ("campaign_sha256", "manifest_sha256", "envelope_sha256")
 TOKEN_CLASSES = ca.TOKEN_KEYS
+# `lms version` prints only the CLI commit; the app version is in the app bundle's plist.
+LM_STUDIO_VERSION_COMMAND = ("plutil", "-extract", "CFBundleShortVersionString", "raw",
+                             "/Applications/LM Studio.app/Contents/Info.plist")
 # The only external commands the preflight and the machine probes may run (read-only).
 READ_ONLY_COMMANDS = frozenset({
     ("sysctl", "-n", "machdep.cpu.brand_string"), ("sysctl", "-n", "hw.memsize"),
     ("sysctl", "-n", "vm.swapusage"), ("sw_vers", "-productVersion"), ("memory_pressure",),
-    ("lms", "version"), ("lms", "runtime", "ls"), ("lms", "ps", "--json"),
+    LM_STUDIO_VERSION_COMMAND, ("lms", "runtime", "ls"), ("lms", "ps", "--json"),
     ("ps", "-axo", "rss=,command=")})
 _SECRET_NAME = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|SSH_AUTH_SOCK|^FOUNDRY_)", re.I)
 _PLACEHOLDER = re.compile(r"\{(\w+)\}")
@@ -196,6 +199,18 @@ def _check_driver_pins(path: Path, name: str, driver: Mapping[str, Any]) -> None
     if spec is not None and not (isinstance(spec, dict) and all(
             isinstance(spec.get(k), str) and spec[k] for k in ("env", "placeholder", "package", "version"))):
         raise RunnerError(f"{path}: driver {name}: executable needs env, placeholder, package, version")
+    binary = driver.get("binary_version")
+    if binary is not None:
+        ok = (isinstance(binary, dict) and isinstance(binary.get("version"), str) and binary["version"]
+              and isinstance(binary.get("command"), list) and binary["command"]
+              and all(isinstance(a, str) and a for a in binary["command"])
+              and isinstance(binary.get("pattern"), str))
+        try:
+            ok = ok and re.compile(binary["pattern"]).groups == 1
+        except re.error:
+            ok = False
+        if not ok:
+            raise RunnerError(f"{path}: driver {name}: binary_version needs command, pattern (one group), version")
     allowed = driver.get("allowed_tools")
     if allowed is not None and not (isinstance(allowed, list) and all(isinstance(t, str) for t in allowed)):
         raise RunnerError(f"{path}: driver {name}: allowed_tools must be a list of tool names")
@@ -483,7 +498,7 @@ def preflight(campaign: Mapping[str, Any], expected_model: str,
     os_version = fact("os_version", ["sw_vers", "-productVersion"])
     if os_version and os_version != frozen["os_version"]:
         refusals.append("os_version_differs")
-    lms_version = fact("lm_studio_version", ["lms", "version"])
+    lms_version = fact("lm_studio_version", list(LM_STUDIO_VERSION_COMMAND))
     if lms_version and frozen["lm_studio_version_contains"] not in lms_version:
         refusals.append("lm_studio_version_differs")
     runtimes = fact("runtimes", ["lms", "runtime", "ls"])
@@ -526,7 +541,7 @@ def dry_run_facts(campaign: Mapping[str, Any], expected_model: str) -> Callable[
         ("sysctl", "-n", "machdep.cpu.brand_string"): f"Apple {frozen['chip_contains']}",
         ("sysctl", "-n", "hw.memsize"): str(frozen["memory_gib"] * 2**30),
         ("sw_vers", "-productVersion"): frozen["os_version"],
-        ("lms", "version"): frozen["lm_studio_version_contains"],
+        LM_STUDIO_VERSION_COMMAND: frozen["lm_studio_version_contains"],
         ("lms", "runtime", "ls"): frozen["mlx_runtime_contains"],
         ("lms", "ps", "--json"): json.dumps([loaded]),
         ("sysctl", "-n", "vm.swapusage"): "total = 1024.00M  used = 100.00M  free = 924.00M",
@@ -907,6 +922,30 @@ def resolve_executable(driver: Mapping[str, Any], host_env: Mapping[str, str]) -
             "package": spec["package"], "version": version}
 
 
+def check_binary_version(driver: Mapping[str, Any], host_env: Mapping[str, str]) -> None:
+    """A harness that is not an operator-variable path (``omp``, taken from ``PATH``) is run with its
+    read-only version command (``binary_version``: ``command``, ``pattern`` with one group, pinned
+    ``version``); a missing executable, a failing command, an unparsable output or another version is
+    refused. No-op when the driver declares nothing."""
+    spec = driver.get("binary_version")
+    if not spec:
+        return
+    command = list(spec["command"])
+    exe = shutil.which(command[0], path=host_env.get("PATH") or os.defpath)
+    if exe is None:
+        raise RunnerError(f"{command[0]} not found on PATH: the pinned version is {spec['version']}")
+    try:
+        done = subprocess.run([exe, *command[1:]], capture_output=True, text=True, timeout=30, check=False,
+                              env=dict(host_env), stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RunnerError(f"{command[0]} version cannot be read: {exc}") from None
+    match = re.search(spec["pattern"], done.stdout.strip(), re.MULTILINE) if done.returncode == 0 else None
+    if match is None:
+        raise RunnerError(f"{command[0]} version unreadable or unparsable, the pinned version is {spec['version']}")
+    if match.group(1) != spec["version"]:
+        raise RunnerError(f"{command[0]} on PATH is {match.group(1)}, the pinned version is {spec['version']}")
+
+
 _PATH_KEYS = frozenset({"path", "file_path", "notebook_path", "cwd", "directory", "dir", "file",
                         "filename", "paths", "file_paths"})
 # Tools whose ``pattern`` argument is a path glob (Claude ``Glob``, omp ``find``), not a text pattern.
@@ -963,9 +1002,9 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash"})
 _KEYWORDS = frozenset({"{", "!", "if", "then", "else", "elif", "do", "while", "until"})  # before a command
 # A heredoc fed to one of these (``bash <<EOF``, ``cat <<EOF | sh``, ``source /dev/stdin <<EOF``) is RUN.
 _HEREDOC_RUNNERS = _SHELLS | {"source", ".", "eval"}
-# Executables a cloud arm has no business running (tracker, merge, network, other agents, keychain).
+# Executables an arm (local or cloud) has no business running (tracker, merge, network, other agents, keychain).
 FORBIDDEN_EXECUTABLES = frozenset({"gh", "curl", "wget", "claude", "codex", "omp", "ssh", "scp", "nc",
-                                   "security", "open", "npm"})
+                                   "security", "open", "npm", "launchctl", "osascript"})
 FORBIDDEN_GIT = frozenset({"push", "remote", "clone", "fetch", "pull"})
 _WORD_BREAK = " \t\n;&|()"  # a ``#`` right after one of these (or at the start) opens a comment
 _HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^'\n]*'|\"[^\"\n]*\"|\\?[^\s;&|<>()'\"`]+)+)")
@@ -1478,7 +1517,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                      home: str, arm_home: str | None = None,
                      own_session: tuple[str, str] | None = None,
                      literals: Collection[str] = frozenset(),
-                     sandbox_denied: tuple[str, Sequence[str], Sequence[str]] | None = None) -> list[str]:
+                     sandbox_denied: tuple[str, Sequence[str], Sequence[str]] | None = None,
+                     attempt_dir: Path | None = None) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -1504,8 +1544,12 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     ``sandbox_denied`` (``(home, allowed, denied)``, a LOCAL arm run under the deny-home profile): a path
     the arm's own sandbox made unreadable (under ``home`` and outside ``allowed``, or under an entry of
     the explicit ``denied`` list) is a BLOCKED attempt, not an access, and is not flagged: the read
-    failed (EPERM), nothing reached the arm. Commands, climbs out of the bundle to readable places and
+    the sandbox refuses failed (EPERM). The profile is ``(allow default)``, so a bypass through a system
+    service (``launchctl submit``, ``osascript``) would not be refused: those are forbidden commands
+    (``FORBIDDEN_EXECUTABLES``) and contaminate. Commands, climbs out of the bundle to readable places and
     readable paths are audited as before. A cloud arm has no such sandbox: never passed for it.
+    ``attempt_dir`` (the launcher-managed parent of the bundle and scratch) is allowed itself, so ``ls ..``
+    from the bundle is clean; its parent (the work root, which may hold another attempt) is not.
     Best effort on a command line (a path or a command built at run time, or run by a script, is
     not seen). A non-empty result makes the attempt ``contaminated``. ``~`` shows as the home directory
     in the result. Known limit: a token made only of slashes (``/``, ``//``) is the division operator of
@@ -1521,6 +1565,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     bundle_real, home_real = Path(os.path.realpath(bundle)), Path(os.path.realpath(home))
     tilde = os.path.realpath(arm_home) if arm_home is not None else str(home_real)
     allowed = [bundle_real, Path(os.path.realpath(scratch))]
+    if attempt_dir is not None:
+        allowed.append(Path(os.path.realpath(attempt_dir)))
     roots = [Path(os.path.realpath(p)) for p in sensitive]
     projects: Path | None = None
     if own_session is not None and own_session[1]:
@@ -1886,6 +1932,7 @@ class Runner:
 
     def _executable(self, driver: Mapping[str, Any]) -> dict[str, str] | None:
         env = os.environ if self.host_env is None else self.host_env
+        check_binary_version(driver, env)  # before any claim or reservation (local_attempt, screen, compare)
         return resolve_executable(driver, env)
 
     def _check_harness(self, driver_id: str) -> None:
@@ -1916,7 +1963,8 @@ class Runner:
                 walled = (str(deny_home), [str(p) for p in allow], [str(p) for p in self._deny_read(driver)])
         return audit_transcript(stream_log, bundle=bundle, scratch=scratch, sensitive=sensitive, home=home,
                                 arm_home=str(scratch / "home") if isolated else None, own_session=own,
-                                literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled)
+                                literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled,
+                                attempt_dir=bundle.parent)  # ``_bundle`` builds <attempt dir>/bundle
 
     def _home(self) -> str:
         """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""

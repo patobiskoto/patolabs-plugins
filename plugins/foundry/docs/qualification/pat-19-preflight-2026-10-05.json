@@ -13,7 +13,8 @@
     "mlx_engine": "1.11.0 nax",
     "llama_cpp_engine": "2.51.0",
     "claude_code": "2.1.285",
-    "omp": "18.4.10",
+    "omp": "18.6.1",
+    "omp_correction": "2026-10-06 (PAT-112): earlier text said 18.4.10, a version observed before the upgrade. The installed omp is 18.6.1 (/opt/homebrew/Cellar/omp/18.6.1, installed 2026-10-05 17:20 local time) and every omp trial recorded here ran after that (streams at 18:07, 18:27, 20:41, 22:53-22:59), so 18.6.1 is the version used. The launcher now refuses another version (driver binary_version).",
     "mini_swe_agent": "2.4.6 (PyPI, isolated virtual environment)"
   },
   "context_length": {
@@ -83,7 +84,7 @@
         "date": "2026-10-05",
         "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
         "profile_sha256": "e93f02e9781938f10e5dfd25099e71824f87303dc62745d04ccfc17056b901e8",
-        "harness": "omp 18.4.10",
+        "harness": "omp 18.6.1",
         "passed": true,
         "wall_seconds": 73.2,
         "tools": {
@@ -165,7 +166,7 @@
         "date": "2026-10-05",
         "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
         "profile_sha256": "ec47ec15dd5493002aeadad0883e9dc7608e228f3f8e90fb68e005d0bddb4bf1",
-        "harness": "omp 18.4.10",
+        "harness": "omp 18.6.1",
         "passed": true,
         "wall_seconds": 45.6,
         "tools": {
@@ -176,7 +177,9 @@
         "toy_tests_pass": true,
         "tests_dir_modified": false,
         "contamination_audit": "clean",
-        "note": "the first deny-home trial (ac-7), same profile generator"
+        "note": "the first deny-home trial (ac-7), same profile generator",
+        "loaded_instance_observed_note": "unknown: no `lms ps --json` observation of the loaded instance (key, quantization, context) was recorded for this trial, unlike the four other candidates; the run log only shows it was the first deny-home trial (Qwen3.8-27B 4-bit). `loaded_context_observed_2026-10-05` records a loaded context of 208384 for this candidate, not its quantization; `lms_ps_json_observed` documents the fields of the output, it is not an observation of this variant. The screening preflight reads and checks the loaded instance.",
+        "load": "API identifier pat19-smoke and --ttl 1800 -y used for the trial only, not the pinned `--identifier <key>` of load_command; the screening loads with the pinned command"
       }
     },
     "qwen3.6-35b-a3b-mlx-4bit": {
@@ -239,7 +242,7 @@
         "date": "2026-10-05",
         "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
         "profile_sha256": "2a9e6b9acc016302c7f2076e94d5b4c5110e04739c2ea451a3466dab1e879ff8",
-        "harness": "omp 18.4.10",
+        "harness": "omp 18.6.1",
         "passed": true,
         "wall_seconds": 25.3,
         "tools": {
@@ -331,7 +334,7 @@
         "date": "2026-10-05",
         "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
         "profile_sha256": "02ed3b285162a717c8e25ffcd68131f13e7d865b9d657c8a379f02d32ab9bdca",
-        "harness": "omp 18.4.10",
+        "harness": "omp 18.6.1",
         "passed": true,
         "wall_seconds": 224.2,
         "tools": {
@@ -430,7 +433,7 @@
         "date": "2026-10-05",
         "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
         "profile_sha256": "665a18ec3ec9da15915716ce9140dd287d26d9862b1a053b02f10d819e091ec1",
-        "harness": "omp 18.4.10",
+        "harness": "omp 18.6.1",
         "passed": true,
         "wall_seconds": 17.9,
         "tools": {
@@ -462,7 +465,7 @@
   "drivers": {
     "local_harness": {
       "command": "omp -p --mode json --model lm-studio/{model} --cwd {workdir} --no-session --auto-approve --no-extensions --no-skills --no-rules --no-lsp --no-title --max-time {max_duration} {prompt}",
-      "version": "18.4.10",
+      "version": "18.6.1",
       "sandbox": "launcher local sandbox profile (loopback only, writes limited to bundle and attempt directory)",
       "home": "isolated: the lm-studio provider is discovered from the isolated home, no home_files needed",
       "max_time_accepted": "6m",
@@ -478,7 +481,7 @@
         "date": "2026-10-05",
         "profile": "deny_home_by_default true, allow_read_home []",
         "model": "Qwen3.8-27B MLX 4-bit, loaded by the operator",
-        "omp": "18.4.10",
+        "omp": "18.6.1",
         "passed": true,
         "wall_seconds": 45.6,
         "tools": {

@@ -9,6 +9,7 @@ import datetime as dt
 import errno
 import hashlib
 import json
+import re
 import os
 import shutil
 import signal
@@ -560,9 +561,9 @@ def test_preflight_accepts_the_frozen_machine_and_loads_nothing(tmp_path):
     ("chip", {("sysctl", "-n", "machdep.cpu.brand_string"): "Apple M3"}, "chip_differs"),
     ("memory", {("sysctl", "-n", "hw.memsize"): str(32 * 2**30)}, "memory_differs"),
     ("os", {("sw_vers", "-productVersion"): "26.0"}, "os_version_differs"),
-    ("lms", {("lms", "version"): "0.4.0"}, "lm_studio_version_differs"),
+    ("lms", {lfr.LM_STUDIO_VERSION_COMMAND: "0.4.0"}, "lm_studio_version_differs"),
     ("runtime", {("lms", "runtime", "ls"): "mlx 1.0.0"}, "mlx_runtime_differs"),
-    ("unavailable", {("lms", "version"): None}, "fact_unavailable:lm_studio_version")])
+    ("unavailable", {lfr.LM_STUDIO_VERSION_COMMAND: None}, "fact_unavailable:lm_studio_version")])
 def test_preflight_refuses(tmp_path, name, patch, expected):
     campaign, _ = fake_campaign(tmp_path, FIX_ALL)
     facts = lfr.dry_run_facts(campaign, "fake/model-a")
@@ -570,6 +571,28 @@ def test_preflight_refuses(tmp_path, name, patch, expected):
                            lambda argv: patch[tuple(argv)] if tuple(argv) in patch else facts(argv),
                            lambda: 99.0)
     assert not result["ok"] and expected in result["refusals"], name
+
+
+def test_preflight_reads_the_lm_studio_version_from_the_app_plist_not_lms(tmp_path):
+    campaign, _ = fake_campaign(tmp_path, FIX_ALL)
+    facts = lfr.dry_run_facts(campaign, "fake/model-a")
+    issued = []
+
+    def run(argv):
+        issued.append(tuple(argv))
+        return facts(argv)
+    result = lfr.preflight(campaign, "fake/model-a", run, lambda: 99.0)
+    assert lfr.LM_STUDIO_VERSION_COMMAND in issued and ("lms", "version") not in issued
+    assert lfr.LM_STUDIO_VERSION_COMMAND[0] == "plutil" and lfr.LM_STUDIO_VERSION_COMMAND in lfr.READ_ONLY_COMMANDS
+    assert ("lms", "version") not in lfr.READ_ONLY_COMMANDS
+    assert "lm_studio_version_differs" not in result["refusals"]
+    with pytest.raises(lfr.RunnerError, match="not allowed"):
+        lfr.default_run(["plutil", "-p", "/Applications/LM Studio.app/Contents/Info.plist"])
+    # the real banner-only `lms version` output is not a version source any more
+    banner = lfr.preflight(campaign, "fake/model-a",
+                           lambda a: "CLI commit: 69d945a" if tuple(a) == ("lms", "version") else facts(a),
+                           lambda: 99.0)
+    assert "lm_studio_version_differs" not in banner["refusals"]
 
 
 def test_preflight_refuses_low_disk_and_a_failed_preflight_launches_nothing(tmp_path):
@@ -2831,6 +2854,49 @@ def _neutral_driver(campaign):
     return driver
 
 
+def _fake_omp(tmp_path, output, code=0, name="bin"):
+    directory = tmp_path / name
+    directory.mkdir(parents=True, exist_ok=True)
+    exe = directory / "omp"
+    exe.write_text(f"#!/bin/sh\nprintf '%s\\n' '{output}'\nexit {code}\n", encoding="utf-8")
+    exe.chmod(0o755)
+    return directory
+
+
+BINARY = {"command": ["omp", "--version"], "pattern": r"^omp/(\d+\.\d+\.\d+)$", "version": "18.6.1"}
+
+
+def test_pat112_the_local_harness_version_on_path_must_be_the_pinned_one(tmp_path):
+    driver = {"binary_version": BINARY}
+    good = _fake_omp(tmp_path, "omp/18.6.1")
+    lfr.check_binary_version(driver, {"PATH": str(good)})
+    lfr.check_binary_version({}, {})  # nothing declared: nothing checked
+    cases = ((_fake_omp(tmp_path, "omp/18.4.10", name="old"), "is 18.4.10, the pinned version is 18.6.1"),
+             (_fake_omp(tmp_path, "garbage", name="junk"), "unparsable"),
+             (_fake_omp(tmp_path, "omp/18.6.1", code=3, name="fail"), "unparsable"),
+             (tmp_path / "empty", "not found on PATH"))
+    for path, match in cases:
+        with pytest.raises(lfr.RunnerError, match=match):
+            lfr.check_binary_version(driver, {"PATH": str(path)})
+    committed = _committed()["drivers"]["local_harness"]["binary_version"]
+    assert committed["command"] == ["omp", "--version"] and committed["version"] == "18.6.1"
+    assert re.search(committed["pattern"], "omp/18.6.1").group(1) == "18.6.1"
+
+
+def test_pat112_screen_and_compare_refuse_a_wrong_local_harness_version_before_any_claim(tmp_path):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, caps={"cloud_executions": 0},
+                                                host_env={**os.environ, "PATH": str(_fake_omp(tmp_path, "omp/18.4.10"))})
+    campaign["drivers"]["local_harness"]["binary_version"] = BINARY
+    with pytest.raises(lfr.RunnerError, match="is 18.4.10, the pinned version is 18.6.1"):
+        runner.screen(tasks[:1], ["cand-a"])
+    assert counts(plan) == {} and "local_started" not in ledger_kinds(runner)
+    with pytest.raises(lfr.RunnerError, match="is 18.4.10"):
+        runner.compare(tasks[:1], "cand-a", ("C",))
+    assert counts(plan) == {}
+    runner.host_env = {**os.environ, "PATH": str(_fake_omp(tmp_path, "omp/18.6.1", name="ok"))}
+    assert runner.screen(tasks[:1], ["cand-a"])
+
+
 def test_pat111_the_harness_executable_must_come_from_the_operator_variable_at_the_pinned_version(tmp_path):
     exe = _fake_venv(tmp_path)
     spec = {"executable": {"env": "PAT19_MINI_BIN", "placeholder": "mini_bin", "package": "mini-swe-agent",
@@ -3933,6 +3999,69 @@ def test_pat111_fix5_a_read_the_local_sandbox_refused_is_blocked_not_a_contamina
     assert audit((kind, tool, {key: "gh pr view 3"}), sandbox_denied=walled) == ["command:gh"]
     assert audit((kind, tool, {key: f"cat {venv}/../../.ssh/id_ed25519"}), sandbox_denied=walled) == []
     assert audit((kind, tool, {key: f"cat {venv}/lib/site.py"}), sandbox_denied=walled) != []  # readable
+
+
+@pytest.mark.parametrize("kind,tool,key", [("omp", "bash", "command"), ("claude", "Bash", "command")])
+def test_pat112_ac1_a_system_service_bypass_of_the_sandbox_is_a_forbidden_command(tmp_path, kind, tool, key):
+    """The profile is ``(allow default)``: ``launchctl submit`` / ``osascript`` read the home through a
+    service OUTSIDE the sandbox, so the blocked-path exemption must not hide them."""
+    audit, home, bundle, _ = _audit_kw(tmp_path)
+    walled = (str(home), [], [])
+    cache = home / ".claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"
+    for command, found in ((f"launchctl submit -l x -o out -- cat {cache}", "command:launchctl"),
+                           ("/bin/launchctl list", "command:launchctl"),
+                           ("osascript -e 'tell application \"Finder\" to get name'", "command:osascript")):
+        assert found in audit((kind, tool, {key: command}), sandbox_denied=walled), command
+        assert found in audit((kind, tool, {key: command})), command  # and for a cloud arm
+    assert audit((kind, tool, {key: f"cat {cache}"}), sandbox_denied=walled) == []  # a refused read stays blocked
+
+
+@pytest.mark.parametrize("kind,tool,key", [("omp", "bash", "command"), ("claude", "Bash", "command")])
+def test_pat112_ac2_the_attempt_directory_is_allowed_but_not_the_work_root(tmp_path, kind, tool, key):
+    home = _fake_home(tmp_path)
+    attempt = tmp_path / "attempt"
+    bundle, scratch = attempt / "bundle", attempt / "scratch"
+    bundle.mkdir(parents=True)
+    scratch.mkdir()
+    repo, _, _, _ = _make_repo(tmp_path)
+    sensitive = lfr.read_deny_list(repo=repo, home=home, state_dir=tmp_path / "state", input_paths=[],
+                                   kind="local_harness")
+    stream = tmp_path / "stream2.jsonl"
+
+    def run(command, **kw):
+        _stream(stream, (kind, tool, {key: command}))
+        return lfr.audit_transcript(stream, bundle=bundle, scratch=scratch, sensitive=sensitive,
+                                    home=str(home), **kw)
+
+    for command in ("ls ..", "ls ../"):
+        assert run(command) != [], command  # without the attempt directory: flagged (the old behaviour)
+        assert run(command, attempt_dir=attempt) == [], command
+    assert run("cat ../scratch/x", attempt_dir=attempt) == []
+    assert run("ls ../..", attempt_dir=attempt) != []  # the work root may hold another attempt
+    assert run("cat ../../other/bundle/x", attempt_dir=attempt) != []
+
+
+@pytest.mark.parametrize("behavior_driver", ["local", "cloud"])
+def test_pat112_ac3_the_runner_passes_the_sandbox_denial_to_the_audit_of_a_local_driver_only(
+        tmp_path, monkeypatch, behavior_driver):
+    home = _fake_home(tmp_path)
+    env = {**os.environ, "HOME": str(home)}
+    plan = _peek_plan(home, local=1, implementer=1)
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", plan, host_env=env)
+    real = lfr.execute_driver
+
+    def spy(driver, *args, **kwargs):
+        return real(driver, *args, **{**kwargs, "sandbox": False})  # the fake arm has no profile
+
+    monkeypatch.setattr(lfr, "execute_driver", spy)
+    monkeypatch.setattr(lfr, "sandbox_available", lambda: True)
+    runner.sandbox = True
+    if behavior_driver == "local":
+        rec = runner.local_attempt(tasks[0], "cand-a", "local_harness", "S", 0, "screening")[0]
+        assert not rec.get("contamination"), rec  # its sandbox refuses the read: blocked, not an access
+    else:
+        rec = runner.cloud_path(tasks[0], "A", "comparison")[0]
+        assert rec["outcome"] == "contaminated"  # a cloud arm has no such sandbox
 
 
 def test_pat111_fix4_n4_audit_literals_cover_results_only(tmp_path):

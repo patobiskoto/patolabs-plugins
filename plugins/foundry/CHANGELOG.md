@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Fixed (PAT-112; no model load): the launcher preflight read the LM Studio version from `lms version`, which prints
+  only the CLI commit, so every real candidate was refused (`lm_studio_version_differs`). It now reads the app's
+  `CFBundleShortVersionString` with the read-only `plutil -extract ... raw` on `/Applications/LM Studio.app/Contents/Info.plist`
+  (`LM_STUDIO_VERSION_COMMAND`, in `READ_ONLY_COMMANDS`; `lms version` is no longer allowed); same fact name and
+  `contains` comparison against the unchanged frozen 0.4.25; a missing plist refuses as `fact_unavailable:lm_studio_version`.
+  R5: documented in `docs/qualification/pat-19-launcher-v1.md` "Préflight"; the public constant `READ_ONLY_COMMANDS`
+  swapped `lms version` for the plutil tuple; no CLI verb changed.
+- Fixed (PAT-112; fake arms only, no real model/harness/cloud call): the local contamination audit no longer
+  hides a sandbox bypass through a system service (`launchctl`, `osascript` are forbidden executables, local and
+  cloud; best effort: `crontab`, `at`, an out-of-sandbox `tmux`/`screen` server, `shortcuts run`, `automator` stay unlisted; the "blocked" exemption is decided on the path, not on an observed refusal) and treats the attempt directory
+  (the bundle's parent, passed explicitly as `attempt_dir`) as allowed, so `ls ..` is no longer a contamination
+  (`ls ../..` still is); a runner-level test proves `sandbox_denied` reaches a local driver's audit and never a
+  cloud one. Docs/evidence: the generation_config digest is the only pinned sampling element (effective
+  sampling values are unrecorded, limit stated), the 4-bit candidate's missing `loaded_instance_observed` and
+  the trials' `pat19-smoke`/`--ttl 1800 -y` load are stated. R5: documented in
+  `docs/qualification/pat-19-launcher-v1.md` "Statut documentaire" (`deny_home_trial`,
+  `smoke.deny_home_evidence`, `sandbox_denied`, and the new driver key `binary_version`); no CLI verb changed, and the public constant `FORBIDDEN_EXECUTABLES` gained `launchctl` and `osascript`.
+- Fixed (PAT-112): the omp version recorded as 18.4.10 was observed before the upgrade; the installed and used one is
+  18.6.1 (installed 2026-10-05 17:20, every omp trial ran later), corrected in the evidence, campaign and docs.
+  The launcher now runs `omp --version` from PATH and refuses a missing, unparsable or different version
+  (driver `binary_version`, checked with the harness executable at the start of `screen`/`compare` and per attempt).
 - Fixed (PAT-111, review round 4): a local arm's read that its deny-home sandbox refused (real home outside
   the allow list, or an explicitly denied path) is a blocked attempt, no longer a contamination
   (`audit_transcript(sandbox_denied=...)`); a signal between the bundle discard and the settle of a judged

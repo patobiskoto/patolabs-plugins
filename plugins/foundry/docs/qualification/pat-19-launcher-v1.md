@@ -224,7 +224,7 @@ registre (`attempt_started`, avec son nom `attempt_dir`) avant de s'exécuter et
 
 Seules les commandes de la liste `READ_ONLY_COMMANDS` peuvent être lancées (toute autre est refusée
 par `default_run`, y compris `lms load`) : `sysctl` (puce, mémoire, swap), `sw_vers`, `memory_pressure`,
-`lms version`, `lms runtime ls`, `lms ps --json`, `ps`. Il refuse quand : une coordonnée gelée de
+`plutil -extract CFBundleShortVersionString raw` sur le `Info.plist` de `/Applications/LM Studio.app` (version de l'app ; `lms version` ne donne que le commit du CLI, un plist absent ou illisible rend le fait indisponible donc refuse), `lms runtime ls`, `lms ps --json`, `ps`. Il refuse quand : une coordonnée gelée de
 `frozen_machine` diffère (puce, mémoire, macOS, LM Studio, moteur MLX), un fait est indisponible,
 un autre modèle que celui attendu est chargé ou le modèle attendu ne l'est pas (`lms ps` doit lister
 exactement l'identifiant), la place disque est sous le minimum. Il relève le swap et la pression
@@ -269,6 +269,7 @@ Clés : `frozen_machine`, `server_process_pattern` (expression pour la mémoire 
 | `allowed_tools` | liste d'autorisation des outils de l'événement `init` d'un pilote cloud `claude-stream-json` (obligatoire pour un pilote cloud vérifié) : un outil hors liste, ou pas d'événement `init`, refuse l'enregistrement |
 | `evidence` | obligatoire pour un pilote `verified: true` non factice : référence `<fichier de preuve>#drivers.<pilote>` |
 | `version` | version du harnais ou de l'hôte épinglée (information) |
+| `binary_version` | `{command, pattern, version}` (`omp`) : le lanceur exécute `command` (`omp --version`, exécuté hors du bac à sable avec l'environnement de l'hôte, délai de 30 s, avant chaque tentative ; `omp` pris dans le `PATH`), lit la version avec `pattern` (un groupe : `omp/<x.y.z>`) et refuse un exécutable absent, une sortie illisible ou une autre version que `version`, avant toute réservation (début de `screen`/`compare`, et à chaque tentative locale) |
 | `executable` | `{env, placeholder, package, version}` : l'exécutable vient d'une variable d'environnement de l'opérateur (chemin absolu, jamais committé) ; le paquet installé dans son environnement virtuel doit avoir la version épinglée (lue dans le `dist-info`, le harnais n'est pas lancé pour la demander) ; `{placeholder}` est substitué dans `argv` |
 | `env_set`, `make_dirs` | variables d'environnement fixes (valeurs avec `{scratch}`…) et dossiers créés avant le lancement ; un nom ressemblant à un secret n'est accepté qu'avec un des espaces réservés documentés (`local-endpoint-no-key`), jamais `FOUNDRY_*` |
 | `trajectory` | `{file, steps_path}` : fichier de trajectoire lu **après** la fin du processus pour les étapes (harnais neutre) ; la borne d'étapes n'est donc pas imposée pendant l'exécution, seulement la borne de durée |
@@ -285,10 +286,15 @@ chargement refuse sinon) et `non_protocol_choices` (voir plus bas).
 
 ## Pilotes épinglés (PAT-111)
 
+**Correction (PAT-112, 2026-10-06)** : le texte disait `omp` 18.4.10, version observée avant la mise à jour. `omp`
+installé est 18.6.1 (installé le 2026-10-05 à 17 h 20, heure locale) et chaque essai `omp` consigné (flux de
+18 h 07, 18 h 27, 20 h 41, 22 h 53 à 22 h 59) lui est postérieur : la version utilisée est 18.6.1, désormais
+vérifiée par le lanceur (`binary_version`).
+
 Un pilote n'est `verified: true` que si son essai réel a réussi (preuve : `pat-19-preflight-2026-10-05.json`) ;
 un pilote qui échoue reste `verified: false` et le lanceur le refuse. Les cinq passent le 2026-10-05 :
 
-- **`local_harness`** : `omp` 18.4.10, argv de la configuration, entrée standard fermée, HOME isolé (le
+- **`local_harness`** : `omp` 18.6.1, argv de la configuration, entrée standard fermée, HOME isolé (le
   fournisseur `lm-studio` est découvert depuis le HOME isolé : aucun `home_files`), `--max-time 6m` accepté,
   sous le profil du bac à sable local. Essayé avec les cinq candidats deux fois : d'abord sous le profil à
   liste d'interdits explicite (`smoke_at_65536`), puis le 2026-10-05 sous le profil final qui refuse le HOME
@@ -389,7 +395,7 @@ corpus). Il est **détecté par un audit après exécution** et consigné comme 
 contamination »), **pas empêché**. Pour les bras **locaux**, le refus par défaut du HOME est **implémenté**
 (`isolation.deny_home_by_default`, voir « Isolement du candidat ») et testé sur le profil généré et sous un vrai
 `sandbox-exec` avec un faux HOME ; il a été **essayé le 2026-10-05 avec les vrais harnais locaux** (Qwen3.8-27B MLX 4-bit,
-`allow_read_home` vide) : `omp` 18.4.10 réussi (45,6 s, tests du jouet réussis) et mini-swe-agent 2.4.6 réussi
+`allow_read_home` vide) : `omp` 18.6.1 réussi (45,6 s, tests du jouet réussis) et mini-swe-agent 2.4.6 réussi
 (`Submitted`, 8 appels d'API). Le refus par défaut est donc confirmé pour les deux harnais.
 
 ## Exposition des bras cloud (ce que le lanceur n'empêche pas)
@@ -498,9 +504,13 @@ le parcours C, une tentative locale contaminée est relayée par le cloud comme 
 compte pas comme réussite locale) ; une revue contaminée laisse la tâche indécise sans relais. **Lecture
 refusée par le bac à sable local** : pour un bras local lancé sous le profil qui refuse le HOME
 (`sandbox_denied`), un chemin que ce profil rend illisible (sous le HOME réel hors de la liste d'autorisation, ou
-sous une entrée de la liste de refus explicite) est une tentative **bloquée**, pas un accès : la lecture a
-échoué (EPERM), rien n'a atteint le bras, et elle n'est pas relevée (un `ls ~/.config` honnête ne rend pas le
-tamis incomplet). Les commandes interdites, les remontées hors du bundle vers un endroit lisible et les chemins
+sous une entrée de la liste de refus explicite) est une tentative **bloquée**, pas un accès : l'exemption est décidée sur le chemin, pas sur un refus observé, et la tentative n'est pas relevée (un `ls ~/.config` honnête ne rend pas le tamis incomplet). Cette
+exemption ne vaut que pour les lectures que le bac à sable refuse : le profil est `(allow default)`, donc les
+services système restent joignables (`launchctl submit … -- cat <fichier du HOME>` puis lecture de la sortie,
+`osascript` pilotant une autre application lisent hors du bac à sable) ; `launchctl` et `osascript` sont des
+exécutables interdits (`command:launchctl`, `command:osascript`, pour un bras local comme cloud), au même titre que `gh`, `curl`, `wget`, `claude`, `codex`, `omp`, `ssh`, `scp`, `nc`, `security`, `open`, `npm`. Cette liste contre les contournements par un service système est un moindre effort : restent non listés `crontab`, `at`, un serveur `tmux`/`screen` lancé hors du bac à sable, `shortcuts run` et `automator`. Le dossier de
+tentative (parent du bundle, géré par le lanceur : bundle et scratch) est autorisé lui-même (`ls ..` est propre) ;
+son parent (la racine de travail, qui peut contenir un autre bundle) et au-dessus restent relevés. Les commandes interdites, les remontées hors du bundle vers un endroit lisible et les chemins
 lisibles (environnement du harnais) restent audités. Un bras cloud n'a pas ce bac à sable. **Fragilité à
 connaître** : une seule contamination rend le tamis entier incomplet sans rejeu (nouvel identifiant de campagne
 nécessaire). Pour un bras **cloud**, un appel **refusé** par une règle de `cloud_bash_deny` (Claude Code répond
@@ -528,7 +538,7 @@ l'audit est différé jusqu'à ce que son résultat soit gardé) donne `status: 
 du parcours C, ainsi qu'une tentative locale réglée mais pas encore écrite : jamais rejouée. Une coupure
 **avant** la fin de l'audit laisse la tentative vide, rejouable une fois (le flux partiel n'est pas audité).
 
-Le pilote `local_harness` est la commande `omp` (18.4.10) éprouvée le 2026-10-05 (voir ci-dessus).
+Le pilote `local_harness` est la commande `omp` (18.6.1) éprouvée le 2026-10-05 (voir ci-dessus).
 
 ## Mesures et résultats
 
@@ -709,7 +719,7 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   **Statut du refus par défaut** : implémenté, testé sur le profil (ordre refus HOME, autorisations, refus
   explicite ; métadonnées des ancêtres seulement) et sous un vrai `sandbox-exec` avec un faux HOME (un fichier
   quelconque du HOME est refusé, une entrée de la liste d'autorisation et le bundle sont lisibles). **Essayé le
-  2026-10-05 avec le vrai `omp` 18.4.10 et mini-swe-agent 2.4.6** (`allow_read_home` vide) : les deux réussissent,
+  2026-10-05 avec le vrai `omp` 18.6.1 et mini-swe-agent 2.4.6** (`allow_read_home` vide) : les deux réussissent,
   le refus par défaut est confirmé ; la liste explicite (37 entrées de refus sur la machine du mainteneur, plus le
   dossier du profil) a aussi été essayée avec le vrai harnais local.
   **Trousseau non couvert** : `(allow default)` laisse l'accès Mach au démon de sécurité ; refuser la
@@ -802,7 +812,7 @@ leur essai ; l'argv final des trois pilotes cloud et le drapeau de borne d'étap
 été essayés le 2026-10-05) ; vérifier la disposition des journaux de session (compteurs égaux à ceux de l'hôte, sous la
 condition de l'assertion d'outils) ; consigner les empreintes des poids, le gabarit et les paramètres de
 génération ; essayer la liste de refus avec le vrai harnais local, puis le refus par défaut du HOME avec `omp`
-18.4.10 et mini-swe-agent 2.4.6 (2026-10-05) ; relever les champs de `lms ps --json` ;
+18.6.1 et mini-swe-agent 2.4.6 (2026-10-05) ; relever les champs de `lms ps --json` ;
 traiter le biais des bras cloud par l'audit de contamination et des règles Bash au mieux ; obtenir
 l'acceptation explicite par le mainteneur de l'exposition résiduelle des bras cloud (donnée le 2026-10-05, voir
 « Exposition des bras cloud »). **Restent ouvertes** : la mémoire globale `CLAUDE.md`
@@ -821,7 +831,9 @@ bornée et le refus d'une configuration différente à `report`), la configurati
 le format de flux `claude-stream-json`, les clés de candidat `lm_studio_key`/`quantization`/`min_context`/
 `load_command`/`file_sha256`/…, le fichier de preuve `pat-19-preflight-2026-10-05.json` dont `command_tried`,
 `pinned_final_argv` et `lms_ps_json_observed`), les refus de préflight
-`loaded_context_*`/`loaded_quantization_*`/`loaded_model_key_*`, l'enregistrement `contaminated`/
+`loaded_context_*`/`loaded_quantization_*`/`loaded_model_key_*`, l'enregistrement `deny_home_trial` de chaque candidat (dont `smoke.deny_home_evidence`), la clé de pilote `binary_version`, le paramètre
+`sandbox_denied` et `attempt_dir` de `audit_transcript`, `launchctl`/`osascript` dans les exécutables interdits,
+l'enregistrement `contaminated`/
 `contamination` (`paths`, `commands`) et `report.contaminated`, les règles de l'audit (corps de `heredoc`,
 commentaires, séparateurs entre guillemets, `sh -c`, HOME isolé d'un bras local, dossier de session propre d'un
 bras cloud, `base_literals`, contamination gardée sur une coupure après l'audit), `review_excluded`, la note
