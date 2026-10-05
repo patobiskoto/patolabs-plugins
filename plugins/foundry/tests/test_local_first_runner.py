@@ -1179,16 +1179,17 @@ def _rerun_env(tmp_path):
     return _make_repo(tmp_path)
 
 
-def test_N3_a_replayed_attempt_is_refused_and_a_duplicate_record_never_counts(tmp_path):
+def test_N3_a_decided_attempt_is_never_replayed_and_a_duplicate_record_never_counts(tmp_path):
     first = _make_repo(tmp_path)
     runner, _, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
     runner.screen(tasks[:1], ["cand-a"])
     assert counts(plan) == {"local": 1}
     again, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
-    with pytest.raises(lfr.RunnerError, match="already recorded"):
-        again.screen(tasks[:1], ["cand-a"])
-    assert counts(plan) == {"local": 1}  # the replayed candidate never ran
-    assert results(again)[-1]["reason"].startswith("tool_error:")
+    assert again.screen(tasks[:1], ["cand-a"]) == []  # resume: the decided task is skipped
+    assert counts(plan) == {"local": 1}  # the decided candidate never ran again
+    assert len(results(again)) == 1  # the first launch's record: nothing added
+    with pytest.raises(lfr.RunnerError, match="already recorded"):  # the claim itself still refuses
+        again._claim("S", tasks[0], "screening", "cand-a", "local", 0)
     dup = [json.loads(line) for line in again.results_path.read_text("utf-8").splitlines()][0]
     with pytest.raises(lfr.RunnerError, match="duplicated attempts"):
         lfr.report(_campaign(), [dup, dup], ledger_of(again))
@@ -1738,7 +1739,7 @@ def test_item3_a_launcher_error_after_the_reservation_never_reads_as_zero_tokens
         f"interrupted:{error['cloud_sessions'][0]}"]
 
 
-def test_item4_an_interrupted_local_attempt_is_counted_recorded_and_cannot_be_replayed(tmp_path, monkeypatch):
+def test_item4_an_interrupted_local_attempt_is_counted_recorded_and_replayed_once(tmp_path, monkeypatch):
     first = _make_repo(tmp_path)
     runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
     _interrupt_nth(monkeypatch, "local_harness", 1)
@@ -1754,9 +1755,9 @@ def test_item4_an_interrupted_local_attempt_is_counted_recorded_and_cannot_be_re
     rep = lfr.report(campaign, results(runner), ledger_of(runner))["screening"]
     assert rep["selected"] is None and rep["complete"] is False  # an interruption is not a refusal
     again, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
-    with pytest.raises(lfr.RunnerError, match="already recorded"):
-        again.screen(tasks[:1], ["cand-a"])
-    assert counts(plan) == {}  # no second chance by Ctrl-C
+    again.screen(tasks[:1], ["cand-a"])  # cut before any verdict: void, replayed once
+    assert counts(plan) == {"local": 1}
+    assert results(again)[-1]["replay_of"]["outcome"] == "interrupted"
 
 
 def test_item5_the_exact_previous_signal_handlers_are_restored(tmp_path):
@@ -1977,8 +1978,11 @@ def test_pat111_ac1_a_stop_outside_the_driver_leaves_an_interrupted_record_and_a
     assert {s: signal.getsignal(s) for s in SIGNALS} == dict.fromkeys(SIGNALS, sentinel_handlers)
     rep = lfr.report(campaign, results(runner), ledger_of(runner))
     assert rep["screening"]["selected"] is None  # an interrupted screening never selects
-    with pytest.raises(lfr.RunnerError, match="already recorded"):  # and the attempt is not replayable
-        make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)[0].screen(tasks[:1], ["cand-a"])
+    played = counts(plan).get("local", 0)
+    make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)[0].screen(tasks[:1], ["cand-a"])
+    # cut before any verdict: replayed once; a verdict was received (record or flushed): never replayed
+    assert counts(plan).get("local", 0) - played == (
+        0 if where in ("after_return", "results_write", "ledger_settle") else 1)
 
 
 def test_pat111_ac1_compare_covers_the_neutral_path_and_the_cloud_record_window(
@@ -2108,11 +2112,14 @@ def test_pat111_ac3_report_lists_a_killed_attempt_that_a_relaunch_replayed_and_w
     killed = "attempt-l01-0001-pr1-S-local-cand-a"
     assert any(e.get("attempt_dir") == killed for e in kept)
     again, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
-    again.screen(tasks, ["cand-a"])  # the relaunch replays it (the claim was never persisted)
+    again.screen(tasks, ["cand-a"])  # the relaunch replays it once (hard kill: void, no verdict)
     rep = lfr.report(campaign, results(again), ledger_of(again))
     assert [h["attempt_dir"] for h in rep["ledger"]["unsettled_starts"]] == [killed]
-    assert rep["screening"]["complete"] and rep["screening"]["selected"] == "cand-a"  # stays...
-    assert rep["screening"]["warnings"] == [f"attempt_started_without_settled:{killed}"]  # ...but warns
+    assert rep["screening"]["complete"] and rep["screening"]["selected"] == "cand-a"
+    assert rep["screening"]["warnings"] == []  # replayed: no longer an open hole...
+    assert [(v["outcome"], v["attempt_dir"], v["replayed"]) for v in rep["void_attempts"]] == [
+        ("hard_kill", killed, True)]  # ...but still listed, with its replay
+    assert [r["replay_of"]["attempt_dir"] for r in rep["replays"]] == [killed]
     # the stream log of the killed attempt is not overwritten by the replay
     names = sorted(p.name for p in (tmp_path / "state" / "streams").iterdir())
     assert any("-attempt-l01-0001-pr1-" in n for n in names) and any("-attempt-l02-0001-pr1-" in n for n in names)
@@ -2187,3 +2194,211 @@ def test_pat111_ac3_without_screening_results_the_report_says_the_check_was_not_
     runner.compare(tasks[:1], "cand-a", ("A", "C"))  # no screening results in this state directory
     comparison = lfr.report(campaign, results(runner), ledger_of(runner))["comparison"]
     assert comparison["screening_selected"] == "screening_results_not_available"
+
+
+# ============================================================ PAT-111: bounded resume (2026-10-05)
+# A relaunch under the same campaign id, envelope, config and manifest resumes: decided work is
+# skipped, an attempt cut before any verdict is void and replayed ONCE, a verdict is never replayed.
+
+def _three(tasks):
+    return [*tasks, {**tasks[0], "pr": 3, "issue": "PAT-3"}]
+
+
+def _resume_report(campaign, runner):
+    rules = json.loads(json.dumps(campaign))
+    rules["rules"]["screening"]["tasks"] = 3
+    return lfr.report(rules, results(runner), ledger_of(runner))
+
+
+def _sigterm_judge_on(monkeypatch, *nths):
+    """SIGTERM just before the judge of the ``nths``-th judged attempt (the arm already ran)."""
+    real, seen = lfc.judge, []
+
+    def judge(*a, **kw):
+        seen.append(1)
+        if len(seen) in nths:
+            _send(signal.SIGTERM)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(lfc, "judge", judge)
+
+
+def _launch(tmp_path, first, plan, tasks, candidates, monkeypatch=None, cut=()):
+    runner, campaign, plan_path, _ = make_runner(tmp_path, "screen", plan, repo_bundle=first)
+    if cut:
+        _sigterm_judge_on(monkeypatch, *cut)
+        with pytest.raises(SystemExit):
+            runner.screen(tasks, candidates)
+        monkeypatch.undo()
+    else:
+        runner.screen(tasks, candidates)
+    return runner, campaign, plan_path
+
+
+RESUME_PLAN = {**FIX_ALL, "local": ["fix"] * 4 + ["partial"] * 3}
+
+
+def test_pat111_resume_screens_candidate_by_candidate_and_replays_the_cut_task_once(
+        tmp_path, monkeypatch, sentinel_handlers):
+    first = _make_repo(tmp_path)
+    tasks = _three(make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)[3])
+    # launch 1: candidate a, SIGTERM during task 2 before the judge
+    _launch(tmp_path, first, RESUME_PLAN, tasks, ["cand-a"], monkeypatch, cut=(2,))
+    # launch 2: task 1 is skipped (not replayed), task 2 replayed once, task 3 played
+    runner, campaign, plan = _launch(tmp_path, first, RESUME_PLAN, tasks, ["cand-a"])
+    assert counts(plan) == {"local": 4}  # 2 in launch 1, then task 2 again and task 3
+    recs = [r for r in results(runner) if r["record_type"] == "attempt"]
+    assert [(r["task"]["pr"], r.get("outcome"), "replay_of" in r) for r in recs] == [
+        (1, None, False), (2, "interrupted", False), (2, None, True), (3, None, False)]
+    replay = recs[2]
+    assert replay["replay_of"]["outcome"] == "interrupted" and replay["replay_of"]["reason"].startswith("SystemExit")
+    assert replay["replay_of"]["attempt_dir"].endswith("-0002-pr2-S-local-cand-a")
+    # launch 3: candidate b runs on its own
+    runner, campaign, plan = _launch(tmp_path, first, RESUME_PLAN, tasks, ["cand-b"])
+    assert counts(plan) == {"local": 7}
+    rep = _resume_report(campaign, runner)
+    screening = rep["screening"]
+    assert screening["complete"] and screening["selected"] == "cand-a" and screening["undecided_tasks"] == []
+    assert screening["candidates"]["cand-a"]["tasks"] == 3  # the task is counted once (decided record)
+    assert [(v["task"]["pr"], v["outcome"], v["replayed"]) for v in rep["void_attempts"]] == [
+        (2, "interrupted", True)]
+    assert [(r["task"]["pr"], r["replay_of"]["outcome"]) for r in rep["replays"]] == [(2, "interrupted")]
+    # a decided record is still never claimed again, and a duplicate of it never counts
+    with pytest.raises(lfr.RunnerError, match="already recorded"):
+        runner._claim("S", tasks[0], "screening", "cand-a", "local", 0)
+    decided = next(r for r in results(runner) if r.get("record_type") == "attempt" and r.get("judge"))
+    with pytest.raises(lfr.RunnerError, match="decided twice"):
+        lfr.report(campaign, [*results(runner), {**decided, "replay_of": {"attempt": 0}}], ledger_of(runner))
+
+
+def test_pat111_a_second_cut_of_the_same_attempt_is_not_replayable(tmp_path, monkeypatch, sentinel_handlers):
+    first = _make_repo(tmp_path)
+    tasks = _three(make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)[3])
+    _launch(tmp_path, first, RESUME_PLAN, tasks, ["cand-a"], monkeypatch, cut=(2,))
+    _launch(tmp_path, first, RESUME_PLAN, tasks, ["cand-a"], monkeypatch, cut=(1,))  # the replay is cut too
+    runner, campaign, plan = _launch(tmp_path, first, RESUME_PLAN, tasks, ["cand-a"])
+    assert counts(plan) == {"local": 4}  # task 1, task 2, its replay, then only task 3: no third try
+    screening = _resume_report(campaign, runner)["screening"]
+    assert screening["selected"] is None and screening["reason"] == "incomplete_screening"
+    assert screening["undecided_tasks"] == [{"candidate": "cand-a", "pr": 2, "outcome": "interrupted",
+                                             "replayed": True}]
+
+
+def _drop(runner, *, record=True, settlement=True, task_pr=2):
+    """Rewrite the state as a SIGKILL would have left it for the LAST attempt of ``task_pr``: no stop,
+    no settlement (``settlement=False`` keeps it) and no record (``record=False`` keeps it)."""
+    last = [e for e in ledger_of(runner) if e["kind"] == "attempt_started" and e["pr"] == task_pr][-1]
+    entries = [e for e in ledger_of(runner) if e["kind"] != "stopped" and not (
+        settlement and e["kind"] == "settled" and e.get("attempt_dir") == last["attempt_dir"])]
+    runner.ledger.path.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
+    recs = [r for r in results(runner) if r["record_type"] != "stop"]
+    mine = [r for r in recs if r["record_type"] == "attempt" and r["task"]["pr"] == task_pr]
+    if record and mine:
+        recs.remove(mine[-1])
+    runner.results_path.write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+    return last["attempt_dir"]
+
+
+def test_pat111_a_hard_kill_without_settlement_is_replayable_once(tmp_path):
+    first = _make_repo(tmp_path)
+    tasks = _three(make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)[3])
+    runner, _, plan = _launch(tmp_path, first, RESUME_PLAN, tasks[:2], ["cand-a"])
+    killed = _drop(runner)  # the attempt of task 2: neither record nor settlement
+    runner, campaign, plan = _launch(tmp_path, first, RESUME_PLAN, tasks, ["cand-a"])
+    assert counts(plan) == {"local": 4}  # task 2 replayed, task 3 played, task 1 skipped
+    replay = next(r for r in results(runner) if r.get("replay_of"))
+    assert replay["replay_of"] == {"attempt": 0, "attempt_dir": killed, "outcome": "hard_kill",
+                                   "reason": "attempt_started without settlement"}
+    rep = _resume_report(campaign, runner)
+    assert rep["screening"]["selected"] == "cand-a" and rep["screening"]["warnings"] == []
+    assert [(v["outcome"], v["replayed"]) for v in rep["void_attempts"]] == [("hard_kill", True)]
+    # the replay is killed in its turn: the same attempt is not replayable a second time
+    _drop(runner)
+    runner, campaign, plan = _launch(tmp_path, first, RESUME_PLAN, tasks, ["cand-a"])
+    assert counts(plan) == {"local": 4}
+    assert [r["task"]["pr"] for r in results(runner) if r["record_type"] == "attempt"] == [1, 3]
+    screening = _resume_report(campaign, runner)["screening"]
+    assert screening["selected"] is None and screening["killed_not_replayed"] == 1
+
+
+def test_pat111_a_local_attempt_with_a_verdict_is_never_replayed(tmp_path):
+    first = _make_repo(tmp_path)
+    tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)[3]
+    runner, _, plan = _launch(tmp_path, first, FIX_ALL, tasks[:1], ["cand-a"])
+    _drop(runner, record=False, task_pr=1)  # killed right after the record write: no settlement left
+    runner, _, plan = _launch(tmp_path, first, FIX_ALL, tasks[:1], ["cand-a"])
+    assert counts(plan) == {"local": 1} and not any(r.get("replay_of") for r in results(runner))
+    # settled but no record (killed between the two writes): a verdict may have been received
+    runner, _, plan = _launch(tmp_path, first, FIX_ALL, tasks[:2], ["cand-a"])
+    _drop(runner, settlement=False)
+    before = counts(plan)["local"]
+    runner, _, plan = _launch(tmp_path, first, FIX_ALL, tasks[:2], ["cand-a"])
+    assert counts(plan)["local"] == before
+
+
+def test_pat111_compare_keeps_the_cost_of_a_void_cloud_round_and_the_invariant_holds(tmp_path, monkeypatch):
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first)
+    real, seen = lfc.judge, []
+
+    def judge(*a, **kw):  # a tool failure after the cloud execution was read (cost known)
+        seen.append(1)
+        if len(seen) == 1:
+            raise lfc.CorpusError("judge crashed")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(lfc, "judge", judge)
+    with pytest.raises(lfc.CorpusError):
+        runner.compare(tasks[:1], "cand-a", ("A",))
+    monkeypatch.undo()
+    again, _, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first)
+    again.compare(tasks[:1], "cand-a", ("A",))
+    assert counts(plan)["implementer"] == 2  # the void round and its replay (one each)
+    recs = [r for r in results(again) if r["record_type"] == "attempt"]
+    assert [(r["outcome"], "replay_of" in r) for r in recs] == [("tool_error", False), ("accepted", True)]
+    assert recs[1]["replay_of"]["outcome"] == "tool_error"
+    started = [e["session_id"] for e in ledger_of(again) if e["kind"] == "cloud_started"]
+    assert sorted(s for r in recs for s in r["cloud_sessions"]) == sorted(started) and len(started) == 3
+    rep = lfr.report(campaign, results(again), ledger_of(again))  # the ledger/results invariant
+    assert rep["ledger"]["unknown_spent_work"] == []
+    paid = sum(e["premium_tokens"] for e in ledger_of(again) if e["kind"] == "settled" and e["cloud"])
+    assert sum(r["premium"]["billing_total"] for r in recs) == paid  # the void round stays paid for
+    assert [v["outcome"] for v in rep["void_attempts"]] == ["tool_error"] and len(rep["replays"]) == 1
+    # a decided path is skipped on the next launch
+    third, _, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first)
+    third.compare(tasks[:1], "cand-a", ("A",))
+    assert counts(plan)["implementer"] == 2
+
+
+def test_pat111_an_interrupted_cloud_round_keeps_its_unknown_cost_and_the_path_stays_undecided(
+        tmp_path, monkeypatch):
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first)
+    _interrupt_nth(monkeypatch, "cloud_implementer", 1)
+    with pytest.raises(KeyboardInterrupt):
+        runner.compare(tasks[:1], "cand-a", ("A",))
+    monkeypatch.undo()
+    again, _, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first)
+    again.compare(tasks[:1], "cand-a", ("A",))  # an unmeasured spend still stops every cloud execution
+    assert counts(plan) == {} and again.stopped == "cap_reached:premium_tokens_unmeasurable"
+    recs = [r for r in results(again) if r["record_type"] == "attempt"]
+    assert [r["outcome"] for r in recs] == ["interrupted"] and recs[0]["premium"]["billing_total"] is None
+    rep = lfr.report(campaign, results(again), ledger_of(again))
+    assert rep["comparison"]["decision"] == "inconclusive"
+    assert rep["ledger"]["unknown_spent_work"] == [f"interrupted:{recs[0]['cloud_sessions'][0]}"]
+    assert [v["replayed"] for v in rep["void_attempts"]] == [False] and rep["replays"] == []
+
+
+def test_pat111_a_cut_correction_is_not_replayed_and_the_path_stays_undecided(tmp_path, monkeypatch):
+    first = _make_repo(tmp_path)
+    plan = {**FIX_ALL, "reviewer": ["PASS", "BLOCK"]}
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", plan, repo_bundle=first)
+    _interrupt_nth(monkeypatch, "cloud_implementer", 3)  # the correction of path B
+    with pytest.raises(KeyboardInterrupt):
+        runner.compare(tasks[:1], "cand-a", ("A", "B"))
+    monkeypatch.undo()
+    again, _, pplan, tasks = make_runner(tmp_path, "compare", plan, repo_bundle=first)
+    again.compare(tasks[:1], "cand-a", ("A", "B"))
+    assert counts(pplan) == {"implementer": 1, "economy": 1, "reviewer": 2}  # nothing replayed
+    rep = lfr.report(campaign, results(again), ledger_of(again))
+    assert rep["comparison"]["arms"]["B"]["economy"] == "unavailable" and rep["replays"] == []

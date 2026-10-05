@@ -690,9 +690,10 @@ def config_digest(data: Any) -> str:
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def _attempt_key(path: str, pr: Any, task_set: Any, candidate: Any, segment: str, attempt: int
-                 ) -> tuple:
-    return (path, pr, task_set, candidate, segment, attempt)
+def _attempt_key(path: str, pr: Any, task_set: Any, candidate: Any, segment: str, attempt: int,
+                 replay: int = 0) -> tuple:
+    """The key of one RECORD: the logical attempt plus 1 when the record is the replay of a void one."""
+    return (path, pr, task_set, candidate, segment, attempt, replay)
 
 
 def _merge_models(into: dict[str, dict[str, int | None]], more: Mapping[str, Mapping[str, Any]]) -> None:
@@ -735,6 +736,7 @@ class Runner:
                            "envelope_sha256": envelope["sha256"]}
         self.results_path = self.state_dir / f"results-{envelope['campaign_id']}.jsonl"
         self.seen = self._scan_results()  # refuses a mixed or foreign state before anything starts
+        self.prior_ledger: list[dict[str, Any]] = []
         if sandbox:  # a configuration error must cost nothing: checked before any claim or reservation
             for driver in campaign["drivers"].values():
                 if mode == "compare" or driver["kind"] in LOCAL_KINDS:
@@ -743,6 +745,7 @@ class Runner:
         self.work_root.mkdir(parents=True, exist_ok=True)
         self.ledger = Ledger(self.state_dir, envelope, mode, now, dry_run=dry_run,
                              provenance=self.provenance)
+        self.prior_ledger = _read_jsonl(self.ledger.path)  # what the earlier launches left (resume)
         self.counter = 0
         self.launch = self.ledger.launch
         self.gate: dict[str, Any] = {"defer": False, "pending": None}  # see ``_signals``
@@ -754,8 +757,8 @@ class Runner:
 
     # ---- bookkeeping
     def _scan_results(self) -> set[tuple]:
-        """Attempt keys already recorded. A relaunch is REFUSED to replay one of them (no resume: a
-        new campaign id, hence a new envelope, is needed), and results written in dry-run mode, under
+        """Attempt keys already recorded (see ``_local_state`` and ``_cloud_resume`` for what a relaunch
+        resumes: a recorded key is never claimed again). Results written in dry-run mode, under
         another campaign config, manifest or envelope never share a file with this run."""
         seen: set[tuple] = set()
         self.prior_records: list[dict[str, Any]] = []
@@ -775,11 +778,60 @@ class Runner:
         return seen
 
     def _claim(self, path: str, task: Mapping[str, Any], task_set: str, candidate: str | None,
-               segment: str, attempt: int) -> None:
-        key = _attempt_key(path, task["pr"], task_set, candidate, segment, attempt)
+               segment: str, attempt: int, replay: int = 0) -> None:
+        key = _attempt_key(path, task["pr"], task_set, candidate, segment, attempt, replay)
         if key in self.seen:
             raise RunnerError(f"attempt already recorded (no second chance, no replay): {key}")
         self.seen.add(key)
+
+    def _local_state(self, path: str, task: Mapping[str, Any], task_set: str, candidate: str,
+                     segment: str, attempt: int) -> tuple[str, Any]:
+        """What a relaunch does with a local attempt: ``decided`` (a record carries a judge verdict:
+        never replayed, whatever happened afterwards), ``replay`` (cut before any verdict, tried once:
+        a void record, or an ``attempt_started`` with no record and no settlement; the second element
+        is the ``replay_of`` to record), ``undecided`` (cut twice, or settled with no record, so a
+        verdict may have been received: never replayed) or ``fresh``."""
+        base = (path, task["pr"], task_set, candidate, segment, attempt)
+        recs = [r for r in self.prior_records
+                if r.get("record_type") == "attempt" and _logical_key(r) == base]
+        for rec in recs:
+            if rec.get("judge"):
+                return "decided", rec
+        starts = [e for e in self.prior_ledger if e.get("kind") == "attempt_started" and
+                  (e.get("path"), e.get("pr"), e.get("set"), e.get("candidate"), e.get("segment"),
+                   e.get("attempt")) == base]
+        if not recs and not starts:
+            return "fresh", None
+        if max(len(recs), len(starts)) > 1 or (recs and recs[0].get("outcome") not in LOST_OUTCOMES):
+            return "undecided", None
+        name = starts[0].get("attempt_dir") if starts else None
+        if recs:
+            outcome, reason = recs[0]["outcome"], recs[0].get("reason")
+        elif any(e.get("kind") == "settled" and not e.get("cloud") and e.get("attempt_dir") == name
+                 for e in self.prior_ledger):
+            return "undecided", None
+        else:
+            outcome, reason = "hard_kill", "attempt_started without settlement"
+        return "replay", {"attempt": attempt, "attempt_dir": name, "outcome": outcome, "reason": reason}
+
+    def _cloud_resume(self, prior: Sequence[Mapping[str, Any]], first_attempt: int
+                      ) -> dict[str, Any] | None:
+        """Cloud path already started by an earlier launch: ``None`` (nothing to play: it ended, or
+        cannot be continued: the patch and the findings of a round are not kept, so only a first
+        round cut before any verdict is replayed, once), else the ``replay_of`` of that round. A void
+        round keeps its cost; a cap still applies to the replay (an unmeasured spend stops it)."""
+        last = first_attempt + self.campaign["bounds"]["max_correction_rounds"]
+        if any(r["outcome"] in ("accepted", "review_unreadable") or
+               (r["attempt"] == last and r["outcome"] in ("review_block", "judge_refused"))
+               for r in prior):
+            return None
+        first = prior[0]
+        if len(prior) != 1 or first["attempt"] != first_attempt or first.get("judge") \
+                or first["outcome"] not in LOST_OUTCOMES:
+            return None
+        self.ledger.check(cloud=True)
+        return {"attempt": first_attempt, "attempt_dir": None, "outcome": first["outcome"],
+                "reason": first.get("reason"), "cloud_sessions": list(first["cloud_sessions"])}
 
     def _emit(self, record: dict[str, Any]) -> dict[str, Any]:
         record = {"schema": RESULT_SCHEMA, "campaign_id": self.envelope["campaign_id"],
@@ -905,7 +957,8 @@ class Runner:
     def _tool_error(self, task: Mapping[str, Any], path: str, segment: str, attempt: int,
                     task_set: str, exc: BaseException, *, wall: float = 0.0, sessions: Sequence[str] = (),
                     by_role: Mapping[str, Any] | None = None, by_model: Mapping[str, Any] | None = None,
-                    local: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+                    local: Mapping[str, Any] | None = None,
+                    replay_of: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         """A tool failure or an interruption (Ctrl-C, SIGTERM, any other exception) is recorded as
         such, never as a verdict, before the campaign stops. An interrupted attempt has an unknown
         cost (``billing_total`` null), like any record whose cloud executions were not all read."""
@@ -925,19 +978,21 @@ class Runner:
                         "billing_total": None if status == "interrupted"
                         else _record_total(by_role, sessions)},
             "local": ({"ended_by_external_signal": False, **local} if local else None),
-            "machine": None, "unknown": {status: reason}}
+            "machine": None, "unknown": {status: reason},
+            **({"replay_of": dict(replay_of)} if replay_of else {})}
         if _record_key(record) in self.emitted:  # the attempt reached the results just before the cut
             return None
         return self._emit(record)
 
     # ---- one local attempt (screen, path N, first step of path C)
     def local_attempt(self, task: Mapping[str, Any], candidate_id: str, driver_id: str,
-                      path: str, attempt: int = 0, task_set: str = "") -> tuple[dict[str, Any], bytes]:
+                      path: str, attempt: int = 0, task_set: str = "",
+                      replay_of: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], bytes]:
         driver = self._driver(driver_id)
         if driver["kind"] not in LOCAL_KINDS:
             raise RunnerError(f"{driver_id} is not a local harness")
         self.ledger.check(cloud=False)
-        self._claim(path, task, task_set, candidate_id, "local", attempt)
+        self._claim(path, task, task_set, candidate_id, "local", attempt, 1 if replay_of else 0)
         bounds = self.campaign["bounds"]
         model = self.campaign["candidates"][candidate_id]["model"]
         execution, started = None, None
@@ -972,7 +1027,7 @@ class Runner:
                                    **({"interrupted": True} if _cut(exc) == "interrupted" else {}))
                 self._tool_error(task, path, "local", attempt, task_set, exc, wall=wall,
                                  local={"harness": driver_id, "harness_kind": driver["kind"],
-                                        "candidate": candidate_id})
+                                        "candidate": candidate_id}, replay_of=replay_of)
             raise
         with self._critical():  # settled and registered as unrecorded together (see ``_stop``)
             self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None,
@@ -998,7 +1053,8 @@ class Runner:
                       "wall_seconds": execution["wall_seconds"], "cloud_executions": 0,
                       "cloud_sessions": [],
                       "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
-                      "machine": {"before": _strip(before), "after": _strip(after)}, "unknown": unknown}
+                      "machine": {"before": _strip(before), "after": _strip(after)}, "unknown": unknown,
+                      **({"replay_of": dict(replay_of)} if replay_of else {})}
             self.unrecorded = record  # until ``_emit`` writes it, an interruption writes it as interrupted
         return record, patch
 
@@ -1079,9 +1135,16 @@ class Runner:
         records: list[dict[str, Any]] = []
         patch: bytes | None = None
         feedback: str | None = None
+        prior = [r for r in self.prior_records if r.get("record_type") == "attempt"
+                 and (r["path"], r["task"]["pr"], r["task"].get("set"), r.get("segment")) ==
+                 (path, task["pr"], task_set, segment)]
+        replay = self._cloud_resume(prior, first_attempt) if prior else None
+        if prior and replay is None:
+            return records
         for index in range(self.campaign["bounds"]["max_correction_rounds"] + 1):
             role = "implementer" if index == 0 else "corrector"
-            self._claim(path, task, task_set, None, segment, first_attempt + index)
+            again = replay if index == 0 else None
+            self._claim(path, task, task_set, None, segment, first_attempt + index, 1 if again else 0)
             by_role: dict[str, Any] = {}
             models: dict[str, dict[str, int | None]] = {}
             unknown: dict[str, str] = {}
@@ -1102,7 +1165,8 @@ class Runner:
                     "cloud_sessions": spent,
                     "premium": {"by_role": {r: _classes(t) for r, t in by_role.items()},
                                 "by_model": models, "billing_total": _record_total(by_role, spent)},
-                    "local": None, "machine": None, "unknown": unknown}))
+                    "local": None, "machine": None, "unknown": unknown,
+                    **({"replay_of": again} if again else {})}))
 
             try:
                 bundle, attempt_dir = self._bundle(task, f"{path}-{role}{index}", patch)
@@ -1141,7 +1205,7 @@ class Runner:
             except BaseException as exc:  # tool failure, Ctrl-C, SIGTERM, anything: never silent
                 self._tool_error(
                     task, path, segment, first_attempt + index, task_set, exc, wall=state["seconds"],
-                    sessions=self.sessions[mark:], by_role=by_role, by_model=models)
+                    sessions=self.sessions[mark:], by_role=by_role, by_model=models, replay_of=again)
                 raise
             outcome = state["outcome"]
             if outcome in ("accepted", "review_unreadable"):
@@ -1156,7 +1220,12 @@ class Runner:
     # ---- path C
     def hybrid_path(self, task: Mapping[str, Any], candidate_id: str, harness_id: str,
                     task_set: str = "") -> list[dict[str, Any]]:
-        local, patch = self.local_attempt(task, candidate_id, harness_id, "C", 0, task_set)
+        state, info = self._local_state("C", task, task_set, candidate_id, "local", 0)
+        if state in ("decided", "undecided"):  # the local attempt is never replayed; only a takeover left
+            if state == "decided" and info.get("outcome") in ("local_refused", "review_block"):
+                return self.cloud_path(task, "C", task_set, segment="takeover", first_attempt=1)
+            return []
+        local, patch = self.local_attempt(task, candidate_id, harness_id, "C", 0, task_set, info)
         records = [local]
         takeover = local["local_outcome"] != "accepted"
         if not takeover:
@@ -1213,8 +1282,12 @@ class Runner:
             try:
                 for candidate_id in candidate_ids:
                     for task in tasks:
+                        state, info = self._local_state("S", task, "screening", candidate_id, "local", 0)
+                        if state in ("decided", "undecided"):
+                            continue  # resume: a decided task is never replayed, an undecided one stays so
                         self.preflight(candidate_id)
-                        record, _ = self.local_attempt(task, candidate_id, harness_id, "S", 0, "screening")
+                        record, _ = self.local_attempt(task, candidate_id, harness_id, "S", 0, "screening",
+                                                       info)
                         record["accepted"] = record["local_outcome"] == "accepted"
                         out.append(self._emit(record))
             except PreflightRefused:
@@ -1236,6 +1309,17 @@ class Runner:
         local_ok = local_fail = 0
         premium = {"A": 0, "C": 0}
         premium_known = {"A": True, "C": True}
+        for rec in self.prior_records:  # a resume keeps the counts the early-stop rules rely on
+            if rec.get("record_type") != "attempt" or rec["task"].get("set") != "comparison" \
+                    or rec["task"]["pr"] not in {t["pr"] for t in tasks}:
+                continue
+            if rec["path"] == "C" and rec["segment"] == "local" and rec.get("outcome") not in LOST_OUTCOMES:
+                local_ok += rec["local_outcome"] == "accepted"
+                local_fail += rec["local_outcome"] != "accepted"
+            if rec["path"] in premium:
+                total = rec["premium"]["billing_total"]
+                premium_known[rec["path"]] &= total is not None
+                premium[rec["path"]] += total or 0
         needs_local = bool({"C", "N"} & set(paths))  # A and B alone never need the local model
         if needs_local:  # refused before any claim or reservation
             self._check_selected(candidate_id)
@@ -1249,12 +1333,17 @@ class Runner:
                             recs = self.cloud_path(task, path, "comparison")
                         elif path == "C":
                             recs = self.hybrid_path(task, candidate_id, harness_id, "comparison")
-                            first = recs[0]
-                            local_ok += first["local_outcome"] == "accepted"
-                            local_fail += first["local_outcome"] != "accepted"
+                            first = recs[0] if recs else None
+                            if first and first["segment"] == "local":
+                                local_ok += first["local_outcome"] == "accepted"
+                                local_fail += first["local_outcome"] != "accepted"
                         else:  # N: the same local attempt under the neutral harness, no cloud
+                            state, info = self._local_state("N", task, "comparison", candidate_id,
+                                                            "local", 0)
+                            if state in ("decided", "undecided"):
+                                continue
                             rec, _ = self.local_attempt(task, candidate_id, "neutral_harness", "N", 0,
-                                                        "comparison")
+                                                        "comparison", info)
                             rec["accepted"] = rec["local_outcome"] == "accepted"
                             recs = [self._emit(rec)]
                         out += recs
@@ -1353,9 +1442,14 @@ def _record_total(by_role: Mapping[str, Any], sessions: Sequence[str]) -> int | 
 
 
 def _record_key(rec: Mapping[str, Any]) -> tuple:
+    return (*_logical_key(rec), 1 if rec.get("replay_of") else 0)
+
+
+def _logical_key(rec: Mapping[str, Any]) -> tuple:
+    """The attempt a record is about: a void record and its replay share it."""
     return _attempt_key(rec["path"], rec["task"]["pr"], rec["task"].get("set"),
                         (rec.get("local") or {}).get("candidate"), rec.get("segment", ""),
-                        rec.get("attempt", 0))
+                        rec.get("attempt", 0))[:6]
 
 
 def _git_in(bundle: Path, *args: str, stdin: bytes | None = None) -> bytes:
@@ -1491,6 +1585,8 @@ def _check_records(records: Sequence[Mapping[str, Any]], campaign_sha256: str | 
                           "under (campaign_sha256 mismatch): the rules cannot change after the fact")
     keys = [_record_key(r) for r in records if r.get("record_type") == "attempt"]
     duplicates = sorted({str(k) for k in keys if keys.count(k) > 1})
+    decided = [_logical_key(r) for r in records if r.get("record_type") == "attempt" and r.get("judge")]
+    duplicates += sorted({f"{k} (decided twice)" for k in decided if decided.count(k) > 1})
     if duplicates:
         raise RunnerError(f"results hold duplicated attempts: {', '.join(duplicates)}")
     return shas
@@ -1568,17 +1664,63 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
     stops = [r["reason"] for r in records if r.get("record_type") == "stop"]
     rules = campaign["rules"]
     holes = _unsettled_starts(ledger)
+    replayed = {(r["replay_of"] or {}).get("attempt_dir") for r in attempts if r.get("replay_of")}
+    for hole in holes:  # a killed attempt a later launch replayed is no longer an open hole
+        hole["replayed"] = hole.get("attempt_dir") in replayed
+    open_holes = [h for h in holes if not h["replayed"]]
+    counted = {_logical_key(r) for r in attempts if r.get("outcome") not in LOST_OUTCOMES}
     out: dict[str, Any] = {"promotion": False, "stops": stops, "rules_applied": rules,
                            "provenance": shas,
                            "ledger": {"unknown_spent_work": unknown_work, "unsettled_starts": holes},
                            "dry_run": any(r.get("dry_run", False) for r in records),
-                           "screening": _report_screening(rules["screening"], attempts)}
-    out["screening"]["warnings"] = [h["warning"] for h in holes if h["mode"] == "screen"]
+                           "void_attempts": _void_attempts(attempts, holes),
+                           "replays": [{"path": r["path"], "task": r["task"],
+                                        "candidate": (r.get("local") or {}).get("candidate"),
+                                        "segment": r.get("segment"), "attempt": r.get("attempt"),
+                                        "outcome": r.get("outcome"), "replay_of": r["replay_of"]}
+                                       for r in attempts if r.get("replay_of")],
+                           "screening": _report_screening(rules["screening"], attempts, len({
+                               (h["path"], h["pr"], h["candidate"], h["segment"], h["attempt"])
+                               for h in open_holes if h["kind"] == "attempt_started" and h["path"] == "S"
+                               and (h["path"], h["pr"], h["set"], h["candidate"], h["segment"],
+                                    h["attempt"]) not in counted}))}
+    out["screening"]["warnings"] = [h["warning"] for h in open_holes if h["mode"] == "screen"]
     comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
     out["comparison"] = _report_comparison(rules["comparison"], comparison, stops, bool(unknown_work),
-                                           [h["warning"] for h in holes if h["mode"] == "compare"])
+                                           [h["warning"] for h in open_holes if h["mode"] == "compare"])
     out["comparison"]["screening_selected"] = _check_compared_candidate(
         out["screening"], attempts, comparison)
+    return out
+
+
+def _is_void(rec: Mapping[str, Any]) -> bool:
+    """Cut before any judge verdict (the only attempts a launcher may replay, once)."""
+    return not rec.get("judge") and rec.get("outcome") in LOST_OUTCOMES
+
+
+def _superseded(attempts: Sequence[Mapping[str, Any]]) -> set[int]:
+    """Void records whose attempt was later settled by another record (the replay): their cost
+    stays counted, but they no longer leave the task undecided."""
+    counted = {_logical_key(r) for r in attempts if r.get("outcome") not in LOST_OUTCOMES}
+    return {id(r) for r in attempts if _is_void(r) and _logical_key(r) in counted}
+
+
+def _void_attempts(attempts: Sequence[Mapping[str, Any]], holes: Sequence[Mapping[str, Any]]
+                   ) -> list[dict[str, Any]]:
+    """Every void attempt: the records cut before a verdict and the starts a hard kill left with no
+    record, each with whether a replay record names it."""
+    replays = [r["replay_of"] for r in attempts if r.get("replay_of")]
+    out = [{"path": r["path"], "task": r["task"], "candidate": (r.get("local") or {}).get("candidate"),
+            "segment": r.get("segment"), "attempt": r.get("attempt"), "outcome": r["outcome"],
+            "reason": r.get("reason"), "cloud_sessions": r.get("cloud_sessions", []),
+            "replayed": any(x.get("attempt") == r.get("attempt") and x.get("outcome") == r["outcome"]
+                            and r.get("reason") == x.get("reason") for x in replays)}
+           for r in attempts if _is_void(r) and not r.get("replay_of")]
+    out += [{"path": h.get("path"), "task": {"pr": h.get("pr"), "set": h.get("set")},
+             "candidate": h.get("candidate"), "segment": h.get("segment"), "attempt": h.get("attempt"),
+             "outcome": "hard_kill", "reason": "attempt_started without settlement",
+             "attempt_dir": h["attempt_dir"], "cloud_sessions": [], "replayed": h["replayed"]}
+            for h in holes if h["kind"] == "attempt_started"]
     return out
 
 
@@ -1617,7 +1759,9 @@ def _unsettled_starts(ledger: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
             if entry.get("attempt_dir") not in settled:
                 out.append({"kind": "attempt_started", "mode": mode, "ledger_line": line,
                             "attempt_dir": entry.get("attempt_dir"), "path": entry.get("path"),
-                            "candidate": entry.get("candidate"),
+                            "candidate": entry.get("candidate"), "pr": entry.get("pr"),
+                            "set": entry.get("set"), "segment": entry.get("segment"),
+                            "attempt": entry.get("attempt"),
                             "warning": f"attempt_started_without_settled:{entry.get('attempt_dir')}"})
     close()
     return out
@@ -1638,12 +1782,17 @@ def _check_compared_candidate(screening: Mapping[str, Any], attempts: Sequence[M
     return screening["selected"] or "none_selected"
 
 
-def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
+                      killed: int = 0) -> dict[str, Any]:
     by_candidate: dict[str, list[Mapping[str, Any]]] = {}
-    lost = 0
+    undecided: dict[tuple, dict[str, Any]] = {}  # tasks with no decided record (cut, replay included)
+    gone = _superseded(attempts)
     for rec in attempts:
         if rec["path"] == "S" and rec.get("outcome") in LOST_OUTCOMES:
-            lost += 1  # a tool failure or an interruption is not a refusal: the result is unknown
+            if id(rec) not in gone:  # a tool failure or an interruption is not a refusal: unknown
+                undecided[_logical_key(rec)] = {
+                    "candidate": rec["local"]["candidate"], "pr": rec["task"]["pr"],
+                    "outcome": rec["outcome"], "replayed": bool(rec.get("replay_of"))}
         elif rec["path"] == "S":
             by_candidate.setdefault(rec["local"]["candidate"], []).append(rec)
     table = {}
@@ -1653,6 +1802,8 @@ def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, A
                       "total_seconds": round(sum(r["wall_seconds"] for r in recs), 3),
                       "peak_swap_used_mib": None if any(s is None for s in swaps) else max(swaps),
                       "harness": sorted({r["local"]["harness"] for r in recs})}
+    undecided_tasks = list(undecided.values())
+    lost = len(undecided_tasks) + killed
     complete = bool(table) and not lost and all(v["tasks"] == rule["tasks"] for v in table.values())
     selected, reason = None, "no_screening_results"
     if table and not complete:  # never select before every candidate has a record for every task
@@ -1669,7 +1820,8 @@ def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, A
             winners = [c for c in tied if table[c]["total_seconds"] == fastest]
             selected, reason = (winners[0], "tie_broken_by_total_duration") if len(winners) == 1 \
                 else (None, "tie_not_resolved")
-    return {"candidates": table, "selected": selected, "reason": reason, "complete": complete}
+    return {"candidates": table, "selected": selected, "reason": reason, "complete": complete,
+            "undecided_tasks": undecided_tasks, "killed_not_replayed": killed}
 
 
 def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -1677,6 +1829,7 @@ def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     for rec in recs:
         tasks.setdefault(rec["task"]["pr"], []).append(rec)
     per_task = {}
+    gone = _superseded(recs)
     for pr, items in sorted(tasks.items()):
         accepted = any(r["accepted"] is True for r in items)
         models: dict[str, dict[str, int | None]] = {}
@@ -1684,7 +1837,8 @@ def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             _merge_models(models, r["premium"].get("by_model") or {})
         per_task[pr] = {
             "accepted": accepted,
-            "unknown": not accepted and any(r.get("outcome") in UNKNOWN_OUTCOMES for r in items),
+            "unknown": not accepted and any(r.get("outcome") in UNKNOWN_OUTCOMES for r in items
+                                            if id(r) not in gone),
             "premium_by_model": models,
             "review_rounds": sum(r["review"]["rounds"] for r in items),
             "wall_seconds": sum(r["wall_seconds"] for r in items),
@@ -1694,7 +1848,8 @@ def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                                       if r["segment"] == "local"
                                       and r.get("outcome") not in LOST_OUTCOMES), None)}
     locals_ = [r for r in recs if r["segment"] == "local" and r.get("outcome") not in LOST_OUTCOMES]
-    lost = any(r["segment"] == "local" and r.get("outcome") in LOST_OUTCOMES for r in recs)
+    lost = any(r["segment"] == "local" and r.get("outcome") in LOST_OUTCOMES and id(r) not in gone
+               for r in recs)
     return {"tasks": per_task, "locals": locals_, "local_tool_error": lost}
 
 
@@ -1762,7 +1917,9 @@ def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, 
     out["complete"] = all(a["tasks_compared"] == expected for a in out["arms"].values()) and bool(out["arms"])
     if out["decision"] == "retained" and not out["complete"]:
         out["decision"] = "inconclusive"
-    if unknown_work or warnings or any(r.get("outcome") == "interrupted" for r in attempts):
+    gone = _superseded(attempts)
+    if unknown_work or warnings or any(r.get("outcome") == "interrupted" and id(r) not in gone
+                                       for r in attempts):
         # spent work is unknown, or a local attempt started and never settled (killed, possibly replayed)
         out["decision"], out["recommendation"] = "inconclusive", None
     return out

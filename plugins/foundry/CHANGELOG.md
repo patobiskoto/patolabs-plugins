@@ -18,6 +18,13 @@
   comparison whose local candidate is not the one the screening selected (`compare` checks it at start
   when the screening results are in the same state directory; without them the report says so).
   Attempt names carry the launch rank, so a relaunch never overwrites the stream log of a killed attempt.
+  A relaunch of `screen`/`compare` under the same campaign id, envelope, config and manifest now
+  RESUMES (bounded rule validated by the maintainer on 2026-10-05, before any trial): decided attempts
+  (a judge verdict) are skipped and never replayed; an attempt cut before any verdict (`interrupted` or
+  `tool_error` without verdict, or an `attempt_started` with no settlement) is void and replayed once on a
+  fresh bundle, recorded with `replay_of`; cloud money and the ledger/results invariant are unchanged (a
+  void round keeps its cost, each session is named once); `report` lists `void_attempts` and `replays`
+  and gives no `selected` while a screening task stays undecided (`undecided_tasks`).
 
 - Added (PAT-108): the PAT-19 comparison launcher `foundry.local_first_runner`
   (`python3 -m foundry.local_first_runner {preflight,screen,compare,report}`, documented in

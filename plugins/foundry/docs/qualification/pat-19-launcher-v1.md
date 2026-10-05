@@ -62,17 +62,44 @@ d'option pour s'en passer.
   `--candidate` ; le préflight est refait pour chacun, donc le mainteneur charge le modèle suivant
   entre deux candidats (le lanceur ne charge rien) et relance avec les candidats restants. Le
   préflight machine est refait avant **chaque tâche**.
-- **Pas de reprise** : le lanceur refuse de démarrer une tentative dont la clé (parcours, tâche, jeu,
-  candidat pour une tentative locale, segment, numéro) a déjà un enregistrement, et `report` refuse un
-  fichier qui en contient deux. Une tentative coupée (panne d'outil, Ctrl-C, SIGTERM) est consignée elle
-  aussi et ne se rejoue pas. Une tentative **tuée** (SIGKILL, coupure de courant) ne laisse pas de
-  clé : voir « Tentative interrompue ». Une campagne interrompue ou bloquée ne se rejoue pas dans le même état : la
-  **seule** sortie est un nouvel identifiant de campagne **et** une nouvelle enveloppe, données par le
-  mainteneur (donc un registre et un fichier de résultats distincts). Choix assumé, plus simple et plus sûr
-  qu'une reprise par saut des tentatives terminées : un candidat rejoué ne peut pas gagner par répétition
-  (« une tentative locale », protocole). Une panne d'outil ou une interruption pendant le tamis rend le
-  tamis incomplet : il faut une nouvelle campagne et y rejouer **tous** les candidats, pas seulement
-  celui qui a été coupé.
+- **Reprise bornée** (règle du mainteneur, 2026-10-05) : une relance de `screen` ou de `compare` sous le
+  **même** identifiant de campagne, la même enveloppe, la même configuration et le même manifeste reprend
+  la campagne ; sous d'autres empreintes elle est refusée comme avant. Le tamis se fait candidat par
+  candidat, en plusieurs lancements. Définitions telles que codées :
+  - **Décidée** : tentative locale dont un enregistrement porte un verdict du juge (accepté ou refusé,
+    `judge` non nul), y compris un enregistrement `interrupted` écrit après le verdict ; pour le cloud, un
+    parcours terminé (`accepted`, `review_unreadable`, ou dernier tour `review_block`/`judge_refused`). Une
+    tentative décidée est **sautée, jamais rejouée**, quoi qu'il arrive ensuite (un seul enregistrement par
+    tentative décidée : `report` refuse un doublon) ; le préflight n'est pas refait pour une tâche sautée.
+  - **Nulle** (*void*) : coupée **avant** tout verdict : enregistrement `interrupted` ou `tool_error` sans
+    `judge`, ou `attempt_started` au registre sans `settled` ni enregistrement (tuée).
+  - **Rejouable** : une tentative locale nulle l'est **une seule fois**, sur un bundle neuf ; le rejeu est
+    enregistré avec `replay_of` (`attempt`, `attempt_dir` de la tentative nulle, `outcome`, `reason`
+    ; `outcome: hard_kill` pour une tentative tuée). Une seconde coupure de la même tentative (deux
+    départs au registre) n'est pas rejouable : la tâche reste **indécise** pour ce candidat. Une tentative
+    réglée au registre sans enregistrement (tuée entre les deux écritures) peut avoir reçu un verdict : elle
+    n'est jamais rejouée non plus.
+  - **Cloud** : rien ne change pour l'argent : toute exécution déjà réservée reste comptée au registre et
+    dans le coût du parcours (un tour nul n'est pas remboursé ; son coût, connu ou inconnu, reste attaché à
+    la tâche). Seul un **premier** tour (indice 0) nul est rejoué (une fois) : le patch et les remarques
+    d'un tour ne sont pas conservés, donc une correction ou un relais coupé laisse le parcours indécis. Le
+    rejeu passe par les plafonds : une dépense non mesurée (tour interrompu pendant l'exécution) arrête
+    toute exécution cloud (`premium_tokens_unmeasurable`), donc ne se rejoue pas. Parcours C : une tentative
+    locale décidée n'est jamais rejouée ; si elle a demandé le relais (`local_refused`, `review_block`) et
+    que celui-ci manque, il est joué ; une revue coupée laisse le parcours indécis.
+  - **Nommage des sessions** (invariant registre/résultats) : l'enregistrement nul nomme ses propres
+    `cloud_sessions` (celles qu'il a réservées) et le rejeu les siennes (une liste par lancement) : chaque
+    session du registre reste nommée exactement une fois. Le rejeu a la clé de la tentative nulle plus un
+    rang de rejeu (1) : la clé complète d'un enregistrement reste unique.
+  - Les plafonds de l'enveloppe sont **cumulés** entre lancements (registre) : une reprise ne remet rien à
+    zéro et n'élargit rien. Les seuils d'arrêt de `compare` (`min_local_successes`, premium C ≥ A) repartent
+    des enregistrements déjà écrits.
+  - Un candidat qui garde une tâche indécise après le rejeu permis n'est pas retenu : `screening.selected`
+    est nul, `reason` reste `incomplete_screening` et `screening.undecided_tasks` dit quelles tâches.
+    `report` liste chaque tentative nulle (`void_attempts`, avec `replayed`) et chaque rejeu (`replays`) et
+    compte une tâche une fois (l'enregistrement décidé). Un départ tué dont le rejeu est enregistré n'est
+    plus un avertissement ; sans rejeu il reste un avertissement (et `killed_not_replayed` le compte pour le
+    tamis). Les règles d'économie et de décision pour le travail dépensé inconnu sont inchangées.
 - **Le dossier d'état est une entrée de confiance de l'opérateur** : le registre et les résultats sont
   rangés par `--state-dir`, donc relancer la même enveloppe dans un autre dossier d'état remettrait ses
   plafonds à zéro. Le lanceur ne peut pas le détecter sans un état global qu'il n'a pas (non imposé) :
@@ -220,7 +247,7 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   `status: interrupted` (`outcome: interrupted`, `reason`, `premium.billing_total` **nul**, les
   `cloud_sessions` déjà inscrites), puis un enregistrement `stop` (`interrupted:<exception>`), puis relaie
   l'exception. Une tentative locale interrompue est réglée au registre (sa durée compte) et sa clé est
-  prise : elle ne se rejoue pas.
+  prise : elle peut se rejouer une fois (reprise bornée), sauf si elle portait déjà un verdict.
   **Couvert exactement** : SIGTERM, SIGHUP et Ctrl-C (SIGINT) reçus par le processus du lanceur pendant
   `screen` ou `compare`, hors des quelques instructions qui installent ou rétablissent les gestionnaires.
   Ils sont convertis en `SystemExit(128 + n)` / `KeyboardInterrupt` ; le groupe de processus d'un pilote en
@@ -235,9 +262,9 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   reçu avant `screen`/`compare` (construction du lanceur) ou hors du fil principal (aucun gestionnaire
   n'y est installé), et un SIGINT ignoré au départ (il le reste). Dans ces cas rien ne peut être écrit :
   une tentative **locale** tuée ne laisse ni règlement ni enregistrement (sa durée n'est pas comptée et
-  elle reste rejouable dans le même état) ; c'est le registre qui le dit à `report` (voir Rapport :
-  `ledger.unsettled_starts`, avertissements, décision `inconclusive`). L'opérateur ne relance pas un
-  état interrompu.
+  elle est rejouable une fois par une relance sous les mêmes empreintes, voir « Reprise bornée ») ;
+  c'est le registre qui le dit à `report` (voir Rapport : `ledger.unsettled_starts`, avertissements,
+  décision `inconclusive`).
 - **Total premium d'un enregistrement** : connu seulement si les compteurs de **chaque** exécution cloud
   de `cloud_sessions` ont été lus ; une exécution inscrite au registre dont le coût n'a pas été relu rend
   le total nul (inconnu), jamais 0.
@@ -280,7 +307,7 @@ exécution cloud des résultats a sa ligne au registre.
   nommée deux fois, total premium d'un enregistrement que le registre ne confirme pas.
 - **Départs non réglés** (`ledger.unsettled_starts`) : `report` liste aussi chaque `attempt_started` du
   registre sans `settled` de même `attempt_dir` (tentative locale tuée, éventuellement rejouée par un
-  lancement ultérieur) et chaque préflight réussi suivi d'aucun démarrage de tentative avant le préflight
+  lancement ultérieur : elle n'est plus un avertissement une fois son rejeu enregistré) et chaque préflight réussi suivi d'aucun démarrage de tentative avant le préflight
   ou le lancement suivant (un préflight suivi d'un `stopped` propre n'en est pas un). Chaque entrée porte
   le mode de la session qui l'a écrite et un `warning` nommant la tentative ou le préflight. Pour le tamis,
   ces avertissements figurent dans `screening.warnings` : `selected` reste (le résultat des enregistrements
@@ -405,7 +432,7 @@ refus de lecture ci-dessus, pas sur une preuve d'absence.
 ## Confiance dans les fichiers d'état
 
 Le registre et le fichier de résultats sont des fichiers **de l'opérateur, sans protection d'intégrité**
-(ni signature, ni chaînage) : supprimer une ligne de résultats permet de rejouer une tentative, supprimer
+(ni signature, ni chaînage) : supprimer une ligne de résultats permet de rejouer une tentative décidée, supprimer
 une ligne du registre remet un plafond à zéro, et le croisement de `report` ne détecte que les
 incohérences entre les deux fichiers, pas une suppression cohérente dans les deux. Le candidat, lui, ne
 peut ni les lire ni les écrire (dossier d'état interdit en lecture, écriture limitée au bundle et au
