@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fixed (PAT-104): the test suite can no longer read or write the maintainer's real
+  `~/.config/foundry`. A global autouse fixture in `tests/conftest.py` redirects `HOME` to a
+  per-test temporary directory and clears `FOUNDRY_DATA`, `FOUNDRY_CONFIG` and
+  `FOUNDRY_EXECUTION_RECEIPTS_DIR`; an audit hook fails any access to the real state
+  directory, and `tests/test_state_isolation.py` asserts every resolver is sandboxed.
+  Test infrastructure only, no production change.
+
 - Added (PAT-95, PAT-ADR-0014): `close-epic` on Linear accepts the nominative flag
   `--accept-override=ID[,ID...]` (only with `--human-verdict=accepted`) to close an Epic
   whose nodes were delivered under a valid typed `acceptance-override` receipt. Refusals
