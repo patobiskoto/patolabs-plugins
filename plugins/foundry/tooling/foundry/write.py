@@ -1136,7 +1136,8 @@ class EpicClosureState:
 
     kind: "none" (no audit, no intent), "intent-only" (local intent, no visible audit),
     "pending" (audit, parent not done), "closed" (audit, parent done), "unknown".
-    ``intent`` is None (absent), "pending"/"complete", or "unreadable".
+    ``intent`` is None (store read, empty), "pending"/"complete", "unreadable", or
+    "unverified" (the tracker's intent store is not read: never a claim of safety).
     """
 
     kind: str
@@ -1150,28 +1151,45 @@ class EpicClosureState:
 _INTENT_PROVIDERS = frozenset({"linear", "ghprojects"})
 
 
+def _read_local_intent(tracker, project, parent_id: str) -> tuple[str | None, str | None]:
+    """(state, audit_id) of the tracker's local intent store, strictly read-only.
+
+    state: None (store READ and empty), "pending"/"complete", "unreadable", or
+    "unverified" (this tracker's intent store is not read: never a claim of safety).
+    """
+    try:
+        if getattr(tracker, "name", None) in _INTENT_PROVIDERS:
+            record = EpicAuditIntent(tracker.name, project, parent_id).read()
+        else:
+            reader = getattr(tracker, "read_epic_closure_intent", None)
+            if not callable(reader):
+                return "unverified", None
+            record = reader(project, parent_id)
+    except Exception:  # noqa: BLE001
+        return "unreadable", None
+    if record is None:
+        return None, None
+    return record["state"], record["audit_id"]
+
+
 def epic_closure_state(tracker, parent_id: str) -> EpicClosureState:
     """Best-effort READ-ONLY closure state: provider audit receipt + local intent.
 
     Never writes (no intent file, no comment, no state change) and never raises: any
-    read failure yields kind "unknown" with its cause, never a claim of safety.
+    read failure yields kind "unknown" with its cause, never a claim of safety.  "none"
+    (nothing written) is only produced when the intent store was actually READ and empty.
     """
     try:
         project = _epic_closure_project(tracker)
-    except BaseException as exc:  # noqa: BLE001 - SystemExit included, state is best effort
+    except Exception as exc:  # noqa: BLE001 - SystemExit included, state is best effort
         return EpicClosureState("unknown", cause=f"{type(exc).__name__}: {exc}")
-    intent_state: str | None = None
-    intent_audit: str | None = None
-    if getattr(tracker, "name", None) in _INTENT_PROVIDERS:
-        try:
-            record = EpicAuditIntent(tracker.name, project, parent_id).read()
-            if record is not None:
-                intent_state, intent_audit = record["state"], record["audit_id"]
-        except Exception:  # noqa: BLE001
-            intent_state = "unreadable"
+    canonical: str | None = None
     try:
+        reader_with_id = getattr(tracker, "read_epic_closure_state_with_id", None)
         reader = getattr(tracker, "read_epic_closure_state", None)
-        if callable(reader):
+        if callable(reader_with_id):
+            outcome, done, canonical = reader_with_id(project, parent_id)
+        elif callable(reader):
             outcome, done = reader(project, parent_id)
         else:
             outcome = tracker.get_epic_closure(project, parent_id)
@@ -1180,15 +1198,28 @@ def epic_closure_state(tracker, parent_id: str) -> EpicClosureState:
             except TrackerConflictError:
                 done = outcome is not None
     except Exception as exc:  # noqa: BLE001
+        # The write keys its intent on the canonical id; the provider read failed, so
+        # only the raw CLI argument is available here (best effort, reported as such).
+        intent_state, intent_audit = _read_local_intent(tracker, project, parent_id)
         return EpicClosureState(
             "unknown", intent=intent_state, intent_audit_id=intent_audit,
             cause=f"{type(exc).__name__}: {exc}",
         )
+    if outcome is not None and canonical is None:
+        canonical = outcome.receipt.parent_id
+    intent_state, intent_audit = _read_local_intent(
+        tracker, project, canonical or parent_id,
+    )
     if outcome is None:
-        if intent_state == "unreadable":
+        if intent_state in {"unreadable", "unverified"}:
+            why = (
+                "intention locale illisible, absence d'intention non prouvée"
+                if intent_state == "unreadable"
+                else "intention locale non vérifiée pour ce tracker, absence d'écriture "
+                     "non prouvée"
+            )
             return EpicClosureState(
-                "unknown", intent=intent_state,
-                cause="intention locale illisible, absence d'intention non prouvée",
+                "unknown", intent=intent_state, intent_audit_id=intent_audit, cause=why,
             )
         kind = "none" if intent_state is None else "intent-only"
         return EpicClosureState(

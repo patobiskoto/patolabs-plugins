@@ -934,8 +934,12 @@ def merge(issue_id, pr_number, flags=()):
 
 
 _SECRET = re.compile(
-    r"(lin_api_|ghp_|github_pat_|xox[a-z]-)[A-Za-z0-9_\-]+"
-    r"|(?i:bearer)\s+\S+|(?i:(?:token|authorization|api[_-]?key)\s*[=:]\s*)\S+"
+    r"(?:lin_api_|gh[opusr]_|github_pat_|xox[a-z]-)[A-Za-z0-9_\-]+"
+    r"|perm:[A-Za-z0-9_.\-:=+/]+"
+    r"|(?i:authorization)\s*[=:]\s*(?:(?i:bearer|basic|token)\s+)?\S+"
+    r"|(?i:bearer)\s+\S+"
+    r"|(?i:(?:token|api[_-]?key)\s*[=:]\s*)\S+"
+    r"|(?<=://)[^\s/@:]+:[^\s/@]+(?=@)"
 )
 
 
@@ -950,7 +954,12 @@ def _provider_cause(exc):
         if isinstance(exc, LinearTrackerError):
             return exc
         seen.add(id(exc))
-        exc = exc.__cause__ or exc.__context__
+        if exc.__cause__ is not None:
+            exc = exc.__cause__
+        elif exc.__suppress_context__:
+            exc = None  # `raise ... from None`: the context is deliberately hidden
+        else:
+            exc = exc.__context__
     return None
 
 
@@ -976,13 +985,30 @@ def _cause_text(exc) -> tuple[str, str]:
     return f"{type(exc).__name__}: {_redact(exc)}", "other"
 
 
-def _state_lines(state, command, kind="other") -> list[str]:
-    """Truthful closure state and re-run advice from a read-only epic_closure_state."""
-    intent = ""
+def _audit_command(tracker, issue_id, state) -> str:
+    """The command carrying exactly the --accept-override set bound by the audit."""
+    flags = set()
+    if state.waived:
+        flags.add("--accept-override=" + ",".join(state.waived))
+    return _epic_command(tracker, issue_id, flags)
+
+
+def _state_lines(
+    state, command, kind="other", *, refused=False, audit_command=None, status_command="",
+) -> list[str]:
+    """Truthful closure state and re-run advice from a read-only epic_closure_state.
+
+    "rien n'a été écrit" is only said when the tracker's intent store was READ and empty
+    (state.kind "none"); every unverified store lands in the unknown branch.  After a
+    refusal, or when the command's waived set differs from the audit's, the refused
+    command is never advised again as such.
+    """
     if state.intent in {"pending", "complete"}:
         intent = f"intention locale présente ({state.intent}, audit attendu {state.intent_audit_id})"
     elif state.intent == "unreadable":
         intent = "intention locale illisible"
+    elif state.intent == "unverified":
+        intent = "intention locale non vérifiée pour ce tracker"
     else:
         intent = "aucune intention locale"
     if kind == "quota":
@@ -997,21 +1023,39 @@ def _state_lines(state, command, kind="other") -> list[str]:
     if state.kind == "intent-only":
         return [f"État : {intent}, mais aucun audit visible côté provider : effet ambigu "
                 "(l'écriture a pu aboutir sans être encore visible). "
-                f"{wait}{rerun} la même commande `{command}` : elle reprend depuis "
-                "l'intention exacte et ne poste jamais deux audits ; une commande différente "
-                "(autre ensemble --accept-override, autre reçu) serait refusée (no second POST)."]
-    if state.kind == "pending":
-        return [f"État : audit provider {state.audit_id} présent, Epic pas encore done : "
-                f"clôture en attente. {wait}{rerun} `{command}` : elle reprend la "
-                "clôture à partir de l'audit."]
-    if state.kind == "closed":
-        return [f"État : audit provider {state.audit_id} présent et Epic done : clôture "
-                f"effective. {wait}{rerun} `{command}` : elle rejoue et vérifie le reçu "
-                "(aucun second audit)."]
+                f"{wait}Une relance régénère un nonce et un horodatage, donc un autre "
+                "identifiant d'audit que celui attendu : elle est REFUSÉE (no second POST) "
+                "tant que l'audit attendu n'est pas visible côté provider ; elle ne "
+                "reprend qu'une fois l'audit apparu et ne reposte jamais. S'il n'apparaît "
+                "jamais, une intervention manuelle est nécessaire (inspecter les "
+                "commentaires de l'Epic et le fichier d'intention locale). "
+                f"`{status_command}` relit cet état."]
+    if state.kind in {"pending", "closed"}:
+        if state.kind == "pending":
+            head = (f"État : audit provider {state.audit_id} présent, Epic pas encore done : "
+                    "clôture en attente.")
+            tail = "elle reprend la clôture à partir de l'audit."
+        else:
+            head = (f"État : audit provider {state.audit_id} présent et Epic done : "
+                    "clôture effective.")
+            tail = "elle rejoue et vérifie le reçu (aucun second audit)."
+        bound = ", ".join(state.waived) or "aucun"
+        if refused:
+            return [f"{head} {wait}Ne relance pas la commande refusée telle quelle. "
+                    f"Ensemble --accept-override lié à l'audit : {bound}. Si ta commande "
+                    f"en différait, relance avec `{audit_command}` ; sinon résous d'abord la "
+                    f"cause du refus. `{status_command}` relit l'état."]
+        if audit_command is not None and audit_command != command:
+            return [f"{head} {wait}Ta commande ne porte pas l'ensemble --accept-override "
+                    f"lié à l'audit ({bound}) et serait refusée : relance avec "
+                    f"`{audit_command}` ({tail[:-1]})."]
+        return [f"{head} {wait}{rerun} `{command}` : {tail}"]
     known = f" ({intent})" if state.intent is not None else ""
+    quota = (" Attends la réinitialisation du quota ; ne relance pas maintenant."
+             if kind == "quota" else "")
     return [f"État du reçu inconnu: lecture impossible ({_redact(state.cause)}){known}. "
             "Vérifie les commentaires de l'Epic pour un audit « Foundry Epic closure audit » "
-            "avant de relancer ; ne suppose pas qu'une relance est sûre."]
+            f"avant de relancer ; ne suppose pas qu'une relance est sûre.{quota}"]
 
 
 def _epic_command(tracker, issue_id, flags) -> str:
@@ -1044,7 +1088,8 @@ def _epic_status(tracker, issue_id):
     if state.kind in {"none", "intent-only"}:
         extra = (
             f" · intention locale {state.intent} (audit attendu {state.intent_audit_id}) "
-            "sans audit visible : effet ambigu, relancer la commande identique"
+            "sans audit visible : effet ambigu ; une relance est refusée tant que "
+            "l'audit attendu n'est pas visible"
             if state.kind == "intent-only" else ""
         )
         print(f"aucun audit · Epic {issue_id}{extra}")
@@ -1073,6 +1118,7 @@ def close_epic(issue_id, flags=()):
     if len(waivers) > 1:
         raise SystemExit("⛔ Clôture Epic refusée : --accept-override ambigu.")
     command = _epic_command(tracker, issue_id, flags)
+    status_command = f"issue close-epic {issue_id} --status"
     human_verdict = verdicts[0] if verdicts else None
     accept_overrides = write.parse_accept_overrides(waivers[0]) if waivers else None
     try:
@@ -1098,7 +1144,11 @@ def close_epic(issue_id, flags=()):
             raise
         state = write.epic_closure_state(tracker, issue_id)
         raise SystemExit(
-            exc.code + "\n" + "\n".join(_state_lines(state, command))
+            exc.code + "\n" + "\n".join(_state_lines(
+                state, command, refused=True,
+                audit_command=_audit_command(tracker, issue_id, state),
+                status_command=status_command,
+            ))
         ) from None
     except Exception as exc:
         typed = _provider_cause(exc)
@@ -1112,11 +1162,19 @@ def close_epic(issue_id, flags=()):
                 f"⛔ Clôture Epic refusée. Cause : {cause}\n"
                 "Si le parent, ses preuves ou son graphe complet a changé (ou si une lecture "
                 "a échoué), recharge le graphe puis relance la commande.\n"
-                + "\n".join(_state_lines(state, command))
+                + "\n".join(_state_lines(
+                    state, command, refused=True,
+                    audit_command=_audit_command(tracker, issue_id, state),
+                    status_command=status_command,
+                ))
             ) from None
         cause, kind = _cause_text(exc)
         state = write.epic_closure_state(tracker, issue_id)
-        lines = _state_lines(state, command, kind)
+        lines = _state_lines(
+            state, command, kind,
+            audit_command=_audit_command(tracker, issue_id, state),
+            status_command=status_command,
+        )
         if kind == "transient" and state.kind in {"none", "intent-only", "pending", "closed"}:
             lines[0] += " L'erreur est possiblement transitoire."
         raise SystemExit(
