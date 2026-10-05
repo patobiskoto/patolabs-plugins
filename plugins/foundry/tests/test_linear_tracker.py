@@ -7150,11 +7150,15 @@ def test_linear_pat72_digest_pinned_blank_line_readback_recovers_only_witness(
     assert "Other whitespace stays exact.\n\n\nStill other whitespace." in rendered
     assert "fenced blank lines stay exact\n\n\nand remain code" in rendered
     linear_module._preflight_adr_body_readback(source)
-    # A neighbouring whitespace sequence does not qualify merely because it looks
-    # similar to Linear's one observed collapse.
-    assert linear_module._linear_markdown_readback_body(
+    # Without the pinned digests the general PAT-103 model applies: it collapses
+    # the neighbouring empty lines outside the fence and keeps those inside it.
+    changed = linear_module._linear_markdown_readback_body(
         source.replace("Before", "Changed", 1)
-    ) == source.replace("Before", "Changed", 1)
+    )
+    assert "Other whitespace stays exact.\n\nStill other whitespace." in changed
+    assert "fenced blank lines stay exact\n\n\nand remain code" in changed
+    assert changed.endswith("After the qualified paragraph.")
+    assert rendered_fragment in changed
 
     metadata = {
         "schema": linear_module._ADR_SCHEMA,
@@ -9063,7 +9067,7 @@ PAT94_OBSERVED_FORMS = [
     ),
     pytest.param(
         "".join(f"{n}. item\n\n" for n in range(1, 10)),
-        "".join(f"{n}. item\n" for n in range(1, 10)) + "\n",
+        "".join(f"{n}. item\n" for n in range(1, 9)) + "9. item",
         id="nine-items",
     ),
 ]
@@ -9193,8 +9197,14 @@ def test_linear_adr_pat94_refuses_unmodelled_list_before_any_write(tracker, host
     legacy = linear_module._linear_markdown_readback_body(
         hostile, observed_lists=False
     )
-    assert linear_module._linear_markdown_readback_body(hostile) == legacy
-    assert linear_module._linear_markdown_readback_bodies(hostile) == (legacy,)
+    # PAT-103 only adds the observed blank-line collapse and final-newline strip.
+    observed = linear_module._linear_observed_blank_line_readback(
+        legacy, strict=False
+    )
+    assert linear_module._linear_markdown_readback_body(hostile) == observed
+    assert linear_module._linear_markdown_readback_bodies(hostile) == tuple(
+        dict.fromkeys((observed, legacy))
+    )
     linear_module._preflight_adr_body_readback(hostile, new_body=False)
 
 
@@ -9255,15 +9265,15 @@ def test_linear_adr_pat101_bracket_text_that_is_no_checkbox_stays_plain(body):
 # list-context paragraph, a gap of two or more empty lines is refused for a new
 # body (cause names the first offending line); not strict, it is left as before.
 PAT94_MULTI_BLANK_LISTS = [
-    pytest.param("1. a\n\n2. b\n\n\nText", "1. a\n2. b\n\n\nText", 4, id="form-then-two"),
-    pytest.param("Intro\n\n\n1. a\n\n2. b", "Intro\n\n\n1. a\n2. b", 2, id="two-then-form"),
-    pytest.param("\n\n1. a\n\n2. b", "\n\n1. a\n2. b", 1, id="two-leading-then-form"),
-    pytest.param("1. a\n\n2. b\n\n\n", "1. a\n2. b\n\n\n", 4, id="form-then-two-trailing"),
-    pytest.param("1. a\n2. b\n\n\n\nText", "1. a\n2. b\n\n\n\nText", 3, id="tight-then-three"),
-    pytest.param("- a\n\n\nText", "* a\n\n\nText", 2, id="bullet-then-two"),
-    pytest.param("* a\n* b\n\n\nText", "* a\n* b\n\n\nText", 3, id="bullets-then-two"),
-    pytest.param("Text\n\n\n- a", "Text\n\n\n* a", 2, id="two-then-bullet"),
-    pytest.param("- a\n\n\n", "* a\n\n\n", 2, id="bullet-then-two-trailing"),
+    pytest.param("1. a\n\n2. b\n\n\nText", "1. a\n2. b\n\nText", 4, id="form-then-two"),
+    pytest.param("Intro\n\n\n1. a\n\n2. b", "Intro\n\n1. a\n2. b", 2, id="two-then-form"),
+    pytest.param("\n\n1. a\n\n2. b", "1. a\n2. b", 1, id="two-leading-then-form"),
+    pytest.param("1. a\n\n2. b\n\n\n", "1. a\n2. b", 4, id="form-then-two-trailing"),
+    pytest.param("1. a\n2. b\n\n\n\nText", "1. a\n2. b\n\nText", 3, id="tight-then-three"),
+    pytest.param("- a\n\n\nText", "* a\n\nText", 2, id="bullet-then-two"),
+    pytest.param("* a\n* b\n\n\nText", "* a\n* b\n\nText", 3, id="bullets-then-two"),
+    pytest.param("Text\n\n\n- a", "Text\n\n* a", 2, id="two-then-bullet"),
+    pytest.param("- a\n\n\n", "* a", 2, id="bullet-then-two-trailing"),
     pytest.param("> - a\n>\n>\n> t", "> - a\n>\n>\n> t", 2, id="quoted-bullet-then-two"),
 ]
 
@@ -9287,20 +9297,20 @@ def test_linear_adr_pat94_refuses_multi_blank_gap_beside_a_list(
 @pytest.mark.parametrize(
     ("body", "rendered"),
     [
-        ("Para\n\n\nText", "Para\n\n\nText"),
-        ("## H\n\n\n\nText\n\n\n", "## H\n\n\n\nText\n\n\n"),
+        ("Para\n\n\nText", "Para\n\nText"),
+        ("## H\n\n\n\nText\n\n\n", "## H\n\nText"),
         (
             "Intro\n\n1. a\n\n2. b\n\nText\n\n\nMore",
-            "Intro\n\n1. a\n2. b\n\nText\n\n\nMore",
+            "Intro\n\n1. a\n2. b\n\nText\n\nMore",
         ),
         (
             "1. a\n\n2. b\n\n```\nx\n```\n\n\nText",
-            "1. a\n2. b\n\n```\nx\n```\n\n\nText",
+            "1. a\n2. b\n\n```\nx\n```\n\nText",
         ),
         ("- a\n\n```\n- x\n\n\n```", "* a\n\n```\n- x\n\n\n```"),
     ],
 )
-def test_linear_adr_pat94_multi_blank_gap_outside_a_list_is_unchanged(body, rendered):
+def test_linear_adr_pat94_multi_blank_gap_outside_a_list_is_collapsed(body, rendered):
     linear_module._preflight_adr_body_readback(body)
     assert linear_module._linear_markdown_readback_body(body, strict=True) == rendered
     assert linear_module._linear_markdown_readback_body(body) == rendered
@@ -9840,3 +9850,152 @@ def test_linear_adr_pat94_interrupted_import_of_stored_body_replays(
     imported = instance.import_adr(PROJECT, **request)
     assert imported.body.endswith(body)
     assert [adr.id for adr in instance.list_adrs(PROJECT)] == ["LIN-ADR-0098"]
+
+
+# PAT-103: blank lines and final newline, qualified by a bounded probe
+# (docs/qualification/pat-103-linear-blank-lines-observation.json).
+PAT103_OBSERVATION = json.loads(
+    (
+        Path(__file__).resolve().parents[1]
+        / "docs/qualification/pat-103-linear-blank-lines-observation.json"
+    ).read_text(encoding="utf-8")
+)
+PAT103_CASES = {case["case"]: case for case in PAT103_OBSERVATION["cases"]}
+
+
+def test_linear_adr_pat103_observation_file_is_self_consistent():
+    assert PAT103_OBSERVATION["observed_at"] == "2026-10-05"
+    assert len(PAT103_CASES) == len(PAT103_OBSERVATION["cases"]) == 13
+    for case in PAT103_CASES.values():
+        assert hashlib.sha256(case["sent"].encode()).hexdigest() == case["sent_sha256"]
+        assert (
+            hashlib.sha256(case["readback"].encode()).hexdigest()
+            == case["readback_sha256"]
+        )
+
+
+@pytest.mark.parametrize(
+    "name", [name for name in PAT103_CASES if name != "table_around2"]
+)
+def test_linear_adr_pat103_model_reproduces_each_observed_readback(name):
+    case = PAT103_CASES[name]
+    for strict in (False, True):
+        assert (
+            linear_module._linear_markdown_readback_body(case["sent"], strict=strict)
+            == case["readback"]
+        )
+    linear_module._preflight_adr_body_readback(case["sent"])
+
+
+def test_linear_adr_pat103_observed_table_rewrite_is_refused_not_modelled():
+    case = PAT103_CASES["table_around2"]
+    assert "| -- | -- |" in case["readback"]
+    # Not strict: the delimiter row is left as written (the observed rewrite is not
+    # modelled), but the blank-line collapse still applies.
+    assert (
+        linear_module._linear_markdown_readback_body(case["sent"])
+        == case["sent"].replace("\n\n\n", "\n\n").removesuffix("\n")
+    )
+    with pytest.raises(TrackerConflictError) as raised:
+        linear_module._preflight_adr_body_readback(case["sent"])
+    assert str(raised.value.__cause__) == "unsupported table Markdown in ADR body"
+
+
+@pytest.mark.parametrize(
+    ("body", "rendered"),
+    [
+        pytest.param("A\n\n\n\n\n\n\nB", "A\n\nB", id="seven-blank"),
+        pytest.param("\n\n\nA", "A", id="leading-three"),
+        pytest.param("A\n", "A", id="one-newline"),
+        pytest.param("A\n\n\n\n", "A", id="four-newlines"),
+        pytest.param("\n\n\n", "", id="only-blanks"),
+        pytest.param("A\n\n\nB\n\n\n\nC\n", "A\n\nB\n\nC", id="several-gaps"),
+        pytest.param("A\n\nB", "A\n\nB", id="single-gap-unchanged"),
+        pytest.param("## T\n\n\n```\nx\n```\n\n\nText\n", "## T\n\n```\nx\n```\n\nText", id="around-fence"),
+        pytest.param("```\na\n\n\n\nb\n```\n\nEnd", "```\na\n\n\n\nb\n```\n\nEnd", id="blank-in-backtick-fence"),
+        pytest.param("~~~\na\n\n\nb\n~~~\n\n\nEnd\n", "~~~\na\n\n\nb\n~~~\n\nEnd", id="blank-in-tilde-fence"),
+        pytest.param("````\n```\n\n\n```\n````\n\n\nEnd", "````\n```\n\n\n```\n````\n\nEnd", id="nested-shorter-fence"),
+        pytest.param("~~~\n```\n\n\n~~~\n\n\nEnd", "~~~\n```\n\n\n~~~\n\nEnd", id="other-marker-inside"),
+        pytest.param("```\na\n\n\nb", "```\na\n\n\nb", id="unclosed-fence-untouched-without-newline"),
+        pytest.param("Text\n\n\n    code\n", "Text\n\n\n    code\n", id="indented-neighbour-untouched"),
+    ],
+)
+def test_linear_adr_pat103_collapses_only_the_observed_blank_lines(body, rendered):
+    assert linear_module._linear_markdown_readback_body(body) == rendered
+    # The rendering is a fixed point.
+    assert linear_module._linear_markdown_readback_body(rendered) == rendered
+
+
+def test_linear_adr_pat103_pre_pat94_model_is_unchanged():
+    body = "A\n\n\nB\n"
+    assert linear_module._linear_markdown_readback_body(
+        body, observed_lists=False
+    ) == body
+    assert linear_module._linear_markdown_readback_bodies(body) == ("A\n\nB", body)
+
+
+PAT103_REFUSED = [
+    pytest.param("A\n\n\t\nB", "unsupported blank lines", id="tab-only-blank"),
+    pytest.param("A\r\n\r\n\r\nB", "unsupported blank lines", id="crlf-gap"),
+    pytest.param("A\n\r\n\nB", "unsupported blank lines", id="mixed-crlf-gap"),
+    pytest.param("A\n\n\n    code", "unsupported blank lines", id="indented-code-after"),
+    pytest.param("    code\n\n\nA", "unsupported blank lines", id="indented-code-before"),
+    pytest.param("A\n\n\n\tcode", "unsupported blank lines", id="tab-indented-after"),
+    pytest.param("> q\n\n\nA", "unsupported blank lines", id="quote-before"),
+    pytest.param("A\n\n\n> q", "unsupported blank lines", id="quote-after"),
+    pytest.param("\r\n\nA", "unsupported blank lines", id="leading-crlf"),
+    pytest.param("A\r\n", "unsupported final newline", id="final-crlf"),
+    pytest.param("A\r\n\r\n", "unsupported blank lines", id="final-crlf-blank"),
+    pytest.param("A\t\n", "unsupported final newline", id="final-after-trailing-tab"),
+    pytest.param("```\nx\n```\n", "unsupported final newline", id="final-after-fence"),
+    pytest.param("~~~\nx\n~~~\n\n", "unsupported final newline", id="final-blank-after-tilde-fence"),
+    pytest.param("```\nx\n", "unsupported final newline", id="final-in-unclosed-fence"),
+    pytest.param("    code\n", "unsupported final newline", id="final-indented-code"),
+    pytest.param("> q\n", "unsupported final newline", id="final-quote"),
+    pytest.param("| a | b |\n|---|---|\n| 1 | 2 |", "unsupported table", id="table"),
+    pytest.param("| a | b |\n|:--|--:|\n| 1 | 2 |", "unsupported table", id="table-alignment"),
+    pytest.param("a | b\n--|--\n1 | 2", "unsupported table", id="table-without-outer-pipes"),
+    pytest.param("| a |\n|-|\n| 1 |", "unsupported table", id="table-one-column"),
+    pytest.param("> | a | b |\n> |---|---|", "unsupported table", id="table-in-quote"),
+    pytest.param("A\n\n| a | b |\n|\t---\t|\t---\t|", "unsupported table", id="table-tabs"),
+]
+
+
+@pytest.mark.parametrize(("body", "cause"), PAT103_REFUSED)
+def test_linear_adr_pat103_refuses_unobserved_shapes_before_any_write(
+    tracker, body, cause
+):
+    instance, wire = tracker
+    for attempt in (
+        lambda: linear_module._preflight_adr_body_readback(body),
+        lambda: instance.create_adr(PROJECT, "PAT-103 hostile", body),
+    ):
+        with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+            attempt()
+        assert str(raised.value.__cause__).startswith(cause)
+    assert wire.documents == {}
+    assert not [q for q, _ in wire.calls if "documentCreate" in q]
+    # Not strict: never refused, and no unobserved byte is rewritten.
+    linear_module._linear_markdown_readback_body(body)
+    linear_module._preflight_adr_body_readback(body, new_body=False)
+
+
+def test_linear_adr_pat103_does_not_mistake_non_tables_for_tables():
+    for body in ["A\n\n---\n\nB", "Title\n---", "A\n\n- - -\n", "| a | b |\n| 1 | 2 |"]:
+        linear_module._preflight_adr_body_readback(body)
+    # A delimiter-looking line inside a fence is code, not a table.
+    linear_module._preflight_adr_body_readback("```\n|---|---|\n```")
+
+
+def test_linear_adr_pat103_list_refusal_keeps_its_cause_over_blank_lines(tracker):
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError) as raised:
+        instance.create_adr(PROJECT, "PAT-103 list", "1. a\n\n\n2. b\n")
+    assert str(raised.value.__cause__).startswith("unsupported list Markdown")
+    assert wire.documents == {}
+
+
+@pytest.mark.parametrize("body", ["A\n\n  \nB", "A  \n", "A\n\n  \n"])
+def test_linear_adr_pat103_whitespace_blank_and_hard_break_were_already_refused(body):
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        linear_module._preflight_adr_body_readback(body, new_body=False)

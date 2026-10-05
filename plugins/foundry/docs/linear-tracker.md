@@ -344,7 +344,7 @@ tight/spaced mix, renumbering, a start other than `1`, ten or more items, a firs
 glued to a paragraph or a fenced block, a last item glued to a fenced block, a list
 inside a blockquote, `\r` or a non-LF separator in an item. A body with no list blank
 line and no such gap keeps the pre-PAT-94 model unchanged, including tight lists with
-sub-items; outside a list context, consecutive empty lines are left exactly as before.
+sub-items; outside a list context, empty lines follow the PAT-103 model below.
 New body: the version-0 body of `adr create` and of a single historical `import_adr`
 whose slot does not exist yet, and the changed body of a body edit. Every other write
 re-uses a body whose rendering is already proven and keeps only the pre-PAT-94 refusals:
@@ -376,6 +376,22 @@ ordered lists of ten or more items, of every refused shape above, of any block f
 the observed form other than the observed heading (assumed unchanged, see above), and of
 a fenced block between ordered items (`1. a`, empty line, fence, empty line, `2. b`):
 `2.` then starts a new list, accepted and assumed unchanged.
+PAT-103 qualifies blank lines, the final newline and tables by a bounded probe on a throwaway
+project (`docs/qualification/pat-103-linear-blank-lines-observation.json`: bytes sent and read
+back, ids and SHA-256, no secret, no authoritative ADR title or slot). Observed: outside
+fenced code, two or more empty lines read back as exactly one (prose, headings, around a fence
+and around a table); empty lines inside a fence are unchanged; a leading empty line and every
+final newline are removed; a table delimiter row is rewritten (`|---|---|` becomes
+`| -- | -- |`). The model recognises exactly that, forward only: runs of two or more empty LF
+lines between blocks collapse to one, leading empty LF lines and trailing newlines are dropped,
+fences are opaque. It applies to every read except the pre-PAT-94 model, which is kept as is
+(additive reads). A new body is refused before any write (stable prefixes
+`unsupported blank lines`, `unsupported final newline`, `unsupported table`) when it holds
+what was not observed: a whitespace-only, tab-only or CR line in a collapsed run, an
+indented or quoted neighbour of a collapsed run, a final newline after a fence, in an
+unclosed fence, after `\r` or an indented or quoted last line, and every table (the delimiter
+rewrite is not modelled, so the author uses a list or a fenced block). The author guide is
+[`linear-adr-body-guide.md`](linear-adr-body-guide.md).
 The digest-pinned profiles (`PAT-72`, `PAT-86`, `PAT-16`) are applied before the strict list
 check: each binds one exact native source and its exact readback digest, so a new ADR
 identical to a pinned source is accepted even where the general whitelist would refuse its
