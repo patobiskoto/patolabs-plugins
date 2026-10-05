@@ -3313,6 +3313,7 @@ def test_pat111_ac7_only_local_drivers_deny_the_home_and_the_option_and_allow_li
         return real(driver, *args, **{**kwargs, "sandbox": False})  # the fake arm has no profile
 
     monkeypatch.setattr(lfr, "execute_driver", spy)
+    monkeypatch.setattr(lfr, "sandbox_available", lambda: True)  # the profile is only generated (CI on Linux)
     runner.sandbox = True
     runner.local_attempt(tasks[0], "cand-a", "local_harness", "S", 0, "screening")
     assert seen["local_harness"] == (home, [home / ".bun", home / ".local/tool"])
