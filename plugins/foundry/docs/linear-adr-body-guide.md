@@ -62,15 +62,32 @@ line, `#tag`, line starting with a digit, `**`, backtick, `[`, `=`, `<`...) is r
 | `*` or `+` bullet, `-` followed by a tab | `bullet list with an unobserved marker glued to a paragraph` |
 | a line `-` or `- ` alone (a setext underline, not an empty item) | `dash line glued to a paragraph (setext underline)` |
 | list in or next to a `>` quote | `list glued in a blockquote context` |
-| list right under an indented line that is not an item continuation | `list glued under an indented line` |
-| indented (nested) list right under a paragraph | `nested list glued to a paragraph` |
+| list right under an indented line that is not inside a list item: indented code, also when the code line starts with a marker (`    - x`, a tab, `    1. x`), an indented paragraph, or a line indented less than the item content (`- a\n cont`, `1. a\n  cont`), in or out of a quote | `list glued under an indented line` |
+| list marker indented by one or more columns right under a paragraph (1 to 3 spaces is still a top-level list, 4 or more is paragraph text) | `indented list glued to a paragraph` |
 | a `- ` list outside the exact shape (paragraph line not starting with a letter or holding a pipe, multi-line or hard-break paragraph, paragraph at the start or right after a heading, CRLF, reference definition, nested or continued or lazy or task or empty item in the run, fence in the run) | `bullet list glued to a paragraph outside the observed shape` |
 
-Still unobserved and NOT refused (behaviour unchanged, no insertion modelled): a list glued
-under a heading (`## H\n- a`), under a `--`/`---` line, under a closing fence; and
-`P\n--` / `P\n---` (not handled by the dash-only setext rule). A `<` line is refused earlier
-by the ambiguous-HTML rule. Put an empty line between the paragraph and the list to avoid
-all of these.
+The check is a closed whitelist (PAT-ADR-0002): for every line that looks like a list item
+and has a non-empty line right above it, that previous line must be in one of three accepted
+sets, and anything else is refused.
+
+1. Inside a list, unchanged: the previous line is a list item (0 to 3 spaces, then `-`, `*`,
+   `+`, or 1 to 9 digits and `.`/`)`), or a line directly under one and indented at least to
+   the content of that item (its continuation or a nested item). `A\n\n- a\n  cont\n- b` is
+   therefore not refused. In a quote, only a previous item line counts.
+2. The observed shape above: one empty line is inserted.
+3. Still unobserved and NOT refused (behaviour unchanged, no insertion modelled): the previous
+   line is an ATX heading (`## H\n- a`), a thematic break or dash-only line (`---`, `***`,
+   `___`, `- - -`, `--`), or a closing fence.
+
+Everything else is refused with one of the causes of the table; a previous line that no rule
+names is refused as `list glued to an unclassified line`. A list context does not survive an
+empty line, a fenced block, a line indented less than the item content or a tab in a quoted
+indentation: an item glued under such a line is refused. A continuation, nested, lazy, task or
+empty item is refused only inside the run glued to a paragraph (set 2), where the shape must
+be exact. A line of more than 9 digits and `.` (`1234567890. x`) is a paragraph line, not an
+item. `P\n--` / `P\n---` are not list lines and are not handled here. A `<` line is refused
+earlier by the ambiguous-HTML rule. Put an empty line between the paragraph and the list to
+avoid all of these.
 
 ## Refused, with the cause
 

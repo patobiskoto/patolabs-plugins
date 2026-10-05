@@ -9,8 +9,9 @@
   `#tag`, digit, `**`, backtick...) is refused. Reads stay additive (the PAT-103 and pre-PAT-94 renderings
   are still accepted) and the pinned profiles are unchanged. A new body is now refused before
   any write, with a precise cause, for the unobserved neighbours: numbered, `*`/`+` or dash-only
-  (setext) glued lists, lists glued in or next to a blockquote, under an indented line, nested,
-  or outside the exact shape. Replaying `adr create` recognises the orphan Document of
+  (setext) glued lists, lists glued in or next to a blockquote, under an indented line that is
+  not inside a list item (including indented code starting with a marker), indented under a
+  paragraph, or outside the exact shape; the check is a closed whitelist whose default refuses. Replaying `adr create` recognises the orphan Document of
   `PAT-ADR-0015` and writes only its witness. See `docs/linear-adr-body-guide.md`.
 
 - Changed (PAT-103): the Linear ADR readback model and preflight now recognise the blank-line

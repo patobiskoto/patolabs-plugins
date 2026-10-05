@@ -1489,6 +1489,19 @@ _HEADING_LINE = re.compile(r"#{1,6}(?:[ \t]|$)")
 _REFERENCE_DEFINITION = re.compile(r"\[[^\]]*\]:")
 _SETEXT_DASHES = re.compile(r" {0,3}-+[ \t]*")
 _BARE_DASH = re.compile(r" {0,3}-[ \t]*")
+# A CommonMark list item start: 0-3 spaces, then a bullet or 1-9 digits and `.`/`)`.
+# (`_LIST_LIKE` is wider on purpose: any indentation, any number of digits.)
+_TOP_LEVEL_ITEM = re.compile(r"( {0,3})([*+-]|[0-9]{1,9}[.)])(?:([ \t]+)|$)")
+_UNKNOWN_COLUMN = 1 << 30
+
+
+def _is_paragraph_start_letter(text: str) -> bool:
+    """The one predicate for "the paragraph line starts with a letter" (PAT-106).
+
+    Shared with the fake provider of the test-suite so the two cannot diverge:
+    `²`, `½` and `Ⅷ` are numerics, not letters.
+    """
+    return text[:1].isalpha()
 
 
 def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[int]:
@@ -1505,15 +1518,39 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
     the end of the body), and any block may precede the empty line before the
     paragraph.
 
-    Whitelist: ``strict`` refuses, with a precise cause and the 1-based line, a
-    list glued to a non-heading, non-fence, non-thematic-break, non-setext line
-    that is not the recognised paragraph (a pipe line, a `#tag` line, a `<` line,
-    a line starting with a digit, `*`, a backtick, `[`, `=`, `\\`...), a list in
-    a blockquote context, under an indented line, an indented (nested) list, a
-    numbered, `*` or `+` marker, a dash-only line (a setext underline), and a
-    bullet list glued to a paragraph outside the exact observed shape.  Not
-    refused, behaviour unchanged (unobserved): a list glued under a heading, under
-    `--`/`---` or a closing fence, and `P\\n--` / `P\\n---`.  Forward only.
+    Closed whitelist (PAT-ADR-0002).  A *glued marker line* is a line outside
+    fenced code that looks like a list item (`_LIST_LIKE`: any indentation, `-`,
+    `*`, `+`, `N.`, `N)`) and whose previous line is not empty.  Its previous
+    line is classified into exactly four sets, and the default refuses:
+
+    1. list context, unchanged: the previous line is a list item (0-3 spaces,
+       marker, at most 9 digits) or a line glued under one and indented to the
+       content column of that item (its continuation or a nested item).  Inside
+       a blockquote only a previous marker line counts.
+    2. the observed shape, one empty line inserted (see above).
+    3. still unobserved, behaviour unchanged (accepted, nothing inserted), each
+       pinned by `test_linear_adr_pat106_unobserved_predecessors_stay_unchanged`:
+       a closing fence (required since PAT-94 by `1. a / fence / 2. b` in
+       `..._pat94_no_blank_line_in_a_list_context_is_never_changed`, and by
+       `after-fence`); an ATX heading (required by `heading-not-a-paragraph`);
+       a thematic break or dash-only line -- `---`, `***`, `___`, `- - -`,
+       `--` -- which no earlier test requires: kept because it was accepted
+       and documented as not refused before this whitelist was closed.
+    4. everything else is refused by ``strict`` with a precise cause and the
+       1-based line: a different blockquote state or a quoted non-item line
+       ("list glued in a blockquote context"); an indented line outside a list
+       context, also when it starts with a marker (indented code), in or out of
+       a quote ("list glued under an indented line"); a paragraph line with an
+       indented marker line, a numbered marker, a `*`/`+`/tab marker, or a `- `
+       list outside the observed shape; and any line no rule names ("list glued
+       to an unclassified line").
+
+    A dash-only line right after a paragraph line is a setext underline and is
+    refused too.  A list context does not survive an empty line, a fence line, a
+    line less indented than the content column (a lazy continuation cannot be
+    told from a block that closes the list) or a tab in a quoted indentation:
+    the list item glued under such a line is refused.  Not handled here:
+    `P\\n--` / `P\\n---` (not marker lines).  Forward only.
     """
     lines = _COMMONMARK_LINE.findall(body)
     fenced: list[bool] = []
@@ -1533,22 +1570,63 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         quote = _BLOCKQUOTE_PREFIX.match(text)
         return quote is not None, text[quote.end() :] if quote else text
 
-    def is_item(text: str) -> bool:
+    def marker_line(text: str) -> bool:
+        """Looks like a list item, whatever its indentation (the trigger)."""
         return _LIST_LIKE.match(text) is not None and (
             _THEMATIC_BREAK.fullmatch(text) is None
         )
 
-    def indent(text: str) -> int:
-        return len(text) - len(text.lstrip(" \t"))
+    def list_item(text: str) -> re.Match[str] | None:
+        """A CommonMark list item start (0-3 spaces, at most 9 digits)."""
+        if _THEMATIC_BREAK.fullmatch(text) is not None:
+            return None
+        return _TOP_LEVEL_ITEM.match(text)
 
-    def in_list(index: int) -> bool:
-        """Whether the non-blank block above line ``index`` holds a list item."""
-        for line in reversed(lines[:index]):
-            if not line.strip(" \t\r\n"):
-                return False
-            if is_item(quoted(line)[1]):
-                return True
-        return False
+    def indented(text: str) -> bool:
+        return text[:1] in (" ", "\t")
+
+    def indent_columns(text: str, in_quote: bool) -> int | None:
+        blank = text[: len(text) - len(text.lstrip(" \t"))]
+        if in_quote and "\t" in blank:
+            return None  # tab stops depend on the quote prefix: not modelled
+        return len(blank.expandtabs(4))
+
+    def content_column(match: re.Match[str], text: str, in_quote: bool) -> int:
+        """The column a line must reach to belong to the item ``match`` starts."""
+        base = len(match[1]) + len(match[2])
+        gap = match[3] or ""
+        if "\t" in gap:
+            if in_quote:
+                return _UNKNOWN_COLUMN
+            gap = (" " * base + gap).expandtabs(4)[base:]
+        if not text[match.end() :].strip(" \t") or len(gap) > 4:
+            return base + 1  # empty item, or content that is indented code
+        return base + len(gap)
+
+    # in_list_context[i]: line i is a list item, or is glued under a line in a
+    # list context and indented to the content column of the governing item.
+    in_list_context = [False] * len(lines)
+    quote_flags = [False] * len(lines)
+    width = _UNKNOWN_COLUMN
+    for index, source_line in enumerate(lines):
+        if fenced[index]:
+            continue
+        in_quote, text = quoted(source_line)
+        quote_flags[index] = in_quote
+        if not text.strip(" \t"):
+            continue
+        columns = indent_columns(text, in_quote)
+        inside = (
+            index > 0
+            and in_list_context[index - 1]
+            and quote_flags[index - 1] == in_quote
+            and columns is not None
+            and columns >= width
+        )
+        item = list_item(text)
+        if item is not None and not inside:
+            width = content_column(item, text, in_quote)
+        in_list_context[index] = item is not None or inside
 
     def paragraph_like(line: str) -> bool:
         """Any line that is not blank, indented, quoted, a list item, a heading, a
@@ -1557,7 +1635,7 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         return (
             bool(text)
             and text[0] not in " \t>"
-            and not is_item(text)
+            and list_item(text) is None
             and _THEMATIC_BREAK.fullmatch(text) is None
             and _SETEXT_DASHES.fullmatch(text) is None
             and _HEADING_LINE.match(text) is None
@@ -1568,7 +1646,7 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         text = line.rstrip("\r\n")
         return (
             paragraph_like(line)
-            and text[0].isalpha()
+            and _is_paragraph_start_letter(text)
             and "|" not in text
             and line.endswith("\n")
             and not line.endswith("\r\n")
@@ -1595,51 +1673,73 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
                 return False
         return True
 
+    def classify(index: int) -> tuple[str, str | None]:
+        """Classify the glued marker line ``index``: (set, refusal cause)."""
+        in_quote, text = quoted(lines[index])
+        previous = lines[index - 1]
+        previous_quote, previous_text = quoted(previous)
+        listed = in_list_context[index - 1]
+        if in_quote != previous_quote:
+            return "refused", "list glued in a blockquote context"
+        if in_quote:
+            if listed and marker_line(previous_text):
+                return "list-context", None
+            if indented(previous_text) and not listed:
+                return "refused", "list glued under an indented line"
+            return "refused", "list glued in a blockquote context"
+        if listed:
+            return "list-context", None
+        if indented(previous_text):
+            return "refused", "list glued under an indented line"
+        if (
+            _HEADING_LINE.match(previous_text) is not None
+            or _THEMATIC_BREAK.fullmatch(previous_text) is not None
+            or _SETEXT_DASHES.fullmatch(previous_text) is not None
+        ):
+            return "unobserved-unchanged", None
+        if not paragraph_like(previous):
+            return "refused", "list glued to an unclassified line"
+        if indented(text):
+            return "refused", "indented list glued to a paragraph"
+        if re.match(r"[0-9]+[.)](?:[ \t]|$)", text):
+            return "refused", "numbered list glued to a paragraph"
+        if not text.startswith("- ") or text[2:3] in ("", " ", "\t"):
+            return (
+                "refused",
+                "bullet list with an unobserved marker glued to a paragraph",
+            )
+        if observed_shape(index):
+            return "observed", None
+        return (
+            "refused",
+            "bullet list glued to a paragraph outside the observed shape",
+        )
+
     inserts: set[int] = set()
     offset = 0
     for index, source_line in enumerate(lines):
         start = offset
         offset += len(source_line)
-        if index == 0 or fenced[index] or fenced[index - 1]:
+        if index == 0 or fenced[index]:
             continue
         previous = lines[index - 1]
         if not previous.strip(" \t\r\n") or not source_line.strip(" \t\r\n"):
             continue
+        if fenced[index - 1]:
+            continue  # set 3: glued under a closing fence, unobserved, unchanged
         in_quote, text = quoted(source_line)
-        previous_quote, previous_text = quoted(previous)
-        glued_to_paragraph = paragraph_like(previous)
-        reason = None
-        if (
-            _BARE_DASH.fullmatch(text)
-            and glued_to_paragraph
-            and not in_quote
-        ):
+        if _BARE_DASH.fullmatch(text) and paragraph_like(previous) and not in_quote:
             # `-` or `- ` right after a paragraph line is a setext underline, not
             # an empty list item.
             reason = "dash line glued to a paragraph (setext underline)"
-        elif not is_item(text):
-            continue
-        elif in_quote != previous_quote or (in_quote and not is_item(previous_text)):
-            reason = "list glued in a blockquote context"
-        elif is_item(previous_text) or in_quote:
-            continue  # a sibling or nested item of an existing list: not modelled
-        elif indent(text) and glued_to_paragraph:
-            reason = "nested list glued to a paragraph"
-        elif indent(previous_text):
-            if in_list(index):
-                continue  # an item continuation line: not modelled
-            reason = "list glued under an indented line"
-        elif not glued_to_paragraph:
-            continue
-        elif re.match(r"[0-9]+[.)](?:[ \t]|$)", text):
-            reason = "numbered list glued to a paragraph"
-        elif not text.startswith("- ") or text[2:3] in ("", " ", "\t"):
-            reason = "bullet list with an unobserved marker glued to a paragraph"
-        elif observed_shape(index):
-            inserts.add(start)
+        elif not marker_line(text):
             continue
         else:
-            reason = "bullet list glued to a paragraph outside the observed shape"
+            kind, reason = classify(index)
+            if kind == "observed":
+                inserts.add(start)
+            if reason is None:
+                continue
         if strict:
             raise ValueError(
                 f"unsupported list Markdown in ADR body (line {index + 1}): {reason}"
@@ -1786,54 +1886,63 @@ def _linear_markdown_readback_body(
         if observed_paragraph_lists and (observed_lists or strict)
         else set()
     )
-    rendered = []
-    nonfenced = []
 
-    def flush_nonfenced() -> None:
-        if nonfenced:
-            rendered.append(_linear_nonfenced_markdown_readback("".join(nonfenced)))
-            nonfenced.clear()
+    def render(inserts: set[int]) -> str:
+        rendered = []
+        nonfenced = []
 
-    fence = None
-    offset = 0
-    for source_line in body.splitlines(keepends=True):
-        offset += len(source_line)
-        if offset - len(source_line) in drops:
-            continue
-        if offset - len(source_line) in inserts:
-            nonfenced.append("\n")
-        line = source_line.removesuffix("\n").removesuffix("\r")
-        if fence is not None:
-            flush_nonfenced()
-            rendered.append(source_line)
-            if _markdown_fence_closing(line, *fence):
-                fence = None
-            continue
-        opening = _markdown_fence_opening(line)
-        if opening is not None:
-            flush_nonfenced()
-            fence = opening
-            rendered.append(source_line)
-            continue
-        candidate = line.lstrip(" ")
-        if len(line) - len(candidate) <= 3 and candidate.startswith("<"):
-            raise ValueError("ambiguous raw HTML block in ADR body")
-        if source_line.startswith("- "):
-            thematic = line.replace(" ", "").replace("\t", "")
-            if len(thematic) < 3 or set(thematic) != {"-"}:
-                source_line = f"* {source_line[2:]}"
-        nonfenced.append(source_line)
-    flush_nonfenced()
-    rendered_body = "".join(rendered)
+        def flush_nonfenced() -> None:
+            if nonfenced:
+                rendered.append(
+                    _linear_nonfenced_markdown_readback("".join(nonfenced))
+                )
+                nonfenced.clear()
+
+        fence = None
+        offset = 0
+        for source_line in body.splitlines(keepends=True):
+            offset += len(source_line)
+            if offset - len(source_line) in drops:
+                continue
+            if offset - len(source_line) in inserts:
+                nonfenced.append("\n")
+            line = source_line.removesuffix("\n").removesuffix("\r")
+            if fence is not None:
+                flush_nonfenced()
+                rendered.append(source_line)
+                if _markdown_fence_closing(line, *fence):
+                    fence = None
+                continue
+            opening = _markdown_fence_opening(line)
+            if opening is not None:
+                flush_nonfenced()
+                fence = opening
+                rendered.append(source_line)
+                continue
+            candidate = line.lstrip(" ")
+            if len(line) - len(candidate) <= 3 and candidate.startswith("<"):
+                raise ValueError("ambiguous raw HTML block in ADR body")
+            if source_line.startswith("- "):
+                thematic = line.replace(" ", "").replace("\t", "")
+                if len(thematic) < 3 or set(thematic) != {"-"}:
+                    source_line = f"* {source_line[2:]}"
+            nonfenced.append(source_line)
+        flush_nonfenced()
+        return "".join(rendered)
+
+    rendered_body = render(inserts)
     # The digest-pinned profiles (PAT-72, PAT-86, PAT-16) come first: each binds one
     # exact native source and its exact readback digest, so it is a more specific
     # recognition than the general strict list whitelist, which only runs after.
+    # Their sources were observed before PAT-106: they get the rendering without
+    # the PAT-106 insertion, so a later model change cannot move a pinned digest.
+    pinned_body = render(set()) if inserts else rendered_body
     for profile in (
         _linear_pat_72_readback,
         _linear_pat_86_readback,
         _linear_pat_16_adr13_readback,
     ):
-        qualified = profile(body, rendered_body)
+        qualified = profile(body, pinned_body)
         if qualified is not None:
             return qualified
     if strict:

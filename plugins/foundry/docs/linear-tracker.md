@@ -416,12 +416,20 @@ stays readable; the pinned profiles and the pre-PAT-94 model are unchanged. A ne
 before any write, after the PAT-94 and PAT-103 refusals, with `unsupported list Markdown in ADR
 body (line N): <cause>` for the unobserved neighbours: a paragraph line not starting with a letter
 or holding a pipe (`#tag`, `a | b`, digit, `**`, backtick, `[`, `=`...), numbered list, `*`/`+` marker, dash-only
-line (setext underline), list in a blockquote context, list under an indented line, indented
-(nested) list, and a `- ` list outside the exact shape (see the guide for the table). Nothing
-refused before becomes accepted. Replaying `adr create` with the original title and body
+line (setext underline), list in a blockquote context, list under an indented line that is not
+inside a list item (indented code, also when it starts with a marker such as `    - x`), list
+marker indented under a paragraph, and a `- ` list outside the exact shape (see the guide for
+the table). The check is a closed whitelist (PAT-ADR-0002): the line above a glued list line
+is either inside a list (a list item of 0 to 3 spaces and at most 9 digits, or a line under it
+indented to its content; unchanged), the observed paragraph (insertion), or one of the
+unobserved predecessors listed below (unchanged); any other line is refused, the default cause
+being `list glued to an unclassified line`. Nothing refused before becomes accepted. Replaying `adr create` with the original title and body
 recognises the stored Document and writes only the missing witness. Still unobserved and not
-refused, behaviour unchanged: a list glued under a heading, under `--`/`---` or a closing fence, and
-`P\n--` / `P\n---` (not handled by the setext rule); an item continuation is refused.
+refused, behaviour unchanged: a list glued under an ATX heading, under a thematic break or
+dash-only line (`---`, `***`, `___`, `- - -`, `--`) or under a closing fence; `P\n--` / `P\n---`
+are not list lines and are not handled by the setext rule. An item continuation is refused only
+inside the run glued to a paragraph (`A\n\nP\n- a\n  cont`); `A\n\n- a\n  cont\n- b` is not.
+The digest-pinned profiles receive the rendering without the PAT-106 insertion.
 Scope of the observation: 13 cases. The handling of the neighbours of a collapsed run
 (merge around a `---` separator, setext headings, lazy blockquote continuation, `~~~` or
 info-string fences, final newline removed after a heading or a list item) is a
