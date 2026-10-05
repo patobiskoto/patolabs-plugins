@@ -391,7 +391,7 @@ def test_hostile_dropped_node_is_never_waivable():
         acceptance_status="override", acceptance_source="linear-acceptance-override",
         acceptance_coordinates="{}",
     )
-    with pytest.raises(SystemExit, match="LIN-2 est dérogé"):
+    with pytest.raises(SystemExit, match="LIN-2 est abandonné"):
         write._bounded_epic_node(node, role="enfant", waivable=frozenset({"LIN-2"}))
 
 
@@ -726,3 +726,91 @@ def test_unqualified_provider_without_the_attribute_fails_closed(monkeypatch):
 def test_receipt_dataclass_default_is_empty():
     fields = EpicClosureReceipt.__dataclass_fields__
     assert fields["accepted_overrides"].default == ()
+
+
+def test_override_hint_only_when_the_strict_refusal_is_an_override(monkeypatch):
+    tracker, _wire, project = _graph(monkeypatch)
+    parent = tracker.get_issue("LIN-1")
+    with pytest.raises(SystemExit) as excinfo:
+        write._snapshot_with_diagnostic(tracker, project, parent, frozenset())
+    text = str(excinfo.value)
+    assert "\nSeuls des reçus d'override valides bloquent" in text
+    assert "Parmi les nœuds lus" not in text
+
+    def other_refusal(*_a, **_k):
+        raise SystemExit("Clôture Epic refusée : autre cause.")
+
+    monkeypatch.setattr(write, "_bounded_epic_graph_snapshot", other_refusal)
+    with pytest.raises(SystemExit) as excinfo:
+        write._snapshot_with_diagnostic(tracker, project, parent, frozenset())
+    text = str(excinfo.value)
+    assert "Parmi les nœuds lus, seuls des reçus d'override valides bloquent" in text
+    assert "\nSeuls des reçus" not in text
+
+
+def test_diagnostic_captures_tracker_systemexit_for_a_foreign_node():
+    parent = Issue(
+        id="P-1", title="",
+        links=[Link("parent-of", "outward", "N-1"), Link("parent-of", "outward", "N-2")],
+    )
+
+    class _FakeYouTrack:
+        def validate_issue_binding(self, _project, issue_id):
+            if issue_id == "N-1":
+                raise SystemExit("Mutation YouTrack refusée : projet natif étranger.")
+
+        def get_issue(self, issue_id):
+            return Issue(id=issue_id, title="", state="review", version=1)
+
+    report = write.epic_graph_diagnostic(_FakeYouTrack(), None, parent)
+    assert [(i["id"], i["code"]) for i in report] == [
+        ("N-1", "foreign-project"), ("N-2", "non-terminal"),
+    ]
+    assert "projet natif étranger" in report[0]["cause"]
+
+    # The original refusal stays the fallback when the walk itself cannot run.
+    class _Broken(_FakeYouTrack):
+        def get_issue(self, issue_id):
+            raise SystemExit("boom")
+
+    original = SystemExit("Clôture Epic refusée : cause d'origine.")
+    assert [i["code"] for i in write.epic_graph_diagnostic(_Broken(), None, parent)] == [
+        "foreign-project", "read-error",
+    ]
+    assert str(original) == "Clôture Epic refusée : cause d'origine."
+
+
+def test_decode_errors_are_read_errors_not_foreign_project():
+    import json
+
+    parent = Issue(id="P-1", title="", links=[Link("parent-of", "outward", "N-1")])
+
+    class _Tracker:
+        def __init__(self, exc):
+            self.exc = exc
+
+        def validate_issue_binding(self, *_a):
+            raise self.exc
+
+    for exc in (
+        json.JSONDecodeError("bad", "{", 0),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"),
+    ):
+        report = write.epic_graph_diagnostic(_Tracker(exc), None, parent)
+        assert [(i["id"], i["code"]) for i in report] == [("N-1", "read-error")]
+    report = write.epic_graph_diagnostic(_Tracker(ValueError("bad id")), None, parent)
+    assert report[0]["code"] == "foreign-project"
+
+
+def test_dropped_node_is_called_abandoned_not_waived():
+    parent = Issue(id="P-1", title="", links=[Link("parent-of", "outward", "N-1")])
+
+    class _Tracker:
+        def validate_issue_binding(self, *_a):
+            return None
+
+        def get_issue(self, _id):
+            return Issue(id="N-1", title="", state="dropped", version=1)
+
+    report = write.epic_graph_diagnostic(_Tracker(), None, parent)
+    assert "abandonné" in report[0]["cause"] and "dérogé" not in report[0]["cause"]

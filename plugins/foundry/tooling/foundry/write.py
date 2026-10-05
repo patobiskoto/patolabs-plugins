@@ -532,13 +532,17 @@ def _epic_override_evidence(node) -> tuple[str, str] | None:
     return digest, coordinates["reason"]
 
 
+class _EpicOverrideRefusal(SystemExit):
+    """The strict refusal is itself an override refusal (PAT-102: gates the hint)."""
+
+
 def _bounded_epic_node(
     issue: Issue, *, role: str, tracker=None, waivable: frozenset = frozenset(),
 ) -> EpicClosureChild:
     """Build one strictly accepted graph coordinate for PAT-ADR-0006."""
     if issue.state == "dropped":
         raise SystemExit(
-            f"Clôture Epic refusée : {role} {issue.id} est dérogé, pas accepté."
+            f"Clôture Epic refusée : {role} {issue.id} est abandonné, pas accepté."
         )
     if issue.state != "done":
         raise SystemExit(
@@ -568,14 +572,20 @@ def _bounded_epic_node(
             )
     else:
         if ac_total == 0 or ac_done != ac_total:
-            raise SystemExit(
+            refusal = (
                 f"Clôture Epic refusée : la preuve AC de {role} {issue.id} est inconnue."
             )
+            if ac_total != 0 and issue.acceptance_status == "override":
+                raise _EpicOverrideRefusal(refusal)
+            raise SystemExit(refusal)
         if issue.acceptance_status != "accepted":
             qualifier = "dérogée" if issue.acceptance_status == "override" else "inconnue"
-            raise SystemExit(
+            refusal = (
                 f"Clôture Epic refusée : la preuve de {role} {issue.id} est {qualifier}."
             )
+            if issue.acceptance_status == "override":
+                raise _EpicOverrideRefusal(refusal)
+            raise SystemExit(refusal)
     if (
         not isinstance(issue.acceptance_source, str)
         or not issue.acceptance_source
@@ -753,7 +763,18 @@ def _epic_graph_walk(
         # alone (one provider read on Linear) instead of re-reading the parent each time.
         try:
             tracker.validate_issue_binding(project, issue_id)
+        except SystemExit as exc:
+            # A tracker (YouTrack) refuses a foreign node with SystemExit: capture it so
+            # the walk goes on and the original refusal stays the fallback.
+            add(issue_id, role, "foreign-project",
+                f"hors projet ou binding invalide (SystemExit: {exc}) ; "
+                "sous-graphe sous ce nœud non parcouru")
+            return None
         except (TrackerBindingError, ValueError) as exc:
+            if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+                # A decoding failure is a failed read, never a foreign project.
+                add(issue_id, role, "read-error", _read_error_cause(exc))
+                return None
             detail = f"{type(exc).__name__}: {exc}"
             if isinstance(exc, ValueError) or getattr(exc, "code", None) in _FOREIGN_BINDING_CODES:
                 add(issue_id, role, "foreign-project",
@@ -769,7 +790,7 @@ def _epic_graph_walk(
             return None
         try:
             issue = tracker.get_issue(issue_id)
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
             add(issue_id, role, "read-error", _read_error_cause(exc))
             return None
         if getattr(issue, "id", None) != issue_id:
@@ -781,7 +802,7 @@ def _epic_graph_walk(
 
     def classify(issue: Issue, role: str) -> None:
         if issue.state == "dropped":
-            add(issue.id, role, "dropped", "dérogé (dropped), jamais acceptable")
+            add(issue.id, role, "dropped", "abandonné (dropped), jamais acceptable")
         elif issue.state != "done":
             add(issue.id, role, "non-terminal", f"n'est pas terminal (état {issue.state})")
         elif type(issue.ac_total) is not int or issue.ac_total <= 0:
@@ -860,7 +881,7 @@ def epic_graph_diagnostic(
         return _epic_graph_walk(tracker, project, parent, accept)[0]
 
 
-def format_epic_diagnostic(report: list[dict]) -> str:
+def format_epic_diagnostic(report: list[dict], *, override_cause: bool = True) -> str:
     if not report:
         return ""
     incomplete = any(item.get("incomplete") for item in report)
@@ -883,8 +904,11 @@ def format_epic_diagnostic(report: list[dict]) -> str:
         waivable and len(waivable) == len(report)
         and not all(item["named"] for item in report)
     ):
+        # The hint is only stated flatly when the strict refusal is itself an override
+        # refusal; otherwise it only describes the nodes that were read.
+        lead = "Seuls" if override_cause else "Parmi les nœuds lus, seuls"
         lines.append(
-            "Seuls des reçus d'override valides bloquent : le mainteneur peut les attester "
+            f"{lead} des reçus d'override valides bloquent : le mainteneur peut les attester "
             "nommément par --human-verdict=accepted --accept-override=" + ",".join(waivable)
             + " (ni CAS ni acceptation)."
         )
@@ -928,7 +952,9 @@ def _snapshot_with_diagnostic_in_scope(
         text = ""
         try:
             report, graph_ids = _epic_graph_walk(tracker, project, parent, accept)
-            text = format_epic_diagnostic(report)
+            text = format_epic_diagnostic(
+                report, override_cause=isinstance(exc, _EpicOverrideRefusal),
+            )
             if not any(item.get("incomplete") for item in report):
                 unknown = sorted(accept - graph_ids)
                 if unknown:
@@ -936,7 +962,7 @@ def _snapshot_with_diagnostic_in_scope(
                         "--accept-override désigne des identifiants hors du graphe de "
                         "l'Epic : " + ", ".join(unknown) + "."
                     )
-        except Exception:
+        except (Exception, SystemExit):
             text = ""
         if not text:
             raise

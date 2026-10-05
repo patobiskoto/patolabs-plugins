@@ -183,7 +183,7 @@ def test_bounded_epic_closure_refuses_dropped_child_as_a_waiver(monkeypatch):
     tracker = BoundedEpicTracker()
     monkeypatch.setattr(write.registry, "repo_basename", lambda: "demo")
 
-    with pytest.raises(SystemExit, match="dérogé, pas accepté"):
+    with pytest.raises(SystemExit, match="abandonné, pas accepté"):
         write.close_epic(tracker, "DEMO-1", human_verdict="accepted")
     assert tracker.close_calls == 0
 

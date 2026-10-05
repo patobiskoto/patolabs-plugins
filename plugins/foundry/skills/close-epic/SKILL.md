@@ -80,7 +80,7 @@ binds a digest of the Epic's exact need and test procedure, and every pending or
 replay refuses a changed procedure. It also requires
 at least one linked required child, and qualified positive AC evidence for every child
 and transitive dependency. Zero criteria, an unknown proof, an override, or a dropped
-node never count as acceptance (an override is only ever waived nominatively, below). The receipt binds the original parent predecessor, the
+node never count as acceptance (an override is only ever waived nominatively, see the `--accept-override` paragraph above). The receipt binds the original parent predecessor, the
 exact direct-child set, every dependency edge, each node version/state/AC snapshot and
 the provider's acceptance coordinates. DevHub retains its atomic transaction. YouTrack,
 Linear and the qualified private personal-Project GitHub profile use PAT-ADR-0006's
