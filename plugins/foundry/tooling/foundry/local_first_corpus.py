@@ -47,6 +47,11 @@ OVERRIDE_DECISIONS = ("include", "exclude")
 TRIPWIRE_NAMES = frozenset({"conftest.py", "pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg",
                             "sitecustomize.py", "usercustomize.py"})
 TRIPWIRE_SUFFIXES = (".pth",)
+# Directories a candidate may legitimately create for its own tooling (PAT-108 N-E): ignored by the
+# tripwire and by the bytecode purge, never on the judged interpreter path. Only when absent from
+# the base tree (a product directory of that name is still inspected).
+ENV_DIR_NAMES = frozenset({".venv", "venv", "node_modules"})
+JUDGED_MARKER = "foundry-judged"  # file inside the bundle's .git: a bundle is judged once
 BUNDLE_AUTHOR = {"GIT_AUTHOR_NAME": "Corpus Bundle", "GIT_AUTHOR_EMAIL": "corpus@example.invalid",
                  "GIT_COMMITTER_NAME": "Corpus Bundle", "GIT_COMMITTER_EMAIL": "corpus@example.invalid",
                  "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+0000",
@@ -555,6 +560,53 @@ def _is_tripwire(path: str) -> bool:
     return name in TRIPWIRE_NAMES or name.endswith(TRIPWIRE_SUFFIXES)
 
 
+def _base_tree(repo: Path, task: Mapping[str, Any]) -> dict[str, str]:
+    base: dict[str, str] = {}
+    for line in _git(repo, "ls-tree", "-r", "-z", task["base_sha"]).split("\0"):
+        if line:
+            meta, path = line.split("\t", 1)
+            base[path] = meta.split()[2]
+    return base
+
+
+def _walk_candidate(candidate: Path, base: Mapping[str, str]):
+    """``os.walk`` over a bundle that skips ``.git``, the pytest cache and the environment
+    directories the candidate itself created (virtualenv, ``node_modules``; PAT-108 N-E)."""
+    base_dirs = {d for path in base for d in (path.rsplit("/", i)[0] for i in range(1, path.count("/") + 1))}
+    for root, dirs, files in os.walk(candidate):
+        rel_root = Path(root).relative_to(candidate).as_posix()
+        kept = []
+        for d in dirs:
+            rel = d if rel_root == "." else f"{rel_root}/{d}"
+            created_env = (d in ENV_DIR_NAMES or (Path(root) / d / "pyvenv.cfg").is_file()) \
+                and rel not in base_dirs
+            if d not in (".git", ".pytest_cache") and not created_env:
+                kept.append(d)
+        dirs[:] = kept
+        yield Path(root), dirs, files
+
+
+def purge_bytecode(candidate: Path, base: Mapping[str, str] | None = None) -> int:
+    """Remove every ``*.pyc`` and ``__pycache__`` of the candidate tree (PAT-108 N-A): a
+    precompiled file could stand in for the source the tests import, and a source-less ``.pyc``
+    is importable. Returns the number of removed entries."""
+    removed = 0
+    for root, dirs, files in _walk_candidate(candidate, base or {}):
+        for d in [d for d in dirs if d == "__pycache__"]:
+            target = root / d
+            if target.is_symlink():
+                target.unlink()
+            else:
+                shutil.rmtree(target, ignore_errors=True)
+            dirs.remove(d)
+            removed += 1
+        for name in files:
+            if name.endswith((".pyc", ".pyo")):
+                (root / name).unlink()
+                removed += 1
+    return removed
+
+
 def _candidate_changes(repo: Path, task: Mapping[str, Any], candidate: Path,
                        exempt: set[str]) -> dict[str, list[str]]:
     """Files the candidate changed against the base tree (``exempt`` = restored by the judge).
@@ -562,17 +614,12 @@ def _candidate_changes(repo: Path, task: Mapping[str, Any], candidate: Path,
     ``tripwire`` lists created/modified/deleted harness files anywhere; ``outside_product``
     lists every changed file outside the product tree (tests, fixtures, docs)."""
     algo = _git(repo, "rev-parse", "--show-object-format").strip() or "sha1"
-    base: dict[str, str] = {}
-    for line in _git(repo, "ls-tree", "-r", "-z", task["base_sha"]).split("\0"):
-        if line:
-            meta, path = line.split("\t", 1)
-            base[path] = meta.split()[2]
+    base = _base_tree(repo, task)
     seen: set[str] = set()
     changed: list[str] = []
-    for root, dirs, files in os.walk(candidate):
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache")]
+    for root, _dirs, files in _walk_candidate(candidate, base):
         for name in files:
-            full = Path(root) / name
+            full = root / name
             rel = full.relative_to(candidate).as_posix()
             seen.add(rel)
             if rel in exempt or name.endswith(".pyc") or rel == "TASK.md":
@@ -592,6 +639,15 @@ def _candidate_changes(repo: Path, task: Mapping[str, Any], candidate: Path,
             "outside_product": sorted(p for p in changed if not p.startswith(SOURCE_PREFIXES))}
 
 
+def inside_developer_checkout(repo: Path, path: Path) -> bool:
+    path = path.resolve()
+    return any(path == root or root in path.parents for root in _checkout_roots(repo))
+
+
+def is_judged(candidate: Path) -> bool:
+    return (candidate / ".git" / JUDGED_MARKER).exists()
+
+
 def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any]:
     """Restore the protected tests from the merged SHA over the candidate bundle, run only
     them and return a mechanical verdict. Tests the candidate wrote never count: the protected
@@ -603,6 +659,8 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any
     code tampering with pytest in-process, edits of non-protected support files (reported in
     ``changed_outside_product``)."""
     candidate = candidate.resolve()
+    if inside_developer_checkout(repo, candidate):  # PAT-108 N-B: the judge rewrites the tree
+        raise CorpusError(f"candidate is inside the developer checkout: {candidate}")
     entries = task["protected"]["entries"]
     selected: list[str] = []
     for entry in entries:
@@ -620,12 +678,18 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any
         if _has_symlink(candidate, entry["path"]):
             return _verdict(f"symlink_at_protected_path:{entry['path']}", selected, 0, 0, 0, 0,
                             None, extra)
+    if not (candidate / ".git").is_dir():
+        raise CorpusError(f"candidate is not a task bundle (no .git): {candidate}")
+    if is_judged(candidate):  # PAT-108 N-C: a judged bundle carries the protected tests
+        raise CorpusError(f"bundle was already judged; use a fresh bundle: {candidate}")
     changes = _candidate_changes(repo, task, candidate, {e["path"] for e in entries})
     extra = {"tripwire": changes["tripwire"],
              "changed_outside_product": changes["outside_product"]}
     if changes["tripwire"]:
         return _verdict("harness_files_changed:" + ",".join(changes["tripwire"]), selected,
                         0, 0, 0, 0, None, extra)
+    (candidate / ".git" / JUDGED_MARKER).write_text("judged\n", encoding="utf-8")
+    purge_bytecode(candidate, _base_tree(repo, task))
     for entry in entries:
         content = _git(repo, "show", f"{task['head_sha']}:{entry['path']}", text=False)
         target = candidate / entry["path"]
@@ -644,15 +708,17 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any
         scratch.mkdir()
         junit = tmp_dir / "junit.xml"
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
-               "TMPDIR": str(scratch), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
+               "TMPDIR": str(scratch), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
+               "PYTHONPYCACHEPREFIX": str(tmp_dir / "pycache")}
         env.update({k: os.environ[k] for k in ("LANG", "LC_ALL") if k in os.environ})
-        ini = []
         merged_ini = subprocess.run(
             ["git", "-C", str(repo), "show", f"{task['head_sha']}:{PLUGIN_PREFIX}pytest.ini"],
             capture_output=True, check=False)
-        if merged_ini.returncode == 0:
-            (tmp_dir / "pytest.ini").write_bytes(merged_ini.stdout)
-            ini = ["-c", str(tmp_dir / "pytest.ini")]
+        # ``-c`` is unconditional (PAT-108 N-F): without a merged ini an empty one still stops
+        # pytest from discovering a candidate-written pytest.toml / .pytest.ini / pyproject.
+        (tmp_dir / "pytest.ini").write_bytes(merged_ini.stdout if merged_ini.returncode == 0
+                                             else b"[pytest]\n")
+        ini = ["-c", str(tmp_dir / "pytest.ini")]
         cmd = [sys.executable, "-P", "-m", "pytest", "-q", "-p", "no:cacheprovider",
                f"--junitxml={junit}", f"--confcutdir={plugin_root / 'tests'}",
                f"--rootdir={plugin_root}", *ini, *selected]
@@ -693,18 +759,19 @@ def _verdict(note: str | None, selected: Sequence[str], passed: int, failed: int
 # ----------------------------------------------------------------- verification (g)
 
 def verify_task(repo: Path, task: Mapping[str, Any], workdir: Path) -> dict[str, Any]:
-    """The judge must ACCEPT the merged solution and REFUSE the base without it."""
+    """The judge must ACCEPT the merged solution and REFUSE the base without it.
+
+    A tooling error propagates (``CorpusError``): the verification stops instead of replacing the
+    task from the queue, which would hide a tool fault behind a different draw (PAT-108 N-D)."""
     result: dict[str, Any] = {"pr": task["pr"], "issue": task["issue"]}
     for label, with_solution in (("with_merged_diff", True), ("without_merged_diff", False)):
         dest = workdir / f"pr{task['pr']}-{label}"
         built = None
-        try:
+        try:  # a tooling error (CorpusError) aborts: it is not a verdict, never a replacement
             built = build_bundle(repo, task, dest)  # refuses an existing destination
             if with_solution:
                 apply_solution(repo, task, built)
             result[label] = judge(repo, task, built)
-        except CorpusError as exc:
-            result[label] = {"verdict": "ERROR", "note": str(exc)[:300]}
         finally:
             if built is not None:  # only what this call created
                 remove_bundle(built)
@@ -726,18 +793,19 @@ def _ok(repo: Path, *args: str) -> bool:
 
 def replayability(repo: Path, task: Mapping[str, Any]) -> dict[str, Any]:
     """Local facts about replaying a task (no network): SHAs present, and which
-    ``origin`` refs known locally contain them. Environment-dependent: recorded as observed."""
+    ``origin`` refs known locally contain them (a count: the ref names are machine-specific and
+    would make the manifest unreproducible). Environment-dependent: recorded as observed."""
     out: dict[str, Any] = {"merge_kind": task["merge_kind"], "base_ref": task.get("base_ref")}
     for key in ("base_sha", "head_sha"):
         sha = task[key]
         present = _ok(repo, "cat-file", "-e", f"{sha}^{{commit}}")
         refs = (_git(repo, "for-each-ref", "--contains", sha, "--format=%(refname)",
                      "refs/remotes/origin", check=False).split() if present else [])
-        out[key] = {"present_locally": present, "origin_refs_containing": sorted(refs)}
+        out[key] = {"present_locally": present, "origin_refs_containing_count": len(refs)}
     on_default = _ok(repo, "merge-base", "--is-ancestor", task["head_sha"],
                      f"refs/remotes/origin/{DEFAULT_BRANCH_FOR_REPLAY}")
     out["head_on_origin_default_branch"] = on_default
-    reachable = on_default or bool(out["head_sha"]["origin_refs_containing"])
+    reachable = on_default or bool(out["head_sha"]["origin_refs_containing_count"])
     out["public_reachability"] = "origin_refs" if reachable else "unknown"
     out["fetch_hint"] = None if reachable else (
         f"git fetch origin {task.get('base_ref')}  # only if that branch still exists on the "

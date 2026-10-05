@@ -60,7 +60,10 @@ python3 -m foundry.local_first_corpus verify --repo <repo> --snapshot <snapshot>
 - `verify` : pour chaque tâche tirée, construit deux bundles jetables (supprimés ensuite) (base + diff mergé hors
   tests protégés ; base seule), lance le juge sur chacun, écarte la tâche si le juge n'accepte pas
   la solution d'origine ou accepte la base, la remplace par la file de remplacement (un créneau
-  défaillant prend la première entrée restante), et consigne la raison.
+  défaillant prend la première entrée restante), et consigne la raison. Une erreur d'outillage
+  (`CorpusError` : commit introuvable, bundle impossible, diff qui ne s'applique pas) **interrompt**
+  la vérification : ce n'est pas un verdict et elle ne déclenche jamais un remplacement par la file
+  (PAT-108).
 
 ## Critères du protocole, appliqués aux PR mergées
 
@@ -113,20 +116,30 @@ retirées du fichier de base (une classe vidée reçoit `pass`).
 
 `judge` prend un bundle candidat et, dans cet ordre :
 
+0. refuse par une erreur (`CorpusError`, pas un verdict) un candidat situé dans le checkout de
+   développement, qui n'est pas un bundle (pas de `.git`) ou qui a déjà été jugé : le juge écrit
+   les tests protégés dans l'arbre, un bundle jugé ne repart jamais chez un candidat (un fichier
+   `foundry-judged` dans son `.git` le consigne ; PAT-108) ;
 1. refuse (`REFUSED`, raison dans `note`) s'il n'y a aucun test sélectionné (jamais la suite
    entière), si un chemin protégé (ou un de ses dossiers parents) est un lien symbolique, ou si le
    candidat a créé, modifié ou supprimé n'importe où dans le bundle un `conftest.py`, `pytest.ini`,
    `pyproject.toml`, `tox.ini`, `setup.cfg`, `sitecustomize.py`, `usercustomize.py` ou `*.pth`
    (comparaison avec l'arbre du SHA de base, équivalent du commit racine du bundle ; les chemins
-   protégés sont exemptés puisqu'ils sont écrasés) ;
+   protégés sont exemptés puisqu'ils sont écrasés). Les dossiers d'environnement que le candidat a
+   créés (`.venv`, `venv`, `node_modules`, ou tout dossier contenant un `pyvenv.cfg`) et qui
+   n'existent pas dans l'arbre de base sont ignorés par ce contrôle, et ne sont jamais sur le
+   chemin de l'interpréteur jugé (PAT-108) ;
 2. écrase les chemins protégés avec les versions du SHA fusionné (supprime d'abord le fichier,
    n'écrit jamais à travers un lien) ; le fichier du candidat à ces chemins ne compte donc jamais ;
-3. lance `python -P -m pytest` sur les seuls identifiants sélectionnés, avec `-c` sur le
-   `pytest.ini` du SHA fusionné, `--rootdir` sur `plugins/foundry`, `--confcutdir` sur `tests/` (un
+2b. supprime tout `*.pyc` et tout `__pycache__` de l'arbre du candidat (un `.pyc` précompilé,
+   par exemple en hash non vérifié, remplacerait la source importée) ;
+3. lance `python -P -m pytest` sur les seuls identifiants sélectionnés, avec `-c` **toujours**
+   donné (sur le `pytest.ini` du SHA fusionné, ou à défaut sur un `[pytest]` vide du juge : ni
+   `pytest.toml`, ni `.pytest.ini`, ni `[tool.pytest]` d'un candidat n'est donc lu), `--rootdir` sur `plugins/foundry`, `--confcutdir` sur `tests/` (un
    `conftest.py` au-dessus de `tests/` n'est pas chargé), `-p no:cacheprovider`, sans le répertoire
    courant dans `sys.path`, dans un environnement réduit à `PATH`, `LANG`, `LC_ALL`, plus `HOME` et
-   `TMPDIR` pointant vers un dossier temporaire neuf, `PYTHONDONTWRITEBYTECODE` et
-   `PYTHONNOUSERSITE` (aucune variable `FOUNDRY_*`, aucun jeton ; testé), avec un délai de 900 s
+   `TMPDIR` pointant vers un dossier temporaire neuf, `PYTHONDONTWRITEBYTECODE`,
+   `PYTHONPYCACHEPREFIX` (dossier temporaire du juge) et `PYTHONNOUSERSITE` (aucune variable `FOUNDRY_*`, aucun jeton ; testé), avec un délai de 900 s
    (`REFUSED`, `note: timeout`).
 
 Il rend `ACCEPTED` si et seulement si pytest sort avec 0, au moins un test passe, et aucun test
@@ -136,7 +149,8 @@ produit : tests, fixtures, docs).
 
 Ce que le juge **empêche** : un test du candidat à un chemin protégé ou dans un autre fichier
 (jamais sélectionné), l'édition de la configuration pytest ou d'un `conftest.py`, les liens
-symboliques sur les chemins protégés, l'usage du `HOME` et de l'environnement réels du
+symboliques sur les chemins protégés, le contournement par bytecode précompilé, la
+réutilisation d'un bundle déjà jugé, l'usage du `HOME` et de l'environnement réels du
 développeur, un `conftest.py` créé au-dessus de `tests/`.
 
 Ce que le juge **n'empêche pas** : le code produit est importé dans le processus de test et peut
@@ -176,7 +190,9 @@ Limites connues :
 - **Rejouabilité** : les commits de base des tâches empilées (#24 à #27) ne sont sur aucune branche
   de `main` ; ils n'existent que sur des branches locales du développeur et sur aucune référence
   `origin/*` connue localement. Le manifeste consigne, par tâche, `replayability` (SHA de base et de
-  tête présents localement, références `origin/*` connues qui les contiennent, accessibilité
+  tête présents localement, nombre de références `origin/*` connues qui les contiennent
+  (`origin_refs_containing_count` : un nombre et non les noms, propres à la machine, pour que le manifeste soit
+  reproductible), accessibilité
   publique : `origin_refs` ou `unknown`). Pour les quatre tâches empilées, l'accessibilité publique
   est `unknown` (aucun réseau utilisé) ; à essayer : `git fetch origin
   feat/pat-22-livrer-le-stockage-adr-versionné` (seulement si la branche existe encore sur le
@@ -236,6 +252,12 @@ Artefacts documentés : le protocole et le corpus (ce dossier), la surface CLI d
 `foundry.local_first_corpus` (section Outil : options `--statements` et `--overrides`), les critères
 et la sélection des tests protégés, le fichier d'énoncés et la règle d'expurgation, ce que le juge
 empêche ou non, les limites du corpus.
+PAT-108 (suites des revues de PAT-107) : durcissements du juge et de `verify` décrits ci-dessus
+(bytecode, bundle jugé une seule fois, checkout de développement refusé, dossiers d'environnement,
+`-c` inconditionnel, erreur d'outillage qui interrompt), clé de rejouabilité
+`origin_refs_containing_count`. Le manifeste est régénéré par `verify` (les 12 tâches sont
+inchangées : 12 sur 12 `ACCEPTED` avec la solution mergée et `REFUSED` sur la base). Le lanceur est
+décrit dans [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md).
 Non documenté car non nécessaire : aucune constante publique, option de `foundry_cli.py`, clé de
 configuration ni table de routage n'a changé. L'application mécanique de R5 reste celle de
 FOUNDRY-123.

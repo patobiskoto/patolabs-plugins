@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Added (PAT-108): the PAT-19 comparison launcher `foundry.local_first_runner`
+  (`python3 -m foundry.local_first_runner {preflight,screen,compare,report}`, documented in
+  `docs/qualification/pat-19-launcher-v1.md`, frozen config `docs/qualification/pat-19-campaign-v1.json`).
+  It plays a task through three paths from PAT-107 bundles (A current cloud, B economy cloud, C one
+  bounded local attempt then cloud review with path A taking over; plus a local-only neutral-harness
+  attempt), reads premium tokens per class and role from the host session logs by the session id it
+  hands to each cloud execution (unknown stays `null` with a reason, never 0), and records machine
+  facts (swap, memory pressure, server memory). A mandatory authorization envelope caps cloud
+  executions, tokens and duration (consumption is ledgered before each cloud execution); `screen` can
+  never spend cloud; a failed machine preflight refuses to launch and the tool loads no model. The
+  candidate runs under a generated `sandbox-exec` profile, a whitelisted environment and an isolated
+  HOME; drivers not marked `verified` are refused for a real run (PAT-109 must pin them). `report`
+  applies the protocol's pre-registered rules and returns compatibility, quality and economy
+  separately, never a promotion. Only fake arms are exercised (dry run). No routing, mapping, role or
+  default changed.
+
+- Changed (PAT-108): carry-over of the PAT-107 reviews in `foundry.local_first_corpus`: the judge purges
+  every `*.pyc`/`__pycache__` of the candidate and redirects bytecode (`PYTHONPYCACHEPREFIX`), refuses a
+  candidate inside the developer checkout and a bundle already judged, ignores virtualenv and
+  `node_modules` directories the candidate created, and always passes `-c`; `verify` aborts on a tooling
+  error instead of replacing the task; `replayability.origin_refs_containing` became a count
+  (`origin_refs_containing_count`) so the manifest is reproducible. The 12 tasks are unchanged and
+  still judged 12 of 12.
+
 - Added (PAT-107): PAT-19 local-first qualification protocol v1 frozen under
   `docs/qualification/pat-19-protocol-v1.md` and a replayable corpus
   (`docs/qualification/pat-19-corpus-v1.md`): `foundry.local_first_corpus` freezes merged PRs in a
