@@ -1,6 +1,8 @@
 """Make the in-repo Foundry package importable without installing it."""
 import ast
 import json
+import os
+import pwd
 import sys
 from pathlib import Path
 
@@ -16,6 +18,100 @@ _CONFORMANCE_MANIFEST = json.loads(_CONFORMANCE_MANIFEST_PATH.read_text(encoding
 _TRACKER_CONFORMANCE_TESTS = frozenset(
     tuple(case["test"].split("::", 1)) for case in _CONFORMANCE_MANIFEST["cases"]
 )
+
+
+# PAT-104: the suite must never read or write the maintainer's REAL Foundry state
+# directory. Every state/config resolver in the tooling ends at `~` (`registry.data_dir`,
+# `config.default_config_path`, `config.install_marker_path`, the legacy dev env file) or
+# at one of the env overrides below, so one autouse fixture redirects `HOME` and clears
+# the overrides; an audit hook then makes the real path unreachable even by accident
+# (e.g. a module imported with `from module import *` running outside its own fixture).
+_REAL_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)  # not `~`: immune to HOME changes
+_REAL_STATE_ROOTS = tuple(
+    {str(_REAL_HOME / ".config" / "foundry"),
+     str(_REAL_HOME.resolve() / ".config" / "foundry"),
+     str(_REAL_HOME / ".config" / "orfeo-poc"),
+     str(_REAL_HOME.resolve() / ".config" / "orfeo-poc")}
+)
+# FOUNDRY_DATA is cleared, not set: its presence enables telemetry, so setting it would
+# change behaviour under test. With it unset, `data_dir()` follows the redirected HOME.
+_STATE_ENV_OVERRIDES = ("FOUNDRY_DATA", "FOUNDRY_CONFIG", "FOUNDRY_EXECUTION_RECEIPTS_DIR")
+_GUARDED_AUDIT_EVENTS = frozenset({
+    "open", "os.mkdir", "os.rename", "os.remove", "os.rmdir", "os.listdir",
+    "os.scandir", "os.chmod", "os.truncate", "os.utime", "os.symlink", "os.link",
+    "shutil.copyfile", "shutil.copytree", "shutil.rmtree", "shutil.move",
+})
+_guard_active = False
+
+
+def _is_real_state_path(candidate) -> bool:
+    if isinstance(candidate, int) or candidate is None:
+        return False
+    try:
+        text = os.path.abspath(os.fsdecode(candidate))
+    except (TypeError, ValueError):
+        return False
+    return any(text == root or text.startswith(root + os.sep) for root in _REAL_STATE_ROOTS)
+
+
+def _audit_real_state(event: str, args: tuple) -> None:
+    if not _guard_active or event not in _GUARDED_AUDIT_EVENTS or not args:
+        return
+    touched = args[:2] if event in {"os.rename", "os.symlink", "os.link", "shutil.copyfile",
+                                    "shutil.copytree", "shutil.move"} else args[:1]
+    for candidate in touched:
+        if _is_real_state_path(candidate):
+            raise RuntimeError(
+                f"PAT-104 guard: test touched the REAL Foundry state ({event} "
+                f"{os.fsdecode(candidate)!r}); isolate it under tmp_path"
+            )
+
+
+sys.addaudithook(_audit_real_state)
+
+
+def assert_state_resolvers_isolated(root: Path) -> None:
+    """Fail loudly unless every state/config resolver lands under ``root``."""
+    from foundry import config, registry
+
+    resolved = {
+        "registry.data_dir": Path(registry.data_dir()),
+        "registry.path": Path(registry.path()),
+        "config.default_config_path": config.default_config_path(),
+        "config.install_marker_path": config.install_marker_path(),
+        **{f"config._dev_files[{i}]": p for i, p in enumerate(config._dev_files())},
+    }
+    root = root.resolve()
+    for name, value in resolved.items():
+        if not value.resolve().is_relative_to(root) or _is_real_state_path(value):
+            raise AssertionError(f"PAT-104: {name} resolves outside the test sandbox: {value}")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_foundry_state(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+):
+    """Point every Foundry state directory at a per-test temporary home.
+
+    Function scope (not session): tests write real state (intents, proofs, dedup
+    ledgers) and must not see each other's leftovers. Explicitly opt-in integration
+    tests retain their own configured environment, as for the repository marker.
+    """
+    global _guard_active
+    if request.node.get_closest_marker("integration") is not None:
+        yield
+        return
+    home = tmp_path_factory.mktemp("foundry-home")
+    monkeypatch.setenv("HOME", str(home))
+    for name in _STATE_ENV_OVERRIDES:
+        monkeypatch.delenv(name, raising=False)
+    assert_state_resolvers_isolated(home)
+    _guard_active = True
+    try:
+        yield home
+    finally:
+        _guard_active = False
 
 
 @pytest.fixture(autouse=True)
