@@ -1327,6 +1327,7 @@ _OBSERVED_ORDERED_ITEM = re.compile(r"([1-9])\. ([^ \t\n][^\n]*)\n?")
 _NOT_PLAIN_ITEM_TEXT = re.compile(
     r"[*+-](?:[ \t]|$)|[0-9]+[.)](?:[ \t]|$)|#{1,6}(?:[ \t]|$)|[>|<]|`{3}|~{3}"
     r"|([*_-])[ \t]*(?:\1[ \t]*){2,}$|\[[^\]]*\]:"
+    r"|\[[ xX]\](?:[ \t]|$)"  # task list item: `1. [ ] a`, `1. [x] a`
 )
 _NON_LF_SEPARATORS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 
@@ -1344,7 +1345,10 @@ def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
     lines and followed by the end of the body or empty LF lines and a non-list
     block, is read back with the separating empty lines removed.  ``strict``
     accepts it only with at most one empty line on each side (PAT-72: Linear
-    collapses two empty lines after a list item).
+    collapses two empty lines after a list item).  The Document already adds one
+    empty line before the body, so a body that itself starts with an empty line
+    next to a list is a leading gap of two and is refused.  A task item
+    (`1. [ ] a`, `1. [x] a`) is not plain.
 
     Whitelist: a blank line in a list context -- after a block holding a
     list-item-like line (also inside a blockquote) or its indented continuation,
@@ -1460,11 +1464,16 @@ def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
         ]
         offending.extend(
             gap[0]
-            for gap, beside in [
-                (leading, listed[:1]),
-                *((gap, listed[index : index + 2]) for index, gap in enumerate(gaps)),
+            for gap, beside, minimum in [
+                # The Document already adds one empty line before the body, so a
+                # single leading empty line is a gap of two next to a list.
+                (leading, listed[:1], 0),
+                *(
+                    (gap, listed[index : index + 2], 1)
+                    for index, gap in enumerate(gaps)
+                ),
             ]
-            if len(gap) > 1 and any(beside)
+            if len(gap) > minimum and any(beside)
         )
         if offending:
             line = blocks[min(offending)][0] + 1
@@ -1493,7 +1502,7 @@ def _linear_markdown_readback_body(
     if qualified is not None:
         return qualified
     drops = (
-        _linear_observed_list_blank_lines(body, strict=strict)
+        _linear_observed_list_blank_lines(body, strict=False)
         if observed_lists or strict
         else set()
     )
@@ -1534,14 +1543,20 @@ def _linear_markdown_readback_body(
         nonfenced.append(source_line)
     flush_nonfenced()
     rendered_body = "".join(rendered)
-    qualified = _linear_pat_72_readback(body, rendered_body)
-    if qualified is not None:
-        return qualified
-    qualified = _linear_pat_86_readback(body, rendered_body)
-    if qualified is not None:
-        return qualified
-    qualified = _linear_pat_16_adr13_readback(body, rendered_body)
-    return rendered_body if qualified is None else qualified
+    # The digest-pinned profiles (PAT-72, PAT-86, PAT-16) come first: each binds one
+    # exact native source and its exact readback digest, so it is a more specific
+    # recognition than the general strict list whitelist, which only runs after.
+    for profile in (
+        _linear_pat_72_readback,
+        _linear_pat_86_readback,
+        _linear_pat_16_adr13_readback,
+    ):
+        qualified = profile(body, rendered_body)
+        if qualified is not None:
+            return qualified
+    if strict:
+        _linear_observed_list_blank_lines(body, strict=True)
+    return rendered_body
 
 
 def _linear_markdown_readback_bodies(
@@ -7875,9 +7890,14 @@ class LinearTracker(Tracker):
         self._validate_adr_graph(hypothetical, binding)
 
         # Supersession never changes a body: each is new only when its stored
-        # rendering is not verified by the model (`_is_stored_adr_body`).
-        source_new = not _is_stored_adr_body(source[-1], source_body)
-        replacement_new = not _is_stored_adr_body(
+        # rendering is not verified by the model (`_is_stored_adr_body`).  The
+        # dangling slot already exists and `_exact_adr_document_matches` just
+        # validated it with the model: only its witness is written, so its body
+        # is not new, whatever proves the previous version's bytes.
+        source_new = dangling_side != "source" and not _is_stored_adr_body(
+            source[-1], source_body
+        )
+        replacement_new = dangling_side != "replacement" and not _is_stored_adr_body(
             replacement_previous, replacement_body
         )
         _preflight_adr_body_readback(
