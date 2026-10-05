@@ -1544,12 +1544,17 @@ def _linear_observed_blank_line_readback(rendered: str, *, strict: bool) -> str:
         if not line.strip(" \t"):
             gap.append(source_line)
             continue
+        after_blank = bool(gap)
         settle(source_line)
         if strict:
             quote = _BLOCKQUOTE_PREFIX.match(line)
             text = line[quote.end() :] if quote else line
             if _TABLE_DELIMITER_ROW.fullmatch(text) and (
-                "|" in text or (previous is not None and "|" in previous)
+                "|" in text or (
+                    previous is not None
+                    and not after_blank
+                    and "|" in previous
+                )
             ):
                 raise ValueError("unsupported table Markdown in ADR body")
         closed_fence = False
@@ -1691,7 +1696,8 @@ def _preflight_adr_body_readback(
     """Refuse a body with an unmodelled Linear rendering before any write.
 
     Every body keeps the pre-PAT-94 refusals.  A ``new_body`` (the fail-closed
-    default) also gets the strict PAT-94 list whitelist.  Callers pass
+    default) also gets the strict PAT-94 list whitelist and the PAT-103 shapes
+    (multiple blank lines, final newline, tables, empty bodies).  Callers pass
     ``new_body=False`` only when the body's Linear rendering is already proven:
     it is the exact body of the stored previous version whose bytes the model
     verifies (`_is_stored_adr_body`), of an existing exact slot being recovered,

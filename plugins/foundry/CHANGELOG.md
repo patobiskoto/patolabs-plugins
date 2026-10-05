@@ -8,10 +8,11 @@
   outside fenced code read back as one, a leading empty line and the final newline(s) are
   removed, fenced code is unchanged. A new body is refused before any write for unobserved
   neighbours (whitespace-only or CRLF blank lines, indented or quoted neighbours, a final
-  newline after a fence or in an unclosed fence), for a body of empty lines only and for every table, whose delimiter row
-  Linear rewrites; the same refusals now also apply before any write to the unchanged body of
-  a migrated historical version 0 the model does not predict (status change, link,
-  supersession). Pinned `PAT-72`/`PAT-86`/`PAT-16` profiles and the pre-PAT-94 model are unchanged.
+  newline after a fence or in an unclosed fence), for a body of empty lines only and for
+  every table, whose delimiter row Linear rewrites; the same refusals now also apply before
+  any write to the unchanged body of a migrated historical version 0 the model does not predict (status change, link,
+  supersession). Pinned `PAT-72`/`PAT-86`/`PAT-16` profiles and the pre-PAT-94 model are
+  unchanged.
   New guide: `docs/linear-adr-body-guide.md`.
 
 - Fixed (PAT-101): residuals of the PAT-94 Linear ADR list preflight. A body that starts with an

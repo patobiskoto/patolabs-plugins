@@ -51,10 +51,11 @@ Trailing spaces before a newline, hard breaks and raw HTML were already refused 
 earlier model. The strict check applies to a new or edited body, and also to the unchanged
 body of a migrated historical version 0 whose stored bytes the model does not predict: a
 status change, link or supersession on such an ADR is refused for the table, final
-newline, unobserved blank-line and indented or quoted last-line cases above. This is
+newline, unobserved blank-line, empty-body and indented or quoted last-line cases above. This is
 better than before: the refusal comes before any write, instead of a write followed by a
 failed verification that left an orphan Document. Reads stay additive: a stored Document
-matches if it equals the canonical bytes, the PAT-94 rendering or the pre-PAT-94 output.
+matches if it equals the canonical bytes, the pre-PAT-94 output or the PAT-103 output (the
+PAT-94-only rendering is no longer accepted for the generalised cases).
 A body that Linear would not leave stable under the blank-line merge is not expected to
 exist as stored, since Linear merges or removes those lines.
 

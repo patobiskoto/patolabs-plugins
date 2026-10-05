@@ -7124,7 +7124,7 @@ def test_linear_adr_pat85_rejects_hostile_strong_code_divergence(tracker):
 def test_linear_pat72_digest_pinned_blank_line_readback_recovers_only_witness(
     tracker, monkeypatch
 ):
-    """One observed blank-line collapse is not a general whitespace rule."""
+    """One observed blank-line collapse recovers only the pinned witness, not an arbitrary body."""
     instance, wire = tracker
     source = (
         "Before the qualified paragraph.\n\n"
@@ -9263,7 +9263,8 @@ def test_linear_adr_pat101_bracket_text_that_is_no_checkbox_stays_plain(body):
 
 # PAT-72 shows Linear collapsing two empty lines after a list item: next to a
 # list-context paragraph, a gap of two or more empty lines is refused for a new
-# body (cause names the first offending line); not strict, it is left as before.
+# body (cause names the first offending line); not strict, it is collapsed to one
+# line (PAT-103 model).
 PAT94_MULTI_BLANK_LISTS = [
     pytest.param("1. a\n\n2. b\n\n\nText", "1. a\n2. b\n\nText", 4, id="form-then-two"),
     pytest.param("Intro\n\n\n1. a\n\n2. b", "Intro\n\n1. a\n2. b", 2, id="two-then-form"),
@@ -10018,6 +10019,15 @@ def test_linear_adr_pat103_does_not_mistake_non_tables_for_tables():
         linear_module._preflight_adr_body_readback(body)
     # A delimiter-looking line inside a fence is code, not a table.
     linear_module._preflight_adr_body_readback("```\n|---|---|\n```")
+
+
+def test_linear_adr_pat103_table_header_must_be_adjacent_to_the_delimiter_row():
+    # A blank gap means the `|` line above is no GFM table header.
+    linear_module._preflight_adr_body_readback("Voir `a|b`.\n\n---\n\nSuite")
+    for body in ["Voir `a|b`.\n---\n\nSuite", "a | b\n- | -", "a | b\n:-: | -"]:
+        with pytest.raises(TrackerConflictError) as raised:
+            linear_module._preflight_adr_body_readback(body)
+        assert str(raised.value.__cause__).startswith("unsupported table")
 
 
 def test_linear_adr_pat103_list_refusal_keeps_its_cause_over_blank_lines(tracker):

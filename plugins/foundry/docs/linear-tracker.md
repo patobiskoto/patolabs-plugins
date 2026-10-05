@@ -361,8 +361,9 @@ change, link, supersession (either side; in an interrupted-pair recovery, the da
 validated by the model, so its body is not new and only its witness is written) or
 `import_adr` relation on such an ADR whose body holds a list shape outside the whitelist
 is refused before any write. Since PAT-103 the same holds for the PAT-103 shapes below
-(a table, a final newline after a closed fence or after a trailing tab, an unobserved
-blank-line run, a last line indented or quoted, a body of empty lines only): such an
+(a table, a final newline after a closed fence, in an unclosed fence, after `\r` or after a
+trailing tab, an unobserved blank-line run, a last line indented or quoted, a body of empty
+lines only): such an
 unchanged body is also refused on a status change, link or supersession. This is a
 deliberate fail-closed trade-off, and better than before: the refusal comes before any
 write, where the next version used to be written and then refused by verification,
@@ -371,8 +372,9 @@ verified by the model, as before PAT-94. Whether any real stored ADR is in
 that case is not known by the adapter; such an ADR can change status, links or
 supersession only after a body edit (itself a strict new body). Reads and verification
 (`list_adrs`, ADR chain, exact replay, batch verification) are never strict and are
-additive: a stored Document matches if it equals the canonical bytes, the PAT-94
-rendering or the pre-PAT-94 model output, so a Document stored before PAT-94 stays
+additive: a stored Document matches if it equals the canonical bytes, the pre-PAT-94
+model output or the PAT-103 model output (the PAT-94-only rendering is no longer accepted
+for the generalised cases), so a Document stored before PAT-94 stays
 readable. Replay of `adr create` with the exact title and body finds the existing slot
 and creates only the missing witness; a second replay is a no-op. Still unobserved and
 not modelled: Linear's rendering of spaced bullet lists, of CRLF line endings, of
@@ -393,10 +395,11 @@ fences are opaque. It applies to every read except the pre-PAT-94 model, which i
 `unsupported blank lines`, `unsupported final newline`, `unsupported table`) when it holds
 what was not observed: a whitespace-only, tab-only or CR line in a collapsed run, an
 indented or quoted neighbour of a collapsed run, a final newline after a fence, in an
-unclosed fence, after `\r` or an indented or quoted last line, a body made only of empty lines (`unsupported empty body`:
-the model would predict an empty body, never observed; the empty string itself is
-unchanged), and every table (the delimiter
-rewrite is not modelled, so the author uses a list or a fenced block). The author guide is
+unclosed fence, after `\r`, after a trailing tab or space, or an indented or quoted last
+line, a body made only of empty lines (`unsupported empty body`: the model would predict an
+empty body, never observed; the empty string itself is unchanged), and every table (the
+delimiter rewrite is not modelled, so the author uses a list or a fenced block). The same
+strict refusals apply to `import_adr`. The author guide is
 [`linear-adr-body-guide.md`](linear-adr-body-guide.md).
 Scope of the observation: 13 cases. The handling of the neighbours of a collapsed run
 (merge around a `---` separator, setext headings, lazy blockquote continuation, `~~~` or
