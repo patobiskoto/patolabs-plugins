@@ -542,7 +542,8 @@
       "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
       "smoke": {
         "passed_at_65536": true,
-        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit"
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit.deny_home_trial"
       },
       "note": "Reached through the LM Studio model key qwen3.8-27b-mlx-alias: a folder of hard links (pat19-campaign/Qwen3.8-27B-MLX-6bit-alias) to the 6-bit files, because LM Studio groups the 4-bit and 6-bit variants under qwen/qwen3.8-27b and no CLI or API key selects the 6-bit variant."
     },
@@ -581,7 +582,8 @@
       "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
       "smoke": {
         "passed_at_65536": true,
-        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit"
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit.deny_home_trial"
       },
       "note": "The selected variant of qwen/qwen3.8-27b must be the 4-bit one: the preflight refuses a loaded instance whose quantization is not 4bit."
     },
@@ -621,7 +623,8 @@
       "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
       "smoke": {
         "passed_at_65536": true,
-        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit"
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit.deny_home_trial"
       }
     },
     "muse-glimmer-30b-gguf": {
@@ -652,7 +655,8 @@
       "smoke": {
         "passed_at_65536": true,
         "evidence": "pat-19-preflight-2026-10-05.json#candidates.muse-glimmer-30b-gguf",
-        "failed_at_default_8192": true
+        "failed_at_default_8192": true,
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.muse-glimmer-30b-gguf.deny_home_trial"
       },
       "note": "Chat template embedded in the GGUF (covered by the file digest)."
     },
@@ -690,7 +694,8 @@
       "smoke": {
         "passed_at_65536": true,
         "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3-coder-30b-a3b-mlx-4bit",
-        "failed_at_default_8192": true
+        "failed_at_default_8192": true,
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3-coder-30b-a3b-mlx-4bit.deny_home_trial"
       }
     },
     "devstral-small-2-24b-gguf": {

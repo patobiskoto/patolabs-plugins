@@ -290,7 +290,11 @@ un pilote qui échoue reste `verified: false` et le lanceur le refuse. Les cinq 
 
 - **`local_harness`** : `omp` 18.4.10, argv de la configuration, entrée standard fermée, HOME isolé (le
   fournisseur `lm-studio` est découvert depuis le HOME isolé : aucun `home_files`), `--max-time 6m` accepté,
-  sous le profil du bac à sable local. Essayé avec les cinq candidats (voir plus bas).
+  sous le profil du bac à sable local. Essayé avec les cinq candidats deux fois : d'abord sous le profil à
+  liste d'interdits explicite (`smoke_at_65536`), puis le 2026-10-05 sous le profil final qui refuse le HOME
+  par défaut (`deny_home_trial` de chaque candidat : chargement confirmé, un seul modèle en mémoire, tests
+  jouets verts, audit propre). Les paramètres d'échantillonnage ne sont pas épinglés (valeurs par défaut de
+  LM Studio et du harnais, non relevées) : limite du résultat.
 - **`neutral_harness`** : mini-swe-agent 2.4.6 (PyPI, environnement virtuel isolé hors du dépôt). L'exécutable
   vient de la variable `PAT19_MINI_BIN` (chemin absolu ; le paquet installé doit être en 2.4.6, sinon le
   lanceur refuse **avant** toute réservation, au début de `screen`/`compare` : `compare` avec le parcours `N`
@@ -491,8 +495,20 @@ jugé ni relu (pas de dépense de plus), son coût reste compté. Une contaminat
 corrigée (pas de seconde chance) : le tamis reste incomplet (`undecided_tasks`, `selected` nul), un parcours dont
 une tâche est contaminée a une qualité et une économie `unavailable`, `report.contaminated` liste chaque cas. Pour
 le parcours C, une tentative locale contaminée est relayée par le cloud comme une tentative refusée (elle ne
-compte pas comme réussite locale) ; une revue contaminée laisse la tâche indécise sans relais. **Limites** :
-c'est un audit, pas une interdiction (la commande ou la lecture a eu lieu) ; il ne voit que ce que le flux montre
+compte pas comme réussite locale) ; une revue contaminée laisse la tâche indécise sans relais. **Lecture
+refusée par le bac à sable local** : pour un bras local lancé sous le profil qui refuse le HOME
+(`sandbox_denied`), un chemin que ce profil rend illisible (sous le HOME réel hors de la liste d'autorisation, ou
+sous une entrée de la liste de refus explicite) est une tentative **bloquée**, pas un accès : la lecture a
+échoué (EPERM), rien n'a atteint le bras, et elle n'est pas relevée (un `ls ~/.config` honnête ne rend pas le
+tamis incomplet). Les commandes interdites, les remontées hors du bundle vers un endroit lisible et les chemins
+lisibles (environnement du harnais) restent audités. Un bras cloud n'a pas ce bac à sable. **Fragilité à
+connaître** : une seule contamination rend le tamis entier incomplet sans rejeu (nouvel identifiant de campagne
+nécessaire). Pour un bras **cloud**, un appel **refusé** par une règle de `cloud_bash_deny` (Claude Code répond
+« Permission to use … has been denied by your rule ») est encore relevé comme contamination alors que rien n'a
+été exécuté, et le corps d'un heredoc passé à un interpréteur (`python3 - <<'PY'`) n'est pas audité (un chemin
+qu'il ouvre n'est pas vu) : deux points propres aux bras cloud, donc à la comparaison et pas au tamis, à traiter
+avant la comparaison. **Limites** :
+c'est un audit, pas une interdiction (la commande ou la lecture a eu lieu, ou a été tentée) ; il ne voit que ce que le flux montre
 (un chemin ou une commande construits à l'exécution, cachés dans un script ou un interpréteur, un alias, un
 processus fils, un sous-agent ne le sont pas) ; l'analyse d'une ligne de commande n'est pas un analyseur de shell
 (`eval "…"`, `find -exec`, `watch "…"`, un `$'…'` ne sont pas suivis ; un chemin dans un argument entre guillemets

@@ -2961,6 +2961,36 @@ def test_pat111_fix1_a_local_attempt_cut_right_after_its_verdict_is_decided_and_
     assert again.screen(tasks[:1], ["cand-a"]) == [] and counts(plan) == {"local": 1}  # no second chance
 
 
+def test_pat111_fix5_a_signal_between_the_discard_and_the_settle_never_replays_a_judged_attempt(
+        tmp_path, monkeypatch, sentinel_handlers):
+    """The gap after the bundle is discarded and before the attempt is settled: the signal lands as
+    the next critical section starts. It waits for the record; the judged attempt is never replayed."""
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    real_discard, real_critical, state = runner._discard, runner._critical, {"discarded": False}
+
+    def discard(*a, **kw):
+        out = real_discard(*a, **kw)
+        state["discarded"] = True
+        return out
+
+    def critical():
+        if state.pop("discarded", False):  # the first critical section after the discard
+            _send(signal.SIGTERM)
+        return real_critical()
+
+    monkeypatch.setattr(runner, "_discard", discard)
+    monkeypatch.setattr(runner, "_critical", critical)
+    with pytest.raises(SystemExit):
+        runner.screen(tasks[:1], ["cand-a"])
+    monkeypatch.undo()
+    rec = [r for r in results(runner) if r["record_type"] == "attempt"]
+    assert len(rec) == 1 and rec[0]["judge"]["verdict"] == "ACCEPTED"
+    assert lfr.report(campaign, results(runner), ledger_of(runner))["void_attempts"] == []
+    again, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    assert again.screen(tasks[:1], ["cand-a"]) == [] and counts(plan) == {"local": 1}  # no second chance
+
+
 CLOUD_CUTS = {  # where the signal falls, which attempt of the path has to stay decided
     "judge_discard": lambda m, r: _nth(m, r, "_discard", 1, signal.SIGTERM, after=False),
     "review_discard": lambda m, r: _nth(m, r, "_discard", 2, signal.SIGTERM, after=True),
@@ -3883,6 +3913,25 @@ def test_pat111_fix4_n4_a_bundle_file_that_names_a_home_path_is_text_in_a_result
         found = rec.get("contamination", {}).get("paths", [])
         assert found == expected, behavior
         assert (rec["outcome"] == "contaminated") is bool(expected), behavior
+
+
+@pytest.mark.parametrize("kind,tool,key", [("omp", "bash", "command"), ("claude", "Bash", "command")])
+def test_pat111_fix5_a_read_the_local_sandbox_refused_is_blocked_not_a_contamination(tmp_path, kind, tool, key):
+    """Under the deny-home profile a local arm's read of the real home (outside the allow list) or of
+    an explicitly denied path fails (EPERM): a blocked attempt, nothing reached the arm. One honest
+    ``ls ~/.config`` must not make the whole screening incomplete. Readable places stay audited."""
+    audit, home, bundle, _ = _audit_kw(tmp_path)
+    venv, state = home / ".venvs" / "mini", tmp_path / "state"
+    walled = (str(home), [str(venv)], [str(state)])
+    cache = home / ".claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"
+    denial = {"type": "tool_execution_end", "result": f"cat: {cache}: Operation not permitted"}
+    read = (kind, tool, {key: f"cat {cache}"})
+    assert audit(read, raw=[denial], sandbox_denied=walled) == []
+    assert audit(read, raw=[denial]) != []  # without the sandbox (a cloud arm) it is an access
+    assert audit((kind, tool, {key: f"ls {state}"}), sandbox_denied=walled) == []
+    assert audit((kind, tool, {key: "gh pr view 3"}), sandbox_denied=walled) == ["command:gh"]
+    assert audit((kind, tool, {key: f"cat {venv}/../../.ssh/id_ed25519"}), sandbox_denied=walled) == []
+    assert audit((kind, tool, {key: f"cat {venv}/lib/site.py"}), sandbox_denied=walled) != []  # readable
 
 
 def test_pat111_fix4_n4_audit_literals_cover_results_only(tmp_path):

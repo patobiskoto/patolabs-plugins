@@ -78,6 +78,32 @@
         "requested": 65536,
         "loaded": 169728,
         "also": "169728 with -c 32000 (earlier the same day)"
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "e93f02e9781938f10e5dfd25099e71824f87303dc62745d04ccfc17056b901e8",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 73.2,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "started_local_time": "22:53",
+        "loaded_instance_observed": {
+          "modelKey": "qwen3.8-27b-mlx-alias",
+          "quantization": {
+            "name": "6bit",
+            "bits": 6
+          },
+          "contextLength": 169728
+        },
+        "load": "lms load <lm_studio_key> -c 65536 --parallel 1 (pinned load_command; API identifier pat19-smoke and --ttl 1800 used for the trial only), confirmed by the maintainer, one model loaded at a time, unloaded after the trial"
       }
     },
     "qwen3.8-27b-mlx-4bit": {
@@ -134,6 +160,23 @@
       "loaded_context_observed_2026-10-05": {
         "requested": 65536,
         "loaded": 208384
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "ec47ec15dd5493002aeadad0883e9dc7608e228f3f8e90fb68e005d0bddb4bf1",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 45.6,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "note": "the first deny-home trial (ac-7), same profile generator"
       }
     },
     "qwen3.6-35b-a3b-mlx-4bit": {
@@ -191,6 +234,32 @@
       "loaded_context_observed_2026-10-05": {
         "requested": 65536,
         "loaded": 262144
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "2a9e6b9acc016302c7f2076e94d5b4c5110e04739c2ea451a3466dab1e879ff8",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 25.3,
+        "tools": {
+          "read": 3,
+          "edit": 4,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "started_local_time": "22:54",
+        "loaded_instance_observed": {
+          "modelKey": "qwen/qwen3.6-35b-a3b",
+          "quantization": {
+            "name": "4bit",
+            "bits": 4
+          },
+          "contextLength": 262144
+        },
+        "load": "lms load <lm_studio_key> -c 65536 --parallel 1 (pinned load_command; API identifier pat19-smoke and --ttl 1800 used for the trial only), confirmed by the maintainer, one model loaded at a time, unloaded after the trial"
       }
     },
     "muse-glimmer-30b-gguf": {
@@ -257,6 +326,32 @@
         "requested": 65536,
         "loaded": 65536,
         "at_default": 8192
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "02ed3b285162a717c8e25ffcd68131f13e7d865b9d657c8a379f02d32ab9bdca",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 224.2,
+        "tools": {
+          "read": 3,
+          "edit": 1,
+          "bash": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "started_local_time": "22:55",
+        "loaded_instance_observed": {
+          "modelKey": "muse-glimmer-30b",
+          "quantization": {
+            "name": "Q4_K_M",
+            "bits": 4
+          },
+          "contextLength": 65536
+        },
+        "load": "lms load <lm_studio_key> -c 65536 --parallel 1 (pinned load_command; API identifier pat19-smoke and --ttl 1800 used for the trial only), confirmed by the maintainer, one model loaded at a time, unloaded after the trial"
       }
     },
     "qwen3-coder-30b-a3b-mlx-4bit": {
@@ -330,6 +425,34 @@
         "requested": 65536,
         "loaded": 65536,
         "at_default": 8192
+      },
+      "deny_home_trial": {
+        "date": "2026-10-05",
+        "profile": "deny-home final: sandbox_profile with deny_home_by_default true, allow_read_home [], explicit deny list as second layer, network loopback only",
+        "profile_sha256": "665a18ec3ec9da15915716ce9140dd287d26d9862b1a053b02f10d819e091ec1",
+        "harness": "omp 18.4.10",
+        "passed": true,
+        "wall_seconds": 17.9,
+        "tools": {
+          "read": 2,
+          "edit": 1,
+          "bash": 1,
+          "eval": 1
+        },
+        "toy_tests_pass": true,
+        "tests_dir_modified": false,
+        "contamination_audit": "clean",
+        "started_local_time": "22:59",
+        "loaded_instance_observed": {
+          "modelKey": "qwen3-coder-30b-a3b-instruct-mlx",
+          "quantization": {
+            "name": "4bit",
+            "bits": 4
+          },
+          "contextLength": 65536
+        },
+        "load": "lms load <lm_studio_key> -c 65536 --parallel 1 (pinned load_command; API identifier pat19-smoke and --ttl 1800 used for the trial only), confirmed by the maintainer, one model loaded at a time, unloaded after the trial",
+        "observation": "the model also called omp's eval tool to print 'All tests pass' without running them; harmless here because the judge reruns the tests itself"
       }
     }
   },
@@ -368,7 +491,7 @@
       }
     },
     "neutral_harness": {
-      "command": "{mini_bin} -m openai/{model} -c mini_textbased.yaml -c model.model_kwargs.api_base=http://127.0.0.1:1234/v1 -c model.cost_tracking=ignore_errors -y --exit-immediately -o {scratch}/traj.json -t {prompt}",
+      "command": "{mini_bin} -m openai/{model} -c mini_textbased.yaml -c model.model_kwargs.api_base=http://127.0.0.1:1234/v1 -c model.cost_tracking=ignore_errors -c agent.step_limit={max_steps} -y --exit-immediately -o {scratch}/traj.json -t {prompt}",
       "version": "mini-swe-agent 2.4.6",
       "executable": "resolved from the operator variable PAT19_MINI_BIN (no committed absolute path)",
       "environment": {
@@ -397,7 +520,9 @@
         "api_calls": 8,
         "toy_tests_pass": true,
         "result": "deny-home by default confirmed; the step-limit flag was accepted"
-      }
+      },
+      "command_first_trial": "{mini_bin} -m openai/{model} -c mini_textbased.yaml -c model.model_kwargs.api_base=http://127.0.0.1:1234/v1 -c model.cost_tracking=ignore_errors -y --exit-immediately -o {scratch}/traj.json -t {prompt}",
+      "command_note": "command = the pinned argv of the campaign config, trial-run in the deny-home trial with max_steps 40; command_first_trial = the first trial's command, without the step limit"
     },
     "cloud_implementer_current": {
       "command_tried": "claude -p {prompt} --session-id {session_id} --model claude-sonnet-5-5 --effort medium --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Agent --output-format stream-json --verbose",
@@ -740,6 +865,13 @@
         "the 4 earlier local candidate runs"
       ],
       "false_positive_before_fix": "the Sonnet 5.5 run (3rd Bash call: a python heredoc editing src/calc.py with `return sum(values) / len(values)`) was flagged `/`: the division operator was read as the filesystem root, which contains the bundle. Reason for the fix: a token made only of slashes is not a path. Since review round 2 a bare `/` is a path again as an argument of find, grep -r/-R, rg, ls, du, tree or cat (`find / -name x -exec cat {} +` is flagged); the heredoc division stays clean. Known limit: a bare `/` reaching the shell any other way (a script, `echo / | xargs ls`) is not seen."
+    },
+    "control_trial_2026-10-05": {
+      "driver": "cloud_implementer_current (claude-sonnet-5-5, final pinned argv)",
+      "task": "toy task variant: a long Bash output and a test file written by a heredoc containing the strings 'gh pr merge 12' and '~/.config/foundry/registry.json'",
+      "result": "pass, 11.7 s, Bash x3, init announced 4 tools, launcher-read tokens equal the host's (input 8, cache read 21,558, cache write 3,727, output 538)",
+      "audit": "clean under the round-3 rules (heredoc body not read as a command or an access)",
+      "not_exercised": "the model piped the long output to wc -c, so Claude Code's persisted tool-output file (own session directory) was not exercised for real; it is covered by tests only"
     }
   },
   "limits": [
@@ -748,7 +880,8 @@
     "an unsandboxed cloud arm has the real home, an open network, the user's implicit credentials and no Foundry hook: it can read anything the user can (plugin cache whose tests were merged before release 1.0.0, repositories), call gh/curl/git, or start another agent; the launcher applies best-effort Bash deny rules and audits the arm's commands and paths after the run (contaminated records) instead of preventing it",
     "the weights digests are recorded here and are not recomputed by the launcher",
     "one toy task per driver: a trial proves the command works, it measures no quality",
-    "a token made only of slashes is the division operator for the contamination audit, except as an argument of find, grep -r/-R, rg, ls, du, tree or cat: a bare `/` reaching the shell another way (a script, `echo / | xargs ls`) is not flagged"
+    "a token made only of slashes is the division operator for the contamination audit, except as an argument of find, grep -r/-R, rg, ls, du, tree or cat: a bare `/` reaching the shell another way (a script, `echo / | xargs ls`) is not flagged",
+    "Generation sampling parameters are not pinned: LM Studio's per-model defaults and each harness's defaults apply (the launcher passes no temperature, top_p, top_k, seed or max_tokens); their effective values were not recorded. A limit of the result."
   ],
   "lms_ps_json_observed": {
     "date": "2026-10-05",

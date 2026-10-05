@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Fixed (PAT-111, review round 4): a local arm's read that its deny-home sandbox refused (real home outside
+  the allow list, or an explicitly denied path) is a blocked attempt, no longer a contamination
+  (`audit_transcript(sandbox_denied=...)`); a signal between the bundle discard and the settle of a judged
+  local attempt now waits for the record (the attempt is never replayed). Evidence: the four remaining
+  candidates passed the toy tool-call trial under the final deny-home profile on 2026-10-05
+  (`deny_home_trial` per candidate), plus one cloud control run (heredoc with `gh`/`~/.config` strings,
+  audit clean); sampling parameters are declared unpinned. Cloud-only gaps (a call refused by a
+  `cloud_bash_deny` rule still counts as contamination; interpreter heredoc bodies are not audited) are
+  documented, to be handled before the comparison.
 - Fixed (PAT-111, review round 3; fake arms only): the contamination audit no longer reads heredoc bodies given to
   `cat`/`tee`/`python3 -` (a body a shell runs, and the `$(…)` of an unquoted-delimiter body, stay audited),
   `#` comments or separators inside quotes as commands/paths, allows a cloud arm's own Claude Code session

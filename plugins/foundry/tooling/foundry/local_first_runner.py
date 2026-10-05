@@ -1477,7 +1477,8 @@ def _tool_results(lines: Sequence[str]) -> list[str]:
 def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive: Sequence[Path],
                      home: str, arm_home: str | None = None,
                      own_session: tuple[str, str] | None = None,
-                     literals: Collection[str] = frozenset()) -> list[str]:
+                     literals: Collection[str] = frozenset(),
+                     sandbox_denied: tuple[str, Sequence[str], Sequence[str]] | None = None) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -1500,6 +1501,11 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     for the stream (the result names it, the arm then reads it); another session's directory stays a
     hit. ``literals`` (``base_literals``): a path whose literal text is one of them is not flagged in a tool
     RESULT (the arm read a bundle file that mentions it); path keys and commands that name it still are.
+    ``sandbox_denied`` (``(home, allowed, denied)``, a LOCAL arm run under the deny-home profile): a path
+    the arm's own sandbox made unreadable (under ``home`` and outside ``allowed``, or under an entry of
+    the explicit ``denied`` list) is a BLOCKED attempt, not an access, and is not flagged: the read
+    failed (EPERM), nothing reached the arm. Commands, climbs out of the bundle to readable places and
+    readable paths are audited as before. A cloud arm has no such sandbox: never passed for it.
     Best effort on a command line (a path or a command built at run time, or run by a script, is
     not seen). A non-empty result makes the attempt ``contaminated``. ``~`` shows as the home directory
     in the result. Known limit: a token made only of slashes (``/``, ``//``) is the division operator of
@@ -1521,8 +1527,21 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
         expanded = _expand(own_session[0], str(home_real))
         projects = Path(os.path.realpath(os.path.expanduser(own_session[0]) if expanded is None else expanded))
 
+    walled: tuple[Path, list[Path], list[Path]] | None = None
+    if sandbox_denied is not None:
+        walled = (Path(os.path.realpath(sandbox_denied[0])),
+                  [Path(os.path.realpath(p)) for p in sandbox_denied[1]],
+                  [Path(os.path.realpath(p)) for p in sandbox_denied[2]])
+
+    def blocked(path: Path) -> bool:  # the local sandbox refused this read: an attempt, not an access
+        if walled is None:
+            return False
+        w_home, w_allow, w_deny = walled
+        return (any(_within(path, d) for d in w_deny)
+                or (_within(path, w_home) and not any(_within(path, a) for a in w_allow)))
+
     def permitted(path: Path) -> bool:
-        if any(_within(path, a) for a in allowed):
+        if any(_within(path, a) for a in allowed) or blocked(path):
             return True
         if projects is None or path == projects or projects not in path.parents:
             return False
@@ -1874,7 +1893,7 @@ class Runner:
         self._executable(self._driver(driver_id))
 
     def _audit(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
-               session_id: str | None = None) -> list[str]:
+               session_id: str | None = None, exe: Mapping[str, str] | None = None) -> list[str]:
         """Contamination audit of one arm's tool calls, on the stream the launcher kept. Always against
         the strictest list (the one of a local arm): a cloud arm keeps ``~/.claude`` for its identity,
         but reading anything there (the plugin cache holds the merged tests) is a contamination, except
@@ -1890,9 +1909,14 @@ class Runner:
         own = None
         if session_id and not isolated:
             own = ((driver.get("session_log") or {}).get("projects_dir", "~/.claude/projects"), session_id)
+        walled = None
+        if driver["kind"] in LOCAL_KINDS and self._sandboxed(driver):  # what its sandbox made unreadable
+            deny_home, allow = self._home_policy(driver, exe)
+            if deny_home is not None:
+                walled = (str(deny_home), [str(p) for p in allow], [str(p) for p in self._deny_read(driver)])
         return audit_transcript(stream_log, bundle=bundle, scratch=scratch, sensitive=sensitive, home=home,
                                 arm_home=str(scratch / "home") if isolated else None, own_session=own,
-                                literals=self.literals.get(bundle, frozenset()))
+                                literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled)
 
     def _home(self) -> str:
         """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""
@@ -2044,6 +2068,7 @@ class Runner:
         model = self.campaign["candidates"][candidate_id]["model"]
         execution, started, verdict = None, None, None
         contamination: list[str] = []
+        hold = contextlib.ExitStack()  # once a verdict exists, a signal waits until the attempt is settled
         name = self._attempt_name(task, f"{path}-local-{candidate_id}")
         self.ledger.append("attempt_started", attempt_dir=name, path=path, pr=task["pr"],
                            set=task_set, candidate=candidate_id, segment="local", attempt=attempt)
@@ -2068,18 +2093,20 @@ class Runner:
                     deny_home=deny_home, allow_read=allow_read)
                 after = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
                 with self._critical():  # a signal right after the audit never loses its result
-                    contamination = self._audit(stream_log, bundle, attempt_dir / "scratch", driver)
+                    contamination = self._audit(stream_log, bundle, attempt_dir / "scratch", driver,
+                                                exe=exe)
                 try:
                     patch = self._patch_of(bundle)
                 except CandidateFault as fault:  # the arm's doing: refused, never void and replayed
                     patch, verdict = b"", _fault_verdict(fault)
                 else:
                     verdict = self._judge(task, bundle)
+                hold.enter_context(self._critical())  # no gap between the try and the settle below
             finally:
                 self._discard(bundle, attempt_dir)
         except BaseException as exc:  # tool failure or interruption: time is counted, the attempt
-            with self._critical():    # is recorded; a verdict already received is kept on it, so
-                                      # the attempt is decided and never replayed (no second chance)
+            with hold, self._critical():  # is recorded; a verdict already received is kept on it,
+                                          # so the attempt is decided and never replayed
                 wall = 0.0
                 if started is not None:
                     wall = execution["wall_seconds"] if execution else time.monotonic() - started
@@ -2091,7 +2118,7 @@ class Runner:
                                  judge=_judge_summary(verdict) if verdict else None,
                                  contamination=contamination)
             raise
-        with self._critical():  # settled and registered as unrecorded together (see ``_stop``)
+        with hold, self._critical():  # settled and registered as unrecorded together (see ``_stop``)
             self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None,
                                attempt_dir=name)
             stream = execution["stream"]
