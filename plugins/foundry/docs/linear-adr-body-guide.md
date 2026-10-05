@@ -42,23 +42,34 @@ empty lines next to a list, is refused with `unsupported list Markdown in ADR bo
 | --- | --- | --- |
 | any table (delimiter row such as `\|---\|---\|`, with or without alignment colons or outer pipes, also in a quote) | `unsupported table Markdown` | Linear rewrites the delimiter row (`\| -- \| -- \|`), which is not modelled: use a list or a fenced block |
 | two or more empty lines whose lines are not exactly `\n` (CRLF `\r\n`, a line with spaces or tabs) | `unsupported blank lines` (or an earlier whitespace refusal) | use LF only and truly empty lines |
-| two or more empty lines next to an indented (4 columns or a tab) or `>` quoted line | `unsupported blank lines` | keep one empty line there |
-| a final newline after a closing fence, inside an unclosed fence, after `\r`, or when the last line is indented or quoted | `unsupported final newline` | end the body on a prose line without trailing newline, or close the fence and add a closing sentence |
+| one empty line at the start or the end, or two or more between blocks, next to an indented (4 columns or a tab) or `>` quoted line | `unsupported blank lines` | keep one empty line between two ordinary blocks |
+| a body made only of empty lines | `unsupported empty body` | write content |
+| a final newline after a closing fence, inside an unclosed fence, after `\r` or a trailing tab, or when the last line is indented or quoted | `unsupported final newline` | end the body on a prose line without trailing newline, or close the fence and add a closing sentence |
 | list blank lines outside the observed form | `unsupported list Markdown` | tight list |
 
 Trailing spaces before a newline, hard breaks and raw HTML were already refused by the
-earlier model. An existing stored ADR is not re-checked: only a new or edited body
-is strict; reads stay additive and accept what was accepted before.
+earlier model. The strict check applies to a new or edited body, and also to the unchanged
+body of a migrated historical version 0 whose stored bytes the model does not predict: a
+status change, link or supersession on such an ADR is refused for the table, final
+newline, unobserved blank-line and indented or quoted last-line cases above. This is
+better than before: the refusal comes before any write, instead of a write followed by a
+failed verification that left an orphan Document. Reads stay additive: a stored Document
+matches if it equals the canonical bytes, the PAT-94 rendering or the pre-PAT-94 output.
+A body that Linear would not leave stable under the blank-line merge is not expected to
+exist as stored, since Linear merges or removes those lines.
+
+Evidence covers 13 observed cases. How the neighbours are handled (merge around a `---`
+separator, setext headings, lazy blockquote continuation, `~~~` or info-string fences,
+final newline removed after a heading or list item) is a generalisation consistent with
+the CommonMark tree, where repeated empty lines do not exist; it is not an exact
+observation of each case.
 
 ## Check a body before writing
 
-```text
-python3 - <<'PY'
-import sys; sys.path.insert(0, "plugins/foundry/tooling")
-from foundry.trackers.linear import _preflight_adr_body_readback as check
-check(open("body.md", encoding="utf-8").read())   # raises if refused, with __cause__
-PY
-```
+`adr create` (or a body edit) runs the check before any write: a refusal raises
+`Linear ADR body has unsupported Markdown serialization` with the cause above and
+creates nothing. Compare your body with the causes in the tables, there is no separate
+public checker.
 
 Unobserved shapes stay refused until a new bounded probe qualifies them; do not
 rely on the rendering of anything this guide does not list.

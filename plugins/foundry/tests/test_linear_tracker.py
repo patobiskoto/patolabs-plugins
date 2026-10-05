@@ -9958,6 +9958,13 @@ PAT103_REFUSED = [
     pytest.param("| a |\n|-|\n| 1 |", "unsupported table", id="table-one-column"),
     pytest.param("> | a | b |\n> |---|---|", "unsupported table", id="table-in-quote"),
     pytest.param("A\n\n| a | b |\n|\t---\t|\t---\t|", "unsupported table", id="table-tabs"),
+    pytest.param("a | b\n- | -\n1 | 2", "unsupported table", id="table-dash-first-cell"),
+    pytest.param("a | b\n-:|:-\n1 | 2", "unsupported table", id="table-colon-dash-pipe"),
+    pytest.param("a | b\n:-: | -\n1 | 2", "unsupported table", id="table-center-then-dash"),
+    pytest.param("> a | b\n> - | -\n> 1 | 2", "unsupported table", id="table-dash-first-cell-in-quote"),
+    pytest.param("> a | b\n> :-: | -", "unsupported table", id="table-center-in-quote"),
+    pytest.param("\n", "unsupported empty body", id="only-newline"),
+    pytest.param("\n\n\n", "unsupported empty body", id="only-blanks"),
 ]
 
 
@@ -9976,8 +9983,34 @@ def test_linear_adr_pat103_refuses_unobserved_shapes_before_any_write(
     assert wire.documents == {}
     assert not [q for q, _ in wire.calls if "documentCreate" in q]
     # Not strict: never refused, and no unobserved byte is rewritten.
-    linear_module._linear_markdown_readback_body(body)
+    if not cause.startswith(("unsupported table", "unsupported empty")):
+        # "~~~\nx\n~~~\n\n": the observed trailing empty line is dropped, the
+        # unobserved final newline after the fence is kept.
+        expected = (
+            "~~~\nx\n~~~\n"
+            if body == "~~~\nx\n~~~\n\n"
+            else linear_module._linear_markdown_readback_body(
+                body, observed_lists=False
+            )
+        )
+        assert linear_module._linear_markdown_readback_body(body) == expected
     linear_module._preflight_adr_body_readback(body, new_body=False)
+
+
+def test_linear_adr_pat103_empty_body_keeps_its_previous_behaviour():
+    # Only a body of empty lines is refused (the model would predict an unobserved
+    # ""); the empty string and the non-strict readback are unchanged.
+    assert linear_module._linear_markdown_readback_body("") == ""
+    assert linear_module._linear_markdown_readback_body("\n\n\n") == ""
+    linear_module._preflight_adr_body_readback("")
+    linear_module._preflight_adr_body_readback("\n\n\n", new_body=False)
+
+
+def test_linear_adr_pat103_unclosed_code_block_is_strict_only_about_the_final_newline():
+    linear_module._preflight_adr_body_readback("```\nx\n\n\ny")
+    with pytest.raises(TrackerConflictError) as raised:
+        linear_module._preflight_adr_body_readback("```\nx\n\n\ny\n")
+    assert str(raised.value.__cause__).startswith("unsupported final newline")
 
 
 def test_linear_adr_pat103_does_not_mistake_non_tables_for_tables():

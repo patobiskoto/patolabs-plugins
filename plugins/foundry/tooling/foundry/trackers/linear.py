@@ -1487,8 +1487,10 @@ def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
 # newline, leaves empty lines inside a fence untouched, and rewrites a table
 # delimiter row (`|---|---|` -> `| -- | -- |`), which is not modelled: a table is
 # refused before write.
+# The optional leading `* ` is a source `- ` already rewritten to a bullet by the
+# caller: `a | b` / `- | -` is a table whose delimiter row starts with `- `.
 _TABLE_DELIMITER_ROW = re.compile(
-    r"[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*"
+    r"(?:\*[ \t])?[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*"
 )
 
 
@@ -1555,10 +1557,13 @@ def _linear_observed_blank_line_readback(rendered: str, *, strict: bool) -> str:
         out.append(source_line)
         previous = source_line
     settle(None)
-    # A trailing gap left unmodified above (unobserved) keeps its bytes; the final
-    # newline is stripped only from an observed tail.
+    if strict and rendered and not rendered.strip(" \t\r\n"):
+        # Only empty lines: the model would predict "", which was never observed.
+        raise ValueError("unsupported empty body in ADR body")
+    # `settle(None)` already emitted every gap, so the tail is the last emitted line;
+    # a blank tail (an unobserved gap kept as written) is never stripped.
     tail = out[-1] if out else ""
-    if tail.endswith("\n") and not gap:
+    if tail.endswith("\n"):
         body = tail.removesuffix("\n")
         blocked = (
             fence is not None

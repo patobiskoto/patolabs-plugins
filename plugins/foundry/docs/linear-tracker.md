@@ -360,10 +360,14 @@ version, which the model verifies: that unchanged body is a new body there, so a
 change, link, supersession (either side; in an interrupted-pair recovery, the dangling slot already exists and was
 validated by the model, so its body is not new and only its witness is written) or
 `import_adr` relation on such an ADR whose body holds a list shape outside the whitelist
-is refused before any write. This is a deliberate fail-closed trade-off: without it, the
-next version would be written and then refused by verification, leaving an orphan
-Document. The strict check covers list shapes only: such a body without one is still
-written and verified by the model, as before PAT-94. Whether any real stored ADR is in
+is refused before any write. Since PAT-103 the same holds for the PAT-103 shapes below
+(a table, a final newline after a closed fence or after a trailing tab, an unobserved
+blank-line run, a last line indented or quoted, a body of empty lines only): such an
+unchanged body is also refused on a status change, link or supersession. This is a
+deliberate fail-closed trade-off, and better than before: the refusal comes before any
+write, where the next version used to be written and then refused by verification,
+leaving an orphan Document. A body with none of these shapes is still written and
+verified by the model, as before PAT-94. Whether any real stored ADR is in
 that case is not known by the adapter; such an ADR can change status, links or
 supersession only after a body edit (itself a strict new body). Reads and verification
 (`list_adrs`, ADR chain, exact replay, batch verification) are never strict and are
@@ -389,9 +393,16 @@ fences are opaque. It applies to every read except the pre-PAT-94 model, which i
 `unsupported blank lines`, `unsupported final newline`, `unsupported table`) when it holds
 what was not observed: a whitespace-only, tab-only or CR line in a collapsed run, an
 indented or quoted neighbour of a collapsed run, a final newline after a fence, in an
-unclosed fence, after `\r` or an indented or quoted last line, and every table (the delimiter
+unclosed fence, after `\r` or an indented or quoted last line, a body made only of empty lines (`unsupported empty body`:
+the model would predict an empty body, never observed; the empty string itself is
+unchanged), and every table (the delimiter
 rewrite is not modelled, so the author uses a list or a fenced block). The author guide is
 [`linear-adr-body-guide.md`](linear-adr-body-guide.md).
+Scope of the observation: 13 cases. The handling of the neighbours of a collapsed run
+(merge around a `---` separator, setext headings, lazy blockquote continuation, `~~~` or
+info-string fences, final newline removed after a heading or a list item) is a
+generalisation consistent with the CommonMark tree, where repeated empty lines do not
+exist, not an exact observation of each case.
 The digest-pinned profiles (`PAT-72`, `PAT-86`, `PAT-16`) are applied before the strict list
 check: each binds one exact native source and its exact readback digest, so a new ADR
 identical to a pinned source is accepted even where the general whitelist would refuse its
