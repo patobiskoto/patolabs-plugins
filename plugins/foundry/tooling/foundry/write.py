@@ -7,6 +7,7 @@ mechanical invariants live in code (this file); judgment lives in the skills.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import secrets
 import time
@@ -594,7 +595,28 @@ def _bounded_epic_node(
     )
 
 
+def _graph_snapshot_scope(tracker):
+    """Open one private read scope for ONE snapshot (PAT-99); a no-op if unsupported."""
+    opener = getattr(tracker, "graph_snapshot", None)
+    return opener() if callable(opener) else contextlib.nullcontext()
+
+
 def bounded_epic_graph_snapshot(
+    tracker, project: Project, parent: Issue,
+    accept_overrides: frozenset = frozenset(),
+) -> tuple[tuple[EpicClosureChild, ...], tuple[EpicClosureDependency, ...]]:
+    """Read the complete required-child/dependency graph in canonical order.
+
+    Each call is its own fresh snapshot: a provider that supports it reads every node
+    once inside the call (PAT-99) and shares nothing with any other call.
+    """
+    with _graph_snapshot_scope(tracker):
+        return _bounded_epic_graph_snapshot(
+            tracker, project, parent, accept_overrides,
+        )
+
+
+def _bounded_epic_graph_snapshot(
     tracker, project: Project, parent: Issue,
     accept_overrides: frozenset = frozenset(),
 ) -> tuple[tuple[EpicClosureChild, ...], tuple[EpicClosureDependency, ...]]:
@@ -832,7 +854,8 @@ def epic_graph_diagnostic(
     reserved for a deterministic binding refusal (``TrackerBindingError`` or
     ``ValueError``); every other failure is a ``read-error``.  No provider write.
     """
-    return _epic_graph_walk(tracker, project, parent, accept)[0]
+    with _graph_snapshot_scope(tracker):
+        return _epic_graph_walk(tracker, project, parent, accept)[0]
 
 
 def format_epic_diagnostic(report: list[dict]) -> str:
@@ -870,8 +893,17 @@ def _snapshot_with_diagnostic(
     tracker, project: Project, parent: Issue, accept: frozenset,
 ):
     """Build the graph snapshot; on refusal, append the complete read-only diagnostic."""
+    # PAT-99: the refused snapshot and its diagnostic are ONE snapshot, so a node read
+    # by the former is not read again by the latter (a failed read is never cached).
+    with _graph_snapshot_scope(tracker):
+        return _snapshot_with_diagnostic_in_scope(tracker, project, parent, accept)
+
+
+def _snapshot_with_diagnostic_in_scope(
+    tracker, project: Project, parent: Issue, accept: frozenset,
+):
     try:
-        return bounded_epic_graph_snapshot(tracker, project, parent, accept)
+        return _bounded_epic_graph_snapshot(tracker, project, parent, accept)
     except (SystemExit, TrackerConflictError, TrackerBindingError) as exc:
         text = ""
         try:

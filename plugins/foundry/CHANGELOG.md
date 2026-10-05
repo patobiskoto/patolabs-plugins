@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Changed (PAT-99): reading a closed Epic or taking a graph snapshot reads each node at most
+  once per snapshot (`LinearTracker.graph_snapshot()`, used by `bounded_epic_graph_snapshot`
+  and the PAT-95 diagnostic): N + 1 reads for N nodes instead of about 5 N (fake graph of 31
+  children + 24 prerequisites: snapshot 269 -> 56, closed-Epic read 270 -> 57, diagnostic
+  110 -> 55, whole `close-epic` 1118 -> 266). The pre-write S1 and the post-write
+  verification stay independent fresh snapshots: no reuse across snapshots, calls or the
+  write; closure semantics, receipts and fail-closed detection are unchanged. See
+  `docs/linear-tracker.md`.
+
 - Added (PAT-98): the Linear client retries a pure read at most 3 times (deterministic waits
   of 1 s, 2 s, 4 s) on a network failure (`transport_error`) or HTTP 500/502/503/504, never on
   data, binding or authorization errors, and never a write (PAT-ADR-0006 S2). A rate-limit

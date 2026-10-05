@@ -1081,7 +1081,9 @@ def test_graph_version_change_around_parent_write_fails_closed(
                 and variables.get("id") == "LIN-1"
             ):
                 parent_reads["value"] += 1
-                if parent_reads["value"] == 10:
+                # PAT-99: the 8th parent read opens the S1 snapshot (it was the 10th
+                # before nodes were read once per snapshot); the change lands before S1.
+                if parent_reads["value"] == 8:
                     wire.issues["LIN-2"]["updatedAt"] = "2026-09-20T10:03:00Z"
             result = original(document, variables)
             if (

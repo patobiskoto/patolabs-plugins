@@ -509,10 +509,11 @@ def _fail_reads(tracker, wire, issue_id, *, from_read=1, exc=OSError("boom")):
     return reads
 
 
-@pytest.mark.parametrize("from_read", (1, 2))
+@pytest.mark.parametrize("from_read", (1,))
 def test_transport_failure_is_a_read_error_never_a_foreign_project(monkeypatch, from_read):
-    # from_read=1: validate_issue_binding (the first provider read on Linear) fails;
-    # from_read=2: validate passes and get_issue's own read fails.
+    # PAT-99: inside one snapshot the binding check and get_issue share ONE provider
+    # read per node, so only the first read can fail (the former from_read=2 case, a
+    # second read failing after a passed validation, no longer exists).
     tracker, wire, project = _graph(monkeypatch, dependency=True, transitive=True)
     parent = tracker.get_issue("LIN-1")
     _fail_reads(tracker, wire, "LIN-3", from_read=from_read)
@@ -617,9 +618,9 @@ def test_snapshot_binding_configuration_error_is_not_labelled_foreign(monkeypatc
     assert "nœud hors projet" not in str(excinfo.value).split("\n", 1)[0]
 
 
-def test_diagnostic_reads_each_node_at_most_twice(monkeypatch):
-    # Before: validate_issue_binding(parent, node) re-read the parent + the node, then
-    # get_issue read the node again = 3 provider issue reads per node.  Now: 2.
+def test_diagnostic_reads_each_node_at_most_once(monkeypatch):
+    # Before PAT-95: 3 provider issue reads per node; PAT-95: 2; PAT-99: 1 (the
+    # snapshot scope reuses the binding-check read for get_issue).
     tracker, wire, project = _graph(monkeypatch, dependency=True, transitive=True)
     parent = tracker.get_issue("LIN-1")
     counts: dict[str, int] = {}
@@ -632,7 +633,7 @@ def test_diagnostic_reads_each_node_at_most_twice(monkeypatch):
 
     tracker._transport = transport
     write.epic_graph_diagnostic(tracker, project, parent)
-    assert counts == {"LIN-2": 2, "LIN-3": 2, "LIN-4": 2}
+    assert counts == {"LIN-2": 1, "LIN-3": 1, "LIN-4": 1}
 
 
 def test_unknown_named_id_is_named_even_when_the_snapshot_fails_elsewhere(monkeypatch):
