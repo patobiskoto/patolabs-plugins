@@ -43,15 +43,18 @@ Codes de sortie : 0 terminé, 2 refus ou erreur d'outil (pas d'enveloppe, envelo
 refusé, pilote non vérifié, dossier de travail dans le checkout, tentative déjà consignée, état mêlant
 essai à blanc et réel, candidat inconnu, bac à sable impossible à appliquer, ligne tronquée dans le
 registre ou les résultats, rapport sous une autre configuration ou sans registre…), 3 plafond d'enveloppe
-atteint. Une interruption (Ctrl-C, SIGTERM, SIGHUP) sort avec le code du signal après avoir consigné
-la tentative coupée.
+atteint. Une interruption (Ctrl-C, SIGTERM, SIGHUP) pendant `screen` ou `compare` sort avec le code du
+signal après avoir consigné la tentative coupée et l'arrêt (voir « Tentative interrompue » pour ce qui est
+couvert et ce qui ne l'est pas).
 
 `report` lit **obligatoirement** le registre `ledger-<campagne>.jsonl` placé à côté du fichier de
 résultats (même dossier d'état, même identifiant de campagne) : sans lui, il refuse (code 2). Il n'y a pas
 d'option pour s'en passer.
 
 - `--work-root` est un dossier jetable **hors du checkout de développement** (refusé sinon). Chaque
-  tentative y reçoit un bundle neuf (`attempt-NNNN-…/bundle`) et un dossier d'essai
+  tentative y reçoit un bundle neuf (`attempt-lLL-NNNN-…/bundle`, où `LL` est le rang du lancement dans le
+  registre de la campagne : un relancement ne réutilise jamais un nom, donc n'écrase pas le flux d'une
+  tentative tuée par un lancement précédent) et un dossier d'essai
   (`scratch/`), supprimés ensuite. Les flux d'événements bruts sont conservés sous
   `<state-dir>/streams/`.
 - `screen` ne fait que des tentatives locales (candidat × tâche du tamis) et le juge : aucune
@@ -62,7 +65,8 @@ d'option pour s'en passer.
 - **Pas de reprise** : le lanceur refuse de démarrer une tentative dont la clé (parcours, tâche, jeu,
   candidat pour une tentative locale, segment, numéro) a déjà un enregistrement, et `report` refuse un
   fichier qui en contient deux. Une tentative coupée (panne d'outil, Ctrl-C, SIGTERM) est consignée elle
-  aussi et ne se rejoue pas. Une campagne interrompue ou bloquée ne se rejoue pas dans le même état : la
+  aussi et ne se rejoue pas. Une tentative **tuée** (SIGKILL, coupure de courant) ne laisse pas de
+  clé : voir « Tentative interrompue ». Une campagne interrompue ou bloquée ne se rejoue pas dans le même état : la
   **seule** sortie est un nouvel identifiant de campagne **et** une nouvelle enveloppe, données par le
   mainteneur (donc un registre et un fichier de résultats distincts). Choix assumé, plus simple et plus sûr
   qu'une reprise par saut des tentatives terminées : un candidat rejoué ne peut pas gagner par répétition
@@ -144,11 +148,18 @@ profil d'une exécution cloud est généré avant son inscription au registre.
 Le registre est `<state-dir>/ledger-<campagne>.jsonl`, en ajout seul et synchronisé sur disque à chaque
 ligne, comme le fichier de résultats (`session_started` avec les sha256 de
 l'enveloppe, de la configuration de campagne et du manifeste, `preflight`, `cloud_started`, `settled`,
-`stopped`). Une ligne tronquée ou illisible dans l'un des deux fichiers est un refus net qui nomme le
+`attempt_started`, `stopped`). Une ligne tronquée ou illisible dans l'un des deux fichiers est un refus net qui nomme le
 fichier et la ligne : cet état n'est plus fiable, il faut une nouvelle campagne. Chaque ligne du registre et chaque enregistrement de résultat porte `dry_run` ; un état qui
 contient des lignes de l'autre nature est refusé (jamais d'exécution à blanc comptée contre un plafond
 réel). Chaque enregistrement de résultat porte aussi `campaign_sha256`, `manifest_sha256` et
-`envelope_sha256` : le lanceur refuse de continuer dans un fichier écrit sous d'autres valeurs.
+`envelope_sha256` : le lanceur refuse de continuer dans un fichier écrit sous d'autres valeurs. Le registre
+est vérifié **au démarrage de la même façon** que les résultats : chacune de ses lignes `session_started`
+(y compris celle d'un lancement refusé au préflight, qui n'a laissé aucun résultat) doit porter les mêmes
+empreintes de campagne, de manifeste et d'enveloppe que ce lancement, sinon le lanceur refuse (code 2)
+**avant** toute réservation, tentative ou ligne écrite : modifier la configuration ou l'enveloppe en gardant
+l'identifiant de campagne ne remet pas les plafonds à zéro. Chaque tentative locale est inscrite au
+registre (`attempt_started`, avec son nom `attempt_dir`) avant de s'exécuter et réglée (`settled`, même
+`attempt_dir`) à sa fin, y compris interrompue.
 
 ## Préflight (le lanceur ne charge aucun modèle)
 
@@ -203,15 +214,30 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   `envelope_sha256` sur chaque enregistrement ; `report` les vérifie (une seule valeur par fichier, la
   configuration passée à `--campaign` doit avoir le sha256 des résultats), refuse les tentatives en double
   et les fichiers mêlant essai à blanc et réel, puis imprime `rules_applied` et `provenance`.
-- **Tentative interrompue** : sur Ctrl-C, SIGTERM, SIGHUP ou toute autre exception pendant une
-  tentative locale, un parcours cloud ou la revue du parcours C, le lanceur écrit un enregistrement
+- **Tentative interrompue** : sur Ctrl-C, SIGTERM, SIGHUP ou toute autre exception **à n'importe quel moment
+  de `screen` et de `compare`** (construction du bundle, patch, juge, lecture des journaux, écriture du
+  registre ou d'un enregistrement, nettoyage d'un pilote), le lanceur écrit un enregistrement
   `status: interrupted` (`outcome: interrupted`, `reason`, `premium.billing_total` **nul**, les
   `cloud_sessions` déjà inscrites), puis un enregistrement `stop` (`interrupted:<exception>`), puis relaie
   l'exception. Une tentative locale interrompue est réglée au registre (sa durée compte) et sa clé est
-  prise : elle ne se rejoue pas. Après un SIGKILL ou une panne franche rien ne peut être écrit : c'est le
-  registre qui le dit à `report` (voir Rapport). Non imposé : une tentative **locale** tuée par SIGKILL ne
-  laisse ni règlement ni enregistrement (sa durée n'est pas comptée et elle resterait rejouable dans le
-  même état) ; l'opérateur ne relance pas un état interrompu.
+  prise : elle ne se rejoue pas.
+  **Couvert exactement** : SIGTERM, SIGHUP et Ctrl-C (SIGINT) reçus par le processus du lanceur pendant
+  `screen` ou `compare`, hors des quelques instructions qui installent ou rétablissent les gestionnaires.
+  Ils sont convertis en `SystemExit(128 + n)` / `KeyboardInterrupt` ; le groupe de processus d'un pilote en
+  cours est tué ; un signal reçu **pendant** une écriture au registre, une écriture de résultat, un
+  règlement ou le nettoyage d'un pilote est noté et levé juste après (l'écriture n'est jamais coupée en
+  deux) ; un second signal n'est jamais avalé (il remplace le premier une fois l'enregistrement et
+  l'arrêt écrits) ; les gestionnaires précédents sont rétablis à l'identique en sortie. Une tentative
+  locale réglée mais dont l'enregistrement n'était pas encore écrit (signal entre le retour de la tentative
+  et son écriture) est écrite `interrupted` avant le `stop`. Un signal qui tombe pendant l'écriture même de
+  l'enregistrement fini laisse **cet** enregistrement (complet, une seule fois), puis le `stop`.
+  **Non couvert** : SIGKILL, coupure de courant, plantage de l'interpréteur ou de la machine, un signal
+  reçu avant `screen`/`compare` (construction du lanceur) ou hors du fil principal (aucun gestionnaire
+  n'y est installé), et un SIGINT ignoré au départ (il le reste). Dans ces cas rien ne peut être écrit :
+  une tentative **locale** tuée ne laisse ni règlement ni enregistrement (sa durée n'est pas comptée et
+  elle reste rejouable dans le même état) ; c'est le registre qui le dit à `report` (voir Rapport :
+  `ledger.unsettled_starts`, avertissements, décision `inconclusive`). L'opérateur ne relance pas un
+  état interrompu.
 - **Total premium d'un enregistrement** : connu seulement si les compteurs de **chaque** exécution cloud
   de `cloud_sessions` ont été lus ; une exécution inscrite au registre dont le coût n'a pas été relu rend
   le total nul (inconnu), jamais 0.
@@ -252,6 +278,21 @@ exécution cloud des résultats a sa ligne au registre.
   d'une autre nature (à blanc/réel) ou écrit sous d'autres empreintes (enveloppe, configuration,
   manifeste), enregistrement qui ne nomme pas ses exécutions cloud, session inconnue du registre, session
   nommée deux fois, total premium d'un enregistrement que le registre ne confirme pas.
+- **Départs non réglés** (`ledger.unsettled_starts`) : `report` liste aussi chaque `attempt_started` du
+  registre sans `settled` de même `attempt_dir` (tentative locale tuée, éventuellement rejouée par un
+  lancement ultérieur) et chaque préflight réussi suivi d'aucun démarrage de tentative avant le préflight
+  ou le lancement suivant (un préflight suivi d'un `stopped` propre n'en est pas un). Chaque entrée porte
+  le mode de la session qui l'a écrite et un `warning` nommant la tentative ou le préflight. Pour le tamis,
+  ces avertissements figurent dans `screening.warnings` : `selected` reste (le résultat des enregistrements
+  est intact) mais le tamis n'est pas présenté comme propre. Pour la comparaison, ils figurent dans
+  `comparison.warnings` et la décision est `inconclusive` (jamais `retained` ni `keep_cloud`).
+- **Candidat comparé** : `report` refuse (code 2) une comparaison dont le candidat local (parcours `C` ou
+  `N`) n'est pas celui que le tamis a désigné par la règle préenregistrée (`selected`) ; un tamis incomplet
+  ou sans vainqueur ne désigne personne, donc refuse aussi. `compare` fait la même vérification au
+  démarrage, avant toute réservation, quand les résultats du tamis sont dans le même dossier d'état
+  (seulement pour les parcours `C`/`N` ; `A` et `B` n'ont pas de candidat local). Sans résultats de tamis
+  dans les fichiers, le contrôle est impossible : `comparison.screening_selected` vaut
+  `screening_results_not_available` (rien n'est supposé).
 - Travail dépensé inconnu (`ledger.unknown_spent_work` liste les raisons) : `cloud_started` sans `settled`
   apparié, `settled` interrompu, `settled` aux tokens inconnus, session du registre sans enregistrement de
   résultat. Dans ces cas **aucun** verdict d'économie n'est rendu (`unavailable` pour tous les parcours :
@@ -275,7 +316,10 @@ Règles :
   `unavailable` si le travail premium d'un des deux parcours n'est pas mesurable, si le registre connaît
   du travail dépensé inconnu, ou si une tâche comparée (du parcours ou de A) n'est pas décidée : un
   parcours coupé avant son terme n'a pas de coût complet, le comparer donnerait un chiffre trop
-  favorable. Le travail premium est
+  favorable. **Cette règle « indisponible dès qu'une tâche comparée n'est pas décidée » est un choix du
+  lanceur, pas une coordonnée du protocole** (le protocole ne dit rien d'une tâche non décidée) : elle est
+  étiquetée comme telle dans `non_protocol_choices`
+  (`economy_unavailable_when_a_compared_task_is_undecided`). Le travail premium est
   la somme **non pondérée** des quatre classes de tokens facturables sur tous les modèles : c'est une
   limite (un token d'un modèle économique pèse autant qu'un token premium), d'où le détail par modèle
   (`economy_detail.premium_by_model`) nécessaire pour juger honnêtement le parcours B ;
@@ -322,9 +366,11 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   entrée standard fermée.
 - **Interruption et durée** : le groupe de processus du bras est tué à la borne de durée ou d'étapes, et
   aussi sur Ctrl-C, SIGTERM, SIGHUP ou toute exception du lanceur (`try/finally` ; SIGTERM et SIGHUP sont
-  convertis en `SystemExit` pendant l'exécution). Un signal reçu pendant le démarrage du bras (`Popen`)
-  est différé jusqu'à ce que le processus soit connu, puis le tue ; les gestionnaires de signaux
-  précédents sont rétablis à l'identique en sortie. Une exécution cloud interrompue est réglée dans le
+  convertis en `SystemExit` pour toute la durée de `screen` et de `compare`, pas seulement pendant
+  l'exécution d'un pilote). Un signal reçu pendant le démarrage du bras (`Popen`)
+  est différé jusqu'à ce que le processus soit connu, puis le tue ; un signal reçu pendant le nettoyage
+  (profil temporaire, rétablissement des gestionnaires) est levé une fois le nettoyage terminé ; les
+  gestionnaires de signaux précédents sont rétablis à l'identique en sortie. Une exécution cloud interrompue est réglée dans le
   registre avec des tokens inconnus. **Non imposé** : un enfant qui appelle `setsid` sort du groupe et
   survit au `kill` ; seule parade, un contrôle de quiétude avant le jugement : le lanceur compare deux
   empreintes (chemin, taille, mtime) du bundle à 0,2 s d'écart et refuse de juger (`tool_error`) si
@@ -374,7 +420,8 @@ enveloppes ne se mélangent pas (empreinte `envelope_sha256` vérifiée).
 configuration de campagne : `min_free_disk_gib` (30, marge de sécurité) ; le temps compté dans le verdict
 d'économie (`time_ratio_max`) ; le swap supplémentaire mesuré comme le maximum, sur les tentatives locales,
 de (après − avant) ; le « travail premium » défini comme la somme non pondérée des quatre classes de
-tokens sur tous les modèles (limite : voir Rapport). `bounds.cloud_max_seconds`, `max_correction_rounds`,
+tokens sur tous les modèles (limite : voir Rapport) ; l'économie « indisponible » dès qu'une tâche comparée
+n'est pas décidée (voir Rapport). `bounds.cloud_max_seconds`, `max_correction_rounds`,
 `isolation` et le pied d'énoncé sont aussi des choix du lanceur. Ils ne sont pas gelés par le protocole.
 
 ## Préconditions pour PAT-109

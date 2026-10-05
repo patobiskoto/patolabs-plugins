@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Changed (PAT-111): launcher corrections left by the PAT-108 reviews in `foundry.local_first_runner`
+  (fake arms only; no real arm, no pinning, no `verified` flag changed). SIGTERM, SIGHUP and Ctrl-C are now
+  converted for the whole duration of `screen` and `compare` (bundle build, judge, log reading, record
+  writing included), not only while a driver runs: the cut attempt leaves an `interrupted` record and a
+  `stop`; ledger and results writes are never cut in two; a second signal is never masked; a signal in
+  the cleanup of a driver no longer skips the handler restoration or the profile removal; a settled local
+  attempt not yet written is recorded as `interrupted`. SIGKILL and power loss remain uncovered (stated in
+  `pat-19-launcher-v1.md`). The existing ledger is checked at start against the campaign, manifest and
+  envelope digests (a launch refused at preflight no longer lets a modified configuration or envelope
+  reuse the campaign id). The rule "economy unavailable as soon as a compared task is undecided" is
+  labelled a launcher choice (`non_protocol_choices`). Local attempts are ledgered (`attempt_started`);
+  `report` lists every attempt start or passed preflight without a settlement (`ledger.unsettled_starts`),
+  warns on the screening (`selected` stays) and makes the comparison `inconclusive`, and refuses a
+  comparison whose local candidate is not the one the screening selected (`compare` checks it at start
+  when the screening results are in the same state directory; without them the report says so).
+  Attempt names carry the launch rank, so a relaunch never overwrites the stream log of a killed attempt.
+
 - Added (PAT-108): the PAT-19 comparison launcher `foundry.local_first_runner`
   (`python3 -m foundry.local_first_runner {preflight,screen,compare,report}`, documented in
   `docs/qualification/pat-19-launcher-v1.md`, frozen config `docs/qualification/pat-19-campaign-v1.json`).

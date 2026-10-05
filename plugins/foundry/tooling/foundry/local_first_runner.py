@@ -186,13 +186,21 @@ class Ledger:
         self.mode, self.caps, self.now, self.dry_run = mode, envelope["caps"], now, dry_run
         self.path = Path(state_dir) / f"ledger-{envelope['campaign_id']}.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        expected = {"envelope_sha256": envelope["sha256"], **(provenance or {})}
+        self.launch = 1  # this launcher's rank in the campaign: keeps attempt names unique across launches
         if self.path.exists():  # a dry run and a real run never share a ledger (nor a cap)
             for entry in _read_jsonl(self.path):
                 if bool(entry.get("dry_run", False)) != dry_run:
                     raise RunnerError(f"{self.path} holds {'real' if dry_run else 'dry-run'} entries: "
                                       "refusing to mix dry-run and real records")
-        self.append("session_started", mode=mode,
-                    **{"envelope_sha256": envelope["sha256"], **(provenance or {})})
+                if entry.get("kind") == "session_started":
+                    self.launch += 1
+                    for key, value in expected.items():  # before any claim or reservation
+                        if entry.get(key) != value:
+                            raise RunnerError(f"{self.path} was written under another {key}: the "
+                                              "campaign, manifest and envelope cannot change after the "
+                                              "first launch (new campaign id and envelope needed)")
+        self.append("session_started", mode=mode, **expected)
 
     def append(self, kind: str, **fields: Any) -> None:
         line = json.dumps({"kind": kind, "at": self.now(), "dry_run": self.dry_run, **fields},
@@ -606,13 +614,19 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
                     "wall_seconds": round(time.monotonic() - started, 3), "start_error": str(exc)[:200],
                     "stream": stats.summary(), "launcher_kill": False}
     finally:
-        if proc is not None:  # whatever was started is killed and reaped, however the call ends
-            _kill_group(proc)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                proc.wait(timeout=10)
-        _restore_handlers(previous)
-        if profile_dir is not None:
-            shutil.rmtree(profile_dir, ignore_errors=True)
+        gate["defer"] = True  # a signal during the cleanup is noted and raised once it is complete
+        try:
+            if proc is not None:  # whatever was started is killed and reaped, however the call ends
+                _kill_group(proc)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=10)
+        finally:
+            try:
+                if profile_dir is not None:
+                    shutil.rmtree(profile_dir, ignore_errors=True)
+            finally:
+                _restore_handlers(previous)
+                _deliver(gate)  # never masked: raised after the handlers are back
     code = proc.returncode
     launcher_kill = state["timed_out"] or state["step_limit"]
     return {"exit_code": code if code is not None and code >= 0 else None,
@@ -730,6 +744,10 @@ class Runner:
         self.ledger = Ledger(self.state_dir, envelope, mode, now, dry_run=dry_run,
                              provenance=self.provenance)
         self.counter = 0
+        self.launch = self.ledger.launch
+        self.gate: dict[str, Any] = {"defer": False, "pending": None}  # see ``_signals``
+        self.unrecorded: dict[str, Any] | None = None  # a settled local attempt not yet in the results
+        self.emitted: set[tuple] = set()
         self.stopped: str | None = None
         self.handed: set[Path] = set()
         self.guards: dict[Path, tuple[str, dict[str, str | None]]] = {}
@@ -740,9 +758,11 @@ class Runner:
         new campaign id, hence a new envelope, is needed), and results written in dry-run mode, under
         another campaign config, manifest or envelope never share a file with this run."""
         seen: set[tuple] = set()
+        self.prior_records: list[dict[str, Any]] = []
         if not self.results_path.exists():
             return seen
-        for rec in _read_jsonl(self.results_path):
+        self.prior_records = _read_jsonl(self.results_path)
+        for rec in self.prior_records:
             if bool(rec.get("dry_run", False)) != self.dry_run:
                 raise RunnerError(f"{self.results_path} holds {'real' if self.dry_run else 'dry-run'} "
                                   "records: refusing to mix dry-run and real records")
@@ -765,11 +785,46 @@ class Runner:
         record = {"schema": RESULT_SCHEMA, "campaign_id": self.envelope["campaign_id"],
                   "mode": self.mode, "dry_run": self.dry_run, **self.provenance, **record}
         self.results_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.results_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())  # the record is the anti-replay guard: it must survive a crash
+        with self._critical():  # a signal never cuts the write: it is raised once the record is on disk
+            with self.results_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())  # the record is the anti-replay guard: it must survive a crash
+            if record.get("record_type") == "attempt":
+                self.emitted.add(_record_key(record))
+                if self.unrecorded is not None and _record_key(self.unrecorded) == _record_key(record):
+                    self.unrecorded = None
         return record
+
+    # ---- signals
+    @contextlib.contextmanager
+    def _signals(self):
+        """SIGTERM, SIGHUP and Ctrl-C become an exception (``SystemExit(128 + n)`` /
+        ``KeyboardInterrupt``) for the WHOLE call, not only while a driver runs, so the paths that
+        already record an interruption (``interrupted`` record, ``stop``) cover the bundle build, the
+        judge, the log reading and the record writing too. The exact previous handlers are put back."""
+        previous = _install_term_handlers(self.gate)
+        try:
+            yield
+        finally:
+            self.gate["defer"] = True
+            try:
+                _restore_handlers(previous)
+            finally:
+                _deliver(self.gate)
+
+    @contextlib.contextmanager
+    def _critical(self):
+        """A signal received inside is noted and raised when the block ends (never dropped, never
+        raised in the middle of a ledger or results write)."""
+        outer = self.gate["defer"]
+        self.gate["defer"] = True
+        try:
+            yield
+        finally:
+            self.gate["defer"] = outer
+            if not outer:
+                _deliver(self.gate)
 
     def _driver(self, driver_id: str) -> Mapping[str, Any]:
         driver = self.campaign["drivers"].get(driver_id)
@@ -785,14 +840,19 @@ class Runner:
             input_paths=self.input_paths, kind=driver["kind"],
             isolation=(self.campaign.get("isolation") or {}).get("deny_read_home"))
 
-    def _bundle(self, task: Mapping[str, Any], label: str, patch: bytes | None = None
-                ) -> tuple[Path, Path]:
+    def _attempt_name(self, task: Mapping[str, Any], label: str) -> str:
+        """Unique across the launches of one campaign (the launch rank comes from the ledger): a
+        relaunch never overwrites the stream log of an attempt a previous launcher left."""
+        self.counter += 1
+        return f"attempt-l{self.launch:02d}-{self.counter:04d}-pr{task['pr']}-{label}"
+
+    def _bundle(self, task: Mapping[str, Any], label: str, patch: bytes | None = None,
+                name: str | None = None) -> tuple[Path, Path]:
         """A FRESH bundle for one attempt (a judged bundle is never handed back to a candidate)
         and its attempt directory (scratch). The statement carries the launcher footer, identical
         for every arm. The patch (a previous attempt) is applied to the index so that
         ``git diff HEAD`` shows every change, new files included."""
-        self.counter += 1
-        attempt_dir = self.work_root / f"attempt-{self.counter:04d}-pr{task['pr']}-{label}"
+        attempt_dir = self.work_root / (name or self._attempt_name(task, label))
         bundle = lfc.build_bundle(self.repo, task, attempt_dir / "bundle")
         try:
             statement = bundle / "TASK.md"
@@ -845,7 +905,7 @@ class Runner:
     def _tool_error(self, task: Mapping[str, Any], path: str, segment: str, attempt: int,
                     task_set: str, exc: BaseException, *, wall: float = 0.0, sessions: Sequence[str] = (),
                     by_role: Mapping[str, Any] | None = None, by_model: Mapping[str, Any] | None = None,
-                    local: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                    local: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
         """A tool failure or an interruption (Ctrl-C, SIGTERM, any other exception) is recorded as
         such, never as a verdict, before the campaign stops. An interrupted attempt has an unknown
         cost (``billing_total`` null), like any record whose cloud executions were not all read."""
@@ -853,7 +913,7 @@ class Runner:
         reason = (str(exc) or type(exc).__name__)[:200] if status == "tool_error" \
             else f"{type(exc).__name__}: {exc}"[:200]
         by_role = dict(by_role or {})
-        return self._emit({
+        record = {
             "record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
             "segment": segment, "attempt": attempt, "outcome": status, "status": status,
             "reason": reason, "judge": None, "accepted": None,
@@ -865,7 +925,10 @@ class Runner:
                         "billing_total": None if status == "interrupted"
                         else _record_total(by_role, sessions)},
             "local": ({"ended_by_external_signal": False, **local} if local else None),
-            "machine": None, "unknown": {status: reason}})
+            "machine": None, "unknown": {status: reason}}
+        if _record_key(record) in self.emitted:  # the attempt reached the results just before the cut
+            return None
+        return self._emit(record)
 
     # ---- one local attempt (screen, path N, first step of path C)
     def local_attempt(self, task: Mapping[str, Any], candidate_id: str, driver_id: str,
@@ -878,8 +941,11 @@ class Runner:
         bounds = self.campaign["bounds"]
         model = self.campaign["candidates"][candidate_id]["model"]
         execution, started = None, None
+        name = self._attempt_name(task, f"{path}-local-{candidate_id}")
+        self.ledger.append("attempt_started", attempt_dir=name, path=path, pr=task["pr"],
+                           set=task_set, candidate=candidate_id, segment="local", attempt=attempt)
         try:
-            bundle, attempt_dir = self._bundle(task, f"{path}-local-{candidate_id}")
+            bundle, attempt_dir = self._bundle(task, "", name=name)
             try:
                 values = self._values(bundle, attempt_dir, model=model)
                 values["prompt"] = self._prompt("implement", values)
@@ -898,37 +964,42 @@ class Runner:
             finally:
                 self._discard(bundle, attempt_dir)
         except BaseException as exc:  # tool failure or interruption: time is counted, the attempt
-            wall = 0.0                # is recorded and can never be replayed (no second chance)
-            if started is not None:
-                wall = execution["wall_seconds"] if execution else time.monotonic() - started
-                self.ledger.settle(cloud=False, seconds=wall, premium_tokens=None,
+            with self._critical():    # is recorded and can never be replayed (no second chance)
+                wall = 0.0
+                if started is not None:
+                    wall = execution["wall_seconds"] if execution else time.monotonic() - started
+                self.ledger.settle(cloud=False, seconds=wall, premium_tokens=None, attempt_dir=name,
                                    **({"interrupted": True} if _cut(exc) == "interrupted" else {}))
-            self._tool_error(task, path, "local", attempt, task_set, exc, wall=wall,
-                             local={"harness": driver_id, "harness_kind": driver["kind"],
-                                    "candidate": candidate_id})
+                self._tool_error(task, path, "local", attempt, task_set, exc, wall=wall,
+                                 local={"harness": driver_id, "harness_kind": driver["kind"],
+                                        "candidate": candidate_id})
             raise
-        self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None)
-        stream = execution["stream"]
-        unknown = {f"local.{k}": v for k, v in stream["unknown"].items()}
-        unknown.update({f"machine.{k}": v for k, v in {**before["unknown"], **after["unknown"]}.items()})
-        local = {"harness": driver_id, "harness_kind": driver["kind"], "candidate": candidate_id,
-                 "max_seconds": round(budget, 3), "nominal_max_seconds": bounds["local_max_seconds"],
-                 "max_steps": bounds["local_max_steps"],
-                 "steps": stream["steps"], "stream_tokens": stream["stream_tokens"],
-                 "prefill_tokens_per_second": stream["prefill_tokens_per_second"],
-                 "generation_tokens_per_second": stream["generation_tokens_per_second"],
-                 "timed_out": execution["timed_out"], "step_limit_hit": execution["step_limit_hit"],
-                 "exit_code": execution["exit_code"], "signal": execution["signal"],
-                 "ended_by_external_signal": execution["signal"] is not None
-                 and not execution["launcher_kill"], "start_error": execution["start_error"]}
-        record = {"record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
-                  "segment": "local", "attempt": attempt, "judge": _judge_summary(verdict),
-                  "local_outcome": "accepted" if verdict["verdict"] == "ACCEPTED" else "refused",
-                  "accepted": None, "review": {"rounds": 0, "verdicts": []},
-                  "wall_seconds": execution["wall_seconds"], "cloud_executions": 0,
-                  "cloud_sessions": [],
-                  "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
-                  "machine": {"before": _strip(before), "after": _strip(after)}, "unknown": unknown}
+        with self._critical():  # settled and registered as unrecorded together (see ``_stop``)
+            self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None,
+                               attempt_dir=name)
+            stream = execution["stream"]
+            unknown = {f"local.{k}": v for k, v in stream["unknown"].items()}
+            unknown.update({f"machine.{k}": v
+                            for k, v in {**before["unknown"], **after["unknown"]}.items()})
+            local = {"harness": driver_id, "harness_kind": driver["kind"], "candidate": candidate_id,
+                     "max_seconds": round(budget, 3), "nominal_max_seconds": bounds["local_max_seconds"],
+                     "max_steps": bounds["local_max_steps"],
+                     "steps": stream["steps"], "stream_tokens": stream["stream_tokens"],
+                     "prefill_tokens_per_second": stream["prefill_tokens_per_second"],
+                     "generation_tokens_per_second": stream["generation_tokens_per_second"],
+                     "timed_out": execution["timed_out"], "step_limit_hit": execution["step_limit_hit"],
+                     "exit_code": execution["exit_code"], "signal": execution["signal"],
+                     "ended_by_external_signal": execution["signal"] is not None
+                     and not execution["launcher_kill"], "start_error": execution["start_error"]}
+            record = {"record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
+                      "segment": "local", "attempt": attempt, "judge": _judge_summary(verdict),
+                      "local_outcome": "accepted" if verdict["verdict"] == "ACCEPTED" else "refused",
+                      "accepted": None, "review": {"rounds": 0, "verdicts": []},
+                      "wall_seconds": execution["wall_seconds"], "cloud_executions": 0,
+                      "cloud_sessions": [],
+                      "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
+                      "machine": {"before": _strip(before), "after": _strip(after)}, "unknown": unknown}
+            self.unrecorded = record  # until ``_emit`` writes it, an interruption writes it as interrupted
         return record, patch
 
     # ---- one cloud execution
@@ -956,10 +1027,13 @@ class Runner:
             sandbox_text(driver, [bundle, scratch, *extra], deny)
         budget = min(self.campaign["bounds"]["cloud_max_seconds"],
                      max(self.ledger.remaining_seconds(), 0))
-        self.ledger.reserve_cloud(role, session_id)  # cap checked, then recorded, then run
-        self.sessions.append(session_id)  # every reserved execution is named by a result record
+        reserved = False
         started = time.monotonic()
         try:
+            with self._critical():  # a signal here is raised at the end of the block: inside the try
+                self.ledger.reserve_cloud(role, session_id)  # cap checked, then recorded, then run
+                reserved = True
+                self.sessions.append(session_id)  # every reserved execution is named by a record
             execution = execute_driver(
                 driver, values, workdir=bundle, scratch=scratch,
                 stream_log=self.state_dir / "streams" / f"{self.envelope['campaign_id']}-"
@@ -967,8 +1041,10 @@ class Runner:
                 max_seconds=budget, max_steps=None, sandbox=self.sandbox, deny_read=deny,
                 extra_write=extra, host_env=self.host_env)
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
-            self.ledger.settle(cloud=True, seconds=time.monotonic() - started, premium_tokens=None,
-                               session_id=session_id, interrupted=True)
+            if reserved:
+                with self._critical():
+                    self.ledger.settle(cloud=True, seconds=time.monotonic() - started,
+                                       premium_tokens=None, session_id=session_id, interrupted=True)
             raise
         by_model: dict[str, dict[str, int | None]] = {}
         tokens, reason = premium_tokens(session_id, driver.get("session_log") or {}, by_model)
@@ -1057,16 +1133,16 @@ class Runner:
                     state["accepted"] = {"PASS": True, "BLOCK": False, None: None}[review]
                     if review is None:
                         unknown["review"] = "review_unreadable"
+                emit()  # inside the try: a cut before or after the write never loses the record
             except CapReached:  # the cut round is recorded even when nothing was spent in it: the
                 state["outcome"] = "stopped_by_cap"  # task is not decided (never a refusal)
                 emit()
                 raise
             except BaseException as exc:  # tool failure, Ctrl-C, SIGTERM, anything: never silent
-                records.append(self._tool_error(
+                self._tool_error(
                     task, path, segment, first_attempt + index, task_set, exc, wall=state["seconds"],
-                    sessions=self.sessions[mark:], by_role=by_role, by_model=models))
+                    sessions=self.sessions[mark:], by_role=by_role, by_model=models)
                 raise
-            emit()
             outcome = state["outcome"]
             if outcome in ("accepted", "review_unreadable"):
                 break
@@ -1087,6 +1163,20 @@ class Runner:
             mark = len(self.sessions)
             try:
                 review, _, rev_exec, rev_tokens, rev_reason = self._review(task, patch, "C-0")
+                total = billing_total(rev_tokens)
+                local["review"] = {"rounds": 1, "verdicts": [review]}
+                local["cloud_executions"], local["cloud_sessions"] = 1, self.sessions[mark:]
+                local["wall_seconds"] = round(local["wall_seconds"] + rev_exec["wall_seconds"], 3)
+                local["premium"] = {"by_role": {"reviewer": _classes(rev_tokens)},
+                                    "by_model": rev_exec["by_model"], "billing_total": total}
+                if rev_tokens is None:
+                    local["unknown"]["premium.reviewer"] = rev_reason or "unknown"
+                local["accepted"] = {"PASS": True, "BLOCK": False, None: None}[review]
+                local["outcome"] = {"PASS": "accepted", "BLOCK": "review_block",
+                                    None: "review_unreadable"}[review]
+                if review is None:
+                    local["unknown"]["review"] = "review_unreadable"
+                takeover = review == "BLOCK"
             except BaseException as exc:  # cap, tool failure or interruption during the review
                 cut, spent = _cut(exc), self.sessions[mark:]
                 local.update(outcome=cut, cloud_sessions=spent, cloud_executions=len(spent))
@@ -1097,20 +1187,6 @@ class Runner:
                     local["premium"]["billing_total"] = None
                 self._emit(local)
                 raise
-            total = billing_total(rev_tokens)
-            local["review"] = {"rounds": 1, "verdicts": [review]}
-            local["cloud_executions"], local["cloud_sessions"] = 1, self.sessions[mark:]
-            local["wall_seconds"] = round(local["wall_seconds"] + rev_exec["wall_seconds"], 3)
-            local["premium"] = {"by_role": {"reviewer": _classes(rev_tokens)},
-                                "by_model": rev_exec["by_model"], "billing_total": total}
-            if rev_tokens is None:
-                local["unknown"]["premium.reviewer"] = rev_reason or "unknown"
-            local["accepted"] = {"PASS": True, "BLOCK": False, None: None}[review]
-            local["outcome"] = {"PASS": "accepted", "BLOCK": "review_block",
-                                None: "review_unreadable"}[review]
-            if review is None:
-                local["unknown"]["review"] = "review_unreadable"
-            takeover = review == "BLOCK"
         else:
             local["outcome"] = "local_refused"
         self._emit(local)
@@ -1133,23 +1209,24 @@ class Runner:
         """Local attempts only (candidate x task) and the judge: no cloud, ever. The machine
         preflight is re-run before every task."""
         out = []
-        try:
-            for candidate_id in candidate_ids:
-                for task in tasks:
-                    self.preflight(candidate_id)
-                    record, _ = self.local_attempt(task, candidate_id, harness_id, "S", 0, "screening")
-                    record["accepted"] = record["local_outcome"] == "accepted"
-                    out.append(self._emit(record))
-        except PreflightRefused:
-            raise
-        except CapReached as exc:
-            self._stop(f"cap_reached:{exc}")
-        except (RunnerError, lfc.CorpusError) as exc:
-            self._stop(f"tool_error:{str(exc)[:160]}")
-            raise
-        except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
-            self._stop(f"interrupted:{type(exc).__name__}")
-            raise
+        with self._signals():  # the WHOLE call: an interruption anywhere leaves a record and a stop
+            try:
+                for candidate_id in candidate_ids:
+                    for task in tasks:
+                        self.preflight(candidate_id)
+                        record, _ = self.local_attempt(task, candidate_id, harness_id, "S", 0, "screening")
+                        record["accepted"] = record["local_outcome"] == "accepted"
+                        out.append(self._emit(record))
+            except PreflightRefused:
+                raise
+            except CapReached as exc:
+                self._stop(f"cap_reached:{exc}", exc)
+            except (RunnerError, lfc.CorpusError) as exc:
+                self._stop(f"tool_error:{str(exc)[:160]}", exc)
+                raise
+            except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
+                self._stop(f"interrupted:{type(exc).__name__}", exc)
+                raise
         return out
 
     def compare(self, tasks: Sequence[Mapping[str, Any]], candidate_id: str,
@@ -1160,56 +1237,89 @@ class Runner:
         premium = {"A": 0, "C": 0}
         premium_known = {"A": True, "C": True}
         needs_local = bool({"C", "N"} & set(paths))  # A and B alone never need the local model
-        try:
-            for done, task in enumerate(tasks, 1):
-                if needs_local:
-                    self.preflight(candidate_id)
-                for path in paths:
-                    if path == "A" or path == "B":
-                        recs = self.cloud_path(task, path, "comparison")
-                    elif path == "C":
-                        recs = self.hybrid_path(task, candidate_id, harness_id, "comparison")
-                        first = recs[0]
-                        local_ok += first["local_outcome"] == "accepted"
-                        local_fail += first["local_outcome"] != "accepted"
-                    else:  # N: the same local attempt under the neutral harness, no cloud
-                        rec, _ = self.local_attempt(task, candidate_id, "neutral_harness", "N", 0,
-                                                    "comparison")
-                        rec["accepted"] = rec["local_outcome"] == "accepted"
-                        recs = [self._emit(rec)]
-                    out += recs
-                    if path in premium:
-                        for rec in recs:
-                            total = rec["premium"]["billing_total"]
-                            premium_known[path] &= total is not None
-                            premium[path] += total or 0
-                remaining = len(tasks) - done
-                rules = self.campaign["rules"]["comparison"]
-                if "C" in paths and local_ok + remaining < rules["min_local_successes"]:
-                    return self._stopped(out, "fewer_than_min_local_successes")
-                if ("C" in paths and "A" in paths and premium_known["A"] and premium_known["C"]
-                        and premium["C"] >= premium["A"] > 0):
-                    return self._stopped(out, "premium_c_not_below_a")
-        except PreflightRefused:
-            raise
-        except CapReached as exc:
-            self._stop(f"cap_reached:{exc}")
-        except (RunnerError, lfc.CorpusError) as exc:
-            self._stop(f"tool_error:{str(exc)[:160]}")
-            raise
-        except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
-            self._stop(f"interrupted:{type(exc).__name__}")
-            raise
+        if needs_local:  # refused before any claim or reservation
+            self._check_selected(candidate_id)
+        with self._signals():  # the WHOLE call: an interruption anywhere leaves a record and a stop
+            try:
+                for done, task in enumerate(tasks, 1):
+                    if needs_local:
+                        self.preflight(candidate_id)
+                    for path in paths:
+                        if path == "A" or path == "B":
+                            recs = self.cloud_path(task, path, "comparison")
+                        elif path == "C":
+                            recs = self.hybrid_path(task, candidate_id, harness_id, "comparison")
+                            first = recs[0]
+                            local_ok += first["local_outcome"] == "accepted"
+                            local_fail += first["local_outcome"] != "accepted"
+                        else:  # N: the same local attempt under the neutral harness, no cloud
+                            rec, _ = self.local_attempt(task, candidate_id, "neutral_harness", "N", 0,
+                                                        "comparison")
+                            rec["accepted"] = rec["local_outcome"] == "accepted"
+                            recs = [self._emit(rec)]
+                        out += recs
+                        if path in premium:
+                            for rec in recs:
+                                total = rec["premium"]["billing_total"]
+                                premium_known[path] &= total is not None
+                                premium[path] += total or 0
+                    remaining = len(tasks) - done
+                    rules = self.campaign["rules"]["comparison"]
+                    if "C" in paths and local_ok + remaining < rules["min_local_successes"]:
+                        return self._stopped(out, "fewer_than_min_local_successes")
+                    if ("C" in paths and "A" in paths and premium_known["A"] and premium_known["C"]
+                            and premium["C"] >= premium["A"] > 0):
+                        return self._stopped(out, "premium_c_not_below_a")
+            except PreflightRefused:
+                raise
+            except CapReached as exc:
+                self._stop(f"cap_reached:{exc}", exc)
+            except (RunnerError, lfc.CorpusError) as exc:
+                self._stop(f"tool_error:{str(exc)[:160]}", exc)
+                raise
+            except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
+                self._stop(f"interrupted:{type(exc).__name__}", exc)
+                raise
         return out
+
+    def _check_selected(self, candidate_id: str) -> None:
+        """When the screening results sit in this state directory, the compared candidate must be the
+        one the pre-registered rule selected (no screening results here: ``report`` says so)."""
+        attempts = [r for r in self.prior_records if r.get("record_type") == "attempt"]
+        if not any(r["path"] == "S" for r in attempts):
+            return
+        screening = _report_screening(self.campaign["rules"]["screening"], attempts)
+        if screening["selected"] != candidate_id:
+            raise RunnerError(f"candidate {candidate_id} is not the one the screening selected "
+                              f"({screening['selected']}: {screening['reason']})")
 
     def _stopped(self, out: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
         self._stop(reason)
         return out
 
-    def _stop(self, reason: str) -> None:
-        self.stopped = reason
-        self.ledger.append("stopped", reason=reason)
-        self._emit({"record_type": "stop", "reason": reason})
+    def _stop(self, reason: str, exc: BaseException | None = None) -> None:
+        """Record the stop. A settled local attempt that no record names yet is written first, as
+        ``interrupted`` (its result is not trusted once the call was cut). A second signal received
+        meanwhile is raised after both writes, never swallowed."""
+        with self._critical():
+            if exc is not None:
+                self._flush_unrecorded(exc)
+            self.stopped = reason
+            self.ledger.append("stopped", reason=reason)
+            self._emit({"record_type": "stop", "reason": reason})
+
+    def _flush_unrecorded(self, exc: BaseException) -> None:
+        record, self.unrecorded = self.unrecorded, None
+        if record is None:
+            return
+        status = _cut(exc)
+        reason = (str(exc) or type(exc).__name__)[:200] if status == "tool_error" \
+            else f"{type(exc).__name__}: {exc}"[:200]
+        record.update(outcome=status, status=status, reason=reason, accepted=None)
+        record["unknown"][status] = reason
+        if status == "interrupted":
+            record["premium"] = {**record["premium"], "billing_total": None}
+        self._emit(record)
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -1457,13 +1567,75 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
     attempts = [r for r in records if r.get("record_type") == "attempt"]
     stops = [r["reason"] for r in records if r.get("record_type") == "stop"]
     rules = campaign["rules"]
+    holes = _unsettled_starts(ledger)
     out: dict[str, Any] = {"promotion": False, "stops": stops, "rules_applied": rules,
-                           "provenance": shas, "ledger": {"unknown_spent_work": unknown_work},
+                           "provenance": shas,
+                           "ledger": {"unknown_spent_work": unknown_work, "unsettled_starts": holes},
                            "dry_run": any(r.get("dry_run", False) for r in records),
                            "screening": _report_screening(rules["screening"], attempts)}
+    out["screening"]["warnings"] = [h["warning"] for h in holes if h["mode"] == "screen"]
     comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
-    out["comparison"] = _report_comparison(rules["comparison"], comparison, stops, bool(unknown_work))
+    out["comparison"] = _report_comparison(rules["comparison"], comparison, stops, bool(unknown_work),
+                                           [h["warning"] for h in holes if h["mode"] == "compare"])
+    out["comparison"]["screening_selected"] = _check_compared_candidate(
+        out["screening"], attempts, comparison)
     return out
+
+
+def _unsettled_starts(ledger: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Every local attempt start of the ledger without a ``settled`` of the same ``attempt_dir`` and
+    every passed machine preflight followed by no attempt start (the launcher was killed between
+    them) before the next preflight or session: a killed attempt writes neither record nor
+    settlement, and a relaunch may have replayed it. A preflight followed by a clean ``stopped`` is
+    not one. ``mode`` is the mode of the session that wrote the entry."""
+    settled = {e.get("attempt_dir") for e in ledger if e.get("kind") == "settled" and not e.get("cloud")}
+    out: list[dict[str, Any]] = []
+    mode: Any = None
+    window: dict[str, Any] | None = None
+
+    def close() -> None:
+        if window is not None and not window["attempts"]:
+            out.append({"kind": "preflight", "mode": window["mode"], "ledger_line": window["line"],
+                        "candidate": window["candidate"],
+                        "warning": f"preflight_without_attempt:{window['candidate']}"
+                                   f"@ledger_line_{window['line']}"})
+
+    for line, entry in enumerate(ledger, 1):
+        kind = entry.get("kind")
+        if kind in ("session_started", "preflight"):
+            close()
+            window = None
+        elif kind == "stopped":
+            window = None
+        if kind == "session_started":
+            mode = entry.get("mode")
+        elif kind == "preflight" and entry.get("ok") is True:
+            window = {"mode": mode, "line": line, "candidate": entry.get("candidate"), "attempts": False}
+        elif kind == "attempt_started":
+            if window is not None:
+                window["attempts"] = True
+            if entry.get("attempt_dir") not in settled:
+                out.append({"kind": "attempt_started", "mode": mode, "ledger_line": line,
+                            "attempt_dir": entry.get("attempt_dir"), "path": entry.get("path"),
+                            "candidate": entry.get("candidate"),
+                            "warning": f"attempt_started_without_settled:{entry.get('attempt_dir')}"})
+    close()
+    return out
+
+
+def _check_compared_candidate(screening: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
+                              comparison: Sequence[Mapping[str, Any]]) -> str:
+    """The local candidate of the comparison must be the one the screening selected under the
+    pre-registered rule: otherwise the comparison is refused. Without screening results in these
+    files the check cannot be done and the report says so (it never assumes)."""
+    compared = {(r.get("local") or {}).get("candidate") for r in comparison if r["path"] in ("C", "N")}
+    compared.discard(None)
+    if not any(r["path"] == "S" for r in attempts):
+        return "screening_results_not_available"
+    if compared and compared != {screening["selected"]}:
+        raise RunnerError(f"the compared candidate(s) {sorted(compared)} are not the one the screening "
+                          f"selected ({screening['selected']}: {screening['reason']})")
+    return screening["selected"] or "none_selected"
 
 
 def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -1527,10 +1699,12 @@ def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
-                       stops: Sequence[str], unknown_work: bool = False) -> dict[str, Any]:
+                       stops: Sequence[str], unknown_work: bool = False,
+                       warnings: Sequence[str] = ()) -> dict[str, Any]:
     arms = {p: _arm_totals([r for r in attempts if r["path"] == p]) for p in PATHS
             if any(r["path"] == p for r in attempts)}
-    out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None}
+    out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None,
+                           "warnings": list(warnings)}
     reference = arms.get("A")
     if reference is None:
         out["reason"] = "no_reference_path_A"
@@ -1588,8 +1762,9 @@ def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, 
     out["complete"] = all(a["tasks_compared"] == expected for a in out["arms"].values()) and bool(out["arms"])
     if out["decision"] == "retained" and not out["complete"]:
         out["decision"] = "inconclusive"
-    if unknown_work or any(r.get("outcome") == "interrupted" for r in attempts):
-        out["decision"], out["recommendation"] = "inconclusive", None  # spent work is unknown
+    if unknown_work or warnings or any(r.get("outcome") == "interrupted" for r in attempts):
+        # spent work is unknown, or a local attempt started and never settled (killed, possibly replayed)
+        out["decision"], out["recommendation"] = "inconclusive", None
     return out
 
 

@@ -76,6 +76,10 @@
     "premium_work_definition": {
       "not_a_protocol_coordinate": true,
       "rationale": "premium work = unweighted sum of the four billing token classes (input, cached input, cache write, output) over ALL models; a limit: an economy model's token weighs the same as a premium one, hence the per-model breakdown in the report, needed to judge path B honestly"
+    },
+    "economy_unavailable_when_a_compared_task_is_undecided": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the economy verdict is `unavailable` as soon as a compared task (of the path or of A) is not decided (cap, tool failure, interruption, unreadable review) or the ledger knows of spent work the results cannot attribute; the protocol states no rule for an undecided task, this is the launcher's conservative reading (a cut path has no complete cost, comparing it would look better than what was spent)"
     }
   },
   "statement_footer": "\n\n---\nLauncher note (identical for every arm): work only inside this repository. Do not create virtual environments, install packages or create node_modules in the tree; use the interpreter already on PATH. Do not create or edit test configuration files (conftest.py, pytest.ini, pyproject.toml, tox.ini, setup.cfg, sitecustomize.py, *.pth).\n",

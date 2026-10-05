@@ -380,7 +380,15 @@ def test_dry_run_compare_three_paths_two_tasks(tmp_path):
     rep = lfr.report(campaign, results(runner), ledger_of(runner))
     assert rep["promotion"] is False and set(rep["comparison"]["arms"]) == {"B", "C"}
     c = rep["comparison"]["arms"]["C"]
-    assert {c["compatibility"], c["quality"]} <= {"pass", "fail", "unavailable"}
+    # exact verdicts: the injected probe reads no swap, so compatibility is unavailable (never pass)
+    assert (c["compatibility"], c["quality"]) == ("unavailable", "pass")
+    assert c["economy_detail"]["premium_billing_tokens"] == 215 and c["economy_detail"]["premium_pass"] is True
+    assert c["local_successes"] == 1 and c["tasks_compared"] == 2
+    b = rep["comparison"]["arms"]["B"]
+    assert (b["compatibility"], b["quality"]) == ("pass", "pass")
+    assert b["economy_detail"]["premium_billing_tokens"] == 176 and b["economy_detail"]["premium_pass"] is True
+    assert rep["comparison"]["decision"] == "retained" and rep["comparison"]["recommendation"] == "B"
+    assert rep["comparison"]["warnings"] == [] and rep["ledger"]["unsettled_starts"] == []
     # A: task 1 = (135 + 40) twice = 350, task 2 = 175 -> 525 over two tasks
     assert c["economy_detail"]["reference_premium_billing_tokens"] == 525
 
@@ -1349,7 +1357,8 @@ def test_N7_cloud_drivers_declare_an_unverified_log_layout_so_premium_tokens_sta
 def test_N10_choices_that_are_not_protocol_coordinates_are_labelled_and_the_breakdown_is_reported(tmp_path):
     campaign = lfr.load_campaign(QUALIFICATION / "pat-19-campaign-v1.json")
     choices = campaign["non_protocol_choices"]
-    assert set(choices) == {"min_free_disk_gib", "economy_time_counted", "swap_metric", "premium_work_definition"}
+    assert set(choices) == {"min_free_disk_gib", "economy_time_counted", "swap_metric", "premium_work_definition",
+                            "economy_unavailable_when_a_compared_task_is_undecided"}
     for name, choice in choices.items():
         assert choice["not_a_protocol_coordinate"] is True and choice["rationale"], name
     runner, camp, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
@@ -1859,3 +1868,322 @@ def test_item8_results_are_synced_and_a_truncated_line_is_a_clean_refusal(tmp_pa
         make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
     assert lfr.main(["report", "--campaign", str(cfg), "--results", str(runner.results_path)]) == 2
     assert "results-test-campaign.jsonl: line 2" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------------- PAT-111 (launcher fixes)
+
+SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+
+@pytest.fixture
+def sentinel_handlers():
+    """Python handlers that fail loudly: a signal that reaches one was NOT converted by the launcher
+    (and never kills the test process). The launcher must put exactly these back."""
+    saved = {s: signal.getsignal(s) for s in SIGNALS}
+
+    def unconverted(signum, frame):
+        raise AssertionError(f"signal {signum} was not handled by the launcher")
+
+    for sig in SIGNALS:
+        signal.signal(sig, unconverted)
+    try:
+        yield unconverted
+    finally:
+        for sig, old in saved.items():
+            signal.signal(sig, old)
+
+
+def _send(sig):
+    os.kill(os.getpid(), sig)
+    time.sleep(0.02)  # the handler runs at the next bytecode boundary of this (main) thread
+
+
+def _fsync_on(monkeypatch, path, nth, sig):
+    """The ``nth`` fsync of the file ``path`` (a ledger or results write) receives ``sig``."""
+    real, seen = os.fsync, []
+
+    def fsync(fd):
+        if os.fstat(fd).st_ino == Path(path).stat().st_ino:
+            seen.append(1)
+            real(fd)
+            if len(seen) == nth:
+                _send(sig)
+            return
+        real(fd)
+
+    monkeypatch.setattr(lfr.os, "fsync", fsync)
+
+
+def _once(monkeypatch, owner, name, sig, *, after=False):
+    """``owner.name`` sends ``sig`` the first time it is called (before it runs, or after with
+    ``after=True``)."""
+    real, done = getattr(owner, name), []
+
+    def wrapper(*a, **kw):
+        if not done:
+            done.append(1)
+            if not after:
+                _send(sig)
+        out = real(*a, **kw)
+        if after and len(done) == 1:
+            done.append(2)
+            _send(sig)
+        return out
+
+    monkeypatch.setattr(owner, name, wrapper)
+
+
+def _expect_exit(sig):
+    return KeyboardInterrupt if sig == signal.SIGINT else SystemExit
+
+
+def _check_interrupted_screen(runner, campaign, exc_name):
+    *recs, stop = results(runner)
+    cut = [r for r in recs if r["path"] == "S"]
+    assert len(cut) == 1, "exactly one record for the attempt (no loss, no duplicate)"
+    assert stop["record_type"] == "stop" and stop["reason"] == f"interrupted:{exc_name}"
+    assert ledger_of(runner)[-1]["kind"] == "stopped"
+    assert lfr._unsettled_starts(ledger_of(runner)) == []  # the cut attempt is settled in the ledger
+    assert not list((runner.work_root).iterdir())  # no bundle left behind
+    return cut[0]
+
+
+@pytest.mark.parametrize("where,sig", [("bundle", signal.SIGTERM), ("judge", signal.SIGHUP),
+                                        ("after_return", signal.SIGINT), ("results_write", signal.SIGTERM),
+                                        ("ledger_settle", signal.SIGTERM)])
+def test_pat111_ac1_a_stop_outside_the_driver_leaves_an_interrupted_record_and_a_stop(
+        tmp_path, monkeypatch, sentinel_handlers, where, sig):
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    if where == "bundle":
+        _once(monkeypatch, lfc, "build_bundle", sig)
+    elif where == "judge":
+        _once(monkeypatch, lfc, "judge", sig)
+    elif where == "after_return":  # between the return of ``local_attempt`` and ``_emit``
+        _once(monkeypatch, runner, "local_attempt", sig, after=True)
+    elif where == "results_write":
+        runner.results_path.touch()
+        _fsync_on(monkeypatch, runner.results_path, 1, sig)
+    else:  # the settlement line of the ledger (after preflight and attempt_started)
+        _fsync_on(monkeypatch, runner.ledger.path, 3, sig)
+    with pytest.raises(_expect_exit(sig)):
+        runner.screen(tasks[:1], ["cand-a"])
+    monkeypatch.undo()
+    cut = _check_interrupted_screen(runner, campaign, _expect_exit(sig).__name__)
+    if where == "results_write":  # the write is atomic for signals: the finished record is the one kept
+        assert cut.get("status") != "interrupted" and cut["local_outcome"] == "accepted"
+    else:
+        assert (cut["status"], cut["outcome"], cut["accepted"]) == ("interrupted", "interrupted", None)
+    assert {s: signal.getsignal(s) for s in SIGNALS} == dict.fromkeys(SIGNALS, sentinel_handlers)
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert rep["screening"]["selected"] is None  # an interrupted screening never selects
+    with pytest.raises(lfr.RunnerError, match="already recorded"):  # and the attempt is not replayable
+        make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)[0].screen(tasks[:1], ["cand-a"])
+
+
+def test_pat111_ac1_compare_covers_the_neutral_path_and_the_cloud_record_window(
+        tmp_path, monkeypatch, sentinel_handlers):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    _once(monkeypatch, runner, "local_attempt", signal.SIGTERM, after=True)
+    with pytest.raises(SystemExit):
+        runner.compare(tasks[:1], "cand-a", ("N",))
+    monkeypatch.undo()
+    cut, stop = results(runner)
+    assert (cut["path"], cut["status"], cut["local"]["candidate"]) == ("N", "interrupted", "cand-a")
+    assert stop["reason"] == "interrupted:SystemExit"
+    # a cut between the end of a cloud round and the write of its record still leaves a record
+    second, _, _, tasks2 = make_runner(_sub(tmp_path, "b"), "compare", FIX_ALL)
+    _once(monkeypatch, lfr, "_record_total", signal.SIGHUP)
+    with pytest.raises(SystemExit):
+        second.compare(tasks2[:1], "cand-a", ("A",))
+    monkeypatch.undo()
+    cut, stop = results(second)
+    assert (cut["path"], cut["status"]) == ("A", "interrupted") and len(cut["cloud_sessions"]) == 2
+    assert cut["premium"]["billing_total"] is None and stop["reason"] == "interrupted:SystemExit"
+    assert {s: signal.getsignal(s) for s in SIGNALS} == dict.fromkeys(SIGNALS, sentinel_handlers)
+
+
+def test_pat111_ac1_a_second_signal_is_never_masked_and_the_records_are_still_written(
+        tmp_path, monkeypatch, sentinel_handlers):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL)
+
+    def interrupted(*a, **kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(lfc, "judge", interrupted)
+    real = runner.ledger.append
+
+    def append(kind, **fields):
+        if kind == "stopped":
+            _send(signal.SIGTERM)  # a second signal while the stop is being written
+        real(kind, **fields)
+
+    monkeypatch.setattr(runner.ledger, "append", append)
+    with pytest.raises(SystemExit):  # raised once both writes are done, replacing the Ctrl-C
+        runner.screen(tasks[:1], ["cand-a"])
+    monkeypatch.undo()
+    cut, stop = results(runner)
+    assert cut["status"] == "interrupted" and stop["reason"] == "interrupted:KeyboardInterrupt"
+    assert ledger_of(runner)[-1]["kind"] == "stopped"
+    assert {s: signal.getsignal(s) for s in SIGNALS} == dict.fromkeys(SIGNALS, sentinel_handlers)
+
+
+def test_pat111_ac1_a_signal_during_the_cleanup_of_a_driver_does_not_skip_it(
+        tmp_path, monkeypatch, sentinel_handlers):
+    """The cleanup of ``execute_driver`` (profile directory, previous handlers) completes, then the
+    signal is raised."""
+    seen = {}
+
+    def popen(argv, **kw):
+        seen["profile_dir"] = Path(argv[2]).parent
+        raise OSError("not started: only the cleanup matters here")
+
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, *a, **kw):
+        _send(signal.SIGTERM)
+        real_rmtree(path, *a, **kw)
+
+    monkeypatch.setattr(lfr, "sandbox_available", lambda: True)
+    monkeypatch.setattr(lfr.subprocess, "Popen", popen)
+    monkeypatch.setattr(lfr.shutil, "rmtree", rmtree)
+    with pytest.raises(SystemExit):
+        lfr.execute_driver({"kind": "local_harness", "argv": ["arm"]}, {}, workdir=_sub(tmp_path, "bundle"),
+                           scratch=tmp_path / "scratch", stream_log=tmp_path / "s.log", max_seconds=5,
+                           max_steps=None, sandbox=True, deny_read=[], host_env={"PATH": "/usr/bin"})
+    monkeypatch.undo()
+    assert not seen["profile_dir"].exists()  # the profile was removed
+    assert {s: signal.getsignal(s) for s in SIGNALS} == dict.fromkeys(SIGNALS, sentinel_handlers)
+
+
+# ---- AC2: the existing ledger must have been written under the same digests
+
+def test_pat111_ac2_a_ledger_left_by_a_refused_launch_pins_the_digests_before_any_spend(tmp_path):
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first)
+    runner.preflight_run = lambda cid: (lambda argv: None)  # no machine fact: the preflight refuses
+    with pytest.raises(lfr.PreflightRefused):
+        runner.compare(tasks, "cand-a", ("A", "C"))
+    assert not runner.results_path.exists() or "attempt" not in runner.results_path.read_text("utf-8")
+    before = runner.ledger.path.read_text("utf-8")
+    # the operator edits the configuration, keeping the campaign id: refused, nothing written
+    with pytest.raises(lfr.RunnerError, match="ledger-test-campaign.jsonl was written under another campaign_sha256"):
+        make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first,
+                    campaign_over={"bounds": {"local_max_seconds": 21}})
+    # ... or the envelope (a larger cap)
+    with pytest.raises(lfr.RunnerError, match="written under another envelope_sha256"):
+        make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first, caps={"cloud_executions": 99})
+    # ... or the manifest
+    campaign2, _ = fake_campaign(tmp_path, FIX_ALL)
+    envelope = lfr.load_envelope(write_envelope(tmp_path), "compare", TODAY)
+    with pytest.raises(lfr.RunnerError, match="written under another manifest_sha256"):
+        lfr.Runner(repo=first[0], campaign=campaign, envelope=envelope, state_dir=tmp_path / "state",
+                   work_root=tmp_path / "work", mode="compare", dry_run=True, sandbox=False,
+                   provenance={"manifest_sha256": "f" * 64})
+    assert runner.ledger.path.read_text("utf-8") == before  # no session_started, no reservation
+    assert counts(plan) == {}
+    # the same configuration and envelope resume normally
+    again, _, _, tasks = make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first)
+    assert [e["kind"] for e in ledger_of(again)].count("session_started") == 2
+    assert again.ledger.launch == 2
+
+
+# ---- AC3: undecided-task rule labelled, unsettled starts, selected candidate, unique attempt names
+
+def test_pat111_ac3_the_economy_undecided_rule_is_labelled_as_a_launcher_choice():
+    campaign = lfr.load_campaign(QUALIFICATION / "pat-19-campaign-v1.json")
+    choice = campaign["non_protocol_choices"]["economy_unavailable_when_a_compared_task_is_undecided"]
+    assert choice["not_a_protocol_coordinate"] is True and "undecided" in choice["rationale"]
+
+
+def test_pat111_ac3_report_lists_a_killed_attempt_that_a_relaunch_replayed_and_warns(
+        tmp_path, monkeypatch):
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    runner.screen(tasks[:1], ["cand-a"])
+    # SIGKILL during the first attempt: neither its record nor its settlement were written
+    runner.results_path.write_text("", encoding="utf-8")
+    kept = [e for e in ledger_of(runner) if e["kind"] != "settled"]
+    runner.ledger.path.write_text("".join(json.dumps(e) + "\n" for e in kept), encoding="utf-8")
+    killed = "attempt-l01-0001-pr1-S-local-cand-a"
+    assert any(e.get("attempt_dir") == killed for e in kept)
+    again, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    again.screen(tasks, ["cand-a"])  # the relaunch replays it (the claim was never persisted)
+    rep = lfr.report(campaign, results(again), ledger_of(again))
+    assert [h["attempt_dir"] for h in rep["ledger"]["unsettled_starts"]] == [killed]
+    assert rep["screening"]["complete"] and rep["screening"]["selected"] == "cand-a"  # stays...
+    assert rep["screening"]["warnings"] == [f"attempt_started_without_settled:{killed}"]  # ...but warns
+    # the stream log of the killed attempt is not overwritten by the replay
+    names = sorted(p.name for p in (tmp_path / "state" / "streams").iterdir())
+    assert any("-attempt-l01-0001-pr1-" in n for n in names) and any("-attempt-l02-0001-pr1-" in n for n in names)
+
+
+def test_pat111_ac3_a_preflight_not_followed_by_an_attempt_is_listed_a_clean_stop_is_not():
+    def entry(kind, **kw):
+        return {"kind": kind, **kw}
+
+    ledger = [entry("session_started", mode="compare"), entry("preflight", ok=True, candidate="c1"),
+              entry("session_started", mode="compare"), entry("preflight", ok=True, candidate="c2"),
+              entry("attempt_started", attempt_dir="d1", path="C", candidate="c2"),
+              entry("settled", cloud=False, attempt_dir="d1"),
+              entry("preflight", ok=True, candidate="c3"), entry("stopped", reason="cap_reached:x"),
+              entry("preflight", ok=False, candidate="c4")]
+    found = lfr._unsettled_starts(ledger)
+    assert [(h["kind"], h["candidate"], h["mode"]) for h in found] == [("preflight", "c1", "compare")]
+    assert found[0]["warning"] == "preflight_without_attempt:c1@ledger_line_2"
+    # an attempt started in another launch and never settled
+    found = lfr._unsettled_starts(ledger[:5])
+    assert found == [] or [h["kind"] for h in found] == ["preflight", "attempt_started"]
+
+
+def test_pat111_ac3_a_comparison_with_an_unsettled_local_start_is_inconclusive(tmp_path):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    campaign["rules"]["comparison"]["tasks"] = 1
+    runner.compare(tasks[:1], "cand-a", ("A", "B", "C"))
+    clean = lfr.report(campaign, results(runner), ledger_of(runner))["comparison"]
+    assert clean["decision"] == "retained" and clean["warnings"] == []
+    hole = {"kind": "attempt_started", "attempt_dir": "attempt-l01-0099-pr1-C-local-cand-a", "path": "C",
+            "candidate": "cand-a", "dry_run": True}
+    rep = lfr.report(campaign, results(runner), [*ledger_of(runner), hole])
+    assert rep["comparison"]["decision"] == "inconclusive" and rep["comparison"]["recommendation"] is None
+    assert rep["comparison"]["warnings"] == [
+        "attempt_started_without_settled:attempt-l01-0099-pr1-C-local-cand-a"]
+    assert rep["ledger"]["unsettled_starts"][0]["mode"] == "compare"
+
+
+def _screened(tmp_path, local_plan):
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", {**FIX_ALL, "local": local_plan},
+                                                repo_bundle=first)
+    runner.screen(tasks, ["cand-a", "cand-b"])
+    return first, campaign, runner
+
+
+def test_pat111_ac3_compare_and_report_refuse_a_candidate_the_screening_did_not_select(tmp_path):
+    first, campaign, screened = _screened(tmp_path, ["fix", "fix", "partial", "partial"])
+    rep = lfr.report(campaign, results(screened), ledger_of(screened))
+    assert rep["screening"]["selected"] == "cand-a" and rep["comparison"]["screening_selected"] == "cand-a"
+    runner, _, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL, repo_bundle=first)
+    with pytest.raises(lfr.RunnerError, match="not the one the screening selected"):
+        runner.compare(tasks, "cand-b", ("A", "C"))  # refused at the start: nothing reserved
+    assert "cloud_started" not in ledger_kinds(runner) and "implementer" not in counts(plan)
+    assert runner.results_path.read_text("utf-8") == screened.results_path.read_text("utf-8")
+    runner.compare(tasks[:1], "cand-a", ("A",))  # a cloud-only comparison has no local candidate
+    # report: a comparison made on another candidate than the selected one is refused
+    recs = results(screened)
+    foreign = dict(recs[0], path="C", segment="local", task={"pr": 1, "issue": "PAT-1", "set": "comparison"},
+                   local=dict(recs[0]["local"], candidate="cand-b"), attempt=0)
+    with pytest.raises(lfr.RunnerError, match="not the one the screening selected"):
+        lfr.report(campaign, [*recs, foreign], ledger_of(screened))
+    # an incomplete screening selects nobody: a comparison of any local candidate is refused
+    partial = [r for r in recs if r["task"]["pr"] == 1]
+    with pytest.raises(lfr.RunnerError, match="not the one the screening selected"):
+        lfr.report(campaign, [*partial, dict(foreign, local=dict(foreign["local"], candidate="cand-a"))],
+                   ledger_of(screened))
+
+
+def test_pat111_ac3_without_screening_results_the_report_says_the_check_was_not_possible(tmp_path):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    runner.compare(tasks[:1], "cand-a", ("A", "C"))  # no screening results in this state directory
+    comparison = lfr.report(campaign, results(runner), ledger_of(runner))["comparison"]
+    assert comparison["screening_selected"] == "screening_results_not_available"
