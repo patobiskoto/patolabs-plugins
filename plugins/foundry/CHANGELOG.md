@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Fixed (PAT-100): `close-epic` interruptions and refusals state the real closure state
+  instead of a fixed "le reçu provider permettra la reprise". After a failure it reads,
+  read-only, the provider audit and the local intent and says: no audit and an intent store
+  actually read and empty (nothing written, re-run safe; any tracker whose intent store is
+  not read, e.g. DevHub, is "intention locale non vérifiée", never safe; YouTrack's journal
+  is read), intent without visible audit (ambiguous, a re-run is refused until the audit is
+  visible, never reposts), audit pending (re-run with the exact `--accept-override` set of
+  the audit, never the refused command), audit and Epic done (replay verifies), or state unreadable
+  ("état du reçu inconnu", nothing claimed), with the audit id. Without a receipt it names the
+  original cause (quota with remaining/reset and no immediate re-run, network/5xx with retry
+  count, conflict, or exception type). A provider read error during the strict snapshot is
+  intercepted like a conflict. Added `close-epic <EPIC-ID> --status` (read-only: `aucun audit`,
+  `audit en attente`, `clos`; exit non-zero only on a failed read). No write, receipt, audit
+  identity or replay rule changed. See `docs/linear-tracker.md` and `skills/close-epic/SKILL.md`.
+
 - Changed (PAT-99): reading a closed Epic or taking a graph snapshot reads each node at most
   once per snapshot (`LinearTracker.graph_snapshot()`, used by `bounded_epic_graph_snapshot`
   and the PAT-95 diagnostic): N + 1 reads for N nodes instead of about 5 N (fake graph of 31

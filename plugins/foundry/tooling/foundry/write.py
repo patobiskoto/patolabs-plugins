@@ -8,6 +8,7 @@ mechanical invariants live in code (this file); judgment lives in the skills.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 import re
 import secrets
 import time
@@ -31,6 +32,7 @@ from foundry.routing import (
     acceptance_digest,
     synchronize_acceptance_body,
 )
+from foundry.trackers.epic_intent import EpicAuditIntent
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     EpicClosureUnavailableError,
@@ -889,6 +891,10 @@ def format_epic_diagnostic(report: list[dict]) -> str:
     return "\n".join(lines)
 
 
+class _SnapshotReadError(TrackerConflictError):
+    """A provider read failed while building the strict snapshot (PAT-100)."""
+
+
 def _snapshot_with_diagnostic(
     tracker, project: Project, parent: Issue, accept: frozenset,
 ):
@@ -903,7 +909,21 @@ def _snapshot_with_diagnostic_in_scope(
     tracker, project: Project, parent: Issue, accept: frozenset,
 ):
     try:
-        return _bounded_epic_graph_snapshot(tracker, project, parent, accept)
+        try:
+            return _bounded_epic_graph_snapshot(tracker, project, parent, accept)
+        except (SystemExit, TrackerConflictError, TrackerBindingError):
+            raise
+        except Exception as exc:
+            if isinstance(exc, (ValueError, TypeError)):
+                raise  # programming/contract errors keep their own type
+            # PAT-100: a provider read error (network, 5xx, quota) during the strict
+            # snapshot is intercepted like a conflict, with the original as __cause__
+            # so the CLI can name it; no diagnostic walk (it would re-read what failed).
+            raise _SnapshotReadError(
+                f"lecture du graphe Epic impossible ({type(exc).__name__}: {exc})"
+            ) from exc
+    except _SnapshotReadError:
+        raise
     except (SystemExit, TrackerConflictError, TrackerBindingError) as exc:
         text = ""
         try:
@@ -1110,20 +1130,114 @@ def _validate_epic_outcome(
     return outcome
 
 
-def close_epic(
-    tracker,
-    parent_id: str,
-    *,
-    issued_at: int | None = None,
-    nonce: str | None = None,
-    human_verdict: str | None = None,
-    accept_overrides=None,
-) -> EpicClosureOutcome:
-    """Close one non-code Epic through its qualified audited capability.
+@dataclass(frozen=True)
+class EpicClosureState:
+    """Read-only closure state of one Epic (PAT-100); never raised, never written.
 
-    The client preflight makes errors cheap and clear.  DevHub owns the atomic
-    boundary; PAT-ADR-0006 adapters instead apply their documented fresh-read,
-    one targeted parent-write, append-only-audit and readback sequence.
+    kind: "none" (no audit, no intent), "intent-only" (local intent, no visible audit),
+    "pending" (audit, parent not done), "closed" (audit, parent done), "unknown".
+    ``intent`` is None (store read, empty), "pending"/"complete", "unreadable", or
+    "unverified" (the tracker's intent store is not read: never a claim of safety).
+    """
+
+    kind: str
+    audit_id: str | None = None
+    intent: str | None = None
+    intent_audit_id: str | None = None
+    waived: tuple[str, ...] = ()
+    cause: str | None = None
+
+
+_INTENT_PROVIDERS = frozenset({"linear", "ghprojects"})
+
+
+def _read_local_intent(tracker, project, parent_id: str) -> tuple[str | None, str | None]:
+    """(state, audit_id) of the tracker's local intent store, strictly read-only.
+
+    state: None (store READ and empty), "pending"/"complete", "unreadable", or
+    "unverified" (this tracker's intent store is not read: never a claim of safety).
+    """
+    try:
+        if getattr(tracker, "name", None) in _INTENT_PROVIDERS:
+            record = EpicAuditIntent(tracker.name, project, parent_id).read()
+        else:
+            reader = getattr(tracker, "read_epic_closure_intent", None)
+            if not callable(reader):
+                return "unverified", None
+            record = reader(project, parent_id)
+    except Exception:  # noqa: BLE001
+        return "unreadable", None
+    if record is None:
+        return None, None
+    return record["state"], record["audit_id"]
+
+
+def epic_closure_state(tracker, parent_id: str) -> EpicClosureState:
+    """Best-effort READ-ONLY closure state: provider audit receipt + local intent.
+
+    Never writes (no intent file, no comment, no state change) and never raises: any
+    read failure yields kind "unknown" with its cause, never a claim of safety.  "none"
+    (nothing written) is only produced when the intent store was actually READ and empty.
+    """
+    try:
+        project = _epic_closure_project(tracker)
+    except Exception as exc:  # noqa: BLE001 - SystemExit included, state is best effort
+        return EpicClosureState("unknown", cause=f"{type(exc).__name__}: {exc}")
+    canonical: str | None = None
+    try:
+        reader_with_id = getattr(tracker, "read_epic_closure_state_with_id", None)
+        reader = getattr(tracker, "read_epic_closure_state", None)
+        if callable(reader_with_id):
+            outcome, done, canonical = reader_with_id(project, parent_id)
+        elif callable(reader):
+            outcome, done = reader(project, parent_id)
+        else:
+            outcome = tracker.get_epic_closure(project, parent_id)
+            try:
+                done = tracker.get_issue(parent_id).state == "done"
+            except TrackerConflictError:
+                done = outcome is not None
+    except Exception as exc:  # noqa: BLE001
+        # The write keys its intent on the canonical id; the provider read failed, so
+        # only the raw CLI argument is available here (best effort, reported as such).
+        intent_state, intent_audit = _read_local_intent(tracker, project, parent_id)
+        return EpicClosureState(
+            "unknown", intent=intent_state, intent_audit_id=intent_audit,
+            cause=f"{type(exc).__name__}: {exc}",
+        )
+    if outcome is not None and canonical is None:
+        canonical = outcome.receipt.parent_id
+    intent_state, intent_audit = _read_local_intent(
+        tracker, project, canonical or parent_id,
+    )
+    if outcome is None:
+        if intent_state in {"unreadable", "unverified"}:
+            why = (
+                "intention locale illisible, absence d'intention non prouvée"
+                if intent_state == "unreadable"
+                else "intention locale non vérifiée pour ce tracker, absence d'écriture "
+                     "non prouvée"
+            )
+            return EpicClosureState(
+                "unknown", intent=intent_state, intent_audit_id=intent_audit, cause=why,
+            )
+        kind = "none" if intent_state is None else "intent-only"
+        return EpicClosureState(
+            kind, intent=intent_state, intent_audit_id=intent_audit,
+        )
+    return EpicClosureState(
+        "closed" if done else "pending", audit_id=outcome.audit_id,
+        intent=intent_state, intent_audit_id=intent_audit,
+        waived=tuple(item.node_id for item in outcome.receipt.accepted_overrides),
+    )
+
+
+def validate_epic_closure_request(
+    tracker, parent_id, human_verdict, accept_overrides,
+) -> tuple[str, ...]:
+    """Pure pre-provider validation of a close-epic request (no provider read).
+
+    Shared by ``close_epic`` and the CLI so a local refusal never triggers a state read.
     """
     atomic = getattr(tracker, "epic_closure_supported", False)
     bounded = getattr(tracker, "bounded_epic_closure_supported", False)
@@ -1150,6 +1264,28 @@ def close_epic(
                 "Clôture Epic refusée : --accept-override n'est qualifié que pour Linear "
                 f"(tracker {tracker.name})."
             )
+    return accepted_ids
+
+
+def close_epic(
+    tracker,
+    parent_id: str,
+    *,
+    issued_at: int | None = None,
+    nonce: str | None = None,
+    human_verdict: str | None = None,
+    accept_overrides=None,
+) -> EpicClosureOutcome:
+    """Close one non-code Epic through its qualified audited capability.
+
+    The client preflight makes errors cheap and clear.  DevHub owns the atomic
+    boundary; PAT-ADR-0006 adapters instead apply their documented fresh-read,
+    one targeted parent-write, append-only-audit and readback sequence.
+    """
+    bounded = getattr(tracker, "bounded_epic_closure_supported", False)
+    accepted_ids = validate_epic_closure_request(
+        tracker, parent_id, human_verdict, accept_overrides,
+    )
     requested = frozenset(accepted_ids)
     project = _epic_closure_project(tracker)
     tracker.validate_issue_binding(project, parent_id)

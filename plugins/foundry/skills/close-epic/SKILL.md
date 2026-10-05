@@ -22,6 +22,31 @@ Run the dedicated mechanical command once:
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue close-epic <EPIC-ID> --human-verdict=accepted
 ```
 
+If the command is interrupted or refused, its message reads, read-only, the real closure
+state (provider audit comment and machine-local intent) and says whether re-running is
+safe: no audit and an intent store that was READ and empty (nothing written, safe), intent
+without a visible audit (ambiguous: a re-run uses a new nonce, hence another audit id, and is
+REFUSED, never reposting, until the expected audit is visible; it resumes only once it
+appears; if it never does, inspect the Epic comments and the intent file by hand), audit
+pending (re-run with the exact `--accept-override` set bound by the audit resumes), audit and
+Epic done (same set: replays and verifies), or "état du reçu inconnu" (check the Epic
+comments for an audit before re-running; this includes a tracker whose local intent store is
+not read: "intention locale non vérifiée pour ce tracker"). After a refusal about the waived
+set or the pending audit, the message gives the exact set to re-run with, never the refused
+command. It names the
+original cause; on a quota error wait for the reset time it gives instead of re-running now.
+Do not infer the state from your own reading of the comments: use the read-only status:
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue close-epic <EPIC-ID> --status
+```
+
+`--status` writes nothing (no comment, no intent, no state) and takes no other flag. It
+prints `aucun audit`, `audit en attente` or `clos`, with the audit id and the node ids
+waived by the receipt (non-zero, "non vérifiée", for a tracker whose intent store is not read). The audit is read without `--human-verdict`/`--accept-override` and is
+not re-verified against the current graph (only the identical close command does). Exit code
+0 for a clean read, non-zero only if the read itself failed.
+
 When a refusal lists nodes delivered under an audited `acceptance-override`, a human
 may accept them nominatively on Linear only (PAT-ADR-0014):
 

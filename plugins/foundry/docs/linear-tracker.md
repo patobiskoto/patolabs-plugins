@@ -977,6 +977,47 @@ its diagnostic form one snapshot. Nothing is cached across calls, so a node adde
 reopened or modified between two snapshots is still detected exactly as before
 (PAT-ADR-0006, PAT-ADR-0014).
 
+**Truthful interruption messages and read-only status (PAT-100).** An interrupted or
+refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only
+and each read itself guarded, the real state from two sources and says what is proven.
+The provider receipt is the Epic closure audit comment (one `issue.read`, no graph
+snapshot: `LinearTracker.read_epic_closure_state`), the local intent is
+`linear-epic-closure-intents/<fingerprint>.json` (keyed by provider, project id/key and
+Epic id, read without creating anything). States: (a) no audit and the tracker's intent store
+READ and empty: nothing was written, re-running is safe (this, and the words "aucune
+intention locale"/"rien n'a été écrit", is only ever said when the store was read); (b)
+intent but no visible audit: ambiguous (the effect may be invisible). A re-run generates a
+new nonce/`issued_at`, hence another audit id, and is REFUSED (`reçu d'audit Epic Linear
+différent de l'effet local incertain ; no second POST`) until the expected audit becomes
+visible through `get_pending_epic_closure`; it resumes only once the audit appears and never
+reposts; if it never appears a manual intervention is needed (inspect the Epic comments and
+the intent file); (c) audit and parent not done: pending, the command carrying the exact
+`--accept-override` set bound by the audit resumes; (d) audit and parent done: closed, the
+same command replays and verifies (no second audit). After a refusal about the waived set,
+a pending audit with another set or a graph divergence, the message never advises the
+refused command: it prints the audit-bound command and `--status`. The intent is looked up
+with the canonical Epic id (`LinearTracker.read_epic_closure_state_with_id`), falling back to
+the raw argument when the provider read fails. Stores read: Linear and GitHub Projects
+(`<provider>-epic-closure-intents/`) and YouTrack (`youtrack-epic-closure-intents/`, through
+the read-only `YouTrackTracker.read_epic_closure_intent`: no mkdir, no lock, no write). Any
+other bounded or atomic tracker (DevHub, unknown) is "intention locale non vérifiée pour ce
+tracker": state unknown, no safety claimed, `--status` exits non-zero. YouTrack's own audit
+read still raises for a pending audit (parent not closed), so it reports "unknown" rather
+than the "pending" state; (e) a read of
+the state failed: "état du reçu inconnu: lecture impossible (cause)", check the Epic
+comments for an audit before re-running, no safety claimed. The audit id is given when
+known. Without a receipt the message names the original cause: quota
+(`LinearQuotaExhaustedError`: remaining, reset time, wait, do not re-run now), network or
+5xx (retry count shown, possibly transient), a conflict, or the exception type and message
+(token patterns redacted). A provider read error during the strict snapshot is intercepted
+like a conflict (original kept as `__cause__`, no diagnostic walk that would re-read what
+failed). `close-epic <EPIC-ID> --status` is the same read without any write: it prints
+`aucun audit`, `audit en attente` or `clos`, with the audit id and the nodes waived by the
+receipt, exit 0 on a clean read, non-zero only when the read fails; it takes no other
+flag (the audit is read without `--human-verdict`/`--accept-override`, and is not
+re-verified against the current graph: only the identical close command does that). No
+closure write, receipt format, audit identity or replay rule changed.
+
 The provider implementation was first proven without activating a real workspace.
 FOUNDRY-159 then activated `github.com/patobiskoto/patolabs-plugins` on Linear after a
 selective live migration and provider readback. The versioned manifest and credential-

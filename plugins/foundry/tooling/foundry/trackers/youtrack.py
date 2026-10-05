@@ -1619,6 +1619,18 @@ class YouTrackTracker(Tracker):
             )
         return record
 
+    def read_epic_closure_intent(
+        self, project: Project, parent_id: str,
+    ) -> dict[str, str] | None:
+        """Strictly read-only view of the local intent journal (PAT-100).
+
+        No mkdir, no lock file, no write: None when no intent exists; raises
+        TrackerConflictError when the journal is unreadable or invalid.
+        """
+        return self._read_epic_closure_intent(
+            self._epic_closure_scope_fingerprint(project, parent_id)
+        )
+
     def _write_epic_closure_intent(
         self, fingerprint: str, audit_id: str, state: str,
     ) -> None:
