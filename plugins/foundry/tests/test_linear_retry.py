@@ -305,3 +305,84 @@ def test_real_path_quota_from_headers_and_body(monkeypatch):
     with pytest.raises(LinearTrackerError) as raised:
         LinearTracker(token=TOKEN)._graphql(READ, {}, "issue.read")
     assert not isinstance(raised.value, LinearQuotaExhaustedError) and len(calls) == 1
+
+
+# ---- PAT-105: review residuals ---------------------------------------------
+@pytest.mark.parametrize("code", [["RATELIMITED"], {"a": 1}, 7, None])
+def test_non_string_graphql_code_does_not_break_error_path(code):
+    t = scripted({"errors": [{"extensions": {"code": code}}], "data": None})
+    with pytest.raises(LinearTrackerError) as raised:
+        tracker(t)._graphql(READ, {}, "issue.read")
+    assert raised.value.code == "graphql_error"
+
+
+def test_unreadable_http_error_body_keeps_typed_error(monkeypatch):
+    class Unreadable(io.BytesIO):
+        def read(self, *a):
+            raise RuntimeError("boom")
+
+    msg = email.message.Message()
+    error = urllib.error.HTTPError(
+        linear.LINEAR_GRAPHQL_ENDPOINT, 400, "x", msg, Unreadable(b"")
+    )
+
+    class Opener:
+        def open(self, *a, **k):
+            raise error
+
+    monkeypatch.setattr(linear.urllib.request, "build_opener", lambda *a: Opener())
+    with pytest.raises(LinearTrackerError) as raised:
+        tracker(None)._graphql(READ, {}, "issue.read")
+    assert raised.value.code == "http_error" and raised.value.status == 400
+
+
+@pytest.mark.parametrize("reset", [10**30, -(10**30)])
+def test_aberrant_reset_keeps_typed_quota_error(reset):
+    headers = {
+        "x-ratelimit-requests-remaining": "0",
+        "x-ratelimit-requests-reset": str(reset),
+    }
+    with pytest.raises(LinearQuotaExhaustedError) as raised:
+        tracker(scripted(Boom(400, headers)))._graphql(READ, {}, "issue.read")
+    assert raised.value.reset_at is None and "reset_at=unknown" in str(raised.value)
+
+
+def test_429_is_never_retried_even_from_a_raised_linear_error(_no_linear_retry_sleep):
+    t = scripted(LinearTrackerError("issue.read", 429, "http_error"), OK)
+    with pytest.raises(LinearTrackerError) as raised:
+        tracker(t)._graphql(READ, {}, "issue.read")
+    assert len(t.calls) == 1 and raised.value.retries == 0
+    assert _no_linear_retry_sleep == []
+
+
+def test_zero_remaining_on_unrelated_200_graphql_error_is_not_quota():
+    body = {"errors": [{"message": "no"}], "data": None, "_headers": ZERO}
+    with pytest.raises(LinearTrackerError) as raised:
+        tracker(scripted(body))._graphql(READ, {}, "issue.read")
+    assert not isinstance(raised.value, LinearQuotaExhaustedError)
+    assert raised.value.code == "graphql_error"
+
+
+def test_complexity_quota_is_distinguished_in_message():
+    headers = {"x-ratelimit-complexity-remaining": "0", "x-ratelimit-complexity-reset": str(RESET_MS)}
+    with pytest.raises(LinearQuotaExhaustedError) as raised:
+        tracker(scripted(Boom(400, headers)))._graphql(READ, {}, "issue.read")
+    assert raised.value.scope == "complexity" and "complexity quota" in str(raised.value)
+    with pytest.raises(LinearQuotaExhaustedError) as raised:
+        tracker(scripted(Boom(400, ZERO)))._graphql(READ, {}, "issue.read")
+    assert raised.value.scope == "requests" and "requests quota" in str(raised.value)
+
+
+def test_singular_retry_message():
+    error = LinearTrackerError("issue.read", 503, "http_error")._with_retries(1)
+    assert str(error).endswith("after 1 retry")
+
+
+def test_retry_stats_expose_instability_without_final_failure():
+    tr = tracker(scripted(Boom(503), Boom(), OK))
+    tr._graphql(READ, {}, "issue.read")
+    assert tr.retry_stats == {"retries": 2, "recovered": 1, "exhausted": 0}
+    tr = tracker(scripted(Boom(503)))
+    with pytest.raises(LinearTrackerError):
+        tr._graphql(READ, {}, "issue.read")
+    assert tr.retry_stats == {"retries": 3, "recovered": 0, "exhausted": 1}

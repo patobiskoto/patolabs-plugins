@@ -318,21 +318,15 @@ _WORKFLOW_STATE_TYPES = frozenset(
 # PAT-98: bounded retry of READ-ONLY calls only. A write is never retried (PAT-ADR-0006
 # S2: its effect may be invisible). Readonly-ness is decided from the GraphQL document.
 _sleep = time.sleep  # module-level seam: tests replace it, so the suite never sleeps
-_READ_RETRY_DELAYS = (1.0, 2.0, 4.0)  # deterministic, no jitter: at most 7 s per call
-# 429 is always classified as quota exhaustion first (typed error, never retried).
-_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+# Deterministic, no jitter: 7 s of WAITS per call. Each attempt may itself last up to the 15 s
+# HTTP timeout, so the worst case is ~67 s per call (4 x 15 s + 7 s), multiplied by the number
+# of calls of a loop that continues after an error.
+_READ_RETRY_DELAYS = (1.0, 2.0, 4.0)
+# 429 is not listed: it is always a quota (typed error, never retried).
+_RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
 _RATE_LIMIT_CODES = frozenset({"RATELIMITED", "RATE_LIMITED"})
 _QUERY_DOCUMENT = re.compile(r"\s*query\b")
 _WRITE_OR_STREAM_WORD = re.compile(r"\b(mutation|subscription)\b")
-# Secondary documentation aid only (the document decides): every read operation name.
-_READ_OPERATIONS = frozenset({
-    "issue.read", "issue.search", "issue.state-history", "adr.list", "adr.read",
-    "release.read", "release.issues", "release.labels", "release.children",
-    "release.comments", "release.inverseRelations", "project-binding-read",
-    "team.git-automation-states", "lifecycle.readback", "lifecycle.comment.read",
-    "issue.relation.readback", "issue.readback.labels", "comment.readback",
-    "adr.issue.resolve",
-})
 
 
 def _is_read_only_document(document: str) -> bool:
@@ -369,7 +363,10 @@ class LinearTrackerError(RuntimeError):
 
     def _render(self) -> str:
         rendered_status = str(self.status) if self.status is not None else "unavailable"
-        suffix = f" after {self.retries} retries" if self.retries else ""
+        suffix = (
+            f" after {self.retries} {'retry' if self.retries == 1 else 'retries'}"
+            if self.retries else ""
+        )
         return f"Linear {self.operation} -> {rendered_status} ({self.code}){suffix}"
 
     def _with_retries(self, retries: int) -> "LinearTrackerError":
@@ -383,23 +380,27 @@ class LinearQuotaExhaustedError(LinearTrackerError):
 
     def __init__(
         self, operation: str, status: int | None, remaining: int | None,
-        reset_at_ms: int | None, retries: int = 0,
+        reset_at_ms: int | None, retries: int = 0, scope: str = "requests",
     ):
         self.remaining = remaining
         self.reset_at_ms = reset_at_ms
-        self.reset_at = (
-            datetime.fromtimestamp(reset_at_ms / 1000, tz=timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
+        self.scope = scope
+        try:
+            self.reset_at = (
+                datetime.fromtimestamp(reset_at_ms / 1000, tz=timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+                if reset_at_ms is not None else None
             )
-            if reset_at_ms is not None else None
-        )
+        except (OverflowError, ValueError, OSError):  # aberrant header: keep the typed error
+            self.reset_at = None
         super().__init__(operation, status, "quota_exhausted", retries)
 
     def _render(self) -> str:
         remaining = self.remaining if self.remaining is not None else "unknown"
         reset = self.reset_at if self.reset_at is not None else "unknown"
         return (
-            f"Linear quota exhausted: {super()._render()}"
+            f"Linear {self.scope} quota exhausted: {super()._render()}"
             f" remaining={remaining} reset_at={reset}"
         )
 
@@ -2272,8 +2273,12 @@ class LinearTracker(Tracker):
             raise ValueError("credential Linear invalid")
         self._transport = transport
         self.read_retries = max(0, min(int(read_retries), len(_READ_RETRY_DELAYS)))
-        # Last rate-limit headers seen on any response (never the token): diagnostics only.
+        # Last rate-limit headers seen on any response (never the token). Diagnostics only:
+        # updated without a lock, so across threads it is a best-effort last-writer-wins view.
         self.rate_limit: dict[str, int | None] = {}
+        # Cumulative read-retry counters (same diagnostic-only, non-atomic contract): make
+        # instability visible even when a retried read finally succeeds.
+        self.retry_stats = {"retries": 0, "recovered": 0, "exhausted": 0}
         self._epic_closure_reads = threading.local()
         self._snapshot_scopes = threading.local()
         self._active_project: Project | None = None
@@ -2542,14 +2547,17 @@ class LinearTracker(Tracker):
     def _graphql(self, document: str, variables: dict, operation: str) -> dict:
         """One GraphQL call; a pure read is retried a bounded number of times (PAT-98).
 
-        Only a transport failure or HTTP 429/500/502/503/504 on a read-only document is
-        retried. Writes, data/binding/authorization errors and quota exhaustion never are.
+        Only a transport failure or HTTP 500/502/503/504 on a read-only document is
+        retried. When retries are exhausted the error of the last attempt is raised. Writes, data/binding/authorization errors and quota exhaustion never are.
         The retry wraps the single raw HTTP call, never any caller recovery logic.
         """
         retries = 0
         while True:
             try:
-                return self._graphql_once(document, variables, operation)
+                result = self._graphql_once(document, variables, operation)
+                if retries:
+                    self.retry_stats["recovered"] += 1
+                return result
             except LinearQuotaExhaustedError as error:
                 raise error._with_retries(retries) from None
             except LinearTrackerError as error:
@@ -2562,9 +2570,12 @@ class LinearTracker(Tracker):
                     or retries >= self.read_retries
                     or not _is_read_only_document(document)
                 ):
+                    if retries:
+                        self.retry_stats["exhausted"] += 1
                     raise error._with_retries(retries) from None
                 _sleep(_READ_RETRY_DELAYS[retries])
                 retries += 1
+                self.retry_stats["retries"] += 1
 
     def _note_rate_limit(self, headers) -> None:
         for kind in ("requests", "complexity"):
@@ -2582,17 +2593,19 @@ class LinearTracker(Tracker):
         remaining = _header_int(headers, "x-ratelimit-requests-remaining")
         reset = _header_int(headers, "x-ratelimit-requests-reset")
         complexity = _header_int(headers, "x-ratelimit-complexity-remaining")
+        scope = "requests"
         if complexity == 0 and remaining != 0:
             remaining = 0
             reset = _header_int(headers, "x-ratelimit-complexity-reset")
+            scope = "complexity"
         exhausted = (
             status == 429
             or any(code in _RATE_LIMIT_CODES for code in body_codes)
-            or (remaining == 0 and status in (None, 400, 429))
+            or (remaining == 0 and status in (400, 429))
         )
         if not exhausted:
             return None
-        return LinearQuotaExhaustedError(operation, status, remaining, reset)
+        return LinearQuotaExhaustedError(operation, status, remaining, reset, scope=scope)
 
     @staticmethod
     def _error_codes(envelope) -> list:
@@ -2603,7 +2616,9 @@ class LinearTracker(Tracker):
         for item in errors:
             extensions = item.get("extensions") if isinstance(item, dict) else None
             if isinstance(extensions, dict):
-                codes.append(extensions.get("code"))
+                code = extensions.get("code")
+                if isinstance(code, str):
+                    codes.append(code)
         return codes
 
     def _graphql_once(self, document: str, variables: dict, operation: str) -> dict:
@@ -2653,7 +2668,7 @@ class LinearTracker(Tracker):
                 codes = []
                 try:
                     codes = self._error_codes(json.loads(error.read(_MAX_RESPONSE_BYTES)))
-                except (OSError, ValueError, UnicodeError):
+                except Exception:  # never let body parsing mask the typed HTTP error
                     pass
                 quota = self._quota_error(operation, error.code, error.headers, codes)
                 if quota is not None:

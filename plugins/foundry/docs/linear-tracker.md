@@ -81,18 +81,28 @@ else retries.
 - **A write is never retried** (PAT-ADR-0006 S2: its effect may be invisible), even on a
   `transport_error` or a 503. Ambiguous-write recovery stays in the callers, unchanged.
 - **Retried failures**: `transport_error` and HTTP 500/502/503/504 only, at most 3 retries,
-  waiting 1 s, 2 s then 4 s (at most 7 s added per call, no jitter; `read_retries` on the
-  tracker lowers it). Data, binding, authorization (401/403), 404 and non-quota 400 errors
+  waiting 1 s, 2 s then 4 s (7 s of waits per call, no jitter; `read_retries` on the
+  tracker lowers it). The waits are not the whole cost: each attempt may last up to the 15 s
+  HTTP timeout, so the worst case is about 67 s per call (4 x 15 s + 7 s), multiplied by the
+  number of calls of a loop that continues after an error (e.g. the closure diagnostic graph
+  walk, about 2 reads per node). Data, binding, authorization (401/403), 404 and non-quota 400 errors
   are raised at once.
 - **Retries are never masked**: `LinearTrackerError.retries` holds the count and the message
-  ends with `after N retries` when N > 0 (unchanged otherwise). When retries are exhausted
-  the original error (code, status) is raised.
-- **Quota**: HTTP 429, a `RATELIMITED` error code, or HTTP 400 whose
+  ends with `after N retries` (`after 1 retry` for one) when N > 0 (unchanged otherwise).
+  When retries are exhausted the error of the last attempt (code, status) is raised.
+  `tracker.retry_stats` counts cumulatively `retries` performed, reads `recovered` after
+  retries and reads `exhausted`, so instability stays visible without a final failure.
+- **Quota**: HTTP 429, a `RATELIMITED` error code (also in an HTTP 200 envelope), or HTTP
+  400/429 whose
   `x-ratelimit-requests-remaining` (or complexity equivalent) is zero raises
   `LinearQuotaExhaustedError` (code `quota_exhausted`, a `LinearTrackerError`) with
   `remaining`, `reset_at_ms` (epoch ms from `x-ratelimit-requests-reset`) and `reset_at`
-  (ISO UTC). It is never retried. Only `x-ratelimit-*` headers are read; the token is never
-  in any message. The last values seen are kept in `tracker.rate_limit`.
+  (ISO UTC). The message says `requests` or `complexity` quota (`scope`). A 200 response
+  with an unrelated GraphQL error is never a quota, even with a zero remaining header; a 429
+  is never retried. A malformed error body, a non-string error code or an aberrant reset
+  header never replace the typed error. It is never retried. Only `x-ratelimit-*` headers are read; the token is never
+  in any message. The last values seen are kept in `tracker.rate_limit`, a diagnostic-only view updated
+  without a lock (best-effort across threads, like `retry_stats`).
 
 ## Qualification evidence, distinct from registration
 

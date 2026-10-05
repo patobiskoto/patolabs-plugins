@@ -34,6 +34,14 @@
   reset time, without retry. The number of retries is exposed (`retries`, "after N retries"
   in the message). See `docs/linear-tracker.md` ("Transport errors, read retries and quota").
 
+- Fixed (PAT-105): residuals of the PAT-98 review. A malformed error body, a non-string
+  GraphQL error code or an aberrant reset header can no longer replace the typed error; 429
+  is no longer in the retryable statuses; a zero remaining header on an HTTP 200 with an
+  unrelated GraphQL error is no longer a quota; the quota message names `requests` or
+  `complexity`; `tracker.retry_stats` counts retries, recovered and exhausted reads. The
+  7 s bound covers waits only: with the 15 s attempt timeout the worst case is about 67 s per
+  call. `tracker.rate_limit` and `retry_stats` are diagnostic-only across threads.
+
 - Fixed (PAT-104): the test suite can no longer read or write the maintainer's real
   `~/.config/foundry`. A global autouse fixture in `tests/conftest.py` redirects `HOME` to a
   per-test temporary directory and clears `FOUNDRY_DATA`, `FOUNDRY_CONFIG` and
