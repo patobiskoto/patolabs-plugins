@@ -2,7 +2,26 @@
 
 ## Unreleased
 
-- Fixed (PAT-111, final real trials): the contamination audit no longer reads a token made only of slashes (`/`, `//`, the division operator of code) as the filesystem root: a legitimate Sonnet 5.5 run whose heredoc held `sum(values) / len(values)` was flagged `/` and would have been recorded `contaminated`. A bare `ls /` is no longer flagged (known limit, no file content revealed). The final cloud argv (3 drivers) and the deny-home local profile (omp 18.4.10, mini-swe-agent 2.4.6 with `agent.step_limit=40`) are recorded as trial-run on 2026-10-05 in `pat-19-preflight-2026-10-05.json`; the audit is clean on those real streams.
+- Fixed (PAT-111, review round 2; fake arms only, no real arm run): the contamination audit no longer
+  treats text as an access: only path arguments (`path`, `file_path`…, the `pattern` of a Glob/find tool) and
+  shell commands are read, not what an arm writes or searches (Edit/Write content, Grep pattern); a tool
+  result counts only for a LITERAL absolute path under a sensitive root (`~`/`$HOME` in result text are not
+  expanded), and in a command `~` inside quotes or `$HOME` inside single quotes is text
+  (`grep -rn '~/.claude' .` is clean; `cat ~/.config/…`, `ls ~/.claude/plugins` stay flagged). A bare `/` is a
+  path again as an argument of `find`, `grep -r/-R`, `rg`, `ls`, `du`, `tree`, `cat` (`find / -name x -exec cat
+  {} +` is flagged; the heredoc division stays clean). After the arm ran, a git failure taking the patch (stale
+  `.git/index.lock`, empty nested repository, unreadable file) or an `OSError` of the judge on a bundle file is
+  a `REFUSED` verdict (`candidate_fault`, error recorded, cost kept, never replayed) instead of a void,
+  replayable attempt; launcher/environment failures stay void. The reviewer's bundle no longer receives the
+  implementer's `.claude/` files (`review_excluded` on the record). A cloud record refused on its `init` tool
+  set is still audited (`outcome: contaminated` alongside the `tool_error` status, never replayed). Stated
+  limits: the neutral harness's trajectory is not audited (mitigated by the deny-home profile); a local arm can
+  signal the launcher (its profile starts from `(allow default)`; the void attempt is replayed at most once
+  and listed). Documentation status (AGENTS.md R5): `pat-19-launcher-v1.md` and
+  `pat-19-preflight-2026-10-05.json` updated; no CLI option of `foundry_cli.py`, product constant or routing
+  table changed.
+
+- Fixed (PAT-111, final real trials): the contamination audit no longer reads a token made only of slashes (`/`, `//`, the division operator of code) as the filesystem root: a legitimate Sonnet 5.5 run whose heredoc held `sum(values) / len(values)` was flagged `/` and would have been recorded `contaminated`. A bare `/` stays a path as an argument of a filesystem reader (see the review-round-2 entry). The final cloud argv (3 drivers) and the deny-home local profile (omp 18.4.10, mini-swe-agent 2.4.6 with `agent.step_limit=40`) are recorded as trial-run on 2026-10-05 in `pat-19-preflight-2026-10-05.json`; the audit is clean on those real streams.
 
 - Changed (PAT-111): launcher corrections left by the PAT-108 reviews in `foundry.local_first_runner`
   (fake arms only; no real arm, no pinning, no `verified` flag changed). SIGTERM, SIGHUP and Ctrl-C are now
@@ -41,16 +60,16 @@
   literally in each cloud argv, enforced at load; command-prefix rules, evadable, not a sandbox); the
   post-run audit now covers COMMANDS (`command:` labels, `contamination.commands`), tool results and path
   resolution against the bundle with `cd` tracking (`find ~`, `cd ~ && cat .claude/x`, `src/../../..`); the
-  launcher doc and the protocol amendment note are rewritten accordingly and the maintainer's acceptance of the
-  exposure is recorded as pending. (3) Local arms now deny reads under the real home by default
+  launcher doc and the protocol amendment note are rewritten accordingly and the maintainer's explicit
+  acceptance of the residual exposure (2026-10-05) is recorded. (3) Local arms now deny reads under the real home by default
   (`isolation.deny_home_by_default`, true; `isolation.allow_read_home`, empty) with the explicit deny list kept
   as a second layer; unit-tested on the generated profile and under a real `sandbox-exec` with a fake home,
-  not yet tried with the real `omp`. Also: the preflight refuses a loaded instance with no `modelKey`; the
+  then tried on 2026-10-05 with the real `omp` 18.4.10 and mini-swe-agent 2.4.6. Also: the preflight refuses a loaded instance with no `modelKey`; the
   neutral harness is given `-c agent.step_limit={max_steps}` and `step_limit_hit` is also set a posteriori
   (attempt refused); `compare` refuses a C/N comparison with no screening results under its campaign id unless
   `--screening-campaign <id>` names a completed matching screening (read-only); the cloud evidence labels the
-  command actually tried (`--disallowedTools Agent`) apart from the final argv, which is still to be
-  trial-run. Documentation status (AGENTS.md R5): `pat-19-launcher-v1.md`, `pat-19-protocol-v1.md`,
+  command actually tried first (`--disallowedTools Agent` only: 11.6 / 16.3 / 16.5 s) apart from the final
+  pinned argv, trial-run afterwards on 2026-10-05 (7.6 / 13.1 / 17.1 s). Documentation status (AGENTS.md R5): `pat-19-launcher-v1.md`, `pat-19-protocol-v1.md`,
   `pat-19-preflight-2026-10-05.json` and the campaign config updated; no CLI option of `foundry_cli.py`,
   product constant or routing table changed.
 

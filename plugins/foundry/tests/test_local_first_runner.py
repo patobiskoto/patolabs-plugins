@@ -80,6 +80,29 @@ if behavior.startswith("cmd:"):  # the arm runs a command through its shell tool
 if behavior == "tamper":  # the arm edits the git configuration of its bundle, then does the work
     open(os.path.join(a.workdir, ".git", "config"), "a").write("[core]\n\tfsmonitor = false\n")
     behavior = "fix"
+if behavior == "lock":  # a stale index lock, as a bound's SIGKILL in the middle of a git command leaves it
+    open(os.path.join(a.workdir, ".git", "index.lock"), "w").close()
+    behavior = "fix"
+if behavior == "unreadable":  # a file git cannot read
+    path = os.path.join(a.workdir, "plugins/foundry/tooling/foundry/secret.txt")
+    open(path, "w").write("x\n")
+    os.chmod(path, 0)
+    behavior = "fix"
+if behavior == "cache_unreadable":  # out of the patch (``__pycache__``) but read by the judge
+    os.makedirs(os.path.join(a.workdir, "__pycache__"), exist_ok=True)
+    path = os.path.join(a.workdir, "__pycache__", "notes.txt")
+    open(path, "w").write("x\n")
+    os.chmod(path, 0)
+    behavior = "fix"
+if behavior == "nested":  # an empty nested repository (``git init sub/``)
+    subprocess.run(["git", "init", "-q", os.path.join(a.workdir, "sub")], check=True,
+                   env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": a.workdir,
+                        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+    behavior = "fix"
+if behavior == "dotclaude":  # project settings the reviewer's host would load
+    os.makedirs(os.path.join(a.workdir, ".claude"), exist_ok=True)
+    open(os.path.join(a.workdir, ".claude", "settings.json"), "w").write("{}\n")
+    behavior = "fix"
 if behavior == "crash":
     sys.exit(3)
 if behavior == "hang":
@@ -3390,3 +3413,156 @@ def test_pat111_fix_nit9_the_cli_refuses_a_local_comparison_without_screening_re
     assert "no screening results under campaign id test-campaign" in capsys.readouterr().err
     assert lfr.main(["compare", *base, "--paths", "C", "--screening-campaign", "nope"], today=TODAY) == 2
     assert "results-nope.jsonl" in capsys.readouterr().err
+
+
+# ---- review round 2
+
+def _root_reads_anything():
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+@pytest.mark.parametrize("behavior", ["lock", "unreadable", "nested", "cache_unreadable"])
+def test_pat111_fix3_a_bundle_the_arm_left_unreadable_is_a_refusal_never_a_void_attempt(tmp_path, behavior):
+    """B1: a git failure or an ``OSError`` on the bundle AFTER the arm ran (stale index lock, unreadable
+    file, empty nested repository, a file the judge cannot read) is the arm's doing: REFUSED, decided,
+    cost kept, never replayed."""
+    if "unreadable" in behavior and _root_reads_anything():
+        pytest.skip("root reads a mode-0 file: the unreadable-file case cannot be built")
+    first = _make_repo(tmp_path)
+    plan = {**FIX_ALL, "local": [behavior]}
+    runner, campaign, p, tasks = make_runner(tmp_path, "screen", plan, repo_bundle=first)
+    rec = runner.screen(tasks[:1], ["cand-a"])[0]
+    assert rec["judge"]["verdict"] == "REFUSED" and rec["judge"]["note"].startswith("candidate_fault: ")
+    assert str(tmp_path.resolve()) not in rec["judge"]["note"]  # the error is recorded, no work path
+    assert {"lock": "index.lock", "unreadable": "Permission denied", "nested": "sub/",
+            "cache_unreadable": "__pycache__/notes.txt"}[behavior] in rec["judge"]["note"]
+    assert rec["local_outcome"] == "refused" and rec["accepted"] is False
+    assert rec.get("outcome") not in lfr.LOST_OUTCOMES and rec["wall_seconds"] > 0  # cost kept
+    again, _, _, tasks = make_runner(tmp_path, "screen", plan, repo_bundle=first)
+    assert again.screen(tasks[:1], ["cand-a"]) == [] and counts(p) == {"local": 1}  # never replayed
+    assert lfr.report(campaign, results(runner), ledger_of(runner))["void_attempts"] == []
+    # a cloud round is judged refused, its cost kept, and a correction may follow
+    second, _, _, tasks2 = make_runner(_sub(tmp_path, "c"), "compare", {**FIX_ALL, "implementer": [behavior, "fix"]})
+    recs = second.cloud_path(tasks2[0], "A", "comparison")
+    assert [r["outcome"] for r in recs] == ["judge_refused", "accepted"]
+    assert recs[0]["judge"]["note"].startswith("candidate_fault: ") and recs[0]["premium"]["billing_total"] == 135
+
+
+def test_pat111_fix3_only_an_oserror_on_the_bundle_content_is_the_arm_s_doing(tmp_path, monkeypatch):
+    first = _make_repo(tmp_path)
+    runner, campaign, p, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+
+    def locked(candidate, base=None):  # ``purge_bytecode`` cannot unlink a bytecode file of the bundle
+        raise PermissionError(errno.EACCES, "Permission denied", str(candidate / "src" / "x.pyc"))
+
+    monkeypatch.setattr(lfc, "purge_bytecode", locked)
+    rec = runner.screen(tasks[:1], ["cand-a"])[0]
+    assert rec["judge"]["verdict"] == "REFUSED"
+    assert rec["judge"]["note"] == ("candidate_fault: the judge cannot handle the bundle content: "
+                                    "PermissionError on src/x.pyc: Permission denied")  # no absolute path
+    # an OSError of the launcher's environment (outside the bundle) stays a void, replayable attempt
+    other, _, p2, tasks2 = make_runner(_sub(tmp_path, "b"), "screen", FIX_ALL)
+
+    def environment(*_args, **_kw):
+        raise OSError(errno.ENOSPC, "No space left on device", str(tmp_path / "elsewhere"))
+
+    monkeypatch.setattr(lfc, "judge", environment)
+    with pytest.raises(OSError):
+        other.screen(tasks2[:1], ["cand-a"])
+    assert [r["outcome"] in lfr.LOST_OUTCOMES and r["judge"] is None
+            for r in results(other) if r["record_type"] == "attempt"] == [True]
+
+
+@pytest.mark.parametrize("shape", ["claude", "omp"])
+def test_pat111_fix3_text_that_mentions_a_home_path_is_not_an_access(tmp_path, shape):
+    """B2: a bundle file, a written text or a searched pattern that MENTIONS ``~/.config`` or ``~/.claude``
+    is not a read of the home; a command or a result that really names it still is."""
+    audit, home, bundle = _audit_in(tmp_path)
+    read, edit, write, bash = (("Read", "Edit", "Write", "Bash") if shape == "claude"
+                               else ("read", "edit", "write", "bash"))
+    path_key = "file_path" if shape == "claude" else "path"
+    mention = "registry: `~/.config/foundry/registry.json`; settings under ~/.claude and $HOME/.claude\n"
+
+    def result(text):
+        if shape == "claude":
+            return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t",
+                                                             "content": text}]}}
+        return {"type": "tool_execution_end", "toolName": read, "result": {"content": [
+            {"type": "text", "text": text}]}}
+
+    assert audit((shape, read, {path_key: str(bundle / "registry.py")}), raw=[result(mention)]) == []
+    assert audit((shape, edit, {path_key: "src/a.py", "old_string": "~/.config/foundry/registry.json",
+                                "new_string": "~/.claude/x", "oldText": "~/.claude", "newText": "$HOME/.ssh"})) == []
+    assert audit((shape, write, {path_key: "docs/a.md", "content": mention})) == []
+    assert audit(("claude", "Grep", {"pattern": "~/.claude", "path": "."})) == []
+    for command in ("grep -rn '~/.claude' .", 'grep -rn "~/.config/foundry" src', "rg -n '$HOME/.claude' .",
+                    "echo '~/.claude' > notes.txt"):
+        assert audit((shape, bash, {"command": command})) == [], command
+    # the guards stay red
+    assert audit((shape, bash, {"command": "cat ~/.config/foundry/registry.json"})) == [
+        "~/.config/foundry/registry.json"]
+    assert audit((shape, bash, {"command": "ls ~/.claude/plugins"})) == ["~/.claude/plugins"]
+    assert audit((shape, bash, {"command": 'cat "$HOME/.claude/settings.json"'})) == ["~/.claude/settings.json"]
+    assert audit((shape, bash, {"command": "grep -rn x '~/.claude' ~/.claude"})) == ["~/.claude"]
+    assert audit((shape, read, {path_key: "~/.claude/settings.json"})) == ["~/.claude/settings.json"]
+    listing = f"{home}/.claude/plugins/cache/foundry/1.0.0/tests/test_m.py\n"
+    assert audit(raw=[result(listing)]) == [
+        "tool_result:~/.claude/plugins/cache/foundry/1.0.0/tests/test_m.py"]
+
+
+@pytest.mark.parametrize("shape,name", [("claude", "Bash"), ("omp", "bash")])
+def test_pat111_fix3_a_bare_root_given_to_a_filesystem_reader_is_a_path(tmp_path, shape, name):
+    """N2: ``/`` is the division operator, except as an argument of find, grep -r/-R, rg, ls, du, tree, cat."""
+    audit, _, _ = _audit_in(tmp_path)
+    for command in ("find / -name x -exec cat {} +", "ls /", "grep -rn token /", "grep -R x / --include=*.py",
+                    "rg token /", "du -sh /", "tree /", "cat /", "cd src && find / -name '*.py'",
+                    "sudo find / -name x", "grep --recursive x /"):
+        assert audit((shape, name, {"command": command})) == ["/"], command
+    heredoc = ("python3 - <<'E'\nvalues = [1, 2]\nprint(sum(values) / len(values))\nE")
+    for command in (heredoc, "echo $((4 / 2))", "grep -n x / || true", "expr 4 / 2"):
+        assert audit((shape, name, {"command": command})) == [], command
+
+
+def test_pat111_fix3_claude_settings_of_the_implementer_never_reach_the_reviewer_bundle(tmp_path, monkeypatch):
+    """N3: the implementer's ``.claude/`` files are not applied to the reviewer's bundle, and the record
+    says so."""
+    applied = []
+    real = lfr._apply_patch
+
+    def spy(bundle, patch):
+        applied.append(patch)
+        return real(bundle, patch)
+
+    monkeypatch.setattr(lfr, "_apply_patch", spy)
+    runner, _, _, tasks = make_runner(tmp_path, "compare", {**FIX_ALL, "implementer": ["dotclaude"],
+                                                            "local": ["dotclaude"]})
+    rec = runner.cloud_path(tasks[0], "A", "comparison")[0]
+    assert rec["outcome"] == "accepted" and rec["review_excluded"] == [".claude/settings.json"]
+    assert applied and b".claude/" not in applied[-1] and b"m.py" in applied[-1]
+    local = runner.hybrid_path(tasks[1], "cand-a", "local_harness", "comparison")[0]
+    assert local["review_excluded"] == [".claude/settings.json"] and b".claude/" not in applied[-1]
+    clean, _, _, tasks = make_runner(_sub(tmp_path, "b"), "compare", FIX_ALL)
+    assert "review_excluded" not in clean.cloud_path(tasks[0], "A", "comparison")[0]
+    patch = (b"diff --git a/x.py b/x.py\n+1\ndiff --git a/.claude/s.json b/.claude/s.json\n+{}\n"
+             b"diff --git a/p/.claude/agents/a.md b/p/.claude/agents/a.md\n+x\n")
+    assert lfr._without_claude_dirs(patch) == (b"diff --git a/x.py b/x.py\n+1\n",
+                                               [".claude/s.json", "p/.claude/agents/a.md"])
+
+
+def test_pat111_fix3_a_refusal_on_init_still_records_the_contamination_and_is_never_replayed(tmp_path):
+    """N5: the audit runs even when the ``init`` tool set refuses the record."""
+    home = _fake_home(tmp_path)
+    first = _make_repo(tmp_path)
+    env = {**os.environ, "HOME": str(home)}
+    plan = _peek_plan(home, implementer=1)
+    runner, campaign, p, tasks = make_runner(tmp_path, "compare", plan, repo_bundle=first, host_env=env)
+    _claude_stream_driver(campaign["drivers"]["cloud_implementer_current"], "Read,Edit,Bash,Write,Task")
+    with pytest.raises(lfr.RunnerError, match="sub-agent tool"):
+        runner.cloud_path(tasks[0], "A", "comparison")
+    rec = [r for r in results(runner) if r["record_type"] == "attempt"][0]
+    assert rec["status"] == "tool_error" and "sub-agent tool" in rec["reason"]
+    assert rec["contaminated"] is True and rec["outcome"] == "contaminated" and rec["accepted"] is None
+    assert rec["contamination"]["paths"] == ["~/.claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"]
+    again, campaign2, _, tasks = make_runner(tmp_path, "compare", plan, repo_bundle=first, host_env=env)
+    _claude_stream_driver(campaign2["drivers"]["cloud_implementer_current"], "Read,Edit,Bash,Write")
+    assert again.cloud_path(tasks[0], "A", "comparison") == [] and counts(p)["implementer"] == 1  # not replayed

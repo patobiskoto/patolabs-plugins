@@ -91,10 +91,15 @@ d'option pour s'en passer.
     juge).
   - **Nulle** (*void*) : coupée **avant** tout verdict : enregistrement `interrupted` ou `tool_error` sans
     `judge`, ou `attempt_started` au registre sans `settled` ni enregistrement (tuée). Seules les pannes du
-    lanceur ou de l'environnement sont nulles : une panne **causée par le candidat** (il a modifié la
-    configuration ou les attributs git de son bundle, ou l'arbre bouge encore) est un **refus** (verdict
-    `REFUSED`, note `candidate_fault: …`, le juge n'est pas lancé), décidé, jamais rejoué ; en cloud le tour
-    est jugé refusé et une correction peut suivre.
+    lanceur ou de l'environnement **avant** que le bras ne tourne (construction du bundle, démarrage du
+    pilote), ou hors du bundle ensuite, sont nulles. Une panne sur le bundle **après** l'exécution du bras est
+    **causée par le candidat** et vaut **refus** (verdict `REFUSED`, note `candidate_fault: …` avec l'erreur,
+    coût conservé), décidé, jamais rejoué : `.git` n'est plus un dossier simple, sa configuration ou ses
+    attributs ont changé, l'arbre bouge encore (contrôle de quiétude), **toute commande git qui prend le patch
+    échoue** (`.git/index.lock` laissé par le bras tué à la borne, dépôt imbriqué vide d'un `git init sub/`,
+    fichier illisible…), ou le juge reçoit une `OSError` sur un fichier **du bundle** (lecture de
+    `_candidate_changes`, suppression de bytecode de `purge_bytecode`). Une `OSError` du juge sur un chemin
+    hors du bundle reste nulle. En cloud le tour est jugé refusé et une correction peut suivre.
   - **Rejouable** : une tentative locale nulle l'est **une seule fois**, sur un bundle neuf ; le rejeu est
     enregistré avec `replay_of` (`attempt`, `attempt_dir` de la tentative nulle, `outcome`, `reason`
     ; `outcome: hard_kill` pour une tentative tuée). Une seconde coupure de la même tentative (deux
@@ -325,7 +330,9 @@ un pilote qui échoue reste `verified: false` et le lanceur le refuse. Les cinq 
   (`gh pr merge`, `git push` refusés par le crochet `PreToolUse`) ne s'applique pas à ces bras**, et aucun serveur
   MCP. **Non vérifié** : si la mémoire globale `CLAUDE.md` de l'utilisateur est encore chargée
   (asymétrie avec le bras local) : limite du résultat.
-  Essais : 11,6 s / 7 tours (Sonnet), 16,3 s (Haiku), 16,5 s (Opus, a écrit le fichier de revue demandé).
+  Durées des **premiers essais, avec `--disallowedTools Agent` seul** (pas l'argv final) : 11,6 s / 7 tours
+  (Sonnet), 16,3 s (Haiku), 16,5 s (Opus, a écrit le fichier de revue demandé) ; celles de l'**argv final
+  épinglé** sont 7,6 s / 13,1 s / 17,1 s (ci-dessus).
 
 **Disposition des journaux de session** (vérifiée sur un essai réel pour les trois pilotes cloud) : les
 compteurs que lit `premium_tokens(session_id)` dans `<projects>/*/<session>.jsonl` sont **égaux** à ceux que l'hôte
@@ -416,23 +423,34 @@ de commandes, audit de contamination, bundle sans dépôt distant).
 ## Audit de contamination
 
 Après chaque exécution (locale ou cloud, une fois le flux conservé), le lanceur lit les appels d'outils du
-flux (`tool_use` Claude, `tool_execution_start` omp : arguments de Read, Grep, Glob, Bash, Edit… quel que soit
-l'outil) et, quand le flux les expose, les **résultats d'outils** (blocs `tool_result` Claude,
-`tool_execution_end` omp). Il relève :
+flux (`tool_use` Claude, `tool_execution_start` omp) et, quand le flux les expose, les **résultats d'outils**
+(blocs `tool_result` Claude, `tool_execution_end` omp). Des arguments d'un appel, il ne lit que les **clés de
+chemin** (`path`, `file_path`, `notebook_path`, `cwd`…, et le `pattern` d'un outil Glob/`find`, qui est un
+chemin) et les **commandes** (`command`, `cmd`), quel que soit l'outil : le texte qu'un bras écrit ou cherche
+(`old_string`/`new_string` d'Edit, `content` de Write, `pattern` de Grep…) n'est pas un accès, même s'il mentionne
+`~/.config` ou `~/.claude` (des dizaines de fichiers de ce dépôt, outillage, tests, docs, `AGENTS.md`, en contiennent). Il relève :
 
-- **les chemins** : valeurs de clés de chemin, et tout jeton qui ressemble à un chemin (`~`, `$HOME`,
-  absolu, relatif). Un chemin relatif se résout **contre le bundle**, ou contre le dossier d'un `cd` précédent de
+- **les chemins** : valeurs de clés de chemin, et dans une commande tout jeton qui ressemble à un chemin (`~`,
+  `$HOME`, absolu, relatif). Dans une commande, `~` et `$HOME` ne sont développés que là où le shell les développe :
+  un `~` entre guillemets (simples ou doubles) et un `$HOME` entre guillemets simples sont du texte
+  (`grep -rn '~/.claude' .` est propre ; `cat ~/.config/foundry/registry.json`, `ls ~/.claude/plugins`,
+  `cat "$HOME/.claude/x"` sont relevés). Un chemin relatif se résout **contre le bundle**, ou contre le dossier d'un `cd` précédent de
   la même commande (`cd ~ && cat .claude/x`). Hors du bundle et du dossier d'essai, un chemin est relevé quand il
   tombe dans la liste sensible (celle d'un bras local : cache de plugins et configuration de l'utilisateur sous
   `~/.claude`, `.config`…, tout autre checkout ou worktree de ce dépôt, dossier d'état, dossiers des fichiers
   d'entrée, secrets du HOME) ; **et**, pour une clé de chemin ou une commande Bash, quand il se résout vers le HOME
   réel ou dessous, vers un dossier qui en contient un chemin sensible ou un ancêtre du bundle (`find ~`,
   `grep -r … ~`, `src/../../..`), ou, s'il est **relatif** au bundle, hors du bundle et du dossier d'essai
-  (`../../x`) ; un chemin absolu hors du HOME n'est pas relevé par ce seul motif (`/usr/bin` reste propre) ; un jeton fait **uniquement de barres obliques** (`/`, `//`) n'est pas un chemin :
-  c'est l'opérateur de division du code (`sum(v) / len(v)` dans un script Python en `heredoc` donnait à tort `/`,
-  la racine, lors de l'essai réel final de Sonnet 5.5). **Limite connue** : un `ls /` nu n'est plus relevé (il ne
-  révèle aucun contenu de fichier) ; tout accès qui nomme quelque chose sous la racine (`/Users/…`, `~`) l'est ;
-- **les résultats d'outils** montrant un chemin sensible (`tool_result:<chemin>`) ;
+  (`../../x`) ; un chemin absolu hors du HOME n'est pas relevé par ce seul motif (`/usr/bin` reste propre) ; un
+  jeton fait **uniquement de barres obliques** (`/`, `//`) est l'opérateur de division du code (`sum(v) / len(v)`
+  dans un script Python en `heredoc` donnait à tort `/`, la racine, lors de l'essai réel final de Sonnet 5.5),
+  **sauf** comme argument de `find`, `grep -r`/`-R`, `rg`, `ls`, `du`, `tree` ou `cat` dans un segment de commande,
+  où c'est la racine et la règle large s'applique (`find / -name x -exec cat {} +` est relevé). **Limite
+  connue** : un `/` nu qui atteint le shell autrement (un script, `echo / | xargs ls`) n'est pas vu ;
+- **les résultats d'outils** montrant un chemin **littéral absolu** sous une racine sensible
+  (`tool_result:<chemin>`, par exemple `/Users/<u>/.claude/plugins/…` affiché par `find`, `ls` ou `cat`) ; `~`,
+  `$HOME` ou `${HOME}` dans le texte d'un résultat ne sont pas développés (un fichier du bundle qui cite
+  `~/.config/foundry/registry.json` est du texte, pas un accès) ;
 - **les commandes** (`command:<étiquette>`) : tout appel Bash dont la commande, après une normalisation simple
   (guillemets retirés, découpe sur `&&`, `||`, `;`, `|`, `&`, `` ` ``, `$(`, retrait de `VAR=…`, `env`, `sudo`,
   `command`, `exec`, `nohup`, `time`, `nice`, `xargs`, `timeout`, descente dans `sh|bash|zsh -c`, nom de base de
@@ -454,7 +472,12 @@ c'est un audit, pas une interdiction (la commande ou la lecture a eu lieu) ; il 
 processus fils, un sous-agent ne le sont pas) ; l'analyse d'une ligne de commande n'est pas un analyseur de shell ;
 une commande `npm` légitime (tâche JavaScript) est relevée comme contaminée (choix conservateur) ; il porte sur
 le flux du lanceur (mêmes appels d'outils que la transcription de session de l'hôte). Une contamination
-possible mais non détectée reste donc une limite du résultat des bras cloud.
+possible mais non détectée reste donc une limite du résultat des bras cloud. **Le flux du harnais neutre
+(mini-swe-agent) n'est pas audité** : sa trajectoire (fichier `trajectory`) n'est pas analysée, seul son flux de
+sortie l'est, qui ne contient pas d'appels d'outils au format lu ; l'atténuation est le profil `sandbox-exec` qui
+refuse la lecture du HOME réel aux bras locaux (`deny_home_by_default`). Une exécution cloud refusée sur son
+événement `init` (outils hors liste) est quand même auditée : la contamination éventuelle est consignée avec le
+refus (`status: tool_error`, `outcome: contaminated`), et l'enregistrement n'est alors jamais rejoué.
 
 Le pilote `local_harness` est la commande `omp` (18.4.10) éprouvée le 2026-10-05 (voir ci-dessus).
 
@@ -656,15 +679,22 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   gestionnaires de signaux précédents sont rétablis à l'identique en sortie. Une exécution cloud interrompue est réglée dans le
   registre avec des tokens inconnus. **Non imposé** : un enfant qui appelle `setsid` sort du groupe et
   survit au `kill` ; seule parade, un contrôle de quiétude avant le jugement : le lanceur compare deux
-  empreintes (chemin, taille, mtime) du bundle à 0,2 s d'écart et refuse de juger (`tool_error`) si
-  elles diffèrent. Un enfant échappé qui ne fait rien ne se voit pas.
+  empreintes (chemin, taille, mtime) du bundle à 0,2 s d'écart et, si elles diffèrent, ne juge pas : la
+  tentative est refusée (`REFUSED`, `candidate_fault`, voir « Nulle »). Un enfant échappé qui ne fait rien ne se
+  voit pas. **Limite connue, non corrigée ici** : le profil d'un bras local part de `(allow default)`, donc un bras
+  local peut envoyer un signal au lanceur (`pkill`, `kill`) ; une coupure ainsi provoquée donne une tentative
+  **nulle**, rejouée **au plus une fois** et listée dans `report.void_attempts` (une seconde coupure laisse la
+  tâche indécise). Durcir le profil demanderait un nouvel essai réel avec un modèle chargé.
 - **Git sur un bundle** : toute commande git du lanceur sur un bundle neutralise la configuration
   (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` vers `/dev/null`, `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `protocol.file.allow=never`, `core.attributesFile=/dev/null`, `--no-ext-diff`,
   `--no-textconv`) et refuse un bundle dont `.git` n'est plus un dossier simple, dont `.git/config`,
   `.git/info/attributes` ou un `.gitattributes` a changé depuis le commit racine. Le patch est pris contre
   le SHA du commit racine enregistré à la construction (un bras qui commite donne son patch) et les
-  fichiers nouveaux y figurent ; il est appliqué avec `--index` pour la revue.
+  fichiers nouveaux y figurent ; il est appliqué avec `--index` pour la revue, **sans** ses fichiers sous un
+  dossier `.claude/` (à toute profondeur) : l'hôte du relecteur les chargerait comme réglages de projet. Les
+  chemins écartés sont consignés dans `review_excluded` de l'enregistrement (absent quand rien n'est écarté) ; le
+  juge, lui, a vu le bundle complet.
 - **Juge** (`local_first_corpus`) : l'état « jugé » est tenu par le lanceur (clé : chemin du bundle),
   jamais dans l'arbre du candidat ; un lien symbolique sous les préfixes de code produit (ou l'un de leurs
   parents) donne un `REFUSED` (`symlink_in_product_source`).
@@ -715,10 +745,11 @@ Faites par PAT-111 (voir « Pilotes épinglés ») : épingler chaque pilote par
 leur essai ; l'argv final des trois pilotes cloud et le drapeau de borne d'étapes du harnais neutre ont aussi
 été essayés le 2026-10-05) ; vérifier la disposition des journaux de session (compteurs égaux à ceux de l'hôte, sous la
 condition de l'assertion d'outils) ; consigner les empreintes des poids, le gabarit et les paramètres de
-génération ; essayer la liste de refus avec le vrai harnais local ; relever les champs de `lms ps --json` ;
-traiter le biais des bras cloud par l'audit de contamination et des règles Bash au mieux. **Restent ouvertes** :
-l'**acceptation explicite par le mainteneur de
-l'exposition des bras cloud** (voir « Exposition des bras cloud ») ; la mémoire globale `CLAUDE.md`
+génération ; essayer la liste de refus avec le vrai harnais local, puis le refus par défaut du HOME avec `omp`
+18.4.10 et mini-swe-agent 2.4.6 (2026-10-05) ; relever les champs de `lms ps --json` ;
+traiter le biais des bras cloud par l'audit de contamination et des règles Bash au mieux ; obtenir
+l'acceptation explicite par le mainteneur de l'exposition résiduelle des bras cloud (donnée le 2026-10-05, voir
+« Exposition des bras cloud »). **Restent ouvertes** : la mémoire globale `CLAUDE.md`
 éventuellement chargée par le bras cloud ; **trouver où le jeton du tracker est stocké** (fichier, trousseau,
 variable) et, s'il est au trousseau, refuser ce service dans le profil, par exemple `(deny mach-lookup
 (global-name "com.apple.SecurityServer") …)`, à condition que le harnais fonctionne encore ainsi (à vérifier par
@@ -735,7 +766,8 @@ le format de flux `claude-stream-json`, les clés de candidat `lm_studio_key`/`q
 `load_command`/`file_sha256`/…, le fichier de preuve `pat-19-preflight-2026-10-05.json` dont `command_tried`,
 `pinned_final_argv` et `lms_ps_json_observed`), les refus de préflight
 `loaded_context_*`/`loaded_quantization_*`/`loaded_model_key_*`, l'enregistrement `contaminated`/
-`contamination` (`paths`, `commands`) et `report.contaminated`, `report.void_attempts` (dont les sessions cloud
+`contamination` (`paths`, `commands`) et `report.contaminated`, `review_excluded`, la note
+`candidate_fault` (pannes du bundle après l'exécution du bras), `report.void_attempts` (dont les sessions cloud
 sans enregistrement), `local.harness_executable`, `local.step_limit_hit`, le format
 d'enveloppe et de registre (`dry_run`, empreintes, `settled` apparié), le schéma des résultats (`tool_error`,
 `interrupted` avec `judge` quand la coupure suit un verdict, `stopped_by_cap`, `cloud_sessions`,
@@ -745,8 +777,8 @@ cloud et le périmètre de l'isolement. Aucune constante publique, option de `fo
 configuration produit ni table de routage n'a changé (la table de traduction des modèles Claude de
 `routing_facades.py` n'est pas touchée : les identifiants complets des pilotes sont des données de campagne).
 **Documenté et non appliqué mécaniquement** (dit explicitement) : toute interdiction de lecture, de réseau ou
-d'identifiants pour un bras cloud ; l'essai du refus par défaut du HOME avec le vrai harnais ; l'essai de l'argv
-final cloud et du drapeau de borne d'étapes ; le recalcul des empreintes de poids au préflight ; la borne
+d'identifiants pour un bras cloud ; l'audit du flux du harnais neutre (trajectoire non analysée) ; l'interdiction
+pour un bras local de signaler le lanceur ; le recalcul des empreintes de poids au préflight ; la borne
 d'étapes du harnais neutre **en cours d'exécution** (transmise au harnais et vérifiée a posteriori) ; la
 détection des chemins ou commandes construits à l'exécution par l'audit ; la fenêtre de quelques instructions
 entre le retour du juge et l'affectation de son verdict. L'application mécanique de R5 reste celle de

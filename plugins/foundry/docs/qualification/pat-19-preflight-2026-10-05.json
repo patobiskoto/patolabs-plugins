@@ -440,6 +440,7 @@
         "claim": "pinned from a real trial on 2026-10-05 (Claude Code 2.1.285); the earlier command_tried entry and trial stay as history"
       },
       "trial": {
+        "label": "first trial, with --disallowedTools Agent only (command_tried), not the final pinned argv",
         "role": "implement",
         "model": "claude-sonnet-5-5",
         "effort": "medium",
@@ -515,6 +516,7 @@
         "claim": "pinned from a real trial on 2026-10-05 (Claude Code 2.1.285); the earlier command_tried entry and trial stay as history"
       },
       "trial": {
+        "label": "first trial, with --disallowedTools Agent only (command_tried), not the final pinned argv",
         "role": "implement",
         "model": "claude-haiku-4-5-20251001",
         "effort": null,
@@ -590,6 +592,7 @@
         "claim": "pinned from a real trial on 2026-10-05 (Claude Code 2.1.285); the earlier command_tried entry and trial stay as history"
       },
       "trial": {
+        "label": "first trial, with --disallowedTools Agent only (command_tried), not the final pinned argv",
         "role": "review",
         "model": "claude-opus-5-5",
         "effort": "high",
@@ -728,7 +731,7 @@
     },
     "settings": "With --setting-sources project,local --strict-mcp-config only built-in plugins load (no user plugin hooks, no MCP server). Not verified: whether the user's global CLAUDE.md memory is still loaded (asymmetry with the local arm): a limit of the result.",
     "cost_note": "Host-reported list prices are informative only, never an economy figure.",
-    "exposure": "Cloud arms are bare Claude Code (--setting-sources project,local --strict-mcp-config: no Foundry plugin, hook or agent definition, so not the Eiffel/Maigret definitions and no R1 guard on gh pr merge / git push) with --permission-mode bypassPermissions, the real home, an open network and the user's implicit credentials (git credential helper through the keychain, gh configuration, ~/.config/foundry). The launcher applies no read denial to them. A cloud arm could read merged solutions (gh pr view, git clone, curl), act on the real repository through gh, start another claude -p whose tokens are never read, or exfiltrate. Mitigations are best-effort only: cloud_bash_deny permission rules, a post-run audit of commands and paths (contaminated records), and the bundle having no remote. The maintainer's explicit acceptance of this exposure is pending.",
+    "exposure": "Cloud arms are bare Claude Code (--setting-sources project,local --strict-mcp-config: no Foundry plugin, hook or agent definition, so not the Eiffel/Maigret definitions and no R1 guard on gh pr merge / git push) with --permission-mode bypassPermissions, the real home, an open network and the user's implicit credentials (git credential helper through the keychain, gh configuration, ~/.config/foundry). The launcher applies no read denial to them. A cloud arm could read merged solutions (gh pr view, git clone, curl), act on the real repository through gh, start another claude -p whose tokens are never read, or exfiltrate. Mitigations are best-effort only: cloud_bash_deny permission rules, a post-run audit of commands and paths (contaminated records), and the bundle having no remote. The maintainer explicitly accepted this residual exposure on 2026-10-05, with these mitigations.",
     "contamination_audit_real_streams": {
       "date": "2026-10-05",
       "clean": [
@@ -736,15 +739,16 @@
         "the omp deny-home run",
         "the 4 earlier local candidate runs"
       ],
-      "false_positive_before_fix": "the Sonnet 5.5 run (3rd Bash call: a python heredoc editing src/calc.py with `return sum(values) / len(values)`) was flagged `/`: the division operator was read as the filesystem root, which contains the bundle. Reason for the fix: a token made only of slashes is not a path. Known limit: a bare `ls /` is no longer flagged (it reveals no file content); `/etc/x` or `~` still are."
+      "false_positive_before_fix": "the Sonnet 5.5 run (3rd Bash call: a python heredoc editing src/calc.py with `return sum(values) / len(values)`) was flagged `/`: the division operator was read as the filesystem root, which contains the bundle. Reason for the fix: a token made only of slashes is not a path. Since review round 2 a bare `/` is a path again as an argument of find, grep -r/-R, rg, ls, du, tree or cat (`find / -name x -exec cat {} +` is flagged); the heredoc division stays clean. Known limit: a bare `/` reaching the shell any other way (a script, `echo / | xargs ls`) is not seen."
     }
   },
   "limits": [
     "tokens of a neutral-harness run are unknown (no event stream)",
+    "the contamination audit does not read the neutral harness's trajectory (its tool calls are not parsed): mitigated by the deny-home sandbox profile of local arms",
     "an unsandboxed cloud arm has the real home, an open network, the user's implicit credentials and no Foundry hook: it can read anything the user can (plugin cache whose tests were merged before release 1.0.0, repositories), call gh/curl/git, or start another agent; the launcher applies best-effort Bash deny rules and audits the arm's commands and paths after the run (contaminated records) instead of preventing it",
     "the weights digests are recorded here and are not recomputed by the launcher",
     "one toy task per driver: a trial proves the command works, it measures no quality",
-    "a bare `ls /` (a token made only of slashes) is not flagged by the contamination audit: it reveals no file content, and the division operator of code must not make an honest run contaminated"
+    "a token made only of slashes is the division operator for the contamination audit, except as an argument of find, grep -r/-R, rg, ls, du, tree or cat: a bare `/` reaching the shell another way (a script, `echo / | xargs ls`) is not flagged"
   ],
   "lms_ps_json_observed": {
     "date": "2026-10-05",

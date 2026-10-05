@@ -93,6 +93,15 @@ class CandidateFault(RunnerError):
     changed, tree still moving). Not a launcher failure: the attempt is refused, never void."""
 
 
+class ToolsetRefused(RunnerError):
+    """A cloud record refused on the ``init`` tool set of its stream; carries the contamination audit
+    of the same stream, recorded alongside the refusal."""
+
+    def __init__(self, reason: str, contamination: Sequence[str]):
+        super().__init__(reason)
+        self.contamination = list(contamination)
+
+
 class PreflightRefused(RunnerError):
     def __init__(self, refusals: Sequence[str]):
         super().__init__("preflight refused: " + ", ".join(refusals))
@@ -900,6 +909,8 @@ def resolve_executable(driver: Mapping[str, Any], host_env: Mapping[str, str]) -
 
 _PATH_KEYS = frozenset({"path", "file_path", "notebook_path", "cwd", "directory", "dir", "file",
                         "filename", "paths", "file_paths"})
+# Tools whose ``pattern`` argument is a path glob (Claude ``Glob``, omp ``find``), not a text pattern.
+_GLOB_TOOLS = frozenset({"glob", "find"})
 _PATH_TOKEN = re.compile(r"(?:~|\$\{?HOME\}?|(?<![\w.~$}/])/|(?<![\w.~$}/])\.\.?/)[^\s'\"`;|&<>(),]*")
 
 
@@ -1016,8 +1027,47 @@ def _forbidden_command(tokens: Sequence[str]) -> str | None:
 
 def _pathlike(token: str) -> bool:
     if token and not token.strip("/"):
-        return False  # ``/``, ``//``: an operator, not a path
+        return False  # ``/``, ``//``: an operator, not a path (unless a reader takes it, see below)
     return token.startswith(("~", "$HOME", "${HOME}", "/")) or token in (".", "..") or "/" in token
+
+
+# Executables that, given a bare ``/``, walk or read the filesystem root (``find / -name x``).
+_ROOT_READERS = frozenset({"find", "rg", "ls", "du", "tree", "cat"})
+
+
+def _reads_root(tokens: Sequence[str]) -> bool:
+    """Whether a bare ``/`` in this segment (wrappers stripped) is a path: an argument of ``find``,
+    ``rg``, ``ls``, ``du``, ``tree``, ``cat`` or of a recursive ``grep`` (``-r``/``-R``)."""
+    if not tokens:
+        return False
+    exe = os.path.basename(tokens[0].lstrip("\\({"))
+    if exe in ("grep", "egrep", "fgrep"):
+        return any(t in ("--recursive", "--dereference-recursive")
+                   or (t.startswith("-") and not t.startswith("--") and ("r" in t or "R" in t))
+                   for t in tokens[1:])
+    return exe in _ROOT_READERS
+
+
+def _unquoted_expansions(command: str) -> str:
+    """The command with what the shell does NOT expand neutralised for the path audit: a ``~`` inside
+    single or double quotes and a ``$`` inside single quotes become ``_`` (``grep -rn '~/.claude' .``
+    searches the text ``~/.claude``, it reads nothing under the home). An unquoted ``~`` or ``$HOME``
+    and a ``$HOME`` inside double quotes are kept (``cat ~/.config/x`` stays an access). Best effort:
+    a quote inside a heredoc body is read like any other."""
+    out, quote, escaped = [], None, False
+    for ch in command:
+        if escaped:
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            escaped = True
+        elif quote is None and ch in "'\"":
+            quote = ch
+        elif ch == quote:
+            quote = None
+        elif quote is not None and (ch == "~" or (ch == "$" and quote == "'")):
+            ch = "_"
+        out.append(ch)
+    return "".join(out)
 
 
 def _expand(token: str, home: str) -> str | None:
@@ -1033,8 +1083,10 @@ def _expand(token: str, home: str) -> str | None:
 
 def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bool]]:
     """Every path a command line names, resolved against the working directory the line has at that
-    point (``cd`` is followed): ``find ~``, ``cd ~ && cat .claude/x``, ``src/../../..`` included. The
-    flag says the path was RELATIVE to the bundle (an honest arm never climbs out of it)."""
+    point (``cd`` is followed): ``find ~``, ``cd ~ && cat .claude/x``, ``src/../../..`` included; a bare
+    ``/`` only as an argument of a filesystem reader (``find / -name x``, see ``_reads_root``). The
+    flag says the path was RELATIVE to the bundle (an honest arm never climbs out of it). Expects the
+    command after ``_unquoted_expansions``."""
     cwd, out = bundle, []
 
     def resolve(token: str) -> tuple[Path, bool] | None:
@@ -1053,11 +1105,13 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
                 out.append(found)
                 cwd = found[0]
             continue
+        root_reader = _reads_root(tokens)
         for token in tokens:
             token = token.lstrip("<>")
             if token.startswith("-"):
                 token = token.partition("=")[2]
-            if token and _pathlike(token) and (found := resolve(token)) is not None:
+            if token and (_pathlike(token) or (root_reader and not token.strip("/"))) \
+                    and (found := resolve(token)) is not None:
                 out.append(found)
     return out
 
@@ -1085,19 +1139,26 @@ def _tool_results(lines: Sequence[str]) -> list[str]:
 
 def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive: Sequence[Path],
                      home: str) -> list[str]:
-    """What an arm's stream shows it did outside its bundle and attempt directory. Paths of its tool
-    calls (Read/Grep/Glob/Bash arguments, whatever the tool; relative ones resolved against the bundle,
+    """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
+    arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
+    commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
+    ``content``, Grep ``pattern``...) is not an access. Paths (relative ones resolved against the bundle,
     or against the directory of a ``cd``) that fall among ``sensitive`` (plugin cache and the rest of the
     user's configuration, other checkouts of this repository, the launcher's own files); for a path key
     or a Bash command also any path that resolves to the real home or below it, to a directory that
-    contains a sensitive path, or to an ancestor of the bundle (``find ~``, ``src/../../..``);
-    ``tool_result:<path>`` for a sensitive path that a tool RESULT shows; ``command:<label>`` for a Bash
+    contains a sensitive path, or to an ancestor of the bundle (``find ~``, ``src/../../..``). In a
+    command, ``~`` and ``$HOME`` are expanded only where the shell expands them (``grep -rn '~/.claude'
+    .`` is clean, ``cat ~/.config/x`` is not). ``tool_result:<path>`` for a LITERAL absolute path under
+    a sensitive root that a tool RESULT shows (``~``/``$HOME`` in result text are not expanded: a file
+    of the bundle that mentions ``~/.claude`` is text, not an access); ``command:<label>`` for a Bash
     command that runs a forbidden executable (see ``FORBIDDEN_EXECUTABLES``, ``git push|remote|clone|
     fetch|pull``, ``python -m http``, ``pip install``). Best effort on a command line (a path or a
     command built at run time, or run by a script, is not seen). A non-empty result makes the attempt
-    ``contaminated``. ``~`` shows as the home directory in the result. Known limit: a token made only of slashes (``/``,
-    ``//``) is not a path (it is the division operator of code), so a bare ``ls /`` is not flagged; it
-    reveals no file content, and any access that names something under the root (``/etc/x``) is."""
+    ``contaminated``. ``~`` shows as the home directory in the result. Known limit: a token made only of
+    slashes (``/``, ``//``) is the division operator of code, not a path, EXCEPT as an argument of a
+    filesystem reader (``find``, ``grep -r``, ``rg``, ``ls``, ``du``, ``tree``, ``cat``): ``find / -name x
+    -exec cat {} +`` is flagged, while a bare ``/`` reaching the shell any other way (``echo / | xargs
+    ls``, a script) is not seen."""
     try:
         lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
     except FileNotFoundError:
@@ -1122,16 +1183,23 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                 or any(_within(r, path) for r in roots))):
             hits[shown(path)] = None
 
-    for _name, args in _tool_calls(lines):
+    for name, args in _tool_calls(lines):
+        path_keys = _PATH_KEYS | ({"pattern"} if name.lower() in _GLOB_TOOLS else frozenset())
         for key, text in _strings(args):
-            tokens = _path_tokens(text) + ([text.strip()] if key in _PATH_KEYS else [])
+            if key in _COMMAND_KEYS:
+                literal = _unquoted_expansions(text)
+                tokens = _path_tokens(literal)
+            elif key in path_keys:
+                tokens = _path_tokens(text) + [text.strip()]
+            else:  # text the arm writes or searches (Edit, Write, Grep pattern...): not an access
+                continue
             for token in tokens:
                 token = _expand(token, str(home_real))
                 if token is not None:
                     consider(Path(os.path.realpath(token if os.path.isabs(token) else bundle / token)),
-                             key in _PATH_KEYS, key in _PATH_KEYS and not os.path.isabs(token))
+                             key in path_keys, key in path_keys and not os.path.isabs(token))
             if key in _COMMAND_KEYS:
-                for path, relative in _command_paths(text, bundle_real, str(home_real)):
+                for path, relative in _command_paths(literal, bundle_real, str(home_real)):
                     consider(path, True, relative)
                 for segment in _segments(text):
                     if (found := _forbidden_command(segment)) is not None:
@@ -1140,9 +1208,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     for text in _tool_results(lines):
         for token in _path_tokens(text):
             token = re.sub(r":\d+(?::\d+)?:?$", "", token).rstrip(":.")  # ``file.py:12:`` locations
-            expanded = _expand(token, str(home_real))
-            if expanded is not None and os.path.isabs(expanded):
-                path = Path(os.path.realpath(expanded))
+            if os.path.isabs(token):  # a literal path only: ``~``/``$HOME`` in text are not expanded
+                path = Path(os.path.realpath(token))
                 if any(_within(path, r) for r in roots) and not any(_within(path, a) for a in allowed):
                     seen[f"tool_result:{shown(path)}"] = None
     return [*sorted(hits), *sorted(seen), *sorted(commands)]
@@ -1490,16 +1557,37 @@ class Runner:
     def _patch_of(self, bundle: Path) -> bytes:
         """The candidate's change against the ROOT commit recorded at construction (a candidate
         that commits still yields its patch), after checking that the arm left nothing running and
-        did not touch the git configuration or attributes that git would honour."""
+        did not touch the git configuration or attributes that git would honour. Called only AFTER the
+        arm ran: any git failure or ``OSError`` here (a stale ``.git/index.lock`` left by the killed arm,
+        an empty nested repository, an unreadable file) is the arm's doing, a ``CandidateFault``."""
         root, surface = self.guards[bundle]
         _wait_quiescent(bundle, self.quiescent_wait)
         try:
             changed = _git_surface(bundle) != surface
-        except RunnerError as exc:  # the arm replaced ``.git``
+        except (RunnerError, OSError) as exc:  # the arm replaced ``.git`` or made a file unreadable
             raise CandidateFault(str(exc)) from None
         if changed:
             raise CandidateFault("bundle git configuration or attributes changed: refusing to run git on it")
-        return _capture_patch(bundle, root)
+        try:
+            return _capture_patch(bundle, root)
+        except (RunnerError, OSError) as exc:
+            raise CandidateFault(f"bundle unreadable by git: {exc}") from None
+
+    def _judge(self, task: Mapping[str, Any], bundle: Path) -> dict[str, Any]:
+        """``lfc.judge``, where an ``OSError`` on the bundle's own content (a file the arm made
+        unreadable, a bytecode file it made undeletable) is the arm's doing: a ``REFUSED`` verdict
+        (``candidate_fault``), never a void attempt. Any other ``OSError`` (the launcher's environment)
+        propagates and leaves the attempt void."""
+        try:
+            return lfc.judge(self.repo, task, bundle)
+        except OSError as exc:
+            real = Path(os.path.realpath(bundle))
+            name = Path(os.path.realpath(exc.filename)) if isinstance(exc.filename, str) else None
+            if name is None or not _within(name, real):
+                raise
+            rel = name.relative_to(real).as_posix()
+            return _fault_verdict(CandidateFault(
+                f"the judge cannot handle the bundle content: {type(exc).__name__} on {rel}: {exc.strerror}"))
 
     def _values(self, bundle: Path, attempt_dir: Path, **extra: str) -> dict[str, str]:
         b = self.campaign["bounds"]
@@ -1544,6 +1632,10 @@ class Runner:
             "local": ({"ended_by_external_signal": False, **local} if local else None),
             "machine": None, "unknown": {status: reason},
             **({"replay_of": dict(replay_of)} if replay_of else {})}
+        if getattr(exc, "contamination", None):  # refused AND contaminated: never replayed either
+            record.update(contaminated=True, outcome="contaminated",
+                          contamination=_contamination(exc.contamination))
+            record["unknown"]["contaminated"] = _CONTAMINATED
         if _record_key(record) in self.emitted:  # the attempt reached the results just before the cut
             return None
         return self._emit(record)
@@ -1590,7 +1682,7 @@ class Runner:
                 except CandidateFault as fault:  # the arm's doing: refused, never void and replayed
                     patch, verdict = b"", _fault_verdict(fault)
                 else:
-                    verdict = lfc.judge(self.repo, task, bundle)
+                    verdict = self._judge(task, bundle)
             finally:
                 self._discard(bundle, attempt_dir)
         except BaseException as exc:  # tool failure or interruption: time is counted, the attempt
@@ -1695,19 +1787,23 @@ class Runner:
         execution["session_id"] = session_id
         execution["by_model"] = by_model if tokens is not None else {}
         refusal = tool_allowlist_refusal(driver, execution["stream"])
+        execution["contamination"] = self._audit(stream_log, bundle, scratch)  # refused or not
         if refusal:  # money is settled above; the record is refused (a tool error, never a verdict)
-            raise RunnerError(refusal)
-        execution["contamination"] = self._audit(stream_log, bundle, scratch)
+            raise ToolsetRefused(refusal, execution["contamination"])
         return execution, tokens, reason
 
     def _review(self, task: Mapping[str, Any], patch: bytes, label: str
                 ) -> tuple[str | None, str, dict[str, Any], dict[str, int | None] | None, str | None]:
         """Independent review of ``patch`` on a fresh bundle: ``(verdict, findings, ...)``. An
-        unreadable review is ``None`` (unknown), never a failed one."""
+        unreadable review is ``None`` (unknown), never a failed one. The patch's ``.claude/`` files are
+        not applied to the reviewer's bundle (the reviewer's host would load them as its project
+        settings); ``execution["review_excluded"]`` names them."""
+        patch, excluded = _without_claude_dirs(patch)
         bundle, attempt_dir = self._bundle(task, f"{label}-review", patch)
         try:
             execution, tokens, reason = self.cloud_execution(
                 "reviewer", REVIEWER_DRIVER, bundle, attempt_dir, "review")
+            execution["review_excluded"] = excluded
             verdict, findings = None, ""
             with contextlib.suppress(OSError, ValueError, AttributeError):
                 data = json.loads((attempt_dir / "scratch" / "review.json").read_text("utf-8"))
@@ -1758,6 +1854,8 @@ class Runner:
                     "local": None, "machine": None, "unknown": unknown,
                     **({"contaminated": True, "contamination": _contamination(state["contamination"])}
                        if state.get("contamination") else {}),
+                    **({"review_excluded": state["review_excluded"]} if state.get("review_excluded")
+                       else {}),
                     **({"replay_of": again} if again else {})}))
 
             try:
@@ -1783,13 +1881,14 @@ class Runner:
                     elif fault is not None:
                         verdict = _fault_verdict(fault)
                     else:
-                        verdict = lfc.judge(self.repo, task, bundle)
+                        verdict = self._judge(task, bundle)
                 finally:
                     self._discard(bundle, attempt_dir)
                 if verdict and verdict["verdict"] == "ACCEPTED":
                     review, findings, rev_exec, rev_tokens, rev_reason = self._review(
                         task, patch, f"{path}-{index}")
                     state["seconds"] += rev_exec["wall_seconds"]
+                    state["review_excluded"] = rev_exec.get("review_excluded")
                     by_role["reviewer"] = rev_tokens
                     _merge_models(models, rev_exec["by_model"])
                     if rev_tokens is None:
@@ -1849,6 +1948,8 @@ class Runner:
                 local["review"] = {"rounds": 1, "verdicts": [review]}
                 local["cloud_executions"], local["cloud_sessions"] = 1, self.sessions[mark:]
                 local["wall_seconds"] = round(local["wall_seconds"] + rev_exec["wall_seconds"], 3)
+                if rev_exec.get("review_excluded"):
+                    local["review_excluded"] = rev_exec.get("review_excluded")
                 local["premium"] = {"by_role": {"reviewer": _classes(rev_tokens)},
                                     "by_model": rev_exec["by_model"], "billing_total": total}
                 if rev_tokens is None:
@@ -1871,6 +1972,10 @@ class Runner:
                     local["unknown"][cut] = local["reason"]
                 if spent or cut == "interrupted":  # a started review of unread cost: never 0
                     local["premium"]["billing_total"] = None
+                if getattr(exc, "contamination", None):  # a refused review that also touched paths
+                    local.update(contaminated=True, accepted=None, outcome="contaminated",
+                                 contamination=_contamination(exc.contamination))
+                    local["unknown"]["contaminated"] = "the reviewer's " + _CONTAMINATED[len("the arm's "):]
                 self._emit(local)
                 raise
         else:
@@ -2110,7 +2215,10 @@ def _git_in(bundle: Path, *args: str, stdin: bytes | None = None) -> bytes:
     proc = subprocess.run(["git", "-C", str(bundle), *_GIT_NEUTRAL, *args], input=stdin,
                           capture_output=True, env=env, check=False)
     if proc.returncode != 0:
-        raise RunnerError(f"git {args[0]} failed: {proc.stderr.decode('utf-8', 'replace')[:200]}")
+        stderr = proc.stderr.decode("utf-8", "replace")
+        for prefix in (os.path.realpath(bundle), str(bundle)):  # an error names no work path
+            stderr = stderr.replace(prefix, "<bundle>")
+        raise RunnerError(f"git {args[0]} failed: {stderr[:200]}")
     return proc.stdout
 
 
@@ -2164,6 +2272,27 @@ def _capture_patch(bundle: Path, root: str) -> bytes:
     _git_in(bundle, "add", "-A", "-f", "--", ".", *_PATCH_EXCLUDES)
     return _git_in(bundle, "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", root,
                    "--", ".", *_PATCH_EXCLUDES)
+
+
+_DIFF_HEADER = re.compile(rb"^diff --git (.*)$", re.M)
+
+
+def _without_claude_dirs(patch: bytes) -> tuple[bytes, list[str]]:
+    """``patch`` minus every file section under a ``.claude/`` directory (at any depth, either side of
+    a rename), and the (post-image) paths of the dropped sections."""
+    starts = [m.start() for m in _DIFF_HEADER.finditer(patch)] if patch else []
+    if not starts:
+        return patch, []
+    kept, dropped = [patch[:starts[0]]], []
+    for begin, end in zip(starts, [*starts[1:], len(patch)]):
+        section = patch[begin:end]
+        header = _DIFF_HEADER.match(section).group(1)
+        if b"/.claude/" in header:
+            path = header.replace(b'"', b"").rsplit(b" b/", 1)[-1]
+            dropped.append(path.decode("utf-8", "replace"))
+        else:
+            kept.append(section)
+    return b"".join(kept), dropped
 
 
 def _apply_patch(bundle: Path, patch: bytes) -> None:
