@@ -771,7 +771,7 @@ def _epic_graph_walk(
                 "sous-graphe sous ce nœud non parcouru")
             return None
         except (TrackerBindingError, ValueError) as exc:
-            if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+            if isinstance(exc, (json.JSONDecodeError, UnicodeError)):
                 # A decoding failure is a failed read, never a foreign project.
                 add(issue_id, role, "read-error", _read_error_cause(exc))
                 return None
@@ -874,14 +874,14 @@ def epic_graph_diagnostic(
     never stops at the first cause.  A node that cannot be read or validated is
     reported with that cause and its sub-graph is NOT traversed: every item then
     carries ``incomplete`` and the list is a lower bound.  ``foreign-project`` is
-    reserved for a deterministic binding refusal (``TrackerBindingError`` or
-    ``ValueError``); every other failure is a ``read-error``.  No provider write.
+    reserved for identifier/binding errors (``TrackerBindingError``, ``ValueError`` or a
+    tracker ``SystemExit``); decoding errors and failed reads are ``read-error``.  No provider write.
     """
     with _graph_snapshot_scope(tracker):
         return _epic_graph_walk(tracker, project, parent, accept)[0]
 
 
-def format_epic_diagnostic(report: list[dict], *, override_cause: bool = True) -> str:
+def format_epic_diagnostic(report: list[dict], *, override_cause: bool = False) -> str:
     if not report:
         return ""
     incomplete = any(item.get("incomplete") for item in report)

@@ -7,7 +7,7 @@
   override refusal, otherwise it reads "Parmi les nœuds lus, seuls ...". The diagnostic captures
   the `SystemExit` a tracker (YouTrack) raises for a foreign node, keeps walking and falls back to
   the original refusal. `ValueError` is `foreign-project` only for an identifier or binding error;
-  `JSONDecodeError`/`UnicodeDecodeError` are a `read-error`. "dérogé" is reserved for an override:
+  `JSONDecodeError`/`UnicodeError` are a `read-error`. "dérogé" is reserved for an override:
   a `dropped` node is "abandonné". Documentation fixes ("two issue reads", the `SKILL.md`
   cross-reference, one unwrapped line). No write behaviour, audit id or receipt format changed.
 

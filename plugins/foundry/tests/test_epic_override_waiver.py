@@ -768,16 +768,42 @@ def test_diagnostic_captures_tracker_systemexit_for_a_foreign_node():
     ]
     assert "projet natif étranger" in report[0]["cause"]
 
-    # The original refusal stays the fallback when the walk itself cannot run.
-    class _Broken(_FakeYouTrack):
-        def get_issue(self, issue_id):
-            raise SystemExit("boom")
 
+def test_diagnostic_appends_foreign_node_to_the_original_systemexit(monkeypatch):
+    parent = Issue(id="P-1", title="", links=[Link("parent-of", "outward", "N-1")])
+
+    class _FakeYouTrack:
+        def validate_issue_binding(self, _project, _issue_id):
+            raise SystemExit("Mutation YouTrack refusée : projet natif étranger.")
+
+        def get_issue(self, issue_id):
+            return Issue(id=issue_id, title="", state="review", version=1)
+
+    def refuse(*_a, **_k):
+        raise SystemExit("Clôture Epic refusée : cause d'origine.")
+
+    monkeypatch.setattr(write, "_bounded_epic_graph_snapshot", refuse)
+    with pytest.raises(SystemExit) as excinfo:
+        write._snapshot_with_diagnostic(_FakeYouTrack(), None, parent, frozenset())
+    text = str(excinfo.value)
+    assert text.startswith("Clôture Epic refusée : cause d'origine.")
+    assert "N-1" in text and "hors projet" in text
+
+
+def test_diagnostic_walk_systemexit_falls_back_to_the_original(monkeypatch):
     original = SystemExit("Clôture Epic refusée : cause d'origine.")
-    assert [i["code"] for i in write.epic_graph_diagnostic(_Broken(), None, parent)] == [
-        "foreign-project", "read-error",
-    ]
-    assert str(original) == "Clôture Epic refusée : cause d'origine."
+
+    def refuse(*_a, **_k):
+        raise original
+
+    def broken_walk(*_a, **_k):
+        raise SystemExit("walk boom")
+
+    monkeypatch.setattr(write, "_bounded_epic_graph_snapshot", refuse)
+    monkeypatch.setattr(write, "_epic_graph_walk", broken_walk)
+    with pytest.raises(SystemExit) as excinfo:
+        write._snapshot_with_diagnostic(object(), None, Issue(id="P-1", title=""), frozenset())
+    assert excinfo.value is original
 
 
 def test_decode_errors_are_read_errors_not_foreign_project():
@@ -795,6 +821,7 @@ def test_decode_errors_are_read_errors_not_foreign_project():
     for exc in (
         json.JSONDecodeError("bad", "{", 0),
         UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"),
+        UnicodeEncodeError("ascii", "é", 0, 1, "bad"),
     ):
         report = write.epic_graph_diagnostic(_Tracker(exc), None, parent)
         assert [(i["id"], i["code"]) for i in report] == [("N-1", "read-error")]
