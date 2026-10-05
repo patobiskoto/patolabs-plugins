@@ -167,6 +167,27 @@ def results(runner):
     return [json.loads(line) for line in runner.results_path.read_text("utf-8").splitlines()]
 
 
+def ledger_of(runner):
+    return [json.loads(line) for line in runner.ledger.path.read_text("utf-8").splitlines()]
+
+
+def rule_report(campaign, recs, **kw):
+    """Report on hand-written records, with the ledger a real run would have left for them: one
+    settled cloud execution per ``cloud_executions``, carrying the record's premium total."""
+    entries = [{"kind": "session_started"}]
+    recs = [dict(r) for r in recs]
+    for n, rec in enumerate(recs):
+        if rec.get("record_type") != "attempt":
+            continue
+        rec["cloud_sessions"] = [f"s{n}-{i}" for i in range(rec["cloud_executions"])]
+        total = rec["premium"]["billing_total"]
+        for i, sid in enumerate(rec["cloud_sessions"]):
+            entries += [{"kind": "cloud_started", "session_id": sid},
+                        {"kind": "settled", "cloud": True, "session_id": sid,
+                         "premium_tokens": None if total is None else (total if i == 0 else 0)}]
+    return lfr.report(campaign, recs, entries, **kw)
+
+
 def ledger_kinds(runner):
     return [json.loads(line)["kind"] for line in runner.ledger.path.read_text("utf-8").splitlines()]
 
@@ -305,7 +326,7 @@ def test_dry_run_screen_two_candidates_two_tasks(tmp_path):
     assert first["unknown"]["machine.swap_used_mib"].startswith("vm.swapusage")  # unknown, never 0
     assert first["machine"]["before"]["swap_used_mib"] is None
     assert lfr.Ledger.totals(runner.ledger)["cloud_started"] == 0
-    rep = lfr.report(campaign, results(runner))
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
     assert rep["screening"]["selected"] == "cand-b" and rep["screening"]["complete"]
     assert rep["screening"]["candidates"]["cand-a"]["accepted"] == 1
     assert not list((tmp_path / "work").iterdir())  # every disposable attempt is gone
@@ -356,7 +377,7 @@ def test_dry_run_compare_three_paths_two_tasks(tmp_path):
     assert counts(plan_path) == {"implementer": 4, "economy": 2, "reviewer": 7, "local": 2}
     # every arm got a fresh bundle; none is left behind
     assert len(runner.handed) == runner.counter and not list((tmp_path / "work").iterdir())
-    rep = lfr.report(campaign, results(runner))
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
     assert rep["promotion"] is False and set(rep["comparison"]["arms"]) == {"B", "C"}
     c = rep["comparison"]["arms"]["C"]
     assert {c["compatibility"], c["quality"]} <= {"pass", "fail", "unavailable"}
@@ -612,42 +633,42 @@ def test_report_applies_the_pre_registered_comparison_rules_with_three_separate_
                       wall=5, swap=(10.0, 20.0)),
                  _rec("C", pr, accepted=True, premium=70, wall=10, segment="cloud"),
                  _rec("B", pr, accepted=True, premium=90, wall=10)]
-    rep = lfr.report(_campaign(), recs)["comparison"]
+    rep = rule_report(_campaign(), recs)["comparison"]
     c = rep["arms"]["C"]
     assert (c["compatibility"], c["quality"], c["economy"]) == ("pass", "pass", "pass")
     assert rep["arms"]["B"]["economy"] == "fail"  # 90 > 0.75 * 100
     assert rep["decision"] == "retained" and rep["recommendation"] == "C" and rep["complete"]
     # a time overrun alone fails the economy verdict; quality stays separate
     slow = [dict(r, wall_seconds=100) if r["path"] == "C" else r for r in recs]
-    c = lfr.report(_campaign(), slow)["comparison"]["arms"]["C"]
+    c = rule_report(_campaign(), slow)["comparison"]["arms"]["C"]
     assert (c["quality"], c["economy"]) == ("pass", "fail") and c["economy_detail"]["time_pass"] is False
     # extra swap of 10 GiB fails compatibility only
     swap = [dict(r, machine={"before": {"swap_used_mib": 0.0}, "after": {"swap_used_mib": 10240.0}})
             if r["segment"] == "local" else r for r in recs]
-    c = lfr.report(_campaign(), swap)["comparison"]["arms"]["C"]
+    c = rule_report(_campaign(), swap)["comparison"]["arms"]["C"]
     assert (c["compatibility"], c["quality"], c["economy"]) == ("fail", "pass", "pass")
     # more review rounds than A, or a refused task, fails quality
-    c = lfr.report(_campaign(), [dict(r, review={"rounds": 3}) if r["path"] == "C" else r
+    c = rule_report(_campaign(), [dict(r, review={"rounds": 3}) if r["path"] == "C" else r
                                  for r in recs])["comparison"]["arms"]["C"]
     assert c["quality"] == "fail"
 
 
 def test_economy_is_unavailable_when_premium_work_is_not_measurable():
     recs = [_rec("A", 1, accepted=True), _rec("C", 1, accepted=True, premium=None)]
-    rep = lfr.report(_campaign(1), recs)["comparison"]
+    rep = rule_report(_campaign(1), recs)["comparison"]
     assert rep["arms"]["C"]["economy"] == "unavailable"
     assert rep["decision"] == "inconclusive"
     unknown_swap = [_rec("A", 1, accepted=True), _rec("C", 1, accepted=None, segment="local",
                                                     outcome="accepted", swap=(None, 5.0)),
                     _rec("C", 1, accepted=True)]
-    assert lfr.report(_campaign(1), unknown_swap)["comparison"]["arms"]["C"]["compatibility"] == "unavailable"
+    assert rule_report(_campaign(1), unknown_swap)["comparison"]["arms"]["C"]["compatibility"] == "unavailable"
 
 
 def test_report_stop_and_incomplete_runs_never_retain_the_hybrid():
     recs = [_rec("A", 1, accepted=True), _rec("C", 1, accepted=True, premium=10)]
-    assert lfr.report(_campaign(6), recs)["comparison"]["decision"] == "inconclusive"
+    assert rule_report(_campaign(6), recs)["comparison"]["decision"] == "inconclusive"
     stopped = recs + [{"record_type": "stop", "reason": "premium_c_not_below_a"}]
-    rep = lfr.report(_campaign(6), stopped)
+    rep = rule_report(_campaign(6), stopped)
     assert rep["comparison"]["decision"] == "keep_cloud" and rep["promotion"] is False
 
 
@@ -658,11 +679,11 @@ def test_screening_selection_rule_and_threshold():
 
     recs = [s("a", 1, True, 50), s("a", 2, True, 50), s("b", 1, True, 10), s("b", 2, True, 10),
             s("c", 1, True, 1), s("c", 2, False, 1)]
-    rep = lfr.report(_campaign(), recs)["screening"]
+    rep = rule_report(_campaign(), recs)["screening"]
     assert rep["selected"] == "b" and rep["reason"] == "tie_broken_by_total_duration"
-    low = lfr.report(_campaign(), [s("a", 1, True, 5), s("a", 2, False, 5)])["screening"]
+    low = rule_report(_campaign(), [s("a", 1, True, 5), s("a", 2, False, 5)])["screening"]
     assert low["selected"] is None and "keep_cloud" in low["reason"]
-    tie = lfr.report(_campaign(), [s("a", 1, True, 5), s("a", 2, True, 5), s("b", 1, True, 5),
+    tie = rule_report(_campaign(), [s("a", 1, True, 5), s("a", 2, True, 5), s("b", 1, True, 5),
                                    s("b", 2, True, 5)])["screening"]
     assert tie["selected"] is None and tie["reason"] == "tie_not_resolved"
 
@@ -950,6 +971,7 @@ def test_B1_an_interrupted_execution_kills_the_whole_process_group(tmp_path, sig
     script.write_text(SLEEPER, encoding="utf-8")
     driver = {"kind": "cloud_implementer", "home": "real", "network": "open",
               "argv": [sys.executable, str(script), str(pids)]}
+    before = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
     _interrupt_when_ready(pids, sig)
     with pytest.raises(expected):
         lfr.execute_driver(driver, {}, workdir=tmp_path, scratch=tmp_path / "scratch",
@@ -966,7 +988,7 @@ def test_B1_an_interrupted_execution_kills_the_whole_process_group(tmp_path, sig
     for pid in survivors:  # never leave a stray process behind if the assertion below fails
         os.kill(pid, signal.SIGKILL)
     assert not survivors, "the arm or its child outlived the interrupted call"
-    assert signal.getsignal(signal.SIGTERM) is not None  # the handler was restored
+    assert {s: signal.getsignal(s) for s in before} == before  # the exact previous handlers are back
 
 
 def test_B1_an_interrupted_cloud_execution_is_settled_with_unknown_tokens(tmp_path, monkeypatch):
@@ -1026,12 +1048,16 @@ def test_N1_the_read_deny_list_covers_home_configuration_other_worktrees_and_lau
     envelope.write_text("{}")
     kwargs = dict(repo=repo, home=home, state_dir=tmp_path / "state", input_paths=[envelope])
     local = {os.path.realpath(p) for p in lfr.read_deny_list(kind="local_harness", **kwargs)}
-    for expected in (home / ".claude", home / ".codex", home / ".config", home / ".ssh", home / ".gnupg",
-                     home / ".aws", home / ".netrc", home / "Library/Keychains", repo, tmp_path / "other-wt",
+    secrets = [".ssh", ".gnupg", ".aws", ".netrc", "Library/Keychains", ".git-credentials", ".npmrc",
+               ".pypirc", ".docker", ".kube", ".zsh_history", ".bash_history", ".python_history"]
+    for expected in (home / ".claude", home / ".claude.json", home / ".codex", home / ".config",
+                     *(home / name for name in secrets), repo, tmp_path / "other-wt",
                      tmp_path / "state", inputs):
         assert os.path.realpath(expected) in local, expected
     cloud = {os.path.realpath(p) for p in lfr.read_deny_list(kind="cloud_implementer", **kwargs)}
     assert os.path.realpath(home / ".claude") not in cloud  # OAuth identity (AGENTS.md R6)
+    assert os.path.realpath(home / ".claude.json") not in cloud  # Claude Code reads and writes it
+    assert all(os.path.realpath(home / name) in cloud for name in secrets)
     assert os.path.realpath(home / ".ssh") in cloud and os.path.realpath(home / ".config/foundry") in cloud
     custom = lfr.read_deny_list(kind="local_harness", isolation={"local": [".only"], "cloud": []}, **kwargs)
     assert os.path.realpath(home / ".only") in {os.path.realpath(p) for p in custom}
@@ -1069,7 +1095,7 @@ print(json.dumps(out))
 """
 
 
-def test_N1_a_local_candidate_cannot_read_plugin_cache_ssh_config_or_launcher_inputs(tmp_path):
+def test_N1_a_local_candidate_cannot_read_plugin_cache_ssh_config_or_launcher_inputs(tmp_path, monkeypatch):
     if not lfr.sandbox_available():
         pytest.skip("sandbox-exec is macOS only: read-denial probes cannot run on this platform "
                     "(the deny list and the profile are unit-tested above)")
@@ -1085,9 +1111,14 @@ def test_N1_a_local_candidate_cannot_read_plugin_cache_ssh_config_or_launcher_in
     bundle.mkdir()
     control = bundle / "control.txt"
     control.write_text("fine")
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    monkeypatch.setattr(lfr.tempfile, "mkdtemp", lambda prefix: str(profiles))
+    monkeypatch.setattr(lfr.shutil, "rmtree", lambda *a, **kw: None)  # keep the profile for the assert
     targets = {"plugin_cache": home / ".claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py",
                "ssh": home / ".ssh/id_ed25519", "config": home / ".config/foundry/config.json",
-               "aws": home / ".aws/credentials", "envelope": envelope, "control": control}
+               "aws": home / ".aws/credentials", "envelope": envelope, "control": control,
+               "profile": profiles / "profile.sb"}
     script = tmp_path / "read_probe.py"
     script.write_text(READ_PROBE, encoding="utf-8")
     argv = [sys.executable, str(script)] + [x for k, v in targets.items() for x in (k, str(v))]
@@ -1100,7 +1131,8 @@ def test_N1_a_local_candidate_cannot_read_plugin_cache_ssh_config_or_launcher_in
     assert execution["exit_code"] == 0, execution
     probes = json.loads((tmp_path / "stream.log").read_text("utf-8").splitlines()[-1])
     assert probes == {"plugin_cache": "EPERM", "ssh": "EPERM", "config": "EPERM", "aws": "EPERM",
-                      "envelope": "EPERM", "control": "ok"}
+                      "envelope": "EPERM", "control": "ok", "profile": "EPERM"}
+    assert (profiles / "profile.sb").is_file()  # the launcher itself could read it
 
 
 # ------------------------------------------------------------------------------------- N2
@@ -1151,7 +1183,7 @@ def test_N3_a_replayed_attempt_is_refused_and_a_duplicate_record_never_counts(tm
     assert results(again)[-1]["reason"].startswith("tool_error:")
     dup = [json.loads(line) for line in again.results_path.read_text("utf-8").splitlines()][0]
     with pytest.raises(lfr.RunnerError, match="duplicated attempts"):
-        lfr.report(_campaign(), [dup, dup])
+        lfr.report(_campaign(), [dup, dup], ledger_of(again))
 
 
 def test_N3_the_selection_waits_for_every_candidate_to_have_every_screening_task():
@@ -1167,7 +1199,7 @@ def test_N3_the_selection_waits_for_every_candidate_to_have_every_screening_task
 
 
 def lfc_report(recs):
-    return lfr.report(_campaign(), recs)["screening"]
+    return rule_report(_campaign(), recs)["screening"]
 
 
 # ------------------------------------------------------------------------------------- N4
@@ -1180,16 +1212,16 @@ def test_N4_records_carry_the_config_digests_and_the_rules_cannot_change_after_t
     assert rec["envelope_sha256"] == envelope_sha and rec["campaign_sha256"] == lfr.config_digest(campaign)
     started = json.loads(runner.ledger.path.read_text("utf-8").splitlines()[0])
     assert started["kind"] == "session_started" and started["campaign_sha256"] == rec["campaign_sha256"]
-    rep = lfr.report(campaign, results(runner), campaign_sha256=rec["campaign_sha256"])
+    rep = lfr.report(campaign, results(runner), ledger_of(runner), campaign_sha256=rec["campaign_sha256"])
     assert rep["rules_applied"] == campaign["rules"]  # the applied rules are printed
     assert rep["provenance"]["envelope_sha256"] == envelope_sha
     with pytest.raises(lfr.RunnerError, match="campaign_sha256 mismatch"):
-        lfr.report(campaign, results(runner), campaign_sha256="0" * 64)
+        lfr.report(campaign, results(runner), ledger_of(runner), campaign_sha256="0" * 64)
     # results of two campaign configs never share a file
     loosened, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
     mixed = results(loosened) + [dict(results(loosened)[0], campaign_sha256="f" * 64)]
     with pytest.raises(lfr.RunnerError, match="several campaign_sha256"):
-        lfr.report(campaign, mixed)
+        lfr.report(campaign, mixed, ledger_of(loosened))
     changed = json.loads(json.dumps(campaign))
     changed["rules"]["screening"]["min_accepted"] = 1  # a rule edited after the first record
     envelope = lfr.load_envelope(write_envelope(tmp_path), "screen", TODAY)
@@ -1238,7 +1270,7 @@ def test_N5_dry_run_and_real_records_never_share_a_state_directory(tmp_path):
     with pytest.raises(lfr.RunnerError, match="mix dry-run and real"):
         lfr.Ledger(tmp_path / "state", envelope, "screen", dry_run=False)
     with pytest.raises(lfr.RunnerError, match="mix dry-run and real"):
-        lfr.report(campaign, [rec, dict(rec, dry_run=False, attempt=7)])
+        lfr.report(campaign, [rec, dict(rec, dry_run=False, attempt=7)], ledger_of(runner))
     # a dry-run cloud_started never counts against a real cap
     ledger = lfr.Ledger(tmp_path / "other", envelope, "compare", dry_run=True)
     ledger.append("cloud_started", role="x", session_id="s")
@@ -1257,7 +1289,7 @@ def test_N6_an_unreadable_review_is_unknown_not_a_failed_task(tmp_path):
     assert unreadable["outcome"] == "review_unreadable" and unreadable["accepted"] is None
     assert unreadable["unknown"]["review"] == "review_unreadable"
     campaign["rules"]["comparison"]["tasks"] = 1
-    arm = lfr.report(campaign, results(runner))["comparison"]["arms"]["C"]
+    arm = lfr.report(campaign, results(runner), ledger_of(runner))["comparison"]["arms"]["C"]
     assert arm["quality"] == "unavailable"  # not "fail"
 
 
@@ -1275,7 +1307,7 @@ def test_N6_a_tool_error_after_a_paid_execution_is_recorded_before_the_campaign_
     assert error["reason"] == "judge tool failure" and error["accepted"] is None
     assert error["cloud_executions"] == 1 and error["premium"]["billing_total"] == 135  # the paid arm
     assert stop["record_type"] == "stop" and stop["reason"].startswith("tool_error:")
-    rep = lfr.report(_campaign(1), [error, stop])  # no reference path: nothing is concluded
+    rep = lfr.report(_campaign(1), [error, stop], ledger_of(runner))  # no reference path: nothing is concluded
     assert rep["comparison"]["decision"] == "inconclusive"
 
 
@@ -1290,17 +1322,17 @@ def test_N6_a_local_tool_error_is_recorded_and_makes_the_screening_incomplete(tm
         runner.screen(tasks[:1], ["cand-a"])
     error = results(runner)[-2]
     assert error["status"] == "tool_error" and error["path"] == "S" and error["local"]["candidate"] == "cand-a"
-    rep = lfr.report(_campaign(), results(runner))["screening"]
+    rep = lfr.report(_campaign(), results(runner), ledger_of(runner))["screening"]
     assert rep["selected"] is None and rep["complete"] is False  # a tool failure is not a refusal
 
 
 def test_N6_a_stop_on_a_cap_is_inconclusive_a_rule_stop_keeps_the_cloud():
     recs = [_rec("A", 1, accepted=True), _rec("C", 1, accepted=True, premium=10)]
-    capped = lfr.report(_campaign(6), recs + [{"record_type": "stop", "reason": "cap_reached:premium_tokens"}])
+    capped = rule_report(_campaign(6), recs + [{"record_type": "stop", "reason": "cap_reached:premium_tokens"}])
     assert capped["comparison"]["decision"] == "inconclusive" and capped["comparison"]["recommendation"] is None
-    errored = lfr.report(_campaign(6), recs + [{"record_type": "stop", "reason": "tool_error:x"}])
+    errored = rule_report(_campaign(6), recs + [{"record_type": "stop", "reason": "tool_error:x"}])
     assert errored["comparison"]["decision"] == "inconclusive"
-    ruled = lfr.report(_campaign(6), recs + [{"record_type": "stop", "reason": "fewer_than_min_local_successes"}])
+    ruled = rule_report(_campaign(6), recs + [{"record_type": "stop", "reason": "fewer_than_min_local_successes"}])
     assert ruled["comparison"]["decision"] == "keep_cloud"
 
 
@@ -1326,7 +1358,7 @@ def test_N10_choices_that_are_not_protocol_coordinates_are_labelled_and_the_brea
         "input_tokens": 130, "cached_input_tokens": 10, "cache_write_input_tokens": 5,
         "output_tokens": 30, "reasoning_output_tokens": None}}
     camp["rules"]["comparison"]["tasks"] = 1
-    detail = lfr.report(camp, results(runner))["comparison"]["arms"]["B"]["economy_detail"]
+    detail = lfr.report(camp, results(runner), ledger_of(runner))["comparison"]["arms"]["B"]["economy_detail"]
     assert detail["reference_premium_by_model"]["claude-sonnet-5-5"]["output_tokens"] == 30
     assert "unweighted" in detail["premium_definition"]
 
@@ -1442,3 +1474,388 @@ def test_N11_the_containment_probes_report_passed_or_skipped_explicitly(tmp_path
     ``pytest -rs`` states for each machine whether containment was passed or skipped."""
     status = "passed" if lfr.sandbox_available() and _sandbox_works(tmp_path) else "skipped"
     assert status in ("passed", "skipped")
+
+
+# ====================================================== PAT-108 review round 2 (B1', items 1-8)
+# The ledger and the results never disagree about spent work, and ``report`` gives no economy
+# verdict (and no decision) while the ledger knows that some spent work is unknown.
+
+def _interrupt_nth(monkeypatch, kind, nth, exc=KeyboardInterrupt):
+    """The ``nth`` execution of a driver of ``kind`` is cut, like a Ctrl-C while the arm runs."""
+    real, seen = lfr.execute_driver, []
+
+    def cut(driver, values, **kw):
+        if driver["kind"] == kind:
+            seen.append(1)
+            if len(seen) == nth:
+                raise exc
+        return real(driver, values, **kw)
+
+    monkeypatch.setattr(lfr, "execute_driver", cut)
+
+
+def _hard_crash(runner):
+    """Rewrite the state as a SIGKILL would have left it: the interrupted record, the stop and the
+    settlement of the interrupted execution were never written."""
+    kept = [r for r in results(runner) if r.get("outcome") != "interrupted" and r["record_type"] != "stop"]
+    runner.results_path.write_text("".join(json.dumps(r) + "\n" for r in kept), encoding="utf-8")
+    entries = [e for e in ledger_of(runner) if not e.get("interrupted") and e["kind"] != "stopped"]
+    runner.ledger.path.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
+
+
+B1P_CASES = {
+    # path B: round 0 recorded (review BLOCK), the correction is interrupted after it started
+    "B": dict(plan={**FIX_ALL, "reviewer": ["PASS", "BLOCK"]}, paths=("A", "B"), nth=3,
+              before=["review_block"], segment="cloud"),
+    # path C: the local attempt is recorded (refused), the takeover is interrupted after it started
+    "C": dict(plan={**FIX_ALL, "local": ["partial"]}, paths=("A", "C"), nth=2,
+              before=["local_refused"], segment="takeover")}
+
+
+@pytest.mark.parametrize("path", ["B", "C"])
+def test_B1p_an_interrupted_correction_or_takeover_is_recorded_and_never_counts_as_zero(
+        tmp_path, monkeypatch, path):
+    case = B1P_CASES[path]
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", case["plan"])
+    campaign["rules"]["comparison"]["tasks"] = 1
+    _interrupt_nth(monkeypatch, "cloud_implementer", case["nth"])
+    with pytest.raises(KeyboardInterrupt):
+        runner.compare(tasks[:1], "cand-a", case["paths"])
+    monkeypatch.undo()
+    *recs, stop = results(runner)
+    arm = [r for r in recs if r["path"] == path]
+    assert [r["outcome"] for r in arm] == [*case["before"], "interrupted"]
+    cut = arm[-1]
+    assert cut["status"] == "interrupted" and cut["reason"].startswith("KeyboardInterrupt")
+    assert cut["segment"] == case["segment"] and cut["accepted"] is None
+    assert cut["premium"]["billing_total"] is None and len(cut["cloud_sessions"]) == 1  # unknown, never 0
+    assert stop["record_type"] == "stop" and stop["reason"] == "interrupted:KeyboardInterrupt"
+    assert ledger_of(runner)[-1]["kind"] == "stopped"
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert rep["comparison"]["arms"][path]["economy"] == "unavailable"
+    assert rep["comparison"]["arms"][path]["quality"] == "unavailable"
+    assert rep["comparison"]["decision"] == "inconclusive" and rep["comparison"]["recommendation"] is None
+    assert rep["ledger"]["unknown_spent_work"] == [f"interrupted:{cut['cloud_sessions'][0]}"]
+    # the same interruption as a hard crash: nothing could be written after the ``cloud_started``
+    _hard_crash(runner)
+    assert [r["outcome"] for r in results(runner) if r["path"] == path] == case["before"]
+    crashed = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert crashed["comparison"]["arms"][path]["economy"] == "unavailable"  # the results alone say "pass"
+    assert crashed["comparison"]["decision"] == "inconclusive"
+    lost = cut["cloud_sessions"][0]
+    assert crashed["ledger"]["unknown_spent_work"] == [f"cloud_started_without_settled:{lost}",
+                                                       f"no_result_record:{lost}"]
+
+
+def test_B1p_a_sigterm_during_a_cloud_arm_leaves_an_interrupted_record_and_no_verdict(tmp_path):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", {**FIX_ALL, "economy": ["hang"]})
+    campaign["rules"]["comparison"]["tasks"] = 1
+    child = Path(str(plan) + ".child")
+
+    def terminate():
+        for _ in range(400):
+            if child.exists() and child.read_text("utf-8").strip():
+                break
+            time.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=terminate, daemon=True).start()
+    with pytest.raises(SystemExit):
+        runner.compare(tasks[:1], "cand-a", ("A", "B"))
+    *_, cut, stop = results(runner)
+    assert (cut["path"], cut["status"], cut["premium"]["billing_total"]) == ("B", "interrupted", None)
+    assert stop["reason"] == "interrupted:SystemExit"
+    for _ in range(60):
+        if not _alive(int(child.read_text("utf-8"))):
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("the child of the interrupted arm survived")
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert rep["comparison"]["arms"]["B"]["economy"] == "unavailable"
+    assert rep["comparison"]["decision"] == "inconclusive"
+    with pytest.raises(lfr.CapReached, match="premium_tokens_unmeasurable"):
+        runner.ledger.check(cloud=True)
+
+
+def test_B1p_an_interruption_after_a_settled_execution_still_gives_no_verdict(tmp_path, monkeypatch):
+    """The ledger is clean here (every execution settled with known tokens): only the
+    ``interrupted`` record says that the correction was cut while it was being judged."""
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", {**FIX_ALL, "reviewer": ["PASS", "BLOCK"]})
+    campaign["rules"]["comparison"]["tasks"] = 1
+    real, calls = lfc.judge, []
+
+    def judge(*a, **kw):
+        calls.append(1)
+        if len(calls) == 3:  # A, B round 0, then the correction of B
+            raise KeyboardInterrupt
+        return real(*a, **kw)
+
+    monkeypatch.setattr(lfc, "judge", judge)
+    with pytest.raises(KeyboardInterrupt):
+        runner.compare(tasks[:1], "cand-a", ("A", "B"))
+    cut = results(runner)[-2]
+    assert cut["outcome"] == "interrupted" and cut["premium"]["billing_total"] is None
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert rep["ledger"]["unknown_spent_work"] == []
+    assert rep["comparison"]["arms"]["B"]["economy"] == "unavailable"
+    assert rep["comparison"]["decision"] == "inconclusive"
+
+
+def test_B1p_report_refuses_results_the_ledger_cannot_account_for(tmp_path, capsys):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    runner.compare(tasks[:1], "cand-a", ("A", "B"))
+    recs, entries = results(runner), ledger_of(runner)
+    assert lfr.report(campaign, recs, entries)["ledger"]["unknown_spent_work"] == []
+    assert sorted(s for r in recs for s in r["cloud_sessions"]) == sorted(
+        e["session_id"] for e in entries if e["kind"] == "cloud_started")  # one to one
+    sid = recs[0]["cloud_sessions"][0]
+    with pytest.raises(lfr.RunnerError, match="no ledger entry"):
+        lfr.report(campaign, recs, [])
+    with pytest.raises(lfr.RunnerError, match="unknown to the ledger"):
+        lfr.report(campaign, recs, [e for e in entries if e.get("session_id") != sid])
+    with pytest.raises(lfr.RunnerError, match="named by two result records"):
+        lfr.report(campaign, [recs[0], dict(recs[1], cloud_sessions=recs[0]["cloud_sessions"])], entries)
+    with pytest.raises(lfr.RunnerError, match="does not name its cloud executions"):
+        lfr.report(campaign, [{k: v for k, v in recs[0].items() if k != "cloud_sessions"}], entries)
+    cheaper = [dict(e, premium_tokens=1) if e.get("session_id") == sid and e["kind"] == "settled" else e
+               for e in entries]
+    with pytest.raises(lfr.RunnerError, match="premium tokens, the ledger"):
+        lfr.report(campaign, recs, cheaper)
+    with pytest.raises(lfr.RunnerError, match="another envelope_sha256"):
+        lfr.report(campaign, recs, [dict(e, envelope_sha256="0" * 64) for e in entries])
+    with pytest.raises(lfr.RunnerError, match="mix dry-run and real"):
+        lfr.report(campaign, recs, [dict(e, dry_run=False) for e in entries])
+    # a settled execution whose tokens are unknown, and one that no result record names
+    unread = [dict(e, premium_tokens=None) if e.get("session_id") == sid and e["kind"] == "settled" else e
+              for e in entries]
+    unknown = lfr.report(campaign, [dict(recs[0], premium={**recs[0]["premium"], "billing_total": None}),
+                                    *recs[1:]], unread)
+    assert unknown["ledger"]["unknown_spent_work"] == [f"tokens_unknown:{sid}"]
+    assert unknown["comparison"]["arms"]["B"]["economy"] == "unavailable"
+    assert unknown["comparison"]["decision"] == "inconclusive"
+    extra = entries + [{"kind": "cloud_started", "session_id": "x", "dry_run": True},
+                       {"kind": "settled", "cloud": True, "session_id": "x", "premium_tokens": 5,
+                        "dry_run": True}]
+    paid = lfr.report(campaign, recs, extra)
+    assert paid["ledger"]["unknown_spent_work"] == ["no_result_record:x"]
+    assert paid["comparison"]["arms"]["B"]["economy"] == "unavailable"
+    # the CLI has no way to report without the ledger of the same state directory
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps(campaign), encoding="utf-8")
+    alone = tmp_path / "alone" / runner.results_path.name
+    alone.parent.mkdir()
+    shutil.copy(runner.results_path, alone)
+    assert lfr.main(["report", "--campaign", str(cfg), "--results", str(alone)]) == 2
+    assert "no ledger beside" in capsys.readouterr().err
+    renamed = tmp_path / "state" / "results-other.jsonl"
+    shutil.copy(runner.results_path, renamed)
+    shutil.copy(runner.ledger.path, tmp_path / "state" / "ledger-other.jsonl")
+    assert lfr.main(["report", "--campaign", str(cfg), "--results", str(renamed)]) == 2
+    assert "another campaign id" in capsys.readouterr().err
+
+
+def test_item1_a_cap_at_the_start_of_a_takeover_or_a_correction_is_recorded_and_inconclusive(tmp_path):
+    # takeover: A spends 2 executions, the local attempt of C is refused, the takeover cannot start
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", {**FIX_ALL, "local": ["partial"]},
+                                                caps={"cloud_executions": 2})
+    campaign["rules"]["comparison"]["tasks"] = 1
+    runner.compare(tasks[:1], "cand-a", ("A", "C"))
+    *recs, stop = results(runner)
+    assert [(r["path"], r["segment"], r["outcome"]) for r in recs] == [
+        ("A", "cloud", "accepted"), ("C", "local", "local_refused"), ("C", "takeover", "stopped_by_cap")]
+    assert recs[-1]["cloud_executions"] == 0 and recs[-1]["premium"]["billing_total"] == 0
+    assert stop["reason"] == "cap_reached:cloud_executions" and counts(plan)["implementer"] == 1
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))["comparison"]
+    assert (rep["arms"]["C"]["quality"], rep["arms"]["C"]["economy"]) == ("unavailable", "unavailable")
+    assert rep["decision"] == "inconclusive" and rep["recommendation"] is None
+    # correction: A spends 2, B round 0 spends 2 (review BLOCK), the correction cannot start
+    second, campaign2, _, tasks2 = make_runner(_sub(tmp_path, "b"), "compare",
+                                               {**FIX_ALL, "reviewer": ["PASS", "BLOCK"]},
+                                               caps={"cloud_executions": 4})
+    campaign2["rules"]["comparison"]["tasks"] = 1
+    second.compare(tasks2[:1], "cand-a", ("A", "B"))
+    assert [r["outcome"] for r in results(second) if r.get("path") == "B"] == ["review_block", "stopped_by_cap"]
+    rep = lfr.report(campaign2, results(second), ledger_of(second))["comparison"]
+    assert (rep["arms"]["B"]["quality"], rep["arms"]["B"]["economy"]) == ("unavailable", "unavailable")
+    assert rep["decision"] == "inconclusive"
+
+
+def _bare_runner(tmp_path, **kw):
+    repo, _, _, _ = _make_repo(tmp_path)
+    campaign, _ = fake_campaign(tmp_path, FIX_ALL)
+    envelope = lfr.load_envelope(write_envelope(tmp_path), "compare", TODAY)
+    return lfr.Runner(repo=repo, campaign=campaign, envelope=envelope, state_dir=tmp_path / "state",
+                      mode="compare", dry_run=True, host_env={"HOME": str(tmp_path / "home")}, **kw)
+
+
+def test_item3_a_configuration_error_is_refused_before_any_claim_or_reservation(tmp_path, monkeypatch):
+    monkeypatch.setattr(lfr, "sandbox_available", lambda: False)
+    with pytest.raises(lfr.RunnerError, match="sandbox-exec is unavailable"):
+        _bare_runner(tmp_path, work_root=tmp_path / "work", sandbox=True)
+    assert not (tmp_path / "state").exists()  # no ledger, no result: nothing is burnt
+    monkeypatch.setattr(lfr, "sandbox_available", lambda: True)
+    inputs = _sub(tmp_path, "inputs")
+    with pytest.raises(lfr.RunnerError, match="read-denied"):
+        _bare_runner(_sub(tmp_path, "second"), work_root=inputs / "work", sandbox=True,
+                     input_paths=[inputs / "envelope.json"])
+    assert not (tmp_path / "second" / "state").exists()
+    # sandbox-exec disappearing later: refused before the reservation, the campaign stays alive
+    runner, _, plan, tasks = make_runner(_sub(tmp_path, "third"), "compare", FIX_ALL)
+    runner.sandbox = True
+    monkeypatch.setattr(lfr, "sandbox_available", lambda: False)
+    with pytest.raises(lfr.RunnerError, match="sandbox-exec is unavailable"):
+        runner.cloud_path(tasks[0], "A", "comparison")
+    assert "cloud_started" not in ledger_kinds(runner) and counts(plan) == {}
+    assert runner.ledger.totals()["tokens_unmeasurable"] is False
+    runner.ledger.check(cloud=True)  # a later cloud execution is still allowed
+    error = results(runner)[-1]
+    assert (error["status"], error["cloud_executions"], error["premium"]["billing_total"]) == ("tool_error", 0, 0)
+
+
+def test_item3_a_launcher_error_after_the_reservation_never_reads_as_zero_tokens(tmp_path, monkeypatch):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+
+    def broken(*a, **kw):
+        raise lfr.RunnerError("the arm could not be started")
+
+    monkeypatch.setattr(lfr, "execute_driver", broken)
+    with pytest.raises(lfr.RunnerError):
+        runner.cloud_path(tasks[0], "A", "comparison")
+    error = results(runner)[-1]
+    assert error["status"] == "tool_error" and error["cloud_executions"] == 1
+    assert error["premium"]["billing_total"] is None  # reserved in the ledger, not read back: unknown
+    assert lfr.report(campaign, results(runner), ledger_of(runner))["ledger"]["unknown_spent_work"] == [
+        f"interrupted:{error['cloud_sessions'][0]}"]
+
+
+def test_item4_an_interrupted_local_attempt_is_counted_recorded_and_cannot_be_replayed(tmp_path, monkeypatch):
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    _interrupt_nth(monkeypatch, "local_harness", 1)
+    with pytest.raises(KeyboardInterrupt):
+        runner.screen(tasks[:1], ["cand-a"])
+    monkeypatch.undo()
+    cut, stop = results(runner)
+    assert (cut["status"], cut["path"], cut["local"]["candidate"]) == ("interrupted", "S", "cand-a")
+    assert stop["reason"] == "interrupted:KeyboardInterrupt"
+    settled = [e for e in ledger_of(runner) if e["kind"] == "settled"]
+    assert len(settled) == 1 and settled[0]["interrupted"] is True and settled[0]["cloud"] is False
+    assert not list((tmp_path / "work").iterdir())
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))["screening"]
+    assert rep["selected"] is None and rep["complete"] is False  # an interruption is not a refusal
+    again, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    with pytest.raises(lfr.RunnerError, match="already recorded"):
+        again.screen(tasks[:1], ["cand-a"])
+    assert counts(plan) == {}  # no second chance by Ctrl-C
+
+
+def test_item5_the_exact_previous_signal_handlers_are_restored(tmp_path):
+    def custom(signum, frame):
+        raise AssertionError("not expected")
+
+    signals = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+    saved = {s: signal.getsignal(s) for s in signals}
+    try:
+        for sig in signals:
+            signal.signal(sig, custom)
+        execution = lfr.execute_driver(
+            {"kind": "local_harness", "argv": [sys.executable, "-c", "print(1)"]}, {}, workdir=tmp_path,
+            scratch=tmp_path / "scratch", stream_log=tmp_path / "s.log", max_seconds=30, max_steps=None,
+            sandbox=False, deny_read=[], host_env=dict(os.environ))
+        assert execution["exit_code"] == 0
+        assert all(signal.getsignal(sig) is custom for sig in signals)
+        # a handler that was not set from Python reads as None: the default one is put back
+        signal.signal(signal.SIGHUP, custom)
+        lfr._restore_handlers({signal.SIGHUP: None})
+        assert signal.getsignal(signal.SIGHUP) is signal.SIG_DFL
+        signal.signal(signal.SIGINT, signal.SIG_IGN)  # an ignored Ctrl-C stays ignored
+        assert signal.SIGINT not in lfr._install_term_handlers({"defer": False, "pending": None})
+    finally:
+        for sig, old in saved.items():
+            signal.signal(sig, old)
+
+
+def test_item5_a_signal_received_while_the_arm_is_being_started_still_kills_it(tmp_path, monkeypatch):
+    script, pids = tmp_path / "sleeper.py", tmp_path / "pids"
+    script.write_text(SLEEPER, encoding="utf-8")
+    real, started = subprocess.Popen, []
+
+    def popen(*a, **kw):
+        proc = real(*a, **kw)
+        if not started:  # the signal lands inside ``Popen``, before the caller knows the process
+            started.append(proc.pid)
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.05)
+        return proc
+
+    monkeypatch.setattr(lfr.subprocess, "Popen", popen)
+    try:
+        with pytest.raises(SystemExit):
+            lfr.execute_driver({"kind": "cloud_implementer", "home": "real", "network": "open",
+                                "argv": [sys.executable, str(script), str(pids)]}, {}, workdir=tmp_path,
+                               scratch=tmp_path / "scratch", stream_log=tmp_path / "s.log",
+                               max_seconds=60, max_steps=None, sandbox=False, deny_read=[],
+                               host_env=dict(os.environ))
+        for _ in range(60):
+            if not _alive(started[0]):
+                break
+            time.sleep(0.1)
+        survived = _alive(started[0])
+    finally:
+        monkeypatch.undo()
+        for pid in started:  # never leave a stray process behind
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    assert not survived, "the arm started during the signal outlived the call"
+
+
+def test_item6_the_generated_profile_is_denied_to_the_arm(tmp_path, monkeypatch):
+    seen = {}
+
+    def popen(argv, **kw):
+        seen["argv"], seen["profile"] = argv, Path(argv[2]).read_text("utf-8")
+        raise OSError("not started: the profile is all this test needs")
+
+    monkeypatch.setattr(lfr, "sandbox_available", lambda: True)
+    monkeypatch.setattr(lfr.subprocess, "Popen", popen)
+    execution = lfr.execute_driver(
+        {"kind": "local_harness", "argv": ["arm"]}, {}, workdir=_sub(tmp_path, "bundle"),
+        scratch=tmp_path / "scratch", stream_log=tmp_path / "s.log", max_seconds=5, max_steps=None,
+        sandbox=True, deny_read=[tmp_path / "secret"], host_env={"PATH": "/usr/bin"})
+    monkeypatch.undo()
+    assert execution["start_error"] and seen["argv"][:2] == ["sandbox-exec", "-f"]
+    profile_dir = Path(seen["argv"][2]).parent
+    deny = next(x for x in seen["profile"].splitlines() if x.startswith("(deny file-read*"))
+    assert f'(subpath "{profile_dir}")' in deny and f'(subpath "{os.path.realpath(tmp_path / "secret")}")' in deny
+    assert not profile_dir.exists()  # removed after the call
+
+
+def test_item8_results_are_synced_and_a_truncated_line_is_a_clean_refusal(tmp_path, monkeypatch, capsys):
+    first = _make_repo(tmp_path)
+    runner, campaign, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    synced = []
+    real = os.fsync
+    monkeypatch.setattr(lfr.os, "fsync", lambda fd: (synced.append(fd), real(fd))[1])
+    runner._emit({"record_type": "stop", "reason": "probe"})
+    monkeypatch.undo()
+    assert len(synced) == 1  # the record that forbids a replay survives a crash
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps(campaign), encoding="utf-8")
+    with runner.ledger.path.open("a", encoding="utf-8") as handle:
+        handle.write('{"kind": "settled", "clou')  # the launcher died while writing
+    with pytest.raises(lfr.RunnerError, match=r"ledger-test-campaign\.jsonl: line 2 is not a JSON record"):
+        runner.ledger.totals()
+    with pytest.raises(lfr.RunnerError, match="line 2"):
+        make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    assert lfr.main(["report", "--campaign", str(cfg), "--results", str(runner.results_path)]) == 2
+    assert "line 2 is not a JSON record" in capsys.readouterr().err
+    runner.ledger.path.write_text(runner.ledger.path.read_text("utf-8").rsplit("\n", 1)[0] + "\n")
+    with runner.results_path.open("a", encoding="utf-8") as handle:
+        handle.write('{"record_type": "att')
+    with pytest.raises(lfr.RunnerError, match=r"results-test-campaign\.jsonl: line 2"):
+        make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    assert lfr.main(["report", "--campaign", str(cfg), "--results", str(runner.results_path)]) == 2
+    assert "results-test-campaign.jsonl: line 2" in capsys.readouterr().err

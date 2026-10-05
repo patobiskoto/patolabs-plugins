@@ -41,7 +41,14 @@ python3 -m foundry.local_first_runner report --campaign <cfg> --results <results
 
 Codes de sortie : 0 terminé, 2 refus ou erreur d'outil (pas d'enveloppe, enveloppe invalide, préflight
 refusé, pilote non vérifié, dossier de travail dans le checkout, tentative déjà consignée, état mêlant
-essai à blanc et réel, candidat inconnu, rapport sous une autre configuration…), 3 plafond d'enveloppe atteint.
+essai à blanc et réel, candidat inconnu, bac à sable impossible à appliquer, ligne tronquée dans le
+registre ou les résultats, rapport sous une autre configuration ou sans registre…), 3 plafond d'enveloppe
+atteint. Une interruption (Ctrl-C, SIGTERM, SIGHUP) sort avec le code du signal après avoir consigné
+la tentative coupée.
+
+`report` lit **obligatoirement** le registre `ledger-<campagne>.jsonl` placé à côté du fichier de
+résultats (même dossier d'état, même identifiant de campagne) : sans lui, il refuse (code 2). Il n'y a pas
+d'option pour s'en passer.
 
 - `--work-root` est un dossier jetable **hors du checkout de développement** (refusé sinon). Chaque
   tentative y reçoit un bundle neuf (`attempt-NNNN-…/bundle`) et un dossier d'essai
@@ -54,10 +61,19 @@ essai à blanc et réel, candidat inconnu, rapport sous une autre configuration�
   préflight machine est refait avant **chaque tâche**.
 - **Pas de reprise** : le lanceur refuse de démarrer une tentative dont la clé (parcours, tâche, jeu,
   candidat pour une tentative locale, segment, numéro) a déjà un enregistrement, et `report` refuse un
-  fichier qui en contient deux. Une campagne interrompue ne se rejoue pas dans le même état : il faut un
-  autre identifiant de campagne (donc une autre enveloppe) ou un autre dossier d'état. Choix assumé, plus
-  simple et plus sûr qu'une reprise par saut des tentatives terminées : un candidat rejoué ne peut pas
-  gagner par répétition (« une tentative locale », protocole).
+  fichier qui en contient deux. Une tentative coupée (panne d'outil, Ctrl-C, SIGTERM) est consignée elle
+  aussi et ne se rejoue pas. Une campagne interrompue ou bloquée ne se rejoue pas dans le même état : la
+  **seule** sortie est un nouvel identifiant de campagne **et** une nouvelle enveloppe, données par le
+  mainteneur (donc un registre et un fichier de résultats distincts). Choix assumé, plus simple et plus sûr
+  qu'une reprise par saut des tentatives terminées : un candidat rejoué ne peut pas gagner par répétition
+  (« une tentative locale », protocole). Une panne d'outil ou une interruption pendant le tamis rend le
+  tamis incomplet : il faut une nouvelle campagne et y rejouer **tous** les candidats, pas seulement
+  celui qui a été coupé.
+- **Le dossier d'état est une entrée de confiance de l'opérateur** : le registre et les résultats sont
+  rangés par `--state-dir`, donc relancer la même enveloppe dans un autre dossier d'état remettrait ses
+  plafonds à zéro. Le lanceur ne peut pas le détecter sans un état global qu'il n'a pas (non imposé) :
+  l'opérateur garde **un seul dossier d'état par identifiant de campagne**, et ne réutilise jamais une
+  enveloppe ailleurs. Voir « Confiance dans les fichiers d'état ».
 - `compare` joue chaque tâche de comparaison dans les parcours demandés, dans l'ordre. `N` est la
   tentative locale sous le harnais neutre sans validation cloud (coût : du temps machine seulement).
   `--paths A,B` n'a pas besoin du modèle local : aucun préflight machine n'est lancé (seuls `C` et `N`
@@ -117,12 +133,19 @@ autorisé, plafond manquant ou négatif. `screen` exige une enveloppe aussi (`cl
   s'arrête (`premium_tokens_unmeasurable`) : un plafond ne se vérifie pas sur une donnée inconnue.
   `settled` porte l'identifiant de session de son `cloud_started` ; un `cloud_started` sans `settled`
   apparié (lanceur tué, interruption, exception) rend les tokens inconnus : aucune nouvelle exécution
-  cloud ne démarre, y compris après un redémarrage (jamais « 0 token » par défaut) ;
+  cloud ne démarre, y compris après un redémarrage (jamais « 0 token » par défaut). La campagne est alors
+  terminée pour le cloud : il faut un nouvel identifiant de campagne et une nouvelle enveloppe ;
 - durée : somme des durées murales (locales et cloud) ; elle borne aussi le délai de chaque exécution.
 
-Le registre est `<state-dir>/ledger-<campagne>.jsonl`, en ajout seul (`session_started` avec les sha256 de
+Une erreur de configuration ne brûle pas la campagne : la disponibilité de `sandbox-exec` et le profil
+de chaque pilote du mode demandé sont vérifiés à la construction du lanceur (avant toute tentative), et le
+profil d'une exécution cloud est généré avant son inscription au registre.
+
+Le registre est `<state-dir>/ledger-<campagne>.jsonl`, en ajout seul et synchronisé sur disque à chaque
+ligne, comme le fichier de résultats (`session_started` avec les sha256 de
 l'enveloppe, de la configuration de campagne et du manifeste, `preflight`, `cloud_started`, `settled`,
-`stopped`). Chaque ligne du registre et chaque enregistrement de résultat porte `dry_run` ; un état qui
+`stopped`). Une ligne tronquée ou illisible dans l'un des deux fichiers est un refus net qui nomme le
+fichier et la ligne : cet état n'est plus fiable, il faut une nouvelle campagne. Chaque ligne du registre et chaque enregistrement de résultat porte `dry_run` ; un état qui
 contient des lignes de l'autre nature est refusé (jamais d'exécution à blanc comptée contre un plafond
 réel). Chaque enregistrement de résultat porte aussi `campaign_sha256`, `manifest_sha256` et
 `envelope_sha256` : le lanceur refuse de continuer dans un fichier écrit sous d'autres valeurs.
@@ -168,7 +191,9 @@ Un enregistrement par (tâche, parcours, tentative) dans `<state-dir>/results-<c
 (`foundry.local-first-result.v1`) : `task` (`pr`, `issue`, `set`), `path` (`S` pour le tamis, `A`, `B`,
 `C`, `N`), `segment` (`local`, `cloud`, `takeover`), `attempt`, `outcome`, `judge` (verdict et comptes),
 `accepted` (vrai seulement quand le parcours se termine accepté : tests protégés verts **et** revue sans
-blocage ; nul sinon), `review` (`rounds`, `verdicts`), `wall_seconds`, `cloud_executions`, `premium`
+blocage ; nul sinon), `review` (`rounds`, `verdicts`), `wall_seconds`, `cloud_executions`,
+`cloud_sessions` (l'identifiant de session de chaque exécution cloud inscrite au registre pendant cette
+tentative), `premium`
 (`by_role` par classe de token, `billing_total`), `local` (harnais, candidat, `steps`, `stream_tokens`,
 vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_external_signal`),
 `machine` (`before`/`after` : `swap_used_mib`, `pressure_free_percent`, `server_rss_kib`), `unknown`
@@ -178,6 +203,20 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   `envelope_sha256` sur chaque enregistrement ; `report` les vérifie (une seule valeur par fichier, la
   configuration passée à `--campaign` doit avoir le sha256 des résultats), refuse les tentatives en double
   et les fichiers mêlant essai à blanc et réel, puis imprime `rules_applied` et `provenance`.
+- **Tentative interrompue** : sur Ctrl-C, SIGTERM, SIGHUP ou toute autre exception pendant une
+  tentative locale, un parcours cloud ou la revue du parcours C, le lanceur écrit un enregistrement
+  `status: interrupted` (`outcome: interrupted`, `reason`, `premium.billing_total` **nul**, les
+  `cloud_sessions` déjà inscrites), puis un enregistrement `stop` (`interrupted:<exception>`), puis relaie
+  l'exception. Une tentative locale interrompue est réglée au registre (sa durée compte) et sa clé est
+  prise : elle ne se rejoue pas. Après un SIGKILL ou une panne franche rien ne peut être écrit : c'est le
+  registre qui le dit à `report` (voir Rapport). Non imposé : une tentative **locale** tuée par SIGKILL ne
+  laisse ni règlement ni enregistrement (sa durée n'est pas comptée et elle resterait rejouable dans le
+  même état) ; l'opérateur ne relance pas un état interrompu.
+- **Total premium d'un enregistrement** : connu seulement si les compteurs de **chaque** exécution cloud
+  de `cloud_sessions` ont été lus ; une exécution inscrite au registre dont le coût n'a pas été relu rend
+  le total nul (inconnu), jamais 0.
+- **Arrêt sur plafond** : le tour coupé (y compris une correction ou une reprise qui n'a pas pu démarrer)
+  reçoit un enregistrement `stopped_by_cap` : la tâche n'est pas décidée, ce n'est pas un refus.
 - **Panne d'outil** : une `CorpusError`/`RunnerError` n'est jamais un verdict. Elle écrit un
   enregistrement `status: tool_error` (avec `reason`, et le coût déjà engagé) avant l'arrêt
   (`stopped`, raison `tool_error:…`, code de sortie 2). Une revue illisible est `review_unreadable` :
@@ -202,7 +241,26 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
 ## Rapport et règles préenregistrées
 
 `report` agrège et applique les règles du protocole, rend trois verdicts **séparés** par parcours
-comparé (`pass`, `fail` ou `unavailable`) et ne promeut jamais (`"promotion": false`) :
+comparé (`pass`, `fail` ou `unavailable`) et ne promeut jamais (`"promotion": false`).
+
+**Registre et résultats ne se contredisent jamais sur le travail dépensé.** `report` croise les deux
+fichiers par identifiant de session. Invariant vérifié : chaque `cloud_started` du registre est nommé par
+**exactement un** enregistrement de résultat (`cloud_sessions`) et réglé avec des tokens connus ; chaque
+exécution cloud des résultats a sa ligne au registre.
+
+- Refus (code 2), les deux fichiers ne décrivent pas la même campagne : registre absent ou vide, registre
+  d'une autre nature (à blanc/réel) ou écrit sous d'autres empreintes (enveloppe, configuration,
+  manifeste), enregistrement qui ne nomme pas ses exécutions cloud, session inconnue du registre, session
+  nommée deux fois, total premium d'un enregistrement que le registre ne confirme pas.
+- Travail dépensé inconnu (`ledger.unknown_spent_work` liste les raisons) : `cloud_started` sans `settled`
+  apparié, `settled` interrompu, `settled` aux tokens inconnus, session du registre sans enregistrement de
+  résultat. Dans ces cas **aucun** verdict d'économie n'est rendu (`unavailable` pour tous les parcours :
+  le registre ne sait pas à quel parcours attribuer le travail perdu) et la décision est `inconclusive`,
+  jamais `retained` ni `keep_cloud`. Un enregistrement `interrupted` donne la même décision
+  `inconclusive`, même quand le registre est complet (interruption après le règlement) ; l'économie du
+  parcours touché est alors `unavailable` par son total premium nul.
+
+Règles :
 
 - **tamis** : le candidat qui fait accepter le plus de tâches ; à égalité la durée totale la plus courte ;
   sous `min_accepted` (2) aucun candidat, « conserver le cloud » ; égalité de durée : non résolue ;
@@ -211,17 +269,22 @@ comparé (`pass`, `fail` ou `unavailable`) et ne promeut jamais (`"promotion": f
 - **compatibilité** (C) : aucune tentative interrompue sur un signal extérieur et swap supplémentaire sous
   `extra_swap_gib_max` (10 Go) ; swap non mesuré : `unavailable` ;
 - **qualité** : toutes les tâches acceptées et pas plus de tours de revue au total que A ; une tâche
-  dont le verdict est inconnu (revue illisible, panne d'outil, arrêt sur plafond) rend la qualité
-  `unavailable`, pas `fail` ;
+  dont le verdict est inconnu (revue illisible, panne d'outil, interruption, arrêt sur plafond) rend la
+  qualité `unavailable`, pas `fail` ;
 - **économie** : travail premium total inférieur d'au moins 25 % à A **et** durée totale au plus 2 fois A ;
-  `unavailable` si le travail premium d'un des deux parcours n'est pas mesurable. Le travail premium est
+  `unavailable` si le travail premium d'un des deux parcours n'est pas mesurable, si le registre connaît
+  du travail dépensé inconnu, ou si une tâche comparée (du parcours ou de A) n'est pas décidée : un
+  parcours coupé avant son terme n'a pas de coût complet, le comparer donnerait un chiffre trop
+  favorable. Le travail premium est
   la somme **non pondérée** des quatre classes de tokens facturables sur tous les modèles : c'est une
   limite (un token d'un modèle économique pèse autant qu'un token premium), d'où le détail par modèle
   (`economy_detail.premium_by_model`) nécessaire pour juger honnêtement le parcours B ;
 - décision : `retained` (recommandation B si B suffit, sinon C) seulement si les trois verdicts passent
   sur le nombre de tâches prévu ; `keep_cloud` sur un échec ou sur un arrêt anticipé **de règle**
-  (`fewer_than_min_local_successes`, `premium_c_not_below_a`) ; un arrêt sur plafond ou sur panne
-  d'outil laisse une campagne incomplète : `inconclusive`.
+  (`fewer_than_min_local_successes`, `premium_c_not_below_a`) ; un arrêt sur plafond, sur panne
+  d'outil ou sur interruption laisse une campagne incomplète : `inconclusive` (un `fail` réellement
+  mesuré sur une autre tâche reste un `fail`, sauf interruption ou travail dépensé inconnu, qui donnent
+  toujours `inconclusive`).
 
 Le rapport ne dit pas qu'un échantillon de 6 tâches est une preuve statistique générale : il ne l'est pas.
 
@@ -239,10 +302,16 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   `--envelope`, `--campaign`, `--snapshot`, `--manifest` (à garder à part de `--work-root`, sinon le
   lanceur refuse de générer le profil), et dans le HOME **réel** les entrées de
   `isolation.deny_read_home` : pour un pilote local `.claude` (dont le cache de plugins qui contient les
-  tests fusionnés), `.codex`, `.config`, `.ssh`, `.gnupg`, `.aws`, `.netrc`, `Library/Keychains` ; pour un
-  pilote cloud la même liste sans `.claude` ni `.config` entier (identité OAuth, AGENTS.md R6), avec
-  `.config/foundry`. Réseau limité à la boucle locale pour un pilote local. Un vrai lancement exige
-  `sandbox-exec` (refusé ailleurs).
+  tests fusionnés), `.claude.json`, `.codex`, `.config`, `.ssh`, `.gnupg`, `.aws`, `.netrc`,
+  `Library/Keychains`, `.git-credentials`, `.npmrc`, `.pypirc`, `.docker`, `.kube`, `.zsh_history`,
+  `.bash_history`, `.python_history` ; pour un pilote cloud la même liste sans `.claude`, `.claude.json` ni
+  `.config` entier (identité OAuth, AGENTS.md R6 ; Claude Code lit et écrit `.claude.json`), avec
+  `.config/foundry`. Le profil généré, qui nomme tous les chemins refusés, est écrit dans un dossier
+  temporaire lui-même interdit en lecture au candidat (sonde testée). Réseau limité à la boucle locale pour
+  un pilote local. Un vrai lancement exige `sandbox-exec` (refusé ailleurs).
+  **Trousseau non couvert** : `(allow default)` laisse l'accès Mach au démon de sécurité ; refuser la
+  lecture de `Library/Keychains` n'empêche donc **pas** une requête au trousseau (`security
+  find-generic-password`, API Keychain). Rien n'est imposé là-dessus ici : voir les préconditions PAT-109.
   Ce n'est **pas** un refus par défaut du HOME avec liste d'autorisation (outil, bundle, dossier d'essai,
   installation de l'interpréteur) : cette forme, préférable, n'est pas vérifiable sans lancer `omp`, ce que
   ce ticket n'a pas le droit de faire ; la liste de refus est une coordonnée de configuration
@@ -253,7 +322,9 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   entrée standard fermée.
 - **Interruption et durée** : le groupe de processus du bras est tué à la borne de durée ou d'étapes, et
   aussi sur Ctrl-C, SIGTERM, SIGHUP ou toute exception du lanceur (`try/finally` ; SIGTERM et SIGHUP sont
-  convertis en `SystemExit` pendant l'exécution). Une exécution cloud interrompue est réglée dans le
+  convertis en `SystemExit` pendant l'exécution). Un signal reçu pendant le démarrage du bras (`Popen`)
+  est différé jusqu'à ce que le processus soit connu, puis le tue ; les gestionnaires de signaux
+  précédents sont rétablis à l'identique en sortie. Une exécution cloud interrompue est réglée dans le
   registre avec des tokens inconnus. **Non imposé** : un enfant qui appelle `setsid` sort du groupe et
   survit au `kill` ; seule parade, un contrôle de quiétude avant le jugement : le lanceur compare deux
   empreintes (chemin, taille, mtime) du bundle à 0,2 s d'écart et refuse de juger (`tool_error`) si
@@ -285,6 +356,18 @@ un enfant sorti du groupe par `setsid`, et le code produit reste importé dans l
 du juge). Le suivi du tracker et des secrets repose sur la liste blanche d'environnement et sur les
 refus de lecture ci-dessus, pas sur une preuve d'absence.
 
+## Confiance dans les fichiers d'état
+
+Le registre et le fichier de résultats sont des fichiers **de l'opérateur, sans protection d'intégrité**
+(ni signature, ni chaînage) : supprimer une ligne de résultats permet de rejouer une tentative, supprimer
+une ligne du registre remet un plafond à zéro, et le croisement de `report` ne détecte que les
+incohérences entre les deux fichiers, pas une suppression cohérente dans les deux. Le candidat, lui, ne
+peut ni les lire ni les écrire (dossier d'état interdit en lecture, écriture limitée au bundle et au
+dossier d'essai). L'honnêteté de la campagne repose donc sur l'opérateur : un seul dossier d'état par
+identifiant de campagne, jamais d'édition à la main. Une enveloppe renouvelée porte un **nouvel
+identifiant de campagne**, donc un registre et un fichier de résultats distincts ; les résultats de deux
+enveloppes ne se mélangent pas (empreinte `envelope_sha256` vérifiée).
+
 ## Choix du lanceur qui ne sont pas des coordonnées du protocole
 
 Étiquetés `not_a_protocol_coordinate: true` avec leur raison dans `non_protocol_choices` de la
@@ -301,7 +384,11 @@ journaux de session** de l'hôte cloud (les transcriptions de sous-agents sont-e
 fichiers ? tant que ce n'est pas établi, `session_log.layout_verified` reste `false` et les tokens premium
 sont inconnus, donc aucune campagne cloud plafonnée ne peut avancer au-delà de la première exécution) ;
 remplacer la liste de refus de lecture par une liste d'autorisation après test de fumée de `omp` ;
-décider du biais des bras cloud qui lisent `~/.claude` ; consigner les empreintes des poids.
+décider du biais des bras cloud qui lisent `~/.claude` ; consigner les empreintes des poids ;
+**trouver où le jeton du tracker est stocké** (fichier, trousseau, variable) et, s'il est au trousseau,
+refuser ce service dans le profil, par exemple `(deny mach-lookup (global-name
+"com.apple.SecurityServer") …)`, à condition que le harnais fonctionne encore ainsi (à vérifier par test
+de fumée : non essayé ici).
 
 ## Statut documentaire (AGENTS.md R5)
 
@@ -309,6 +396,8 @@ Artefacts documentés ici : la surface CLI de `foundry.local_first_runner` (dont
 le refus d'une configuration différente à `report`), la configuration de campagne
 (`pat-19-campaign-v1.json` : `isolation`, `non_protocol_choices`, `session_log.layout_verified`), le format
 d'enveloppe et de registre (`dry_run`, empreintes, `settled` apparié), le schéma des résultats (`tool_error`,
-`premium.by_model`), les règles du rapport et le périmètre de l'isolement. Aucune constante publique, option de `foundry_cli.py`, clé de
+`interrupted`, `stopped_by_cap`, `cloud_sessions`, `premium.by_model`), les règles du rapport (registre
+obligatoire, invariant registre/résultats), la confiance accordée aux fichiers d'état et le périmètre de
+l'isolement. Aucune constante publique, option de `foundry_cli.py`, clé de
 configuration produit ni table de routage n'a changé. L'application mécanique de R5 reste celle de
 FOUNDRY-123.

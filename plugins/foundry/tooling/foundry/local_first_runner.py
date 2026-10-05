@@ -51,9 +51,11 @@ REVIEWER_DRIVER = "cloud_reviewer"
 # Home entries a candidate may not read (campaign config ``isolation.deny_read_home`` overrides this
 # list, which is a launcher choice and not a protocol coordinate). A local arm may read nothing of the
 # user's configuration; a cloud arm keeps ``~/.claude`` (OAuth identity, AGENTS.md R6) and ``~/.config``.
-DEFAULT_HOME_DENY = {
-    "local": [".claude", ".codex", ".config", ".ssh", ".gnupg", ".aws", ".netrc", "Library/Keychains"],
-    "cloud": [".codex", ".config/foundry", ".ssh", ".gnupg", ".aws", ".netrc", "Library/Keychains"]}
+_HOME_SECRETS = [".ssh", ".gnupg", ".aws", ".netrc", "Library/Keychains", ".git-credentials", ".npmrc",
+                 ".pypirc", ".docker", ".kube", ".zsh_history", ".bash_history", ".python_history"]
+DEFAULT_HOME_DENY = {  # a cloud arm also keeps ``~/.claude.json`` (Claude Code reads and writes it)
+    "local": [".claude", ".claude.json", ".codex", ".config", *_HOME_SECRETS],
+    "cloud": [".codex", ".config/foundry", *_HOME_SECRETS]}
 RULE_STOPS = ("fewer_than_min_local_successes", "premium_c_not_below_a")  # pre-registered early stops
 PROVENANCE_KEYS = ("campaign_sha256", "manifest_sha256", "envelope_sha256")
 TOKEN_CLASSES = ca.TOKEN_KEYS
@@ -185,8 +187,8 @@ class Ledger:
         self.path = Path(state_dir) / f"ledger-{envelope['campaign_id']}.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.exists():  # a dry run and a real run never share a ledger (nor a cap)
-            for line in self.path.read_text(encoding="utf-8").splitlines():
-                if line.strip() and bool(json.loads(line).get("dry_run", False)) != dry_run:
+            for entry in _read_jsonl(self.path):
+                if bool(entry.get("dry_run", False)) != dry_run:
                     raise RunnerError(f"{self.path} holds {'real' if dry_run else 'dry-run'} entries: "
                                       "refusing to mix dry-run and real records")
         self.append("session_started", mode=mode,
@@ -204,8 +206,7 @@ class Ledger:
         out: dict[str, Any] = {"cloud_started": 0, "premium_tokens": 0, "tokens_unmeasurable": False,
                                "seconds": 0.0, "unsettled_sessions": []}
         pending: dict[str, None] = {}
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            entry = json.loads(line)
+        for entry in _read_jsonl(self.path):
             if bool(entry.get("dry_run", False)) != self.dry_run:
                 continue
             if entry["kind"] == "cloud_started":
@@ -439,6 +440,15 @@ def sandbox_available() -> bool:
     return sys.platform == "darwin" and shutil.which("sandbox-exec") is not None
 
 
+def sandbox_text(driver: Mapping[str, Any], writable: Sequence[Path], deny_read: Sequence[Path]) -> str:
+    """The profile of one driver, or a ``RunnerError`` when isolation cannot be enforced. Pure: the
+    runner calls it before any claim or reservation, so a configuration error costs nothing."""
+    if not sandbox_available():
+        raise RunnerError("sandbox-exec is unavailable: isolation cannot be enforced")
+    return sandbox_profile(writable=list(writable), deny_read=list(deny_read),
+                           network=driver.get("network", "loopback"))
+
+
 # ------------------------------------------------------------------------- stream parsing
 
 class StreamStats:
@@ -495,22 +505,35 @@ def _kill_group(proc: subprocess.Popen) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
 
 
-def _install_term_handlers() -> dict[int, Any]:
+def _deliver(gate: dict[str, Any]) -> None:
+    """Stop deferring and raise the signal received meanwhile, if any."""
+    gate["defer"] = False
+    signum, gate["pending"] = gate["pending"], None
+    if signum is not None:
+        raise KeyboardInterrupt if signum == signal.SIGINT else SystemExit(128 + signum)
+
+
+def _install_term_handlers(gate: dict[str, Any]) -> dict[int, Any]:
     """SIGTERM/SIGHUP end the call like an interruption (``SystemExit``) so the ``finally`` that
-    kills the arm's process group runs. Only the main thread can install handlers."""
+    kills the arm's process group runs. While ``gate["defer"]`` is set (the arm is being started
+    and its pid is not known yet) a signal, Ctrl-C included, is only noted in ``gate["pending"]``
+    and raised by ``_deliver`` once the process can be killed. Only the main thread can install
+    handlers; an ignored SIGINT stays ignored."""
     if threading.current_thread() is not threading.main_thread():
         return {}
 
     def handler(signum: int, _frame: Any) -> None:
-        raise SystemExit(128 + signum)
+        gate["pending"] = signum
+        if not gate["defer"]:
+            _deliver(gate)
 
-    return {sig: signal.signal(sig, handler) for sig in (signal.SIGTERM, signal.SIGHUP)}
+    return {sig: signal.signal(sig, handler) for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+            if not (sig == signal.SIGINT and signal.getsignal(sig) is signal.SIG_IGN)}
 
 
 def _restore_handlers(previous: Mapping[int, Any]) -> None:
-    for sig, old in previous.items():
-        if old is not None:
-            signal.signal(sig, old)
+    for sig, old in previous.items():  # None: the previous handler was not set from Python
+        signal.signal(sig, signal.SIG_DFL if old is None else old)
 
 
 def _substitute(template: str, values: Mapping[str, str]) -> str:
@@ -537,25 +560,25 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
     argv = [_substitute(a, values) for a in driver["argv"]]
     profile_dir = None
     if sandbox:
-        if not sandbox_available():
-            raise RunnerError("sandbox-exec is unavailable: isolation cannot be enforced")
-        text = sandbox_profile(writable=[workdir, scratch, *extra_write], deny_read=list(deny_read),
-                               network=driver.get("network", "loopback"))
+        sandbox_text(driver, [workdir, scratch, *extra_write], deny_read)  # refuse before any file
         profile_dir = Path(os.path.realpath(tempfile.mkdtemp(prefix="foundry-sb-")))
-        profile = profile_dir / "profile.sb"
-        profile.write_text(text, encoding="utf-8")
+        profile = profile_dir / "profile.sb"  # it names every denied path: the arm may not read it
+        profile.write_text(sandbox_text(driver, [workdir, scratch, *extra_write],
+                                        [*deny_read, profile_dir]), encoding="utf-8")
         argv = ["sandbox-exec", "-f", str(profile), *argv]
     stats = StreamStats(driver.get("stream"))
     state = {"step_limit": False, "timed_out": False}
     stream_log.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     proc: subprocess.Popen | None = None
-    previous = _install_term_handlers()
+    gate: dict[str, Any] = {"defer": True, "pending": None}  # no signal can cut ``Popen`` itself
+    previous = _install_term_handlers(gate)
     try:
         try:
             with stream_log.open("wb") as log, (scratch / "stderr.log").open("wb") as err:
                 proc = subprocess.Popen(argv, cwd=workdir, env=env, stdin=subprocess.DEVNULL,
                                         stdout=subprocess.PIPE, stderr=err, start_new_session=True)
+                _deliver(gate)  # ``proc`` is known: an interruption now kills its group (finally)
 
                 def pump(proc: subprocess.Popen = proc) -> None:
                     for raw in proc.stdout:
@@ -578,12 +601,15 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
                     proc.wait()
                     reader.join(timeout=10)
         except OSError as exc:
+            _deliver(gate)
             return {"exit_code": None, "signal": None, "timed_out": False, "step_limit_hit": False,
                     "wall_seconds": round(time.monotonic() - started, 3), "start_error": str(exc)[:200],
                     "stream": stats.summary(), "launcher_kill": False}
     finally:
-        if proc is not None:
+        if proc is not None:  # whatever was started is killed and reaped, however the call ends
             _kill_group(proc)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=10)
         _restore_handlers(previous)
         if profile_dir is not None:
             shutil.rmtree(profile_dir, ignore_errors=True)
@@ -695,6 +721,11 @@ class Runner:
                            "envelope_sha256": envelope["sha256"]}
         self.results_path = self.state_dir / f"results-{envelope['campaign_id']}.jsonl"
         self.seen = self._scan_results()  # refuses a mixed or foreign state before anything starts
+        if sandbox:  # a configuration error must cost nothing: checked before any claim or reservation
+            for driver in campaign["drivers"].values():
+                if mode == "compare" or driver["kind"] in LOCAL_KINDS:
+                    sandbox_text(driver, [self.work_root, *_extra_write(driver)], self._deny_read(driver))
+        self.sessions: list[str] = []  # session id of every cloud execution reserved in the ledger
         self.work_root.mkdir(parents=True, exist_ok=True)
         self.ledger = Ledger(self.state_dir, envelope, mode, now, dry_run=dry_run,
                              provenance=self.provenance)
@@ -706,7 +737,7 @@ class Runner:
     # ---- bookkeeping
     def _scan_results(self) -> set[tuple]:
         """Attempt keys already recorded. A relaunch is REFUSED to replay one of them (no resume: a
-        new campaign id or state directory is needed), and results written in dry-run mode, under
+        new campaign id, hence a new envelope, is needed), and results written in dry-run mode, under
         another campaign config, manifest or envelope never share a file with this run."""
         seen: set[tuple] = set()
         if not self.results_path.exists():
@@ -736,6 +767,8 @@ class Runner:
         self.results_path.parent.mkdir(parents=True, exist_ok=True)
         with self.results_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())  # the record is the anti-replay guard: it must survive a crash
         return record
 
     def _driver(self, driver_id: str) -> Mapping[str, Any]:
@@ -810,24 +843,29 @@ class Runner:
         return _substitute(self.campaign["prompts"][key], values)
 
     def _tool_error(self, task: Mapping[str, Any], path: str, segment: str, attempt: int,
-                    task_set: str, exc: BaseException, *, wall: float = 0.0, cloud_executions: int = 0,
+                    task_set: str, exc: BaseException, *, wall: float = 0.0, sessions: Sequence[str] = (),
                     by_role: Mapping[str, Any] | None = None, by_model: Mapping[str, Any] | None = None,
                     local: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        """A tool failure is recorded as such (never as a verdict) before the campaign stops."""
+        """A tool failure or an interruption (Ctrl-C, SIGTERM, any other exception) is recorded as
+        such, never as a verdict, before the campaign stops. An interrupted attempt has an unknown
+        cost (``billing_total`` null), like any record whose cloud executions were not all read."""
+        status = _cut(exc)
+        reason = (str(exc) or type(exc).__name__)[:200] if status == "tool_error" \
+            else f"{type(exc).__name__}: {exc}"[:200]
         by_role = dict(by_role or {})
-        totals = [billing_total(t) for t in by_role.values()]
         return self._emit({
             "record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
-            "segment": segment, "attempt": attempt, "outcome": "tool_error", "status": "tool_error",
-            "reason": str(exc)[:200], "judge": None, "accepted": None,
-            "local_outcome": "tool_error" if segment == "local" else None,
+            "segment": segment, "attempt": attempt, "outcome": status, "status": status,
+            "reason": reason, "judge": None, "accepted": None,
+            "local_outcome": status if segment == "local" else None,
             "review": {"rounds": 0, "verdicts": []}, "wall_seconds": round(wall, 3),
-            "cloud_executions": cloud_executions,
+            "cloud_executions": len(sessions), "cloud_sessions": list(sessions),
             "premium": {"by_role": {r: _classes(t) for r, t in by_role.items()},
                         "by_model": dict(by_model or {}),
-                        "billing_total": None if any(t is None for t in totals) else sum(totals)},
+                        "billing_total": None if status == "interrupted"
+                        else _record_total(by_role, sessions)},
             "local": ({"ended_by_external_signal": False, **local} if local else None),
-            "machine": None, "unknown": {"tool_error": str(exc)[:200]}})
+            "machine": None, "unknown": {status: reason}})
 
     # ---- one local attempt (screen, path N, first step of path C)
     def local_attempt(self, task: Mapping[str, Any], candidate_id: str, driver_id: str,
@@ -839,7 +877,7 @@ class Runner:
         self._claim(path, task, task_set, candidate_id, "local", attempt)
         bounds = self.campaign["bounds"]
         model = self.campaign["candidates"][candidate_id]["model"]
-        execution = None
+        execution, started = None, None
         try:
             bundle, attempt_dir = self._bundle(task, f"{path}-local-{candidate_id}")
             try:
@@ -847,6 +885,7 @@ class Runner:
                 values["prompt"] = self._prompt("implement", values)
                 before = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
                 budget = min(bounds["local_max_seconds"], max(self.ledger.remaining_seconds(), 0))
+                started = time.monotonic()
                 execution = execute_driver(
                     driver, values, workdir=bundle, scratch=attempt_dir / "scratch",
                     stream_log=self.state_dir / "streams" / f"{self.envelope['campaign_id']}-"
@@ -858,11 +897,13 @@ class Runner:
                 verdict = lfc.judge(self.repo, task, bundle)
             finally:
                 self._discard(bundle, attempt_dir)
-        except (RunnerError, lfc.CorpusError) as exc:
-            if execution is not None:
-                self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None)
-            self._tool_error(task, path, "local", attempt, task_set, exc,
-                             wall=execution["wall_seconds"] if execution else 0.0,
+        except BaseException as exc:  # tool failure or interruption: time is counted, the attempt
+            wall = 0.0                # is recorded and can never be replayed (no second chance)
+            if started is not None:
+                wall = execution["wall_seconds"] if execution else time.monotonic() - started
+                self.ledger.settle(cloud=False, seconds=wall, premium_tokens=None,
+                                   **({"interrupted": True} if _cut(exc) == "interrupted" else {}))
+            self._tool_error(task, path, "local", attempt, task_set, exc, wall=wall,
                              local={"harness": driver_id, "harness_kind": driver["kind"],
                                     "candidate": candidate_id})
             raise
@@ -885,6 +926,7 @@ class Runner:
                   "local_outcome": "accepted" if verdict["verdict"] == "ACCEPTED" else "refused",
                   "accepted": None, "review": {"rounds": 0, "verdicts": []},
                   "wall_seconds": execution["wall_seconds"], "cloud_executions": 0,
+                  "cloud_sessions": [],
                   "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
                   "machine": {"before": _strip(before), "after": _strip(after)}, "unknown": unknown}
         return record, patch
@@ -908,11 +950,14 @@ class Runner:
         values = self._values(bundle, attempt_dir, session_id=session_id,
                               model=driver.get("model", ""))
         values["prompt"] = self._prompt(prompt_key, values)
-        extra = [Path(os.path.expanduser(p)) for p in driver.get("extra_write", [])]
+        extra = _extra_write(driver)
         deny = self._deny_read(driver)
+        if self.sandbox:  # a profile that cannot be generated must not burn a reservation
+            sandbox_text(driver, [bundle, scratch, *extra], deny)
         budget = min(self.campaign["bounds"]["cloud_max_seconds"],
                      max(self.ledger.remaining_seconds(), 0))
         self.ledger.reserve_cloud(role, session_id)  # cap checked, then recorded, then run
+        self.sessions.append(session_id)  # every reserved execution is named by a result record
         started = time.monotonic()
         try:
             execution = execute_driver(
@@ -965,23 +1010,22 @@ class Runner:
             models: dict[str, dict[str, int | None]] = {}
             unknown: dict[str, str] = {}
             verdict: Mapping[str, Any] | None = None
-            state = {"seconds": 0.0, "count": 0, "rounds": [], "accepted": None,
-                     "outcome": "judge_refused"}
+            state = {"seconds": 0.0, "rounds": [], "accepted": None, "outcome": "judge_refused"}
             findings = ""
+            mark = len(self.sessions)
 
             def emit() -> None:
-                totals = [billing_total(t) for t in by_role.values()]
+                spent = self.sessions[mark:]
                 records.append(self._emit({
                     "record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
                     "segment": segment, "attempt": first_attempt + index, "outcome": state["outcome"],
                     "judge": _judge_summary(verdict) if verdict else None,
                     "accepted": state["accepted"],
                     "review": {"rounds": len(state["rounds"]), "verdicts": state["rounds"]},
-                    "wall_seconds": round(state["seconds"], 3), "cloud_executions": state["count"],
+                    "wall_seconds": round(state["seconds"], 3), "cloud_executions": len(spent),
+                    "cloud_sessions": spent,
                     "premium": {"by_role": {r: _classes(t) for r, t in by_role.items()},
-                                "by_model": models,
-                                "billing_total": None if any(t is None for t in totals)
-                                else sum(totals)},
+                                "by_model": models, "billing_total": _record_total(by_role, spent)},
                     "local": None, "machine": None, "unknown": unknown}))
 
             try:
@@ -990,7 +1034,7 @@ class Runner:
                     execution, tokens, reason = self.cloud_execution(
                         role, implementer, bundle, attempt_dir,
                         "implement" if index == 0 else "correct", feedback)
-                    state["seconds"], state["count"] = execution["wall_seconds"], 1
+                    state["seconds"] = execution["wall_seconds"]
                     by_role[role] = tokens
                     _merge_models(models, execution["by_model"])
                     if tokens is None:
@@ -1003,7 +1047,6 @@ class Runner:
                     review, findings, rev_exec, rev_tokens, rev_reason = self._review(
                         task, patch, f"{path}-{index}")
                     state["seconds"] += rev_exec["wall_seconds"]
-                    state["count"] = 2
                     by_role["reviewer"] = rev_tokens
                     _merge_models(models, rev_exec["by_model"])
                     if rev_tokens is None:
@@ -1014,16 +1057,14 @@ class Runner:
                     state["accepted"] = {"PASS": True, "BLOCK": False, None: None}[review]
                     if review is None:
                         unknown["review"] = "review_unreadable"
-            except CapReached:
-                if state["count"]:  # the spent execution must not vanish from the results
-                    state["outcome"] = "stopped_by_cap"
-                    emit()
+            except CapReached:  # the cut round is recorded even when nothing was spent in it: the
+                state["outcome"] = "stopped_by_cap"  # task is not decided (never a refusal)
+                emit()
                 raise
-            except (RunnerError, lfc.CorpusError) as exc:
-                state["outcome"], unknown["tool_error"] = "tool_error", str(exc)[:200]
+            except BaseException as exc:  # tool failure, Ctrl-C, SIGTERM, anything: never silent
                 records.append(self._tool_error(
                     task, path, segment, first_attempt + index, task_set, exc, wall=state["seconds"],
-                    cloud_executions=state["count"], by_role=by_role, by_model=models))
+                    sessions=self.sessions[mark:], by_role=by_role, by_model=models))
                 raise
             emit()
             outcome = state["outcome"]
@@ -1043,20 +1084,22 @@ class Runner:
         records = [local]
         takeover = local["local_outcome"] != "accepted"
         if not takeover:
+            mark = len(self.sessions)
             try:
                 review, _, rev_exec, rev_tokens, rev_reason = self._review(task, patch, "C-0")
-            except CapReached:
-                local["outcome"] = "stopped_by_cap"
-                self._emit(local)
-                raise
-            except (RunnerError, lfc.CorpusError) as exc:
-                local["outcome"], local["reason"] = "tool_error", str(exc)[:200]
-                local["unknown"]["tool_error"] = local["reason"]
+            except BaseException as exc:  # cap, tool failure or interruption during the review
+                cut, spent = _cut(exc), self.sessions[mark:]
+                local.update(outcome=cut, cloud_sessions=spent, cloud_executions=len(spent))
+                if cut != "stopped_by_cap":
+                    local["status"], local["reason"] = cut, (str(exc) or type(exc).__name__)[:200]
+                    local["unknown"][cut] = local["reason"]
+                if spent or cut == "interrupted":  # a started review of unread cost: never 0
+                    local["premium"]["billing_total"] = None
                 self._emit(local)
                 raise
             total = billing_total(rev_tokens)
             local["review"] = {"rounds": 1, "verdicts": [review]}
-            local["cloud_executions"] = 1
+            local["cloud_executions"], local["cloud_sessions"] = 1, self.sessions[mark:]
             local["wall_seconds"] = round(local["wall_seconds"] + rev_exec["wall_seconds"], 3)
             local["premium"] = {"by_role": {"reviewer": _classes(rev_tokens)},
                                 "by_model": rev_exec["by_model"], "billing_total": total}
@@ -1103,6 +1146,9 @@ class Runner:
             self._stop(f"cap_reached:{exc}")
         except (RunnerError, lfc.CorpusError) as exc:
             self._stop(f"tool_error:{str(exc)[:160]}")
+            raise
+        except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
+            self._stop(f"interrupted:{type(exc).__name__}")
             raise
         return out
 
@@ -1151,6 +1197,9 @@ class Runner:
         except (RunnerError, lfc.CorpusError) as exc:
             self._stop(f"tool_error:{str(exc)[:160]}")
             raise
+        except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
+            self._stop(f"interrupted:{type(exc).__name__}")
+            raise
         return out
 
     def _stopped(self, out: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
@@ -1173,6 +1222,24 @@ _PATCH_EXCLUDES = (":(exclude)TASK.md", ":(exclude,glob)**/__pycache__/**", ":(e
 _GIT_NEUTRAL = ("-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
                 "-c", "protocol.file.allow=never", "-c", f"core.attributesFile={os.devnull}",
                 "-c", "commit.gpgsign=false")
+
+
+def _cut(exc: BaseException) -> str:
+    """How an attempt was cut short: a cap, a tool failure, or an interruption (everything else)."""
+    if isinstance(exc, CapReached):
+        return "stopped_by_cap"
+    return "tool_error" if isinstance(exc, (RunnerError, lfc.CorpusError)) else "interrupted"
+
+
+def _extra_write(driver: Mapping[str, Any]) -> list[Path]:
+    return [Path(os.path.expanduser(p)) for p in driver.get("extra_write", [])]
+
+
+def _record_total(by_role: Mapping[str, Any], sessions: Sequence[str]) -> int | None:
+    """Premium work of one record: known only when the counters of EVERY cloud execution it started
+    were read (an execution reserved in the ledger and not read back is unknown, never 0)."""
+    totals = [billing_total(t) for t in by_role.values()]
+    return None if len(totals) != len(sessions) or any(t is None for t in totals) else sum(totals)
 
 
 def _record_key(rec: Mapping[str, Any]) -> tuple:
@@ -1268,15 +1335,34 @@ def _strip(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 # ------------------------------------------------------------------------------- report
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text("utf-8").splitlines() if line.strip()]
+    """Every record of a ledger or results file; a truncated or foreign line is a clean refusal."""
+    out = []
+    try:
+        lines = Path(path).read_text("utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RunnerError(f"{path}: unreadable ({exc})") from None
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            entry = None
+        if not isinstance(entry, dict):
+            raise RunnerError(f"{path}: line {number} is not a JSON record (truncated or damaged "
+                              "file): this state cannot be trusted, start a new campaign")
+        out.append(entry)
+    return out
 
 
 def _sum_known(values: Sequence[float | int | None]) -> float | int | None:
     return None if any(v is None for v in values) else sum(values)
 
 
-# Outcomes where the verdict of a task is not known (tool failure, unreadable review, cap stop).
-UNKNOWN_OUTCOMES = ("review_unreadable", "tool_error", "stopped_by_cap")
+# Outcomes where the verdict of a task is not known (tool failure, unreadable review, cap stop,
+# interruption), and those where an attempt itself was lost.
+UNKNOWN_OUTCOMES = ("review_unreadable", "tool_error", "stopped_by_cap", "interrupted")
+LOST_OUTCOMES = ("tool_error", "interrupted")
 
 
 def _check_records(records: Sequence[Mapping[str, Any]], campaign_sha256: str | None) -> dict[str, Any]:
@@ -1300,21 +1386,83 @@ def _check_records(records: Sequence[Mapping[str, Any]], campaign_sha256: str | 
     return shas
 
 
-def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]], *,
-           campaign_sha256: str | None = None) -> dict[str, Any]:
+def _check_ledger(records: Sequence[Mapping[str, Any]], ledger: Sequence[Mapping[str, Any]],
+                  shas: Mapping[str, Any]) -> list[str]:
+    """Cross-check the results against the consumption ledger of the same campaign. The invariant:
+    every ``cloud_started`` session id is named by exactly one result record (``cloud_sessions``) and
+    settled with known tokens, and every cloud execution of the results has its ledger line.
+
+    Raises when the two files cannot describe the same campaign (no ledger, other digests, a cloud
+    execution the ledger does not know, one named twice, a premium total the ledger does not back).
+    Returns the reasons why some SPENT work is unknown (never an empty list for a campaign whose
+    ledger knows more than its results): the caller then gives no economy verdict."""
+    if not ledger:
+        raise RunnerError("no ledger entry: a report needs the ledger written with these results")
+    attempts = [r for r in records if r.get("record_type") == "attempt"]
+    if records and {bool(e.get("dry_run", False)) for e in ledger} != {
+            bool(records[0].get("dry_run", False))}:
+        raise RunnerError("the ledger and the results mix dry-run and real records")
+    for entry in ledger:
+        if records and entry.get("kind") == "session_started":
+            for key in PROVENANCE_KEYS:
+                if entry.get(key) != shas[key]:
+                    raise RunnerError(f"the ledger was written under another {key} than the results")
+    started: dict[Any, None] = {}
+    settled: dict[Any, Mapping[str, Any]] = {}
+    for entry in ledger:
+        if entry.get("kind") == "cloud_started":
+            if entry.get("session_id") in started:
+                raise RunnerError(f"the ledger holds the cloud execution {entry.get('session_id')} twice")
+            started[entry.get("session_id")] = None
+        elif entry.get("kind") == "settled" and entry.get("cloud"):
+            settled[entry.get("session_id")] = entry
+    named: set[Any] = set()
+    for rec in attempts:
+        sessions = rec.get("cloud_sessions")
+        if not isinstance(sessions, list) or len(sessions) != rec.get("cloud_executions"):
+            raise RunnerError(f"record {_record_key(rec)} does not name its cloud executions")
+        for sid in sessions:
+            if sid in named:
+                raise RunnerError(f"the cloud execution {sid} is named by two result records")
+            if sid not in started:
+                raise RunnerError(f"the results hold the cloud execution {sid}, unknown to the ledger")
+            named.add(sid)
+        total = rec["premium"]["billing_total"]
+        backed = _sum_known([settled.get(sid, {}).get("premium_tokens") for sid in sessions])
+        if total is not None and total != backed:
+            raise RunnerError(f"record {_record_key(rec)} counts {total} premium tokens, "
+                              f"the ledger {backed}")
+    unknown = []
+    for sid in started:
+        if sid not in settled:
+            unknown.append(f"cloud_started_without_settled:{sid}")
+        elif settled[sid].get("interrupted"):
+            unknown.append(f"interrupted:{sid}")
+        elif settled[sid].get("premium_tokens") is None:
+            unknown.append(f"tokens_unknown:{sid}")
+        if sid not in named:
+            unknown.append(f"no_result_record:{sid}")
+    return unknown
+
+
+def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
+           ledger: Sequence[Mapping[str, Any]], *, campaign_sha256: str | None = None) -> dict[str, Any]:
     """Aggregate results and apply the pre-registered rules of the protocol. The three verdicts
     (compatibility, quality, economy) stay separate; nothing is promoted. The rules applied are
-    printed with the digests the results were produced under."""
+    printed with the digests the results were produced under. ``ledger`` (the entries of the
+    campaign's ledger) is mandatory: whenever it knows of spent work the results cannot measure,
+    no economy verdict is given and the decision is ``inconclusive``."""
     shas = _check_records(records, campaign_sha256)
+    unknown_work = _check_ledger(records, ledger, shas)
     attempts = [r for r in records if r.get("record_type") == "attempt"]
     stops = [r["reason"] for r in records if r.get("record_type") == "stop"]
     rules = campaign["rules"]
     out: dict[str, Any] = {"promotion": False, "stops": stops, "rules_applied": rules,
-                           "provenance": shas,
+                           "provenance": shas, "ledger": {"unknown_spent_work": unknown_work},
                            "dry_run": any(r.get("dry_run", False) for r in records),
                            "screening": _report_screening(rules["screening"], attempts)}
     comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
-    out["comparison"] = _report_comparison(rules["comparison"], comparison, stops)
+    out["comparison"] = _report_comparison(rules["comparison"], comparison, stops, bool(unknown_work))
     return out
 
 
@@ -1322,8 +1470,8 @@ def _report_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, A
     by_candidate: dict[str, list[Mapping[str, Any]]] = {}
     lost = 0
     for rec in attempts:
-        if rec["path"] == "S" and rec.get("outcome") == "tool_error":
-            lost += 1  # a tool failure is not a refusal: the candidate's result is unknown
+        if rec["path"] == "S" and rec.get("outcome") in LOST_OUTCOMES:
+            lost += 1  # a tool failure or an interruption is not a refusal: the result is unknown
         elif rec["path"] == "S":
             by_candidate.setdefault(rec["local"]["candidate"], []).append(rec)
     table = {}
@@ -1372,14 +1520,14 @@ def _arm_totals(recs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "premium_billing_tokens": _sum_known([r["premium"]["billing_total"] for r in items]),
             "local_attempt_ok": next((r["local_outcome"] == "accepted" for r in items
                                       if r["segment"] == "local"
-                                      and r.get("outcome") != "tool_error"), None)}
-    locals_ = [r for r in recs if r["segment"] == "local" and r.get("outcome") != "tool_error"]
-    lost = any(r["segment"] == "local" and r.get("outcome") == "tool_error" for r in recs)
+                                      and r.get("outcome") not in LOST_OUTCOMES), None)}
+    locals_ = [r for r in recs if r["segment"] == "local" and r.get("outcome") not in LOST_OUTCOMES]
+    lost = any(r["segment"] == "local" and r.get("outcome") in LOST_OUTCOMES for r in recs)
     return {"tasks": per_task, "locals": locals_, "local_tool_error": lost}
 
 
 def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
-                       stops: Sequence[str]) -> dict[str, Any]:
+                       stops: Sequence[str], unknown_work: bool = False) -> dict[str, Any]:
     arms = {p: _arm_totals([r for r in attempts if r["path"] == p]) for p in PATHS
             if any(r["path"] == p for r in attempts)}
     out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None}
@@ -1401,7 +1549,11 @@ def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, 
                                  <= sum(t["review_rounds"] for t in a_tasks), True))
         a_prem = _sum_known([t["premium_billing_tokens"] for t in a_tasks])
         x_prem = _sum_known([t["premium_billing_tokens"] for t in x_tasks])
-        premium_v = (None if a_prem is None or x_prem is None or not shared
+        # A path cut before its task was decided (cap, tool failure, interruption, unreadable
+        # review) has no complete cost, and spent work the ledger cannot match is unknown: in both
+        # cases a premium comparison would look better than what was really spent.
+        cut = unknown_work or any(t["unknown"] for t in [*a_tasks, *x_tasks])
+        premium_v = (None if a_prem is None or x_prem is None or not shared or cut
                      else x_prem <= (1 - rule["premium_reduction_min"]) * a_prem)
         a_wall, x_wall = sum(t["wall_seconds"] for t in a_tasks), sum(t["wall_seconds"] for t in x_tasks)
         time_v = x_wall <= rule["time_ratio_max"] * a_wall if shared else None
@@ -1436,6 +1588,8 @@ def _report_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, 
     out["complete"] = all(a["tasks_compared"] == expected for a in out["arms"].values()) and bool(out["arms"])
     if out["decision"] == "retained" and not out["complete"]:
         out["decision"] = "inconclusive"
+    if unknown_work or any(r.get("outcome") == "interrupted" for r in attempts):
+        out["decision"], out["recommendation"] = "inconclusive", None  # spent work is unknown
     return out
 
 
@@ -1492,12 +1646,22 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             p.add_argument("--paths", default="A,B,C")
     r = sub.add_parser("report")
     r.add_argument("--campaign", required=True)
-    r.add_argument("--results", required=True)
+    r.add_argument("--results", required=True,
+                   help="results-<campaign>.jsonl; ledger-<campaign>.jsonl is read beside it (mandatory)")
     args = parser.parse_args(argv)
     campaign = load_campaign(Path(args.campaign))
     if args.cmd == "report":
         try:
-            result = report(campaign, _read_jsonl(Path(args.results)),
+            results = Path(args.results)
+            name = re.fullmatch(r"results-(.+)\.jsonl", results.name)
+            ledger = results.with_name(f"ledger-{name.group(1)}.jsonl") if name else None
+            if ledger is None or not ledger.is_file():
+                raise RunnerError(f"no ledger beside {results} (expected ledger-<campaign>.jsonl in "
+                                  "the same state directory): a report is refused without it")
+            records = _read_jsonl(results)
+            if any(r.get("campaign_id") != name.group(1) for r in records):
+                raise RunnerError(f"{results} holds records of another campaign id")
+            result = report(campaign, records, _read_jsonl(ledger),
                             campaign_sha256=hashlib.sha256(Path(args.campaign).read_bytes()).hexdigest())
         except RunnerError as exc:
             print(f"refused: {exc}", file=sys.stderr)

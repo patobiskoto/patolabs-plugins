@@ -19,17 +19,26 @@
     "note": "local bounds are protocol coordinates (20 min, 40 steps); cloud_max_seconds and max_correction_rounds are operational bounds chosen by PAT-108 (protocol: 'within the limit of Foundry escalations')"
   },
   "isolation": {
-    "note": "Launcher choice, not a protocol coordinate. Explicit read-deny list on top of an allow-default sandbox profile, relative to the REAL home of the user. A default-deny of the home (allowing only the harness's isolated home, bundle, attempt directory and tool installation paths) could not be verified without running the harness: PAT-109 should replace this list by that allow list once smoke-tested. Also denied, computed at launch: every checkout/worktree of this repository, the state directory, and the parent directory of --envelope/--campaign/--snapshot/--manifest (keep them apart from --work-root). Local arms: the whole configuration of the user. Cloud arms keep ~/.claude (Claude Code OAuth identity, AGENTS.md R6): the plugin cache there is NOT hidden from a cloud arm.",
+    "note": "Launcher choice, not a protocol coordinate. Explicit read-deny list on top of an allow-default sandbox profile, relative to the REAL home of the user. A default-deny of the home (allowing only the harness's isolated home, bundle, attempt directory and tool installation paths) could not be verified without running the harness: PAT-109 should replace this list by that allow list once smoke-tested. Also denied, computed at launch: every checkout/worktree of this repository, the state directory, and the parent directory of --envelope/--campaign/--snapshot/--manifest (keep them apart from --work-root). Local arms: the whole configuration of the user. Cloud arms keep ~/.claude (Claude Code OAuth identity, AGENTS.md R6): the plugin cache there is NOT hidden from a cloud arm. Cloud arms also keep ~/.claude.json (Claude Code reads and writes it). The generated profile is itself denied to the arm. Not covered: '(allow default)' leaves Mach access to the security daemon, so denying Library/Keychains does not prevent a keychain query (PAT-109 precondition).",
     "deny_read_home": {
       "local": [
         ".claude",
+        ".claude.json",
         ".codex",
         ".config",
         ".ssh",
         ".gnupg",
         ".aws",
         ".netrc",
-        "Library/Keychains"
+        "Library/Keychains",
+        ".git-credentials",
+        ".npmrc",
+        ".pypirc",
+        ".docker",
+        ".kube",
+        ".zsh_history",
+        ".bash_history",
+        ".python_history"
       ],
       "cloud": [
         ".codex",
@@ -38,7 +47,15 @@
         ".gnupg",
         ".aws",
         ".netrc",
-        "Library/Keychains"
+        "Library/Keychains",
+        ".git-credentials",
+        ".npmrc",
+        ".pypirc",
+        ".docker",
+        ".kube",
+        ".zsh_history",
+        ".bash_history",
+        ".python_history"
       ]
     }
   },
