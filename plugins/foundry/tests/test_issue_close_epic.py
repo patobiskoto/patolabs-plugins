@@ -302,7 +302,8 @@ def test_close_epic_retries_by_recovering_provider_audit_after_interruption(
     issue.close_epic("DEMO-1")
 
     assert tracker.close_calls == 1
-    assert tracker.recovery_reads == 1
+    # one read by the post-interruption read-only state check (PAT-100), one by the retry
+    assert tracker.recovery_reads == 2
     assert "reçu existant repris" in capsys.readouterr().out
 
 

@@ -5419,6 +5419,26 @@ class LinearTracker(Tracker):
         self._assert_issue_project(raw, binding)
         return self._verified_epic_closure(raw, project)
 
+    def read_epic_closure_state(
+        self, project: Project, parent_id: str,
+    ) -> tuple[EpicClosureOutcome | None, bool]:
+        """Read-only status of an Epic closure (PAT-100): (audit or None, parent native done).
+
+        One issue read, no graph snapshot, no write: the audit is the exact append-only
+        comment (pending or done), not re-verified against the current graph.
+        """
+        self.validate_issue_binding(project, parent_id)
+        binding = self._activate(project)
+        raw = self._read_raw(parent_id)
+        self._assert_issue_project(raw, binding)
+        state = raw.get("state")
+        native_done = (
+            isinstance(state, dict) and state.get("id") == binding["state_ids"]["done"]
+        )
+        # require_done=False: a pending audit (parent not done) is a valid, readable state.
+        # A done parent still gets the same audit validation, via its own native state.
+        return self._closure_from_raw(raw, project, require_done=native_done), native_done
+
     def _verified_epic_closure(
         self, raw: dict, project: Project,
     ) -> EpicClosureOutcome | None:

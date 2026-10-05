@@ -977,6 +977,32 @@ its diagnostic form one snapshot. Nothing is cached across calls, so a node adde
 reopened or modified between two snapshots is still detected exactly as before
 (PAT-ADR-0006, PAT-ADR-0014).
 
+**Truthful interruption messages and read-only status (PAT-100).** An interrupted or
+refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only
+and each read itself guarded, the real state from two sources and says what is proven.
+The provider receipt is the Epic closure audit comment (one `issue.read`, no graph
+snapshot: `LinearTracker.read_epic_closure_state`), the local intent is
+`linear-epic-closure-intents/<fingerprint>.json` (keyed by provider, project id/key and
+Epic id, read without creating anything). States: (a) no audit, no intent: nothing was
+written, re-running the identical command is safe; (b) intent but no visible audit:
+ambiguous (the effect may be invisible), re-run the identical command, which recovers from
+the exact intent and never posts twice, a different command is refused (`no second POST`);
+(c) audit and parent not done: pending, the identical command resumes; (d) audit and parent
+done: closed, the identical command replays and verifies (no second audit); (e) a read of
+the state failed: "état du reçu inconnu: lecture impossible (cause)", check the Epic
+comments for an audit before re-running, no safety claimed. The audit id is given when
+known. Without a receipt the message names the original cause: quota
+(`LinearQuotaExhaustedError`: remaining, reset time, wait, do not re-run now), network or
+5xx (retry count shown, possibly transient), a conflict, or the exception type and message
+(token patterns redacted). A provider read error during the strict snapshot is intercepted
+like a conflict (original kept as `__cause__`, no diagnostic walk that would re-read what
+failed). `close-epic <EPIC-ID> --status` is the same read without any write: it prints
+`aucun audit`, `audit en attente` or `clos`, with the audit id and the nodes waived by the
+receipt, exit 0 on a clean read, non-zero only when the read fails; it takes no other
+flag (the audit is read without `--human-verdict`/`--accept-override`, and is not
+re-verified against the current graph: only the identical close command does that). No
+closure write, receipt format, audit identity or replay rule changed.
+
 The provider implementation was first proven without activating a real workspace.
 FOUNDRY-159 then activated `github.com/patobiskoto/patolabs-plugins` on Linear after a
 selective live migration and provider readback. The versioned manifest and credential-

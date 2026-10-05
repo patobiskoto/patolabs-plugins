@@ -22,6 +22,25 @@ Run the dedicated mechanical command once:
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue close-epic <EPIC-ID> --human-verdict=accepted
 ```
 
+If the command is interrupted or refused, its message reads, read-only, the real closure
+state (provider audit comment and machine-local intent) and says whether re-running the
+identical command is safe: no audit and no intent (nothing written, safe), intent without a
+visible audit (ambiguous: re-run the identical command, never a different one), audit
+pending (re-run resumes), audit and Epic done (re-run replays and verifies), or
+"état du reçu inconnu" (check the Epic comments for an audit before re-running). It names the
+original cause; on a quota error wait for the reset time it gives instead of re-running now.
+Do not infer the state from your own reading of the comments: use the read-only status:
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue close-epic <EPIC-ID> --status
+```
+
+`--status` writes nothing (no comment, no intent, no state) and takes no other flag. It
+prints `aucun audit`, `audit en attente` or `clos`, with the audit id and the node ids
+waived by the receipt. The audit is read without `--human-verdict`/`--accept-override` and is
+not re-verified against the current graph (only the identical close command does). Exit code
+0 for a clean read, non-zero only if the read itself failed.
+
 When a refusal lists nodes delivered under an audited `acceptance-override`, a human
 may accept them nominatively on Linear only (PAT-ADR-0014):
 
