@@ -42,7 +42,7 @@ python3 -m foundry.local_first_runner screen  --campaign <cfg> --envelope <env> 
     [--harness local_harness|neutral_harness] [--dry-run] [--sandbox]
 python3 -m foundry.local_first_runner compare --campaign <cfg> --envelope <env> --state-dir <dir> --work-root <dir> \
     --repo <clone complet> --snapshot <snapshot> --manifest <manifeste> --candidate <id> [--paths A,B,C,N] \
-    [--harness ...] [--dry-run] [--sandbox]
+    [--screening-campaign <id>] [--harness ...] [--dry-run] [--sandbox]
 python3 -m foundry.local_first_runner report --campaign <cfg> --results <results-<campagne>.jsonl>
 ```
 
@@ -75,13 +75,26 @@ d'option pour s'en passer.
   **même** identifiant de campagne, la même enveloppe, la même configuration et le même manifeste reprend
   la campagne ; sous d'autres empreintes elle est refusée comme avant. Le tamis se fait candidat par
   candidat, en plusieurs lancements. Définitions telles que codées :
-  - **Décidée** : tentative locale dont un enregistrement porte un verdict du juge (accepté ou refusé,
-    `judge` non nul), y compris un enregistrement `interrupted` écrit après le verdict ; pour le cloud, un
-    parcours terminé (`accepted`, `review_unreadable`, ou dernier tour `review_block`/`judge_refused`). Une
-    tentative décidée est **sautée, jamais rejouée**, quoi qu'il arrive ensuite (un seul enregistrement par
-    tentative décidée : `report` refuse un doublon) ; le préflight n'est pas refait pour une tâche sautée.
+  - **Décidée** : tentative (locale ou tour cloud) dont un enregistrement porte un verdict du juge (accepté
+    ou refusé, `judge` non nul), y compris un enregistrement `interrupted` ou `tool_error` **écrit après le
+    verdict ou après la revue** : une coupure entre le verdict (ou la revue) et l'écriture de
+    l'enregistrement final garde le verdict (et la revue) reçus sur l'enregistrement coupé, qui n'est donc
+    jamais rejoué (pas de seconde chance après un verdict ; testé pour le local, pour le cloud juste après le
+    juge, pendant le nettoyage de la revue, au retour de la revue et juste avant l'écriture) ; pour le cloud,
+    un parcours terminé (`accepted`, `review_unreadable`, ou dernier tour `review_block`/`judge_refused`).
+    Une tentative décidée est **sautée, jamais rejouée**, quoi qu'il arrive ensuite (un seul enregistrement
+    par tentative décidée : `report` refuse un doublon) ; le préflight n'est pas refait pour une tâche
+    sautée. Un enregistrement coupé après verdict reste `interrupted` (inconnu, jamais accepté, coût
+    conservé) : la tâche est indécise, pas rejouée. Reste une fenêtre de quelques instructions entre le
+    retour du juge et l'affectation de son résultat (`verdict = lfc.judge(...)`) qu'un signal peut encore
+    couper : elle n'est pas fermée (la fermer demanderait de différer les signaux pendant toute la durée du
+    juge).
   - **Nulle** (*void*) : coupée **avant** tout verdict : enregistrement `interrupted` ou `tool_error` sans
-    `judge`, ou `attempt_started` au registre sans `settled` ni enregistrement (tuée).
+    `judge`, ou `attempt_started` au registre sans `settled` ni enregistrement (tuée). Seules les pannes du
+    lanceur ou de l'environnement sont nulles : une panne **causée par le candidat** (il a modifié la
+    configuration ou les attributs git de son bundle, ou l'arbre bouge encore) est un **refus** (verdict
+    `REFUSED`, note `candidate_fault: …`, le juge n'est pas lancé), décidé, jamais rejoué ; en cloud le tour
+    est jugé refusé et une correction peut suivre.
   - **Rejouable** : une tentative locale nulle l'est **une seule fois**, sur un bundle neuf ; le rejeu est
     enregistré avec `replay_of` (`attempt`, `attempt_dir` de la tentative nulle, `outcome`, `reason`
     ; `outcome: hard_kill` pour une tentative tuée). Une seconde coupure de la même tentative (deux
@@ -93,9 +106,14 @@ d'option pour s'en passer.
     la tâche). Seul un **premier** tour (indice 0) nul est rejoué (une fois) : le patch et les remarques
     d'un tour ne sont pas conservés, donc une correction ou un relais coupé laisse le parcours indécis. Le
     rejeu passe par les plafonds : une dépense non mesurée (tour interrompu pendant l'exécution) arrête
-    toute exécution cloud (`premium_tokens_unmeasurable`), donc ne se rejoue pas. Parcours C : une tentative
-    locale décidée n'est jamais rejouée ; si elle a demandé le relais (`local_refused`, `review_block`) et
-    que celui-ci manque, il est joué ; une revue coupée laisse le parcours indécis.
+    toute exécution cloud (`premium_tokens_unmeasurable`), donc ne se rejoue pas. Un tour tué (SIGKILL) après
+    son règlement mais avant son enregistrement est rejoué **sans** `replay_of` (rien ne le relie) ; `report`
+    le liste dans `void_attempts` (une entrée par session du registre qu'aucun enregistrement ne nomme :
+    `outcome: hard_kill`, `reason: cloud_started without a result record`, `role`, `replayed` nul = inconnu).
+    Parcours C : une tentative locale décidée n'est jamais rejouée ; si elle a demandé le relais
+    (`local_refused`, `review_block`) ou si elle-même a été contaminée et que le relais manque, il est joué ;
+    une revue coupée laisse le parcours indécis ; une revue **contaminée** laisse la tâche indécise **sans
+    relais**, coût conservé, au premier lancement comme à la reprise (même comportement, testé).
   - **Nommage des sessions** (invariant registre/résultats) : l'enregistrement nul nomme ses propres
     `cloud_sessions` (celles qu'il a réservées) et le rejeu les siennes (une liste par lancement) : chaque
     session du registre reste nommée exactement une fois. Le rejeu a la clé de la tentative nulle plus un
@@ -215,10 +233,10 @@ sa quantification diffère (`loaded_quantization_differs`) ou est absente (`load
 candidat 4 bits dépend de la variante sélectionnée de `qwen/qwen3.8-27b`, que le préflight vérifie ; sa clé
 de modèle diffère (`loaded_model_key_differs`). Les champs lus sont `contextLength` (ou `context_length`),
 `quantization` (texte ou objet `name`) et `modelKey` ; un champ absent refuse (inconnu n'est jamais un
-succès). **Non vérifié ici** : la forme exacte de la sortie de `lms ps --json` n'a pas été observée par le
-lanceur (le ticket interdit de lancer `lms`) ; si LM Studio nomme ces champs autrement, le préflight refuse
-et la configuration se corrige. L'opérateur charge toujours le modèle (`load_command` du candidat) ;
-le lanceur ne charge rien.
+succès), la clé de modèle comprise (`loaded_model_key_unknown`). **Observé** le 2026-10-05 avec un modèle
+chargé (consigné dans `pat-19-preflight-2026-10-05.json#lms_ps_json_observed`) : `modelKey`, `identifier`,
+`quantization` (objet `{name, bits}`) et `contextLength`. L'opérateur charge toujours le modèle (`load_command`
+du candidat) ; le lanceur ne charge rien.
 
 Les empreintes des poids, l'empreinte du gabarit de conversation et les paramètres de génération de chaque
 candidat sont **consignés** dans la configuration (`file_sha256`, `chat_template_sha256`,
@@ -254,7 +272,11 @@ Clés : `frozen_machine`, `server_process_pattern` (expression pour la mémoire 
 | `session_log` | `{"host": "claude", "projects_dir": "~/.claude/projects", "layout_verified": false}` (pilotes cloud) : seul `<projects_dir>/*/<session>.jsonl` est lu ; tant que `layout_verified` n'est pas `true`, les tokens premium de l'exécution sont inconnus (`log_layout_unverified`) ; `true` est refusé au chargement sans le flux `claude-stream-json` (l'assertion de la liste d'outils) |
 
 Clés de la configuration : `isolation.deny_read_home` (listes `local` et `cloud` d'entrées du HOME réel à
-interdire en lecture, relatives, sans `..`) et `non_protocol_choices` (voir plus bas).
+interdire en lecture, relatives, sans `..`), `isolation.deny_home_by_default` (booléen, vrai par défaut : un
+pilote **local** n'a **aucune** lecture du HOME réel, hors liste d'autorisation) et `isolation.allow_read_home`
+(entrées du HOME relatives, sans `..`, vide par défaut), `cloud_bash_deny` (règles de permission Bash,
+meilleur effort, présentes **à la lettre** dans le `--disallowedTools` de chaque pilote cloud réel : le
+chargement refuse sinon) et `non_protocol_choices` (voir plus bas).
 
 ## Pilotes épinglés (PAT-111)
 
@@ -274,20 +296,32 @@ un pilote qui échoue reste `verified: false` et le lanceur le refuse. Les cinq 
   et `LITELLM_LOCAL_MODEL_COST_MAP=True` (sans lui LiteLLM tente de télécharger une table de prix : le bac à
   sable le bloque et environ 20 s se perdent). La trajectoire est écrite dans le dossier d'essai ; les étapes
   sont `info.model_stats.api_calls` de la trajectoire, lues après la fin du processus (jamais en cours
-  d'exécution). Tokens inconnus (aucun flux d'événements). Essai : réussi, 139 s, 5 appels d'API.
+  d'exécution) : le lanceur ne peut pas imposer la borne de 40 étapes pendant l'exécution, il la **transmet**
+  au harnais (`-c agent.step_limit={max_steps}`, **à essayer pour de vrai par le coordinateur avant le
+  corpus** : ce drapeau n'était pas dans l'essai du 2026-10-05) et marque `step_limit_hit` **a posteriori**
+  quand `api_calls` dépasse la borne : la tentative est alors **refusée** (jamais acceptée, notée
+  `local.step_limit`). Tokens inconnus (aucun flux d'événements). Essai (sans ce drapeau) : réussi, 139 s,
+  5 appels d'API.
 - **Pilotes cloud** (`cloud_implementer_current` : `claude-sonnet-5-5`, effort `medium` ; `cloud_implementer_economy` :
   `claude-haiku-4-5-20251001`, sans `--effort` (effort nul de Haiku 4.5) ; `cloud_reviewer` : `claude-opus-5-5`,
-  effort `high`) : Claude Code 2.1.285, même gabarit d'argv pour tous
+  effort `high`) : **Claude Code nu** 2.1.285 (pas les définitions d'agent Eiffel ni Maigret : le modèle et
+  l'effort du protocole, un prompt identique pour tous les bras), même gabarit d'argv pour tous
   (`--permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools
-  <29 noms> --output-format stream-json --verbose`, la liste exacte est dans la configuration) ; les textes des prompts sont identiques pour tous les bras et
+  <29 noms d'outils + 19 règles Bash de cloud_bash_deny> --output-format stream-json --verbose`, la liste exacte est
+  dans la configuration) ; les textes des prompts sont identiques pour tous les bras et
   rendus par la substitution du lanceur (pas `str.format` : le prompt de revue contient des accolades JSON).
+  **L'essai du 2026-10-05 a tourné avec `--disallowedTools Agent` seul** ; les 29 noms ont été observés à
+  l'événement `init` seulement (aucun appel de modèle) ; l'argv **final** (les 29 noms et les règles Bash) est à
+  **essayer pour de vrai par le coordinateur avant le corpus**, et consigné alors dans la preuve
+  (`pinned_final_argv`, aujourd'hui « pas encore essayé »).
   **Sans `sandbox-exec`** (`sandbox: false`, avec sa raison dans la configuration) : sous `sandbox-exec`, Claude
   Code ne peut pas s'authentifier (« Not logged in » trousseau refusé ; « 401 OAuth access token has been revoked »
   trousseau permis, après quoi le mainteneur a dû se reconnecter ; cause non établie). Le bras garde l'environnement
   d'AGENTS.md R6 intact (`HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `TMPDIR` **réel**, `USER`, rien d'autre),
   son répertoire de travail est le bundle jetable hors du dépôt. Avec `--setting-sources project,local
-  --strict-mcp-config`, seuls les greffons intégrés se chargent (ni crochets de greffons utilisateur comme ceux de
-  Foundry, ni serveur MCP). **Non vérifié** : si la mémoire globale `CLAUDE.md` de l'utilisateur est encore chargée
+  --strict-mcp-config`, aucun greffon ni crochet d'utilisateur ne se charge, **donc pas ceux de Foundry : la garde R1
+  (`gh pr merge`, `git push` refusés par le crochet `PreToolUse`) ne s'applique pas à ces bras**, et aucun serveur
+  MCP. **Non vérifié** : si la mémoire globale `CLAUDE.md` de l'utilisateur est encore chargée
   (asymétrie avec le bras local) : limite du résultat.
   Essais : 11,6 s / 7 tours (Sonnet), 16,3 s (Haiku), 16,5 s (Opus, a écrit le fichier de revue demandé).
 
@@ -307,8 +341,10 @@ aucun appel de modèle) : avec `--disallowedTools Agent` seul, l'événement lis
 `SendMessage`, `Monitor`, `Cron*`, `WebFetch`, `WebSearch`, `Skill`, `RemoteTrigger`, `PushNotification`,
 `ToolSearch` (le drapeau ne retirait pas `Task`) ; interdire `ToolSearch` fait apparaître des outils différés
 (`Artifact*`, `SendFeedback`, `Task*`) ; avec les 29 noms de la configuration, les outils sont exactement
-`Bash`, `Edit`, `Read`, `Write`. **Les bras cloud n'ont donc que Read, Edit, Write et Bash : ni web, ni
-sous-agent, ni workflow.** Le harnais local `omp` expose son propre jeu d'outils (read, edit, write, bash, glob
+`Bash`, `Edit`, `Read`, `Write`. **Seul le jeu d'outils intégré est donc restreint à Read, Edit, Write et
+Bash** (pas d'outil web, de sous-agent, de workflow ni de planification) ; **Bash lui-même n'est pas restreint**,
+sauf par les règles `cloud_bash_deny` (voir « Exposition des bras cloud ») : le réseau et le HOME restent ouverts.
+Le harnais local `omp` expose son propre jeu d'outils (read, edit, write, bash, glob
 vus dans les essais) : cette asymétrie est consignée, pas égalisée. Le coût en dollars que l'hôte
 rapporte (0,054 / 0,036 / 0,182 USD) est informatif, jamais un chiffre d'économie.
 
@@ -336,31 +372,83 @@ aucune qualité.
 
 **Biais des bras cloud** (AC7) : un bras cloud sans `sandbox-exec` peut lire tout ce que l'utilisateur peut lire,
 y compris le cache de plugins dont les tests ont été fusionnés avant la version 1.0.0 (la plupart des tâches du
-corpus). Il est **traité par un audit après exécution** et consigné comme limite du résultat : voir « Audit de
-contamination ». La liste d'interdits de lecture du HOME reste explicite pour les bras locaux, essayée avec le vrai
-harnais local (liste de 37 entrées sur la machine du mainteneur : les 17 entrées du HOME plus les checkouts, le
-dossier d'état et les dossiers d'entrée) ; un refus par défaut de tout le HOME **n'a pas été essayé** et n'est
-donc pas adopté (limite documentée, voir « Isolement du candidat »).
+corpus). Il est **détecté par un audit après exécution** et consigné comme limite du résultat (voir « Audit de
+contamination »), **pas empêché**. Pour les bras **locaux**, le refus par défaut du HOME est **implémenté**
+(`isolation.deny_home_by_default`, voir « Isolement du candidat ») et testé sur le profil généré et sous un vrai
+`sandbox-exec` avec un faux HOME ; il n'a **pas encore été essayé avec le vrai `omp`** (le coordinateur le fait
+et consigne le résultat : en cas d'échec, la configuration revient à la liste explicite avec la raison observée).
+
+## Exposition des bras cloud (ce que le lanceur n'empêche pas)
+
+Les trois pilotes cloud lancent **Claude Code nu** avec `bypassPermissions`, l'outil Bash, le **vrai HOME**, un
+**réseau ouvert**, les **identifiants implicites de l'utilisateur** (assistant d'identifiants git via le
+trousseau, configuration de `gh`, `~/.config/foundry`) et **sans les crochets de Foundry** (`--setting-sources
+project,local` : pas de garde R1 sur `gh pr merge` / `git push`). **Aucun refus de lecture ne s'applique à un
+bras cloud** (ni `deny_home_by_default`, ni la liste `cloud` de `deny_read_home`, gardée comme donnée). **Le
+tracker, les secrets et la fusion ne sont donc PAS protégés par le lanceur pour les bras cloud.** Un bras cloud
+pourrait lire des solutions fusionnées (`gh pr view`, `git clone`, `curl`), agir sur le vrai dépôt par `gh`,
+démarrer un autre `claude -p` dont les tokens ne sont jamais lus, ou exfiltrer.
+
+Ce qui s'interpose, **au mieux** :
+
+- **Règles de permission Bash** (`cloud_bash_deny`, données de la configuration, présentes à la lettre dans le
+  `--disallowedTools` des trois pilotes ; le chargement refuse un pilote cloud réel auquel il en manque une) :
+  `Bash(gh:*)`, `Bash(git push:*)`, `Bash(git remote:*)`, `Bash(git clone:*)`, `Bash(git fetch:*)`,
+  `Bash(git pull:*)`, `Bash(curl:*)`, `Bash(wget:*)`, `Bash(claude:*)`, `Bash(codex:*)`, `Bash(omp:*)`,
+  `Bash(ssh:*)`, `Bash(scp:*)`, `Bash(nc:*)`, `Bash(python3 -m http:*)`, `Bash(pip install:*)`,
+  `Bash(npm:*)`, `Bash(security:*)`, `Bash(open:*)`. **Ce n'est pas un bac à sable** : Claude Code compare une
+  règle au **préfixe** de la commande ; un agent déterminé les contourne (un script, un interpréteur en une
+  ligne, un binaire renommé ou chemin complet, un alias, une bibliothèque). Elles arrêtent l'usage direct.
+- **L'audit après exécution** des commandes et des chemins (voir « Audit de contamination »), qui **détecte**
+  les formes directes sans rien empêcher.
+- **Le bundle n'a aucun distant ni lien avec le dépôt de développement** : un `git push` depuis le bundle ne
+  mène nulle part ; le bras peut en revanche agir sur le vrai dépôt s'il y accède par un autre chemin.
+
+**Non appliqué, dit explicitement** : toute interdiction de lecture, de réseau ou d'identifiants pour un bras
+cloud (Claude Code ne s'authentifie pas sous `sandbox-exec`, cause non établie), la garde R1, la preuve qu'un
+bras n'a pas démarré un autre agent (les tokens d'un sous-processus `claude` ne sont pas lus). Le mainteneur a
+accepté explicitement ce risque résiduel le 2026-10-05, avec les atténuations ci-dessus (règles d'interdiction
+de commandes, audit de contamination, bundle sans dépôt distant).
 
 ## Audit de contamination
 
 Après chaque exécution (locale ou cloud, une fois le flux conservé), le lanceur lit les appels d'outils du
 flux (`tool_use` Claude, `tool_execution_start` omp : arguments de Read, Grep, Glob, Bash, Edit… quel que soit
-l'outil) et en extrait les chemins (valeurs de clés de chemin, et tout jeton qui ressemble à un chemin absolu,
-`~`, `$HOME` ou relatif remontant hors du bundle). Un chemin hors du bundle et du dossier d'essai qui tombe dans
-la liste sensible (celle d'un bras local : cache de plugins et configuration de l'utilisateur sous `~/.claude`,
-`.config`…, tout autre checkout ou worktree de ce dépôt, dossier d'état, dossiers des fichiers d'entrée, secrets
-du HOME) rend l'enregistrement **`contaminated: true`**, avec `contamination.paths` (le HOME est écrit `~`),
-`outcome: contaminated`, `accepted` nul : la tâche est **indécise** pour ce parcours, jamais acceptée. Le
+l'outil) et, quand le flux les expose, les **résultats d'outils** (blocs `tool_result` Claude,
+`tool_execution_end` omp). Il relève :
+
+- **les chemins** : valeurs de clés de chemin, et tout jeton qui ressemble à un chemin (`~`, `$HOME`,
+  absolu, relatif). Un chemin relatif se résout **contre le bundle**, ou contre le dossier d'un `cd` précédent de
+  la même commande (`cd ~ && cat .claude/x`). Hors du bundle et du dossier d'essai, un chemin est relevé quand il
+  tombe dans la liste sensible (celle d'un bras local : cache de plugins et configuration de l'utilisateur sous
+  `~/.claude`, `.config`…, tout autre checkout ou worktree de ce dépôt, dossier d'état, dossiers des fichiers
+  d'entrée, secrets du HOME) ; **et**, pour une clé de chemin ou une commande Bash, quand il se résout vers le HOME
+  réel ou dessous, vers un dossier qui en contient un chemin sensible ou un ancêtre du bundle (`find ~`,
+  `grep -r … ~`, `src/../../..`), ou, s'il est **relatif** au bundle, hors du bundle et du dossier d'essai
+  (`../../x`) ; un chemin absolu hors du HOME n'est pas relevé par ce seul motif (`/usr/bin` reste propre) ;
+- **les résultats d'outils** montrant un chemin sensible (`tool_result:<chemin>`) ;
+- **les commandes** (`command:<étiquette>`) : tout appel Bash dont la commande, après une normalisation simple
+  (guillemets retirés, découpe sur `&&`, `||`, `;`, `|`, `&`, `` ` ``, `$(`, retrait de `VAR=…`, `env`, `sudo`,
+  `command`, `exec`, `nohup`, `time`, `nice`, `xargs`, `timeout`, descente dans `sh|bash|zsh -c`, nom de base de
+  l'exécutable), lance `gh`, `curl`, `wget`, `claude`, `codex`, `omp`, `ssh`, `scp`, `nc`, `security`, `open`,
+  `npm`, `git push|remote|clone|fetch|pull` (options `-C`/`-c` sautées), `python -m http…`, `python -m pip install`
+  ou `pip install`.
+
+Un relevé rend l'enregistrement **`contaminated: true`**, avec `contamination.paths` (le HOME est écrit `~`) et
+`contamination.commands`, `outcome: contaminated`, `accepted` nul : la tâche est **indécise** pour ce parcours,
+jamais acceptée. Le
 verdict du juge d'une tentative locale reste consigné mais n'est pas retenu ; un bras cloud contaminé n'est ni
 jugé ni relu (pas de dépense de plus), son coût reste compté. Une contamination n'est jamais rejouée ni
 corrigée (pas de seconde chance) : le tamis reste incomplet (`undecided_tasks`, `selected` nul), un parcours dont
 une tâche est contaminée a une qualité et une économie `unavailable`, `report.contaminated` liste chaque cas. Pour
 le parcours C, une tentative locale contaminée est relayée par le cloud comme une tentative refusée (elle ne
-compte pas comme réussite locale). **Limites** : c'est un audit, pas une interdiction (la lecture a eu lieu) ;
-il ne voit que les chemins que le flux montre (un chemin construit à l'exécution, ou lu par un processus fils, ne
-l'est pas) ; il porte sur le flux du lanceur (mêmes appels d'outils que la transcription de session de l'hôte).
-Une contamination possible mais non détectée reste donc une limite du résultat des bras cloud.
+compte pas comme réussite locale) ; une revue contaminée laisse la tâche indécise sans relais. **Limites** :
+c'est un audit, pas une interdiction (la commande ou la lecture a eu lieu) ; il ne voit que ce que le flux montre
+(un chemin ou une commande construits à l'exécution, cachés dans un script ou un interpréteur, un alias, un
+processus fils, un sous-agent ne le sont pas) ; l'analyse d'une ligne de commande n'est pas un analyseur de shell ;
+une commande `npm` légitime (tâche JavaScript) est relevée comme contaminée (choix conservateur) ; il porte sur
+le flux du lanceur (mêmes appels d'outils que la transcription de session de l'hôte). Une contamination
+possible mais non détectée reste donc une limite du résultat des bras cloud.
 
 Le pilote `local_harness` est la commande `omp` (18.4.10) éprouvée le 2026-10-05 (voir ci-dessus).
 
@@ -388,7 +476,8 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   `status: interrupted` (`outcome: interrupted`, `reason`, `premium.billing_total` **nul**, les
   `cloud_sessions` déjà inscrites), puis un enregistrement `stop` (`interrupted:<exception>`), puis relaie
   l'exception. Une tentative locale interrompue est réglée au registre (sa durée compte) et sa clé est
-  prise : elle peut se rejouer une fois (reprise bornée), sauf si elle portait déjà un verdict.
+  prise : elle peut se rejouer une fois (reprise bornée), sauf si un verdict (ou une revue) était déjà reçu : il
+  est alors écrit sur l'enregistrement coupé, qui est décidé.
   **Couvert exactement** : SIGTERM, SIGHUP et Ctrl-C (SIGINT) reçus par le processus du lanceur pendant
   `screen` ou `compare`, hors des quelques instructions qui installent ou rétablissent les gestionnaires.
   Ils sont convertis en `SystemExit(128 + n)` / `KeyboardInterrupt` ; le groupe de processus d'un pilote en
@@ -411,7 +500,7 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   le total nul (inconnu), jamais 0.
 - **Arrêt sur plafond** : le tour coupé (y compris une correction ou une reprise qui n'a pas pu démarrer)
   reçoit un enregistrement `stopped_by_cap` : la tâche n'est pas décidée, ce n'est pas un refus.
-- **Panne d'outil** : une `CorpusError`/`RunnerError` n'est jamais un verdict. Elle écrit un
+- **Panne d'outil** : une `CorpusError`/`RunnerError` n'est jamais un verdict (sauf une panne causée par le candidat, qui est un refus : voir « Nulle »). Elle écrit un
   enregistrement `status: tool_error` (avec `reason`, et le coût déjà engagé) avant l'arrêt
   (`stopped`, raison `tool_error:…`, code de sortie 2). Une revue illisible est `review_unreadable` :
   `accepted` nul et qualité `unavailable` (pas `fail`). Une tentative locale tronquée par le budget de
@@ -458,10 +547,16 @@ exécution cloud des résultats a sa ligne au registre.
 - **Candidat comparé** : `report` refuse (code 2) une comparaison dont le candidat local (parcours `C` ou
   `N`) n'est pas celui que le tamis a désigné par la règle préenregistrée (`selected`) ; un tamis incomplet
   ou sans vainqueur ne désigne personne, donc refuse aussi. `compare` fait la même vérification au
-  démarrage, avant toute réservation, quand les résultats du tamis sont dans le même dossier d'état
-  (seulement pour les parcours `C`/`N` ; `A` et `B` n'ont pas de candidat local). Sans résultats de tamis
-  dans les fichiers, le contrôle est impossible : `comparison.screening_selected` vaut
-  `screening_results_not_available` (rien n'est supposé).
+  démarrage, avant toute réservation, pour les parcours `C`/`N` (`A` et `B` n'ont pas de candidat local), **mais
+  elle ne fonctionne que si le tamis et la comparaison partagent l'identifiant de campagne** (mêmes fichiers
+  de résultats : le tamis d'un autre identifiant n'est pas vu). Quand les résultats de **cet** identifiant ne
+  contiennent aucune tentative de tamis, `compare` **refuse** de démarrer une comparaison `C`/`N` (code 2),
+  sauf si `--screening-campaign <id>` désigne un tamis **terminé** d'un autre identifiant de campagne, lu en
+  **lecture seule** dans le même dossier d'état (`results-<id>.jsonl`), produit sous la même configuration de
+  campagne et de même nature (à blanc ou réel), et dont `selected` est le candidat demandé. Côté `report`, sans
+  résultats de tamis dans les fichiers le contrôle est impossible : `comparison.screening_selected` vaut
+  `screening_results_not_available` (rien n'est supposé). La classe `Runner` garde un mode permissif
+  (`require_screening=False`) pour les tests ; la CLI exige toujours le tamis.
 - Travail dépensé inconnu (`ledger.unknown_spent_work` liste les raisons) : `cloud_started` sans `settled`
   apparié, `settled` interrompu, `settled` aux tokens inconnus, session du registre sans enregistrement de
   résultat. Dans ces cas **aucun** verdict d'économie n'est rendu (`unavailable` pour tous les parcours :
@@ -511,30 +606,38 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
 - **Bac à sable macOS** (`sandbox-exec`, profil généré par `sandbox_profile` : `(allow default)` puis
   refus ; **appliqué à chaque pilote local, toujours** : un pilote local `sandbox: false` est refusé au
   chargement ; **les pilotes cloud épinglés tournent sans** (`sandbox: false`, raison dans la configuration :
-  Claude Code ne s'authentifie pas sous `sandbox-exec`), leur seul confinement est alors le bundle comme
-  répertoire de travail, l'environnement en liste blanche et l'audit de contamination ; un vrai lancement exige
-  `sandbox-exec` dès qu'un pilote sandboxé sert) : écriture interdite hors du bundle et du dossier d'essai (plus `extra_write` pour un pilote
-  cloud) ; **lecture interdite** (liste explicite, `read_deny_list`) de : chaque checkout et worktree de ce
-  dépôt que `git worktree list` énumère, le dossier d'état, le dossier parent de chacun des fichiers
-  `--envelope`, `--campaign`, `--snapshot`, `--manifest` (à garder à part de `--work-root`, sinon le
-  lanceur refuse de générer le profil), et dans le HOME **réel** les entrées de
+  Claude Code ne s'authentifie pas sous `sandbox-exec`) : leur seul confinement est alors le bundle comme
+  répertoire de travail, l'environnement en liste blanche, les règles `cloud_bash_deny` et l'audit
+  (voir « Exposition des bras cloud ») ; un vrai lancement exige `sandbox-exec` dès qu'un pilote sandboxé
+  sert) : écriture interdite hors du bundle et du dossier d'essai (plus `extra_write` pour un pilote
+  cloud) ; **lecture interdite par défaut sur tout le HOME réel** pour un pilote local
+  (`isolation.deny_home_by_default`, vrai par défaut) : le profil refuse `file-read*` sur le HOME puis ne
+  rend que le bundle, le dossier d'essai, les entrées de `isolation.allow_read_home` (vide par défaut) et la
+  racine de l'environnement de l'exécutable du harnais quand elle est dans le HOME, plus la lecture des
+  **métadonnées** (`stat`, jamais le contenu ni le listage) des dossiers ancêtres de ces chemins jusqu'au HOME ;
+  le dossier de travail est en général hors du HOME réel. **La liste de refus explicite reste une seconde
+  couche, placée après l'autorisation (la dernière règle qui correspond gagne)** : `read_deny_list` donne chaque
+  checkout et worktree de ce dépôt que `git worktree list` énumère, le dossier d'état, le dossier parent de
+  chacun des fichiers `--envelope`, `--campaign`, `--snapshot`, `--manifest` (à garder à part de `--work-root`,
+  sinon le lanceur refuse de générer le profil), et dans le HOME **réel** les entrées de
   `isolation.deny_read_home` : pour un pilote local `.claude` (dont le cache de plugins qui contient les
   tests fusionnés), `.claude.json`, `.codex`, `.config`, `.ssh`, `.gnupg`, `.aws`, `.netrc`,
   `Library/Keychains`, `.git-credentials`, `.npmrc`, `.pypirc`, `.docker`, `.kube`, `.zsh_history`,
-  `.bash_history`, `.python_history` ; pour un pilote cloud la même liste sans `.claude`, `.claude.json` ni
-  `.config` entier (identité OAuth, AGENTS.md R6 ; Claude Code lit et écrit `.claude.json`), avec
-  `.config/foundry`. Le profil généré, qui nomme tous les chemins refusés, est écrit dans un dossier
-  temporaire lui-même interdit en lecture au candidat (sonde testée). Réseau limité à la boucle locale pour
-  un pilote local. Un vrai lancement exige `sandbox-exec` (refusé ailleurs).
+  `.bash_history`, `.python_history` ; la liste `cloud` (même liste sans `.claude`, `.claude.json` ni
+  `.config` entier, avec `.config/foundry`) n'est **pas appliquée** à un bras cloud (pas de bac à sable) : elle
+  ne sert qu'à nommer ce que l'audit surveille. Le profil généré, qui nomme tous les chemins refusés, est écrit
+  dans un dossier temporaire lui-même interdit en lecture au candidat (sonde testée). Réseau limité à la
+  boucle locale pour un pilote local. Un vrai lancement exige `sandbox-exec` (refusé ailleurs).
+  **Statut du refus par défaut** : implémenté, testé sur le profil (ordre refus HOME, autorisations, refus
+  explicite ; métadonnées des ancêtres seulement) et sous un vrai `sandbox-exec` avec un faux HOME (un fichier
+  quelconque du HOME est refusé, une entrée de la liste d'autorisation et le bundle sont lisibles). **Pas encore
+  essayé avec le vrai `omp`** : s'il ne tourne pas ainsi (par exemple faute d'accès à son installation sous le
+  HOME), le coordinateur ajoute les entrées nécessaires à `allow_read_home` ou, à défaut, met
+  `deny_home_by_default` à `false` en consignant la raison observée ; la liste explicite (37 entrées de refus sur
+  la machine du mainteneur, plus le dossier du profil) a, elle, été essayée avec le vrai harnais local.
   **Trousseau non couvert** : `(allow default)` laisse l'accès Mach au démon de sécurité ; refuser la
   lecture de `Library/Keychains` n'empêche donc **pas** une requête au trousseau (`security
   find-generic-password`, API Keychain). Rien n'est imposé là-dessus ici : voir les préconditions PAT-109.
-  Ce n'est **pas** un refus par défaut du HOME avec liste d'autorisation (outil, bundle, dossier d'essai,
-  installation de l'interpréteur) : la liste explicite a été essayée avec le vrai harnais local (`omp`, 37
-  entrées de refus sur la machine du mainteneur, plus le dossier du profil) et il fonctionne ; le refus par
-  défaut du HOME **n'a pas été essayé** : la liste explicite est conservée, c'est une limite documentée
-  (tout chemin non nommé reste lisible). La liste est une coordonnée de configuration
-  (`isolation.deny_read_home`).
 - **Environnement** : liste blanche (`PATH`, `LANG`, `LC_ALL`), HOME et XDG isolés dans le dossier
   d'essai, aucune variable `FOUNDRY_*`, aucun jeton, aucun agent SSH ; un pilote cloud garde le vrai
   HOME (identité OAuth de Claude Code, AGENTS.md R6) et ne reçoit que ce que `env_allow` nomme ;
@@ -568,15 +671,16 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   d'environnement restent testés. Chaque exécution de la suite indique donc explicitement « passées » ou
   « ignorées » : à reporter dans la PR pour la machine qui a fait tourner les tests.
 
-Ce que l'isolement **n'impose pas** : le candidat lit le reste du disque (liste de refus, pas liste
-d'autorisation : tout chemin non nommé est lisible, par exemple une copie des tests fusionnés ailleurs que
-dans le cache de plugins), un pilote cloud a le réseau ouvert, l'écriture dans `~/.claude` et la lecture de
-`~/.claude` (donc du cache de plugins et des tests fusionnés : biais des bras cloud, **détecté après coup**
-par l'audit de contamination, pas empêché ; limite du résultat), le harnais local et le harnais neutre sont
-éprouvés (PAT-111) mais leur configuration réelle n'est pas auditée,
-un enfant sorti du groupe par `setsid`, et le code produit reste importé dans le processus de test (limite
-du juge). Le suivi du tracker et des secrets repose sur la liste blanche d'environnement et sur les
-refus de lecture ci-dessus, pas sur une preuve d'absence.
+Ce que l'isolement **n'impose pas** : pour un bras **local**, tout ce qui n'est pas sous le HOME réel
+(le reste du disque, par exemple une copie des tests fusionnés ailleurs) reste lisible, et si
+`deny_home_by_default` est mis à `false` après un échec avec le vrai harnais, tout chemin non nommé de la liste
+explicite l'est aussi ; un enfant sorti du groupe par `setsid` ; le code produit reste importé dans le
+processus de test (limite du juge) ; le harnais local et le harnais neutre sont éprouvés (PAT-111) mais leur
+configuration réelle n'est pas auditée. Pour un bras **cloud**, **rien de la lecture, du réseau ni des
+identifiants n'est imposé** : voir « Exposition des bras cloud » (lecture de tout le HOME dont `~/.claude` et le
+cache de plugins, réseau ouvert, identifiants implicites, pas de garde R1 ; **le tracker, les secrets et la
+fusion ne sont pas protégés par le lanceur** ; seuls les règles Bash au mieux, l'audit après coup et l'absence de
+distant du bundle s'interposent).
 
 ## Confiance dans les fichiers d'état
 
@@ -602,34 +706,44 @@ n'est pas décidée (voir Rapport). `bounds.cloud_max_seconds`, `max_correction_
 
 ## Préconditions pour PAT-109 : état après PAT-111
 
-Faites par PAT-111 (voir « Pilotes épinglés ») : épingler chaque pilote par un essai réel (les cinq passent) ;
-vérifier la disposition des journaux de session (compteurs égaux à ceux de l'hôte, sous la condition de
-l'assertion sans sous-agent) ; consigner les empreintes des poids, le gabarit et les paramètres de génération ;
-essayer la liste de refus avec le vrai harnais local ; traiter le biais des bras cloud par l'audit de
-contamination. **Restent ouvertes** : le refus par défaut du HOME avec liste d'autorisation (non essayé, la liste
-explicite est gardée) ; la forme exacte de `lms ps --json` ; la mémoire globale `CLAUDE.md` éventuellement chargée par le bras cloud ;
-**trouver où le jeton du tracker est stocké** (fichier, trousseau, variable) et, s'il est au trousseau,
-refuser ce service dans le profil, par exemple `(deny mach-lookup (global-name
-"com.apple.SecurityServer") …)`, à condition que le harnais fonctionne encore ainsi (à vérifier par test
-de fumée : non essayé ici).
+Faites par PAT-111 (voir « Pilotes épinglés ») : épingler chaque pilote par un essai réel (les cinq ont passé
+leur essai ; **l'argv final des trois pilotes cloud et le drapeau de borne d'étapes du harnais neutre ne sont pas
+encore essayés**) ; vérifier la disposition des journaux de session (compteurs égaux à ceux de l'hôte, sous la
+condition de l'assertion d'outils) ; consigner les empreintes des poids, le gabarit et les paramètres de
+génération ; essayer la liste de refus avec le vrai harnais local ; relever les champs de `lms ps --json` ;
+traiter le biais des bras cloud par l'audit de contamination et des règles Bash au mieux. **Restent ouvertes** :
+l'essai du refus par défaut du HOME avec le vrai `omp` (implémenté, voir « Isolement du candidat ») ; l'essai
+de l'argv final cloud et du drapeau `agent.step_limit` ; l'**acceptation explicite par le mainteneur de
+l'exposition des bras cloud** (voir « Exposition des bras cloud ») ; la mémoire globale `CLAUDE.md`
+éventuellement chargée par le bras cloud ; **trouver où le jeton du tracker est stocké** (fichier, trousseau,
+variable) et, s'il est au trousseau, refuser ce service dans le profil, par exemple `(deny mach-lookup
+(global-name "com.apple.SecurityServer") …)`, à condition que le harnais fonctionne encore ainsi (à vérifier par
+test de fumée : non essayé ici).
 
 ## Statut documentaire (AGENTS.md R5)
 
-Artefacts documentés ici : la surface CLI de `foundry.local_first_runner` (dont l'absence de reprise et
-le refus d'une configuration différente à `report`), la configuration de campagne
-(`pat-19-campaign-v1.json` : `isolation`, `non_protocol_choices`, `session_log.layout_verified`, et depuis
-PAT-111 les clés de pilote `sandbox`/`sandbox_reason`/`evidence`/`executable`/`env_set`/`make_dirs`/`trajectory`,
+Artefacts documentés ici : la surface CLI de `foundry.local_first_runner` (dont `--screening-campaign`, la reprise
+bornée et le refus d'une configuration différente à `report`), la configuration de campagne
+(`pat-19-campaign-v1.json` : `isolation` dont `deny_home_by_default` et `allow_read_home`, `cloud_bash_deny`,
+`non_protocol_choices`, `session_log.layout_verified`, et depuis PAT-111 les clés de pilote
+`sandbox`/`sandbox_reason`/`evidence`/`executable`/`env_set`/`make_dirs`/`trajectory`,
 le format de flux `claude-stream-json`, les clés de candidat `lm_studio_key`/`quantization`/`min_context`/
-`load_command`/`file_sha256`/…, le fichier de preuve `pat-19-preflight-2026-10-05.json`), les refus de préflight
-`loaded_context_*`/`loaded_quantization_*`/`loaded_model_key_differs`, l'enregistrement `contaminated`/
-`contamination` et `report.contaminated`, `local.harness_executable`, le format
+`load_command`/`file_sha256`/…, le fichier de preuve `pat-19-preflight-2026-10-05.json` dont `command_tried`,
+`pinned_final_argv` et `lms_ps_json_observed`), les refus de préflight
+`loaded_context_*`/`loaded_quantization_*`/`loaded_model_key_*`, l'enregistrement `contaminated`/
+`contamination` (`paths`, `commands`) et `report.contaminated`, `report.void_attempts` (dont les sessions cloud
+sans enregistrement), `local.harness_executable`, `local.step_limit_hit`, le format
 d'enveloppe et de registre (`dry_run`, empreintes, `settled` apparié), le schéma des résultats (`tool_error`,
-`interrupted`, `stopped_by_cap`, `cloud_sessions`, `premium.by_model`), les règles du rapport (registre
-obligatoire, invariant registre/résultats), la confiance accordée aux fichiers d'état et le périmètre de
-l'isolement. Aucune constante publique, option de `foundry_cli.py`, clé de
+`interrupted` avec `judge` quand la coupure suit un verdict, `stopped_by_cap`, `cloud_sessions`,
+`premium.by_model`), les règles du rapport (registre
+obligatoire, invariant registre/résultats), la confiance accordée aux fichiers d'état, l'exposition des bras
+cloud et le périmètre de l'isolement. Aucune constante publique, option de `foundry_cli.py`, clé de
 configuration produit ni table de routage n'a changé (la table de traduction des modèles Claude de
 `routing_facades.py` n'est pas touchée : les identifiants complets des pilotes sont des données de campagne).
-**Documenté et non appliqué mécaniquement** (dit explicitement) : le refus par défaut du HOME (non essayé), le
-recalcul des empreintes de poids au préflight, la borne d'étapes du harnais neutre en cours d'exécution, la
-détection des chemins construits à l'exécution par l'audit. L'application mécanique de R5 reste celle de
+**Documenté et non appliqué mécaniquement** (dit explicitement) : toute interdiction de lecture, de réseau ou
+d'identifiants pour un bras cloud ; l'essai du refus par défaut du HOME avec le vrai harnais ; l'essai de l'argv
+final cloud et du drapeau de borne d'étapes ; le recalcul des empreintes de poids au préflight ; la borne
+d'étapes du harnais neutre **en cours d'exécution** (transmise au harnais et vérifiée a posteriori) ; la
+détection des chemins ou commandes construits à l'exécution par l'audit ; la fenêtre de quelques instructions
+entre le retour du juge et l'affectation de son verdict. L'application mécanique de R5 reste celle de
 FOUNDRY-123.

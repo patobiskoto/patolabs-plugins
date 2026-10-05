@@ -343,7 +343,7 @@
       "sandbox": "launcher local sandbox profile (loopback only, writes limited to bundle and attempt directory)",
       "home": "isolated: the lm-studio provider is discovered from the isolated home, no home_files needed",
       "max_time_accepted": "6m",
-      "read_deny": "explicit deny list (37 entries on the maintainer's machine: 17 home entries plus checkouts, state and input directories) and profile directory unreadable; verified working with the real harness. A default-deny of the whole home was not tried: the explicit list is kept (documented limit).",
+      "read_deny": "explicit deny list (37 entries on the maintainer's machine: 17 home entries plus checkouts, state and input directories) and profile directory unreadable; verified working with the real harness. This trial used the explicit list only. A default-deny of the whole home is implemented afterwards (isolation.deny_home_by_default, the explicit list stays as a second layer) and is not yet tried with the real omp: the coordinator tries it and records the result or the fallback.",
       "passed_candidates": [
         "qwen3.8-27b-mlx-6bit",
         "qwen3.8-27b-mlx-4bit",
@@ -374,7 +374,13 @@
       "profile_sha256": "7192135a900b5e9ebe27fb41df7ddcc7ec1556648c9608762e389e311b6f60b7"
     },
     "cloud_implementer_current": {
-      "command": "claude -p {prompt} --session-id {session_id} --model claude-sonnet-5-5 --effort medium --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Task TaskStop Workflow SendMessage ListAgents Monitor CronCreate CronDelete CronList ScheduleWakeup RemoteTrigger PushNotification WebFetch WebSearch Skill DesignSync EnterWorktree ExitWorktree ReportFindings ToolSearch NotebookEdit Artifact ArtifactComments ArtifactData SendFeedback TaskCreate TaskGet TaskList TaskUpdate --output-format stream-json --verbose",
+      "command_tried": "claude -p {prompt} --session-id {session_id} --model claude-sonnet-5-5 --effort medium --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Agent --output-format stream-json --verbose",
+      "command_tried_note": "the command ACTUALLY run in the toy-task trial: `--disallowedTools Agent` only (the 29-name list was observed at the init event separately, see cloud_findings.init_tools_observation, with no model call)",
+      "pinned_final_argv": {
+        "disallowedTools": "the 29 tool names of cloud_findings.init_tools_observation.after.argv_disallow plus the 19 Bash rules of cloud_bash_deny in pat-19-campaign-v1.json (see the driver's argv there)",
+        "trial": "NOT YET TRIAL-RUN: the coordinator trial-runs this final argv before the corpus and records the result here",
+        "claim": "none: it is not described as pinned from a real trial"
+      },
       "trial": {
         "role": "implement",
         "model": "claude-sonnet-5-5",
@@ -408,8 +414,14 @@
       }
     },
     "cloud_implementer_economy": {
-      "command": "claude -p {prompt} --session-id {session_id} --model claude-haiku-4-5-20251001 --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Task TaskStop Workflow SendMessage ListAgents Monitor CronCreate CronDelete CronList ScheduleWakeup RemoteTrigger PushNotification WebFetch WebSearch Skill DesignSync EnterWorktree ExitWorktree ReportFindings ToolSearch NotebookEdit Artifact ArtifactComments ArtifactData SendFeedback TaskCreate TaskGet TaskList TaskUpdate --output-format stream-json --verbose",
       "note": "no --effort: Haiku 4.5 has a null effort",
+      "command_tried": "claude -p {prompt} --session-id {session_id} --model claude-haiku-4-5-20251001 --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Agent --output-format stream-json --verbose",
+      "command_tried_note": "the command ACTUALLY run in the toy-task trial: `--disallowedTools Agent` only (the 29-name list was observed at the init event separately, see cloud_findings.init_tools_observation, with no model call)",
+      "pinned_final_argv": {
+        "disallowedTools": "the 29 tool names of cloud_findings.init_tools_observation.after.argv_disallow plus the 19 Bash rules of cloud_bash_deny in pat-19-campaign-v1.json (see the driver's argv there)",
+        "trial": "NOT YET TRIAL-RUN: the coordinator trial-runs this final argv before the corpus and records the result here",
+        "claim": "none: it is not described as pinned from a real trial"
+      },
       "trial": {
         "role": "implement",
         "model": "claude-haiku-4-5-20251001",
@@ -443,7 +455,13 @@
       }
     },
     "cloud_reviewer": {
-      "command": "claude -p {prompt} --session-id {session_id} --model claude-opus-5-5 --effort high --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Task TaskStop Workflow SendMessage ListAgents Monitor CronCreate CronDelete CronList ScheduleWakeup RemoteTrigger PushNotification WebFetch WebSearch Skill DesignSync EnterWorktree ExitWorktree ReportFindings ToolSearch NotebookEdit Artifact ArtifactComments ArtifactData SendFeedback TaskCreate TaskGet TaskList TaskUpdate --output-format stream-json --verbose",
+      "command_tried": "claude -p {prompt} --session-id {session_id} --model claude-opus-5-5 --effort high --permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools Agent --output-format stream-json --verbose",
+      "command_tried_note": "the command ACTUALLY run in the toy-task trial: `--disallowedTools Agent` only (the 29-name list was observed at the init event separately, see cloud_findings.init_tools_observation, with no model call)",
+      "pinned_final_argv": {
+        "disallowedTools": "the 29 tool names of cloud_findings.init_tools_observation.after.argv_disallow plus the 19 Bash rules of cloud_bash_deny in pat-19-campaign-v1.json (see the driver's argv there)",
+        "trial": "NOT YET TRIAL-RUN: the coordinator trial-runs this final argv before the corpus and records the result here",
+        "claim": "none: it is not described as pinned from a real trial"
+      },
       "trial": {
         "role": "review",
         "model": "claude-opus-5-5",
@@ -484,7 +502,7 @@
     }
   },
   "cloud_findings": {
-    "cloud_tool_set": "Cloud arms have only Read, Edit, Write and Bash: no web, no sub-agent, no workflow, no scheduling. The local harness omp exposes its own tool set (read, edit, write, bash, glob seen in the smoke runs): this asymmetry between arms is recorded, not equalised.",
+    "cloud_tool_set": "Cloud arms have only the built-in tools Read, Edit, Write and Bash (init event, 29-name list). Bash itself is unrestricted except for the best-effort cloud_bash_deny rules (command-prefix permission rules, evadable); web, sub-agent and workflow TOOLS are absent, but a shell can still reach the network. The local harness omp exposes its own tool set (read, edit, write, bash, glob seen in the smoke runs): this asymmetry between arms is recorded, not equalised.",
     "sandbox": "Under sandbox-exec Claude Code could not authenticate: with the keychain read-denied it said 'Not logged in'; with the keychain allowed it got '401 OAuth access token has been revoked', after which the maintainer had to log in again in a terminal (cause not established; possibly the sandboxed or TMPDIR-overridden child). Decision: cloud drivers run WITHOUT sandbox-exec (sandbox: false with this reason), with the AGENTS.md R6 environment intact (HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER, the real TMPDIR) and the disposable bundle as working directory.",
     "session_log_layout": "premium_tokens(session_id) read from <projects>/*/<session_id>.jsonl equals the host's own result.usage exactly for the three runs (input, cache read, cache write, output). Only one file named by the session id existed each time. layout_verified is set to true CONDITIONALLY on the launcher asserting from the stream's system/init event that no sub-agent tool (Agent, Task) is available.",
     "tool_set_assertion": "The launcher refuses a cloud record unless the init event's tools are a subset of allowed_tools (Bash, Edit, Read, Write). The three smoke runs were made before this list existed (their init event listed Task among 25 tools); the allowlisted tool set below was observed at the init event only, with no model call.",
@@ -582,13 +600,28 @@
       }
     },
     "settings": "With --setting-sources project,local --strict-mcp-config only built-in plugins load (no user plugin hooks, no MCP server). Not verified: whether the user's global CLAUDE.md memory is still loaded (asymmetry with the local arm): a limit of the result.",
-    "cost_note": "Host-reported list prices are informative only, never an economy figure."
+    "cost_note": "Host-reported list prices are informative only, never an economy figure.",
+    "exposure": "Cloud arms are bare Claude Code (--setting-sources project,local --strict-mcp-config: no Foundry plugin, hook or agent definition, so not the Eiffel/Maigret definitions and no R1 guard on gh pr merge / git push) with --permission-mode bypassPermissions, the real home, an open network and the user's implicit credentials (git credential helper through the keychain, gh configuration, ~/.config/foundry). The launcher applies no read denial to them. A cloud arm could read merged solutions (gh pr view, git clone, curl), act on the real repository through gh, start another claude -p whose tokens are never read, or exfiltrate. Mitigations are best-effort only: cloud_bash_deny permission rules, a post-run audit of commands and paths (contaminated records), and the bundle having no remote. The maintainer's explicit acceptance of this exposure is pending."
   },
   "limits": [
     "tokens of a neutral-harness run are unknown (no event stream)",
-    "a default-deny of the whole home was not tried with the local harness",
-    "an unsandboxed cloud arm can read anything the user can, including the plugin cache whose tests were merged before release 1.0.0; the launcher audits the arm's tool calls after the run (contaminated records) instead of preventing it",
+    "default-deny of the whole home for local arms is implemented (isolation.deny_home_by_default) but not yet tried with the real omp: the coordinator tries it and records the result or the fallback to the explicit list",
+    "an unsandboxed cloud arm has the real home, an open network, the user's implicit credentials and no Foundry hook: it can read anything the user can (plugin cache whose tests were merged before release 1.0.0, repositories), call gh/curl/git, or start another agent; the launcher applies best-effort Bash deny rules and audits the arm's commands and paths after the run (contaminated records) instead of preventing it",
     "the weights digests are recorded here and are not recomputed by the launcher",
-    "one toy task per driver: a trial proves the command works, it measures no quality"
-  ]
+    "one toy task per driver: a trial proves the command works, it measures no quality",
+    "the final argv of the three cloud drivers (Bash deny rules) and the neutral harness `-c agent.step_limit` are not yet trial-run"
+  ],
+  "lms_ps_json_observed": {
+    "date": "2026-10-05",
+    "note": "fields of `lms ps --json` observed with a loaded model on the maintainer's machine; the launcher reads them",
+    "fields": {
+      "modelKey": "string, the LM Studio model key (checked against lm_studio_key; absent refuses)",
+      "identifier": "string, the served identifier",
+      "quantization": {
+        "name": "string, e.g. 4bit",
+        "bits": "integer"
+      },
+      "contextLength": "integer, the loaded context (checked against min_context)"
+    }
+  }
 }

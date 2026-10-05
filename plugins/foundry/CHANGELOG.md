@@ -26,6 +26,32 @@
   void round keeps its cost, each session is named once); `report` lists `void_attempts` and `replays`
   and gives no `selected` while a screening task stays undecided (`undecided_tasks`).
 
+- Changed (PAT-111, review round 1; fake arms only, no real arm run): (1) a cut AFTER a judge verdict or a
+  review (local and cloud) now keeps them on the interrupted record, so the attempt is decided and a relaunch
+  never replays it (no second chance after a verdict; a cut before the verdict stays void and is replayed
+  once); a failure caused by the candidate (git configuration or attributes changed, tree still moving) is a
+  `REFUSED` verdict (`candidate_fault`), not a void attempt; a cloud session killed after its settlement and
+  before its record is listed in `report.void_attempts`; a contaminated review of path C leaves the task
+  undecided with no takeover at first launch and at resume. (2) The unsandboxed cloud arms are documented for
+  what they are (bare Claude Code, `bypassPermissions`, real home, open network, implicit credentials, no
+  Foundry hook, not the Eiffel/Maigret definitions; the launcher protects neither the tracker, secrets nor
+  merge for them): 19 best-effort Bash permission deny rules (`cloud_bash_deny`, data in the campaign config,
+  literally in each cloud argv, enforced at load; command-prefix rules, evadable, not a sandbox); the
+  post-run audit now covers COMMANDS (`command:` labels, `contamination.commands`), tool results and path
+  resolution against the bundle with `cd` tracking (`find ~`, `cd ~ && cat .claude/x`, `src/../../..`); the
+  launcher doc and the protocol amendment note are rewritten accordingly and the maintainer's acceptance of the
+  exposure is recorded as pending. (3) Local arms now deny reads under the real home by default
+  (`isolation.deny_home_by_default`, true; `isolation.allow_read_home`, empty) with the explicit deny list kept
+  as a second layer; unit-tested on the generated profile and under a real `sandbox-exec` with a fake home,
+  not yet tried with the real `omp`. Also: the preflight refuses a loaded instance with no `modelKey`; the
+  neutral harness is given `-c agent.step_limit={max_steps}` and `step_limit_hit` is also set a posteriori
+  (attempt refused); `compare` refuses a C/N comparison with no screening results under its campaign id unless
+  `--screening-campaign <id>` names a completed matching screening (read-only); the cloud evidence labels the
+  command actually tried (`--disallowedTools Agent`) apart from the final argv, which is still to be
+  trial-run. Documentation status (AGENTS.md R5): `pat-19-launcher-v1.md`, `pat-19-protocol-v1.md`,
+  `pat-19-preflight-2026-10-05.json` and the campaign config updated; no CLI option of `foundry_cli.py`,
+  product constant or routing table changed.
+
 - Changed (PAT-111, pinning): the five real drivers of the PAT-19 launcher and the five local candidates are
   pinned in `docs/qualification/pat-19-campaign-v1.json` from real toy-task trials (not the corpus) made with
   the maintainer's confirmation of every model load and cloud call; the evidence is committed, sanitised, as
@@ -46,9 +72,11 @@
   from the operator variable `PAT19_MINI_BIN` at the pinned version, with its fixed environment, trajectory
   steps and no committed path. Candidates carry LM Studio key, engine, quantization, weights and chat-template
   digests, load command (`-c 65536`) and generation parameters (server defaults, not overridden); Devstral is
-  declared unused. Limits stated, not enforced: a default-deny of the home was not tried (explicit list kept),
-  the cloud and local arms expose different tool sets (recorded, not equalised), weights digests are
-  recorded not recomputed, the exact `lms ps --json` field names were not observed. Documentation status
+  declared unused. Limits stated, not enforced: the cloud and local arms expose different tool sets (recorded,
+  not equalised), weights digests are recorded not recomputed; the `lms ps --json` fields (`modelKey`,
+  `identifier`, `quantization` {name, bits}, `contextLength`) were observed on 2026-10-05 and are recorded in the
+  evidence file (see the review-round-1 entry below for the default-deny of the home and the cloud
+  exposure). Documentation status
   (AGENTS.md R5): `pat-19-launcher-v1.md` and `pat-19-protocol-v1.md` updated, no CLI option of
   `foundry_cli.py`, product constant or routing table changed.
 
