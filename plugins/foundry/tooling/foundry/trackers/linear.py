@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -2273,6 +2275,7 @@ class LinearTracker(Tracker):
         # Last rate-limit headers seen on any response (never the token): diagnostics only.
         self.rate_limit: dict[str, int | None] = {}
         self._epic_closure_reads = threading.local()
+        self._snapshot_scopes = threading.local()
         self._active_project: Project | None = None
 
     def migration_attribute_exceptions(
@@ -3845,15 +3848,42 @@ class LinearTracker(Tracker):
         return identifiers, canonical_to_native
 
     # ---- reads / normalization ------------------------------------
+    @contextlib.contextmanager
+    def graph_snapshot(self):
+        """PAT-99: one graph snapshot reads each node at most once.
+
+        Inside this context (same thread) a successful ``issue.read`` is reused by the
+        next read of the same id, so a node is fetched once for validation, binding
+        check, normalization and diagnostic.  The scope is private to ONE snapshot: it
+        is created empty, never shared with another scope (a nested snapshot, the
+        pre-write S1, the post-write verification each open their own), and dropped on
+        exit, so nothing survives across snapshots, calls or the write.
+        """
+        stack = getattr(self._snapshot_scopes, "stack", None)
+        if stack is None:
+            stack = self._snapshot_scopes.stack = []
+        scope: dict[str, dict] = {}
+        stack.append(scope)
+        try:
+            yield
+        finally:
+            stack.pop()
+
     def _read_raw(self, issue_id: str) -> dict:
         if not isinstance(issue_id, str) or not issue_id:
             raise IssueUnavailableError(str(issue_id))
+        stack = getattr(self._snapshot_scopes, "stack", None)
+        scope = stack[-1] if stack else None
+        if scope is not None and issue_id in scope:
+            return copy.deepcopy(scope[issue_id])
         data = self._graphql(_ISSUE_QUERY, {"id": issue_id}, "issue.read")
         raw = data.get("issue")
         if raw is None:
             raise IssueUnavailableError(issue_id)
         if not isinstance(raw, dict):
             raise LinearTrackerError("issue.read", None, "invalid_response")
+        if scope is not None:
+            scope[issue_id] = copy.deepcopy(raw)
         return raw
 
     @staticmethod

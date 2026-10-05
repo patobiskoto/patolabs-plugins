@@ -957,6 +957,26 @@ cannot distinguish an interrupted closure from a later reopen to that same
 predecessor. A different predecessor is refused. This retains the existing
 bounded guarantee rather than claiming provider CAS or a new history guarantee.
 
+**Provider-read cost of a graph snapshot (PAT-99).** Reading a closed Epic or taking a
+graph snapshot used to re-read the same nodes many times (the parent once per child, each
+child three to four times: 269 `issue.read` calls for 31 children + 24 prerequisites, about
+221 measured on the real 31-child Epic PAT-51, ~1/3 of the 2500 requests/hour quota for one
+closure). Inside ONE snapshot (`bounded_epic_graph_snapshot`, the PAT-95 diagnostic, the
+replay check of a closed Epic) `LinearTracker.graph_snapshot()` now reuses a successful
+`issue.read` of an id for the binding check, normalization and diagnostic, so a snapshot
+costs **N + 1 reads for N nodes (parent included once), bound N + 2**; reading a closed
+Epic costs one read more (the read itself). Measured on the fake transport (31 children,
+24 prerequisites = 55 nodes; counter at the GraphQL level, retries excluded): snapshot
+269 -> 56, closed-Epic read 270 -> 57, diagnostic 110 -> 55, a whole `close-epic`
+1118 -> 266 (S0 preflight, pre-write S1, the closed parent's replay check and the
+post-write S3, each one snapshot of 56 reads, plus the fixed pre-validation of N + 1).
+Guarantees unchanged: the scope is created empty for each snapshot, never shared with
+another snapshot (nested ones included), the pre-write S1, the post-write verification
+or the write, and dropped on exit; a failed read is never cached; a refused snapshot and
+its diagnostic form one snapshot. Nothing is cached across calls, so a node added,
+reopened or modified between two snapshots is still detected exactly as before
+(PAT-ADR-0006, PAT-ADR-0014).
+
 The provider implementation was first proven without activating a real workspace.
 FOUNDRY-159 then activated `github.com/patobiskoto/patolabs-plugins` on Linear after a
 selective live migration and provider readback. The versioned manifest and credential-
