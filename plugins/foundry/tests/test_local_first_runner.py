@@ -77,6 +77,15 @@ if behavior.startswith("cmd:"):  # the arm runs a command through its shell tool
     event("tool_execution_start", toolName="bash", args={"command": command})
     event("assistant", message={"content": [{"type": "tool_use", "name": "Bash",
                                              "input": {"command": command}}]})
+if behavior.startswith(("show:", "say:")):  # a tool result: a bundle file the arm reads, or literal text
+    kind, _, arg = behavior.partition(":")
+    text = open(os.path.join(a.workdir, arg)).read() if kind == "show" else arg
+    behavior = "PASS" if a.role == "reviewer" else "fix"
+    if kind == "show":
+        event("tool_execution_start", toolName="read", args={"path": arg})
+        event("assistant", message={"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": arg}}]})
+    event("tool_execution_end", toolName="read", result={"content": [{"type": "text", "text": text}]})
+    event("user", message={"content": [{"type": "tool_result", "tool_use_id": "t", "content": text}]})
 if behavior == "tamper":  # the arm edits the git configuration of its bundle, then does the work
     open(os.path.join(a.workdir, ".git", "config"), "a").write("[core]\n\tfsmonitor = false\n")
     behavior = "fix"
@@ -3566,3 +3575,324 @@ def test_pat111_fix3_a_refusal_on_init_still_records_the_contamination_and_is_ne
     again, campaign2, _, tasks = make_runner(tmp_path, "compare", plan, repo_bundle=first, host_env=env)
     _claude_stream_driver(campaign2["drivers"]["cloud_implementer_current"], "Read,Edit,Bash,Write")
     assert again.cloud_path(tasks[0], "A", "comparison") == [] and counts(p)["implementer"] == 1  # not replayed
+
+
+# ---- round 3 of the review: what is text is never read as an access, a contamination is never lost
+
+def _audit_kw(tmp_path):
+    """Like ``_audit_in``, with the ``arm_home`` / ``own_session`` options of ``audit_transcript``."""
+    home = _fake_home(tmp_path)
+    repo, _, _, _ = _make_repo(tmp_path)
+    bundle, scratch = tmp_path / "work" / "b", tmp_path / "work" / "s"
+    bundle.mkdir(parents=True)
+    scratch.mkdir()
+    sensitive = lfr.read_deny_list(repo=repo, home=home, state_dir=tmp_path / "state", input_paths=[],
+                                   kind="local_harness")
+    stream = tmp_path / "stream.jsonl"
+
+    def audit(*calls, raw=(), **kw):
+        _stream(stream, *calls)
+        stream.write_text(stream.read_text("utf-8") + "".join(json.dumps(r) + "\n" for r in raw), "utf-8")
+        return lfr.audit_transcript(stream, bundle=bundle, scratch=scratch, sensitive=sensitive,
+                                    home=str(home), **kw)
+
+    return audit, home, bundle, scratch
+
+
+SESSION = "0b6c1e9e-2f6a-4d1c-9a51-3b7f0c2d4e81"
+OTHER_SESSION = "7d2e4a10-8c3b-4f5e-b6a7-1c9d0e2f3a4b"
+
+
+def test_pat111_fix4_b1_a_cloud_arm_reads_back_the_tool_output_claude_code_saved_in_its_own_session(tmp_path):
+    """B1 (reproduced): Claude Code saves a tool output too large for the stream under
+    ``<projects_dir>/<slug>/<session_id>/tool-results/`` and the result names it; the arm then reads it.
+    Its OWN session directory is allowed; another session's directory stays a hit."""
+    audit, home, bundle, _ = _audit_kw(tmp_path)
+
+    def saved(session):
+        target = home / ".claude/projects/-tmp-work-b" / session / "tool-results/toolu_01Xy.txt"
+        result = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content":
+                  f"Output too large (61.2KB). Full output saved to: {target}\n\nPreview (first 2KB):\nok"}]}}
+        return ("claude", "Read", {"file_path": str(target)}), result, target
+
+    own = ("~/.claude/projects", SESSION)
+    call, result, _ = saved(SESSION)
+    assert audit(call, raw=[result], own_session=own) == []
+    assert audit(("claude", "Bash", {"command": f"tail -50 {saved(SESSION)[2]}"}), own_session=own) == []
+    call, result, target = saved(OTHER_SESSION)  # another session: flagged, in the result and in the read
+    shown = "~/.claude/projects/-tmp-work-b/" + OTHER_SESSION + "/tool-results/toolu_01Xy.txt"
+    assert audit(call, raw=[result], own_session=own) == [shown, f"tool_result:{shown}"]
+    assert audit(*[saved(SESSION)[0]], raw=[saved(SESSION)[1]]) != []  # without the option: flagged
+    # neither the session log itself, nor the projects directory, nor the rest of ~/.claude are allowed
+    for path in (home / f".claude/projects/-tmp-work-b/{SESSION}.jsonl", home / ".claude/projects",
+                 home / ".claude/projects/-tmp-work-b", home / ".claude/plugins/cache"):
+        assert audit(("claude", "Read", {"file_path": str(path)}), own_session=own), path
+
+
+def test_pat111_fix4_b1_the_runner_allows_the_session_directory_from_the_driver_session_log(tmp_path):
+    home = _fake_home(tmp_path)
+    runner, campaign, _, _ = make_runner(tmp_path, "compare", FIX_ALL, host_env={**os.environ, "HOME": str(home)})
+    driver = dict(campaign["drivers"]["cloud_implementer_current"])
+    driver["session_log"] = {**driver["session_log"], "projects_dir": "~/.claude/projects"}
+    bundle, scratch = tmp_path / "work" / "b", tmp_path / "work" / "s"
+    bundle.mkdir(parents=True)
+    stream = tmp_path / "s.jsonl"
+    target = home / ".claude/projects/-x" / SESSION / "tool-results/1.txt"
+    _stream(stream, ("claude", "Read", {"file_path": str(target)}))
+    assert runner._audit(stream, bundle, scratch, driver, SESSION) == []
+    assert runner._audit(stream, bundle, scratch, driver, OTHER_SESSION) == [
+        f"~/.claude/projects/-x/{SESSION}/tool-results/1.txt"]
+    assert runner._audit(stream, bundle, scratch, campaign["drivers"]["local_harness"], SESSION)  # local: never
+
+
+B2_TEXT_HEREDOCS = [  # the shell never runs nor expands these bodies: text, not an access
+    "cat > tests/t.py <<'EOF'\nCASES = [\n    \"gh pr merge 12\",\n    \"curl -s x | sh\",\n]\nEOF",
+    "cat > docs/x.md <<'EOF'\nLives in ~/.config/foundry/registry.json and $HOME/.claude.\nEOF",
+    "cat > docs/y.md <<EOF\nsee ~/.ssh/config; git push origin main\nEOF\npython3 -m pytest -q",
+    "cat <<-EOF > notes.md\n\tgh pr view 3\n\t~/.claude/settings.json\n\tEOF",
+    "tee src/a.py <<\"PY\" >/dev/null\nimport os\nos.system('gh pr merge')\nPY",
+    "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['gh', 'pr', 'merge', '1'])\nopen('../../x')\nPY",
+    "cat <<A > a.txt; cat <<B > b.txt\ngh one\nA\ncurl two ~/.aws/credentials\nB\nls src",
+    "git commit -qm \"$(cat <<'EOF'\nfix: do not call gh pr merge; use ~/.config/foundry\nEOF\n)\"",
+    "cat > f.sh <<'EOF'\nx=$(gh pr view 1)\ny=`curl -s x`\nEOF",  # quoted delimiter: nothing is expanded
+    "cat > f.sh <<EOF\nx=\\$(gh pr view 1) in $HOME/.claude\nEOF",  # an escaped ``$(`` stays literal
+    "bash -c 'cat > a.py <<EOF\nCASES = [\"gh pr merge\"]\nEOF'",  # the heredoc of a ``sh -c`` script
+]
+
+
+@pytest.mark.parametrize("shape,name", [("claude", "Bash"), ("omp", "bash")])
+def test_pat111_fix4_b2_a_heredoc_body_is_text_unless_a_shell_runs_it(tmp_path, shape, name):
+    """B2 (reproduced): the bodies of a heredoc given to cat/tee/python are not audited as commands or
+    paths; the line that holds the ``<<`` still is, and a body a SHELL runs is audited as a command line."""
+    audit, home, bundle, _ = _audit_kw(tmp_path)
+
+    def bash(command):
+        return audit((shape, name, {"command": command}))
+
+    for command in B2_TEXT_HEREDOCS:
+        assert bash(command) == [], command
+    # the line that holds the ``<<`` stays audited
+    assert bash("cat > ~/.config/x <<EOF\nhello\nEOF") == ["~/.config/x"]
+    assert bash("gh pr create --body-file - <<'EOF'\nbody\nEOF") == ["command:gh"]
+    # a body a shell runs is a command line: commands AND paths
+    for command in ("bash <<EOF\ngh pr view 3\nEOF", "sh -s <<'X'\necho ok\ngh pr view 3\nX",
+                    "zsh <<-EOF\n\tgh pr view 3\n\tEOF", "cat <<EOF | bash\ngh pr view 3\nEOF",
+                    "cat <<EOF |\ngh pr view 3\nEOF\nsudo sh", "source /dev/stdin <<EOF\ngh pr view 3\nEOF"):
+        assert bash(command) == ["command:gh"], command
+    assert bash("bash <<'EOF'\ncat ~/.ssh/id_ed25519\nEOF") == ["~/.ssh/id_ed25519"]
+    # with an UNQUOTED delimiter the shell runs the body's command substitutions
+    assert bash("cat > f.txt <<EOF\nsha: $(gh pr view 1 --json sha)\nEOF") == ["command:gh"]
+    assert bash("cat > f.txt <<EOF\nnow `curl -s x`\nEOF") == ["command:curl"]
+    assert bash("cat > f.txt <<EOF\n$(cat ~/.ssh/id_ed25519)\nEOF") == ["~/.ssh/id_ed25519"]
+    # what follows the delimiter line is audited again; an unclosed heredoc is audited as it is
+    assert bash("cat > a.txt <<EOF\ntext\nEOF\ncurl -s x") == ["command:curl"]
+    assert bash("cat > a.txt <<EOF\ntext\ngh pr view") == ["command:gh"]
+    # ``<<`` inside quotes or arithmetic is not a heredoc: what follows is still audited
+    assert bash("echo $((1 << 2))\ngh pr view\n2))") == ["command:gh"]
+    assert bash("echo 'a <<EOF'\ngh pr view\nEOF") == ["command:gh"]
+    # a here-string (``<<<``) has no body: the next lines are commands
+    assert bash("cat <<<EOF\ngh pr view\nEOF") == ["command:gh"]
+    # the Sonnet division case stays clean
+    assert bash("python3 - <<'PY'\nprint(sum([1, 2]) / len([1, 2]), 7 // 2)\nPY") == []
+
+
+@pytest.mark.parametrize("shape,name", [("claude", "Bash"), ("omp", "bash")])
+def test_pat111_fix4_same_class_quoted_separators_and_comments_are_text(tmp_path, shape, name):
+    """Same class as B2, found in review: a ``|`` or ``;`` inside quotes (a grep pattern, a commit message)
+    does not start a command, a ``#`` comment is not run; what a shell really runs is still caught."""
+    audit, home, bundle, _ = _audit_kw(tmp_path)
+
+    def bash(command):
+        return audit((shape, name, {"command": command}))
+
+    for command in ('grep -rnE "claude|codex|omp" plugins/foundry/tooling', "rg -n 'gh pr (create|merge)' .",
+                    'git commit -qm "routing: drop curl; gh is denied"', "echo 'a; ssh host'",
+                    "python3 -m pytest -q  # then gh pr view, see ~/.config/foundry",
+                    "# cat ~/.ssh/id_ed25519\nls src", 'echo "${#x} $# a#b"'):
+        assert bash(command) == [], command
+    for command, expected in (
+            ('bash -c "cd src && gh pr merge 3"', ["command:gh"]),
+            ("sh -c 'curl x; wget y'", ["command:curl", "command:wget"]),
+            ('echo "$(gh pr view 1)"', ["command:gh"]), ("echo \"`curl x`\"", ["command:curl"]),
+            ('bash -c "cat ~/.ssh/id_ed25519"', ["~/.ssh/id_ed25519"]),
+            ("sh -c 'cat ../../x'", [str(Path(os.path.realpath(tmp_path))) + "/x"]),
+            ('echo "$(cat ~/.aws/credentials)"', ["~/.aws/credentials"]),
+            ("ls src # ok\ngh pr view", ["command:gh"]), ("cat 2>~/.config/x", ["~/.config/x"]),
+            ("if true; then curl x; fi", ["command:curl"]), ("{ gh pr view; }", ["command:gh"]),
+            ("while read l; do gh $l; done < f", ["command:gh"]),
+            # a path inside a quoted argument is still read piece by piece, as before
+            ("python3 -c \"open('../../x').read()\"", [str(Path(os.path.realpath(tmp_path))) + "/x"])):
+        assert bash(command) == expected, command
+
+
+@pytest.mark.parametrize("shape,name,read,key", [("claude", "Bash", "Read", "file_path"),
+                                                 ("omp", "bash", "read", "path")])
+def test_pat111_fix4_n3_a_local_arm_s_tilde_is_its_isolated_home(tmp_path, shape, name, read, key):
+    """N3: a local arm runs with HOME in its attempt directory; its ``~``/``$HOME`` is that one."""
+    audit, home, bundle, scratch = _audit_kw(tmp_path)
+    isolated = str(scratch / "home")
+    for command in ("cat ~/.config/omp/config.yml", "ls $HOME/.cache", "cd && ls .config",
+                    "find ~ -name '*.json'", 'cat "${HOME}/.local/state/x"'):
+        assert audit((shape, name, {"command": command}), arm_home=isolated) == [], command
+        assert audit((shape, name, {"command": command})) != [], command  # the real home: flagged
+    assert audit((shape, read, {key: "~/.config/x"}), arm_home=isolated) == []
+    # a literal absolute path under the real home stays a hit
+    assert audit((shape, name, {"command": f"cat {home}/.ssh/id_ed25519"}), arm_home=isolated) == [
+        "~/.ssh/id_ed25519"]
+    assert audit((shape, read, {key: f"{home}/.config/foundry/config.json"}), arm_home=isolated) == [
+        "~/.config/foundry/config.json"]
+
+
+def test_pat111_fix4_n3_the_runner_expands_a_local_arm_s_tilde_to_its_isolated_home(tmp_path):
+    home = _fake_home(tmp_path)
+    runner, campaign, _, _ = make_runner(tmp_path, "compare", FIX_ALL, host_env={**os.environ, "HOME": str(home)})
+    bundle, scratch = tmp_path / "work" / "b", tmp_path / "work" / "s"
+    bundle.mkdir(parents=True)
+    stream = tmp_path / "s.jsonl"
+    _stream(stream, ("omp", "bash", {"command": "cat ~/.config/foundry/config.json"}))
+    assert runner._audit(stream, bundle, scratch, campaign["drivers"]["local_harness"]) == []
+    assert runner._audit(stream, bundle, scratch, campaign["drivers"]["neutral_harness"]) == []
+    assert runner._audit(stream, bundle, scratch, campaign["drivers"]["cloud_implementer_current"], SESSION) == [
+        "~/.config/foundry/config.json"]  # a cloud arm has the real HOME
+
+
+@pytest.mark.parametrize("cut", ["after_audit", "after_patch"])
+def test_pat111_fix4_n1_a_local_attempt_cut_after_its_audit_stays_contaminated_and_is_never_replayed(
+        tmp_path, monkeypatch, sentinel_handlers, cut):
+    home = _fake_home(tmp_path)
+    first = _make_repo(tmp_path)
+    env = {**os.environ, "HOME": str(home)}
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", _peek_plan(home, local=1),
+                                                repo_bundle=first, host_env=env)
+    if cut == "after_audit":
+        _once(monkeypatch, runner, "_audit", signal.SIGTERM, after=True)
+    else:
+        _once(monkeypatch, runner, "_patch_of", signal.SIGTERM)
+    with pytest.raises(SystemExit):
+        runner.screen(tasks[:1], ["cand-a"])
+    monkeypatch.undo()
+    rec = [r for r in results(runner) if r["record_type"] == "attempt"]
+    assert len(rec) == 1 and rec[0]["status"] == "interrupted" and rec[0]["judge"] is None
+    assert rec[0]["outcome"] == "contaminated" and rec[0]["contaminated"] is True and rec[0]["accepted"] is None
+    assert rec[0]["contamination"]["paths"] == ["~/.claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"]
+    again, _, _, tasks = make_runner(tmp_path, "screen", _peek_plan(home, local=1), repo_bundle=first, host_env=env)
+    assert again.screen(tasks[:1], ["cand-a"]) == [] and counts(plan) == {"local": 1}  # never replayed
+
+
+@pytest.mark.parametrize("cut", ["after_audit", "after_patch"])
+def test_pat111_fix4_n1_a_cloud_round_cut_after_its_audit_stays_contaminated_and_is_never_replayed(
+        tmp_path, monkeypatch, sentinel_handlers, cut):
+    home = _fake_home(tmp_path)
+    first = _make_repo(tmp_path)
+    env = {**os.environ, "HOME": str(home)}
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", _peek_plan(home, implementer=1),
+                                                repo_bundle=first, host_env=env)
+    if cut == "after_audit":
+        _once(monkeypatch, runner, "_audit", signal.SIGTERM, after=True)
+    else:
+        _once(monkeypatch, runner, "_patch_of", signal.SIGTERM)
+    with pytest.raises(SystemExit):
+        runner.compare(tasks[:1], "cand-a", ("A",))
+    monkeypatch.undo()
+    rec = [r for r in results(runner) if r["record_type"] == "attempt"]
+    assert len(rec) == 1 and rec[0]["status"] == "interrupted" and rec[0]["judge"] is None
+    assert rec[0]["outcome"] == "contaminated" and rec[0]["contaminated"] is True
+    assert rec[0]["contamination"]["paths"] == ["~/.claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"]
+    again, _, _, tasks = make_runner(tmp_path, "compare", _peek_plan(home, implementer=1), repo_bundle=first,
+                                     host_env=env)
+    assert again.compare(tasks[:1], "cand-a", ("A",)) == [] and counts(plan) == {"implementer": 1}
+
+
+def test_pat111_fix4_n1_a_review_of_path_c_cut_after_its_audit_leaves_the_local_record_contaminated(
+        tmp_path, monkeypatch, sentinel_handlers):
+    home = _fake_home(tmp_path)
+    env = {**os.environ, "HOME": str(home)}
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", _peek_plan(home, reviewer=1), host_env=env)
+    _nth(monkeypatch, runner, "_audit", 2, signal.SIGTERM, after=True)  # 1: the local arm, 2: its review
+    with pytest.raises(SystemExit):
+        runner.compare(tasks[:1], "cand-a", ("C",))
+    monkeypatch.undo()
+    rec = [r for r in results(runner) if r["record_type"] == "attempt"][0]
+    assert rec["segment"] == "local" and rec["status"] == "interrupted" and rec["outcome"] == "contaminated"
+    assert rec["contaminated"] is True and rec["accepted"] is None and rec["judge"]["verdict"] == "ACCEPTED"
+
+
+def test_pat111_fix4_n1_a_settled_contaminated_local_attempt_flushed_by_a_cut_keeps_its_outcome(
+        tmp_path, monkeypatch, sentinel_handlers):
+    home = _fake_home(tmp_path)
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", _peek_plan(home, local=1),
+                                                host_env={**os.environ, "HOME": str(home)})
+    _once(monkeypatch, runner, "_emit", signal.SIGTERM)  # the settled record is not written yet
+    with pytest.raises(SystemExit):
+        runner.screen(tasks[:1], ["cand-a"])
+    monkeypatch.undo()
+    rec = [r for r in results(runner) if r["record_type"] == "attempt"][0]
+    assert rec["status"] == "interrupted" and rec["outcome"] == "contaminated" and rec["contaminated"] is True
+
+
+# ---- N4: a bundle file of the base that records a real-home path (PR 83: ``/Users/<u>/.codex/...``)
+
+def _literal_repo(tmp_path):
+    home = _fake_home(tmp_path)
+    literal = f"{home}/.codex/worktrees/pat68-resume/patolabs-plugins"
+    first = _make_repo(tmp_path, base_files={
+        "plugins/foundry/docs/obs.json": f'{{\n  "root": "{literal}",\n  "n": 1\n}}\n'})
+    return home, literal, first, {**os.environ, "HOME": str(home)}
+
+
+def test_pat111_fix4_n4_base_literals_are_read_from_the_bundle_before_the_arm(tmp_path):
+    home, literal, first, env = _literal_repo(tmp_path)
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first, host_env=env)
+    bundle, attempt_dir = runner._bundle(tasks[0], "probe")
+    try:
+        assert runner.literals[bundle] == frozenset({literal})
+        assert lfr.base_literals(bundle, str(home)) == frozenset({literal})
+        (bundle / "planted.md").write_text(f"{home}/.ssh/id_ed25519\n")  # what the arm writes later
+        assert runner.literals[bundle] == frozenset({literal})  # computed once, before the arm
+    finally:
+        runner._discard(bundle, attempt_dir)
+    assert bundle not in runner.literals
+    # a correction round: the previous arm's patch is applied AFTER the scan, so it cannot add literals
+    planted = f"{home}/.ssh/id_ed25519"
+    patch = (f"diff --git a/planted.md b/planted.md\nnew file mode 100644\n--- /dev/null\n+++ b/planted.md\n"
+             f"@@ -0,0 +1 @@\n+{planted}\n").encode()
+    bundle, attempt_dir = runner._bundle(tasks[0], "probe2", patch)
+    try:
+        assert (bundle / "planted.md").read_text().strip() == planted
+        assert runner.literals[bundle] == frozenset({literal})
+    finally:
+        runner._discard(bundle, attempt_dir)
+
+
+@pytest.mark.parametrize("segment", ["local", "implementer"])
+def test_pat111_fix4_n4_a_bundle_file_that_names_a_home_path_is_text_in_a_result_not_in_a_call(
+        tmp_path, segment):
+    home, literal, first, env = _literal_repo(tmp_path)
+    cases = {"show:plugins/foundry/docs/obs.json": [],  # the arm reads the bundle file: clean
+             f"say:see {literal}/x": ["tool_result:~/.codex/worktrees/pat68-resume/patolabs-plugins/x"],
+             f"cmd:cat {literal}": ["~/.codex/worktrees/pat68-resume/patolabs-plugins"],
+             f"peek:{literal}": ["~/.codex/worktrees/pat68-resume/patolabs-plugins"]}
+    for n, (behavior, expected) in enumerate(cases.items()):
+        root = _sub(tmp_path, f"r{n}")
+        runner, _, _, tasks = make_runner(root, "compare", {**FIX_ALL, segment: [behavior]},
+                                          repo_bundle=first, host_env=env)
+        if segment == "local":
+            rec = runner.hybrid_path(tasks[0], "cand-a", "local_harness", "comparison")[0]
+        else:
+            rec = runner.cloud_path(tasks[0], "A", "comparison")[0]
+        found = rec.get("contamination", {}).get("paths", [])
+        assert found == expected, behavior
+        assert (rec["outcome"] == "contaminated") is bool(expected), behavior
+
+
+def test_pat111_fix4_n4_audit_literals_cover_results_only(tmp_path):
+    audit, home, bundle, _ = _audit_kw(tmp_path)
+    literal = f"{home}/.codex/worktrees/x"
+    lit = frozenset({literal})
+    result = {"type": "user", "message": {"content": [{"type": "tool_result", "content": f'"root": "{literal}",'}]}}
+    assert audit(raw=[result], literals=lit) == []
+    assert audit(raw=[result]) == ["tool_result:~/.codex/worktrees/x"]
+    other = {"type": "user", "message": {"content": [{"type": "tool_result", "content": f"{literal}/sub"}]}}
+    assert audit(raw=[other], literals=lit) == ["tool_result:~/.codex/worktrees/x/sub"]
+    assert audit(("claude", "Bash", {"command": f"cat {literal}"}), literals=lit) == ["~/.codex/worktrees/x"]
+    assert audit(("claude", "Read", {"file_path": literal}), literals=lit) == ["~/.codex/worktrees/x"]

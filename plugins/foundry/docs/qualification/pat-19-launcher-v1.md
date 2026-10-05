@@ -434,7 +434,17 @@ chemin) et les **commandes** (`command`, `cmd`), quel que soit l'outil : le text
   `$HOME`, absolu, relatif). Dans une commande, `~` et `$HOME` ne sont développés que là où le shell les développe :
   un `~` entre guillemets (simples ou doubles) et un `$HOME` entre guillemets simples sont du texte
   (`grep -rn '~/.claude' .` est propre ; `cat ~/.config/foundry/registry.json`, `ls ~/.claude/plugins`,
-  `cat "$HOME/.claude/x"` sont relevés). Un chemin relatif se résout **contre le bundle**, ou contre le dossier d'un `cd` précédent de
+  `cat "$HOME/.claude/x"` sont relevés). `~` et `$HOME` valent le HOME **qu'avait le bras** : pour un bras
+  **local**, le HOME isolé de son dossier d'essai (`cat ~/.config/x` d'un bras local est propre ; un chemin absolu
+  littéral sous le HOME réel reste relevé) ; pour un bras cloud, le HOME réel. Le **corps d'un `heredoc`** est du
+  texte (`cat > tests/t.py <<'EOF'` … `"gh pr merge 12"` … `EOF`, ou une doc qui cite `~/.config/foundry`, sont
+  propres), avec ou sans guillemets autour du délimiteur, `<<-` compris, plusieurs par commande ; la ligne qui
+  porte le `<<` reste auditée (`cat > ~/.config/x <<EOF` est relevé) ; un corps qu'un **shell exécute**
+  (`bash <<EOF`, `sh -s <<EOF`, `cat <<EOF | bash`, `source /dev/stdin <<EOF`) est audité comme une ligne de
+  commande (commandes et chemins), pas celui de `cat`, `tee` ou `python3 -`, et avec un délimiteur **sans
+  guillemets** (`<<EOF`) les `$(…)` et `` `…` `` du corps, que le shell exécute, le sont aussi ; un `<<` entre
+  guillemets ou dans `$((…))` n'est pas un `heredoc`, et un `heredoc` jamais fermé reste audité tel quel. Un
+  **commentaire** `#` (en début de mot) est du texte. Un chemin relatif se résout **contre le bundle**, ou contre le dossier d'un `cd` précédent de
   la même commande (`cd ~ && cat .claude/x`). Hors du bundle et du dossier d'essai, un chemin est relevé quand il
   tombe dans la liste sensible (celle d'un bras local : cache de plugins et configuration de l'utilisateur sous
   `~/.claude`, `.config`…, tout autre checkout ou worktree de ce dépôt, dossier d'état, dossiers des fichiers
@@ -450,11 +460,26 @@ chemin) et les **commandes** (`command`, `cmd`), quel que soit l'outil : le text
 - **les résultats d'outils** montrant un chemin **littéral absolu** sous une racine sensible
   (`tool_result:<chemin>`, par exemple `/Users/<u>/.claude/plugins/…` affiché par `find`, `ls` ou `cat`) ; `~`,
   `$HOME` ou `${HOME}` dans le texte d'un résultat ne sont pas développés (un fichier du bundle qui cite
-  `~/.config/foundry/registry.json` est du texte, pas un accès) ;
+  `~/.config/foundry/registry.json` est du texte, pas un accès). Pour un bras **cloud**, son **propre dossier
+  de session** `<projects_dir>/*/<id de session>/` (`projects_dir` de `session_log`, id donné par le lanceur) est
+  permis, dans un résultat comme dans un appel : Claude Code y enregistre une sortie d'outil trop grande pour le
+  flux (« Output too large. Full output saved to: …/tool-results/… ») que le bras relit ensuite ; le dossier
+  d'une **autre** session, le journal `<id>.jsonl` lui-même et le reste de `~/.claude` restent relevés. Un
+  chemin dont le **texte littéral** figure dans les fichiers du bundle (`base_literals` : chemins absolus sous le
+  HOME réel relevés par `git grep` dans le bundle **à sa construction**, avant le bras et avant tout patch d'une
+  tentative précédente, donc non falsifiables par le bras) n'est pas relevé **dans un résultat** : c'est le texte
+  d'un fichier lu. Les clés de chemin et les commandes qui le nomment restent auditées sans changement
+  (`cat /Users/<u>/.codex/x` ou un Read de ce chemin sont relevés), et un chemin du résultat absent de la base
+  (un sous-chemin compris) l'est aussi. Cas connu : la base de la tâche de tamisage **PR 83** (`f740bebe48`)
+  contient 12 chemins `/Users/<mainteneur>/.codex/…` dans `docs/qualification/pat-61-*` et `pat-62-*` ;
 - **les commandes** (`command:<étiquette>`) : tout appel Bash dont la commande, après une normalisation simple
-  (guillemets retirés, découpe sur `&&`, `||`, `;`, `|`, `&`, `` ` ``, `$(`, retrait de `VAR=…`, `env`, `sudo`,
-  `command`, `exec`, `nohup`, `time`, `nice`, `xargs`, `timeout`, descente dans `sh|bash|zsh -c`, nom de base de
-  l'exécutable), lance `gh`, `curl`, `wget`, `claude`, `codex`, `omp`, `ssh`, `scp`, `nc`, `security`, `open`,
+  (corps de `heredoc` et commentaires retirés comme ci-dessus, découpe sur `&&`, `||`, `;`, `|`, `&`, `(`, `)` et
+  les fins de ligne **hors guillemets** seulement — `grep -E "claude|codex" src` ou un message de commit
+  `"…; gh …"` ne lancent rien —, guillemets retirés, chaque `$(…)` et `` `…` `` hors guillemets ou entre
+  guillemets doubles lu comme une commande, retrait de `VAR=…`, `env`, `sudo`, `command`, `exec`, `nohup`,
+  `time`, `nice`, `xargs`, `timeout` et des mots-clés `{`, `!`, `if`, `then`, `else`, `elif`, `do`, `while`,
+  `until`, descente dans le script de `sh|bash|zsh|dash -c` (commandes et chemins),
+  nom de base de l'exécutable), lance `gh`, `curl`, `wget`, `claude`, `codex`, `omp`, `ssh`, `scp`, `nc`, `security`, `open`,
   `npm`, `git push|remote|clone|fetch|pull` (options `-C`/`-c` sautées), `python -m http…`, `python -m pip install`
   ou `pip install`.
 
@@ -469,7 +494,10 @@ le parcours C, une tentative locale contaminée est relayée par le cloud comme 
 compte pas comme réussite locale) ; une revue contaminée laisse la tâche indécise sans relais. **Limites** :
 c'est un audit, pas une interdiction (la commande ou la lecture a eu lieu) ; il ne voit que ce que le flux montre
 (un chemin ou une commande construits à l'exécution, cachés dans un script ou un interpréteur, un alias, un
-processus fils, un sous-agent ne le sont pas) ; l'analyse d'une ligne de commande n'est pas un analyseur de shell ;
+processus fils, un sous-agent ne le sont pas) ; l'analyse d'une ligne de commande n'est pas un analyseur de shell
+(`eval "…"`, `find -exec`, `watch "…"`, un `$'…'` ne sont pas suivis ; un chemin dans un argument entre guillemets
+est encore lu morceau par morceau, donc `grep "x ../../y" src` ou `echo $HOME` restent relevés : texte lu comme
+un accès, choix conservateur) ;
 une commande `npm` légitime (tâche JavaScript) est relevée comme contaminée (choix conservateur) ; il porte sur
 le flux du lanceur (mêmes appels d'outils que la transcription de session de l'hôte). Une contamination
 possible mais non détectée reste donc une limite du résultat des bras cloud. **Le flux du harnais neutre
@@ -477,7 +505,12 @@ possible mais non détectée reste donc une limite du résultat des bras cloud. 
 sortie l'est, qui ne contient pas d'appels d'outils au format lu ; l'atténuation est le profil `sandbox-exec` qui
 refuse la lecture du HOME réel aux bras locaux (`deny_home_by_default`). Une exécution cloud refusée sur son
 événement `init` (outils hors liste) est quand même auditée : la contamination éventuelle est consignée avec le
-refus (`status: tool_error`, `outcome: contaminated`), et l'enregistrement n'est alors jamais rejoué.
+refus (`status: tool_error`, `outcome: contaminated`), et l'enregistrement n'est alors jamais rejoué. De même,
+une **coupure** (signal, panne d'outil) qui tombe **après l'audit** d'une exécution (le signal reçu pendant
+l'audit est différé jusqu'à ce que son résultat soit gardé) donne `status: interrupted` ou `tool_error` **et**
+`outcome: contaminated` avec la contamination déjà trouvée, pour une tentative locale, un tour cloud ou la revue
+du parcours C, ainsi qu'une tentative locale réglée mais pas encore écrite : jamais rejouée. Une coupure
+**avant** la fin de l'audit laisse la tentative vide, rejouable une fois (le flux partiel n'est pas audité).
 
 Le pilote `local_harness` est la commande `omp` (18.4.10) éprouvée le 2026-10-05 (voir ci-dessus).
 
@@ -722,9 +755,16 @@ distant du bundle s'interposent).
 Le registre et le fichier de résultats sont des fichiers **de l'opérateur, sans protection d'intégrité**
 (ni signature, ni chaînage) : supprimer une ligne de résultats permet de rejouer une tentative décidée, supprimer
 une ligne du registre remet un plafond à zéro, et le croisement de `report` ne détecte que les
-incohérences entre les deux fichiers, pas une suppression cohérente dans les deux. Le candidat, lui, ne
-peut ni les lire ni les écrire (dossier d'état interdit en lecture, écriture limitée au bundle et au
-dossier d'essai). L'honnêteté de la campagne repose donc sur l'opérateur : un seul dossier d'état par
+incohérences entre les deux fichiers, pas une suppression cohérente dans les deux. Un bras **local** ne peut
+ni les lire ni les écrire (`sandbox-exec` : dossier d'état interdit en lecture, écriture limitée au bundle et au
+dossier d'essai). Un bras **cloud**, sans `sandbox-exec`, **peut lire et écrire** le registre, les résultats et
+les flux conservés (`streams/`) : ce qui tient, c'est seulement que l'audit relève tout appel d'outil ou ligne de
+commande qui **nomme** un chemin du dossier d'état (lecture ou écriture, l'enregistrement devient `contaminated`),
+sans rien empêcher ni réparer ; une écriture faite par un script, un interpréteur ou un processus fils n'est
+**pas détectée** (limite connue). Les empreintes vérifiées au démarrage (`campaign_sha256`, `manifest_sha256`,
+`envelope_sha256` de chaque ligne `session_started` du registre et de chaque résultat) refusent un état écrit
+sous une autre configuration, pas une ligne supprimée ou modifiée : ce n'est pas un contrôle d'intégrité.
+L'honnêteté de la campagne repose donc sur l'opérateur : un seul dossier d'état par
 identifiant de campagne, jamais d'édition à la main. Une enveloppe renouvelée porte un **nouvel
 identifiant de campagne**, donc un registre et un fichier de résultats distincts ; les résultats de deux
 enveloppes ne se mélangent pas (empreinte `envelope_sha256` vérifiée).
@@ -766,7 +806,9 @@ le format de flux `claude-stream-json`, les clés de candidat `lm_studio_key`/`q
 `load_command`/`file_sha256`/…, le fichier de preuve `pat-19-preflight-2026-10-05.json` dont `command_tried`,
 `pinned_final_argv` et `lms_ps_json_observed`), les refus de préflight
 `loaded_context_*`/`loaded_quantization_*`/`loaded_model_key_*`, l'enregistrement `contaminated`/
-`contamination` (`paths`, `commands`) et `report.contaminated`, `review_excluded`, la note
+`contamination` (`paths`, `commands`) et `report.contaminated`, les règles de l'audit (corps de `heredoc`,
+commentaires, séparateurs entre guillemets, `sh -c`, HOME isolé d'un bras local, dossier de session propre d'un
+bras cloud, `base_literals`, contamination gardée sur une coupure après l'audit), `review_excluded`, la note
 `candidate_fault` (pannes du bundle après l'exécution du bras), `report.void_attempts` (dont les sessions cloud
 sans enregistrement), `local.harness_executable`, `local.step_limit_hit`, le format
 d'enveloppe et de registre (`dry_run`, empreintes, `settled` apparié), le schéma des résultats (`tool_error`,
@@ -780,6 +822,7 @@ configuration produit ni table de routage n'a changé (la table de traduction de
 d'identifiants pour un bras cloud ; l'audit du flux du harnais neutre (trajectoire non analysée) ; l'interdiction
 pour un bras local de signaler le lanceur ; le recalcul des empreintes de poids au préflight ; la borne
 d'étapes du harnais neutre **en cours d'exécution** (transmise au harnais et vérifiée a posteriori) ; la
-détection des chemins ou commandes construits à l'exécution par l'audit ; la fenêtre de quelques instructions
+détection des chemins ou commandes construits à l'exécution par l'audit ; toute protection du dossier d'état
+contre un bras cloud (lecture ou écriture : seul un chemin nommé dans un appel est relevé) ; la fenêtre de quelques instructions
 entre le retour du juge et l'affectation de son verdict. L'application mécanique de R5 reste celle de
 FOUNDRY-123.

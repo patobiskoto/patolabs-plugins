@@ -34,7 +34,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Collection, Mapping, Sequence
 
 from foundry import cost_attribution as ca
 from foundry import local_first_corpus as lfc
@@ -956,30 +956,158 @@ def _within(path: Path, root: Path) -> bool:
 
 # ---- command audit (best effort: the stream shows the command line, not what a script does)
 _COMMAND_KEYS = frozenset({"command", "cmd"})
-_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|&\n`]|\$\(|\)")
 _ASSIGNMENT = re.compile(r"^\w+=")
 _WRAPPERS = frozenset({"env", "sudo", "command", "exec", "nohup", "time", "nice", "xargs", "timeout",
                        "builtin"})
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash"})
+_KEYWORDS = frozenset({"{", "!", "if", "then", "else", "elif", "do", "while", "until"})  # before a command
+# A heredoc fed to one of these (``bash <<EOF``, ``cat <<EOF | sh``, ``source /dev/stdin <<EOF``) is RUN.
+_HEREDOC_RUNNERS = _SHELLS | {"source", ".", "eval"}
 # Executables a cloud arm has no business running (tracker, merge, network, other agents, keychain).
 FORBIDDEN_EXECUTABLES = frozenset({"gh", "curl", "wget", "claude", "codex", "omp", "ssh", "scp", "nc",
                                    "security", "open", "npm"})
 FORBIDDEN_GIT = frozenset({"push", "remote", "clone", "fetch", "pull"})
+_WORD_BREAK = " \t\n;&|()"  # a ``#`` right after one of these (or at the start) opens a comment
+_HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^'\n]*'|\"[^\"\n]*\"|\\?[^\s;&|<>()'\"`]+)+)")
+_QUOTED_PIECES = re.compile(r"[\s'\"`;|&()]+")
+_REDIRECTION = re.compile(r"^\d*(?:<<<|<<-?|>>|<>|>\||[<>])&?")
 
 
-def _segments(command: str) -> list[list[str]]:
-    """Simple command segments of a shell command line (split on ``&& || ; | & `` and ``$(``, quotes
-    dropped). Not a shell parser: a command built at run time or hidden in a script is not seen."""
-    text = command.replace("'", " ").replace('"', " ")
-    return [tokens for tokens in (part.split() for part in _SEGMENT_SPLIT.split(text)) if tokens]
+def _closing(text: str, start: int) -> int:
+    """Index of the ``)`` that closes a ``$(`` whose content starts at ``start`` (quotes skipped),
+    or ``len(text)`` when it is never closed."""
+    depth, i = 1, start
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            i += 1
+        elif ch in "'\"":
+            end = text.find(ch, i + 1)
+            i = len(text) if end < 0 else end
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return len(text)
+
+
+def _segments(command: str) -> list[list[tuple[str, str]]]:
+    """Simple command segments of a shell command line, split on ``&& || ; | & ( )`` and newlines
+    OUTSIDE quotes only (``grep -E "claude|codex" src`` is one segment), a ``#`` comment dropped. Each
+    word is ``(neutral, raw)``: ``raw`` has its quotes removed; ``neutral`` also has what the shell does
+    NOT expand neutralised for the path audit (a ``~`` inside quotes, a ``$`` inside single quotes
+    become ``_``). A ``$(...)`` or a backquoted command, unquoted or inside double quotes, is run: its
+    own segments come first. Not a shell parser: a command built at run time or hidden in a script is
+    not seen."""
+    segments: list[list[tuple[str, str]]] = []
+    words: list[tuple[str, str]] = []
+    neutral: list[str] = []
+    raw: list[str] = []
+    started = False
+    i, n = 0, len(command)
+
+    def end_word() -> None:
+        nonlocal started
+        if started:
+            words.append(("".join(neutral), "".join(raw)))
+        neutral.clear()
+        raw.clear()
+        started = False
+
+    def end_segment() -> None:
+        nonlocal words
+        end_word()
+        if words:
+            segments.append(words)
+        words = []
+
+    def add(ch: str, quote: str | None) -> None:
+        nonlocal started
+        started = True
+        raw.append(ch)
+        neutral.append("_" if quote and (ch == "~" or (ch == "$" and quote == "'")) else ch)
+
+    while i < n:
+        ch = command[i]
+        if ch in " \t":
+            end_word()
+        elif ch in "\n;&|()":
+            end_segment()
+        elif ch == "#" and not started:
+            newline = command.find("\n", i)
+            i = n if newline < 0 else newline
+            continue
+        elif ch == "\\":
+            if i + 1 < n and command[i + 1] != "\n":
+                add(command[i + 1], "\\")
+            i += 2
+            continue
+        elif ch == "'":
+            end = command.find("'", i + 1)
+            end = n if end < 0 else end
+            for c in command[i + 1:end]:
+                add(c, "'")
+            started = True
+            i = end + 1
+            continue
+        elif command.startswith("$(", i):
+            end = _closing(command, i + 2)
+            segments += _segments(command[i + 2:end])
+            started = True
+            i = end + 1
+            continue
+        elif ch == "`":
+            end = command.find("`", i + 1)
+            end = n if end < 0 else end
+            segments += _segments(command[i + 1:end])
+            started = True
+            i = end + 1
+            continue
+        elif ch == '"':
+            started = True
+            j = i + 1
+            while j < n and command[j] != '"':
+                c = command[j]
+                if c == "\\" and j + 1 < n:
+                    if command[j + 1] in '$`"\\':
+                        add(command[j + 1], '"')
+                    elif command[j + 1] != "\n":
+                        add(c, '"')
+                        add(command[j + 1], '"')
+                    j += 2
+                    continue
+                if command.startswith("$(", j):
+                    end = _closing(command, j + 2)
+                    segments += _segments(command[j + 2:end])
+                    j = end + 1
+                    continue
+                if c == "`":
+                    end = command.find("`", j + 1)
+                    end = n if end < 0 else end
+                    segments += _segments(command[j + 1:end])
+                    j = end + 1
+                    continue
+                add(c, '"')
+                j += 1
+            i = j + 1
+            continue
+        else:
+            add(ch, None)
+        i += 1
+    end_segment()
+    return segments
 
 
 def _strip_wrappers(tokens: Sequence[str]) -> list[str]:
     """Drop leading ``VAR=value``, ``env``, ``sudo``, ``command``, ``exec``, ``nohup``, ``time``,
-    ``nice``, ``xargs``, ``timeout`` and their options."""
+    ``nice``, ``xargs``, ``timeout`` and their options, and the shell keywords that precede a command
+    (``{``, ``!``, ``if``, ``then``, ``else``, ``elif``, ``do``, ``while``, ``until``)."""
     rest = list(tokens)
     while rest:
-        if _ASSIGNMENT.match(rest[0]):
+        if _ASSIGNMENT.match(rest[0]) or rest[0] in _KEYWORDS:
             rest.pop(0)
         elif os.path.basename(rest[0].lstrip("\\({")) in _WRAPPERS:
             wrapper = os.path.basename(rest.pop(0).lstrip("\\({"))
@@ -991,17 +1119,41 @@ def _strip_wrappers(tokens: Sequence[str]) -> list[str]:
     return rest
 
 
-def _forbidden_command(tokens: Sequence[str]) -> str | None:
-    """The forbidden executable a segment starts with (after wrappers and ``sh -c``), or ``None``."""
-    rest = _strip_wrappers(tokens)
-    if not rest:
+def _unwrapped(segment: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``segment`` without its wrappers (decided on the raw words)."""
+    raw = [r for _, r in segment]
+    return list(segment[len(raw) - len(_strip_wrappers(raw)):])
+
+
+def _shell_script(raw: Sequence[str]) -> str | None:
+    """The script a ``sh|bash|zsh|dash -c <script>`` segment (wrappers stripped) runs, else ``None``."""
+    if not raw or os.path.basename(raw[0].lstrip("\\({")) not in _SHELLS:
         return None
-    exe, args = os.path.basename(rest[0].lstrip("\\({")), rest[1:]
-    if exe in _SHELLS:
-        for n, arg in enumerate(args):
-            if arg.startswith("-") and "c" in arg[1:]:
-                return _forbidden_command(args[n + 1:])
-        return None
+    for n, arg in enumerate(raw[1:], 1):
+        if arg.startswith("-") and "c" in arg[1:]:
+            return raw[n + 1] if n + 1 < len(raw) else ""
+    return None
+
+
+def _forbidden_commands(command: str) -> list[str]:
+    """The forbidden executables the command line runs (after wrappers, descending into ``sh -c``)."""
+    found: list[str] = []
+    for segment in _segments(command):
+        rest = [r for _, r in _unwrapped(segment)]
+        if not rest:
+            continue
+        script = _shell_script(rest)
+        if script is not None:  # the script is a command line, with its own heredocs
+            stripped, executed = _without_heredocs(script)
+            found += [x for text in (stripped, *executed) for x in _forbidden_commands(text)]
+        elif (label := _forbidden_label(rest)) is not None:
+            found.append(label)
+    return found
+
+
+def _forbidden_label(rest: Sequence[str]) -> str | None:
+    """The forbidden executable a segment (wrappers stripped) starts with, or ``None``."""
+    exe, args = os.path.basename(rest[0].lstrip("\\({")), list(rest[1:])
     if exe in FORBIDDEN_EXECUTABLES:
         return exe
     if exe == "git":
@@ -1023,6 +1175,155 @@ def _forbidden_command(tokens: Sequence[str]) -> str | None:
     if exe in ("pip", "pip3") and "install" in args:
         return "pip install"
     return None
+
+
+def _heredoc_end(command: str, start: int, delimiter: str, tabs: bool) -> tuple[int, int] | None:
+    """``(start of the delimiter line, end of it)`` of a heredoc body that starts at ``start``, or
+    ``None`` when no line closes it."""
+    pos = start
+    while True:
+        newline = command.find("\n", pos)
+        end = len(command) if newline < 0 else newline
+        line = command[pos:end]
+        if (line.lstrip("\t") if tabs else line) == delimiter:
+            return pos, (end if newline < 0 else end + 1)
+        if newline < 0:
+            return None
+        pos = newline + 1
+
+
+def _substitutions(body: str) -> list[str]:
+    """The commands a heredoc body with an UNQUOTED delimiter runs when the shell expands it: every
+    ``$(...)`` and backquoted command (an escaped ``\\$`` stays literal)."""
+    found, i = [], 0
+    while i < len(body):
+        if body[i] == "\\":
+            i += 2
+            continue
+        if body.startswith("$(", i):
+            end = _closing(body, i + 2)
+            found.append(body[i + 2:end])
+            i = end + 1
+            continue
+        if body[i] == "`":
+            end = body.find("`", i + 1)
+            end = len(body) if end < 0 else end
+            found.append(body[i + 1:end])
+            i = end + 1
+            continue
+        i += 1
+    return found
+
+
+def _runs_heredoc(line: str) -> bool:
+    """Whether a segment of the line that holds a ``<<`` feeds its input to a shell (``bash <<EOF``,
+    ``sh -s <<EOF``, ``cat <<EOF | bash``, ``source /dev/stdin <<EOF``)."""
+    for segment in _segments(line):
+        rest = [r for _, r in _unwrapped(segment)]
+        if rest and os.path.basename(rest[0].lstrip("\\({")) in _HEREDOC_RUNNERS \
+                and _shell_script(rest) is None:
+            return True
+    return False
+
+
+def _without_heredocs(command: str) -> tuple[str, list[str]]:
+    """The command line without its heredoc bodies and ``#`` comments, and the bodies a shell RUNS.
+    The shell never runs nor expands a heredoc body given to ``cat``, ``python3 -`` or ``tee`` (a test
+    file that lists ``"gh pr merge 12"``, a doc that names ``~/.config/foundry``): it is text. A body
+    fed to a shell (see ``_runs_heredoc``) is returned to be audited as a command line. A ``<<`` inside
+    quotes or arithmetic (``$((1 << 2))``) is not a heredoc; a heredoc whose delimiter line never comes
+    is kept as it is (audited). With an UNQUOTED delimiter (``<<EOF``) the shell expands the body: its
+    ``$(...)`` and backquoted commands are returned too (``_substitutions``)."""
+    out: list[str] = []
+    executed: list[str] = []
+    stack: list[str] = []  # open contexts: ' " $( ( ` ((
+    pending: list[tuple[str, bool, bool]] = []  # (delimiter, ``<<-``, quoted delimiter)
+    line_start, i, n = 0, 0, len(command)
+    while i < n:
+        ch = command[i]
+        top = stack[-1] if stack else ""
+        if top == "'":
+            if ch == "'":
+                stack.pop()
+        elif top == "((":
+            if command.startswith("))", i):
+                stack.pop()
+                out.append("))")
+                i += 2
+                continue
+        elif ch == "\\" and i + 1 < n:
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        elif command.startswith("$((", i):
+            stack.append("((")
+            out.append("$((")
+            i += 3
+            continue
+        elif command.startswith("$(", i):
+            stack.append("$(")
+            out.append("$(")
+            i += 2
+            continue
+        elif ch == "`":
+            if top == "`":
+                stack.pop()
+            else:
+                stack.append("`")
+        elif top == '"':
+            if ch == '"':
+                stack.pop()
+        elif ch in "'\"":
+            stack.append(ch)
+        elif command.startswith("((", i) and (i == 0 or command[i - 1] in _WORD_BREAK):
+            stack.append("((")
+            out.append("((")
+            i += 2
+            continue
+        elif ch == "(":
+            stack.append("(")
+        elif ch == ")":
+            if top in ("(", "$("):
+                stack.pop()
+        elif ch == "#" and (i == 0 or command[i - 1] in _WORD_BREAK):
+            newline = command.find("\n", i)
+            i = n if newline < 0 else newline
+            continue
+        elif command.startswith("<<<", i):  # a here-string: its word is on the line, no body
+            out.append("<<<")
+            i += 3
+            continue
+        elif command.startswith("<<", i) and (match := _HEREDOC.match(command, i)):
+            word = re.sub(r"['\"\\]", "", match.group(2))
+            pending.append((word, match.group(1) == "-", word != match.group(2)))
+            out.append(match.group(0))
+            i = match.end()
+            continue
+        elif ch == "\n" and pending:
+            out.append("\n")
+            holding, start = "".join(out[line_start:]), i + 1
+            bodies: list[str] = []
+            for delimiter, tabs, quoted in pending:
+                found = _heredoc_end(command, start, delimiter, tabs)
+                if found is None:  # never closed: what follows stays audited as commands
+                    break
+                bodies.append(command[start:found[0]])
+                if not quoted:  # ``<<EOF``: the shell runs the body's ``$(...)`` and backquotes
+                    executed += _substitutions(bodies[-1])
+                start = found[1]
+            pending = []
+            if holding.rstrip().endswith("|"):  # ``cat <<EOF |`` <body> ``bash``: the pipe goes on after
+                holding += command[start:].split("\n", 1)[0]
+            if _runs_heredoc(holding):
+                executed += bodies
+            i = start
+            line_start = len(out)
+            continue
+        out.append(ch)
+        if ch == "\n" and not stack:
+            line_start = len(out)
+        i += 1
+    return "".join(out), executed
 
 
 def _pathlike(token: str) -> bool:
@@ -1052,8 +1353,8 @@ def _unquoted_expansions(command: str) -> str:
     """The command with what the shell does NOT expand neutralised for the path audit: a ``~`` inside
     single or double quotes and a ``$`` inside single quotes become ``_`` (``grep -rn '~/.claude' .``
     searches the text ``~/.claude``, it reads nothing under the home). An unquoted ``~`` or ``$HOME``
-    and a ``$HOME`` inside double quotes are kept (``cat ~/.config/x`` stays an access). Best effort:
-    a quote inside a heredoc body is read like any other."""
+    and a ``$HOME`` inside double quotes are kept (``cat ~/.config/x`` stays an access). Expects the
+    command without its heredoc bodies (``_without_heredocs``)."""
     out, quote, escaped = [], None, False
     for ch in command:
         if escaped:
@@ -1084,9 +1385,10 @@ def _expand(token: str, home: str) -> str | None:
 def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bool]]:
     """Every path a command line names, resolved against the working directory the line has at that
     point (``cd`` is followed): ``find ~``, ``cd ~ && cat .claude/x``, ``src/../../..`` included; a bare
-    ``/`` only as an argument of a filesystem reader (``find / -name x``, see ``_reads_root``). The
-    flag says the path was RELATIVE to the bundle (an honest arm never climbs out of it). Expects the
-    command after ``_unquoted_expansions``."""
+    ``/`` only as an argument of a filesystem reader (``find / -name x``, see ``_reads_root``); the
+    script of a ``sh -c`` is read the same way. The flag says the path was RELATIVE to the bundle (an
+    honest arm never climbs out of it). ``home`` is what ``~`` and ``$HOME`` mean for the arm. Expects
+    the command without its heredoc bodies (``_without_heredocs``)."""
     cwd, out = bundle, []
 
     def resolve(token: str) -> tuple[Path, bool] | None:
@@ -1096,24 +1398,59 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
         relative = not os.path.isabs(expanded) and cwd == bundle
         return Path(os.path.realpath(expanded if os.path.isabs(expanded) else cwd / expanded)), relative
 
-    for segment in _segments(command):
-        tokens = _strip_wrappers(segment)
-        if tokens and os.path.basename(tokens[0]) == "cd":
-            target = next((t for t in tokens[1:] if not t.startswith("-")), "~")
-            found = resolve(target)
-            if found is not None:
-                out.append(found)
-                cwd = found[0]
-            continue
-        root_reader = _reads_root(tokens)
-        for token in tokens:
-            token = token.lstrip("<>")
-            if token.startswith("-"):
-                token = token.partition("=")[2]
-            if token and (_pathlike(token) or (root_reader and not token.strip("/"))) \
-                    and (found := resolve(token)) is not None:
-                out.append(found)
+    def walk(text: str, depth: int = 0) -> None:
+        nonlocal cwd
+        for segment in _segments(text):
+            words = _unwrapped(segment)
+            tokens = [w for w, _ in words]
+            script = _shell_script([r for _, r in words])
+            if script is not None and depth < 8:
+                stripped, executed = _without_heredocs(script)
+                for text in (stripped, *executed):
+                    walk(text, depth + 1)
+                continue
+            if tokens and os.path.basename(tokens[0]) == "cd":
+                target = next((t for t in tokens[1:] if not t.startswith("-")), "~")
+                found = resolve(target)
+                if found is not None:
+                    out.append(found)
+                    cwd = found[0]
+                continue
+            root_reader = _reads_root(tokens)
+            for word in tokens:  # a quoted word is also read piece by piece (``python3 -c "open('../x')"``)
+                for token in dict.fromkeys([word, *_QUOTED_PIECES.split(word)]):
+                    token = _REDIRECTION.sub("", token)
+                    if token.startswith("-"):
+                        token = token.partition("=")[2]
+                    if token and (_pathlike(token) or (root_reader and not token.strip("/"))) \
+                            and (found := resolve(token)) is not None:
+                        out.append(found)
+
+    walk(command)
     return out
+
+
+def _result_token(token: str) -> str:
+    """A path token of result text without a ``file.py:12:`` location suffix or a trailing ``:``/``.``."""
+    return re.sub(r":\d+(?::\d+)?:?$", "", token).rstrip(":.")
+
+
+def base_literals(bundle: Path, home: str) -> frozenset[str]:
+    """Literal absolute paths under the real ``home`` that the bundle's OWN files contain (a qualification
+    doc of the base that records ``/Users/<u>/.codex/worktrees/...``), with the token shapes of the
+    tool-result scan. Read with ``git grep`` on the bundle as built, BEFORE any arm runs (and before a
+    previous attempt's patch is applied): the arm cannot add to it. Such a path shown in a tool RESULT is
+    the text of a bundle file, not an access (``audit_transcript``)."""
+    prefixes = list(dict.fromkeys(p.rstrip("/") + "/" for p in (str(home), os.path.realpath(home)) if p))
+    patterns = [arg for prefix in prefixes for arg in ("-e", prefix)]
+    out = _git_in(bundle, "grep", "-I", "-h", "-F", *patterns, ok=(0, 1))
+    found = set()
+    for line in out.decode("utf-8", "replace").splitlines():
+        for token in _path_tokens(line):
+            token = _result_token(token)
+            if token.startswith(tuple(prefixes)):
+                found.add(token)
+    return frozenset(found)
 
 
 def _tool_results(lines: Sequence[str]) -> list[str]:
@@ -1138,7 +1475,9 @@ def _tool_results(lines: Sequence[str]) -> list[str]:
 
 
 def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive: Sequence[Path],
-                     home: str) -> list[str]:
+                     home: str, arm_home: str | None = None,
+                     own_session: tuple[str, str] | None = None,
+                     literals: Collection[str] = frozenset()) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -1148,17 +1487,25 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     or a Bash command also any path that resolves to the real home or below it, to a directory that
     contains a sensitive path, or to an ancestor of the bundle (``find ~``, ``src/../../..``). In a
     command, ``~`` and ``$HOME`` are expanded only where the shell expands them (``grep -rn '~/.claude'
-    .`` is clean, ``cat ~/.config/x`` is not). ``tool_result:<path>`` for a LITERAL absolute path under
-    a sensitive root that a tool RESULT shows (``~``/``$HOME`` in result text are not expanded: a file
-    of the bundle that mentions ``~/.claude`` is text, not an access); ``command:<label>`` for a Bash
-    command that runs a forbidden executable (see ``FORBIDDEN_EXECUTABLES``, ``git push|remote|clone|
-    fetch|pull``, ``python -m http``, ``pip install``). Best effort on a command line (a path or a
-    command built at run time, or run by a script, is not seen). A non-empty result makes the attempt
-    ``contaminated``. ``~`` shows as the home directory in the result. Known limit: a token made only of
-    slashes (``/``, ``//``) is the division operator of code, not a path, EXCEPT as an argument of a
-    filesystem reader (``find``, ``grep -r``, ``rg``, ``ls``, ``du``, ``tree``, ``cat``): ``find / -name x
-    -exec cat {} +`` is flagged, while a bare ``/`` reaching the shell any other way (``echo / | xargs
-    ls``, a script) is not seen."""
+    .`` is clean, ``cat ~/.config/x`` is not), and to ``arm_home``, the HOME the arm really had (the
+    isolated one, inside the attempt directory, for a local arm; the real ``home`` by default). A
+    heredoc body is text unless a shell runs it, a ``#`` comment is text, and a separator inside quotes
+    does not split a command (``grep -E "claude|codex" src``): see ``_without_heredocs`` and
+    ``_segments``. ``tool_result:<path>`` for a LITERAL absolute path under a sensitive root that a tool
+    RESULT shows (``~``/``$HOME`` in result text are not expanded: a file of the bundle that mentions
+    ``~/.claude`` is text, not an access); ``command:<label>`` for a Bash command that runs a forbidden
+    executable (see ``FORBIDDEN_EXECUTABLES``, ``git push|remote|clone|fetch|pull``, ``python -m http``,
+    ``pip install``). ``own_session`` (``(projects_dir, session_id)``, a cloud arm) allows the arm's OWN
+    session directory ``<projects_dir>/*/<session_id>/``, where Claude Code saves a tool output too large
+    for the stream (the result names it, the arm then reads it); another session's directory stays a
+    hit. ``literals`` (``base_literals``): a path whose literal text is one of them is not flagged in a tool
+    RESULT (the arm read a bundle file that mentions it); path keys and commands that name it still are.
+    Best effort on a command line (a path or a command built at run time, or run by a script, is
+    not seen). A non-empty result makes the attempt ``contaminated``. ``~`` shows as the home directory
+    in the result. Known limit: a token made only of slashes (``/``, ``//``) is the division operator of
+    code, not a path, EXCEPT as an argument of a filesystem reader (``find``, ``grep -r``, ``rg``, ``ls``,
+    ``du``, ``tree``, ``cat``): ``find / -name x -exec cat {} +`` is flagged, while a bare ``/`` reaching
+    the shell any other way (``echo / | xargs ls``, a script) is not seen."""
     try:
         lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
     except FileNotFoundError:
@@ -1166,8 +1513,21 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     except OSError as exc:
         raise RunnerError(f"transcript unreadable, it cannot be audited: {exc}") from None
     bundle_real, home_real = Path(os.path.realpath(bundle)), Path(os.path.realpath(home))
+    tilde = os.path.realpath(arm_home) if arm_home is not None else str(home_real)
     allowed = [bundle_real, Path(os.path.realpath(scratch))]
     roots = [Path(os.path.realpath(p)) for p in sensitive]
+    projects: Path | None = None
+    if own_session is not None and own_session[1]:
+        expanded = _expand(own_session[0], str(home_real))
+        projects = Path(os.path.realpath(os.path.expanduser(own_session[0]) if expanded is None else expanded))
+
+    def permitted(path: Path) -> bool:
+        if any(_within(path, a) for a in allowed):
+            return True
+        if projects is None or path == projects or projects not in path.parents:
+            return False
+        parts = path.relative_to(projects).parts
+        return len(parts) >= 2 and parts[1] == own_session[1]
 
     def shown(path: Path) -> str:
         return str(path).replace(str(home_real), "~", 1)
@@ -1176,7 +1536,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     commands: dict[str, None] = {}
 
     def consider(path: Path, broad: bool, relative: bool = False) -> None:
-        if any(_within(path, a) for a in allowed):
+        if permitted(path):
             return
         if any(_within(path, r) for r in roots) or relative or (broad and (
                 _within(path, home_real) or _within(bundle_real, path)
@@ -1187,30 +1547,33 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
         path_keys = _PATH_KEYS | ({"pattern"} if name.lower() in _GLOB_TOOLS else frozenset())
         for key, text in _strings(args):
             if key in _COMMAND_KEYS:
-                literal = _unquoted_expansions(text)
-                tokens = _path_tokens(literal)
+                stripped, executed = _without_heredocs(text)
+                scripts = [stripped, *executed]  # a body a shell runs is a command line too
+                tokens = [t for script in scripts for t in _path_tokens(_unquoted_expansions(script))]
             elif key in path_keys:
                 tokens = _path_tokens(text) + [text.strip()]
             else:  # text the arm writes or searches (Edit, Write, Grep pattern...): not an access
                 continue
             for token in tokens:
-                token = _expand(token, str(home_real))
+                token = _expand(token, tilde)
                 if token is not None:
                     consider(Path(os.path.realpath(token if os.path.isabs(token) else bundle / token)),
                              key in path_keys, key in path_keys and not os.path.isabs(token))
             if key in _COMMAND_KEYS:
-                for path, relative in _command_paths(literal, bundle_real, str(home_real)):
-                    consider(path, True, relative)
-                for segment in _segments(text):
-                    if (found := _forbidden_command(segment)) is not None:
+                for script in scripts:
+                    for path, relative in _command_paths(script, bundle_real, tilde):
+                        consider(path, True, relative)
+                    for found in _forbidden_commands(script):
                         commands[f"command:{found}"] = None
     seen: dict[str, None] = {}
     for text in _tool_results(lines):
         for token in _path_tokens(text):
-            token = re.sub(r":\d+(?::\d+)?:?$", "", token).rstrip(":.")  # ``file.py:12:`` locations
+            token = _result_token(token)  # ``file.py:12:`` locations
+            if token in literals:  # the text of a bundle file (``base_literals``), not an access
+                continue
             if os.path.isabs(token):  # a literal path only: ``~``/``$HOME`` in text are not expanded
                 path = Path(os.path.realpath(token))
-                if any(_within(path, r) for r in roots) and not any(_within(path, a) for a in allowed):
+                if any(_within(path, r) for r in roots) and not permitted(path):
                     seen[f"tool_result:{shown(path)}"] = None
     return [*sorted(hits), *sorted(seen), *sorted(commands)]
 
@@ -1324,6 +1687,7 @@ class Runner:
                     sandbox_text(driver, [self.work_root, *_extra_write(driver)], self._deny_read(driver),
                                  *self._home_policy(driver))
         self.sessions: list[str] = []  # session id of every cloud execution reserved in the ledger
+        self.audited: dict[str, list[str]] = {}  # contamination found in each audited cloud execution
         self.work_root.mkdir(parents=True, exist_ok=True)
         self.ledger = Ledger(self.state_dir, envelope, mode, now, dry_run=dry_run,
                              provenance=self.provenance)
@@ -1336,6 +1700,7 @@ class Runner:
         self.stopped: str | None = None
         self.handed: set[Path] = set()
         self.guards: dict[Path, tuple[str, dict[str, str | None]]] = {}
+        self.literals: dict[Path, frozenset[str]] = {}  # ``base_literals`` of each bundle handed out
 
     # ---- bookkeeping
     def _scan_results(self) -> set[tuple]:
@@ -1414,6 +1779,10 @@ class Runner:
         self.ledger.check(cloud=True)
         return {"attempt": first_attempt, "attempt_dir": None, "outcome": first["outcome"],
                 "reason": first.get("reason"), "cloud_sessions": list(first["cloud_sessions"])}
+
+    def _audited_since(self, mark: int) -> list[str]:
+        """Contamination found by the audits of the cloud executions reserved since ``mark``."""
+        return list(dict.fromkeys(c for sid in self.sessions[mark:] for c in self.audited.get(sid, [])))
 
     def _emit(self, record: dict[str, Any]) -> dict[str, Any]:
         record = {"schema": RESULT_SCHEMA, "campaign_id": self.envelope["campaign_id"],
@@ -1504,16 +1873,31 @@ class Runner:
         """A harness executable that cannot be resolved is refused before any claim or spend."""
         self._executable(self._driver(driver_id))
 
-    def _audit(self, stream_log: Path, bundle: Path, scratch: Path) -> list[str]:
+    def _audit(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
+               session_id: str | None = None) -> list[str]:
         """Contamination audit of one arm's tool calls, on the stream the launcher kept. Always against
         the strictest list (the one of a local arm): a cloud arm keeps ``~/.claude`` for its identity,
-        but reading anything there (the plugin cache holds the merged tests) is a contamination."""
-        env = os.environ if self.host_env is None else self.host_env
-        home = str(env.get("HOME") or Path.home())
+        but reading anything there (the plugin cache holds the merged tests) is a contamination, except
+        its OWN session directory (``session_log.projects_dir``/*/<session id>/: Claude Code's saved tool
+        outputs). A local arm's ``~`` is its isolated HOME (``isolated_environment``), not the real one.
+        A literal real-home path that the bundle's own files contain (``base_literals``, computed when the
+        bundle was built) is not flagged in a tool result."""
+        home = self._home()
         sensitive = read_deny_list(
             repo=self.repo, home=home, state_dir=self.state_dir, input_paths=self.input_paths,
             kind="local_harness", isolation=(self.campaign.get("isolation") or {}).get("deny_read_home"))
-        return audit_transcript(stream_log, bundle=bundle, scratch=scratch, sensitive=sensitive, home=home)
+        isolated = driver.get("home", "isolated") == "isolated"
+        own = None
+        if session_id and not isolated:
+            own = ((driver.get("session_log") or {}).get("projects_dir", "~/.claude/projects"), session_id)
+        return audit_transcript(stream_log, bundle=bundle, scratch=scratch, sensitive=sensitive, home=home,
+                                arm_home=str(scratch / "home") if isolated else None, own_session=own,
+                                literals=self.literals.get(bundle, frozenset()))
+
+    def _home(self) -> str:
+        """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""
+        env = os.environ if self.host_env is None else self.host_env
+        return str(env.get("HOME") or Path.home())
 
     def _attempt_name(self, task: Mapping[str, Any], label: str) -> str:
         """Unique across the launches of one campaign (the launch rank comes from the ledger): a
@@ -1537,12 +1921,14 @@ class Runner:
             _git_in(bundle, "commit", "-q", "--amend", "--no-edit", "--no-verify")
             root = _git_in(bundle, "rev-parse", "HEAD").decode().strip()
             self.guards[bundle] = (root, _git_surface(bundle))
+            self.literals[bundle] = base_literals(bundle, self._home())  # before any patch or arm
             if patch:
                 _apply_patch(bundle, patch)
             if lfc.is_judged(bundle) or bundle in self.handed:
                 raise RunnerError("refusing to hand a judged or reused bundle to a candidate")
         except BaseException:  # nothing is left on disk when the bundle cannot be prepared
             self.guards.pop(bundle, None)
+            self.literals.pop(bundle, None)
             lfc.remove_bundle(bundle)
             shutil.rmtree(attempt_dir, ignore_errors=True)
             raise
@@ -1551,6 +1937,7 @@ class Runner:
 
     def _discard(self, bundle: Path, attempt_dir: Path) -> None:
         self.guards.pop(bundle, None)
+        self.literals.pop(bundle, None)
         lfc.remove_bundle(bundle)
         shutil.rmtree(attempt_dir, ignore_errors=True)
 
@@ -1607,12 +1994,15 @@ class Runner:
                     by_role: Mapping[str, Any] | None = None, by_model: Mapping[str, Any] | None = None,
                     local: Mapping[str, Any] | None = None,
                     replay_of: Mapping[str, Any] | None = None, judge: Mapping[str, Any] | None = None,
-                    review: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+                    review: Mapping[str, Any] | None = None, contamination: Sequence[str] = ()
+                    ) -> dict[str, Any] | None:
         """A tool failure or an interruption (Ctrl-C, SIGTERM, any other exception) is recorded as
         such, never as a new verdict, before the campaign stops. An interrupted attempt has an unknown
         cost (``billing_total`` null), like any record whose cloud executions were not all read. A cut
         that comes AFTER a verdict (``judge``) or a review keeps them on the record: the attempt is then
-        decided and a relaunch never replays it (no second chance after a verdict)."""
+        decided and a relaunch never replays it (no second chance after a verdict). ``contamination``
+        already found by an audit of the attempt (a cut right after it) makes the record ``contaminated``,
+        never replayed, like a refusal that carries one."""
         status = _cut(exc)
         reason = (str(exc) or type(exc).__name__)[:200] if status == "tool_error" \
             else f"{type(exc).__name__}: {exc}"[:200]
@@ -1632,9 +2022,9 @@ class Runner:
             "local": ({"ended_by_external_signal": False, **local} if local else None),
             "machine": None, "unknown": {status: reason},
             **({"replay_of": dict(replay_of)} if replay_of else {})}
-        if getattr(exc, "contamination", None):  # refused AND contaminated: never replayed either
-            record.update(contaminated=True, outcome="contaminated",
-                          contamination=_contamination(exc.contamination))
+        found = list(dict.fromkeys([*contamination, *(getattr(exc, "contamination", None) or [])]))
+        if found:  # refused or cut AND contaminated: never replayed either
+            record.update(contaminated=True, outcome="contaminated", contamination=_contamination(found))
             record["unknown"]["contaminated"] = _CONTAMINATED
         if _record_key(record) in self.emitted:  # the attempt reached the results just before the cut
             return None
@@ -1653,6 +2043,7 @@ class Runner:
         bounds = self.campaign["bounds"]
         model = self.campaign["candidates"][candidate_id]["model"]
         execution, started, verdict = None, None, None
+        contamination: list[str] = []
         name = self._attempt_name(task, f"{path}-local-{candidate_id}")
         self.ledger.append("attempt_started", attempt_dir=name, path=path, pr=task["pr"],
                            set=task_set, candidate=candidate_id, segment="local", attempt=attempt)
@@ -1676,7 +2067,8 @@ class Runner:
                     deny_read=self._deny_read(driver), host_env=self.host_env,
                     deny_home=deny_home, allow_read=allow_read)
                 after = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
-                contamination = self._audit(stream_log, bundle, attempt_dir / "scratch")
+                with self._critical():  # a signal right after the audit never loses its result
+                    contamination = self._audit(stream_log, bundle, attempt_dir / "scratch", driver)
                 try:
                     patch = self._patch_of(bundle)
                 except CandidateFault as fault:  # the arm's doing: refused, never void and replayed
@@ -1696,7 +2088,8 @@ class Runner:
                 self._tool_error(task, path, "local", attempt, task_set, exc, wall=wall,
                                  local={"harness": driver_id, "harness_kind": driver["kind"],
                                         "candidate": candidate_id}, replay_of=replay_of,
-                                 judge=_judge_summary(verdict) if verdict else None)
+                                 judge=_judge_summary(verdict) if verdict else None,
+                                 contamination=contamination)
             raise
         with self._critical():  # settled and registered as unrecorded together (see ``_stop``)
             self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None,
@@ -1787,7 +2180,9 @@ class Runner:
         execution["session_id"] = session_id
         execution["by_model"] = by_model if tokens is not None else {}
         refusal = tool_allowlist_refusal(driver, execution["stream"])
-        execution["contamination"] = self._audit(stream_log, bundle, scratch)  # refused or not
+        with self._critical():  # refused or not; a signal right after the audit never loses its result
+            execution["contamination"] = self._audit(stream_log, bundle, scratch, driver, session_id)
+            self.audited[session_id] = execution["contamination"]
         if refusal:  # money is settled above; the record is refused (a tool error, never a verdict)
             raise ToolsetRefused(refusal, execution["contamination"])
         return execution, tokens, reason
@@ -1914,7 +2309,7 @@ class Runner:
                     sessions=self.sessions[mark:], by_role=by_role, by_model=models, replay_of=again,
                     judge=_judge_summary(verdict) if verdict else None,
                     review={"rounds": len(state["rounds"]), "verdicts": state["rounds"]}
-                    if state["rounds"] else None)
+                    if state["rounds"] else None, contamination=self._audited_since(mark))
                 raise
             outcome = state["outcome"]
             if outcome in ("accepted", "review_unreadable", "contaminated"):
@@ -1972,9 +2367,10 @@ class Runner:
                     local["unknown"][cut] = local["reason"]
                 if spent or cut == "interrupted":  # a started review of unread cost: never 0
                     local["premium"]["billing_total"] = None
-                if getattr(exc, "contamination", None):  # a refused review that also touched paths
+                found = self._audited_since(mark) or getattr(exc, "contamination", None)
+                if found:  # a review that touched paths, refused or cut after its audit
                     local.update(contaminated=True, accepted=None, outcome="contaminated",
-                                 contamination=_contamination(exc.contamination))
+                                 contamination=_contamination(found))
                     local["unknown"]["contaminated"] = "the reviewer's " + _CONTAMINATED[len("the arm's "):]
                 self._emit(local)
                 raise
@@ -2161,7 +2557,8 @@ class Runner:
         status = _cut(exc)
         reason = (str(exc) or type(exc).__name__)[:200] if status == "tool_error" \
             else f"{type(exc).__name__}: {exc}"[:200]
-        record.update(outcome=status, status=status, reason=reason, accepted=None)
+        record.update(outcome="contaminated" if record.get("contaminated") else status, status=status,
+                      reason=reason, accepted=None)  # a contamination found is never lost by the cut
         record["unknown"][status] = reason
         if status == "interrupted":
             record["premium"] = {**record["premium"], "billing_total": None}
@@ -2209,12 +2606,12 @@ def _logical_key(rec: Mapping[str, Any]) -> tuple:
                         rec.get("attempt", 0))[:6]
 
 
-def _git_in(bundle: Path, *args: str, stdin: bytes | None = None) -> bytes:
+def _git_in(bundle: Path, *args: str, stdin: bytes | None = None, ok: Sequence[int] = (0,)) -> bytes:
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_GLOBAL": os.devnull,
            "GIT_CONFIG_SYSTEM": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", **lfc.BUNDLE_AUTHOR}
     proc = subprocess.run(["git", "-C", str(bundle), *_GIT_NEUTRAL, *args], input=stdin,
                           capture_output=True, env=env, check=False)
-    if proc.returncode != 0:
+    if proc.returncode not in ok:
         stderr = proc.stderr.decode("utf-8", "replace")
         for prefix in (os.path.realpath(bundle), str(bundle)):  # an error names no work path
             stderr = stderr.replace(prefix, "<bundle>")

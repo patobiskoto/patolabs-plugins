@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed (PAT-111, review round 3; fake arms only): the contamination audit no longer reads heredoc bodies given to
+  `cat`/`tee`/`python3 -` (a body a shell runs, and the `$(…)` of an unquoted-delimiter body, stay audited),
+  `#` comments or separators inside quotes as commands/paths, allows a cloud arm's own Claude Code session
+  directory (saved tool outputs), ignores in tool results only the real-home paths the bundle's own files
+  contain (`base_literals`, read at bundle build; PR 83's base), expands a local arm's `~` to its isolated HOME, and a cut after the audit keeps
+  the contamination on the record (never replayed); the docs no longer claim a cloud arm cannot touch the state files.
 - Fixed (PAT-111, review round 2; fake arms only, no real arm run): the contamination audit no longer
   treats text as an access: only path arguments (`path`, `file_path`…, the `pattern` of a Glob/find tool) and
   shell commands are read, not what an arm writes or searches (Edit/Write content, Grep pattern); a tool
