@@ -999,7 +999,7 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash"})
 _KEYWORDS = frozenset({"{", "!", "if", "then", "else", "elif", "do", "while", "until"})  # before a command
 # A heredoc fed to one of these (``bash <<EOF``, ``cat <<EOF | sh``, ``source /dev/stdin <<EOF``) is RUN.
 _HEREDOC_RUNNERS = _SHELLS | {"source", ".", "eval"}
-# Executables a cloud arm has no business running (tracker, merge, network, other agents, keychain).
+# Executables an arm (local or cloud) has no business running (tracker, merge, network, other agents, keychain).
 FORBIDDEN_EXECUTABLES = frozenset({"gh", "curl", "wget", "claude", "codex", "omp", "ssh", "scp", "nc",
                                    "security", "open", "npm", "launchctl", "osascript"})
 FORBIDDEN_GIT = frozenset({"push", "remote", "clone", "fetch", "pull"})

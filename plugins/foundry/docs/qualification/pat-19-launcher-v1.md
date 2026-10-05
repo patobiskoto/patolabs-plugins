@@ -269,7 +269,7 @@ Clés : `frozen_machine`, `server_process_pattern` (expression pour la mémoire 
 | `allowed_tools` | liste d'autorisation des outils de l'événement `init` d'un pilote cloud `claude-stream-json` (obligatoire pour un pilote cloud vérifié) : un outil hors liste, ou pas d'événement `init`, refuse l'enregistrement |
 | `evidence` | obligatoire pour un pilote `verified: true` non factice : référence `<fichier de preuve>#drivers.<pilote>` |
 | `version` | version du harnais ou de l'hôte épinglée (information) |
-| `binary_version` | `{command, pattern, version}` (`omp`) : le lanceur exécute `command` (`omp --version`, lecture seule, `omp` pris dans le `PATH`), lit la version avec `pattern` (un groupe : `omp/<x.y.z>`) et refuse un exécutable absent, une sortie illisible ou une autre version que `version`, avant toute réservation (début de `screen`/`compare`, et à chaque tentative locale) |
+| `binary_version` | `{command, pattern, version}` (`omp`) : le lanceur exécute `command` (`omp --version`, exécuté hors du bac à sable avec l'environnement de l'hôte, délai de 30 s, avant chaque tentative ; `omp` pris dans le `PATH`), lit la version avec `pattern` (un groupe : `omp/<x.y.z>`) et refuse un exécutable absent, une sortie illisible ou une autre version que `version`, avant toute réservation (début de `screen`/`compare`, et à chaque tentative locale) |
 | `executable` | `{env, placeholder, package, version}` : l'exécutable vient d'une variable d'environnement de l'opérateur (chemin absolu, jamais committé) ; le paquet installé dans son environnement virtuel doit avoir la version épinglée (lue dans le `dist-info`, le harnais n'est pas lancé pour la demander) ; `{placeholder}` est substitué dans `argv` |
 | `env_set`, `make_dirs` | variables d'environnement fixes (valeurs avec `{scratch}`…) et dossiers créés avant le lancement ; un nom ressemblant à un secret n'est accepté qu'avec un des espaces réservés documentés (`local-endpoint-no-key`), jamais `FOUNDRY_*` |
 | `trajectory` | `{file, steps_path}` : fichier de trajectoire lu **après** la fin du processus pour les étapes (harnais neutre) ; la borne d'étapes n'est donc pas imposée pendant l'exécution, seulement la borne de durée |
@@ -504,12 +504,11 @@ le parcours C, une tentative locale contaminée est relayée par le cloud comme 
 compte pas comme réussite locale) ; une revue contaminée laisse la tâche indécise sans relais. **Lecture
 refusée par le bac à sable local** : pour un bras local lancé sous le profil qui refuse le HOME
 (`sandbox_denied`), un chemin que ce profil rend illisible (sous le HOME réel hors de la liste d'autorisation, ou
-sous une entrée de la liste de refus explicite) est une tentative **bloquée**, pas un accès : la lecture a
-échoué (EPERM), et elle n'est pas relevée (un `ls ~/.config` honnête ne rend pas le tamis incomplet). Cette
+sous une entrée de la liste de refus explicite) est une tentative **bloquée**, pas un accès : l'exemption est décidée sur le chemin, pas sur un refus observé, et la tentative n'est pas relevée (un `ls ~/.config` honnête ne rend pas le tamis incomplet). Cette
 exemption ne vaut que pour les lectures que le bac à sable refuse : le profil est `(allow default)`, donc les
 services système restent joignables (`launchctl submit … -- cat <fichier du HOME>` puis lecture de la sortie,
 `osascript` pilotant une autre application lisent hors du bac à sable) ; `launchctl` et `osascript` sont des
-exécutables interdits (`command:launchctl`, `command:osascript`, pour un bras local comme cloud). Le dossier de
+exécutables interdits (`command:launchctl`, `command:osascript`, pour un bras local comme cloud), au même titre que `gh`, `curl`, `wget`, `claude`, `codex`, `omp`, `ssh`, `scp`, `nc`, `security`, `open`, `npm`. Cette liste contre les contournements par un service système est un moindre effort : restent non listés `crontab`, `at`, un serveur `tmux`/`screen` lancé hors du bac à sable, `shortcuts run` et `automator`. Le dossier de
 tentative (parent du bundle, géré par le lanceur : bundle et scratch) est autorisé lui-même (`ls ..` est propre) ;
 son parent (la racine de travail, qui peut contenir un autre bundle) et au-dessus restent relevés. Les commandes interdites, les remontées hors du bundle vers un endroit lisible et les chemins
 lisibles (environnement du harnais) restent audités. Un bras cloud n'a pas ce bac à sable. **Fragilité à

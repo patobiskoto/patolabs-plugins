@@ -178,7 +178,7 @@
         "tests_dir_modified": false,
         "contamination_audit": "clean",
         "note": "the first deny-home trial (ac-7), same profile generator",
-        "loaded_instance_observed_note": "unknown: no `lms ps --json` observation of the loaded instance (key, quantization, context) was recorded for this trial, unlike the three other candidates; the run log only shows it was the first deny-home trial (Qwen3.8-27B 4-bit). `loaded_context_observed_2026-10-05` records a loaded context of 208384 for this candidate, not its quantization; `lms_ps_json_observed` documents the fields of the output, it is not an observation of this variant. The screening preflight reads and checks the loaded instance.",
+        "loaded_instance_observed_note": "unknown: no `lms ps --json` observation of the loaded instance (key, quantization, context) was recorded for this trial, unlike the four other candidates; the run log only shows it was the first deny-home trial (Qwen3.8-27B 4-bit). `loaded_context_observed_2026-10-05` records a loaded context of 208384 for this candidate, not its quantization; `lms_ps_json_observed` documents the fields of the output, it is not an observation of this variant. The screening preflight reads and checks the loaded instance.",
         "load": "API identifier pat19-smoke and --ttl 1800 -y used for the trial only, not the pinned `--identifier <key>` of load_command; the screening loads with the pinned command"
       }
     },
