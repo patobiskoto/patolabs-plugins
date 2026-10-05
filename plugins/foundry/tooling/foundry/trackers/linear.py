@@ -1481,6 +1481,164 @@ def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
     return drops
 
 
+# PAT-106: observed paragraph-glued bullet list (docs/qualification/
+# pat-106-linear-paragraph-list-observation.json).  Linear inserts one empty line
+# between a plain paragraph line and a top-level `- ` list that directly follows it.
+_OBSERVED_BULLET_ITEM = re.compile(r"- ([^ \t\n][^\n]*)\n?")
+_HEADING_LINE = re.compile(r"#{1,6}(?:[ \t]|$)")
+_REFERENCE_DEFINITION = re.compile(r"\[[^\]]*\]:")
+_SETEXT_DASHES = re.compile(r" {0,3}-+[ \t]*")
+_BARE_DASH = re.compile(r" {0,3}-[ \t]*")
+
+
+def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[int]:
+    """Return the offsets of the lines before which Linear inserts an empty line.
+
+    Observed (PAT-106, native PAT-ADR-0015): a top-level `- ` bullet list whose
+    first item directly follows a plain single-line paragraph (itself after an
+    empty LF line, not at the start of the body) is read back with one empty line
+    inserted between the paragraph line and the list.  Plain: no indentation,
+    quote, list marker, heading, table pipe, thematic break, fence, HTML, link
+    reference definition or trailing space/backslash; the list is a run of plain
+    one-line `- ` items ended by an empty line or the end of the body.
+
+    Whitelist: ``strict`` refuses, with a precise cause and the 1-based line, every
+    unobserved neighbour: a list glued to a paragraph in or next to a blockquote,
+    under an indented line, as an indented (nested) list, with a numbered, `*` or
+    `+` marker, or as a dash-only line (a setext underline), and a bullet list
+    glued to a paragraph outside the exact observed shape.  Otherwise those are
+    left untouched, as before PAT-106.  Forward only.
+    """
+    lines = _COMMONMARK_LINE.findall(body)
+    fenced: list[bool] = []
+    fence = None
+    for source_line in lines:
+        line = source_line.rstrip("\r\n")
+        if fence is not None:
+            fenced.append(True)
+            if _markdown_fence_closing(line, *fence):
+                fence = None
+            continue
+        fence = _markdown_fence_opening(line)
+        fenced.append(fence is not None)
+
+    def quoted(line: str) -> tuple[bool, str]:
+        text = line.rstrip("\r\n")
+        quote = _BLOCKQUOTE_PREFIX.match(text)
+        return quote is not None, text[quote.end() :] if quote else text
+
+    def is_item(text: str) -> bool:
+        return _LIST_LIKE.match(text) is not None and (
+            _THEMATIC_BREAK.fullmatch(text) is None
+        )
+
+    def indent(text: str) -> int:
+        return len(text) - len(text.lstrip(" \t"))
+
+    def in_list(index: int) -> bool:
+        """Whether the non-blank block above line ``index`` holds a list item."""
+        for line in reversed(lines[:index]):
+            if not line.strip(" \t\r\n"):
+                return False
+            if is_item(quoted(line)[1]):
+                return True
+        return False
+
+    def paragraph_like(line: str) -> bool:
+        """A line that starts or continues a paragraph, plain or not."""
+        text = line.rstrip("\r\n")
+        return (
+            bool(text)
+            and text[0] not in " \t>#<|"
+            and "|" not in text
+            and not is_item(text)
+            and _THEMATIC_BREAK.fullmatch(text) is None
+            and _SETEXT_DASHES.fullmatch(text) is None
+            and _HEADING_LINE.match(text) is None
+            and _markdown_fence_opening(text) is None
+        )
+
+    def plain_paragraph(line: str) -> bool:
+        text = line.rstrip("\r\n")
+        return (
+            paragraph_like(line)
+            and line.endswith("\n")
+            and not line.endswith("\r\n")
+            and _REFERENCE_DEFINITION.match(text) is None
+            and text[-1] not in " \t\\"
+            and _NON_LF_SEPARATORS.isdisjoint(text)
+        )
+
+    def observed_shape(index: int) -> bool:
+        if index < 2 or lines[index - 2] != "\n" or fenced[index - 2]:
+            return False
+        if not plain_paragraph(lines[index - 1]):
+            return False
+        for line in lines[index:]:
+            if not line.strip(" \t\r\n"):
+                break
+            match = _OBSERVED_BULLET_ITEM.fullmatch(line)
+            if (
+                match is None
+                or _NOT_PLAIN_ITEM_TEXT.match(match[1]) is not None
+                or match[1][-1] in " \t"
+                or not _NON_LF_SEPARATORS.isdisjoint(line)
+            ):
+                return False
+        return True
+
+    inserts: set[int] = set()
+    offset = 0
+    for index, source_line in enumerate(lines):
+        start = offset
+        offset += len(source_line)
+        if index == 0 or fenced[index] or fenced[index - 1]:
+            continue
+        previous = lines[index - 1]
+        if not previous.strip(" \t\r\n") or not source_line.strip(" \t\r\n"):
+            continue
+        in_quote, text = quoted(source_line)
+        previous_quote, previous_text = quoted(previous)
+        glued_to_paragraph = paragraph_like(previous)
+        reason = None
+        if (
+            _BARE_DASH.fullmatch(text)
+            and glued_to_paragraph
+            and not in_quote
+        ):
+            # `-` or `- ` right after a paragraph line is a setext underline, not
+            # an empty list item.
+            reason = "dash line glued to a paragraph (setext underline)"
+        elif not is_item(text):
+            continue
+        elif in_quote != previous_quote or (in_quote and not is_item(previous_text)):
+            reason = "list glued to a paragraph in a blockquote"
+        elif is_item(previous_text) or in_quote:
+            continue  # a sibling or nested item of an existing list: not modelled
+        elif indent(text) and glued_to_paragraph:
+            reason = "nested list glued to a paragraph"
+        elif indent(previous_text):
+            if in_list(index):
+                continue  # an item continuation line: not modelled
+            reason = "list glued under an indented line"
+        elif not glued_to_paragraph:
+            continue
+        elif re.match(r"[0-9]+[.)](?:[ \t]|$)", text):
+            reason = "numbered list glued to a paragraph"
+        elif not text.startswith("- ") or text[2:3] in ("", " ", "\t"):
+            reason = "bullet list with an unobserved marker glued to a paragraph"
+        elif observed_shape(index):
+            inserts.add(start)
+            continue
+        else:
+            reason = "bullet list glued to a paragraph outside the observed shape"
+        if strict:
+            raise ValueError(
+                f"unsupported list Markdown in ADR body (line {index + 1}): {reason}"
+            )
+    return inserts
+
+
 # PAT-103: observed blank-line and table rendering (docs/qualification/
 # pat-103-linear-blank-lines-observation.json).  Linear collapses two or more empty
 # lines outside fenced code to one, drops a leading empty line and every final
@@ -1590,6 +1748,7 @@ def _linear_markdown_readback_body(
     allow_foundry_adr_0001: bool = False,
     strict: bool = False,
     observed_lists: bool = True,
+    observed_paragraph_lists: bool = True,
 ) -> str:
     """Model only closed, observed Linear Markdown serializations.
 
@@ -1597,7 +1756,10 @@ def _linear_markdown_readback_body(
     PAT-94 may hold that rendering.  ``strict`` refuses every list blank line
     outside the one observed form (`_linear_observed_list_blank_lines`).  The PAT-103
     blank-line model (`_linear_observed_blank_line_readback`) applies to every
-    mode but ``observed_lists=False``.
+    mode but ``observed_lists=False``.  ``observed_paragraph_lists=False`` is the
+    PAT-103 model, without the PAT-106 empty line Linear inserts between a
+    paragraph and a directly following `- ` list
+    (`_linear_observed_paragraph_list_inserts`); strict refuses its neighbours.
     """
     if allow_foundry_adr_0001:
         qualified = _linear_foundry_adr_0001_v1_readback(body)
@@ -1609,6 +1771,11 @@ def _linear_markdown_readback_body(
     drops = (
         _linear_observed_list_blank_lines(body, strict=False)
         if observed_lists or strict
+        else set()
+    )
+    inserts = (
+        _linear_observed_paragraph_list_inserts(body, strict=False)
+        if observed_paragraph_lists and (observed_lists or strict)
         else set()
     )
     rendered = []
@@ -1625,6 +1792,8 @@ def _linear_markdown_readback_body(
         offset += len(source_line)
         if offset - len(source_line) in drops:
             continue
+        if offset - len(source_line) in inserts:
+            nonfenced.append("\n")
         line = source_line.removesuffix("\n").removesuffix("\r")
         if fence is not None:
             flush_nonfenced()
@@ -1667,6 +1836,9 @@ def _linear_markdown_readback_body(
         rendered_body = _linear_observed_blank_line_readback(
             rendered_body, strict=strict
         )
+    if strict:
+        # After the table and blank-line refusals, which name their own cause first.
+        _linear_observed_paragraph_list_inserts(body, strict=True)
     return rendered_body
 
 
@@ -1675,19 +1847,28 @@ def _linear_markdown_readback_bodies(
 ) -> tuple[str, ...]:
     """Every body rendering a read accepts: PAT-94 first, then pre-PAT-94.
 
-    Additive: a Document stored with the pre-PAT-94 model output stays readable,
+    Additive: a Document stored with the pre-PAT-94 model output, or with the
+    PAT-103 output (no PAT-106 empty line before a glued list), stays readable,
     and the pre-PAT-94 refusals still raise.  Never strict.
     """
     legacy = _linear_markdown_readback_body(
         body, allow_foundry_adr_0001=allow_foundry_adr_0001, observed_lists=False
     )
-    try:
-        observed = _linear_markdown_readback_body(
-            body, allow_foundry_adr_0001=allow_foundry_adr_0001
-        )
-    except ValueError:
-        return (legacy,)
-    return (observed,) if observed == legacy else (observed, legacy)
+    renderings: list[str] = []
+    for paragraph_lists in (True, False):
+        try:
+            observed = _linear_markdown_readback_body(
+                body,
+                allow_foundry_adr_0001=allow_foundry_adr_0001,
+                observed_paragraph_lists=paragraph_lists,
+            )
+        except ValueError:
+            break
+        if observed not in renderings:
+            renderings.append(observed)
+    if legacy not in renderings:
+        renderings.append(legacy)
+    return tuple(renderings)
 
 
 def _preflight_adr_body_readback(

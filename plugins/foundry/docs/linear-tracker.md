@@ -372,8 +372,8 @@ verified by the model, as before PAT-94. Whether any real stored ADR is in
 that case is not known by the adapter; such an ADR can change status, links or
 supersession only after a body edit (itself a strict new body). Reads and verification
 (`list_adrs`, ADR chain, exact replay, batch verification) are never strict and are
-additive: a stored Document matches if it equals the canonical bytes, the pre-PAT-94
-model output or the PAT-103 model output (the PAT-94-only rendering is no longer accepted
+additive: a stored Document matches if it equals the canonical bytes, the PAT-106 model output, the PAT-103 model
+output or the pre-PAT-94 model output (the PAT-94-only rendering is no longer accepted
 for the generalised cases), so a Document stored before PAT-94 stays
 readable. Replay of `adr create` with the exact title and body finds the existing slot
 and creates only the missing witness; a second replay is a no-op. Still unobserved and
@@ -401,6 +401,23 @@ empty body, never observed; the empty string itself is unchanged), and every tab
 delimiter rewrite is not modelled, so the author uses a list or a fenced block). The same
 strict refusals apply to `import_adr`. The author guide is
 [`linear-adr-body-guide.md`](linear-adr-body-guide.md).
+PAT-106 qualifies one more form, observed on the native `PAT-ADR-0015` Document
+(`docs/qualification/pat-106-linear-paragraph-list-observation.json`: bytes sent and read back,
+Document id, SHA-256, date, no secret; the metadata header is omitted): a top-level `- ` bullet
+list directly after a paragraph line is read back with one empty line inserted between the two
+(besides the modelled `- ` to `* ` rewrite); a list after a heading and an empty line is unchanged.
+The model recognises exactly that, forward only, in `_linear_observed_paragraph_list_inserts`
+(a plain single-line paragraph after an empty line, then a run of plain one-line `- ` items). Reads
+are additive: `_linear_markdown_readback_bodies` returns the PAT-106 rendering, then the PAT-103
+rendering (no insertion), then the pre-PAT-94 rendering, so a Document stored under an earlier model
+stays readable; the pinned profiles and the pre-PAT-94 model are unchanged. A new body is refused
+before any write, after the PAT-94 and PAT-103 refusals, with `unsupported list Markdown in ADR
+body (line N): <cause>` for the unobserved neighbours: numbered list, `*`/`+` marker, dash-only
+line (setext underline), list in or next to a blockquote, list under an indented line, indented
+(nested) list, and a `- ` list outside the exact shape (see the guide for the table). Nothing
+refused before becomes accepted. Replaying `adr create` with the original title and body
+recognises the stored Document and writes only the missing witness. Still unobserved: any
+other neighbour of a glued list (an item continuation, a heading directly above the paragraph).
 Scope of the observation: 13 cases. The handling of the neighbours of a collapsed run
 (merge around a `---` separator, setext headings, lazy blockquote continuation, `~~~` or
 info-string fences, final newline removed after a heading or a list item) is a

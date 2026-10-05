@@ -1,7 +1,7 @@
 # Writing a Linear ADR body
 
 Guide for the author of an ADR body stored in a Linear Document (`adr create`, body edit,
-historical import). Reference: [linear-tracker.md](linear-tracker.md) (PAT-94, PAT-103).
+historical import). Reference: [linear-tracker.md](linear-tracker.md) (PAT-94, PAT-103, PAT-106).
 Evidence: `qualification/pat-103-linear-blank-lines-observation.json` (probe of
 2026-10-05 on a throwaway project; bytes sent and read back, ids and SHA-256).
 
@@ -36,6 +36,33 @@ empty line are read back tight; any other list blank line, or a gap of two or mo
 empty lines next to a list, is refused with `unsupported list Markdown in ADR body
 (line N)`. Write tight lists (no empty line between items).
 
+A top-level `- ` bullet list written directly under a paragraph line (PAT-106) is read back
+with one empty line inserted between the paragraph and the list (and `- ` rewritten to
+`* `, as for every bullet):
+
+```text
+Pour chaque tâche :\n- a\n- b   ->   Pour chaque tâche :\n\n* a\n* b
+```
+
+The adapter models exactly that and nothing else: the paragraph is a plain single-line
+paragraph (no indentation, quote, marker, heading, pipe, trailing space or backslash)
+preceded by an empty line and not at the start of the body; the list is a run of plain
+one-line `- ` items ended by an empty line or the end of the body. Prefer writing the
+stored form directly (an empty line before the list). Every unobserved neighbour is
+refused before any write:
+
+| Shape glued to a paragraph line | Cause (after `unsupported list Markdown in ADR body (line N)`) |
+| --- | --- |
+| `1.` / `1)` numbered list | `numbered list glued to a paragraph` |
+| `*` or `+` bullet, `-` followed by a tab | `bullet list with an unobserved marker glued to a paragraph` |
+| a line `-` or `- ` alone (a setext underline, not an empty item) | `dash line glued to a paragraph (setext underline)` |
+| list in or next to a `>` quote | `list glued to a paragraph in a blockquote` |
+| list right under an indented line that is not an item continuation | `list glued under an indented line` |
+| indented (nested) list right under a paragraph | `nested list glued to a paragraph` |
+| a `- ` list outside the exact shape (multi-line or hard-break paragraph, paragraph at the start or right after a heading, CRLF, reference definition, nested or continued or lazy or task or empty item in the run, fence in the run) | `bullet list glued to a paragraph outside the observed shape` |
+
+Put an empty line between the paragraph and the list to avoid all of these.
+
 ## Refused, with the cause
 
 | Shape | Cause prefix | Do instead |
@@ -54,8 +81,9 @@ status change, link or supersession on such an ADR is refused for the table, fin
 newline, unobserved blank-line, empty-body and indented or quoted last-line cases above. This is
 better than before: the refusal comes before any write, instead of a write followed by a
 failed verification that left an orphan Document. Reads stay additive: a stored Document
-matches if it equals the canonical bytes, the pre-PAT-94 output or the PAT-103 output (the
-PAT-94-only rendering is no longer accepted for the generalised cases).
+matches if it equals the canonical bytes, the PAT-106 output, the PAT-103 output (no empty line
+inserted before a glued list) or the pre-PAT-94 output (the PAT-94-only rendering is no longer
+accepted for the generalised cases).
 A body that Linear would not leave stable under the blank-line merge is not expected to
 exist as stored, since Linear merges or removes those lines.
 
