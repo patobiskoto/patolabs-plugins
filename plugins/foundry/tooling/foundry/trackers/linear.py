@@ -1493,6 +1493,10 @@ _BARE_DASH = re.compile(r" {0,3}-[ \t]*")
 # (`_LIST_LIKE` is wider on purpose: any indentation, any number of digits.)
 _TOP_LEVEL_ITEM = re.compile(r"( {0,3})([*+-]|[0-9]{1,9}[.)])(?:([ \t]+)|$)")
 _UNKNOWN_COLUMN = 1 << 30
+# A `>` the blockquote prefix (0-3 columns) did not consume: behind 4+ columns, a
+# tab or list markers (`    > x`, `\t> x`, `- > x`).  A quote opened inside an item
+# or indented code: its nesting is not modelled.
+_STRAY_QUOTE = re.compile(r"(?:[ \t]|[*+-][ \t]|[0-9]+[.)][ \t])*>")
 
 
 def _is_paragraph_start_letter(text: str) -> bool:
@@ -1533,17 +1537,31 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
        a closing fence (required since PAT-94 by `1. a / fence / 2. b` in
        `..._pat94_no_blank_line_in_a_list_context_is_never_changed`, and by
        `after-fence`); an ATX heading (required by `heading-not-a-paragraph`);
-       a thematic break or dash-only line -- `---`, `***`, `___`, `- - -`,
-       `--` -- which no earlier test requires: kept because it was accepted
-       and documented as not refused before this whitelist was closed.
+       a thematic break -- `---`, `***`, `___`, `- - -` -- which no earlier
+       test requires: kept because it was accepted and documented as not
+       refused before this whitelist was closed.  Only for an unquoted
+       top-level item (0-3 columns, at most 9 digits): anything else there is
+       indented code or a paragraph line and is refused.
     4. everything else is refused by ``strict`` with a precise cause and the
-       1-based line: a different blockquote state or a quoted non-item line
-       ("list glued in a blockquote context"); an indented line outside a list
-       context, also when it starts with a marker (indented code), in or out of
-       a quote ("list glued under an indented line"); a paragraph line with an
-       indented marker line, a numbered marker, a `*`/`+`/tab marker, or a `- `
-       list outside the observed shape; and any line no rule names ("list glued
-       to an unclassified line").
+       1-based line: a blockquote neighbour (below); an indented line outside
+       a list context, also when it starts with a marker (indented code), in
+       or out of a quote ("list glued under an indented line"); a `--` line (a
+       paragraph or a setext underline, "list glued under a dash-only line");
+       a paragraph line with an indented marker line, a numbered marker, a
+       `*`/`+`/tab marker, or a `- ` list outside the observed shape; and any
+       line no rule names ("list glued to an unclassified line").
+
+    Blockquotes, closed by construction ("list glued in a blockquote context").
+    The quote depth of a line is the number of `>` in its 0-3 column prefix; a
+    *stray quote* is a `>` that prefix did not consume (behind 4+ columns, a
+    tab or list markers: `_STRAY_QUOTE`).  Refused: a glued marker line whose
+    depth differs from its previous line's (a closing fence has depth 0) or
+    whose previous line has a stray quote; a stray-quote line glued under a
+    line in list context or itself holding a marker after its `>`; a quoted
+    line glued under a line in list context of another depth.  Inside one
+    quote depth only set (1) with a previous marker line is accepted.  A stray
+    quote never is in list context.  A quote with no marker line, not glued
+    under a list context, is not refused here.
 
     A dash-only line right after a paragraph line is a setext underline and is
     refused too.  A list context does not survive an empty line, a fence line, a
@@ -1565,10 +1583,13 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         fence = _markdown_fence_opening(line)
         fenced.append(fence is not None)
 
-    def quoted(line: str) -> tuple[bool, str]:
+    def quoted(line: str) -> tuple[int, str, bool]:
+        """(quote depth, text after the prefix, text holds a stray quote)."""
         text = line.rstrip("\r\n")
         quote = _BLOCKQUOTE_PREFIX.match(text)
-        return quote is not None, text[quote.end() :] if quote else text
+        rest = text[quote.end() :] if quote else text
+        depth = quote[0].count(">") if quote else 0
+        return depth, rest, _STRAY_QUOTE.match(rest) is not None
 
     def marker_line(text: str) -> bool:
         """Looks like a list item, whatever its indentation (the trigger)."""
@@ -1606,26 +1627,26 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
     # in_list_context[i]: line i is a list item, or is glued under a line in a
     # list context and indented to the content column of the governing item.
     in_list_context = [False] * len(lines)
-    quote_flags = [False] * len(lines)
+    quote_depths = [0] * len(lines)
     width = _UNKNOWN_COLUMN
     for index, source_line in enumerate(lines):
         if fenced[index]:
             continue
-        in_quote, text = quoted(source_line)
-        quote_flags[index] = in_quote
-        if not text.strip(" \t"):
+        depth, text, stray = quoted(source_line)
+        quote_depths[index] = depth
+        if stray or not text.strip(" \t"):
             continue
-        columns = indent_columns(text, in_quote)
+        columns = indent_columns(text, depth > 0)
         inside = (
             index > 0
             and in_list_context[index - 1]
-            and quote_flags[index - 1] == in_quote
+            and quote_depths[index - 1] == depth
             and columns is not None
             and columns >= width
         )
         item = list_item(text)
         if item is not None and not inside:
-            width = content_column(item, text, in_quote)
+            width = content_column(item, text, depth > 0)
         in_list_context[index] = item is not None or inside
 
     def paragraph_like(line: str) -> bool:
@@ -1675,13 +1696,16 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
 
     def classify(index: int) -> tuple[str, str | None]:
         """Classify the glued marker line ``index``: (set, refusal cause)."""
-        in_quote, text = quoted(lines[index])
+        depth, text, _ = quoted(lines[index])
         previous = lines[index - 1]
-        previous_quote, previous_text = quoted(previous)
+        after_fence = fenced[index - 1]  # a closing fence: depth 0, set 3
+        previous_depth, previous_text, previous_stray = (
+            (0, "", False) if after_fence else quoted(previous)
+        )
         listed = in_list_context[index - 1]
-        if in_quote != previous_quote:
+        if depth != previous_depth or previous_stray:
             return "refused", "list glued in a blockquote context"
-        if in_quote:
+        if depth:
             if listed and marker_line(previous_text):
                 return "list-context", None
             if indented(previous_text) and not listed:
@@ -1692,11 +1716,20 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         if indented(previous_text):
             return "refused", "list glued under an indented line"
         if (
-            _HEADING_LINE.match(previous_text) is not None
+            after_fence
+            or _HEADING_LINE.match(previous_text) is not None
             or _THEMATIC_BREAK.fullmatch(previous_text) is not None
-            or _SETEXT_DASHES.fullmatch(previous_text) is not None
         ):
+            if list_item(text) is None:
+                # 4+ columns or a tab (indented code), or more than 9 digits.
+                return (
+                    "refused",
+                    "marker line that is not a top-level list item glued under a "
+                    "heading, thematic break or closing fence",
+                )
             return "unobserved-unchanged", None
+        if _SETEXT_DASHES.fullmatch(previous_text) is not None:
+            return "refused", "list glued under a dash-only line"
         if not paragraph_like(previous):
             return "refused", "list glued to an unclassified line"
         if indented(text):
@@ -1725,13 +1758,23 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         previous = lines[index - 1]
         if not previous.strip(" \t\r\n") or not source_line.strip(" \t\r\n"):
             continue
-        if fenced[index - 1]:
-            continue  # set 3: glued under a closing fence, unobserved, unchanged
-        in_quote, text = quoted(source_line)
-        if _BARE_DASH.fullmatch(text) and paragraph_like(previous) and not in_quote:
+        depth, text, stray = quoted(source_line)
+        listed = in_list_context[index - 1]
+        after_fence = fenced[index - 1]
+        if (
+            _BARE_DASH.fullmatch(text)
+            and not after_fence
+            and paragraph_like(previous)
+            and not depth
+        ):
             # `-` or `- ` right after a paragraph line is a setext underline, not
             # an empty list item.
             reason = "dash line glued to a paragraph (setext underline)"
+        elif stray and (listed or marker_line(text.lstrip(" \t>"))):
+            # A quote opened inside an item or behind 4+ columns / a tab.
+            reason = "list glued in a blockquote context"
+        elif depth and listed and depth != quote_depths[index - 1]:
+            reason = "list glued in a blockquote context"
         elif not marker_line(text):
             continue
         else:

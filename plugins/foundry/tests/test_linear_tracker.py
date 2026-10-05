@@ -10213,11 +10213,11 @@ PAT106_REFUSED = [
     pytest.param("> A\n>\n>     - x\n> - a", "blockquote", id="under-marker-code-after-quoted-blank"),
     pytest.param("A\n\n    - x\n    - y", "list glued under an indented line", id="marker-code-lines"),
     pytest.param("A\n\n    - x\n      y\n- a", "list glued under an indented line", id="under-marker-code-continuation"),
-    pytest.param("## H\n    - x\n- a", "list glued under an indented line", id="marker-code-under-heading"),
-    pytest.param("A\n\n- a\n## H\n    - x\n- b", "list glued under an indented line", id="marker-code-after-list-closed-by-heading"),
+    pytest.param("## H\n    - x\n- a", "not a top-level list item", id="marker-code-under-heading"),
+    pytest.param("A\n\n- a\n## H\n    - x\n- b", "not a top-level list item", id="marker-code-after-list-closed-by-heading"),
     pytest.param("A\n\n- a\n ## H\n    - x\n- b", "list glued under an indented line", id="marker-code-after-list-closed-by-indented-heading"),
-    pytest.param("A\n\n---\n    - x\n- a", "list glued under an indented line", id="marker-code-under-thematic-break"),
-    pytest.param("A\n\n```\nx\n```\n    - x\n- a", "list glued under an indented line", id="marker-code-under-closing-fence"),
+    pytest.param("A\n\n---\n    - x\n- a", "not a top-level list item", id="marker-code-under-thematic-break"),
+    pytest.param("A\n\n```\nx\n```\n    - x\n- a", "not a top-level list item", id="marker-code-under-closing-fence"),
     pytest.param("A\n\n- a\nlazy\n  cont\n- b", "list glued under an indented line", id="indented-line-under-lazy-line"),
     pytest.param("A\n\n- a\n cont\n- b", "list glued under an indented line", id="under-indented-continuation"),
     pytest.param("A\n\n1. a\n  cont\n2. b", "list glued under an indented line", id="under-indented-numbered-continuation"),
@@ -10234,6 +10234,37 @@ PAT106_REFUSED = [
     pytest.param("A\n\nP\n1234567890. x", "numbered list glued to a paragraph", id="ten-digit-marker-stays-refused"),
     pytest.param("A\n\n===\n- a", "outside the observed shape", id="equals-underline"),
     pytest.param("A\n\n²x\n- a", "outside the observed shape", id="superscript-start"),
+    # Blockquotes are closed by construction: the exact quote depth must match,
+    # and a `>` behind 4+ columns, a tab or a list marker is a stray quote.
+    pytest.param("A\n\n> - a\n> > - b", "blockquote", id="quote-depth-increases"),
+    pytest.param("A\n\n> > - a\n> - b", "blockquote", id="quote-depth-decreases"),
+    pytest.param("A\n\n> - a\n>> - b", "blockquote", id="quote-depth-increases-unspaced"),
+    pytest.param("A\n\n- a\n    > - b", "blockquote", id="quote-indented-four-under-item"),
+    pytest.param("10. a\n    > - b", "blockquote", id="quote-under-numbered-item"),
+    pytest.param("A\n\n- a\n\t> - b", "blockquote", id="tab-quote-under-item"),
+    pytest.param("A\n\n- a\n  > b", "blockquote", id="quote-opened-in-item"),
+    pytest.param("A\n\n- a\n    > b", "blockquote", id="indented-quote-opened-in-item"),
+    pytest.param("A\n\n- a\n> b", "blockquote", id="quote-closing-a-list"),
+    pytest.param("A\n\n- a\n- > b", "blockquote", id="quote-on-the-item-line"),
+    pytest.param("A\n\n- > b\n- a", "blockquote", id="under-quote-on-the-item-line"),
+    pytest.param("A\n\n- > b\n  cont\n- a", "list glued under an indented line", id="stray-quote-ends-the-list-context"),
+    pytest.param("A\n\n    > x\n- a", "blockquote", id="under-indented-quote"),
+    pytest.param("A\n\nP\n    > - a", "blockquote", id="indented-quoted-list-after-paragraph"),
+    pytest.param("## H\n    > - a", "blockquote", id="indented-quoted-list-under-heading"),
+    pytest.param("A\n\n> - a\n>     > - b", "blockquote", id="stray-quote-inside-a-quote"),
+    pytest.param("A\n\n> - a\n> > b", "blockquote", id="deeper-quote-under-quoted-item"),
+    pytest.param("> P\n>\n> - a", "blockquote", id="list-after-empty-quote-line"),
+    pytest.param("A\n\n```\nx\n```\n> - a", "blockquote", id="closing-fence-quoted-list"),
+    # `--` is a paragraph (or a setext underline), not a thematic break.
+    pytest.param("A\n\n--\n- a", "dash-only line", id="two-dashes"),
+    pytest.param("A\n\n--\n-", "dash-only line", id="two-dashes-bare-dash"),
+    pytest.param("A\n\nP\n--\n- a", "dash-only line", id="setext-two-dashes"),
+    # Under a set-(3) predecessor only a top-level item is accepted unchanged.
+    pytest.param("## H\n    - a", "not a top-level list item", id="indented-code-under-heading"),
+    pytest.param("A\n\n---\n    - a", "not a top-level list item", id="indented-code-under-thematic-break"),
+    pytest.param("A\n\n---\n\t- a", "not a top-level list item", id="tab-code-under-thematic-break"),
+    pytest.param("A\n\n```\nx\n```\n    1. a", "not a top-level list item", id="indented-code-under-closing-fence"),
+    pytest.param("## H\n1234567890. a", "not a top-level list item", id="ten-digit-line-under-heading"),
 ]
 
 
@@ -10246,11 +10277,12 @@ PAT106_UNOBSERVED_UNCHANGED = [
     pytest.param("A\n\n***\n- a", "A\n\n***\n* a", id="thematic-stars"),
     pytest.param("A\n\n___\n- a", "A\n\n___\n* a", id="thematic-underscores"),
     pytest.param("A\n\n- - -\n- a", "A\n\n- - -\n* a", id="thematic-spaced-dashes"),
-    pytest.param("A\n\n--\n- a", "A\n\n--\n* a", id="two-dashes"),
+    pytest.param("## H\n   - a", "## H\n   - a", id="atx-heading-three-columns"),
     pytest.param("A\n\nP\n---\n- a", "A\n\nP\n---\n* a", id="setext-heading-dashes"),
     pytest.param("A\n\n```\nx\n```\n- a", "A\n\n```\nx\n```\n* a", id="closing-fence"),
     pytest.param("A\n\n~~~\nx\n~~~\n1. a", "A\n\n~~~\nx\n~~~\n1. a", id="closing-tilde-fence-numbered"),
-    pytest.param("A\n\n```\nx\n```\n> - a", "A\n\n```\nx\n```\n> - a", id="closing-fence-quoted-list"),
+    # `P\n--` is not a marker line: its setext handling is untouched.
+    pytest.param("A\n\nP\n--", "A\n\nP\n--", id="setext-two-dashes-alone"),
 ]
 
 
@@ -10285,6 +10317,11 @@ PAT106_LIST_CONTEXT = [
     "A\n\n> - a\n> - b",
     "A\n\n> - a\n>   - b\n> - c",
     "A\n\n> - a\n>     - b\n> - c",
+    "A\n\n> > - a\n> > - b",
+    "A\n\n>> - a\n> > - b",
+    # A plain blockquote with no marker line, not glued to a list context.
+    "A\n\n> P\n> Q\n> > R\n\nB",
+    "A\n\nP\n> Q",
 ]
 
 
@@ -10308,7 +10345,7 @@ PAT106_PREDECESSORS = {
     # set 2 (with `- a` only)
     "Pour :": "paragraph", "P": "paragraph", "é": "paragraph",
     # set 3
-    "## H": "unchanged", "#": "unchanged", "---": "unchanged", "--": "unchanged",
+    "## H": "unchanged", "#": "unchanged", "---": "unchanged",
     "***": "unchanged", "___": "unchanged", "- - -": "unchanged",
     "* * *": "unchanged", "```\nx\n```": "unchanged", "~~~\nx\n~~~": "unchanged",
     # set 4
@@ -10316,7 +10353,12 @@ PAT106_PREDECESSORS = {
     "    code": "refused", "  P": "refused", " ## H": "refused",
     "- x\nlazy": "refused", "- x\n cont": "refused", "1. x\n  cont": "refused",
     "- x\nlazy\n  cont": "refused", "- x\n## H\n    - y": "refused",
-    "> P": "refused", "> - x": "refused", ">": "refused",
+    "> P": "refused", ">": "refused", "> >": "refused", "--": "refused",
+    "P\n--": "refused", "    > - x": "refused", "\t> - x": "refused",
+    "- > x": "refused", "> ## H": "refused", "> - x\n>   cont": "refused",
+    "> - x\n> > y": "refused",
+    # a quoted list: set 1 only for a list start of the same quote depth
+    "> - x": "quote-1", "> > - x": "quote-2", ">> - x": "quote-2",
     "1234567890. x": "refused", "1 item :": "refused", "#tag": "refused",
     "a | b": "refused", "===": "refused", "**b** :": "refused", "`c` :": "refused",
     "[l](u) :": "refused", "\\* :": "refused", "²x": "refused", "P ": "refused",
@@ -10328,19 +10370,33 @@ PAT106_LIST_STARTS = [
     "- a", "* a", "+ a", "1. a", "1) a", "2. a", "-\ta", " - a", "   - a",
     "    - a", "\t- a", "- a\n- b",
 ]
+PAT106_QUOTED_LIST_STARTS = {"> - a": "quote-1", "> > - a": "quote-2", "    > - a": None}
+PAT106_NOT_TOP_LEVEL_STARTS = ("    - a", "\t- a")
 
 
-@pytest.mark.parametrize("start", PAT106_LIST_STARTS)
+def _pat106_expected(kind: str, start: str) -> str:
+    """The only outcome a predecessor kind x list start may have."""
+    if start in PAT106_QUOTED_LIST_STARTS:
+        return "same" if kind == PAT106_QUOTED_LIST_STARTS[start] else "refused"
+    if kind == "paragraph" and start in ("- a", "- a\n- b"):
+        return "observed"
+    if kind == "list":
+        return "same"
+    if kind == "unchanged" and start not in PAT106_NOT_TOP_LEVEL_STARTS:
+        return "same"
+    return "refused"
+
+
+@pytest.mark.parametrize("start", [*PAT106_LIST_STARTS, *PAT106_QUOTED_LIST_STARTS])
 @pytest.mark.parametrize("predecessor", list(PAT106_PREDECESSORS))
 def test_linear_adr_pat106_predecessor_classification_is_closed(predecessor, start):
-    kind = PAT106_PREDECESSORS[predecessor]
+    expected = _pat106_expected(PAT106_PREDECESSORS[predecessor], start)
     body = f"A\n\n{predecessor}\n{start}"
-    observed = kind == "paragraph" and start in ("- a", "- a\n- b")
     try:
         rendered = linear_module._linear_markdown_readback_body(body, strict=True)
     except ValueError as error:
-        # Refused: only where the hand-written table says so, with a named cause.
-        assert kind == "refused" or (kind == "paragraph" and not observed), error
+        # Refused: exactly where the hand-written table says so, with a named cause.
+        assert expected == "refused", error
         assert str(error).startswith(("unsupported ", "ambiguous ")), error
         with pytest.raises(TrackerConflictError):
             linear_module._preflight_adr_body_readback(body)
@@ -10349,12 +10405,12 @@ def test_linear_adr_pat106_predecessor_classification_is_closed(predecessor, sta
     unchanged = linear_module._linear_markdown_readback_body(
         body, observed_paragraph_lists=False
     )
-    if observed:
-        expected = body.replace(f"{predecessor}\n- ", f"{predecessor}\n\n- ", 1)
-        assert rendered == expected.replace("\n- ", "\n* ")
+    if expected == "observed":
+        inserted = body.replace(f"{predecessor}\n- ", f"{predecessor}\n\n- ", 1)
+        assert rendered == inserted.replace("\n- ", "\n* ")
         assert rendered != unchanged
     else:
-        assert kind in ("list", "unchanged"), (kind, rendered)
+        assert expected == "same", (expected, rendered)
         assert rendered == unchanged
 
 

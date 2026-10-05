@@ -61,9 +61,11 @@ line, `#tag`, line starting with a digit, `**`, backtick, `[`, `=`, `<`...) is r
 | `1.` / `1)` numbered list | `numbered list glued to a paragraph` |
 | `*` or `+` bullet, `-` followed by a tab | `bullet list with an unobserved marker glued to a paragraph` |
 | a line `-` or `- ` alone (a setext underline, not an empty item) | `dash line glued to a paragraph (setext underline)` |
-| list in or next to a `>` quote | `list glued in a blockquote context` |
+| list in or next to a `>` quote: under a quoted line that is not an item of the same quote (`> P\n> - a`, also after an empty quote line: `> P\n>\n> - a`), at another quote depth than the line above (`> - a\n> > - b`, `P\n> - a`, a closing fence then `> - a`), or next to a `>` placed behind 4 or more columns, a tab or a list marker (`- a\n    > - b`, `- a\n- > b`); also any `>` line directly under a list line when it opens or changes the quote (`- a\n  > b`, `- a\n> b`) | `list glued in a blockquote context` |
 | list right under an indented line that is not inside a list item: indented code, also when the code line starts with a marker (`    - x`, a tab, `    1. x`), an indented paragraph, or a line indented less than the item content (`- a\n cont`, `1. a\n  cont`), in or out of a quote | `list glued under an indented line` |
 | list marker indented by one or more columns right under a paragraph (1 to 3 spaces is still a top-level list, 4 or more is paragraph text) | `indented list glued to a paragraph` |
+| list under a `--` line (two dashes are a paragraph or a setext underline, not a thematic break) | `list glued under a dash-only line` |
+| under a heading, a thematic break or a closing fence: a marker line that is not a top-level item (4 or more columns or a tab is indented code: `## H\n    - a`; more than 9 digits is a paragraph line) | `marker line that is not a top-level list item glued under a heading, thematic break or closing fence` |
 | a `- ` list outside the exact shape (paragraph line not starting with a letter or holding a pipe, multi-line or hard-break paragraph, paragraph at the start or right after a heading, CRLF, reference definition, nested or continued or lazy or task or empty item in the run, fence in the run) | `bullet list glued to a paragraph outside the observed shape` |
 
 The check is a closed whitelist (PAT-ADR-0002): for every line that looks like a list item
@@ -73,16 +75,22 @@ sets, and anything else is refused.
 1. Inside a list, unchanged: the previous line is a list item (0 to 3 spaces, then `-`, `*`,
    `+`, or 1 to 9 digits and `.`/`)`), or a line directly under one and indented at least to
    the content of that item (its continuation or a nested item). `A\n\n- a\n  cont\n- b` is
-   therefore not refused. In a quote, only a previous item line counts.
+   therefore not refused. In a quote, only a previous item line of the same quote depth
+   counts (`> - a\n> - b`).
 2. The observed shape above: one empty line is inserted.
 3. Still unobserved and NOT refused (behaviour unchanged, no insertion modelled): the previous
-   line is an ATX heading (`## H\n- a`), a thematic break or dash-only line (`---`, `***`,
-   `___`, `- - -`, `--`), or a closing fence.
+   line is an ATX heading (`## H\n- a`), a thematic break (`---`, `***`, `___`, `- - -`;
+   not `--`), or a closing fence, and the list line is an unquoted top-level item (0 to 3
+   spaces, at most 9 digits).
 
 Everything else is refused with one of the causes of the table; a previous line that no rule
 names is refused as `list glued to an unclassified line`. A list context does not survive an
 empty line, a fenced block, a line indented less than the item content or a tab in a quoted
-indentation: an item glued under such a line is refused. A continuation, nested, lazy, task or
+indentation: an item glued under such a line is refused. Quotes are closed by construction:
+the quote depth is the number of `>` in the 0 to 3 column prefix of a line and must be the
+same on a list line and on the line above it; a `>` behind 4 or more columns, a tab or a list
+marker is never accepted next to a list. A quote that holds no list line and is not directly
+under a list line is not refused by this check. A continuation, nested, lazy, task or
 empty item is refused only inside the run glued to a paragraph (set 2), where the shape must
 be exact. A line of more than 9 digits and `.` (`1234567890. x`) is a paragraph line, not an
 item. `P\n--` / `P\n---` are not list lines and are not handled here. A `<` line is refused
@@ -104,7 +112,10 @@ Trailing spaces before a newline, hard breaks and raw HTML were already refused 
 earlier model. The strict check applies to a new or edited body, and also to the unchanged
 body of a migrated historical version 0 whose stored bytes the model does not predict: a
 status change, link or supersession on such an ADR is refused for the table, final
-newline, unobserved blank-line, empty-body and indented or quoted last-line cases above. This is
+newline, unobserved blank-line, empty-body and indented or quoted last-line cases above, and
+for every PAT-106 glued-list refusal (the causes of the PAT-106 table above: numbered,
+`*`/`+`, setext dash, blockquote context, indented line, `--` line, non-top-level marker under
+a heading, thematic break or closing fence, outside the observed shape, unclassified line). This is
 better than before: the refusal comes before any write, instead of a write followed by a
 failed verification that left an orphan Document. Reads stay additive: a stored Document
 matches if it equals the canonical bytes, the PAT-106 output, the PAT-103 output (no empty line
