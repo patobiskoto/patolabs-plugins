@@ -935,7 +935,7 @@ attestation is suggested, and re-running is the first thing to try (never edit
 parents/links for a `read-error`). The list is not carried by a replay of an already
 closed Epic, a pending-audit refusal, a provider refusal after the read, an unknown
 named id raised alone, or a transport error during the snapshot itself. The diagnostic
-reads each node at most twice. The maintainer may then run
+issues at most two issue reads per node. The maintainer may then run
 `close-epic <EPIC-ID> --human-verdict=accepted --accept-override=ID[,ID...]` with the
 exact nominative list (no wildcard, no duplicate, ids matching
 `[A-Z][A-Z0-9]{0,15}-[1-9][0-9]{0,8}`, never without the
@@ -954,8 +954,9 @@ stay incomplete and its code acceptance `unknown`. Observable change: for a node
 override, `query issue` `acceptance_coordinates` now also carries `pr_url`, `head_sha`,
 `base_sha` and `review_digest` (the diff the override was granted for); no persisted
 receipt or replay path compared the former shorter coordinates (override nodes always
-refused closure before PAT-95). This is neither a CAS nor an acceptance: PAT-ADR-0006's bounded detection, non-transactional write and residual
-S1→S2 risk are unchanged. Other trackers refuse the flag.
+refused closure before PAT-95). This is neither a CAS nor an acceptance:
+PAT-ADR-0006's bounded detection, non-transactional write and residual S1→S2 risk
+are unchanged. Other trackers refuse the flag.
 
 Malformed, duplicate, foreign or stale audits and changed validation/type/graph
 coordinates supply no terminal authority: strict reads refuse them, while

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Fixed (PAT-102): residuals of the PAT-95 `close-epic` graph diagnostic. The "Seuls des
+  reçus d'override valides bloquent" suggestion appears only when the strict refusal is itself an
+  override refusal, otherwise it reads "Parmi les nœuds lus, seuls ...". The diagnostic captures
+  the `SystemExit` a tracker (YouTrack) raises for a foreign node, keeps walking and falls back to
+  the original refusal. `ValueError` is `foreign-project` only for an identifier or binding error;
+  `JSONDecodeError`/`UnicodeError` are a `read-error`. "dérogé" is reserved for an override:
+  a `dropped` node is "abandonné". Documentation fixes ("two issue reads", the `SKILL.md`
+  cross-reference, one unwrapped line). No write behaviour, audit id or receipt format changed.
+
 - Fixed (PAT-100): `close-epic` interruptions and refusals state the real closure state
   instead of a fixed "le reçu provider permettra la reprise". After a failure it reads,
   read-only, the provider audit and the local intent and says: no audit and an intent store
