@@ -198,7 +198,7 @@ def linear_markdown_body_readback(body):
                     and rendered[-2] == "\n"
                     and len(rendered) - 1 not in fenced_lines
                     and re.fullmatch(
-                        r"[^\s>#|<*+\-0-9`~\[=\\](?:[^|\n]*[^ \t\\\n])?\n", rendered[-1]
+                        r"[^\W\d_](?:[^|\n]*[^ \t\\\n])?\n", rendered[-1]
                     )
                 ):
                     rendered.append("\n")
@@ -10089,7 +10089,10 @@ def test_linear_adr_pat106_observation_file_is_self_consistent():
         for item in stored[line + 1 :]
     ] == source[line:]
     # Neither bytes carry a credential or a workspace identifier.
-    assert "lin_api" not in json.dumps(observation)
+    dumped = json.dumps(observation)
+    for forbidden in ("lin_api", "Bearer", "team_id", "project_id", "body_sha256"):
+        assert forbidden not in dumped
+    assert "body_sha256" not in dumped and "workspace" not in observation
 
 
 def test_linear_adr_pat106_model_reproduces_the_observed_readback():
@@ -10109,7 +10112,7 @@ def test_linear_adr_pat106_model_reproduces_the_observed_readback():
     )
 
 
-def test_linear_adr_pat106_reads_are_additive_and_pinned_profiles_unchanged():
+def test_linear_adr_pat106_reads_are_additive_over_pat103_and_legacy():
     body = "Intro\n\nPour :\n- a\n- b\n"
     pat103 = "Intro\n\nPour :\n* a\n* b"
     pat106 = "Intro\n\nPour :\n\n* a\n* b"
@@ -10177,6 +10180,17 @@ PAT106_REFUSED = [
     pytest.param("A\nP\n- a", "outside the observed shape", id="two-line-paragraph"),
     pytest.param("P\n- a", "outside the observed shape", id="paragraph-at-start"),
     pytest.param("## H\nP\n- a", "outside the observed shape", id="heading-glued-paragraph"),
+    pytest.param("A\n\nvoir `PASS|BLOCK` :\n- x", "outside the observed shape", id="pipe-paragraph-dash"),
+    pytest.param("A\n\na | b\n1. x", "numbered list glued", id="pipe-paragraph-numbered"),
+    pytest.param("A\n\na | b\n- x", "outside the observed shape", id="pipe-paragraph-bullet"),
+    pytest.param("A\n\n#123 corrigé :\n- x", "outside the observed shape", id="hash-tag-paragraph"),
+    pytest.param("A\n\n#tag\n1. x", "numbered list glued", id="hash-tag-numbered"),
+    pytest.param("A\n\n1 item :\n- x", "outside the observed shape", id="digit-start"),
+    pytest.param("A\n\n**gras** :\n- x", "outside the observed shape", id="bold-start"),
+    pytest.param("A\n\n`code` :\n- x", "outside the observed shape", id="backtick-start"),
+    pytest.param("A\n\n[lien](u) :\n- x", "outside the observed shape", id="bracket-start"),
+    pytest.param("A\n\n=x :\n- x", "outside the observed shape", id="equals-start"),
+    pytest.param("A\n\n\\* :\n- x", "outside the observed shape", id="backslash-start"),
     pytest.param("A\n\nP\r\n- a", "outside the observed shape", id="crlf-paragraph"),
     pytest.param("A\n\nP\n- a\r\n- b", "outside the observed shape", id="crlf-item"),
     pytest.param("A\n\n[x]: http://e\n- a", "outside the observed shape", id="reference-definition"),
@@ -10263,3 +10277,65 @@ def test_linear_adr_pat106_create_round_trips_through_the_fake_provider(tracker)
     created = instance.create_adr(PROJECT, "PAT-106 glued", "A\n\nP :\n- a\n- b")
     assert wire.documents[created.ref]["content"].endswith("A\n\nP :\n\n* a\n* b")
     assert instance.list_adrs(PROJECT)[0].body.endswith("A\n\nP :\n- a\n- b")
+
+
+@pytest.mark.parametrize(
+    ("first", "recognised"),
+    [
+        ("Pour", True), ("a", True), ("é", True), ("日本", True), ("Pour :", True),
+        ("1 a", False), ("**a**", False), ("`a`", False), ("[a]", False),
+        ("=a", False), ("\\*a", False), ("_a_", False), ("(a)", False),
+        ('"a"', False), ("#a", False), ("a | b", False),
+        ("|a", False), ("~a", False), (">a", False),
+    ],
+)
+def test_linear_adr_pat106_model_and_fake_agree_on_paragraph_starts(first, recognised):
+    body = f"A\n\n{first}\n- x"
+    expected = f"A\n\n{first}\n\n* x" if recognised else f"A\n\n{first}\n* x"
+    assert linear_module._linear_markdown_readback_body(body) == expected
+    if first[0] != ">":  # a quote is a refused neighbour, not a paragraph
+        assert linear_markdown_body_readback(body) == expected
+    if recognised:
+        linear_module._preflight_adr_body_readback(body)
+    else:
+        with pytest.raises(TrackerConflictError):
+            linear_module._preflight_adr_body_readback(body)
+
+
+def test_linear_adr_pat106_a_raising_model_does_not_hide_the_pat103_rendering(
+    monkeypatch,
+):
+    def boom(*_args, **_kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(linear_module, "_linear_observed_paragraph_list_inserts", boom)
+    assert linear_module._linear_markdown_readback_bodies("Intro\n\nPour :\n- a\n") == (
+        "Intro\n\nPour :\n* a",
+        "Intro\n\nPour :\n* a\n",
+    )
+
+
+def test_linear_adr_pat106_pinned_profile_is_unchanged_by_the_insertion():
+    # A pinned profile digest-binds its own source: it is checked before the
+    # general model and never reaches the PAT-106 insertion.
+    for name in ("_linear_pat_72_readback", "_linear_pat_86_readback"):
+        calls = []
+        original = getattr(linear_module, name)
+        monkey = lambda body, rendered, _o=original: calls.append(rendered) or _o(  # noqa: E731
+            body, rendered
+        )
+        setattr(linear_module, name, monkey)
+        try:
+            linear_module._linear_markdown_readback_body("A\n\nP :\n- a")
+        finally:
+            setattr(linear_module, name, original)
+        assert calls and calls[0] == "A\n\nP :\n\n* a"
+
+
+def test_linear_adr_pat106_html_line_paragraph_glued_to_a_list_is_refused(tracker):
+    # A `<` line is an (ambiguous) HTML block: refused by the earlier HTML rule,
+    # before any write, never silently unchanged.
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "PAT-106 html", "A\n\n<b>x</b> :\n- x")
+    assert not [q for q, _ in wire.calls if "documentCreate" in q]

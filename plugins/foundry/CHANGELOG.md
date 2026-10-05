@@ -4,8 +4,9 @@
 
 - Changed (PAT-106): the Linear ADR readback model recognises one more observed rendering
   (`docs/qualification/pat-106-linear-paragraph-list-observation.json`, native `PAT-ADR-0015`):
-  a top-level `- ` list directly after a plain single-line paragraph line is read back with one
-  empty line inserted between them. Reads stay additive (the PAT-103 and pre-PAT-94 renderings
+  a top-level `- ` list directly after a single-line paragraph line starting with a letter is read
+  back with one empty line inserted between them; a list glued to any other non-heading line (pipe,
+  `#tag`, digit, `**`, backtick...) is refused. Reads stay additive (the PAT-103 and pre-PAT-94 renderings
   are still accepted) and the pinned profiles are unchanged. A new body is now refused before
   any write, with a precise cause, for the unobserved neighbours: numbered, `*`/`+` or dash-only
   (setext) glued lists, lists glued in or next to a blockquote, under an indented line, nested,

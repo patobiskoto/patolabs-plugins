@@ -44,24 +44,33 @@ with one empty line inserted between the paragraph and the list (and `- ` rewrit
 Pour chaque tâche :\n- a\n- b   ->   Pour chaque tâche :\n\n* a\n* b
 ```
 
-The adapter models exactly that and nothing else: the paragraph is a plain single-line
-paragraph (no indentation, quote, marker, heading, pipe, trailing space or backslash)
-preceded by an empty line and not at the start of the body; the list is a run of plain
-one-line `- ` items ended by an empty line or the end of the body. Prefer writing the
-stored form directly (an empty line before the list). Every unobserved neighbour is
-refused before any write:
+The adapter models only what was observed: one paragraph line starting with a letter and
+ending with ` :`. Narrowed recognised shape: the paragraph is a single LF-terminated line
+that starts with a letter (not a digit, `*`, backtick, `[`, `=`, `\`, `#`, `<`, `|`, quote or
+punctuation), has no pipe, trailing space or backslash, is not a link reference definition,
+is preceded by an empty line and is not at the start of the body. Generalised from that one
+observation (not separately observed): the list may have 1..n plain one-line `- ` items
+(ended by an empty line or the end of the body), and any block may precede the empty line.
+Prefer writing the stored form directly (an empty line before the list). The neighbours
+below are refused before any write; a list glued to any non-recognised paragraph line (pipe
+line, `#tag`, line starting with a digit, `**`, backtick, `[`, `=`, `<`...) is refused as
+"outside the observed shape":
 
 | Shape glued to a paragraph line | Cause (after `unsupported list Markdown in ADR body (line N)`) |
 | --- | --- |
 | `1.` / `1)` numbered list | `numbered list glued to a paragraph` |
 | `*` or `+` bullet, `-` followed by a tab | `bullet list with an unobserved marker glued to a paragraph` |
 | a line `-` or `- ` alone (a setext underline, not an empty item) | `dash line glued to a paragraph (setext underline)` |
-| list in or next to a `>` quote | `list glued to a paragraph in a blockquote` |
+| list in or next to a `>` quote | `list glued in a blockquote context` |
 | list right under an indented line that is not an item continuation | `list glued under an indented line` |
 | indented (nested) list right under a paragraph | `nested list glued to a paragraph` |
-| a `- ` list outside the exact shape (multi-line or hard-break paragraph, paragraph at the start or right after a heading, CRLF, reference definition, nested or continued or lazy or task or empty item in the run, fence in the run) | `bullet list glued to a paragraph outside the observed shape` |
+| a `- ` list outside the exact shape (paragraph line not starting with a letter or holding a pipe, multi-line or hard-break paragraph, paragraph at the start or right after a heading, CRLF, reference definition, nested or continued or lazy or task or empty item in the run, fence in the run) | `bullet list glued to a paragraph outside the observed shape` |
 
-Put an empty line between the paragraph and the list to avoid all of these.
+Still unobserved and NOT refused (behaviour unchanged, no insertion modelled): a list glued
+under a heading (`## H\n- a`), under a `--`/`---` line, under a closing fence; and
+`P\n--` / `P\n---` (not handled by the dash-only setext rule). A `<` line is refused earlier
+by the ambiguous-HTML rule. Put an empty line between the paragraph and the list to avoid
+all of these.
 
 ## Refused, with the cause
 

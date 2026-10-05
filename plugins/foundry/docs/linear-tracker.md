@@ -407,17 +407,21 @@ Document id, SHA-256, date, no secret; the metadata header is omitted): a top-le
 list directly after a paragraph line is read back with one empty line inserted between the two
 (besides the modelled `- ` to `* ` rewrite); a list after a heading and an empty line is unchanged.
 The model recognises exactly that, forward only, in `_linear_observed_paragraph_list_inserts`
-(a plain single-line paragraph after an empty line, then a run of plain one-line `- ` items). Reads
+(a plain single-line paragraph after an empty line that starts with a letter, then a run of plain
+one-line `- ` items; 1..n items and any block before the empty line are generalisations of the one
+observation). Reads
 are additive: `_linear_markdown_readback_bodies` returns the PAT-106 rendering, then the PAT-103
 rendering (no insertion), then the pre-PAT-94 rendering, so a Document stored under an earlier model
 stays readable; the pinned profiles and the pre-PAT-94 model are unchanged. A new body is refused
 before any write, after the PAT-94 and PAT-103 refusals, with `unsupported list Markdown in ADR
-body (line N): <cause>` for the unobserved neighbours: numbered list, `*`/`+` marker, dash-only
-line (setext underline), list in or next to a blockquote, list under an indented line, indented
+body (line N): <cause>` for the unobserved neighbours: a paragraph line not starting with a letter
+or holding a pipe (`#tag`, `a | b`, digit, `**`, backtick, `[`, `=`...), numbered list, `*`/`+` marker, dash-only
+line (setext underline), list in a blockquote context, list under an indented line, indented
 (nested) list, and a `- ` list outside the exact shape (see the guide for the table). Nothing
 refused before becomes accepted. Replaying `adr create` with the original title and body
-recognises the stored Document and writes only the missing witness. Still unobserved: any
-other neighbour of a glued list (an item continuation, a heading directly above the paragraph).
+recognises the stored Document and writes only the missing witness. Still unobserved and not
+refused, behaviour unchanged: a list glued under a heading, under `--`/`---` or a closing fence, and
+`P\n--` / `P\n---` (not handled by the setext rule); an item continuation is refused.
 Scope of the observation: 13 cases. The handling of the neighbours of a collapsed run
 (merge around a `---` separator, setext headings, lazy blockquote continuation, `~~~` or
 info-string fences, final newline removed after a heading or a list item) is a

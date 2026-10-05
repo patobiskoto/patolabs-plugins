@@ -1497,17 +1497,23 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
     Observed (PAT-106, native PAT-ADR-0015): a top-level `- ` bullet list whose
     first item directly follows a plain single-line paragraph (itself after an
     empty LF line, not at the start of the body) is read back with one empty line
-    inserted between the paragraph line and the list.  Plain: no indentation,
-    quote, list marker, heading, table pipe, thematic break, fence, HTML, link
-    reference definition or trailing space/backslash; the list is a run of plain
-    one-line `- ` items ended by an empty line or the end of the body.
+    inserted between the paragraph line and the list.  Recognised paragraph line
+    (one observation, narrowed): it starts with a letter, has no table pipe, no
+    trailing space/backslash, no non-LF separator, is not a link reference
+    definition, and is LF-terminated.  Generalised from the single observation:
+    the list may have 1..n plain one-line `- ` items (ended by an empty line or
+    the end of the body), and any block may precede the empty line before the
+    paragraph.
 
-    Whitelist: ``strict`` refuses, with a precise cause and the 1-based line, every
-    unobserved neighbour: a list glued to a paragraph in or next to a blockquote,
-    under an indented line, as an indented (nested) list, with a numbered, `*` or
-    `+` marker, or as a dash-only line (a setext underline), and a bullet list
-    glued to a paragraph outside the exact observed shape.  Otherwise those are
-    left untouched, as before PAT-106.  Forward only.
+    Whitelist: ``strict`` refuses, with a precise cause and the 1-based line, a
+    list glued to a non-heading, non-fence, non-thematic-break, non-setext line
+    that is not the recognised paragraph (a pipe line, a `#tag` line, a `<` line,
+    a line starting with a digit, `*`, a backtick, `[`, `=`, `\\`...), a list in
+    a blockquote context, under an indented line, an indented (nested) list, a
+    numbered, `*` or `+` marker, a dash-only line (a setext underline), and a
+    bullet list glued to a paragraph outside the exact observed shape.  Not
+    refused, behaviour unchanged (unobserved): a list glued under a heading, under
+    `--`/`---` or a closing fence, and `P\\n--` / `P\\n---`.  Forward only.
     """
     lines = _COMMONMARK_LINE.findall(body)
     fenced: list[bool] = []
@@ -1545,12 +1551,12 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         return False
 
     def paragraph_like(line: str) -> bool:
-        """A line that starts or continues a paragraph, plain or not."""
+        """Any line that is not blank, indented, quoted, a list item, a heading, a
+        thematic break, a setext underline or a fence: recognised or not."""
         text = line.rstrip("\r\n")
         return (
             bool(text)
-            and text[0] not in " \t>#<|"
-            and "|" not in text
+            and text[0] not in " \t>"
             and not is_item(text)
             and _THEMATIC_BREAK.fullmatch(text) is None
             and _SETEXT_DASHES.fullmatch(text) is None
@@ -1562,6 +1568,8 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         text = line.rstrip("\r\n")
         return (
             paragraph_like(line)
+            and text[0].isalpha()
+            and "|" not in text
             and line.endswith("\n")
             and not line.endswith("\r\n")
             and _REFERENCE_DEFINITION.match(text) is None
@@ -1612,7 +1620,7 @@ def _linear_observed_paragraph_list_inserts(body: str, *, strict: bool) -> set[i
         elif not is_item(text):
             continue
         elif in_quote != previous_quote or (in_quote and not is_item(previous_text)):
-            reason = "list glued to a paragraph in a blockquote"
+            reason = "list glued in a blockquote context"
         elif is_item(previous_text) or in_quote:
             continue  # a sibling or nested item of an existing list: not modelled
         elif indent(text) and glued_to_paragraph:
@@ -1845,7 +1853,7 @@ def _linear_markdown_readback_body(
 def _linear_markdown_readback_bodies(
     body: str, *, allow_foundry_adr_0001: bool = False
 ) -> tuple[str, ...]:
-    """Every body rendering a read accepts: PAT-94 first, then pre-PAT-94.
+    """Every body rendering a read accepts: PAT-106, PAT-103, then pre-PAT-94.
 
     Additive: a Document stored with the pre-PAT-94 model output, or with the
     PAT-103 output (no PAT-106 empty line before a glued list), stays readable,
@@ -1863,7 +1871,7 @@ def _linear_markdown_readback_bodies(
                 observed_paragraph_lists=paragraph_lists,
             )
         except ValueError:
-            break
+            continue
         if observed not in renderings:
             renderings.append(observed)
     if legacy not in renderings:
