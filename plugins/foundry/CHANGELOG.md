@@ -5,12 +5,17 @@
 - Added (PAT-107): PAT-19 local-first qualification protocol v1 frozen under
   `docs/qualification/pat-19-protocol-v1.md` and a replayable corpus
   (`docs/qualification/pat-19-corpus-v1.md`): `foundry.local_first_corpus` freezes merged PRs in a
-  committed snapshot, applies the protocol's inclusion/exclusion criteria with a recorded reason per
-  PR, draws 6 comparison + 6 screening (`tamis`) tasks with a seeded sha256 ranking (the sets never overlap), builds disposable worktrees at
-  the base SHA without the PR's protected tests (the task statement is the tracker issue verbatim; `bundle`
-  refuses any PR whose statement is not a tracker issue), and judges a candidate worktree mechanically by
-  restoring and running only those tests from the merged SHA. The judge accepts the merged solution and
-  refuses the base for all 12 drawn tasks. No model is run and no cloud/tracker call is made.
+  committed snapshot (tracker statements from the committed, scrubbed
+  `pat-19-corpus-statements-v1.json`, sha256 recorded), applies the protocol's inclusion/exclusion
+  criteria with a recorded reason per PR (accent-insensitive title rules; manual include/exclude
+  overrides with a mandatory reason), draws 6 comparison + 6 screening (`tamis`) tasks with a seeded
+  sha256 ranking (the sets never overlap, and are not independent: see the corpus limits), builds a
+  bundle as a brand-new one-commit repository at the base tree without the protected tests and with no
+  link to the developer repository (no worktree, remote, alternates or merged SHA), and judges a
+  candidate mechanically by restoring and running only those tests from the merged SHA in a scrubbed
+  environment (temporary HOME, whitelisted variables, `--confcutdir`, REFUSED on harness-file edits or
+  symlinks). The judge accepts the merged solution and refuses the base for all 12 drawn tasks. No
+  model is run and no cloud/tracker call is made.
 
 - Changed (PAT-106): the Linear ADR readback model recognises one more observed rendering
   (`docs/qualification/pat-106-linear-paragraph-list-observation.json`, native `PAT-ADR-0015`):

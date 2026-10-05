@@ -45,7 +45,10 @@ Candidats, sur un seul axe (ce n'est pas une matrice) :
 - Qwen3.8-27B, MLX 6 bits, `lmstudio-community/Qwen3.8-27B-MLX-6bit` (déjà présent) ;
 - Qwen3.8-27B, MLX 4 bits, `mlx-community/Qwen3.8-27B-4bit` (déjà présent) ;
 - Qwen3.6-35B-A3B, MLX 4 bits, `lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit` (déjà présent) ;
-- au plus un candidat d'un autre éditeur, désigné par une note de sélection datée et sourcée, versée au dépôt avant le premier essai du tamis ; à défaut, le tamis se fait à trois.
+- Muse Glimmer 30B (Meta), `lmstudio-community/Muse-Glimmer-30B-GGUF`, à télécharger : candidat d'un autre éditeur, servi par le moteur llama.cpp de LM Studio faute de build MLX identifié ; si ses appels d'outils échouent au test de fumée, il est remplacé par Devstral Small 2 24B (`lmstudio-community/Devstral-Small-2-24B-Instruct-2512-GGUF`) ;
+- Qwen3-Coder-30B-A3B, MLX 4 bits, `lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit`, à télécharger.
+
+La liste est fermée. Le fichier exact, sa quantification et son empreinte sont consignés au préflight pour chaque candidat ; chacun passe un test de fumée d'appel d'outil avant sa première tâche. Le candidat servi en GGUF ne partage pas le moteur des autres : cet écart est consigné avec ses résultats.
 
 Règle fixée d'avance : est retenu le candidat qui fait accepter le plus de tâches par le juge ; à égalité, celui dont la durée totale est la plus courte. Si aucun candidat n'atteint 2 tâches acceptées sur 6, la campagne s'arrête sur le verdict « conserver le cloud ». Le candidat retenu devient le candidat local de la comparaison, sur les 6 tâches de comparaison, qui n'ont pas servi au tamis.
 
@@ -91,11 +94,11 @@ Le corpus éligible compte 13 tickets : il ne permet pas d'étendre la comparais
 ## 8. Budgets et autorisations
 
 - **Cloud** : la comparaison représente environ 12 exécutions d'implémenteur et 18 revues au minimum, davantage en cas de corrections. Plafond : 45 exécutions d'agent cloud. Le volume en tokens est inconnu avant mesure. Le tamis n'en consomme aucune.
-- **Local** : au plus 2 heures de machine par candidat pour le tamis (8 heures à quatre candidats), puis environ 12 tentatives de 20 minutes au plus pour la comparaison, soit 4 heures.
-- **Disque** : aucun téléchargement pour les trois candidats Qwen ; un téléchargement pour le quatrième candidat s'il est désigné, supprimable ensuite ; mini-swe-agent est un petit paquet Python.
+- **Local** : au plus 2 heures de machine par candidat pour le tamis (10 heures à cinq candidats), puis environ 12 tentatives de 20 minutes au plus pour la comparaison, soit 4 heures.
+- **Disque** : aucun téléchargement pour les trois premiers candidats ; deux téléchargements (Muse Glimmer 30B et Qwen3-Coder-30B-A3B), dont la taille est annoncée au mainteneur avant de lancer et qui sont supprimables ensuite ; mini-swe-agent est un petit paquet Python.
 - **Chargement du modèle** : confirmation du mainteneur avant chaque session de chargement.
 - **Machine dédiée** : les mesures se font machine dédiée à la campagne, sans autre modèle chargé ni autre projet consommateur de mémoire ; le préflight relève le swap et la pression mémoire de départ et refuse de lancer si un autre modèle est chargé.
-- **Isolement** : worktree jetable hors du checkout de développement, configuration de harnais isolée, écriture interdite hors du dossier d'essai, réseau du candidat limité à la boucle locale.
+- **Isolement** : dépôt git jetable neuf (un seul commit racine, sans lien avec le dépôt de développement) hors du checkout de développement, configuration de harnais isolée, écriture interdite hors du dossier d'essai, réseau du candidat limité à la boucle locale.
 
 ## 9. Ce qu'il faut construire avant de mesurer
 

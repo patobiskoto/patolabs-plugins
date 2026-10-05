@@ -1,11 +1,22 @@
 {
   "schema": "foundry.local-first-corpus-manifest.v1",
-  "snapshot_sha256": "d4c60420e1616692dca6f9c39b93c3e313a5c8a07d473a6c6004d404d24f3b18",
+  "snapshot_sha256": "c948cf13178f7ee48467a1888974e84123abd6d0ca316a0fab7f0a7e9baf012a",
   "seed": "pat-19-protocol-v1",
   "algorithm": "sha256-rank-v1",
   "criteria": {
     "max_changed_lines": 300
   },
+  "statements": {
+    "file": "pat-19-corpus-statements-v1.json",
+    "sha256": "86a2c98734a9ab047ac27d23ec0f6dbb13514ea347cc19a1bfeba9579348ef2d",
+    "captured_on": "2026-10-05",
+    "as_of": "capture date, not the base SHA"
+  },
+  "limits": [
+    "Comparison and screening sets are disjoint by ticket but not independent: PAT-33 (screening), PAT-34 and PAT-35 (comparison) and PAT-36 (screening) are consecutive commits of one stacked branch, PAT-35 and PAT-36 are twin fixes of import_adr_batch, PAT-39 (screening) precedes PAT-41 (comparison), and 8 of the 12 tasks touch tests/test_linear_tracker.py.",
+    "Statements are the tracker issues as of 2026-10-05 (checkboxes reset), not as of the base SHA.",
+    "The judge does not isolate product code: it is imported in the pytest process and could tamper with pytest; non-protected support files (fixtures, data) can be edited by the candidate and are only reported."
+  ],
   "draw": {
     "seed": "pat-19-protocol-v1",
     "algorithm": "sha256-rank-v1",
@@ -28,6 +39,24 @@
     ],
     "replacement_queue": [
       81
+    ],
+    "overrides": [
+      {
+        "pr": 42,
+        "issue": "PAT-44",
+        "decision": "include",
+        "reason": "data_migration keyword 'basculé' in the title is a false positive: PAT-44 documents and tools the recovery after a repository binding drifted following the cutover; it is a recovery fix, not a data migration (protocol section 3 excludes data migrations). Lifts only the topic:data_migration reason.",
+        "lifted_reasons": [
+          "topic:data_migration"
+        ]
+      },
+      {
+        "pr": 82,
+        "issue": "PAT-102",
+        "decision": "exclude",
+        "reason": "authority: PAT-102 settles the review residuals of PAT-95, the human-override waiver that decides who may close an Epic (protocol section 3: authentication or authority)",
+        "lifted_reasons": []
+      }
     ],
     "excluded": [
       {
@@ -682,7 +711,22 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_stacked_branch",
+        "base_ref": "feat/pat-22-livrer-le-stockage-adr-versionné",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": []
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": []
+        },
+        "head_on_origin_default_branch": false,
+        "public_reachability": "unknown",
+        "fetch_hint": "git fetch origin feat/pat-22-livrer-le-stockage-adr-versionné  # only if that branch still exists on the remote; not verified (no network used); a squash commit of a stacked PR is on no other public ref"
+      }
     },
     {
       "issue": "PAT-45",
@@ -693,7 +737,7 @@
       "pr_head_sha": "0d59f24ae2cefe7beccd17befb43dc063270187d",
       "changed_lines": 229,
       "protected_tests_count": 1,
-      "acceptance_criteria": "# Aligner doctor sur le chemin du hook pre-push du monorepo\n\n## Contexte\n\n`doctor` n'accepte que `core.hooksPath=.githooks`, alors que ce dépôt documente et versionne son hook sous `plugins/foundry/.githooks` (règle R1 du contrat). Une configuration conforme au contrat apparaît donc en orange, avec une commande de correction qui pointe vers un dossier inexistant.\n\n## Critères d’acceptation\n\n- [ ] `doctor` reconnaît comme sain le chemin de hook documenté par le dépôt, sans assouplir le diagnostic des dépôts consommateurs.\n- [ ] La commande de correction proposée pointe vers un dossier qui existe.\n- [ ] Tests et documentation ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans [PAT-51](https://linear.app/patolabs/issue/PAT-51/v100-foundry-et-ship-ios-portables-sur-youtrack-linear-et-github), phase M1, priorité Medium et estimation inchangées. Correctif borné du diagnostic ; ne pas le transformer en refonte de doctor. Sa livraison est requise par la recette finale [PAT-61](https://linear.app/patolabs/issue/PAT-61/v1-m4-prouver-le-parcours-foundry-et-ship-ios-sur-3-trackers-2-hotes).\n",
+      "acceptance_criteria": "# Aligner doctor sur le chemin du hook pre-push du monorepo\n\n## Contexte\n\n`doctor` n'accepte que `core.hooksPath=.githooks`, alors que ce dépôt documente et versionne son hook sous `plugins/foundry/.githooks` (règle R1 du contrat). Une configuration conforme au contrat apparaît donc en orange, avec une commande de correction qui pointe vers un dossier inexistant.\n\n## Critères d’acceptation\n\n- [ ] `doctor` reconnaît comme sain le chemin de hook documenté par le dépôt, sans assouplir le diagnostic des dépôts consommateurs.\n- [ ] La commande de correction proposée pointe vers un dossier qui existe.\n- [ ] Tests et documentation ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans PAT-51, phase M1, priorité Medium et estimation inchangées. Correctif borné du diagnostic ; ne pas le transformer en refonte de doctor. Sa livraison est requise par la recette finale PAT-61.\n",
       "ac_source": "tracker_issue",
       "protected_tests": [
         {
@@ -721,7 +765,123 @@
           ],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_main",
+        "base_ref": "main",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_on_origin_default_branch": true,
+        "public_reachability": "origin_refs",
+        "fetch_hint": null
+      }
     },
     {
       "issue": "PAT-34",
@@ -748,7 +908,22 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_stacked_branch",
+        "base_ref": "feat/pat-22-livrer-le-stockage-adr-versionné",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": []
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": []
+        },
+        "head_on_origin_default_branch": false,
+        "public_reachability": "unknown",
+        "fetch_hint": "git fetch origin feat/pat-22-livrer-le-stockage-adr-versionné  # only if that branch still exists on the remote; not verified (no network used); a squash commit of a stacked PR is on no other public ref"
+      }
     },
     {
       "issue": "PAT-44",
@@ -759,7 +934,7 @@
       "pr_head_sha": "b9db8f5c124c2b51d73960e65073a80c907f4b0f",
       "changed_lines": 98,
       "protected_tests_count": 4,
-      "acceptance_criteria": "# Documenter et outiller la reprise après dérive du binding d'un dépôt basculé\n\n## Contexte\n\nRevue de PR #12 (PAT-10). Toute modification de l'entrée de registre Linear d'un dépôt basculé casse `registry_binding_digest` : `tracker()`, `resolve()` et `registry cutover` refusent alors, et même `open-pr` devient impossible. La seule issue est de restaurer l'entrée exacte à la main. Le message de `register()` renvoie à un « rollback explicite » qui n'existe pas. Autres écarts : le marqueur `.foundry/tracker.json`, générique et prioritaire sur `FOUNDRY_TRACKER`, n'est décrit que dans la doc Linear ; `resolve()` refuse aussi les binding actifs sous deux providers ; une lecture via alias archivé renvoie un message qui parle d'écriture.\n\n## Critères d’acceptation\n\n- [ ] Procédure de reprise documentée, et opération outillée ou message corrigé pour rétablir un binding cohérent sans double écriture.\n- [ ] Le marqueur et la précédence sur `FOUNDRY_TRACKER` sont documentés dans la configuration générale du plugin, ainsi que le refus des binding ambigus.\n- [ ] Message de lecture via alias archivé corrigé ; tests ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans [PAT-51](https://linear.app/patolabs/issue/PAT-51/v100-foundry-et-ship-ios-portables-sur-youtrack-linear-et-github), phase M1, priorité High. Livrer la reprise bornée définie ci-dessus avant [PAT-54](https://linear.app/patolabs/issue/PAT-54/v1-m1-generaliser-le-binding-par-depot-et-le-bootstrap-des-trois) (bootstrap/binding multi-tracker). La généralisation aux trois trackers et aux nouveaux dépôts reste dans [PAT-54](https://linear.app/patolabs/issue/PAT-54/v1-m1-generaliser-le-binding-par-depot-et-le-bootstrap-des-trois) : pas d'extension implicite des critères de ce ticket. Aucune modification de [PAT-42](https://linear.app/patolabs/issue/PAT-42/garder-la-garde-r1-fermee-quand-le-marqueur-tracker-ou-le-registre-du) en cours d'exécution.\n",
+      "acceptance_criteria": "# Documenter et outiller la reprise après dérive du binding d'un dépôt basculé\n\n## Contexte\n\nRevue de PR #12 (PAT-10). Toute modification de l'entrée de registre Linear d'un dépôt basculé casse `registry_binding_digest` : `tracker()`, `resolve()` et `registry cutover` refusent alors, et même `open-pr` devient impossible. La seule issue est de restaurer l'entrée exacte à la main. Le message de `register()` renvoie à un « rollback explicite » qui n'existe pas. Autres écarts : le marqueur `.foundry/tracker.json`, générique et prioritaire sur `FOUNDRY_TRACKER`, n'est décrit que dans la doc Linear ; `resolve()` refuse aussi les binding actifs sous deux providers ; une lecture via alias archivé renvoie un message qui parle d'écriture.\n\n## Critères d’acceptation\n\n- [ ] Procédure de reprise documentée, et opération outillée ou message corrigé pour rétablir un binding cohérent sans double écriture.\n- [ ] Le marqueur et la précédence sur `FOUNDRY_TRACKER` sont documentés dans la configuration générale du plugin, ainsi que le refus des binding ambigus.\n- [ ] Message de lecture via alias archivé corrigé ; tests ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans PAT-51, phase M1, priorité High. Livrer la reprise bornée définie ci-dessus avant PAT-54 (bootstrap/binding multi-tracker). La généralisation aux trois trackers et aux nouveaux dépôts reste dans PAT-54 : pas d'extension implicite des critères de ce ticket. Aucune modification de PAT-42 en cours d'exécution.\n",
       "ac_source": "tracker_issue",
       "protected_tests": [
         {
@@ -776,7 +951,115 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_main",
+        "base_ref": "main",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_on_origin_default_branch": true,
+        "public_reachability": "origin_refs",
+        "fetch_hint": null
+      }
     },
     {
       "issue": "PAT-41",
@@ -822,7 +1105,139 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_main",
+        "base_ref": "main",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-10-basculer-patolabs-plugins-vers-linear-sans",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-23-migrer-et-auditer-les-27",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-50-publier-foundry-090-depuis-le",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-40-qualifier-le-readback-markdown-des",
+            "refs/remotes/origin/fix/pat-41-garder-query-issue-lisible-quand",
+            "refs/remotes/origin/fix/pat-42-garder-la-garde-r1-fermée",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-48-projeter-lindisponibilité-dune-adr-de",
+            "refs/remotes/origin/fix/pat-49-rendre-lisible-un-merge-linear",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-10-basculer-patolabs-plugins-vers-linear-sans",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-23-migrer-et-auditer-les-27",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-50-publier-foundry-090-depuis-le",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-40-qualifier-le-readback-markdown-des",
+            "refs/remotes/origin/fix/pat-42-garder-la-garde-r1-fermée",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-48-projeter-lindisponibilité-dune-adr-de",
+            "refs/remotes/origin/fix/pat-49-rendre-lisible-un-merge-linear",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_on_origin_default_branch": true,
+        "public_reachability": "origin_refs",
+        "fetch_hint": null
+      }
     },
     {
       "issue": "PAT-48",
@@ -833,7 +1248,7 @@
       "pr_head_sha": "6ae1c4de817c57e133b8df03e9a394d0f50ef7bb",
       "changed_lines": 124,
       "protected_tests_count": 2,
-      "acceptance_criteria": "# Projeter l'indisponibilité d'une ADR de l'index embarqué dans query issue\n\n## Contexte\n\nRevue de PR #33 (PAT-41). `query issue` projette un conflit d'index ADR en état explicite, mais une cible de supersession manquante lève `AdrUnavailableError` et rend encore toute lecture d'issue impossible.\n\n## Critères d’acceptation\n\n- [ ] Cette erreur d'intégrité de l'index embarqué est projetée comme état explicite distinct, jamais comme index vide ; `query adr` et `query adrs` restent fail-closed.\n- [ ] Tests sur faux transport ; documentation ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans [PAT-51](https://linear.app/patolabs/issue/PAT-51/v100-foundry-et-ship-ios-portables-sur-youtrack-linear-et-github), phase M1, priorité relevée de Low à High : une erreur d'index ADR ne doit pas rendre tout le backlog illisible. Conserver exactement la distinction d'erreurs et le refus fermé des lectures ADR définis ci-dessus. Correctif indépendant et borné, requis par [PAT-61](https://linear.app/patolabs/issue/PAT-61/v1-m4-prouver-le-parcours-foundry-et-ship-ios-sur-3-trackers-2-hotes) ; estimation inchangée.\n",
+      "acceptance_criteria": "# Projeter l'indisponibilité d'une ADR de l'index embarqué dans query issue\n\n## Contexte\n\nRevue de PR #33 (PAT-41). `query issue` projette un conflit d'index ADR en état explicite, mais une cible de supersession manquante lève `AdrUnavailableError` et rend encore toute lecture d'issue impossible.\n\n## Critères d’acceptation\n\n- [ ] Cette erreur d'intégrité de l'index embarqué est projetée comme état explicite distinct, jamais comme index vide ; `query adr` et `query adrs` restent fail-closed.\n- [ ] Tests sur faux transport ; documentation ; revue et CI vertes.\n\n## Planification V1.0.0 — 26 septembre 2026\n\nRéutilisé dans PAT-51, phase M1, priorité relevée de Low à High : une erreur d'index ADR ne doit pas rendre tout le backlog illisible. Conserver exactement la distinction d'erreurs et le refus fermé des lectures ADR définis ci-dessus. Correctif indépendant et borné, requis par PAT-61 ; estimation inchangée.\n",
       "ac_source": "tracker_issue",
       "protected_tests": [
         {
@@ -848,7 +1263,125 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_main",
+        "base_ref": "main",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-48-projeter-lindisponibilité-dune-adr-de",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_on_origin_default_branch": true,
+        "public_reachability": "origin_refs",
+        "fetch_hint": null
+      }
     }
   ],
   "screening": [
@@ -881,7 +1414,140 @@
           ],
           "module_level_changed": true
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_main",
+        "base_ref": "main",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-10-basculer-patolabs-plugins-vers-linear-sans",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-23-migrer-et-auditer-les-27",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-50-publier-foundry-090-depuis-le",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-40-qualifier-le-readback-markdown-des",
+            "refs/remotes/origin/fix/pat-41-garder-query-issue-lisible-quand",
+            "refs/remotes/origin/fix/pat-42-garder-la-garde-r1-fermée",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-48-projeter-lindisponibilité-dune-adr-de",
+            "refs/remotes/origin/fix/pat-49-rendre-lisible-un-merge-linear",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-10-basculer-patolabs-plugins-vers-linear-sans",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-23-migrer-et-auditer-les-27",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-50-publier-foundry-090-depuis-le",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-40-qualifier-le-readback-markdown-des",
+            "refs/remotes/origin/fix/pat-41-garder-query-issue-lisible-quand",
+            "refs/remotes/origin/fix/pat-42-garder-la-garde-r1-fermée",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-48-projeter-lindisponibilité-dune-adr-de",
+            "refs/remotes/origin/fix/pat-49-rendre-lisible-un-merge-linear",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_on_origin_default_branch": true,
+        "public_reachability": "origin_refs",
+        "fetch_hint": null
+      }
     },
     {
       "issue": "PAT-101",
@@ -912,7 +1578,35 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_main",
+        "base_ref": "main",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_on_origin_default_branch": true,
+        "public_reachability": "origin_refs",
+        "fetch_hint": null
+      }
     },
     {
       "issue": "PAT-36",
@@ -939,7 +1633,22 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_stacked_branch",
+        "base_ref": "feat/pat-22-livrer-le-stockage-adr-versionné",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": []
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": []
+        },
+        "head_on_origin_default_branch": false,
+        "public_reachability": "unknown",
+        "fetch_hint": "git fetch origin feat/pat-22-livrer-le-stockage-adr-versionné  # only if that branch still exists on the remote; not verified (no network used); a squash commit of a stacked PR is on no other public ref"
+      }
     },
     {
       "issue": "PAT-33",
@@ -968,7 +1677,22 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_stacked_branch",
+        "base_ref": "feat/pat-22-livrer-le-stockage-adr-versionné",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": []
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": []
+        },
+        "head_on_origin_default_branch": false,
+        "public_reachability": "unknown",
+        "fetch_hint": "git fetch origin feat/pat-22-livrer-le-stockage-adr-versionné  # only if that branch still exists on the remote; not verified (no network used); a squash commit of a stacked PR is on no other public ref"
+      }
     },
     {
       "issue": "PAT-72",
@@ -997,7 +1721,103 @@
           ],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_main",
+        "base_ref": "main",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_on_origin_default_branch": true,
+        "public_reachability": "origin_refs",
+        "fetch_hint": null
+      }
     },
     {
       "issue": "PAT-28",
@@ -1008,7 +1828,7 @@
       "pr_head_sha": "1ceaf0b71148bc0154c87321593a082516a62fe3",
       "changed_lines": 153,
       "protected_tests_count": 5,
-      "acceptance_criteria": "# Tolérer le passage Linear Backlog vers In Progress après une PR déjà attestée\n\n## Constat\n\nLe 24 septembre 2026, après l'ouverture Foundry de la PR #18 pour PAT-27, l'intégration GitHub de Linear a déplacé le statut natif de Backlog vers In Progress environ dix secondes après le reçu lifecycle state-review. Le reçu porte native_state_id=460f66ac-bb2a-448d-ae41-588b3b275892 (Backlog), alors que Linear exposait 49aa24ba-848c-4ccf-87c3-35569ad000ec (In Progress). `query issue PAT-27` échouait avec `Linear native state changed outside lifecycle`. Une réparation bornée a remis seulement l'état natif de PAT-27 sur Backlog et rétabli la projection Foundry review. PR #18 reste ouverte. PAT-26 a sécurisé merge vers Done ; ce cas start après review est distinct.\n\n## Objectif\n\nFaire correspondre le validateur Linear au contrat documenté de dérive native `backlog/ready -> in-progress` après un reçu `state-review` durable, sans transformer ce mouvement en preuve de revue, d'AC ou de merge.\n\n## Critères d'acceptation\n\n- [ ] Le test reproduit l'ordre réel : reçu `state-review` durable sur Backlog, puis mutation native `In Progress` différée par l'intégration GitHub, sans opération Foundry pendante.\n- [ ] La lecture Foundry reste `review` et conserve PR, head/base et AC du reçu ; aucun reçu n'est réécrit ou fabriqué.\n- [ ] Seule cette dérive monotone est tolérée ; `Done`, `Blocked`, autre projet, mauvais état source ou absence de reçu adéquat échouent fermés.\n- [ ] Le rejeu d'ouverture PR, la revue exacte et le merge relisent les coordonnées courantes sans contourner CI, AC ni protections anti-course.\n- [ ] Documentation et recette de réparation bornée indiquent le comportement avant/après et l'absence de CAS Linear, avec preuves sur doubles et sans écriture YouTrack.\n\n## Contraintes\n\nFOUNDRY-ADR-0001 et FOUNDRY-ADR-0026 restent actifs. Ne pas rouvrir PAT-26 ni élargir PAT-27. Réparer l'adaptateur, pas le ticket PAT-27 par exception permanente.\n",
+      "acceptance_criteria": "# Tolérer le passage Linear Backlog vers In Progress après une PR déjà attestée\n\n## Constat\n\nLe 24 septembre 2026, après l'ouverture Foundry de la PR #18 pour PAT-27, l'intégration GitHub de Linear a déplacé le statut natif de Backlog vers In Progress environ dix secondes après le reçu lifecycle state-review. Le reçu porte native_state_id=<uuid removed> (Backlog), alors que Linear exposait <uuid removed> (In Progress). `query issue PAT-27` échouait avec `Linear native state changed outside lifecycle`. Une réparation bornée a remis seulement l'état natif de PAT-27 sur Backlog et rétabli la projection Foundry review. PR #18 reste ouverte. PAT-26 a sécurisé merge vers Done ; ce cas start après review est distinct.\n\n## Objectif\n\nFaire correspondre le validateur Linear au contrat documenté de dérive native `backlog/ready -> in-progress` après un reçu `state-review` durable, sans transformer ce mouvement en preuve de revue, d'AC ou de merge.\n\n## Critères d'acceptation\n\n- [ ] Le test reproduit l'ordre réel : reçu `state-review` durable sur Backlog, puis mutation native `In Progress` différée par l'intégration GitHub, sans opération Foundry pendante.\n- [ ] La lecture Foundry reste `review` et conserve PR, head/base et AC du reçu ; aucun reçu n'est réécrit ou fabriqué.\n- [ ] Seule cette dérive monotone est tolérée ; `Done`, `Blocked`, autre projet, mauvais état source ou absence de reçu adéquat échouent fermés.\n- [ ] Le rejeu d'ouverture PR, la revue exacte et le merge relisent les coordonnées courantes sans contourner CI, AC ni protections anti-course.\n- [ ] Documentation et recette de réparation bornée indiquent le comportement avant/après et l'absence de CAS Linear, avec preuves sur doubles et sans écriture YouTrack.\n\n## Contraintes\n\nFOUNDRY-ADR-0001 et FOUNDRY-ADR-0026 restent actifs. Ne pas rouvrir PAT-26 ni élargir PAT-27. Réparer l'adaptateur, pas le ticket PAT-27 par exception permanente.\n",
       "ac_source": "tracker_issue",
       "protected_tests": [
         {
@@ -1026,7 +1846,140 @@
           "helper_changed": [],
           "module_level_changed": false
         }
-      ]
+      ],
+      "replayability": {
+        "merge_kind": "squash_on_main",
+        "base_ref": "main",
+        "base_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-10-basculer-patolabs-plugins-vers-linear-sans",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-23-migrer-et-auditer-les-27",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-50-publier-foundry-090-depuis-le",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-40-qualifier-le-readback-markdown-des",
+            "refs/remotes/origin/fix/pat-41-garder-query-issue-lisible-quand",
+            "refs/remotes/origin/fix/pat-42-garder-la-garde-r1-fermée",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-48-projeter-lindisponibilité-dune-adr-de",
+            "refs/remotes/origin/fix/pat-49-rendre-lisible-un-merge-linear",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_sha": {
+          "present_locally": true,
+          "origin_refs_containing": [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/chore/pat-10-basculer-patolabs-plugins-vers-linear-sans",
+            "refs/remotes/origin/chore/pat-101-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-102-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-103-qualifier-par-sonde-les-lignes",
+            "refs/remotes/origin/chore/pat-104-isoler-la-suite-de-tests",
+            "refs/remotes/origin/chore/pat-105-solder-les-résiduels-de-la",
+            "refs/remotes/origin/chore/pat-106-reconnaître-ou-refuser-une-liste",
+            "refs/remotes/origin/chore/pat-107-geler-le-protocole-v1-de",
+            "refs/remotes/origin/chore/pat-14-définir-les-profils-de-migration",
+            "refs/remotes/origin/chore/pat-15-ajouter-les-profils-codex-gpt-6",
+            "refs/remotes/origin/chore/pat-16-v1--actualiser-et-qualifier",
+            "refs/remotes/origin/chore/pat-20-formaliser-lorganisation-linear-par-produit",
+            "refs/remotes/origin/chore/pat-23-migrer-et-auditer-les-27",
+            "refs/remotes/origin/chore/pat-43-étendre-la-pierre-tombale-youtrack",
+            "refs/remotes/origin/chore/pat-44-documenter-et-outiller-la-reprise",
+            "refs/remotes/origin/chore/pat-46-couvrir-les-lacunes-de-tests",
+            "refs/remotes/origin/chore/pat-47-permettre-des-versions-successives-aux",
+            "refs/remotes/origin/chore/pat-50-publier-foundry-090-depuis-le",
+            "refs/remotes/origin/chore/pat-52-v1-m0--réconcilier-la",
+            "refs/remotes/origin/chore/pat-53-v1-m0--figer-le",
+            "refs/remotes/origin/chore/pat-61-v1-m4--recetter-en",
+            "refs/remotes/origin/chore/pat-62-v1-m4--publier-foundry",
+            "refs/remotes/origin/chore/pat-65-v1-m0--qualifier-github",
+            "refs/remotes/origin/chore/pat-93-v100-reliquat--consigner-la",
+            "refs/remotes/origin/feat/pat-100-distinguer-dans-la-clôture-depic",
+            "refs/remotes/origin/feat/pat-54-v1-m1--généraliser-le",
+            "refs/remotes/origin/feat/pat-55-v1-m1--rendre-le",
+            "refs/remotes/origin/feat/pat-56-v1-m1--synchroniser-états",
+            "refs/remotes/origin/feat/pat-57-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-58-v1-m2--gérer-les",
+            "refs/remotes/origin/feat/pat-59-v1-m3--unifier-périmètres",
+            "refs/remotes/origin/feat/pat-60-v1-m3--qualifier-ship-ios",
+            "refs/remotes/origin/feat/pat-64-v1-m3--basculer-un",
+            "refs/remotes/origin/feat/pat-66-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-67-v1-m2--github-projects",
+            "refs/remotes/origin/feat/pat-68-tracker-conformance-suite",
+            "refs/remotes/origin/feat/pat-69-v1-m1--clôturer-un",
+            "refs/remotes/origin/feat/pat-82-qualifier-les-reçus-de-livraison",
+            "refs/remotes/origin/feat/pat-95-clôturer-un-epic-avec-une",
+            "refs/remotes/origin/feat/pat-98-relancer-de-façon-bornée-les",
+            "refs/remotes/origin/feat/pat-99-lire-un-epic-en-une",
+            "refs/remotes/origin/fix/pat-40-qualifier-le-readback-markdown-des",
+            "refs/remotes/origin/fix/pat-41-garder-query-issue-lisible-quand",
+            "refs/remotes/origin/fix/pat-42-garder-la-garde-r1-fermée",
+            "refs/remotes/origin/fix/pat-45-aligner-doctor-sur-le-chemin",
+            "refs/remotes/origin/fix/pat-48-projeter-lindisponibilité-dune-adr-de",
+            "refs/remotes/origin/fix/pat-49-rendre-lisible-un-merge-linear",
+            "refs/remotes/origin/fix/pat-70-projeter-une-issue-liée-à",
+            "refs/remotes/origin/fix/pat-71-réparer-la-création-dadr-linear",
+            "refs/remotes/origin/fix/pat-72-reconnaître-le-rendu-linear-des",
+            "refs/remotes/origin/fix/pat-76-tolérer-la-dérive-native-linear",
+            "refs/remotes/origin/fix/pat-79-empêcher-merge-pr-daccepter-les-adr",
+            "refs/remotes/origin/fix/pat-85-reconnaître-le-rendu-linear-du",
+            "refs/remotes/origin/fix/pat-86-reconnaître-le-rendu-linear-borné",
+            "refs/remotes/origin/fix/pat-92-reconnaître-la-clôture-auditable-des",
+            "refs/remotes/origin/fix/pat-94-reconnaître-le-rendu-linear-dune",
+            "refs/remotes/origin/main"
+          ]
+        },
+        "head_on_origin_default_branch": true,
+        "public_reachability": "origin_refs",
+        "fetch_hint": null
+      }
     }
   ],
   "discarded_at_verification": [],
@@ -1048,7 +2001,11 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1064,7 +2021,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1085,7 +2044,12 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md",
+          "plugins/foundry/skills/frame/SKILL.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1101,7 +2065,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1120,7 +2086,12 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md",
+          "plugins/foundry/skills/frame/SKILL.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1134,7 +2105,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1151,7 +2124,11 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1163,7 +2140,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1182,7 +2161,11 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1196,7 +2179,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1213,7 +2198,11 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1225,7 +2214,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1247,7 +2238,14 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md",
+          "plugins/foundry/skills/merge-pr/SKILL.md",
+          "plugins/foundry/skills/resume-issue/SKILL.md",
+          "plugins/foundry/skills/start-issue/SKILL.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1264,7 +2262,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1282,7 +2282,14 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md",
+          "plugins/foundry/skills/merge-pr/SKILL.md",
+          "plugins/foundry/skills/resume-issue/SKILL.md",
+          "plugins/foundry/skills/start-issue/SKILL.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1295,7 +2302,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1312,7 +2321,11 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/README.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1324,7 +2337,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1344,7 +2359,12 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/README.md",
+          "plugins/foundry/docs/linear-tracker.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1359,7 +2379,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1376,7 +2398,11 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/docs/linear-tracker.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1388,7 +2414,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     },
@@ -1411,7 +2439,12 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 0,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": [
+          "plugins/foundry/CHANGELOG.md",
+          "plugins/foundry/docs/linear-tracker.md"
+        ]
       },
       "without_merged_diff": {
         "verdict": "REFUSED",
@@ -1429,7 +2462,9 @@
         "errors": 0,
         "skipped": 0,
         "pytest_exit_code": 1,
-        "note": null
+        "note": null,
+        "tripwire": [],
+        "changed_outside_product": []
       },
       "discarded_reason": null
     }
