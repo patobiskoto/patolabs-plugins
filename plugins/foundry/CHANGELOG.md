@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixed (PAT-101): residuals of the PAT-94 Linear ADR list preflight. A body that starts with an
+  empty line next to a list is refused as a gap of two (the Document already adds one); task items
+  (`1. [ ] a`, `1. [x] a`) are not plain items of the observed form; an interrupted supersession
+  resume no longer refuses a dangling slot the model already validated (only its witness is
+  written); the digest-pinned `PAT-72`/`PAT-86`/`PAT-16` profiles now apply before the strict list
+  check, so a new ADR identical to a pinned source is accepted. No write path or format changed.
+  See `docs/linear-tracker.md`.
+
 - Fixed (PAT-102): residuals of the PAT-95 `close-epic` graph diagnostic. The "Seuls des
   reçus d'override valides bloquent" suggestion appears only when the strict refusal is itself an
   override refusal, otherwise it reads "Parmi les nœuds lus, seuls ...". The diagnostic captures

@@ -331,7 +331,11 @@ it holds a list blank line outside the exact form above, or a gap of two or more
 lines just before or after a list-context paragraph (a paragraph holding a
 list-item-like line, or its indented continuation), at the start or end of the body too:
 `PAT-72` shows Linear collapsing `\n\n\n` after a list item to `\n\n`, so a new body
-uses the observed form only with at most one empty line on each side. Refused shapes
+uses the observed form only with at most one empty line on each side. The Document already
+puts one empty line before the body, so a body that itself starts with an empty line next
+to a list (`\n1. a\n\n2. b`, `\n- a`) is such a gap of two and is refused (line 1). Task
+items (`1. [ ] a`, `1. [x] a`) are not plain items and are refused like any other
+unmodelled item. Refused shapes
 include spaced bullets of any marker, different markers or delimiters after an empty
 line (`- a`, empty line, `* b`), sub-items, continuation paragraphs or indented code
 after an empty line, lazy continuations, two or more empty lines between items or next
@@ -353,7 +357,8 @@ batch (`migration_preflight`, batch plan and import), whose slot bytes a qualifi
 probe pins before any write. A historical version 0 whose stored bytes only the
 migration probe proves (the model does not predict them) is not proof for its next
 version, which the model verifies: that unchanged body is a new body there, so a status
-change, link, supersession (either side, also its interrupted-pair recovery) or
+change, link, supersession (either side; in an interrupted-pair recovery, the dangling slot already exists and was
+validated by the model, so its body is not new and only its witness is written) or
 `import_adr` relation on such an ADR whose body holds a list shape outside the whitelist
 is refused before any write. This is a deliberate fail-closed trade-off: without it, the
 next version would be written and then refused by verification, leaving an orphan
@@ -371,6 +376,11 @@ ordered lists of ten or more items, of every refused shape above, of any block f
 the observed form other than the observed heading (assumed unchanged, see above), and of
 a fenced block between ordered items (`1. a`, empty line, fence, empty line, `2. b`):
 `2.` then starts a new list, accepted and assumed unchanged.
+The digest-pinned profiles (`PAT-72`, `PAT-86`, `PAT-16`) are applied before the strict list
+check: each binds one exact native source and its exact readback digest, so a new ADR
+identical to a pinned source is accepted even where the general whitelist would refuse its
+shape, and any neighbouring body gets no profile and the strict check. The `PAT-86` and
+`PAT-16` sources pass the whitelist anyway.
 `FOUNDRY-ADR-0001` version 0 has a separate recovery-only qualification: source-body
 SHA-256 `eea144009b8ee8ff5846051ed70fe35d1cf920a78cb4de0ba74d2d616f8535db`
 and its existing Linear Document content SHA-256

@@ -6738,9 +6738,11 @@ def test_linear_adr_readback_rewrites_only_top_level_dash_lists(
     assert not linear_module._adr_readback_content_matches(hostile, canonical)
 
     instance, wire = tracker
-    # PAT-94: a dash list, an empty line, then a star list has no observed
-    # rendering (re-read as one loose list), so a NEW body of this shape is
-    # refused before any write; a stored Document of it stays readable.
+    # PAT-94: the source mixes a dash list, an empty line, then a star list.  The
+    # fake provider renders it as the pre-PAT-94 model does (dash -> star, bytes
+    # otherwise kept); no real Linear rendering of this shape was observed, so the
+    # strict preflight refuses a NEW body of this shape before any write, and a
+    # Document stored before PAT-94 stays readable (preflight bypassed below).
     with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
         instance.create_adr(PROJECT, "Fenced literal", source_body)
     assert wire.documents == {}
@@ -9196,6 +9198,59 @@ def test_linear_adr_pat94_refuses_unmodelled_list_before_any_write(tracker, host
     linear_module._preflight_adr_body_readback(hostile, new_body=False)
 
 
+# The Document puts one empty line before the body: a body that starts with an
+# empty line next to a list is a leading gap of two (PAT-72 collapse), refused.
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("\n1. a\n\n2. b", id="leading-blank-observed-form"),
+        pytest.param("\n- a", id="leading-blank-bullet"),
+        pytest.param("\n1. a\n2. b", id="leading-blank-tight-ordered"),
+        pytest.param("\n \n* a", id="leading-whitespace-blank-bullet"),
+    ],
+)
+def test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused(
+    tracker, body
+):
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+        instance.create_adr(PROJECT, "PAT-101 leading", body)
+    assert str(raised.value.__cause__) == (
+        "unsupported list Markdown in ADR body (line 1)"
+    )
+    assert wire.documents == {}
+    # Not strict: untouched, as before.
+    linear_module._preflight_adr_body_readback(body, new_body=False)
+
+
+@pytest.mark.parametrize("body", ["\nText\n\n- a", "\n\nText", "Text\n\n1. a\n\n2. b"])
+def test_linear_adr_pat101_leading_blank_line_without_a_list_is_accepted(body):
+    linear_module._preflight_adr_body_readback(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("1. [ ] a\n\n2. [ ] b", id="unchecked"),
+        pytest.param("1. [x] a\n\n2. [x] b", id="checked"),
+        pytest.param("1. [X] a\n\n2. b", id="upper-checked-first"),
+        pytest.param("1. a\n\n2. [ ] b", id="task-second"),
+        pytest.param("1. [ ]\n\n2. b", id="empty-task"),
+    ],
+)
+def test_linear_adr_pat101_task_items_are_not_plain(tracker, body):
+    instance, wire = tracker
+    assert linear_module._linear_observed_list_blank_lines(body, strict=False) == set()
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "PAT-101 task", body)
+    assert wire.documents == {}
+
+
+@pytest.mark.parametrize("body", ["1. [link](x) a\n\n2. [xy] b", "1. [a]b\n\n2. c"])
+def test_linear_adr_pat101_bracket_text_that_is_no_checkbox_stays_plain(body):
+    assert linear_module._linear_observed_list_blank_lines(body, strict=True)
+
+
 # PAT-72 shows Linear collapsing two empty lines after a list item: next to a
 # list-context paragraph, a gap of two or more empty lines is refused for a new
 # body (cause names the first offending line); not strict, it is left as before.
@@ -9641,6 +9696,89 @@ def test_linear_adr_pat94_interrupted_supersession_of_stored_bodies_recovers(
     final = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
     assert final[stored.id].status == "superseded"
     assert final[other.id].body.endswith("1) a\n\n2) b")
+
+
+@pytest.mark.parametrize("interrupted", ["replacement", "source"])
+def test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot(
+    tracker, monkeypatch, interrupted
+):
+    """A resume that only writes the witness is not refused for the previous bytes."""
+    instance, wire = tracker
+    refused, plain = "- a\n\n- b", "plain"
+    def store(title, body):
+        if body == plain:
+            return instance.create_adr(PROJECT, title, body)
+        return _store_pre_pat94(instance, monkeypatch, title, body)
+
+    stored = store("PAT-101 source", refused if interrupted == "source" else plain)
+    other = store("PAT-101 other", refused if interrupted == "replacement" else plain)
+    instance.set_adr_status(stored, "accepted", project=PROJECT)
+    instance.set_adr_status(other, "accepted", project=PROJECT)
+    current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    target = other.id if interrupted == "replacement" else stored.id
+    original = _interrupt_witness(instance, wire, f"{target} / v0002")
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+    instance._transport = original
+    # The previous version's bytes are no longer proven by the model (as for a
+    # probe-qualified historical version 0): only the existing slot proves them.
+    monkeypatch.setattr(linear_module, "_is_stored_adr_body", lambda *_args: False)
+    wire.calls.clear()
+    instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+    final = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+    assert final[stored.id].status == "superseded"
+    creates = [
+        variables["input"]["id"]
+        for query, variables in wire.calls
+        if "FoundryLinearAdrDocumentCreate" in query
+    ]
+    assert linear_module._adr_witness_id(PROJECT.id, target, 2) in creates
+
+
+def test_linear_adr_pat101_pinned_pat72_profile_applies_before_the_strict_check(
+    tracker, monkeypatch
+):
+    """A new ADR identical to a digest-pinned source is accepted; a neighbour is not."""
+    instance, wire = tracker
+    fragment = linear_module._PAT_72_BLANK_LINE_FRAGMENT
+    # The pinned gap follows a list item, which the general strict model refuses.
+    source = "- item\n  " + fragment + " After.\n"
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        linear_module._preflight_adr_body_readback(source)
+    star = source.replace("- item", "* item", 1)
+    monkeypatch.setattr(
+        linear_module, "_PAT_72_SOURCE_SHA256", hashlib.sha256(source.encode()).hexdigest()
+    )
+    monkeypatch.setattr(
+        linear_module,
+        "_PAT_72_READBACK_SHA256",
+        hashlib.sha256(
+            star.replace(fragment, linear_module._PAT_72_RENDERED_FRAGMENT, 1).encode()
+        ).hexdigest(),
+    )
+    assert linear_module._linear_markdown_readback_body(source, strict=True) == (
+        star.replace(fragment, linear_module._PAT_72_RENDERED_FRAGMENT, 1)
+    )
+    linear_module._preflight_adr_body_readback(source)
+    created = instance.create_adr(PROJECT, "PAT-101 pinned", source)
+    assert created.body.endswith(source)
+    # A neighbouring body does not inherit the profile.
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        linear_module._preflight_adr_body_readback(source.replace("After", "Later"))
+
+
+def test_linear_adr_pat101_pat86_and_pat16_sources_pass_strict_before_and_after_profiles():
+    fixtures = PAT71_FIXTURES
+    canonical = (fixtures / "linear_pat86_source.txt").read_text()
+    sources = {
+        "pat86": canonical[len(linear_module._ADR_HEADER):].split("\n-->\n\n", 1)[1],
+        "pat16": json.loads((fixtures / "pat16-adr13-readback.json").read_text())["source"],
+    }
+    for source in sources.values():
+        # The strict whitelist alone accepts them: the pinned profiles never rescue
+        # a body the strict check refuses here, they only come first.
+        linear_module._linear_observed_list_blank_lines(source, strict=True)
+        linear_module._preflight_adr_body_readback(source)
 
 
 def test_linear_adr_pat94_import_appends_to_stored_refused_body(tracker, monkeypatch):
