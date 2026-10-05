@@ -3135,6 +3135,25 @@ def test_pat111_fix2_the_audit_resolves_command_paths_against_the_bundle_and_fla
     assert audit(("claude", "Edit", {"file_path": "src/a.py", "old_string": "../..", "new_string": "~"})) == []
 
 
+@pytest.mark.parametrize("shape,name", [("claude", "Bash"), ("omp", "bash")])
+def test_pat111_fix3_a_division_operator_in_a_script_is_not_a_path(tmp_path, shape, name):
+    audit, home, bundle = _audit_in(tmp_path)
+    heredoc = ("python3 - <<'PY'\nfrom pathlib import Path\np = Path('src/calc.py')\n"
+               "s = p.read_text().replace('return 0', 'return sum(values) / len(values)')\n"
+               "n = len(s) // 2\nprint(n / 2, n // 2)\np.write_text(s)\nPY")
+    assert audit((shape, name, {"command": heredoc})) == []
+    assert audit((shape, name, {"command": "echo $((4 / 2)) $((4 // 2))"})) == []
+    # what names something under the root, the home or outside the bundle is still caught
+    assert audit((shape, name, {"command": f"ls {tmp_path}"})) == [str(Path(os.path.realpath(tmp_path)))]
+    assert audit((shape, name, {"command": f"ls {home}/.ssh"})) == ["~/.ssh"]
+    assert audit((shape, name, {"command": "ls ~"})) == ["~"]
+    assert audit((shape, name, {"command": "find ~ -name x"})) == ["~"]
+    assert audit((shape, name, {"command": "cat ../../x"}))
+    # a tool result that only shows a division is clean too
+    event = {"type": "user", "message": {"content": [{"type": "tool_result", "content": "a / b // c"}]}}
+    assert audit(raw=[event]) == []
+
+
 def test_pat111_fix2_the_audit_reads_tool_results_for_sensitive_paths(tmp_path):
     audit, home, bundle = _audit_in(tmp_path)
     cache = home / ".claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"

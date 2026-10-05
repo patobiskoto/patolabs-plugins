@@ -903,6 +903,12 @@ _PATH_KEYS = frozenset({"path", "file_path", "notebook_path", "cwd", "directory"
 _PATH_TOKEN = re.compile(r"(?:~|\$\{?HOME\}?|(?<![\w.~$}/])/|(?<![\w.~$}/])\.\.?/)[^\s'\"`;|&<>(),]*")
 
 
+def _path_tokens(text: str) -> list[str]:
+    """Path-like tokens of free text, minus a token made only of slashes (``/``, ``//``): that is the
+    division / floor-division operator of code, not a path."""
+    return [t for t in _PATH_TOKEN.findall(text) if t.strip("/")]
+
+
 def _tool_calls(lines: Sequence[str]) -> list[tuple[str, Any]]:
     """Every tool call of a stream: Claude ``tool_use`` blocks of assistant messages and omp
     ``tool_execution_start`` events, as ``(tool name, arguments)``."""
@@ -1009,6 +1015,8 @@ def _forbidden_command(tokens: Sequence[str]) -> str | None:
 
 
 def _pathlike(token: str) -> bool:
+    if token and not token.strip("/"):
+        return False  # ``/``, ``//``: an operator, not a path
     return token.startswith(("~", "$HOME", "${HOME}", "/")) or token in (".", "..") or "/" in token
 
 
@@ -1087,7 +1095,9 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     command that runs a forbidden executable (see ``FORBIDDEN_EXECUTABLES``, ``git push|remote|clone|
     fetch|pull``, ``python -m http``, ``pip install``). Best effort on a command line (a path or a
     command built at run time, or run by a script, is not seen). A non-empty result makes the attempt
-    ``contaminated``. ``~`` shows as the home directory in the result."""
+    ``contaminated``. ``~`` shows as the home directory in the result. Known limit: a token made only of slashes (``/``,
+    ``//``) is not a path (it is the division operator of code), so a bare ``ls /`` is not flagged; it
+    reveals no file content, and any access that names something under the root (``/etc/x``) is."""
     try:
         lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
     except FileNotFoundError:
@@ -1114,7 +1124,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
 
     for _name, args in _tool_calls(lines):
         for key, text in _strings(args):
-            tokens = _PATH_TOKEN.findall(text) + ([text.strip()] if key in _PATH_KEYS else [])
+            tokens = _path_tokens(text) + ([text.strip()] if key in _PATH_KEYS else [])
             for token in tokens:
                 token = _expand(token, str(home_real))
                 if token is not None:
@@ -1128,7 +1138,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                         commands[f"command:{found}"] = None
     seen: dict[str, None] = {}
     for text in _tool_results(lines):
-        for token in _PATH_TOKEN.findall(text):
+        for token in _path_tokens(text):
             token = re.sub(r":\d+(?::\d+)?:?$", "", token).rstrip(":.")  # ``file.py:12:`` locations
             expanded = _expand(token, str(home_real))
             if expanded is not None and os.path.isabs(expanded):

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed (PAT-111, final real trials): the contamination audit no longer reads a token made only of slashes (`/`, `//`, the division operator of code) as the filesystem root: a legitimate Sonnet 5.5 run whose heredoc held `sum(values) / len(values)` was flagged `/` and would have been recorded `contaminated`. A bare `ls /` is no longer flagged (known limit, no file content revealed). The final cloud argv (3 drivers) and the deny-home local profile (omp 18.4.10, mini-swe-agent 2.4.6 with `agent.step_limit=40`) are recorded as trial-run on 2026-10-05 in `pat-19-preflight-2026-10-05.json`; the audit is clean on those real streams.
+
 - Changed (PAT-111): launcher corrections left by the PAT-108 reviews in `foundry.local_first_runner`
   (fake arms only; no real arm, no pinning, no `verified` flag changed). SIGTERM, SIGHUP and Ctrl-C are now
   converted for the whole duration of `screen` and `compare` (bundle build, judge, log reading, record

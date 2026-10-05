@@ -297,8 +297,8 @@ un pilote qui échoue reste `verified: false` et le lanceur le refuse. Les cinq 
   sable le bloque et environ 20 s se perdent). La trajectoire est écrite dans le dossier d'essai ; les étapes
   sont `info.model_stats.api_calls` de la trajectoire, lues après la fin du processus (jamais en cours
   d'exécution) : le lanceur ne peut pas imposer la borne de 40 étapes pendant l'exécution, il la **transmet**
-  au harnais (`-c agent.step_limit={max_steps}`, **à essayer pour de vrai par le coordinateur avant le
-  corpus** : ce drapeau n'était pas dans l'essai du 2026-10-05) et marque `step_limit_hit` **a posteriori**
+  au harnais (`-c agent.step_limit={max_steps}`, **essayé pour de vrai le 2026-10-05** : 40, `Submitted`, 8 appels
+  d'API, tests du jouet réussis) et marque `step_limit_hit` **a posteriori**
   quand `api_calls` dépasse la borne : la tentative est alors **refusée** (jamais acceptée, notée
   `local.step_limit`). Tokens inconnus (aucun flux d'événements). Essai (sans ce drapeau) : réussi, 139 s,
   5 appels d'API.
@@ -311,9 +311,11 @@ un pilote qui échoue reste `verified: false` et le lanceur le refuse. Les cinq 
   dans la configuration) ; les textes des prompts sont identiques pour tous les bras et
   rendus par la substitution du lanceur (pas `str.format` : le prompt de revue contient des accolades JSON).
   **L'essai du 2026-10-05 a tourné avec `--disallowedTools Agent` seul** ; les 29 noms ont été observés à
-  l'événement `init` seulement (aucun appel de modèle) ; l'argv **final** (les 29 noms et les règles Bash) est à
-  **essayer pour de vrai par le coordinateur avant le corpus**, et consigné alors dans la preuve
-  (`pinned_final_argv`, aujourd'hui « pas encore essayé »).
+  l'événement `init` seulement (aucun appel de modèle) ; l'argv **final** (les 29 noms et les règles Bash) a ensuite été **essayé pour de vrai le 2026-10-05** (Claude
+  Code 2.1.285, tâche jouet, `init` : exactement Bash, Edit, Read, Write) et réussi pour les trois pilotes
+  (`pinned_final_argv` de la preuve) : Sonnet 5.5 effort medium 7,6 s (Bash×3), Haiku 4.5 sans effort 13,1 s
+  (Read×3, Edit×1, Bash×1), Opus 5.5 effort high 17,1 s (fichier de revue écrit, verdict PASS) ; jetons lus par le
+  lanceur égaux au `result.usage` de l'hôte.
   **Sans `sandbox-exec`** (`sandbox: false`, avec sa raison dans la configuration) : sous `sandbox-exec`, Claude
   Code ne peut pas s'authentifier (« Not logged in » trousseau refusé ; « 401 OAuth access token has been revoked »
   trousseau permis, après quoi le mainteneur a dû se reconnecter ; cause non établie). Le bras garde l'environnement
@@ -375,8 +377,9 @@ y compris le cache de plugins dont les tests ont été fusionnés avant la versi
 corpus). Il est **détecté par un audit après exécution** et consigné comme limite du résultat (voir « Audit de
 contamination »), **pas empêché**. Pour les bras **locaux**, le refus par défaut du HOME est **implémenté**
 (`isolation.deny_home_by_default`, voir « Isolement du candidat ») et testé sur le profil généré et sous un vrai
-`sandbox-exec` avec un faux HOME ; il n'a **pas encore été essayé avec le vrai `omp`** (le coordinateur le fait
-et consigne le résultat : en cas d'échec, la configuration revient à la liste explicite avec la raison observée).
+`sandbox-exec` avec un faux HOME ; il a été **essayé le 2026-10-05 avec les vrais harnais locaux** (Qwen3.8-27B MLX 4-bit,
+`allow_read_home` vide) : `omp` 18.4.10 réussi (45,6 s, tests du jouet réussis) et mini-swe-agent 2.4.6 réussi
+(`Submitted`, 8 appels d'API). Le refus par défaut est donc confirmé pour les deux harnais.
 
 ## Exposition des bras cloud (ce que le lanceur n'empêche pas)
 
@@ -425,7 +428,10 @@ l'outil) et, quand le flux les expose, les **résultats d'outils** (blocs `tool_
   d'entrée, secrets du HOME) ; **et**, pour une clé de chemin ou une commande Bash, quand il se résout vers le HOME
   réel ou dessous, vers un dossier qui en contient un chemin sensible ou un ancêtre du bundle (`find ~`,
   `grep -r … ~`, `src/../../..`), ou, s'il est **relatif** au bundle, hors du bundle et du dossier d'essai
-  (`../../x`) ; un chemin absolu hors du HOME n'est pas relevé par ce seul motif (`/usr/bin` reste propre) ;
+  (`../../x`) ; un chemin absolu hors du HOME n'est pas relevé par ce seul motif (`/usr/bin` reste propre) ; un jeton fait **uniquement de barres obliques** (`/`, `//`) n'est pas un chemin :
+  c'est l'opérateur de division du code (`sum(v) / len(v)` dans un script Python en `heredoc` donnait à tort `/`,
+  la racine, lors de l'essai réel final de Sonnet 5.5). **Limite connue** : un `ls /` nu n'est plus relevé (il ne
+  révèle aucun contenu de fichier) ; tout accès qui nomme quelque chose sous la racine (`/Users/…`, `~`) l'est ;
 - **les résultats d'outils** montrant un chemin sensible (`tool_result:<chemin>`) ;
 - **les commandes** (`command:<étiquette>`) : tout appel Bash dont la commande, après une normalisation simple
   (guillemets retirés, découpe sur `&&`, `||`, `;`, `|`, `&`, `` ` ``, `$(`, retrait de `VAR=…`, `env`, `sudo`,
@@ -630,11 +636,10 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   boucle locale pour un pilote local. Un vrai lancement exige `sandbox-exec` (refusé ailleurs).
   **Statut du refus par défaut** : implémenté, testé sur le profil (ordre refus HOME, autorisations, refus
   explicite ; métadonnées des ancêtres seulement) et sous un vrai `sandbox-exec` avec un faux HOME (un fichier
-  quelconque du HOME est refusé, une entrée de la liste d'autorisation et le bundle sont lisibles). **Pas encore
-  essayé avec le vrai `omp`** : s'il ne tourne pas ainsi (par exemple faute d'accès à son installation sous le
-  HOME), le coordinateur ajoute les entrées nécessaires à `allow_read_home` ou, à défaut, met
-  `deny_home_by_default` à `false` en consignant la raison observée ; la liste explicite (37 entrées de refus sur
-  la machine du mainteneur, plus le dossier du profil) a, elle, été essayée avec le vrai harnais local.
+  quelconque du HOME est refusé, une entrée de la liste d'autorisation et le bundle sont lisibles). **Essayé le
+  2026-10-05 avec le vrai `omp` 18.4.10 et mini-swe-agent 2.4.6** (`allow_read_home` vide) : les deux réussissent,
+  le refus par défaut est confirmé ; la liste explicite (37 entrées de refus sur la machine du mainteneur, plus le
+  dossier du profil) a aussi été essayée avec le vrai harnais local.
   **Trousseau non couvert** : `(allow default)` laisse l'accès Mach au démon de sécurité ; refuser la
   lecture de `Library/Keychains` n'empêche donc **pas** une requête au trousseau (`security
   find-generic-password`, API Keychain). Rien n'est imposé là-dessus ici : voir les préconditions PAT-109.
@@ -707,13 +712,12 @@ n'est pas décidée (voir Rapport). `bounds.cloud_max_seconds`, `max_correction_
 ## Préconditions pour PAT-109 : état après PAT-111
 
 Faites par PAT-111 (voir « Pilotes épinglés ») : épingler chaque pilote par un essai réel (les cinq ont passé
-leur essai ; **l'argv final des trois pilotes cloud et le drapeau de borne d'étapes du harnais neutre ne sont pas
-encore essayés**) ; vérifier la disposition des journaux de session (compteurs égaux à ceux de l'hôte, sous la
+leur essai ; l'argv final des trois pilotes cloud et le drapeau de borne d'étapes du harnais neutre ont aussi
+été essayés le 2026-10-05) ; vérifier la disposition des journaux de session (compteurs égaux à ceux de l'hôte, sous la
 condition de l'assertion d'outils) ; consigner les empreintes des poids, le gabarit et les paramètres de
 génération ; essayer la liste de refus avec le vrai harnais local ; relever les champs de `lms ps --json` ;
 traiter le biais des bras cloud par l'audit de contamination et des règles Bash au mieux. **Restent ouvertes** :
-l'essai du refus par défaut du HOME avec le vrai `omp` (implémenté, voir « Isolement du candidat ») ; l'essai
-de l'argv final cloud et du drapeau `agent.step_limit` ; l'**acceptation explicite par le mainteneur de
+l'**acceptation explicite par le mainteneur de
 l'exposition des bras cloud** (voir « Exposition des bras cloud ») ; la mémoire globale `CLAUDE.md`
 éventuellement chargée par le bras cloud ; **trouver où le jeton du tracker est stocké** (fichier, trousseau,
 variable) et, s'il est au trousseau, refuser ce service dans le profil, par exemple `(deny mach-lookup
