@@ -67,6 +67,33 @@ Only a `tracker=linear` registration JSON-decodes `state_ids`, `type_label_ids`,
 structured input is rejected before the registry is written. Every non-Linear provider
 retains the historical scalar-extra contract, including for JSON-looking `k=v` values.
 
+## Transport errors, read retries and quota (PAT-98)
+
+The client wraps the single raw HTTP call of a **pure read** in a bounded retry; nothing
+else retries.
+
+- **Read-only is decided from the GraphQL document**: it must start with the `query`
+  keyword and contain neither `mutation` nor `subscription`. Anything unrecognised is not
+  retried (fail closed). Operation names are not the criterion; the reads are `issue.read`,
+  `issue.search`, `issue.state-history`, `adr.list`, `adr.read`, `release.read`,
+  `release.issues`, `release.<nested field>`, `project-binding-read`,
+  `team.git-automation-states` and the readbacks (comment, relation, labels).
+- **A write is never retried** (PAT-ADR-0006 S2: its effect may be invisible), even on a
+  `transport_error` or a 503. Ambiguous-write recovery stays in the callers, unchanged.
+- **Retried failures**: `transport_error` and HTTP 500/502/503/504 only, at most 3 retries,
+  waiting 1 s, 2 s then 4 s (at most 7 s added per call, no jitter; `read_retries` on the
+  tracker lowers it). Data, binding, authorization (401/403), 404 and non-quota 400 errors
+  are raised at once.
+- **Retries are never masked**: `LinearTrackerError.retries` holds the count and the message
+  ends with `after N retries` when N > 0 (unchanged otherwise). When retries are exhausted
+  the original error (code, status) is raised.
+- **Quota**: HTTP 429, a `RATELIMITED` error code, or HTTP 400 whose
+  `x-ratelimit-requests-remaining` (or complexity equivalent) is zero raises
+  `LinearQuotaExhaustedError` (code `quota_exhausted`, a `LinearTrackerError`) with
+  `remaining`, `reset_at_ms` (epoch ms from `x-ratelimit-requests-reset`) and `reset_at`
+  (ISO UTC). It is never retried. Only `x-ratelimit-*` headers are read; the token is never
+  in any message. The last values seen are kept in `tracker.rate_limit`.
+
 ## Qualification evidence, distinct from registration
 
 A structurally valid local binding is not evidence that a Linear workspace was observed,

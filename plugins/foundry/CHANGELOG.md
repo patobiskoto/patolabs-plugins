@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added (PAT-98): the Linear client retries a pure read at most 3 times (deterministic waits
+  of 1 s, 2 s, 4 s) on a network failure (`transport_error`) or HTTP 500/502/503/504, never on
+  data, binding or authorization errors, and never a write (PAT-ADR-0006 S2). A rate-limit
+  failure (HTTP 429, a `RATELIMITED` code, or HTTP 400 with `x-ratelimit-requests-remaining`
+  at zero) raises the new `LinearQuotaExhaustedError` carrying the remaining count and the
+  reset time, without retry. The number of retries is exposed (`retries`, "after N retries"
+  in the message). See `docs/linear-tracker.md` ("Transport errors, read retries and quota").
+
 - Fixed (PAT-104): the test suite can no longer read or write the maintainer's real
   `~/.config/foundry`. A global autouse fixture in `tests/conftest.py` redirects `HOME` to a
   per-test temporary directory and clears `FOUNDRY_DATA`, `FOUNDRY_CONFIG` and

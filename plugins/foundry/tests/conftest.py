@@ -115,6 +115,16 @@ def _isolate_foundry_state(
 
 
 @pytest.fixture(autouse=True)
+def _no_linear_retry_sleep(monkeypatch: pytest.MonkeyPatch):
+    """PAT-98: Linear read retries never really sleep in tests; delays are recorded."""
+    from foundry.trackers import linear
+
+    delays: list[float] = []
+    monkeypatch.setattr(linear, "_sleep", delays.append)
+    yield delays
+
+
+@pytest.fixture(autouse=True)
 def _isolate_versioned_repository_marker(
     monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest, tmp_path: Path,
 ):
