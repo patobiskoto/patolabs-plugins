@@ -190,6 +190,19 @@ def linear_markdown_body_readback(body):
             thematic = line.replace(" ", "").replace("\t", "")
             if len(thematic) < 3 or set(thematic) != {"-"}:
                 source_line = f"* {source_line[2:]}"
+                # Observed (PAT-106, docs/qualification/pat-106-*): one empty
+                # line is inserted between a plain single-line paragraph (after
+                # an empty line) and the `- ` list directly following it.
+                if (
+                    len(rendered) >= 2
+                    and rendered[-2] == "\n"
+                    and len(rendered) - 1 not in fenced_lines
+                    # Same letter predicate as the model: a regex class such
+                    # as `[^\W\d_]` also takes `²`, `½` or `Ⅷ` for letters.
+                    and linear_module._is_paragraph_start_letter(rendered[-1])
+                    and re.fullmatch(r"[^|\n]*[^ \t\\\n]\n", rendered[-1])
+                ):
+                    rendered.append("\n")
         rendered.append(source_line)
     # Observed (PAT-94): in a top-level ordered list that starts at 1, counts up
     # by 1 and holds one-line items spaced by one empty line, Linear drops the
@@ -10042,3 +10055,509 @@ def test_linear_adr_pat103_list_refusal_keeps_its_cause_over_blank_lines(tracker
 def test_linear_adr_pat103_whitespace_blank_and_hard_break_were_already_refused(body):
     with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
         linear_module._preflight_adr_body_readback(body, new_body=False)
+
+
+# PAT-106: a top-level `- ` list glued to a paragraph line
+# (docs/qualification/pat-106-linear-paragraph-list-observation.json).
+PAT106_OBSERVATION = json.loads(
+    (
+        Path(__file__).resolve().parents[1]
+        / "docs/qualification/pat-106-linear-paragraph-list-observation.json"
+    ).read_text(encoding="utf-8")
+)
+PAT106_SOURCE = PAT106_OBSERVATION["sent"]
+PAT106_STORED = PAT106_OBSERVATION["readback"]
+
+
+def test_linear_adr_pat106_observation_file_is_self_consistent():
+    observation = PAT106_OBSERVATION
+    assert observation["observed_at"] == "2026-10-05"
+    assert observation["document_id"] and observation["document_title"]
+    for key in ("sent", "readback"):
+        digest = hashlib.sha256(observation[key].encode()).hexdigest()
+        assert digest == observation[f"{key}_sha256"]
+    assert re.fullmatch(r"[0-9a-f]{64}", observation["stored_document_sha256"])
+    source = observation["sent"].splitlines(keepends=True)
+    stored = observation["readback"].splitlines(keepends=True)
+    line = observation["inserted_empty_line_after_source_line"]
+    # The only difference besides the modelled `- ` to `* ` rewrite: one inserted
+    # empty line between the paragraph line and the glued list.
+    assert source[line - 1].endswith(":\n") and source[line].startswith("- ")
+    assert stored[: line] == source[: line]
+    assert stored[line] == "\n"
+    assert [
+        item.replace("* ", "- ", 1) if item.startswith("* ") else item
+        for item in stored[line + 1 :]
+    ] == source[line:]
+    # Neither bytes carry a credential or a workspace identifier.
+    dumped = json.dumps(observation)
+    for forbidden in ("lin_api", "Bearer", "team_id", "project_id", "body_sha256"):
+        assert forbidden not in dumped
+    # A closed key set: no field can carry a workspace identifier (the only
+    # mention of a workspace is the prose of `method`, which says it is omitted).
+    assert set(observation) == {
+        "schema", "issue", "observed_at", "method", "document_id",
+        "document_title", "inserted_empty_line_after_source_line", "sent",
+        "readback", "sent_sha256", "readback_sha256", "stored_document_sha256",
+    }
+    assert all(isinstance(value, (str, int)) for value in observation.values())
+    assert dumped.count("workspace") == 1
+    assert "(omitted here: workspace identifiers)" in observation["method"]
+
+
+def test_linear_adr_pat106_model_reproduces_the_observed_readback():
+    # The non-strict prediction is the stored body, byte for byte; the strict
+    # preflight accepts the source; the PAT-103 model alone did not predict it.
+    assert linear_module._linear_markdown_readback_body(PAT106_SOURCE) == PAT106_STORED
+    assert (
+        linear_module._linear_markdown_readback_body(PAT106_SOURCE, strict=True)
+        == PAT106_STORED
+    )
+    linear_module._preflight_adr_body_readback(PAT106_SOURCE)
+    assert (
+        linear_module._linear_markdown_readback_body(
+            PAT106_SOURCE, observed_paragraph_lists=False
+        )
+        != PAT106_STORED
+    )
+
+
+def test_linear_adr_pat106_reads_are_additive_over_pat103_and_legacy():
+    body = "Intro\n\nPour :\n- a\n- b\n"
+    pat103 = "Intro\n\nPour :\n* a\n* b"
+    pat106 = "Intro\n\nPour :\n\n* a\n* b"
+    legacy = "Intro\n\nPour :\n* a\n* b\n"
+    assert linear_module._linear_markdown_readback_bodies(body) == (
+        pat106,
+        pat103,
+        legacy,
+    )
+    # The pre-PAT-94 model has no insertion and keeps its trailing newline.
+    assert linear_module._linear_markdown_readback_body(
+        body, observed_lists=False
+    ) == "Intro\n\nPour :\n* a\n* b\n"
+    assert linear_module._linear_markdown_readback_bodies(body)[-1] == legacy
+    # A body without the glued shape has a single non-legacy rendering.
+    plain = "Intro\n\nPour :\n\n- a\n- b"
+    assert linear_module._linear_markdown_readback_bodies(plain)[0] == (
+        "Intro\n\nPour :\n\n* a\n* b"
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "rendered"),
+    [
+        pytest.param("A\n\nPour :\n- a", "A\n\nPour :\n\n* a", id="single-item"),
+        pytest.param("A\n\nP\n- a\n- b\n\nEnd", "A\n\nP\n\n* a\n* b\n\nEnd", id="then-text"),
+        pytest.param("## H\n\nP\n- a\n\n## H2\n\nQ\n- b", "## H\n\nP\n\n* a\n\n## H2\n\nQ\n\n* b", id="two-lists"),
+        pytest.param("A\n\nP\n\n- a", "A\n\nP\n\n* a", id="already-separated-unchanged"),
+        pytest.param("## H\n- a", "## H\n* a", id="heading-not-a-paragraph"),
+        pytest.param("```\nP\n```\n- a", "```\nP\n```\n* a", id="after-fence"),
+        pytest.param("A\n\n```\nP\n- a\n```", "A\n\n```\nP\n- a\n```", id="inside-fence"),
+    ],
+)
+def test_linear_adr_pat106_recognises_only_the_observed_shape(body, rendered):
+    assert linear_module._linear_markdown_readback_body(body) == rendered
+    assert linear_module._linear_markdown_readback_body(body, strict=True) == rendered
+    # The independent fake provider agrees with the model.
+    assert linear_markdown_body_readback(body) == rendered
+
+
+PAT106_REFUSED = [
+    pytest.param("A\n\nP\n1. a\n2. b", "numbered list glued to a paragraph", id="numbered"),
+    pytest.param("A\n\nP\n1) a", "numbered list glued to a paragraph", id="numbered-paren"),
+    pytest.param("A\n\nP\n* a", "bullet list with an unobserved marker", id="star-marker"),
+    pytest.param("A\n\nP\n+ a", "bullet list with an unobserved marker", id="plus-marker"),
+    pytest.param("A\n\nP\n-\tb", "bullet list with an unobserved marker", id="tab-after-dash"),
+    pytest.param("A\n\nP\n-", "setext underline", id="bare-dash"),
+    pytest.param("A\n\nP\n- ", "setext underline", id="dash-space"),
+    pytest.param("A\n\n> P\n> - a", "blockquote", id="list-in-quote"),
+    pytest.param("A\n\n> P\n- a", "blockquote", id="list-after-quote"),
+    pytest.param("A\n\nP\n> - a", "blockquote", id="quoted-list-after-paragraph"),
+    pytest.param("A\n\n    code\n- a", "indented line", id="under-code"),
+    pytest.param("A\n\n  P\n- a", "indented line", id="under-indented-paragraph"),
+    pytest.param("A\n\nP\n  - a", "indented list glued to a paragraph", id="indented-top-level"),
+    pytest.param("A\n\nP\n    - a", "indented list glued to a paragraph", id="indented-four-columns"),
+    pytest.param("A\n\nP\n- a\n  - b", "outside the observed shape", id="nested-in-run"),
+    pytest.param("A\n\nP\n- a\n  cont", "outside the observed shape", id="item-continuation"),
+    pytest.param("A\n\nP\n- a\nlazy", "outside the observed shape", id="lazy-line-in-run"),
+    pytest.param("A\n\nP\n- a\n* b", "outside the observed shape", id="mixed-marker-in-run"),
+    pytest.param("A\n\nP\n- a\n- ", "outside the observed shape", id="empty-item-in-run"),
+    pytest.param("A\n\nP\n- [ ] a", "outside the observed shape", id="task-item"),
+    pytest.param("A\n\nP\n- - a", "outside the observed shape", id="item-opening-a-list"),
+    pytest.param("A\n\nP\n- a \n- b", "outside the observed shape", id="trailing-space-item"),
+    pytest.param("A\n\nP\n- a\n```\nx\n```", "outside the observed shape", id="fence-in-run"),
+    pytest.param("A\nP\n- a", "outside the observed shape", id="two-line-paragraph"),
+    pytest.param("P\n- a", "outside the observed shape", id="paragraph-at-start"),
+    pytest.param("## H\nP\n- a", "outside the observed shape", id="heading-glued-paragraph"),
+    pytest.param("A\n\nvoir `PASS|BLOCK` :\n- x", "outside the observed shape", id="pipe-paragraph-dash"),
+    pytest.param("A\n\na | b\n1. x", "numbered list glued", id="pipe-paragraph-numbered"),
+    pytest.param("A\n\na | b\n- x", "outside the observed shape", id="pipe-paragraph-bullet"),
+    pytest.param("A\n\n#123 corrigé :\n- x", "outside the observed shape", id="hash-tag-paragraph"),
+    pytest.param("A\n\n#tag\n1. x", "numbered list glued", id="hash-tag-numbered"),
+    pytest.param("A\n\n1 item :\n- x", "outside the observed shape", id="digit-start"),
+    pytest.param("A\n\n**gras** :\n- x", "outside the observed shape", id="bold-start"),
+    pytest.param("A\n\n`code` :\n- x", "outside the observed shape", id="backtick-start"),
+    pytest.param("A\n\n[lien](u) :\n- x", "outside the observed shape", id="bracket-start"),
+    pytest.param("A\n\n=x :\n- x", "outside the observed shape", id="equals-start"),
+    pytest.param("A\n\n\\* :\n- x", "outside the observed shape", id="backslash-start"),
+    pytest.param("A\n\nP\r\n- a", "outside the observed shape", id="crlf-paragraph"),
+    pytest.param("A\n\nP\n- a\r\n- b", "outside the observed shape", id="crlf-item"),
+    pytest.param("A\n\n[x]: http://e\n- a", "outside the observed shape", id="reference-definition"),
+    # An indented code line that starts with a marker is not a sibling item.
+    pytest.param("A\n\n    - x\n- a", "list glued under an indented line", id="under-marker-code"),
+    pytest.param("A\n\n\t- x\n- a", "list glued under an indented line", id="under-tab-marker-code"),
+    pytest.param("A\n\n    1. x\n- a", "list glued under an indented line", id="under-numbered-marker-code"),
+    pytest.param("> A\n\n>     - x\n> - a", "list glued under an indented line", id="under-marker-code-in-quote"),
+    pytest.param("> A\n>\n> B\n>     - x\n> - a", "blockquote", id="quoted-paragraph-then-marker-code"),
+    pytest.param("> A\n>\n>     - x\n> - a", "blockquote", id="under-marker-code-after-quoted-blank"),
+    pytest.param("A\n\n    - x\n    - y", "list glued under an indented line", id="marker-code-lines"),
+    pytest.param("A\n\n    - x\n      y\n- a", "list glued under an indented line", id="under-marker-code-continuation"),
+    pytest.param("## H\n    - x\n- a", "not a top-level list item", id="marker-code-under-heading"),
+    pytest.param("A\n\n- a\n## H\n    - x\n- b", "not a top-level list item", id="marker-code-after-list-closed-by-heading"),
+    pytest.param("A\n\n- a\n ## H\n    - x\n- b", "list glued under an indented line", id="marker-code-after-list-closed-by-indented-heading"),
+    pytest.param("A\n\n---\n    - x\n- a", "not a top-level list item", id="marker-code-under-thematic-break"),
+    pytest.param("A\n\n```\nx\n```\n    - x\n- a", "not a top-level list item", id="marker-code-under-closing-fence"),
+    pytest.param("A\n\n- a\nlazy\n  cont\n- b", "list glued under an indented line", id="indented-line-under-lazy-line"),
+    pytest.param("A\n\n- a\n cont\n- b", "list glued under an indented line", id="under-indented-continuation"),
+    pytest.param("A\n\n1. a\n  cont\n2. b", "list glued under an indented line", id="under-indented-numbered-continuation"),
+    pytest.param("A\n\n- a\n  ```\n  x\n  ```\n  more\n- b", "list glued under an indented line", id="indented-line-after-fence-in-item"),
+    pytest.param("A\n\n> - a\n> \tb\n> - c", "list glued under an indented line", id="tab-continuation-in-quote"),
+    pytest.param("A\n\n> - a\n>   cont\n> - b", "blockquote", id="continuation-in-quote"),
+    pytest.param("A\n\n> ## H\n> - a", "blockquote", id="heading-in-quote"),
+    # More than nine digits is not a list item (CommonMark): a paragraph line.
+    pytest.param("A\n\n1234567890. foo\n- a", "outside the observed shape", id="ten-digit-paragraph"),
+    pytest.param("A\n\n1234567890) foo\n- a", "outside the observed shape", id="ten-digit-paren-paragraph"),
+    pytest.param("A\n\n1234567890. foo\n1. a", "numbered list glued to a paragraph", id="ten-digit-paragraph-numbered"),
+    pytest.param("A\n\n1234567890. foo\n-", "setext underline", id="ten-digit-paragraph-setext"),
+    pytest.param("A\n\n- a\n1234567890. x\n- b", "outside the observed shape", id="ten-digit-lazy-line"),
+    pytest.param("A\n\nP\n1234567890. x", "numbered list glued to a paragraph", id="ten-digit-marker-stays-refused"),
+    pytest.param("A\n\n===\n- a", "outside the observed shape", id="equals-underline"),
+    pytest.param("A\n\n²x\n- a", "outside the observed shape", id="superscript-start"),
+    # Blockquotes are closed by construction: the exact quote depth must match,
+    # and a `>` behind 4+ columns, a tab or a list marker is a stray quote.
+    pytest.param("A\n\n> - a\n> > - b", "blockquote", id="quote-depth-increases"),
+    pytest.param("A\n\n> > - a\n> - b", "blockquote", id="quote-depth-decreases"),
+    pytest.param("A\n\n> - a\n>> - b", "blockquote", id="quote-depth-increases-unspaced"),
+    pytest.param("A\n\n- a\n    > - b", "blockquote", id="quote-indented-four-under-item"),
+    pytest.param("10. a\n    > - b", "blockquote", id="quote-under-numbered-item"),
+    pytest.param("A\n\n- a\n\t> - b", "blockquote", id="tab-quote-under-item"),
+    pytest.param("A\n\n- a\n  > b", "blockquote", id="quote-opened-in-item"),
+    pytest.param("A\n\n- a\n    > b", "blockquote", id="indented-quote-opened-in-item"),
+    pytest.param("A\n\n- a\n> b", "blockquote", id="quote-closing-a-list"),
+    pytest.param("A\n\n- a\n- > b", "blockquote", id="quote-on-the-item-line"),
+    pytest.param("A\n\n- > b\n- a", "blockquote", id="under-quote-on-the-item-line"),
+    pytest.param("A\n\n- > b\n  cont\n- a", "list glued under an indented line", id="stray-quote-ends-the-list-context"),
+    pytest.param("A\n\n    > x\n- a", "blockquote", id="under-indented-quote"),
+    pytest.param("A\n\nP\n    > - a", "blockquote", id="indented-quoted-list-after-paragraph"),
+    pytest.param("## H\n    > - a", "blockquote", id="indented-quoted-list-under-heading"),
+    pytest.param("A\n\n> - a\n>     > - b", "blockquote", id="stray-quote-inside-a-quote"),
+    pytest.param("A\n\n> - a\n> > b", "blockquote", id="deeper-quote-under-quoted-item"),
+    pytest.param("> P\n>\n> - a", "blockquote", id="list-after-empty-quote-line"),
+    pytest.param("A\n\n```\nx\n```\n> - a", "blockquote", id="closing-fence-quoted-list"),
+    # `--` is a paragraph (or a setext underline), not a thematic break.
+    pytest.param("A\n\n--\n- a", "dash-only line", id="two-dashes"),
+    pytest.param("A\n\n--\n-", "dash-only line", id="two-dashes-bare-dash"),
+    pytest.param("A\n\nP\n--\n- a", "dash-only line", id="setext-two-dashes"),
+    # Under a set-(3) predecessor only a top-level item is accepted unchanged.
+    pytest.param("## H\n    - a", "not a top-level list item", id="indented-code-under-heading"),
+    pytest.param("A\n\n---\n    - a", "not a top-level list item", id="indented-code-under-thematic-break"),
+    pytest.param("A\n\n---\n\t- a", "not a top-level list item", id="tab-code-under-thematic-break"),
+    pytest.param("A\n\n```\nx\n```\n    1. a", "not a top-level list item", id="indented-code-under-closing-fence"),
+    pytest.param("## H\n1234567890. a", "not a top-level list item", id="ten-digit-line-under-heading"),
+]
+
+
+# Set (3) of `_linear_observed_paragraph_list_inserts`: unobserved predecessors
+# whose behaviour stays as before PAT-106 (accepted in strict, nothing inserted).
+PAT106_UNOBSERVED_UNCHANGED = [
+    pytest.param("## H\n- a", "## H\n* a", id="atx-heading"),
+    pytest.param("#\n- a", "#\n* a", id="empty-atx-heading"),
+    pytest.param("A\n\n---\n- a", "A\n\n---\n* a", id="thematic-dashes"),
+    pytest.param("A\n\n***\n- a", "A\n\n***\n* a", id="thematic-stars"),
+    pytest.param("A\n\n___\n- a", "A\n\n___\n* a", id="thematic-underscores"),
+    pytest.param("A\n\n- - -\n- a", "A\n\n- - -\n* a", id="thematic-spaced-dashes"),
+    pytest.param("## H\n   - a", "## H\n   - a", id="atx-heading-three-columns"),
+    pytest.param("A\n\nP\n---\n- a", "A\n\nP\n---\n* a", id="setext-heading-dashes"),
+    pytest.param("A\n\n```\nx\n```\n- a", "A\n\n```\nx\n```\n* a", id="closing-fence"),
+    pytest.param("A\n\n~~~\nx\n~~~\n1. a", "A\n\n~~~\nx\n~~~\n1. a", id="closing-tilde-fence-numbered"),
+    # `P\n--` is not a marker line: its setext handling is untouched.
+    pytest.param("A\n\nP\n--", "A\n\nP\n--", id="setext-two-dashes-alone"),
+]
+
+
+@pytest.mark.parametrize(("body", "rendered"), PAT106_UNOBSERVED_UNCHANGED)
+def test_linear_adr_pat106_unobserved_predecessors_stay_unchanged(body, rendered):
+    assert linear_module._linear_markdown_readback_body(body, strict=True) == rendered
+    assert linear_module._linear_markdown_readback_body(body) == rendered
+    assert (
+        linear_module._linear_markdown_readback_body(
+            body, observed_paragraph_lists=False
+        )
+        == rendered
+    )
+    linear_module._preflight_adr_body_readback(body)
+
+
+# Set (1): the previous line is genuinely in a list context; unchanged.
+PAT106_LIST_CONTEXT = [
+    "A\n\n- a\n- b",
+    "A\n\n- a\n  cont\n- b",
+    "A\n\n- a\n  - b\n- c",
+    "A\n\n- a\n    - b\n- c",
+    "A\n\n- a\n\t- b\n- c",
+    "A\n\n- a\n  - b\n    cont\n  - c\n- d",
+    "A\n\n1. a\n   cont\n2. b",
+    "A\n\n1. a\n   - b\n2. c",
+    "A\n\n - a\n - b",
+    "A\n\n-\n- a",
+    "A\n\n- a\n-\n- b",
+    "A\n\n- a\n1. b",
+    "A\n\n-   a\n    cont\n- b",
+    "A\n\n> - a\n> - b",
+    "A\n\n> - a\n>   - b\n> - c",
+    "A\n\n> - a\n>     - b\n> - c",
+    "A\n\n> > - a\n> > - b",
+    "A\n\n>> - a\n> > - b",
+    # A plain blockquote with no marker line, not glued to a list context.
+    "A\n\n> P\n> Q\n> > R\n\nB",
+    "A\n\nP\n> Q",
+]
+
+
+@pytest.mark.parametrize("body", PAT106_LIST_CONTEXT)
+def test_linear_adr_pat106_list_context_is_not_refused_and_unchanged(body):
+    strict = linear_module._linear_markdown_readback_body(body, strict=True)
+    assert strict == linear_module._linear_markdown_readback_body(
+        body, observed_paragraph_lists=False
+    )
+    linear_module._preflight_adr_body_readback(body)
+
+
+# Closed classification: predecessor block x list start.  Each predecessor is
+# labelled by hand with the only outcome it may have; nothing else is accepted.
+PAT106_PREDECESSORS = {
+    # set 1
+    "- x": "list", "* x": "list", "1. x": "list", "9) x": "list", " - x": "list",
+    "   - x": "list", "-": "list", "- x\n  cont": "list", "- x\n  - y": "list",
+    "- x\n    - y": "list", "- x\n\t- y": "list", "1. x\n   cont": "list",
+    "123456789. x": "list",
+    # set 2 (with `- a` only)
+    "Pour :": "paragraph", "P": "paragraph", "é": "paragraph",
+    # set 3
+    "## H": "unchanged", "#": "unchanged", "---": "unchanged",
+    "***": "unchanged", "___": "unchanged", "- - -": "unchanged",
+    "* * *": "unchanged", "```\nx\n```": "unchanged", "~~~\nx\n~~~": "unchanged",
+    # set 4
+    "    - x": "refused", "\t- x": "refused", "    1. x": "refused",
+    "    code": "refused", "  P": "refused", " ## H": "refused",
+    "- x\nlazy": "refused", "- x\n cont": "refused", "1. x\n  cont": "refused",
+    "- x\nlazy\n  cont": "refused", "- x\n## H\n    - y": "refused",
+    "> P": "refused", ">": "refused", "> >": "refused", "--": "refused",
+    "P\n--": "refused", "    > - x": "refused", "\t> - x": "refused",
+    "- > x": "refused", "> ## H": "refused", "> - x\n>   cont": "refused",
+    "> - x\n> > y": "refused",
+    # a quoted list: set 1 only for a list start of the same quote depth
+    "> - x": "quote-1", "> > - x": "quote-2", ">> - x": "quote-2",
+    "1234567890. x": "refused", "1 item :": "refused", "#tag": "refused",
+    "a | b": "refused", "===": "refused", "**b** :": "refused", "`c` :": "refused",
+    "[l](u) :": "refused", "\\* :": "refused", "²x": "refused", "P ": "refused",
+    "P\\": "refused", "A\nP": "refused", "[x]: http://e": "refused",
+    "_a_": "refused", "(a)": "refused", "=a": "refused", "~a": "refused",
+    "+x": "refused", "-x": "refused", "1.x": "refused", "<b>x</b>": "refused",
+}
+PAT106_LIST_STARTS = [
+    "- a", "* a", "+ a", "1. a", "1) a", "2. a", "-\ta", " - a", "   - a",
+    "    - a", "\t- a", "- a\n- b",
+]
+PAT106_QUOTED_LIST_STARTS = {"> - a": "quote-1", "> > - a": "quote-2", "    > - a": None}
+PAT106_NOT_TOP_LEVEL_STARTS = ("    - a", "\t- a")
+
+
+def _pat106_expected(kind: str, start: str) -> str:
+    """The only outcome a predecessor kind x list start may have."""
+    if start in PAT106_QUOTED_LIST_STARTS:
+        return "same" if kind == PAT106_QUOTED_LIST_STARTS[start] else "refused"
+    if kind == "paragraph" and start in ("- a", "- a\n- b"):
+        return "observed"
+    if kind == "list":
+        return "same"
+    if kind == "unchanged" and start not in PAT106_NOT_TOP_LEVEL_STARTS:
+        return "same"
+    return "refused"
+
+
+@pytest.mark.parametrize("start", [*PAT106_LIST_STARTS, *PAT106_QUOTED_LIST_STARTS])
+@pytest.mark.parametrize("predecessor", list(PAT106_PREDECESSORS))
+def test_linear_adr_pat106_predecessor_classification_is_closed(predecessor, start):
+    expected = _pat106_expected(PAT106_PREDECESSORS[predecessor], start)
+    body = f"A\n\n{predecessor}\n{start}"
+    try:
+        rendered = linear_module._linear_markdown_readback_body(body, strict=True)
+    except ValueError as error:
+        # Refused: exactly where the hand-written table says so, with a named cause.
+        assert expected == "refused", error
+        assert str(error).startswith(("unsupported ", "ambiguous ")), error
+        with pytest.raises(TrackerConflictError):
+            linear_module._preflight_adr_body_readback(body)
+        return
+    # Accepted: only an explicitly enumerated outcome, never a silent third one.
+    unchanged = linear_module._linear_markdown_readback_body(
+        body, observed_paragraph_lists=False
+    )
+    if expected == "observed":
+        inserted = body.replace(f"{predecessor}\n- ", f"{predecessor}\n\n- ", 1)
+        assert rendered == inserted.replace("\n- ", "\n* ")
+        assert rendered != unchanged
+    else:
+        assert expected == "same", (expected, rendered)
+        assert rendered == unchanged
+
+
+@pytest.mark.parametrize(("body", "cause"), PAT106_REFUSED)
+def test_linear_adr_pat106_refuses_unobserved_neighbours_before_any_write(
+    tracker, body, cause
+):
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+        linear_module._preflight_adr_body_readback(body)
+    reason = str(raised.value.__cause__)
+    assert reason.startswith("unsupported list Markdown in ADR body"), reason
+    assert cause in reason
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "PAT-106 hostile", body)
+    assert not [q for q, _ in wire.calls if "documentCreate" in q]
+    assert not wire.documents
+    # A stored body (already proven) and every non-strict read are unchanged:
+    # nothing refused before becomes accepted, nothing accepted is rewritten.
+    linear_module._preflight_adr_body_readback(body, new_body=False)
+    assert linear_module._linear_markdown_readback_body(
+        body
+    ) == linear_module._linear_markdown_readback_body(
+        body, observed_paragraph_lists=False
+    )
+
+
+def test_linear_adr_pat106_refusals_never_accept_a_previously_refused_body():
+    # Bodies the PAT-94/103 strict model already refused stay refused, with their
+    # earlier cause: the PAT-106 check runs after it and only adds refusals.
+    for body, cause in [
+        ("- a\n\n- b", "unsupported list Markdown in ADR body (line 2)"),
+        ("a | b\n- | -\n1 | 2", "unsupported table Markdown in ADR body"),
+        ("A\n\n\nB\n", None),
+        ("```\nx\n```\n", "unsupported final newline in ADR body"),
+    ]:
+        if cause is None:
+            linear_module._preflight_adr_body_readback(body)
+            continue
+        with pytest.raises(TrackerConflictError) as raised:
+            linear_module._preflight_adr_body_readback(body)
+        assert str(raised.value.__cause__) == cause
+
+
+def test_linear_adr_pat106_replay_recognises_the_stored_orphan_and_writes_only_the_witness(
+    tracker,
+):
+    instance, wire = tracker
+    title = PAT106_OBSERVATION["document_title"].split(" / ", 2)[2]
+    # Reproduce the real state: the version Document exists with the bytes Linear
+    # returned (escaped header, observed body) and no witness was written.
+    created = instance.create_adr(PROJECT, title, PAT106_SOURCE)
+    document = wire.documents[created.ref]
+    header, separator, _body = document["content"].partition("\n\\-->\n\n")
+    assert separator
+    document["content"] = f"{header}{separator}{PAT106_STORED}"
+    witness_id = linear_module._adr_witness_id(PROJECT.id, created.id, 0)
+    del wire.documents[witness_id]
+    wire.calls.clear()
+
+    replayed = instance.create_adr(PROJECT, title, PAT106_SOURCE)
+
+    assert replayed.ref == created.ref
+    assert witness_id in wire.documents
+    creates = [
+        variables["input"]["title"]
+        for query, variables in wire.calls
+        if "FoundryLinearAdrDocumentCreate" in query
+    ]
+    assert creates == [wire.documents[witness_id]["title"]]
+    versions = [
+        doc for doc in wire.documents.values()
+        if doc["title"].startswith("[Foundry ADR] ")
+    ]
+    assert len(versions) == 1 and versions[0]["content"].endswith(PAT106_STORED)
+    assert instance.list_adrs(PROJECT)[0].body.endswith(PAT106_SOURCE)
+
+
+def test_linear_adr_pat106_create_round_trips_through_the_fake_provider(tracker):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, "PAT-106 glued", "A\n\nP :\n- a\n- b")
+    assert wire.documents[created.ref]["content"].endswith("A\n\nP :\n\n* a\n* b")
+    assert instance.list_adrs(PROJECT)[0].body.endswith("A\n\nP :\n- a\n- b")
+
+
+@pytest.mark.parametrize(
+    ("first", "recognised"),
+    [
+        ("Pour", True), ("a", True), ("é", True), ("日本", True), ("Pour :", True),
+        ("1 a", False), ("**a**", False), ("`a`", False), ("[a]", False),
+        ("=a", False), ("\\*a", False), ("_a_", False), ("(a)", False),
+        ('"a"', False), ("#a", False), ("a | b", False),
+        ("|a", False), ("~a", False), (">a", False),
+        # Numerics that a `\w`-based class takes for letters: not letters.
+        ("²a", False), ("½a", False), ("Ⅷa", False), ("٣a", False),
+        ("ªa", True),  # a letter (Lo) for both
+    ],
+)
+def test_linear_adr_pat106_model_and_fake_agree_on_paragraph_starts(first, recognised):
+    body = f"A\n\n{first}\n- x"
+    expected = f"A\n\n{first}\n\n* x" if recognised else f"A\n\n{first}\n* x"
+    assert linear_module._linear_markdown_readback_body(body) == expected
+    if first[0] != ">":  # a quote is a refused neighbour, not a paragraph
+        assert linear_markdown_body_readback(body) == expected
+    if recognised:
+        linear_module._preflight_adr_body_readback(body)
+    else:
+        with pytest.raises(TrackerConflictError):
+            linear_module._preflight_adr_body_readback(body)
+
+
+def test_linear_adr_pat106_a_raising_model_does_not_hide_the_pat103_rendering(
+    monkeypatch,
+):
+    def boom(*_args, **_kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(linear_module, "_linear_observed_paragraph_list_inserts", boom)
+    assert linear_module._linear_markdown_readback_bodies("Intro\n\nPour :\n- a\n") == (
+        "Intro\n\nPour :\n* a",
+        "Intro\n\nPour :\n* a\n",
+    )
+
+
+def test_linear_adr_pat106_pinned_profile_is_unchanged_by_the_insertion():
+    # A pinned profile digest-binds a source observed before PAT-106: it is
+    # checked before the general model and is handed the rendering WITHOUT the
+    # PAT-106 insertion, while the general model returns the one with it.
+    for name in ("_linear_pat_72_readback", "_linear_pat_86_readback"):
+        calls = []
+        original = getattr(linear_module, name)
+        monkey = lambda body, rendered, _o=original: calls.append(rendered) or _o(  # noqa: E731
+            body, rendered
+        )
+        setattr(linear_module, name, monkey)
+        try:
+            general = linear_module._linear_markdown_readback_body("A\n\nP :\n- a")
+        finally:
+            setattr(linear_module, name, original)
+        assert calls == ["A\n\nP :\n* a"]
+        assert general == "A\n\nP :\n\n* a"
+
+
+def test_linear_adr_pat106_html_line_paragraph_glued_to_a_list_is_refused(tracker):
+    # A `<` line is an (ambiguous) HTML block: refused by the earlier HTML rule,
+    # before any write, never silently unchanged.
+    instance, wire = tracker
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "PAT-106 html", "A\n\n<b>x</b> :\n- x")
+    assert not [q for q, _ in wire.calls if "documentCreate" in q]

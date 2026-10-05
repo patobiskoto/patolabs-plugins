@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Changed (PAT-106): the Linear ADR readback model recognises one more observed rendering
+  (`docs/qualification/pat-106-linear-paragraph-list-observation.json`, native `PAT-ADR-0015`):
+  a top-level `- ` list directly after a single-line paragraph line starting with a letter is read
+  back with one empty line inserted between them; a list glued to any other non-heading line (pipe,
+  `#tag`, digit, `**`, backtick...) is refused. Reads stay additive (the PAT-103 and pre-PAT-94 renderings
+  are still accepted) and the pinned profiles are unchanged. A new body is now refused before
+  any write, with a precise cause, for the unobserved neighbours: numbered, `*`/`+` or dash-only
+  (setext) glued lists, lists glued in or next to a blockquote (the exact quote depth must match
+  the line above; a `>` behind 4+ columns, a tab or a list marker, or opened directly under a
+  list line, is refused), under a `--` line, under an indented line that is
+  not inside a list item (including indented code starting with a marker), indented under a
+  paragraph, indented (code) under a heading, thematic break or closing fence, or outside the
+  exact shape; the check is a closed whitelist whose default refuses. Replaying `adr create` recognises the orphan Document of
+  `PAT-ADR-0015` and writes only its witness. See `docs/linear-adr-body-guide.md`.
+
 - Changed (PAT-103): the Linear ADR readback model and preflight now recognise the blank-line
   rendering observed by a bounded probe
   (`docs/qualification/pat-103-linear-blank-lines-observation.json`): two or more empty lines
