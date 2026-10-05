@@ -4,6 +4,8 @@ Cadre : PAT-ADR-0015 (acceptée le 2026-10-05). Valeurs validées par le mainten
 
 **Amendements validés par le mainteneur avant tout essai (2026-10-05).** Aucun essai (tentative locale, exécution cloud, mesure) n'avait eu lieu quand ces amendements ont été validés, et aucun fichier v2 n'est créé. Au premier gel (commit `e2f8041`, PAT-107) le protocole comptait déjà cinq candidats nommés et l'étape de tamis local de la section 4. Modifications faites sur place depuis (PAT-108, `git diff e2f8041..` sur ce fichier) : candidat 2 (Qwen3.8-27B, MLX 4 bits) passé de `mlx-community/Qwen3.8-27B-4bit` (« déjà présent ») à `lmstudio-community/Qwen3.8-27B-MLX-4bit` (« à télécharger », même éditeur de quantifications que le 6 bits) ; section « Disque » : trois téléchargements au lieu de deux. Reprise (2026-10-05, avant tout essai) : une tentative interrompue avant tout verdict du juge est nulle et peut être rejouée une fois sur un bundle neuf, le rejeu étant listé dans le rapport ; une tentative qui a reçu un verdict n'est jamais rejouée. Les choix du lanceur qui ne sont pas des coordonnées du protocole sont étiquetés dans `pat-19-campaign-v1.json` (`non_protocol_choices`) et `pat-19-launcher-v1.md`.
 
+**Épinglage après essais sur tâche jouet (PAT-111, 2026-10-05).** Des essais réels sur une tâche jouet, hors corpus, ont eu lieu ; aucune tentative du corpus (tamis ni comparaison) n'avait eu lieu. Ils n'ont changé aucune règle, borne, tirage ni coordonnée de décision (le tirage et les 12 tâches sont inchangés) ; ils précisent trois coordonnées d'exécution, consignées dans `pat-19-campaign-v1.json` et `pat-19-preflight-2026-10-05.json` : (1) la longueur de contexte est **65 536 pour chaque candidat** (deux candidats échouent au contexte par défaut de 8 192 : Muse Glimmer et Qwen3-Coder), lue au préflight ; (2) chaque candidat est désigné par sa clé de modèle LM Studio (le dépôt HF reste en provenance ; le 6 bits passe par la clé `qwen3.8-27b-mlx-alias`, un dossier de liens vers ses fichiers, car LM Studio regroupe les deux variantes sous `qwen/qwen3.8-27b`) ; (3) les trois pilotes cloud tournent **sans bac à sable** (Claude Code ne s'authentifie pas sous `sandbox-exec`) avec un audit de contamination après exécution, ce qui est une limite des bras cloud (ils peuvent lire le cache de plugins). Devstral, repli de Muse, n'est pas utilisé. Validation du mainteneur de cet amendement : à confirmer à la relecture de la PR.
+
 ## 1. Question posée
 
 Pour des correctifs bornés de ce dépôt, un parcours « implémenteur local puis validation cloud » coûte-t-il moins de travail cloud premium et pas trop plus de temps, par tâche acceptée, que le parcours cloud actuel, à qualité égale ?
@@ -18,12 +20,12 @@ Un usage, une machine, et un seul candidat local dans la comparaison : il est d�
 | Serveur | LM Studio 0.4.25+1, moteur MLX 1.11.0 (nax) | relevé du 2026-10-05 |
 | Candidat local de la comparaison | celui que désigne le tamis local (section 4) | règle fixée d'avance |
 | Harnais réel | oh-my-pi `omp` 18.4.10 | test de fumée : outils structurés, tests réellement lancés, contexte le plus léger |
-| Harnais neutre | mini-swe-agent (à installer, version à épingler) | isole la qualité du modèle |
+| Harnais neutre | mini-swe-agent 2.4.6 (PyPI, environnement isolé ; exécutable par la variable `PAT19_MINI_BIN`) | isole la qualité du modèle |
 | Référence cloud courante | Eiffel sur le profil routé actuel (Sonnet 5.5, effort medium) | routage Foundry |
 | Cloud économique | Eiffel sur le palier economy (Haiku 4.5) | routage Foundry |
 | Revue | Maigret (Opus 5.5, effort high), identique pour tous les bras | routage Foundry |
 
-Empreintes des poids, révision, gabarit de conversation et paramètres de génération sont relevés au préflight et consignés. Un changement de l'un de ces éléments ouvre une version 2 ; les séries ne se mélangent pas.
+Contexte chargé : 65 536 pour chaque candidat. Empreintes des poids, révision, gabarit de conversation (empreinte du fichier) et paramètres de génération (valeurs par défaut du serveur et du harnais, non surchargées) sont consignés dans la configuration de campagne ; le préflight vérifie l'instance chargée (clé, quantification, contexte). Un changement de l'un de ces éléments ouvre une version 2 ; les séries ne se mélangent pas.
 
 ## 3. Corpus
 
@@ -114,5 +116,5 @@ Le comparateur d'ADR-0019 n'existe pas comme outil dans ce dépôt. Tickets à c
 
 - Les trois harnais (Codex, OpenCode, `omp`) font fonctionner le candidat avec des appels d'outils sur une micro-tâche ; cela ne mesure pas la qualité.
 - Codex a annoncé des tests verts sans les avoir lancés : la vérification doit rester indépendante du modèle.
-- LM Studio n'a pas appliqué la limite de contexte demandée (169 728 au lieu de 32 000).
+- LM Studio n'a pas appliqué la limite de contexte demandée (169 728 au lieu de 32 000). PAT-111 : il l'a respectée (`-c 65536`) pour le GGUF et pour le build MLX de Coder, et l'a ignorée pour les builds MLX Qwen3.8 et Qwen3.6 ; le préflight lit donc le contexte chargé et refuse sous 65 536.
 - Le swap de la machine est passé d'environ 20 Go à 38,8 Go utilisés pendant l'essai, parce qu'un autre projet chargeait des modèles en parallèle ; ce n'est pas le cas nominal, d'où la condition de machine dédiée.

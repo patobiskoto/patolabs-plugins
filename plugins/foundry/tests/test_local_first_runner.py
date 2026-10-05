@@ -34,6 +34,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--role"); ap.add_argument("--workdir"); ap.add_argument("--plan")
 ap.add_argument("--session-id", default=""); ap.add_argument("--projects-dir", default="")
 ap.add_argument("--review-file", default=""); ap.add_argument("--statement", default="")
+ap.add_argument("--init-tools", default=None); ap.add_argument("--traj", default="")
 a = ap.parse_args()
 counter = a.plan + ".count"
 counts = json.load(open(counter)) if os.path.exists(counter) else {}
@@ -59,6 +60,17 @@ def claude_log(usage):
     with open(os.path.join(folder, a.session_id + ".jsonl"), "w") as out:
         out.write(json.dumps(line) + "\n")
 USAGE = {"implementer": (100, 10, 5, 20), "economy": (40, 0, 0, 8), "reviewer": (30, 0, 0, 10)}
+if a.init_tools is not None:
+    print(json.dumps({"type": "system", "subtype": "init",
+                      "tools": [t for t in a.init_tools.split(",") if t]}), flush=True)
+if a.traj:
+    json.dump({"info": {"model_stats": {"api_calls": 7}}}, open(a.traj, "w"))
+if behavior.startswith("peek:"):  # the arm reads a path it should not: both stream shapes, then works
+    target = behavior[5:]
+    behavior = "PASS" if a.role == "reviewer" else "fix"
+    event("tool_execution_start", toolName="read", args={"path": target})
+    event("assistant", message={"content": [{"type": "tool_use", "name": "Read",
+                                             "input": {"file_path": target}}]})
 if behavior == "crash":
     sys.exit(3)
 if behavior == "hang":
@@ -710,14 +722,17 @@ def test_committed_campaign_config_matches_the_frozen_protocol():
     assert local["verified"] is True and local["argv"][:4] == ["omp", "-p", "--mode", "json"]
     assert "--no-session" in local["argv"] and "--auto-approve" in local["argv"]
     for name in ("neutral_harness", "cloud_implementer_current", "cloud_implementer_economy", "cloud_reviewer"):
-        assert campaign["drivers"][name]["verified"] is False and "note" in campaign["drivers"][name]
-        with pytest.raises(lfr.RunnerError, match="not verified"):
-            lfr._check_driver_usable(name, campaign["drivers"][name], dry_run=False)
+        assert campaign["drivers"][name]["verified"] is True and "note" in campaign["drivers"][name]
+        lfr._check_driver_usable(name, campaign["drivers"][name], dry_run=False)  # pinned by PAT-111
         with pytest.raises(lfr.RunnerError, match="non-fake"):
             lfr._check_driver_usable(name, campaign["drivers"][name], dry_run=True)
+    unverified = {**campaign["drivers"]["cloud_reviewer"], "verified": False}
+    with pytest.raises(lfr.RunnerError, match="not verified"):
+        lfr._check_driver_usable("cloud_reviewer", unverified, dry_run=False)  # a failing driver stays refused
     with pytest.raises(lfr.RunnerError, match="non-fake"):
         lfr._check_driver_usable("local_harness", local, dry_run=True)  # a dry run never starts a real arm
     assert len(campaign["candidates"]) == 6 and not any(c.get("verified") for c in campaign["candidates"].values())
+    assert campaign["candidates"]["devstral-small-2-24b-gguf"]["unused"] is True
     assert campaign["statement_footer"].startswith("\n\n---")
 
 
@@ -1347,12 +1362,13 @@ def test_N6_a_stop_on_a_cap_is_inconclusive_a_rule_stop_keeps_the_cloud():
 
 # ------------------------------------------------------------------------------------- N7 / N10
 
-def test_N7_cloud_drivers_declare_an_unverified_log_layout_so_premium_tokens_stay_unknown():
+def test_N7_a_log_layout_stays_unverified_until_declared_so_premium_tokens_stay_unknown():
     campaign = lfr.load_campaign(QUALIFICATION / "pat-19-campaign-v1.json")
     for name in ("cloud_implementer_current", "cloud_implementer_economy", "cloud_reviewer"):
         log = campaign["drivers"][name]["session_log"]
-        assert log["layout_verified"] is False and "layout_note" in log
-        assert lfr.premium_tokens("any", log) == (None, "log_layout_unverified")
+        assert log["layout_verified"] is True and "layout_note" in log  # PAT-111: reconciled on a real run
+        assert campaign["drivers"][name]["stream"]["format"] == "claude-stream-json"
+        assert lfr.premium_tokens("any", {**log, "layout_verified": False}) == (None, "log_layout_unverified")
 
 
 def test_N10_choices_that_are_not_protocol_coordinates_are_labelled_and_the_breakdown_is_reported(tmp_path):
@@ -2402,3 +2418,456 @@ def test_pat111_a_cut_correction_is_not_replayed_and_the_path_stays_undecided(tm
     assert counts(pplan) == {"implementer": 1, "economy": 1, "reviewer": 2}  # nothing replayed
     rep = lfr.report(campaign, results(again), ledger_of(again))
     assert rep["comparison"]["arms"]["B"]["economy"] == "unavailable" and rep["replays"] == []
+
+
+# ------------------------------------------------------------------ PAT-111 pinning (AC4 to AC8)
+
+EVIDENCE = QUALIFICATION / "pat-19-preflight-2026-10-05.json"
+PINNED = ("local_harness", "neutral_harness", "cloud_implementer_current", "cloud_implementer_economy",
+          "cloud_reviewer")
+
+
+DISALLOWED = ["Task", "TaskStop", "Workflow", "SendMessage", "ListAgents", "Monitor", "CronCreate",
+              "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger", "PushNotification", "WebFetch",
+              "WebSearch", "Skill", "DesignSync", "EnterWorktree", "ExitWorktree", "ReportFindings",
+              "ToolSearch", "NotebookEdit", "Artifact", "ArtifactComments", "ArtifactData", "SendFeedback",
+              "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"]
+
+
+def _committed():
+    return json.loads((QUALIFICATION / "pat-19-campaign-v1.json").read_text("utf-8"))
+
+
+def test_pat111_every_pinned_driver_names_the_evidence_of_its_trial_and_the_file_has_it():
+    campaign, evidence = _committed(), json.loads(EVIDENCE.read_text("utf-8"))
+    for name in PINNED:
+        driver = campaign["drivers"][name]
+        ref_file, _, key = driver["evidence"].partition("#")
+        assert ref_file == EVIDENCE.name and key.split(".")[0] == "drivers" and key.split(".")[1] == name
+        assert name in evidence["drivers"] and driver["verified"] is True
+    for cid, cand in campaign["candidates"].items():
+        if cand.get("unused"):
+            continue
+        entry = evidence["candidates"][cid]
+        assert cand["smoke"]["evidence"] == f"{EVIDENCE.name}#candidates.{cid}"
+        assert cand["smoke"]["passed_at_65536"] is True and entry["smoke_at_65536"]["passed"] is True
+        assert cand["file_sha256"] == entry["file_sha256"] and cand["chat_template_sha256"] == entry["chat_template_sha256"]
+        assert all(len(h) == 64 for h in cand["file_sha256"].values())
+        assert cand["min_context"] == 65536 and cand["load_command"][:5] == ["lms", "load", cand["lm_studio_key"], "-c", "65536"]
+        assert cand["model"] == cand["lm_studio_key"] and "--identifier" in cand["load_command"]
+        assert "defaults" in cand["generation_parameters"]
+    assert campaign["candidates"]["muse-glimmer-30b-gguf"]["engine"] == "llama.cpp"
+    assert evidence["candidates"]["muse-glimmer-30b-gguf"]["smoke_at_default_8192"]["passed"] is False
+    assert evidence["candidates"]["qwen3-coder-30b-a3b-mlx-4bit"]["smoke_at_default_8192"]["passed"] is False
+
+
+def test_pat111_the_committed_files_hold_no_absolute_user_path_and_no_secret():
+    for path in (EVIDENCE, QUALIFICATION / "pat-19-campaign-v1.json"):
+        text = path.read_text("utf-8")
+        for needle in ("/Users/", "/private/", "/home/", "BEGIN PRIVATE", "sk-ant", "Bearer "):
+            assert needle not in text, (path.name, needle)
+
+
+def test_pat111_cloud_drivers_are_unsandboxed_with_a_reason_and_pinned_to_one_command_shape():
+    campaign = _committed()
+    tails = set()
+    for name, model, effort in (("cloud_implementer_current", "claude-sonnet-5-5", "medium"),
+                                ("cloud_implementer_economy", "claude-haiku-4-5-20251001", None),
+                                ("cloud_reviewer", "claude-opus-5-5", "high")):
+        driver = campaign["drivers"][name]
+        assert driver["sandbox"] is False and driver["sandbox_reason"] and driver["model"] == model
+        argv = driver["argv"]
+        assert (("--effort" in argv) and argv[argv.index("--effort") + 1] == effort) if effort else "--effort" not in argv
+        assert argv[:2] == ["claude", "-p"] and argv[2] == "{prompt}"
+        start = argv.index("--disallowedTools") + 1
+        denied = argv[start:argv.index("--output-format")]
+        assert denied == DISALLOWED and "Agent" not in denied and len(denied) == 29
+        assert driver["allowed_tools"] == ["Bash", "Edit", "Read", "Write"]
+        tails.add(tuple(argv[argv.index("--permission-mode"):]))  # incl. the disallow list
+        assert driver["home"] == "real" and driver["env_allow"] == [] and driver["stream"]["format"] == "claude-stream-json"
+    assert len(tails) == 1  # identical host flags for every arm
+    for name in ("local_harness", "neutral_harness"):
+        assert campaign["drivers"][name].get("sandbox", True) is True
+
+
+def _load(tmp_path, mutate):
+    data = _committed()
+    mutate(data)
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return lfr.load_campaign(path)
+
+
+@pytest.mark.parametrize("mutate,match", [
+    (lambda d: d["drivers"]["local_harness"].update(sandbox=False), "cannot run unsandboxed"),
+    (lambda d: d["drivers"]["neutral_harness"].update(sandbox=False, sandbox_reason="x"), "cannot run unsandboxed"),
+    (lambda d: d["drivers"]["cloud_reviewer"].pop("sandbox_reason"), "needs a sandbox_reason"),
+    (lambda d: d["drivers"]["cloud_reviewer"].update(sandbox_reason=" "), "needs a sandbox_reason"),
+    (lambda d: d["drivers"]["cloud_reviewer"].update(sandbox="no"), "must be a boolean"),
+    (lambda d: d["drivers"]["local_harness"].pop("evidence"), "without evidence"),
+    (lambda d: d["drivers"]["cloud_reviewer"]["stream"].update(format="none"), "claude-stream-json"),
+    (lambda d: d["drivers"]["cloud_reviewer"]["stream"].update(format="weird"), "unknown stream format"),
+    (lambda d: d["drivers"]["cloud_reviewer"].pop("allowed_tools"), "needs allowed_tools"),
+    (lambda d: d["drivers"]["cloud_reviewer"].update(allowed_tools="Read"), "allowed_tools must be"),
+    (lambda d: d["drivers"]["neutral_harness"]["env_set"].update(OPENAI_API_KEY="sk-real"), "placeholder"),
+    (lambda d: d["drivers"]["neutral_harness"]["env_set"].update(FOUNDRY_X="1"), "bad env_set"),
+    (lambda d: d["drivers"]["neutral_harness"]["executable"].pop("version"), "executable needs"),
+    (lambda d: d["candidates"]["muse-glimmer-30b-gguf"].update(min_context="big"), "min_context")])
+def test_pat111_the_campaign_loader_refuses_unsafe_or_unproven_pins(tmp_path, mutate, match):
+    with pytest.raises(lfr.RunnerError, match=match):
+        _load(tmp_path, mutate)
+
+
+def test_pat111_the_loaded_instance_is_checked_for_context_quantization_and_key(tmp_path):
+    campaign = _committed()
+    cid = "qwen3.8-27b-mlx-4bit"
+    cand = campaign["candidates"][cid]
+    good = {"identifier": cand["model"], "modelKey": cand["lm_studio_key"], "contextLength": 262144,
+            "quantization": {"name": "4bit", "bits": 4}}
+    facts = lfr.dry_run_facts(campaign, cand["model"])
+
+    def check(**patch):
+        item = {**good, **patch}
+        item = {k: v for k, v in item.items() if v is not None}
+        return lfr.preflight(campaign, cand["model"], lambda argv: json.dumps([item])
+                             if tuple(argv) == ("lms", "ps", "--json") else facts(argv), lambda: 99.0, cand)
+
+    assert check()["ok"] and check(contextLength=65536)["ok"]  # LM Studio may load MORE than asked
+    assert check(contextLength=8192)["refusals"] == ["loaded_context_below_minimum:8192<65536"]
+    assert check(contextLength=None)["refusals"] == ["loaded_context_unknown"]
+    assert check(quantization="6bit")["refusals"] == ["loaded_quantization_differs:6bit!=4bit"]
+    assert check(quantization=None)["refusals"] == ["loaded_quantization_unknown"]
+    assert check(modelKey="qwen3.8-27b-mlx-alias")["refusals"] == [
+        "loaded_model_key_differs:qwen3.8-27b-mlx-alias!=qwen/qwen3.8-27b"]
+    assert check(quantization="4BIT")["ok"]  # case-insensitive
+    ok = check()
+    assert ok["facts"]["loaded_context_length"] == 262144 and ok["facts"]["loaded_quantization"] == "4bit"
+    for candidate_id, candidate in campaign["candidates"].items():  # the dry-run canned facts pass the real pins
+        if not candidate.get("unused"):
+            assert lfr.preflight(campaign, candidate["model"], lfr.dry_run_facts(campaign, candidate["model"]),
+                                 lambda: 99.0, candidate)["ok"], candidate_id
+
+
+def test_pat111_the_runner_preflight_refuses_a_candidate_loaded_with_too_small_a_context(tmp_path):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, caps={"cloud_executions": 0})
+    campaign["candidates"]["cand-a"].update(min_context=65536, quantization="4bit", lm_studio_key="k")
+    small = {"identifier": "fake/model-a", "modelKey": "k", "contextLength": 8192, "quantization": "4bit"}
+    base = lfr.dry_run_facts(campaign, "fake/model-a")
+    runner.preflight_run = lambda cid: (lambda argv: json.dumps([small])
+                                        if tuple(argv) == ("lms", "ps", "--json") else base(argv))
+    with pytest.raises(lfr.PreflightRefused, match="loaded_context_below_minimum"):
+        runner.screen(tasks, ["cand-a"])
+    assert counts(plan) == {}  # nothing was started
+
+
+def test_pat111_an_unsandboxed_cloud_driver_runs_under_a_real_sandboxed_run_and_a_local_one_never_does(
+        tmp_path, monkeypatch):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    for name in ("cloud_implementer_current", "cloud_reviewer"):
+        campaign["drivers"][name]["sandbox"] = False
+    runner.sandbox = True
+    monkeypatch.setattr(lfr, "sandbox_available", lambda: False)  # as on the CI Linux runner
+    seen = []
+    real = lfr.execute_driver
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs["sandbox"])
+        return real(*args, **{**kwargs, "sandbox": False})  # the fake arm has no profile to apply
+
+    monkeypatch.setattr(lfr, "execute_driver", spy)
+    assert runner.cloud_path(tasks[0], "A", "comparison")[0]["outcome"] == "accepted"
+    assert seen == [False, False]  # implementer and reviewer: no profile asked, none needed
+    with pytest.raises(lfr.RunnerError, match="sandbox-exec is unavailable"):  # the economy driver keeps it
+        runner.cloud_path(tasks[0], "B", "comparison")
+    assert counts(plan).get("economy", 0) == 0
+    runner.local_attempt(tasks[0], "cand-a", "local_harness", "S", 0, "screening")
+    assert seen[-1] is True  # and a local driver always asks for its profile
+
+
+def test_pat111_the_r6_environment_reaches_an_unsandboxed_cloud_arm_with_the_real_tmpdir(tmp_path):
+    host = {"HOME": "/h", "LANG": "C", "LC_ALL": "C", "LOGNAME": "u", "PATH": "/bin", "TMPDIR": "/real/tmp/",
+            "USER": "u", "ANTHROPIC_API_KEY": "secret", "FOUNDRY_STATE_DIR": "/s", "SSH_AUTH_SOCK": "/a"}
+    cloud = lfr.isolated_environment({"home": "real", "env_allow": []}, tmp_path / "scratch", host)
+    assert {k: cloud[k] for k in ("HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "TMPDIR", "USER")} == {
+        k: host[k] for k in ("HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "TMPDIR", "USER")}
+    assert set(cloud) == {"HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "TMPDIR", "USER"}
+    local = lfr.isolated_environment({"home": "isolated"}, tmp_path / "scratch", host)
+    assert local["TMPDIR"] == str(tmp_path / "scratch" / "tmp") and local["HOME"] != "/h"
+
+
+# ---- the sub-agent assertion from the init event
+
+def _claude_stream_driver(driver, tools):
+    driver["stream"] = {"format": "claude-stream-json"}
+    if tools is not None:
+        driver["argv"] += ["--init-tools", tools]
+    return driver
+
+
+@pytest.mark.parametrize("tools,reason", [("Read,Bash,Task", "sub-agent tool available to the arm: Task"),
+                                          ("Agent,Read", "sub-agent tool available to the arm: Agent"),
+                                          (None, "no system/init event")])
+def test_pat111_a_cloud_record_is_refused_when_the_init_event_allows_a_subagent_or_is_missing(
+        tmp_path, tools, reason):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    _claude_stream_driver(campaign["drivers"]["cloud_implementer_current"], tools)
+    with pytest.raises(lfr.RunnerError, match=reason):
+        runner.cloud_path(tasks[0], "A", "comparison")
+    last = results(runner)[-1]
+    assert last["status"] == "tool_error" and reason in last["reason"] and last["accepted"] is None
+    assert last["premium"]["billing_total"] is None  # refused: its cost is not attributed
+    assert runner.ledger.totals()["cloud_started"] == 1 and not runner.ledger.totals()["unsettled_sessions"]
+    assert counts(plan).get("reviewer", 0) == 0  # no review is paid on a refused record
+
+
+def test_pat111_a_cloud_record_with_a_clean_init_event_is_kept(tmp_path):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    for name in ("cloud_implementer_current", "cloud_reviewer"):
+        _claude_stream_driver(campaign["drivers"][name], "Read,Edit,Bash,Write")
+    rec = runner.cloud_path(tasks[0], "A", "comparison")[0]
+    assert rec["outcome"] == "accepted" and not rec.get("contaminated")
+
+
+# ---- the contamination audit
+
+def _stream(path, *calls):
+    lines = []
+    for kind, name, args in calls:
+        if kind == "claude":
+            lines.append({"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "x"}, {"type": "tool_use", "name": name, "input": args}]}})
+        else:
+            lines.append({"type": "tool_execution_start", "toolName": name, "args": args})
+    path.write_text("\n".join(json.dumps(x) for x in lines) + "\nnot json\n", encoding="utf-8")
+
+
+def test_pat111_the_audit_flags_reads_of_the_plugin_cache_other_checkouts_and_the_home_configuration(tmp_path):
+    repo, _, _, _ = _make_repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", str(tmp_path / "other-wt")],
+                   check=True, capture_output=True)
+    home = _fake_home(tmp_path)
+    bundle, scratch = tmp_path / "work" / "b", tmp_path / "work" / "s"
+    bundle.mkdir(parents=True)
+    scratch.mkdir()
+    sensitive = lfr.read_deny_list(repo=repo, home=home, state_dir=tmp_path / "state", input_paths=[],
+                                   kind="local_harness")
+    cache = home / ".claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"
+    stream = tmp_path / "stream.jsonl"
+
+    def audit(*calls):
+        _stream(stream, *calls)
+        return lfr.audit_transcript(stream, bundle=bundle, scratch=scratch, sensitive=sensitive, home=str(home))
+
+    assert audit(("claude", "Read", {"file_path": str(cache)})) == [
+        "~/.claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"]
+    assert audit(("omp", "read", {"path": str(cache)})) == audit(("claude", "Read", {"file_path": str(cache)}))
+    assert audit(("claude", "Grep", {"pattern": "def test_", "path": str(home / ".claude/plugins")})) == ["~/.claude/plugins"]
+    assert audit(("claude", "Glob", {"pattern": f"{home}/.claude/plugins/**/test_*.py"}))
+    assert audit(("claude", "Bash", {"command": "cat ~/.ssh/id_ed25519 | head"})) == ["~/.ssh/id_ed25519"]
+    assert audit(("claude", "Bash", {"command": "ls $HOME/.aws && cat ${HOME}/.config/foundry/config.json"})) == [
+        "~/.aws", "~/.config/foundry/config.json"]
+    assert audit(("claude", "Bash", {"command": f"cd {tmp_path / 'other-wt'} && git log"})) == [
+        str(Path(os.path.realpath(tmp_path / "other-wt")))]
+    assert audit(("claude", "Read", {"file_path": str(repo / "plugins/foundry/tests/test_m.py")}))
+    assert audit(("claude", "Read", {"file_path": str(tmp_path / "state" / "ledger.jsonl")}))
+    escaped = os.path.relpath(cache, bundle)  # a relative path that climbs out of the bundle
+    assert audit(("claude", "Read", {"file_path": escaped})) == [
+        "~/.claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"]
+    assert audit(("claude", "Bash", {"command": f"cat {escaped}"}))
+    # what an honest arm does is clean
+    assert audit(("claude", "Read", {"file_path": str(bundle / "src/calc.py")}),
+                 ("claude", "Edit", {"file_path": "src/calc.py", "old_string": "a", "new_string": "b"}),
+                 ("claude", "Bash", {"command": "python3 -m pytest -q 2>&1 | tail -5; ls ./tests /usr/bin /dev/null"}),
+                 ("claude", "Write", {"file_path": str(scratch / "review.json"), "content": "{}"}),
+                 ("omp", "read", {"path": "tests/test_calc.py"}), ("omp", "bash", {"command": "git ls-files"})) == []
+    assert lfr.audit_transcript(tmp_path / "missing.jsonl", bundle=bundle, scratch=scratch,
+                                sensitive=sensitive, home=str(home)) == []
+
+
+def _peek_plan(home, **roles):
+    cache = home / ".claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"
+    return {**FIX_ALL, **{role: [f"peek:{cache}"] for role in roles}}
+
+
+def test_pat111_a_local_attempt_that_read_the_plugin_cache_is_contaminated_undecided_and_never_replayed(tmp_path):
+    home = _fake_home(tmp_path)
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(
+        tmp_path, "screen", _peek_plan(home, local=1), caps={"cloud_executions": 0}, repo_bundle=first,
+        host_env={**os.environ, "HOME": str(home)})
+    out = runner.screen(tasks[:1], ["cand-a"])
+    rec = out[0]
+    assert rec["contaminated"] is True and rec["accepted"] is None and rec["outcome"] == "contaminated"
+    assert rec["local_outcome"] == "contaminated" and rec["judge"]["verdict"] == "ACCEPTED"  # verdict kept, not trusted
+    assert rec["contamination"]["paths"] == ["~/.claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py"]
+    assert "contaminated" in rec["unknown"]
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert rep["screening"]["selected"] is None and rep["screening"]["reason"] == "incomplete_screening"
+    assert rep["screening"]["undecided_tasks"][0]["outcome"] == "contaminated"
+    assert rep["screening"]["candidates"] == {}  # not counted as accepted nor as refused
+    assert rep["contaminated"][0]["paths"] == rec["contamination"]["paths"]
+    again, _, _, tasks = make_runner(tmp_path, "screen", _peek_plan(home, local=1), caps={"cloud_executions": 0},
+                                     repo_bundle=first, host_env={**os.environ, "HOME": str(home)})
+    assert again.screen(tasks[:1], ["cand-a"]) == [] and counts(plan) == {"local": 1}  # never replayed
+
+
+def test_pat111_a_clean_local_attempt_is_not_marked(tmp_path):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, caps={"cloud_executions": 0})
+    rec = runner.screen(tasks[:1], ["cand-a"])[0]
+    assert "contaminated" not in rec and rec["accepted"] is True
+
+
+def test_pat111_a_cloud_arm_that_read_the_plugin_cache_is_undecided_unreviewed_and_not_continued(tmp_path):
+    home = _fake_home(tmp_path)
+    first = _make_repo(tmp_path)
+    runner, campaign, plan, tasks = make_runner(
+        tmp_path, "compare", _peek_plan(home, implementer=1), repo_bundle=first,
+        host_env={**os.environ, "HOME": str(home)})
+    records = runner.cloud_path(tasks[0], "A", "comparison")
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["outcome"] == "contaminated" and rec["accepted"] is None and rec["contaminated"] is True
+    assert rec["judge"] is None and rec["review"]["rounds"] == 0 and rec["cloud_executions"] == 1
+    assert rec["premium"]["billing_total"] == 135  # the money spent stays counted
+    assert counts(plan) == {"implementer": 1}  # no review, no correction
+    again, _, _, tasks = make_runner(tmp_path, "compare", _peek_plan(home, implementer=1), repo_bundle=first,
+                                     host_env={**os.environ, "HOME": str(home)})
+    assert again.cloud_path(tasks[0], "A", "comparison") == [] and counts(plan) == {"implementer": 1}  # no replay
+    runner.cloud_path(tasks[0], "B", "comparison")  # a clean economy path on the same task
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert rep["comparison"]["arms"]["B"]["economy"] == "unavailable"  # A's cost is not a clean reference
+    assert rep["comparison"]["decision"] == "inconclusive" and rep["contaminated"][0]["path"] == "A"
+    assert lfr._arm_totals([r for r in results(runner) if r["path"] == "A"])["tasks"][1]["unknown"] is True
+
+
+def test_pat111_a_reviewer_that_read_the_plugin_cache_leaves_the_task_undecided(tmp_path):
+    home = _fake_home(tmp_path)
+    runner, campaign, plan, tasks = make_runner(
+        tmp_path, "compare", _peek_plan(home, reviewer=1), host_env={**os.environ, "HOME": str(home)})
+    rec = runner.cloud_path(tasks[0], "A", "comparison")[-1]
+    assert rec["outcome"] == "contaminated" and rec["accepted"] is None and rec["cloud_executions"] == 2
+    assert counts(plan) == {"implementer": 1, "reviewer": 1}
+
+
+def test_pat111_a_contaminated_local_attempt_of_path_c_is_taken_over_by_the_cloud(tmp_path):
+    home = _fake_home(tmp_path)
+    runner, _, plan, tasks = make_runner(
+        tmp_path, "compare", _peek_plan(home, local=1), host_env={**os.environ, "HOME": str(home)})
+    recs = runner.hybrid_path(tasks[0], "cand-a", "local_harness", "comparison")
+    assert recs[0]["outcome"] == "contaminated" and recs[0]["local_outcome"] == "contaminated"
+    assert recs[0]["accepted"] is None and recs[1]["outcome"] == "accepted" and counts(plan)["implementer"] == 1
+
+
+# ---- the neutral harness executable comes from an operator variable
+
+def _fake_venv(tmp_path, version="2.4.6"):
+    venv = tmp_path / "venv-mini"
+    (venv / "bin").mkdir(parents=True)
+    (venv / f"lib/python3.12/site-packages/mini_swe_agent-{version}.dist-info").mkdir(parents=True)
+    exe = venv / "bin" / "mini"
+    exe.write_text(FAKE_ARM, encoding="utf-8")
+    exe.chmod(0o755)
+    return exe
+
+
+def _neutral_driver(campaign):
+    driver = campaign["drivers"]["neutral_harness"]
+    driver["argv"] = [sys.executable, "{mini_bin}", *driver["argv"][2:], "--traj", "{scratch}/traj.json"]
+    driver["executable"] = {"env": "PAT19_MINI_BIN", "placeholder": "mini_bin", "package": "mini-swe-agent",
+                            "version": "2.4.6"}
+    driver["env_set"] = {"MSWEA_GLOBAL_CONFIG_DIR": "{scratch}/mswea", "OPENAI_API_KEY": "local-endpoint-no-key"}
+    driver["make_dirs"] = ["{scratch}/mswea"]
+    driver["trajectory"] = {"file": "{scratch}/traj.json", "steps_path": ["info", "model_stats", "api_calls"]}
+    return driver
+
+
+def test_pat111_the_harness_executable_must_come_from_the_operator_variable_at_the_pinned_version(tmp_path):
+    exe = _fake_venv(tmp_path)
+    spec = {"executable": {"env": "PAT19_MINI_BIN", "placeholder": "mini_bin", "package": "mini-swe-agent",
+                           "version": "2.4.6"}}
+    got = lfr.resolve_executable(spec, {"PAT19_MINI_BIN": str(exe)})
+    assert got["placeholder"] == "mini_bin" and got["path"] == str(exe) and got["version"] == "2.4.6"
+    assert lfr.resolve_executable({}, {}) is None
+    for env, match in (({}, "absolute path"), ({"PAT19_MINI_BIN": "mini"}, "absolute path"),
+                       ({"PAT19_MINI_BIN": str(tmp_path / "nope")}, "executable file")):
+        with pytest.raises(lfr.RunnerError, match=match):
+            lfr.resolve_executable(spec, env)
+    exe.chmod(0o644)
+    with pytest.raises(lfr.RunnerError, match="executable file"):
+        lfr.resolve_executable(spec, {"PAT19_MINI_BIN": str(exe)})
+    other = _fake_venv(_sub(tmp_path, "other"), version="2.5.0")
+    with pytest.raises(lfr.RunnerError, match="is 2.5.0, the pinned version is 2.4.6"):
+        lfr.resolve_executable(spec, {"PAT19_MINI_BIN": str(other)})
+    bare = tmp_path / "bare" / "bin"
+    bare.mkdir(parents=True)
+    (bare / "mini").write_text("x")
+    (bare / "mini").chmod(0o755)
+    with pytest.raises(lfr.RunnerError, match="is unknown"):
+        lfr.resolve_executable(spec, {"PAT19_MINI_BIN": str(bare / "mini")})
+    committed = _committed()["drivers"]["neutral_harness"]
+    assert committed["argv"][0] == "{mini_bin}" and committed["executable"]["env"] == "PAT19_MINI_BIN"
+    assert "/" not in committed["executable"]["env"] and committed["executable"]["version"] == "2.4.6"
+
+
+def test_pat111_the_neutral_harness_runs_from_the_variable_and_reads_its_steps_from_the_trajectory(tmp_path):
+    exe = _fake_venv(tmp_path)
+    env = {**os.environ, "PAT19_MINI_BIN": str(exe)}
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, caps={"cloud_executions": 0},
+                                                host_env=env)
+    _neutral_driver(campaign)
+    rec = runner.screen(tasks[:1], ["cand-a"], harness_id="neutral_harness")[0]
+    assert rec["accepted"] is True and rec["local"]["steps"] == 7 and "local.steps" not in rec["unknown"]
+    assert rec["local"]["harness_executable"] == {"env": "PAT19_MINI_BIN", "package": "mini-swe-agent",
+                                                  "version": "2.4.6"}
+    assert str(exe) not in json.dumps(rec)  # no path in the record
+
+
+def test_pat111_an_unresolvable_harness_executable_is_refused_before_any_claim_or_spend(tmp_path):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, caps={"cloud_executions": 0},
+                                                host_env={**os.environ})
+    os.environ.pop("PAT19_MINI_BIN", None)
+    _neutral_driver(campaign)
+    with pytest.raises(lfr.RunnerError, match="PAT19_MINI_BIN"):
+        runner.screen(tasks, ["cand-a"], harness_id="neutral_harness")
+    assert counts(plan) == {} and "attempt_started" not in ledger_kinds(runner) \
+        and not runner.results_path.exists()
+    runner2, campaign2, plan2, tasks2 = make_runner(_sub(tmp_path, "c"), "compare", FIX_ALL, host_env={**os.environ})
+    _neutral_driver(campaign2)
+    with pytest.raises(lfr.RunnerError, match="PAT19_MINI_BIN"):
+        runner2.compare(tasks2, "cand-a", ["A", "N"])
+    assert counts(plan2) == {} and "cloud_started" not in ledger_kinds(runner2)  # not even path A started
+
+
+def test_pat111_the_stream_stats_read_the_init_event_only_for_a_claude_stream():
+    claude = lfr.StreamStats({"format": "claude-stream-json"})
+    for line in ('{"type":"assistant"}', "garbage", '{"type":"system","subtype":"init","tools":["Read",3,"Task"]}',
+                 '{"type":"system","subtype":"init","tools":["Agent"]}'):
+        claude.feed(line)
+    assert claude.summary()["init_tools"] == ["Read", "Task"]  # the first init event counts
+    none = lfr.StreamStats({"format": "none"})
+    none.feed('{"type":"system","subtype":"init","tools":["Task"]}')
+    assert "init_tools" not in none.summary() and none.summary()["steps"] is None
+    assert lfr.tool_allowlist_refusal({"stream": {"format": "none"}}, {}) is None
+
+
+@pytest.mark.parametrize("tools,reason", [
+    ("Bash,Edit,Read,Write,WebFetch", "outside the allowlist available to the arm: WebFetch"),
+    ("Read,Write,Bash,Edit,Task,Skill", "outside the allowlist available to the arm: Skill, Task"),
+    (None, "no system/init event")])
+def test_pat111_an_extra_tool_in_the_init_event_refuses_a_cloud_record_under_the_allowlist(
+        tmp_path, tools, reason):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    driver = _claude_stream_driver(campaign["drivers"]["cloud_implementer_current"], tools)
+    driver["allowed_tools"] = ["Bash", "Edit", "Read", "Write"]
+    with pytest.raises(lfr.RunnerError, match=reason):
+        runner.cloud_path(tasks[0], "A", "comparison")
+    last = results(runner)[-1]
+    assert last["status"] == "tool_error" and last["accepted"] is None
+    assert not runner.ledger.totals()["unsettled_sessions"] and counts(plan).get("reviewer", 0) == 0
+
+
+def test_pat111_the_exact_allowlist_in_any_order_or_a_subset_is_kept(tmp_path):
+    summary = {"init_tools": ["Write", "Read", "Edit", "Bash"]}
+    driver = {"stream": {"format": "claude-stream-json"}, "allowed_tools": ["Bash", "Edit", "Read", "Write"]}
+    assert lfr.tool_allowlist_refusal(driver, summary) is None
+    assert lfr.tool_allowlist_refusal(driver, {"init_tools": ["Read"]}) is None

@@ -26,6 +26,32 @@
   void round keeps its cost, each session is named once); `report` lists `void_attempts` and `replays`
   and gives no `selected` while a screening task stays undecided (`undecided_tasks`).
 
+- Changed (PAT-111, pinning): the five real drivers of the PAT-19 launcher and the five local candidates are
+  pinned in `docs/qualification/pat-19-campaign-v1.json` from real toy-task trials (not the corpus) made with
+  the maintainer's confirmation of every model load and cloud call; the evidence is committed, sanitised, as
+  `pat-19-preflight-2026-10-05.json`. Drivers now `verified: true` with an `evidence` reference (local omp
+  18.4.10, neutral mini-swe-agent 2.4.6, Claude Code 2.1.285 for the current implementer `claude-sonnet-5-5`,
+  the economy implementer `claude-haiku-4-5-20251001` and the reviewer `claude-opus-5-5`); a verified driver
+  without evidence is refused at load. New launcher checks in `foundry.local_first_runner`: the preflight
+  reads the loaded instance (`lms ps --json`) and refuses a context below the frozen 65,536, a different
+  quantization or model key; `sandbox: false` is accepted only for a cloud driver with a reason and refused for
+  any local driver (the cloud drivers run unsandboxed with the AGENTS.md R6 environment, real TMPDIR included,
+  because Claude Code cannot authenticate under sandbox-exec); a cloud record is refused (tool error, spend
+  kept in the ledger) unless the stream's `system/init` tools are a subset of the driver's `allowed_tools`
+  (`Bash`, `Edit`, `Read`, `Write`: observed at the init event of Claude Code 2.1.285 with a 29-name
+  `--disallowedTools` list; `--disallowedTools Agent` alone left 25 tools incl. `Task`, web and workflows), and `session_log.layout_verified` is now true on that condition (launcher reading equals the
+  host's own usage on three real runs); a post-run audit of every arm's tool calls marks a record
+  `contaminated` (undecided, never accepted, never replayed, listed in `report`) when it touched the plugin
+  cache, another checkout of this repository or the user's configuration; the neutral harness executable comes
+  from the operator variable `PAT19_MINI_BIN` at the pinned version, with its fixed environment, trajectory
+  steps and no committed path. Candidates carry LM Studio key, engine, quantization, weights and chat-template
+  digests, load command (`-c 65536`) and generation parameters (server defaults, not overridden); Devstral is
+  declared unused. Limits stated, not enforced: a default-deny of the home was not tried (explicit list kept),
+  the cloud and local arms expose different tool sets (recorded, not equalised), weights digests are
+  recorded not recomputed, the exact `lms ps --json` field names were not observed. Documentation status
+  (AGENTS.md R5): `pat-19-launcher-v1.md` and `pat-19-protocol-v1.md` updated, no CLI option of
+  `foundry_cli.py`, product constant or routing table changed.
+
 - Added (PAT-108): the PAT-19 comparison launcher `foundry.local_first_runner`
   (`python3 -m foundry.local_first_runner {preflight,screen,compare,report}`, documented in
   `docs/qualification/pat-19-launcher-v1.md`, frozen config `docs/qualification/pat-19-campaign-v1.json`).

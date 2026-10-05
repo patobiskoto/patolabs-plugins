@@ -12,6 +12,13 @@ ne charge aucun modèle (aucune commande `lms load`), n'appelle ni tracker ni r�
 rien. Ce ticket ne l'exerce qu'avec des parcours **factices** (mode à blanc) ; les exécutions réelles
 sont celles de PAT-109, avec la confirmation du mainteneur.
 
+**Épinglage des pilotes (PAT-111).** Les cinq pilotes réels et les cinq candidats locaux ont été essayés pour de
+vrai le 2026-10-05, sur une tâche jouet (hors corpus), par le coordinateur, avec la confirmation du
+mainteneur pour chaque chargement de modèle et chaque appel cloud ; les preuves sont versées dans
+[`pat-19-preflight-2026-10-05.json`](pat-19-preflight-2026-10-05.json) (sans secret ni chemin absolu) et
+chaque pilote `verified: true` y renvoie par sa clé `evidence`. Voir « Pilotes épinglés » plus bas. Le lanceur
+lui-même n'a lancé aucun modèle ni appel cloud pour ce ticket.
+
 Le protocole a été amendé sur place avant tout essai (candidat 2, trois téléchargements) ; le mainteneur
 l'a validé le 2026-10-05. La note datée en tête de [`pat-19-protocol-v1.md`](pat-19-protocol-v1.md) en
 fait l'historique ; aucun essai n'avait eu lieu et aucun fichier v2 n'existe.
@@ -40,7 +47,9 @@ python3 -m foundry.local_first_runner report --campaign <cfg> --results <results
 ```
 
 Codes de sortie : 0 terminé, 2 refus ou erreur d'outil (pas d'enveloppe, enveloppe invalide, préflight
-refusé, pilote non vérifié, dossier de travail dans le checkout, tentative déjà consignée, état mêlant
+refusé (dont contexte chargé trop petit, quantification ou clé de modèle différente), pilote non vérifié,
+exécutable de harnais introuvable ou en une autre version, enregistrement cloud refusé faute de preuve d'absence
+d'outil de sous-agent, dossier de travail dans le checkout, tentative déjà consignée, état mêlant
 essai à blanc et réel, candidat inconnu, bac à sable impossible à appliquer, ligne tronquée dans le
 registre ou les résultats, rapport sous une autre configuration ou sans registre…), 3 plafond d'enveloppe
 atteint. Une interruption (Ctrl-C, SIGTERM, SIGHUP) pendant `screen` ou `compare` sort avec le code du
@@ -197,14 +206,34 @@ par `default_run`, y compris `lms load`) : `sysctl` (puce, mémoire, swap), `sw_
 un autre modèle que celui attendu est chargé ou le modèle attendu ne l'est pas (`lms ps` doit lister
 exactement l'identifiant), la place disque est sous le minimum. Il relève le swap et la pression
 mémoire de départ. `screen` et `compare` refusent de lancer (code 2, aucun pilote lancé) si le préflight échoue.
-Les empreintes des poids, le gabarit et les paramètres de génération sont à consigner par le préflight
-de PAT-109 (non faits ici).
+**Instance chargée (PAT-111).** Quand le candidat déclare `min_context`, `quantization` ou `lm_studio_key`
+(tous les candidats épinglés le font), le préflight lit l'instance listée par `lms ps --json` et refuse
+(codes de refus) si : sa longueur de contexte est inférieure à `min_context` (65 536, coordonnée gelée :
+LM Studio a ignoré `-c` pour certains builds MLX et chargé plus, ce qui est accepté ; il ne faut pas
+supposer la valeur demandée, d'où `loaded_context_below_minimum`) ou absente (`loaded_context_unknown`) ;
+sa quantification diffère (`loaded_quantization_differs`) ou est absente (`loaded_quantization_unknown`) : le
+candidat 4 bits dépend de la variante sélectionnée de `qwen/qwen3.8-27b`, que le préflight vérifie ; sa clé
+de modèle diffère (`loaded_model_key_differs`). Les champs lus sont `contextLength` (ou `context_length`),
+`quantization` (texte ou objet `name`) et `modelKey` ; un champ absent refuse (inconnu n'est jamais un
+succès). **Non vérifié ici** : la forme exacte de la sortie de `lms ps --json` n'a pas été observée par le
+lanceur (le ticket interdit de lancer `lms`) ; si LM Studio nomme ces champs autrement, le préflight refuse
+et la configuration se corrige. L'opérateur charge toujours le modèle (`load_command` du candidat) ;
+le lanceur ne charge rien.
+
+Les empreintes des poids, l'empreinte du gabarit de conversation et les paramètres de génération de chaque
+candidat sont **consignés** dans la configuration (`file_sha256`, `chat_template_sha256`,
+`generation_config_sha256`, `generation_parameters` : valeurs par défaut du serveur et du harnais, jamais
+surchargées) et dans le fichier de preuve ; le lanceur **ne les recalcule pas** (hacher 17 Go à chaque
+préflight n'est pas fait) : le préflight vérifie l'identité de l'instance chargée (clé, quantification,
+contexte), pas le contenu des fichiers.
 
 ## Configuration de campagne (`pat-19-campaign-v1.json`)
 
 Clés : `frozen_machine`, `server_process_pattern` (expression pour la mémoire du serveur), `bounds`,
 `statement_footer`, `prompts` (`implement`, `correct`, `review`), `rules` (`screening`, `comparison`),
-`drivers`, `candidates` (identifiant → `model`). Un pilote est une donnée :
+`drivers`, `candidates` (identifiant → `model`, et pour un candidat épinglé : `lm_studio_key`, `engine`,
+`quantization`, `min_context`, `load_command`, `file_sha256`, `chat_template_sha256`,
+`generation_config_sha256`, `generation_parameters`, `smoke`, `hf_repo_provenance`). Un pilote est une donnée :
 
 | Clé | Sens |
 | --- | --- |
@@ -213,15 +242,127 @@ Clés : `frozen_machine`, `server_process_pattern` (expression pour la mémoire 
 | `verified` | un vrai lancement refuse un pilote non vérifié ; PAT-109 doit le tester et l'épingler |
 | `fake` | pilote de test (mode à blanc seulement) |
 | `home`, `network` | `isolated`/`real`, `loopback`/`open` ; un pilote local est toujours `isolated` + `loopback` (refusé au chargement sinon) |
+| `sandbox`, `sandbox_reason` | `sandbox: false` (pilote **cloud** seulement : refusé pour un pilote local, et sans `sandbox_reason` non vide) : le pilote tourne sans `sandbox-exec` ; absent = confiné |
+| `allowed_tools` | liste d'autorisation des outils de l'événement `init` d'un pilote cloud `claude-stream-json` (obligatoire pour un pilote cloud vérifié) : un outil hors liste, ou pas d'événement `init`, refuse l'enregistrement |
+| `evidence` | obligatoire pour un pilote `verified: true` non factice : référence `<fichier de preuve>#drivers.<pilote>` |
+| `version` | version du harnais ou de l'hôte épinglée (information) |
+| `executable` | `{env, placeholder, package, version}` : l'exécutable vient d'une variable d'environnement de l'opérateur (chemin absolu, jamais committé) ; le paquet installé dans son environnement virtuel doit avoir la version épinglée (lue dans le `dist-info`, le harnais n'est pas lancé pour la demander) ; `{placeholder}` est substitué dans `argv` |
+| `env_set`, `make_dirs` | variables d'environnement fixes (valeurs avec `{scratch}`…) et dossiers créés avant le lancement ; un nom ressemblant à un secret n'est accepté qu'avec un des espaces réservés documentés (`local-endpoint-no-key`), jamais `FOUNDRY_*` |
+| `trajectory` | `{file, steps_path}` : fichier de trajectoire lu **après** la fin du processus pour les étapes (harnais neutre) ; la borne d'étapes n'est donc pas imposée pendant l'exécution, seulement la borne de durée |
 | `env_allow`, `home_files`, `extra_write` | variables transmises en plus (jamais `FOUNDRY_*`, jeton, clé, secret, agent SSH), fichiers placés dans le HOME isolé, dossiers inscriptibles en plus |
-| `stream` | `{"format": "omp-json" \| "none", "speed_usage_keys": …}` |
-| `session_log` | `{"host": "claude", "projects_dir": "~/.claude/projects", "layout_verified": false}` (pilotes cloud) : seul `<projects_dir>/*/<session>.jsonl` est lu ; tant que `layout_verified` n'est pas `true`, les tokens premium de l'exécution sont inconnus (`log_layout_unverified`) |
+| `stream` | `{"format": "omp-json" \| "claude-stream-json" \| "none", "speed_usage_keys": …}` ; `claude-stream-json` : le lanceur lit l'événement `system/init` (voir « Pilotes épinglés ») |
+| `session_log` | `{"host": "claude", "projects_dir": "~/.claude/projects", "layout_verified": false}` (pilotes cloud) : seul `<projects_dir>/*/<session>.jsonl` est lu ; tant que `layout_verified` n'est pas `true`, les tokens premium de l'exécution sont inconnus (`log_layout_unverified`) ; `true` est refusé au chargement sans le flux `claude-stream-json` (l'assertion de la liste d'outils) |
 
 Clés de la configuration : `isolation.deny_read_home` (listes `local` et `cloud` d'entrées du HOME réel à
 interdire en lecture, relatives, sans `..`) et `non_protocol_choices` (voir plus bas).
 
-Le pilote `local_harness` est la commande `omp` (18.4.10) éprouvée le 2026-10-05 ; le harnais neutre
-et les trois pilotes cloud (Claude Code en mode non interactif) sont déclarés `"verified": false`.
+## Pilotes épinglés (PAT-111)
+
+Un pilote n'est `verified: true` que si son essai réel a réussi (preuve : `pat-19-preflight-2026-10-05.json`) ;
+un pilote qui échoue reste `verified: false` et le lanceur le refuse. Les cinq passent le 2026-10-05 :
+
+- **`local_harness`** : `omp` 18.4.10, argv de la configuration, entrée standard fermée, HOME isolé (le
+  fournisseur `lm-studio` est découvert depuis le HOME isolé : aucun `home_files`), `--max-time 6m` accepté,
+  sous le profil du bac à sable local. Essayé avec les cinq candidats (voir plus bas).
+- **`neutral_harness`** : mini-swe-agent 2.4.6 (PyPI, environnement virtuel isolé hors du dépôt). L'exécutable
+  vient de la variable `PAT19_MINI_BIN` (chemin absolu ; le paquet installé doit être en 2.4.6, sinon le
+  lanceur refuse **avant** toute réservation, au début de `screen`/`compare` : `compare` avec le parcours `N`
+  vérifie la variable avant le parcours `A`) ; le chemin n'est jamais consigné, seulement le nom de la
+  variable, le paquet et la version (`local.harness_executable`). Environnement ajouté : `MSWEA_GLOBAL_CONFIG_DIR`
+  (sinon il écrit dans le vrai HOME), `MSWEA_CONFIGURED`, `MSWEA_SILENT_STARTUP`, `MSWEA_COST_TRACKING`,
+  `OPENAI_API_BASE`, `OPENAI_API_KEY=local-endpoint-no-key` (espace réservé pour le serveur local, pas un secret)
+  et `LITELLM_LOCAL_MODEL_COST_MAP=True` (sans lui LiteLLM tente de télécharger une table de prix : le bac à
+  sable le bloque et environ 20 s se perdent). La trajectoire est écrite dans le dossier d'essai ; les étapes
+  sont `info.model_stats.api_calls` de la trajectoire, lues après la fin du processus (jamais en cours
+  d'exécution). Tokens inconnus (aucun flux d'événements). Essai : réussi, 139 s, 5 appels d'API.
+- **Pilotes cloud** (`cloud_implementer_current` : `claude-sonnet-5-5`, effort `medium` ; `cloud_implementer_economy` :
+  `claude-haiku-4-5-20251001`, sans `--effort` (effort nul de Haiku 4.5) ; `cloud_reviewer` : `claude-opus-5-5`,
+  effort `high`) : Claude Code 2.1.285, même gabarit d'argv pour tous
+  (`--permission-mode bypassPermissions --setting-sources project,local --strict-mcp-config --disallowedTools
+  <29 noms> --output-format stream-json --verbose`, la liste exacte est dans la configuration) ; les textes des prompts sont identiques pour tous les bras et
+  rendus par la substitution du lanceur (pas `str.format` : le prompt de revue contient des accolades JSON).
+  **Sans `sandbox-exec`** (`sandbox: false`, avec sa raison dans la configuration) : sous `sandbox-exec`, Claude
+  Code ne peut pas s'authentifier (« Not logged in » trousseau refusé ; « 401 OAuth access token has been revoked »
+  trousseau permis, après quoi le mainteneur a dû se reconnecter ; cause non établie). Le bras garde l'environnement
+  d'AGENTS.md R6 intact (`HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `TMPDIR` **réel**, `USER`, rien d'autre),
+  son répertoire de travail est le bundle jetable hors du dépôt. Avec `--setting-sources project,local
+  --strict-mcp-config`, seuls les greffons intégrés se chargent (ni crochets de greffons utilisateur comme ceux de
+  Foundry, ni serveur MCP). **Non vérifié** : si la mémoire globale `CLAUDE.md` de l'utilisateur est encore chargée
+  (asymétrie avec le bras local) : limite du résultat.
+  Essais : 11,6 s / 7 tours (Sonnet), 16,3 s (Haiku), 16,5 s (Opus, a écrit le fichier de revue demandé).
+
+**Disposition des journaux de session** (vérifiée sur un essai réel pour les trois pilotes cloud) : les
+compteurs que lit `premium_tokens(session_id)` dans `<projects>/*/<session>.jsonl` sont **égaux** à ceux que l'hôte
+rapporte (`result.usage`) pour les trois exécutions (Sonnet : entrée 8, cache lu 60 608, cache écrit 7 734, sortie
+1 127 ; Haiku : 42 / 102 294 / 9 500 / 1 384 ; Opus : 8 / 51 654 / 18 407 / 1 216) ; un seul fichier portait
+l'identifiant de session à chaque fois. `layout_verified: true` est donc posé, **sous la condition** que le lanceur
+vérifie à chaque exécution cloud, depuis l'événement `system/init` du flux (`StreamStats.init_tools`), que les outils
+de l'hôte restent dans la liste d'autorisation : aucun outil
+hors de `allowed_tools` (`Bash`, `Edit`, `Read`, `Write`) n'est disponible : sinon l'enregistrement est **refusé** (`tool_error` après le
+règlement du registre : l'argent dépensé reste compté, le total premium de l'enregistrement est inconnu, la campagne
+s'arrête). Un événement `init` absent refuse aussi, et un outil de plus (par exemple ajouté par une nouvelle version
+de l'hôte) aussi : c'est une **liste d'autorisation** (les outils de l'événement `init` doivent en être un
+sous-ensemble), pas une liste d'interdits. **Observé en vrai** (Claude Code 2.1.285, arrêt à l'événement `init`,
+aucun appel de modèle) : avec `--disallowedTools Agent` seul, l'événement listait 25 outils dont `Task`, `Workflow`,
+`SendMessage`, `Monitor`, `Cron*`, `WebFetch`, `WebSearch`, `Skill`, `RemoteTrigger`, `PushNotification`,
+`ToolSearch` (le drapeau ne retirait pas `Task`) ; interdire `ToolSearch` fait apparaître des outils différés
+(`Artifact*`, `SendFeedback`, `Task*`) ; avec les 29 noms de la configuration, les outils sont exactement
+`Bash`, `Edit`, `Read`, `Write`. **Les bras cloud n'ont donc que Read, Edit, Write et Bash : ni web, ni
+sous-agent, ni workflow.** Le harnais local `omp` expose son propre jeu d'outils (read, edit, write, bash, glob
+vus dans les essais) : cette asymétrie est consignée, pas égalisée. Le coût en dollars que l'hôte
+rapporte (0,054 / 0,036 / 0,182 USD) est informatif, jamais un chiffre d'économie.
+
+**Candidats locaux** (`candidates` ; l'opérateur charge, le lanceur ne charge rien ; commande de chargement :
+`lms load <clé> -c 65536 --identifier <clé> --parallel 1`, l'identifiant servi est la clé, qui est aussi le nom
+de modèle transmis au harnais ; le dépôt HF du protocole est gardé en `hf_repo_provenance`) :
+
+| Candidat | Clé LM Studio | Moteur | Quant. | Essai à 65 536 |
+| --- | --- | --- | --- | --- |
+| `qwen3.8-27b-mlx-6bit` | `qwen3.8-27b-mlx-alias` | mlx | 6bit | réussi, 104 s |
+| `qwen3.8-27b-mlx-4bit` | `qwen/qwen3.8-27b` (la variante sélectionnée doit être 4bit) | mlx | 4bit | réussi, 63 s |
+| `qwen3.6-35b-a3b-mlx-4bit` | `qwen/qwen3.6-35b-a3b` | mlx | 4bit | réussi, 29 s |
+| `muse-glimmer-30b-gguf` | `muse-glimmer-30b` | llama.cpp | Q4_K_M | réussi, 91 s (**échoue** au contexte par défaut de 8 192 : boucles de lectures, 361 s) |
+| `qwen3-coder-30b-a3b-mlx-4bit` | `qwen3-coder-30b-a3b-instruct-mlx` | mlx | 4bit | réussi, 42 s (**échoue** à 8 192 : 107 lectures, 225 s) |
+
+Le 6 bits n'est atteint que par la clé `qwen3.8-27b-mlx-alias` : un dossier de liens physiques
+(`pat19-campaign/Qwen3.8-27B-MLX-6bit-alias`) vers les fichiers du 6 bits, parce que LM Studio regroupe les deux
+variantes sous `qwen/qwen3.8-27b` et qu'aucune clé de la CLI ni de l'API ne sélectionne le 6 bits. **Le contexte
+de 65 536 est une coordonnée gelée pour chaque candidat** : deux candidats échouent à 8 192, LM Studio a respecté
+`-c` pour le GGUF et pour le build MLX de Coder et l'a ignoré pour les builds MLX Qwen3.8 et Qwen3.6 (chargés à
+169 728 pour le 6 bits, 208 384 pour `qwen/qwen3.8-27b` 4 bits et 262 144 pour `qwen/qwen3.6-35b-a3b`, relevés le 2026-10-05) : d'où la lecture au préflight. Devstral reste déclaré comme repli de Muse mais
+**n'est pas utilisé** (Muse a réussi ; `unused: true`, jamais chargé). Aucun candidat n'a été retiré ni remplacé :
+les deux échecs à 8 192 sont dus au contexte par défaut, pas au modèle. Un essai de 8 appels d'outil ne mesure
+aucune qualité.
+
+**Biais des bras cloud** (AC7) : un bras cloud sans `sandbox-exec` peut lire tout ce que l'utilisateur peut lire,
+y compris le cache de plugins dont les tests ont été fusionnés avant la version 1.0.0 (la plupart des tâches du
+corpus). Il est **traité par un audit après exécution** et consigné comme limite du résultat : voir « Audit de
+contamination ». La liste d'interdits de lecture du HOME reste explicite pour les bras locaux, essayée avec le vrai
+harnais local (liste de 37 entrées sur la machine du mainteneur : les 17 entrées du HOME plus les checkouts, le
+dossier d'état et les dossiers d'entrée) ; un refus par défaut de tout le HOME **n'a pas été essayé** et n'est
+donc pas adopté (limite documentée, voir « Isolement du candidat »).
+
+## Audit de contamination
+
+Après chaque exécution (locale ou cloud, une fois le flux conservé), le lanceur lit les appels d'outils du
+flux (`tool_use` Claude, `tool_execution_start` omp : arguments de Read, Grep, Glob, Bash, Edit… quel que soit
+l'outil) et en extrait les chemins (valeurs de clés de chemin, et tout jeton qui ressemble à un chemin absolu,
+`~`, `$HOME` ou relatif remontant hors du bundle). Un chemin hors du bundle et du dossier d'essai qui tombe dans
+la liste sensible (celle d'un bras local : cache de plugins et configuration de l'utilisateur sous `~/.claude`,
+`.config`…, tout autre checkout ou worktree de ce dépôt, dossier d'état, dossiers des fichiers d'entrée, secrets
+du HOME) rend l'enregistrement **`contaminated: true`**, avec `contamination.paths` (le HOME est écrit `~`),
+`outcome: contaminated`, `accepted` nul : la tâche est **indécise** pour ce parcours, jamais acceptée. Le
+verdict du juge d'une tentative locale reste consigné mais n'est pas retenu ; un bras cloud contaminé n'est ni
+jugé ni relu (pas de dépense de plus), son coût reste compté. Une contamination n'est jamais rejouée ni
+corrigée (pas de seconde chance) : le tamis reste incomplet (`undecided_tasks`, `selected` nul), un parcours dont
+une tâche est contaminée a une qualité et une économie `unavailable`, `report.contaminated` liste chaque cas. Pour
+le parcours C, une tentative locale contaminée est relayée par le cloud comme une tentative refusée (elle ne
+compte pas comme réussite locale). **Limites** : c'est un audit, pas une interdiction (la lecture a eu lieu) ;
+il ne voit que les chemins que le flux montre (un chemin construit à l'exécution, ou lu par un processus fils, ne
+l'est pas) ; il porte sur le flux du lanceur (mêmes appels d'outils que la transcription de session de l'hôte).
+Une contamination possible mais non détectée reste donc une limite du résultat des bras cloud.
+
+Le pilote `local_harness` est la commande `omp` (18.4.10) éprouvée le 2026-10-05 (voir ci-dessus).
 
 ## Mesures et résultats
 
@@ -289,7 +430,8 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   `server_process_pattern` ; inconnue sinon. **Swap** et **pression mémoire** avant et après chaque
   tentative locale. « Interrompu pour la mémoire » est approché par une sortie sur un signal que le lanceur
   n'a pas envoyé.
-- Non mesuré ici : interventions humaines imprévues (à consigner à la main), empreintes des poids.
+- Non mesuré ici : interventions humaines imprévues (à consigner à la main). Les empreintes des poids sont
+  consignées dans la configuration, pas recalculées (voir Préflight).
 
 ## Rapport et règles préenregistrées
 
@@ -367,7 +509,11 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   checkout ; ni les tests protégés, ni le SHA fusionné, ni les seuils n'y figurent (testé). Le pied
   d'énoncé est commité dans la base : `git diff HEAD` du relecteur ne montre que le travail du bras.
 - **Bac à sable macOS** (`sandbox-exec`, profil généré par `sandbox_profile` : `(allow default)` puis
-  refus) : écriture interdite hors du bundle et du dossier d'essai (plus `extra_write` pour un pilote
+  refus ; **appliqué à chaque pilote local, toujours** : un pilote local `sandbox: false` est refusé au
+  chargement ; **les pilotes cloud épinglés tournent sans** (`sandbox: false`, raison dans la configuration :
+  Claude Code ne s'authentifie pas sous `sandbox-exec`), leur seul confinement est alors le bundle comme
+  répertoire de travail, l'environnement en liste blanche et l'audit de contamination ; un vrai lancement exige
+  `sandbox-exec` dès qu'un pilote sandboxé sert) : écriture interdite hors du bundle et du dossier d'essai (plus `extra_write` pour un pilote
   cloud) ; **lecture interdite** (liste explicite, `read_deny_list`) de : chaque checkout et worktree de ce
   dépôt que `git worktree list` énumère, le dossier d'état, le dossier parent de chacun des fichiers
   `--envelope`, `--campaign`, `--snapshot`, `--manifest` (à garder à part de `--work-root`, sinon le
@@ -384,9 +530,11 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
   lecture de `Library/Keychains` n'empêche donc **pas** une requête au trousseau (`security
   find-generic-password`, API Keychain). Rien n'est imposé là-dessus ici : voir les préconditions PAT-109.
   Ce n'est **pas** un refus par défaut du HOME avec liste d'autorisation (outil, bundle, dossier d'essai,
-  installation de l'interpréteur) : cette forme, préférable, n'est pas vérifiable sans lancer `omp`, ce que
-  ce ticket n'a pas le droit de faire ; la liste de refus est une coordonnée de configuration
-  (`isolation.deny_read_home`) que PAT-109 doit remplacer par la liste d'autorisation après test de fumée.
+  installation de l'interpréteur) : la liste explicite a été essayée avec le vrai harnais local (`omp`, 37
+  entrées de refus sur la machine du mainteneur, plus le dossier du profil) et il fonctionne ; le refus par
+  défaut du HOME **n'a pas été essayé** : la liste explicite est conservée, c'est une limite documentée
+  (tout chemin non nommé reste lisible). La liste est une coordonnée de configuration
+  (`isolation.deny_read_home`).
 - **Environnement** : liste blanche (`PATH`, `LANG`, `LC_ALL`), HOME et XDG isolés dans le dossier
   d'essai, aucune variable `FOUNDRY_*`, aucun jeton, aucun agent SSH ; un pilote cloud garde le vrai
   HOME (identité OAuth de Claude Code, AGENTS.md R6) et ne reçoit que ce que `env_allow` nomme ;
@@ -423,8 +571,9 @@ Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
 Ce que l'isolement **n'impose pas** : le candidat lit le reste du disque (liste de refus, pas liste
 d'autorisation : tout chemin non nommé est lisible, par exemple une copie des tests fusionnés ailleurs que
 dans le cache de plugins), un pilote cloud a le réseau ouvert, l'écriture dans `~/.claude` et la lecture de
-`~/.claude` (donc du cache de plugins et des tests fusionnés : biais possible sur les bras cloud, à
-traiter par PAT-109), le binaire du harnais et sa configuration réelle ne sont pas vérifiés ici (PAT-109),
+`~/.claude` (donc du cache de plugins et des tests fusionnés : biais des bras cloud, **détecté après coup**
+par l'audit de contamination, pas empêché ; limite du résultat), le harnais local et le harnais neutre sont
+éprouvés (PAT-111) mais leur configuration réelle n'est pas auditée,
 un enfant sorti du groupe par `setsid`, et le code produit reste importé dans le processus de test (limite
 du juge). Le suivi du tracker et des secrets repose sur la liste blanche d'environnement et sur les
 refus de lecture ci-dessus, pas sur une preuve d'absence.
@@ -451,14 +600,14 @@ tokens sur tous les modèles (limite : voir Rapport) ; l'économie « indisponib
 n'est pas décidée (voir Rapport). `bounds.cloud_max_seconds`, `max_correction_rounds`,
 `isolation` et le pied d'énoncé sont aussi des choix du lanceur. Ils ne sont pas gelés par le protocole.
 
-## Préconditions pour PAT-109
+## Préconditions pour PAT-109 : état après PAT-111
 
-Avant toute exécution réelle : tester et épingler chaque pilote non vérifié ; **vérifier la disposition des
-journaux de session** de l'hôte cloud (les transcriptions de sous-agents sont-elles dans d'autres
-fichiers ? tant que ce n'est pas établi, `session_log.layout_verified` reste `false` et les tokens premium
-sont inconnus, donc aucune campagne cloud plafonnée ne peut avancer au-delà de la première exécution) ;
-remplacer la liste de refus de lecture par une liste d'autorisation après test de fumée de `omp` ;
-décider du biais des bras cloud qui lisent `~/.claude` ; consigner les empreintes des poids ;
+Faites par PAT-111 (voir « Pilotes épinglés ») : épingler chaque pilote par un essai réel (les cinq passent) ;
+vérifier la disposition des journaux de session (compteurs égaux à ceux de l'hôte, sous la condition de
+l'assertion sans sous-agent) ; consigner les empreintes des poids, le gabarit et les paramètres de génération ;
+essayer la liste de refus avec le vrai harnais local ; traiter le biais des bras cloud par l'audit de
+contamination. **Restent ouvertes** : le refus par défaut du HOME avec liste d'autorisation (non essayé, la liste
+explicite est gardée) ; la forme exacte de `lms ps --json` ; la mémoire globale `CLAUDE.md` éventuellement chargée par le bras cloud ;
 **trouver où le jeton du tracker est stocké** (fichier, trousseau, variable) et, s'il est au trousseau,
 refuser ce service dans le profil, par exemple `(deny mach-lookup (global-name
 "com.apple.SecurityServer") …)`, à condition que le harnais fonctionne encore ainsi (à vérifier par test
@@ -468,10 +617,19 @@ de fumée : non essayé ici).
 
 Artefacts documentés ici : la surface CLI de `foundry.local_first_runner` (dont l'absence de reprise et
 le refus d'une configuration différente à `report`), la configuration de campagne
-(`pat-19-campaign-v1.json` : `isolation`, `non_protocol_choices`, `session_log.layout_verified`), le format
+(`pat-19-campaign-v1.json` : `isolation`, `non_protocol_choices`, `session_log.layout_verified`, et depuis
+PAT-111 les clés de pilote `sandbox`/`sandbox_reason`/`evidence`/`executable`/`env_set`/`make_dirs`/`trajectory`,
+le format de flux `claude-stream-json`, les clés de candidat `lm_studio_key`/`quantization`/`min_context`/
+`load_command`/`file_sha256`/…, le fichier de preuve `pat-19-preflight-2026-10-05.json`), les refus de préflight
+`loaded_context_*`/`loaded_quantization_*`/`loaded_model_key_differs`, l'enregistrement `contaminated`/
+`contamination` et `report.contaminated`, `local.harness_executable`, le format
 d'enveloppe et de registre (`dry_run`, empreintes, `settled` apparié), le schéma des résultats (`tool_error`,
 `interrupted`, `stopped_by_cap`, `cloud_sessions`, `premium.by_model`), les règles du rapport (registre
 obligatoire, invariant registre/résultats), la confiance accordée aux fichiers d'état et le périmètre de
 l'isolement. Aucune constante publique, option de `foundry_cli.py`, clé de
-configuration produit ni table de routage n'a changé. L'application mécanique de R5 reste celle de
+configuration produit ni table de routage n'a changé (la table de traduction des modèles Claude de
+`routing_facades.py` n'est pas touchée : les identifiants complets des pilotes sont des données de campagne).
+**Documenté et non appliqué mécaniquement** (dit explicitement) : le refus par défaut du HOME (non essayé), le
+recalcul des empreintes de poids au préflight, la borne d'étapes du harnais neutre en cours d'exécution, la
+détection des chemins construits à l'exécution par l'audit. L'application mécanique de R5 reste celle de
 FOUNDRY-123.
