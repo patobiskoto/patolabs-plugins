@@ -344,7 +344,7 @@ tight/spaced mix, renumbering, a start other than `1`, ten or more items, a firs
 glued to a paragraph or a fenced block, a last item glued to a fenced block, a list
 inside a blockquote, `\r` or a non-LF separator in an item. A body with no list blank
 line and no such gap keeps the pre-PAT-94 model unchanged, including tight lists with
-sub-items; outside a list context, consecutive empty lines are left exactly as before.
+sub-items; outside a list context, empty lines follow the PAT-103 model below.
 New body: the version-0 body of `adr create` and of a single historical `import_adr`
 whose slot does not exist yet, and the changed body of a body edit. Every other write
 re-uses a body whose rendering is already proven and keeps only the pre-PAT-94 refusals:
@@ -360,15 +360,21 @@ version, which the model verifies: that unchanged body is a new body there, so a
 change, link, supersession (either side; in an interrupted-pair recovery, the dangling slot already exists and was
 validated by the model, so its body is not new and only its witness is written) or
 `import_adr` relation on such an ADR whose body holds a list shape outside the whitelist
-is refused before any write. This is a deliberate fail-closed trade-off: without it, the
-next version would be written and then refused by verification, leaving an orphan
-Document. The strict check covers list shapes only: such a body without one is still
-written and verified by the model, as before PAT-94. Whether any real stored ADR is in
+is refused before any write. Since PAT-103 the same holds for the PAT-103 shapes below
+(a table, a final newline after a closed fence, in an unclosed fence, after `\r` or after a
+trailing tab, an unobserved blank-line run, a last line indented or quoted, a body of empty
+lines only): such an
+unchanged body is also refused on a status change, link or supersession. This is a
+deliberate fail-closed trade-off, and better than before: the refusal comes before any
+write, where the next version used to be written and then refused by verification,
+leaving an orphan Document. A body with none of these shapes is still written and
+verified by the model, as before PAT-94. Whether any real stored ADR is in
 that case is not known by the adapter; such an ADR can change status, links or
 supersession only after a body edit (itself a strict new body). Reads and verification
 (`list_adrs`, ADR chain, exact replay, batch verification) are never strict and are
-additive: a stored Document matches if it equals the canonical bytes, the PAT-94
-rendering or the pre-PAT-94 model output, so a Document stored before PAT-94 stays
+additive: a stored Document matches if it equals the canonical bytes, the pre-PAT-94
+model output or the PAT-103 model output (the PAT-94-only rendering is no longer accepted
+for the generalised cases), so a Document stored before PAT-94 stays
 readable. Replay of `adr create` with the exact title and body finds the existing slot
 and creates only the missing witness; a second replay is a no-op. Still unobserved and
 not modelled: Linear's rendering of spaced bullet lists, of CRLF line endings, of
@@ -376,6 +382,30 @@ ordered lists of ten or more items, of every refused shape above, of any block f
 the observed form other than the observed heading (assumed unchanged, see above), and of
 a fenced block between ordered items (`1. a`, empty line, fence, empty line, `2. b`):
 `2.` then starts a new list, accepted and assumed unchanged.
+PAT-103 qualifies blank lines, the final newline and tables by a bounded probe on a throwaway
+project (`docs/qualification/pat-103-linear-blank-lines-observation.json`: bytes sent and read
+back, ids and SHA-256, no secret, no authoritative ADR title or slot). Observed: outside
+fenced code, two or more empty lines read back as exactly one (prose, headings, around a fence
+and around a table); empty lines inside a fence are unchanged; a leading empty line and every
+final newline are removed; a table delimiter row is rewritten (`|---|---|` becomes
+`| -- | -- |`). The model recognises exactly that, forward only: runs of two or more empty LF
+lines between blocks collapse to one, leading empty LF lines and trailing newlines are dropped,
+fences are opaque. It applies to every read except the pre-PAT-94 model, which is kept as is
+(additive reads). A new body is refused before any write (stable prefixes
+`unsupported blank lines`, `unsupported final newline`, `unsupported table`) when it holds
+what was not observed: a whitespace-only, tab-only or CR line in a collapsed run, an
+indented or quoted neighbour of a collapsed run, a final newline after a fence, in an
+unclosed fence, after `\r`, after a trailing tab or space, or an indented or quoted last
+line, a body made only of empty lines (`unsupported empty body`: the model would predict an
+empty body, never observed; the empty string itself is unchanged), and every table (the
+delimiter rewrite is not modelled, so the author uses a list or a fenced block). The same
+strict refusals apply to `import_adr`. The author guide is
+[`linear-adr-body-guide.md`](linear-adr-body-guide.md).
+Scope of the observation: 13 cases. The handling of the neighbours of a collapsed run
+(merge around a `---` separator, setext headings, lazy blockquote continuation, `~~~` or
+info-string fences, final newline removed after a heading or a list item) is a
+generalisation consistent with the CommonMark tree, where repeated empty lines do not
+exist, not an exact observation of each case.
 The digest-pinned profiles (`PAT-72`, `PAT-86`, `PAT-16`) are applied before the strict list
 check: each binds one exact native source and its exact readback digest, so a new ADR
 identical to a pinned source is accepted even where the general whitelist would refuse its

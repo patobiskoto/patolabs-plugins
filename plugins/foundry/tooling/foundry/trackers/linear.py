@@ -1481,6 +1481,109 @@ def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
     return drops
 
 
+# PAT-103: observed blank-line and table rendering (docs/qualification/
+# pat-103-linear-blank-lines-observation.json).  Linear collapses two or more empty
+# lines outside fenced code to one, drops a leading empty line and every final
+# newline, leaves empty lines inside a fence untouched, and rewrites a table
+# delimiter row (`|---|---|` -> `| -- | -- |`), which is not modelled: a table is
+# refused before write.
+# The optional leading `* ` is a source `- ` already rewritten to a bullet by the
+# caller: `a | b` / `- | -` is a table whose delimiter row starts with `- `.
+_TABLE_DELIMITER_ROW = re.compile(
+    r"(?:\*[ \t])?[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*"
+)
+
+
+def _linear_observed_blank_line_readback(rendered: str, *, strict: bool) -> str:
+    """Apply the PAT-103 observed blank-line model to a rendered body.
+
+    Recognised exactly: a run of two or more empty LF lines outside fenced code
+    between blocks becomes one; empty LF lines at the start and the final
+    newline(s) are dropped.  Anything near these that was not observed -- a
+    whitespace-only or CR line in the run, an indented (code) or quoted
+    neighbour, a final newline after a fence, an indented or quoted last line,
+    after trailing spaces or a CR, or inside an unclosed fence -- is left
+    untouched, and ``strict`` refuses it, as it does every table.  Forward only.
+    """
+    lines = _COMMONMARK_LINE.findall(rendered)
+
+    def unobserved(line: str) -> bool:
+        text = line.rstrip("\r\n")
+        indent = text[: len(text) - len(text.lstrip(" \t"))]
+        return len(indent.expandtabs(4)) >= 4 or _BLOCKQUOTE_PREFIX.match(text) is not None
+
+    out: list[str] = []
+    gap: list[str] = []
+    fence = None
+    previous: str | None = None  # last non-blank line outside the gap
+    closed_fence = False
+
+    def settle(following: str | None) -> None:
+        nonlocal gap
+        modified = bool(gap) and (previous is None or len(gap) > 1 or following is None)
+        if modified:
+            neighbours = [line for line in (previous, following) if line is not None]
+            if all(line == "\n" for line in gap) and not any(
+                unobserved(line) for line in neighbours
+            ):
+                gap = [] if previous is None or following is None else ["\n"]
+            elif strict:
+                raise ValueError("unsupported blank lines in ADR body")
+        out.extend(gap)
+        gap = []
+
+    for source_line in lines:
+        line = source_line.rstrip("\r\n")
+        if fence is not None:
+            out.append(source_line)
+            if _markdown_fence_closing(line, *fence):
+                fence = None
+                closed_fence = True
+                previous = source_line
+            continue
+        if not line.strip(" \t"):
+            gap.append(source_line)
+            continue
+        after_blank = bool(gap)
+        settle(source_line)
+        if strict:
+            quote = _BLOCKQUOTE_PREFIX.match(line)
+            text = line[quote.end() :] if quote else line
+            if _TABLE_DELIMITER_ROW.fullmatch(text) and (
+                "|" in text or (
+                    previous is not None
+                    and not after_blank
+                    and "|" in previous
+                )
+            ):
+                raise ValueError("unsupported table Markdown in ADR body")
+        closed_fence = False
+        fence = _markdown_fence_opening(line)
+        out.append(source_line)
+        previous = source_line
+    settle(None)
+    if strict and rendered and not rendered.strip(" \t\r\n"):
+        # Only empty lines: the model would predict "", which was never observed.
+        raise ValueError("unsupported empty body in ADR body")
+    # `settle(None)` already emitted every gap, so the tail is the last emitted line;
+    # a blank tail (an unobserved gap kept as written) is never stripped.
+    tail = out[-1] if out else ""
+    if tail.endswith("\n"):
+        body = tail.removesuffix("\n")
+        blocked = (
+            fence is not None
+            or closed_fence
+            or unobserved(tail)
+            or body.endswith(("\r", " ", "\t"))
+            or not out[-1].strip()
+        )
+        if not blocked:
+            out[-1] = body
+        elif strict:
+            raise ValueError("unsupported final newline in ADR body")
+    return "".join(out)
+
+
 def _linear_markdown_readback_body(
     body: str,
     *,
@@ -1492,7 +1595,9 @@ def _linear_markdown_readback_body(
 
     ``observed_lists=False`` is the pre-PAT-94 model: a Document stored before
     PAT-94 may hold that rendering.  ``strict`` refuses every list blank line
-    outside the one observed form (`_linear_observed_list_blank_lines`).
+    outside the one observed form (`_linear_observed_list_blank_lines`).  The PAT-103
+    blank-line model (`_linear_observed_blank_line_readback`) applies to every
+    mode but ``observed_lists=False``.
     """
     if allow_foundry_adr_0001:
         qualified = _linear_foundry_adr_0001_v1_readback(body)
@@ -1556,6 +1661,12 @@ def _linear_markdown_readback_body(
             return qualified
     if strict:
         _linear_observed_list_blank_lines(body, strict=True)
+    if observed_lists or strict:
+        # The pre-PAT-94 model stays as it was, so a Document stored under it is
+        # still read (`_linear_markdown_readback_bodies` is additive).
+        rendered_body = _linear_observed_blank_line_readback(
+            rendered_body, strict=strict
+        )
     return rendered_body
 
 
@@ -1585,7 +1696,8 @@ def _preflight_adr_body_readback(
     """Refuse a body with an unmodelled Linear rendering before any write.
 
     Every body keeps the pre-PAT-94 refusals.  A ``new_body`` (the fail-closed
-    default) also gets the strict PAT-94 list whitelist.  Callers pass
+    default) also gets the strict PAT-94 list whitelist and the PAT-103 shapes
+    (multiple blank lines, final newline, tables, empty bodies).  Callers pass
     ``new_body=False`` only when the body's Linear rendering is already proven:
     it is the exact body of the stored previous version whose bytes the model
     verifies (`_is_stored_adr_body`), of an existing exact slot being recovered,

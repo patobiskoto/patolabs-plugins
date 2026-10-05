@@ -1,0 +1,116 @@
+{
+ "schema": "foundry.linear-blank-lines-observation.v1",
+ "issue": "PAT-103",
+ "observed_at": "2026-10-05",
+ "probe_project": {
+  "id": "P-PAT-4",
+  "name": "PROBE-PAT-103 (à supprimer)"
+ },
+ "method": "Document body sent through the adapter's documentCreate then re-read (_read_adr_document); no authoritative ADR slot or title; no secret.",
+ "cases": [
+  {
+   "case": "p2",
+   "document_id": "d3af61ca-ed5f-42a6-8b04-128566f3ae7f",
+   "sent": "Alpha\n\n\nBeta\n",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "cd7ea47d95e7be50d20e45d1e5df3abf9f93e422f65795b78dadd84c39dfa4f8",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  },
+  {
+   "case": "p3",
+   "document_id": "8ab73c83-19d5-4daf-9d67-1a7d59b81f41",
+   "sent": "Alpha\n\n\n\nBeta\n",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "9d74068503fb19c3670fe3c05b7d00b4ddd93e388478ee3c4bfeaee8d438b41b",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  },
+  {
+   "case": "p5",
+   "document_id": "d99d83cc-6d74-494d-869c-f31f84928682",
+   "sent": "Alpha\n\n\n\n\n\nBeta\n",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "60e9de355433824640bd01824156365b7035b3ba698153408c05d24a07ac0973",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  },
+  {
+   "case": "h2",
+   "document_id": "e73059ae-8828-4d3d-9c94-a6bda1589189",
+   "sent": "# Title\n\n\nText\n\n\n## Sub\n\n\nMore\n",
+   "readback": "# Title\n\nText\n\n## Sub\n\nMore",
+   "sent_sha256": "d4547c2899129e4f7ac20c6d30a88d58091992b5dc44ec1e0661cab2b4ebc9b5",
+   "readback_sha256": "8e2dbf0f1906d275bfc96e93562e2070dd186770afe7bfd85e8714814163cabe"
+  },
+  {
+   "case": "code_in2",
+   "document_id": "bd3cb5e3-a0b4-49bd-8ead-f133bfb83991",
+   "sent": "Intro\n\n```\nline1\n\n\nline2\n```\n\nOutro\n",
+   "readback": "Intro\n\n```\nline1\n\n\nline2\n```\n\nOutro",
+   "sent_sha256": "462162fb2feefe413a4f6ed45cd0524cb055e657831793c1d96f16570ea6bf96",
+   "readback_sha256": "67af0f1cfe0753cf909899e059c0f0cf2e76cf6c9e79c46bdb17a1d413aca76f"
+  },
+  {
+   "case": "code_around2",
+   "document_id": "fd83aec4-0dfe-4c11-a409-a5374c876a7a",
+   "sent": "Intro\n\n\n```\ncode\n```\n\n\nOutro\n",
+   "readback": "Intro\n\n```\ncode\n```\n\nOutro",
+   "sent_sha256": "a9c2ff9f30cef84c267e6d4ecdd7e6e6b65d94780daf9e82e0ec73931c4247d6",
+   "readback_sha256": "ce71ba05a8193a47c6df264b1987168228e0fd681c431f4c48e78b074753509b"
+  },
+  {
+   "case": "table_around2",
+   "document_id": "8518bdc0-0f20-4caf-b455-2141969904f8",
+   "sent": "Intro\n\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n\nOutro\n",
+   "readback": "Intro\n\n| a | b |\n| -- | -- |\n| 1 | 2 |\n\nOutro",
+   "sent_sha256": "22b68861e6a428fbec0b694cc7fd4b21cd83ec8865c3c467cb160e7cba0b9c70",
+   "readback_sha256": "cb6bc116a2436e185445d312d4334079130d269772ec869c02ea7457c8ea3131"
+  },
+  {
+   "case": "end_none",
+   "document_id": "05ba6d01-6349-4e36-981f-68d39ec4c47c",
+   "sent": "Alpha\n\nBeta",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  },
+  {
+   "case": "end_one",
+   "document_id": "d5b27584-8c82-4631-a667-d97b674a1c57",
+   "sent": "Alpha\n\nBeta\n",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "a1a5cb18ec0a7ae920e9cfb4d503d826b28236d68dbbf019deb6e0b07377ba9b",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  },
+  {
+   "case": "end_two",
+   "document_id": "35810fcf-24fb-422b-b405-017cdca62548",
+   "sent": "Alpha\n\nBeta\n\n",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "900e39489e0f8d935247cd52d824277b678f4677eff57bc6cc269b4e8198e2ff",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  },
+  {
+   "case": "end_three",
+   "document_id": "2df2333a-b143-45d9-a3bf-de1e97b31e86",
+   "sent": "Alpha\n\nBeta\n\n\n",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "44bf6532233eab6e29361ea5fdecda60d0646c18d1318a166474de405d8c1e03",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  },
+  {
+   "case": "start_blank",
+   "document_id": "5ee2db0e-a20f-4cce-8113-65a87313ae4c",
+   "sent": "\nAlpha\n\nBeta\n",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "7810d7fead5d2bbf78b6c430a99a650185c8dcd6486e132a3ecb8c157a1ee0a0",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  },
+  {
+   "case": "single_baseline",
+   "document_id": "8ff224f7-7a64-4723-822d-9dc0b207714d",
+   "sent": "Alpha\n\nBeta\n",
+   "readback": "Alpha\n\nBeta",
+   "sent_sha256": "a1a5cb18ec0a7ae920e9cfb4d503d826b28236d68dbbf019deb6e0b07377ba9b",
+   "readback_sha256": "611a167854cd6d1c92d7fbcc4ca9b3887ab9cec955ef0e11d4a8dfa3f0596cc4"
+  }
+ ]
+}
