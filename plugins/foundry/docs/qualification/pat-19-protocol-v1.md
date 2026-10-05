@@ -19,13 +19,13 @@ Un usage, une machine, et un seul candidat local dans la comparaison : il est d�
 | Machine | MacBook Pro M5 Pro, 64 Go, macOS 27.0.1 | relevé du 2026-10-05 |
 | Serveur | LM Studio 0.4.25+1, moteur MLX 1.11.0 (nax) | relevé du 2026-10-05 |
 | Candidat local de la comparaison | celui que désigne le tamis local (section 4) | règle fixée d'avance |
-| Harnais réel | oh-my-pi `omp` 18.4.10 | test de fumée : outils structurés, tests réellement lancés, contexte le plus léger |
+| Harnais réel | oh-my-pi `omp` 18.6.1 | test de fumée : outils structurés, tests réellement lancés, contexte le plus léger |
 | Harnais neutre | mini-swe-agent 2.4.6 (PyPI, environnement isolé ; exécutable par la variable `PAT19_MINI_BIN`) | isole la qualité du modèle |
 | Référence cloud courante | Claude Code nu avec le modèle et l'effort du profil routé actuel (Sonnet 5.5, effort medium), sans définition d'agent Eiffel ni crochet Foundry | routage Foundry (modèle et effort seulement) |
 | Cloud économique | Claude Code nu avec le modèle du palier economy (Haiku 4.5, effort nul) | routage Foundry (modèle et effort seulement) |
 | Revue | Claude Code nu avec Opus 5.5, effort high, identique pour tous les bras (pas la définition d'agent Maigret) | routage Foundry (modèle et effort seulement) |
 
-Contexte chargé : 65 536 pour chaque candidat. Empreintes des poids, révision, gabarit de conversation (empreinte du fichier) et paramètres de génération (valeurs par défaut du serveur et du harnais, non surchargées) sont consignés dans la configuration de campagne ; le préflight vérifie l'instance chargée (clé, quantification, contexte). Un changement de l'un de ces éléments ouvre une version 2 ; les séries ne se mélangent pas.
+Contexte chargé : 65 536 pour chaque candidat. Empreintes des poids, révision, gabarit de conversation (empreinte du fichier) et fichier `generation_config` (empreinte : ce sont les valeurs par défaut portées par le modèle) sont consignés dans la configuration de campagne ; le préflight vérifie l'instance chargée (clé, quantification, contexte). Les paramètres d'échantillonnage ne sont pas surchargés par le lanceur, mais leurs valeurs effectives (celles de LM Studio et les défauts du harnais) ne sont **pas** consignées : un changement de ces valeurs est indétectable (limite du résultat). Un changement des éléments épinglés ci-dessus ouvre une version 2 ; les séries ne se mélangent pas.
 
 ## 3. Corpus
 

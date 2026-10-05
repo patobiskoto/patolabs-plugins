@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Fixed (PAT-112; fake arms only, no real model/harness/cloud call): the local contamination audit no longer
+  hides a sandbox bypass through a system service (`launchctl`, `osascript` are forbidden executables, local and
+  cloud; the "blocked" exemption holds only for reads the sandbox refuses) and treats the attempt directory
+  (the bundle's parent, passed explicitly as `attempt_dir`) as allowed, so `ls ..` is no longer a contamination
+  (`ls ../..` still is); a runner-level test proves `sandbox_denied` reaches a local driver's audit and never a
+  cloud one. Docs/evidence: the generation_config digest is the only pinned sampling element (effective
+  sampling values are unrecorded, limit stated), the 4-bit candidate's missing `loaded_instance_observed` and
+  the trials' `pat19-smoke`/`--ttl 1800 -y` load are stated. R5: documented in
+  `docs/qualification/pat-19-launcher-v1.md` "Statut documentaire" (`deny_home_trial`,
+  `smoke.deny_home_evidence`, `sandbox_denied`, and the new driver key `binary_version`); no CLI verb or public constant changed.
+- Fixed (PAT-112): the omp version recorded as 18.4.10 was observed before the upgrade; the installed and used one is
+  18.6.1 (installed 2026-10-05 17:20, every omp trial ran later), corrected in the evidence, campaign and docs.
+  The launcher now runs `omp --version` from PATH and refuses a missing, unparsable or different version
+  (driver `binary_version`, checked with the harness executable at the start of `screen`/`compare` and per attempt).
 - Fixed (PAT-111, review round 4): a local arm's read that its deny-home sandbox refused (real home outside
   the allow list, or an explicitly denied path) is a blocked attempt, no longer a contamination
   (`audit_transcript(sandbox_denied=...)`); a signal between the bundle discard and the settle of a judged
