@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -344,6 +345,8 @@ def test_replayability_records_local_presence_without_network(mini_repo):
     info = lfc.replayability(repo, task)
     assert info["base_sha"]["present_locally"] and info["head_sha"]["present_locally"]
     assert info["public_reachability"] == "unknown" and "git fetch origin" in info["fetch_hint"]
+    assert info["base_sha"]["origin_refs_containing_count"] == 0  # a count, never ref names (N-G)
+    assert "origin_refs_containing" not in info["base_sha"]
     gone = lfc.replayability(repo, {**task, "base_sha": "0" * 40})
     assert gone["base_sha"]["present_locally"] is False
 
@@ -434,12 +437,12 @@ def test_bundle_destination_is_never_deleted_unless_created_by_this_run(mini_rep
     with pytest.raises(lfc.CorpusError, match="inside the developer checkout"):
         lfc.build_bundle(repo, task, inside)
     assert not inside.exists() and (existing / "mine.txt").read_text(encoding="utf-8") == "precious"
-    # verify_task with a pre-existing destination reports an error and leaves it alone
+    # verify_task with a pre-existing destination aborts (PAT-108 N-D) and leaves it alone
     work = tmp_path / "work"
     (work / "pr1-with_merged_diff").mkdir(parents=True)
     (work / "pr1-with_merged_diff" / "mine.txt").write_text("precious", encoding="utf-8")
-    result = lfc.verify_task(repo, task, work)
-    assert result["with_merged_diff"]["verdict"] == "ERROR"
+    with pytest.raises(lfc.CorpusError, match="already exists"):
+        lfc.verify_task(repo, task, work)
     assert (work / "pr1-with_merged_diff" / "mine.txt").read_text(encoding="utf-8") == "precious"
     assert not (work / "pr1-without_merged_diff").exists()
     # a failed build cleans up what it created
@@ -522,10 +525,15 @@ def test_candidate_written_tests_never_count(mini_repo, tmp_path):
 def test_judge_refuses_a_candidate_that_touches_the_pytest_harness(mini_repo, tmp_path, rel):
     repo, snap, _, _ = mini_repo
     task = snap["prs"][0]
+    control = lfc.build_bundle(repo, task, tmp_path / "control")  # a bundle is judged only once
+    try:
+        lfc.apply_solution(repo, task, control)
+        assert lfc.judge(repo, task, control)["verdict"] == "ACCEPTED"  # control: honest solution
+    finally:
+        lfc.remove_bundle(control)
     dest = lfc.build_bundle(repo, task, tmp_path / "tamper")
     try:
         lfc.apply_solution(repo, task, dest)
-        assert lfc.judge(repo, task, dest)["verdict"] == "ACCEPTED"  # control: honest solution
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("import pytest\n" if rel.endswith(".py") else "[pytest]\n",
@@ -689,6 +697,191 @@ def test_a_task_the_judge_cannot_refuse_without_solution_is_discarded(mini_repo,
     assert result["discarded_reason"] == "judge_accepts_base_without_solution"
 
 
+# ---- PAT-108 carry-over of the PAT-107 reviews (N-A .. N-G)
+
+def test_judge_purges_precompiled_bytecode_planted_by_the_candidate(mini_repo, tmp_path):
+    """N-A: an unchecked-hash .pyc of the FIXED module next to the BASE source would make the
+    broken product pass; the judge deletes every .pyc/__pycache__ and redirects bytecode."""
+    import importlib.util
+    import py_compile
+    repo, snap, _, _ = mini_repo
+    task = snap["prs"][0]
+    dest = lfc.build_bundle(repo, task, tmp_path / "pyc")
+    try:
+        module = dest / MOD
+        fixed = tmp_path / "fixed_m.py"
+        fixed.write_text(FIXED_MODULE, encoding="utf-8")
+        cached = Path(importlib.util.cache_from_source(str(module)))
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        py_compile.compile(str(fixed), cfile=str(cached), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        (dest / "plugins/foundry/tooling/foundry/orphan.pyc").write_bytes(b"x")
+        verdict = lfc.judge(repo, task, dest)
+        assert not cached.exists() and not list(dest.rglob("*.pyc"))
+    finally:
+        lfc.remove_bundle(dest)
+    assert verdict["verdict"] == "REFUSED" and verdict["failed"] == 2, verdict
+
+
+def test_judge_environment_redirects_bytecode_to_its_temporary_directory(tmp_path, monkeypatch):
+    seen = {}
+    real_run = subprocess.run
+
+    def spy(cmd, *a, **kw):
+        if isinstance(cmd, list) and "pytest" in cmd:
+            seen.update(kw["env"])
+        return real_run(cmd, *a, **kw)
+
+    monkeypatch.setattr(lfc.subprocess, "run", spy)
+    repo, snap, _, _ = _make_repo(tmp_path)
+    dest = lfc.build_bundle(repo, snap["prs"][0], tmp_path / "b")
+    try:
+        lfc.judge(repo, snap["prs"][0], dest)
+    finally:
+        lfc.remove_bundle(dest)
+    assert "foundry-judge-" in seen["PYTHONPYCACHEPREFIX"]
+    assert "PYTHONPATH" not in seen
+
+
+def test_judge_refuses_a_candidate_inside_the_developer_checkout(mini_repo):
+    """N-B"""
+    repo, snap, _, _ = mini_repo
+    inside = repo / "plugins" / "elsewhere"
+    inside.mkdir(parents=True)
+    with pytest.raises(lfc.CorpusError, match="inside the developer checkout"):
+        lfc.judge(repo, snap["prs"][0], inside)
+    assert not (inside / "plugins").exists()  # nothing was restored into it
+
+
+def test_a_bundle_is_judged_once_fresh_bundle_per_attempt(mini_repo, tmp_path):
+    """N-C: a judged bundle holds the protected tests and is never judged (or handed) again."""
+    repo, snap, _, _ = mini_repo
+    task = snap["prs"][0]
+    dest = lfc.build_bundle(repo, task, tmp_path / "once")
+    try:
+        assert not lfc.is_judged(dest)
+        assert lfc.judge(repo, task, dest)["verdict"] == "REFUSED"
+        assert lfc.is_judged(dest)
+        with pytest.raises(lfc.CorpusError, match="already judged"):
+            lfc.judge(repo, task, dest)
+    finally:
+        lfc.remove_bundle(dest)
+
+
+def test_judged_state_is_launcher_side_and_a_forged_marker_changes_nothing(mini_repo, tmp_path):
+    """PAT-108 N8: the judged state is not a file of the candidate's tree (a dangling symlink or a
+    forged file there neither hides a judged bundle nor makes the judge write through a link)."""
+    repo, snap, _, _ = mini_repo
+    task = snap["prs"][0]
+    dest = lfc.build_bundle(repo, task, tmp_path / "forged")
+    try:
+        target = tmp_path / "never-written"
+        (dest / ".git" / "foundry-judged").symlink_to(target)  # dangling link planted by the arm
+        assert not lfc.is_judged(dest)
+        assert lfc.judge(repo, task, dest)["verdict"] == "REFUSED"
+        assert lfc.is_judged(dest) and not target.exists()
+        with pytest.raises(lfc.CorpusError, match="already judged"):
+            lfc.judge(repo, task, dest)
+    finally:
+        lfc.remove_bundle(dest)
+    assert not lfc.is_judged(dest)
+    fresh = lfc.build_bundle(repo, task, tmp_path / "forged2")
+    try:
+        (fresh / ".git" / "foundry-judged").write_text("judged\n", encoding="utf-8")
+        assert not lfc.is_judged(fresh)  # a forged marker in the tree is not the judged state
+    finally:
+        lfc.remove_bundle(fresh)
+
+
+def test_a_symlink_under_the_product_source_prefixes_is_refused(mini_repo, tmp_path):
+    """PAT-108 N8: product code is imported by pytest; a link there could point anywhere."""
+    repo, snap, _, _ = mini_repo
+    task = snap["prs"][0]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "m.py").write_text(FIXED_MODULE, encoding="utf-8")
+    cases = {"file": lambda d: ((d / MOD).unlink(), (d / MOD).symlink_to(outside / "m.py")),
+             "directory": lambda d: (d / "plugins/foundry/tooling/foundry/sub").symlink_to(outside),
+             "parent": lambda d: (shutil.rmtree(d / "plugins/foundry/tooling"),
+                                  (d / "plugins/foundry/tooling").symlink_to(outside))}
+    for name, plant in cases.items():
+        dest = lfc.build_bundle(repo, task, tmp_path / f"link-{name}")
+        try:
+            plant(dest)
+            verdict = lfc.judge(repo, task, dest)
+        finally:
+            lfc.remove_bundle(dest)
+        assert verdict["verdict"] == "REFUSED", name
+        assert verdict["note"].startswith("symlink_in_product_source:"), (name, verdict["note"])
+        assert verdict["symlinks"], name
+
+
+def test_candidate_environments_are_ignored_but_product_dirs_are_not(mini_repo, tmp_path):
+    """N-E: a venv / node_modules the candidate created does not refuse an honest candidate."""
+    repo, snap, _, _ = mini_repo
+    task = snap["prs"][0]
+    dest = lfc.build_bundle(repo, task, tmp_path / "env")
+    try:
+        (dest / MOD).write_text(FIXED_MODULE, encoding="utf-8")
+        for name in (".venv", "venv", "node_modules", "custom_env"):
+            site = dest / name / "lib" / "site-packages"
+            site.mkdir(parents=True)
+            (site / "conftest.py").write_text("", encoding="utf-8")
+            (site / "x.pth").write_text("", encoding="utf-8")
+        (dest / "custom_env" / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+        verdict = lfc.judge(repo, task, dest)
+    finally:
+        lfc.remove_bundle(dest)
+    assert verdict["verdict"] == "ACCEPTED", verdict
+    assert verdict["tripwire"] == []
+    # the same files outside an environment directory still trip the wire
+    dest = lfc.build_bundle(repo, task, tmp_path / "env2")
+    try:
+        (dest / MOD).write_text(FIXED_MODULE, encoding="utf-8")
+        (dest / "docs_site").mkdir()
+        (dest / "docs_site" / "conftest.py").write_text("", encoding="utf-8")
+        verdict = lfc.judge(repo, task, dest)
+    finally:
+        lfc.remove_bundle(dest)
+    assert verdict["verdict"] == "REFUSED" and verdict["tripwire"] == ["docs_site/conftest.py"]
+
+
+def test_judge_always_passes_an_explicit_pytest_ini(tmp_path, monkeypatch):
+    """N-F: even when the merged SHA has no pytest.ini, ``-c`` points at a judge-owned file."""
+    repo, snap, _, _ = _make_repo(tmp_path)
+    real_run = subprocess.run
+    seen = {}
+
+    def spy(cmd, *a, **kw):
+        if isinstance(cmd, list) and cmd[:2] == ["git", "-C"] and "show" in cmd and cmd[-1].endswith(
+                "pytest.ini"):
+            return subprocess.CompletedProcess(cmd, 128, b"", b"missing")
+        if isinstance(cmd, list) and "pytest" in cmd:
+            seen["cmd"] = list(cmd)
+            seen["ini"] = Path(cmd[cmd.index("-c") + 1]).read_text("utf-8") if "-c" in cmd else None
+        return real_run(cmd, *a, **kw)
+
+    monkeypatch.setattr(lfc.subprocess, "run", spy)
+    dest = lfc.build_bundle(repo, snap["prs"][0], tmp_path / "b")
+    (dest / "plugins/foundry/pytest.toml").write_text("[pytest]\naddopts = '-k nothing'\n", encoding="utf-8")
+    try:
+        lfc.judge(repo, snap["prs"][0], dest)
+    finally:
+        lfc.remove_bundle(dest)
+    assert "-c" in seen["cmd"] and seen["ini"] == "[pytest]\n"
+
+
+def test_verify_aborts_on_a_tooling_error_instead_of_replacing_the_task(mini_repo, tmp_path):
+    """N-D"""
+    repo, snap, _, _ = mini_repo
+    task = {**snap["prs"][0], "base_sha": "f" * 40}
+    with pytest.raises(lfc.CorpusError):
+        lfc.verify_task(repo, task, tmp_path / "work")
+    drawn = {"comparison": [1], "screening": [], "replacement_queue": [2]}
+    with pytest.raises(lfc.CorpusError):
+        lfc.finalize(snap, drawn, lambda pr: lfc.verify_task(repo, task, tmp_path / "work2"))
+
+
 def test_cli_draw_matches_library(mini_repo, tmp_path, capsys):
     _, snap, _, _ = mini_repo
     path = tmp_path / "snap.json"
@@ -720,6 +913,8 @@ def test_committed_manifest_is_the_deterministic_draw_of_the_committed_snapshot(
         assert task["replayability"]["merge_kind"] == frozen["merge_kind"]
         for key in ("base_sha", "head_sha"):
             assert isinstance(task["replayability"][key]["present_locally"], bool)
+            assert isinstance(task["replayability"][key]["origin_refs_containing_count"], int)
+            assert "origin_refs_containing" not in task["replayability"][key]  # reproducible (N-G)
     # verification covers all 12 tasks and the manifest lists are the draw recomputed
     chosen = [t["pr"] for t in manifest["comparison"] + manifest["screening"]]
     recorded = {item["pr"]: item for item in manifest["verification"]}
