@@ -561,9 +561,9 @@ def test_preflight_accepts_the_frozen_machine_and_loads_nothing(tmp_path):
     ("chip", {("sysctl", "-n", "machdep.cpu.brand_string"): "Apple M3"}, "chip_differs"),
     ("memory", {("sysctl", "-n", "hw.memsize"): str(32 * 2**30)}, "memory_differs"),
     ("os", {("sw_vers", "-productVersion"): "26.0"}, "os_version_differs"),
-    ("lms", {("lms", "version"): "0.4.0"}, "lm_studio_version_differs"),
+    ("lms", {lfr.LM_STUDIO_VERSION_COMMAND: "0.4.0"}, "lm_studio_version_differs"),
     ("runtime", {("lms", "runtime", "ls"): "mlx 1.0.0"}, "mlx_runtime_differs"),
-    ("unavailable", {("lms", "version"): None}, "fact_unavailable:lm_studio_version")])
+    ("unavailable", {lfr.LM_STUDIO_VERSION_COMMAND: None}, "fact_unavailable:lm_studio_version")])
 def test_preflight_refuses(tmp_path, name, patch, expected):
     campaign, _ = fake_campaign(tmp_path, FIX_ALL)
     facts = lfr.dry_run_facts(campaign, "fake/model-a")
@@ -571,6 +571,28 @@ def test_preflight_refuses(tmp_path, name, patch, expected):
                            lambda argv: patch[tuple(argv)] if tuple(argv) in patch else facts(argv),
                            lambda: 99.0)
     assert not result["ok"] and expected in result["refusals"], name
+
+
+def test_preflight_reads_the_lm_studio_version_from_the_app_plist_not_lms(tmp_path):
+    campaign, _ = fake_campaign(tmp_path, FIX_ALL)
+    facts = lfr.dry_run_facts(campaign, "fake/model-a")
+    issued = []
+
+    def run(argv):
+        issued.append(tuple(argv))
+        return facts(argv)
+    result = lfr.preflight(campaign, "fake/model-a", run, lambda: 99.0)
+    assert lfr.LM_STUDIO_VERSION_COMMAND in issued and ("lms", "version") not in issued
+    assert lfr.LM_STUDIO_VERSION_COMMAND[0] == "plutil" and lfr.LM_STUDIO_VERSION_COMMAND in lfr.READ_ONLY_COMMANDS
+    assert ("lms", "version") not in lfr.READ_ONLY_COMMANDS
+    assert "lm_studio_version_differs" not in result["refusals"]
+    with pytest.raises(lfr.RunnerError, match="not allowed"):
+        lfr.default_run(["plutil", "-p", "/Applications/LM Studio.app/Contents/Info.plist"])
+    # the real banner-only `lms version` output is not a version source any more
+    banner = lfr.preflight(campaign, "fake/model-a",
+                           lambda a: "CLI commit: 69d945a" if tuple(a) == ("lms", "version") else facts(a),
+                           lambda: 99.0)
+    assert "lm_studio_version_differs" not in banner["refusals"]
 
 
 def test_preflight_refuses_low_disk_and_a_failed_preflight_launches_nothing(tmp_path):

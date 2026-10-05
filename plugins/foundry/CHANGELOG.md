@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fixed (PAT-112; no model load): the launcher preflight read the LM Studio version from `lms version`, which prints
+  only the CLI commit, so every real candidate was refused (`lm_studio_version_differs`). It now reads the app's
+  `CFBundleShortVersionString` with the read-only `plutil -extract ... raw` on `/Applications/LM Studio.app/Contents/Info.plist`
+  (`LM_STUDIO_VERSION_COMMAND`, in `READ_ONLY_COMMANDS`; `lms version` is no longer allowed); same fact name and
+  `contains` comparison against the unchanged frozen 0.4.25; a missing plist refuses as `fact_unavailable:lm_studio_version`.
+  R5: documented in `docs/qualification/pat-19-launcher-v1.md` "Préflight"; the public constant `READ_ONLY_COMMANDS`
+  swapped `lms version` for the plutil tuple; no CLI verb changed.
 - Fixed (PAT-112; fake arms only, no real model/harness/cloud call): the local contamination audit no longer
   hides a sandbox bypass through a system service (`launchctl`, `osascript` are forbidden executables, local and
   cloud; best effort: `crontab`, `at`, an out-of-sandbox `tmux`/`screen` server, `shortcuts run`, `automator` stay unlisted; the "blocked" exemption is decided on the path, not on an observed refusal) and treats the attempt directory

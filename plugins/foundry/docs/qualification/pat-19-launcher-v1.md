@@ -224,7 +224,7 @@ registre (`attempt_started`, avec son nom `attempt_dir`) avant de s'exécuter et
 
 Seules les commandes de la liste `READ_ONLY_COMMANDS` peuvent être lancées (toute autre est refusée
 par `default_run`, y compris `lms load`) : `sysctl` (puce, mémoire, swap), `sw_vers`, `memory_pressure`,
-`lms version`, `lms runtime ls`, `lms ps --json`, `ps`. Il refuse quand : une coordonnée gelée de
+`plutil -extract CFBundleShortVersionString raw` sur le `Info.plist` de `/Applications/LM Studio.app` (version de l'app ; `lms version` ne donne que le commit du CLI, un plist absent ou illisible rend le fait indisponible donc refuse), `lms runtime ls`, `lms ps --json`, `ps`. Il refuse quand : une coordonnée gelée de
 `frozen_machine` diffère (puce, mémoire, macOS, LM Studio, moteur MLX), un fait est indisponible,
 un autre modèle que celui attendu est chargé ou le modèle attendu ne l'est pas (`lms ps` doit lister
 exactement l'identifiant), la place disque est sous le minimum. Il relève le swap et la pression
@@ -286,7 +286,7 @@ chargement refuse sinon) et `non_protocol_choices` (voir plus bas).
 
 ## Pilotes épinglés (PAT-111)
 
-**Correction (PAT-112, 2026-10-05)** : le texte disait `omp` 18.4.10, version observée avant la mise à jour. `omp`
+**Correction (PAT-112, 2026-10-06)** : le texte disait `omp` 18.4.10, version observée avant la mise à jour. `omp`
 installé est 18.6.1 (installé le 2026-10-05 à 17 h 20, heure locale) et chaque essai `omp` consigné (flux de
 18 h 07, 18 h 27, 20 h 41, 22 h 53 à 22 h 59) lui est postérieur : la version utilisée est 18.6.1, désormais
 vérifiée par le lanceur (`binary_version`).

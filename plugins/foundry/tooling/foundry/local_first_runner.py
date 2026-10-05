@@ -59,11 +59,14 @@ DEFAULT_HOME_DENY = {  # a cloud arm also keeps ``~/.claude.json`` (Claude Code 
 RULE_STOPS = ("fewer_than_min_local_successes", "premium_c_not_below_a")  # pre-registered early stops
 PROVENANCE_KEYS = ("campaign_sha256", "manifest_sha256", "envelope_sha256")
 TOKEN_CLASSES = ca.TOKEN_KEYS
+# `lms version` prints only the CLI commit; the app version is in the app bundle's plist.
+LM_STUDIO_VERSION_COMMAND = ("plutil", "-extract", "CFBundleShortVersionString", "raw",
+                             "/Applications/LM Studio.app/Contents/Info.plist")
 # The only external commands the preflight and the machine probes may run (read-only).
 READ_ONLY_COMMANDS = frozenset({
     ("sysctl", "-n", "machdep.cpu.brand_string"), ("sysctl", "-n", "hw.memsize"),
     ("sysctl", "-n", "vm.swapusage"), ("sw_vers", "-productVersion"), ("memory_pressure",),
-    ("lms", "version"), ("lms", "runtime", "ls"), ("lms", "ps", "--json"),
+    LM_STUDIO_VERSION_COMMAND, ("lms", "runtime", "ls"), ("lms", "ps", "--json"),
     ("ps", "-axo", "rss=,command=")})
 _SECRET_NAME = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|SSH_AUTH_SOCK|^FOUNDRY_)", re.I)
 _PLACEHOLDER = re.compile(r"\{(\w+)\}")
@@ -495,7 +498,7 @@ def preflight(campaign: Mapping[str, Any], expected_model: str,
     os_version = fact("os_version", ["sw_vers", "-productVersion"])
     if os_version and os_version != frozen["os_version"]:
         refusals.append("os_version_differs")
-    lms_version = fact("lm_studio_version", ["lms", "version"])
+    lms_version = fact("lm_studio_version", list(LM_STUDIO_VERSION_COMMAND))
     if lms_version and frozen["lm_studio_version_contains"] not in lms_version:
         refusals.append("lm_studio_version_differs")
     runtimes = fact("runtimes", ["lms", "runtime", "ls"])
@@ -538,7 +541,7 @@ def dry_run_facts(campaign: Mapping[str, Any], expected_model: str) -> Callable[
         ("sysctl", "-n", "machdep.cpu.brand_string"): f"Apple {frozen['chip_contains']}",
         ("sysctl", "-n", "hw.memsize"): str(frozen["memory_gib"] * 2**30),
         ("sw_vers", "-productVersion"): frozen["os_version"],
-        ("lms", "version"): frozen["lm_studio_version_contains"],
+        LM_STUDIO_VERSION_COMMAND: frozen["lm_studio_version_contains"],
         ("lms", "runtime", "ls"): frozen["mlx_runtime_contains"],
         ("lms", "ps", "--json"): json.dumps([loaded]),
         ("sysctl", "-n", "vm.swapusage"): "total = 1024.00M  used = 100.00M  free = 924.00M",
