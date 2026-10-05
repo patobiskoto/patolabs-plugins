@@ -1,0 +1,10 @@
+{
+  "82": {
+    "decision": "exclude",
+    "reason": "authority: PAT-102 settles the review residuals of PAT-95, the human-override waiver that decides who may close an Epic (protocol section 3: authentication or authority)"
+  },
+  "42": {
+    "decision": "include",
+    "reason": "data_migration keyword 'basculé' in the title is a false positive: PAT-44 documents and tools the recovery after a repository binding drifted following the cutover; it is a recovery fix, not a data migration (protocol section 3 excludes data migrations). Lifts only the topic:data_migration reason."
+  }
+}
