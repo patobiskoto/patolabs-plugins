@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import base64
 import binascii
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
 import threading
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -312,15 +313,93 @@ _WORKFLOW_STATE_TYPES = frozenset(
 )
 
 
-class LinearTrackerError(RuntimeError):
-    """Sanitized transport/provider failure with no response or credential echo."""
+# PAT-98: bounded retry of READ-ONLY calls only. A write is never retried (PAT-ADR-0006
+# S2: its effect may be invisible). Readonly-ness is decided from the GraphQL document.
+_sleep = time.sleep  # module-level seam: tests replace it, so the suite never sleeps
+_READ_RETRY_DELAYS = (1.0, 2.0, 4.0)  # deterministic, no jitter: at most 7 s per call
+# 429 is always classified as quota exhaustion first (typed error, never retried).
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+_RATE_LIMIT_CODES = frozenset({"RATELIMITED", "RATE_LIMITED"})
+_QUERY_DOCUMENT = re.compile(r"\s*query\b")
+_WRITE_OR_STREAM_WORD = re.compile(r"\b(mutation|subscription)\b")
+# Secondary documentation aid only (the document decides): every read operation name.
+_READ_OPERATIONS = frozenset({
+    "issue.read", "issue.search", "issue.state-history", "adr.list", "adr.read",
+    "release.read", "release.issues", "release.labels", "release.children",
+    "release.comments", "release.inverseRelations", "project-binding-read",
+    "team.git-automation-states", "lifecycle.readback", "lifecycle.comment.read",
+    "issue.relation.readback", "issue.readback.labels", "comment.readback",
+    "adr.issue.resolve",
+})
 
-    def __init__(self, operation: str, status: int | None, code: str):
+
+def _is_read_only_document(document: str) -> bool:
+    """Fail closed: only a `query` document with no `mutation`/`subscription` word."""
+    return (
+        isinstance(document, str)
+        and _QUERY_DOCUMENT.match(document) is not None
+        and _WRITE_OR_STREAM_WORD.search(document) is None
+    )
+
+
+def _header_int(headers, name: str) -> int | None:
+    try:
+        value = headers.get(name) if headers is not None else None
+        return int(str(value).strip()) if value is not None else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+class LinearTrackerError(RuntimeError):
+    """Sanitized transport/provider failure with no response or credential echo.
+
+    `retries` is the number of automatic read retries performed before this failure
+    (PAT-98); it is 0 for every failure that was never retried, and then the message is
+    unchanged.
+    """
+
+    def __init__(self, operation: str, status: int | None, code: str, retries: int = 0):
         self.operation = operation
         self.status = status
         self.code = code
-        rendered_status = str(status) if status is not None else "unavailable"
-        super().__init__(f"Linear {operation} -> {rendered_status} ({code})")
+        self.retries = retries
+        super().__init__(self._render())
+
+    def _render(self) -> str:
+        rendered_status = str(self.status) if self.status is not None else "unavailable"
+        suffix = f" after {self.retries} retries" if self.retries else ""
+        return f"Linear {self.operation} -> {rendered_status} ({self.code}){suffix}"
+
+    def _with_retries(self, retries: int) -> "LinearTrackerError":
+        self.retries = retries
+        self.args = (self._render(),)
+        return self
+
+
+class LinearQuotaExhaustedError(LinearTrackerError):
+    """Linear API quota exhausted (PAT-98). Never retried automatically."""
+
+    def __init__(
+        self, operation: str, status: int | None, remaining: int | None,
+        reset_at_ms: int | None, retries: int = 0,
+    ):
+        self.remaining = remaining
+        self.reset_at_ms = reset_at_ms
+        self.reset_at = (
+            datetime.fromtimestamp(reset_at_ms / 1000, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            if reset_at_ms is not None else None
+        )
+        super().__init__(operation, status, "quota_exhausted", retries)
+
+    def _render(self) -> str:
+        remaining = self.remaining if self.remaining is not None else "unknown"
+        reset = self.reset_at if self.reset_at is not None else "unknown"
+        return (
+            f"Linear quota exhausted: {super()._render()}"
+            f" remaining={remaining} reset_at={reset}"
+        )
 
 
 class LinearBindingError(TrackerBindingError):
@@ -2181,6 +2260,7 @@ class LinearTracker(Tracker):
         token: str | None = None,
         transport=None,
         endpoint: str = LINEAR_GRAPHQL_ENDPOINT,
+        read_retries: int = 3,
     ):
         if endpoint != LINEAR_GRAPHQL_ENDPOINT:
             raise ValueError("Linear endpoint must be the official GraphQL endpoint")
@@ -2189,6 +2269,9 @@ class LinearTracker(Tracker):
         if not isinstance(self.token, str) or not self.token:
             raise ValueError("credential Linear invalid")
         self._transport = transport
+        self.read_retries = max(0, min(int(read_retries), len(_READ_RETRY_DELAYS)))
+        # Last rate-limit headers seen on any response (never the token): diagnostics only.
+        self.rate_limit: dict[str, int | None] = {}
         self._epic_closure_reads = threading.local()
         self._active_project: Project | None = None
 
@@ -2454,13 +2537,93 @@ class LinearTracker(Tracker):
 
     # ---- transport -------------------------------------------------
     def _graphql(self, document: str, variables: dict, operation: str) -> dict:
+        """One GraphQL call; a pure read is retried a bounded number of times (PAT-98).
+
+        Only a transport failure or HTTP 429/500/502/503/504 on a read-only document is
+        retried. Writes, data/binding/authorization errors and quota exhaustion never are.
+        The retry wraps the single raw HTTP call, never any caller recovery logic.
+        """
+        retries = 0
+        while True:
+            try:
+                return self._graphql_once(document, variables, operation)
+            except LinearQuotaExhaustedError as error:
+                raise error._with_retries(retries) from None
+            except LinearTrackerError as error:
+                retryable = (
+                    error.code == "transport_error"
+                    or (error.code == "http_error" and error.status in _RETRYABLE_STATUSES)
+                )
+                if (
+                    not retryable
+                    or retries >= self.read_retries
+                    or not _is_read_only_document(document)
+                ):
+                    raise error._with_retries(retries) from None
+                _sleep(_READ_RETRY_DELAYS[retries])
+                retries += 1
+
+    def _note_rate_limit(self, headers) -> None:
+        for kind in ("requests", "complexity"):
+            for field in ("remaining", "reset"):
+                value = _header_int(headers, f"x-ratelimit-{kind}-{field}")
+                if value is not None:
+                    self.rate_limit[f"{kind}_{field}"] = value
+
+    def _quota_error(
+        self, operation: str, status: int | None, headers, body_codes=(),
+    ) -> LinearQuotaExhaustedError | None:
+        """Classify a rate-limit failure: HTTP 429, a RATELIMITED code, or HTTP 400/429
+        whose headers show a zero remaining quota. Anything else (e.g. a plain 400) is None."""
+        self._note_rate_limit(headers)
+        remaining = _header_int(headers, "x-ratelimit-requests-remaining")
+        reset = _header_int(headers, "x-ratelimit-requests-reset")
+        complexity = _header_int(headers, "x-ratelimit-complexity-remaining")
+        if complexity == 0 and remaining != 0:
+            remaining = 0
+            reset = _header_int(headers, "x-ratelimit-complexity-reset")
+        exhausted = (
+            status == 429
+            or any(code in _RATE_LIMIT_CODES for code in body_codes)
+            or (remaining == 0 and status in (None, 400, 429))
+        )
+        if not exhausted:
+            return None
+        return LinearQuotaExhaustedError(operation, status, remaining, reset)
+
+    @staticmethod
+    def _error_codes(envelope) -> list:
+        errors = envelope.get("errors") if isinstance(envelope, dict) else None
+        if not isinstance(errors, list):
+            return []
+        codes = []
+        for item in errors:
+            extensions = item.get("extensions") if isinstance(item, dict) else None
+            if isinstance(extensions, dict):
+                codes.append(extensions.get("code"))
+        return codes
+
+    def _graphql_once(self, document: str, variables: dict, operation: str) -> dict:
+        headers = None
         if self._transport is not None:
+            # Test seam: a fake transport may raise an exception carrying `status` (int HTTP
+            # status) and `headers` (mapping of x-ratelimit-* values), or return an
+            # envelope with an optional "_headers" mapping, to simulate real responses.
             try:
                 envelope = self._transport(document, variables)
             except LinearTrackerError:
                 raise
-            except Exception:
-                raise LinearTrackerError(operation, None, "transport_error") from None
+            except Exception as error:
+                status = getattr(error, "status", None)
+                headers = getattr(error, "headers", None)
+                if not isinstance(status, int) or isinstance(status, bool):
+                    raise LinearTrackerError(operation, None, "transport_error") from None
+                quota = self._quota_error(operation, status, headers)
+                if quota is not None:
+                    raise quota from None
+                raise LinearTrackerError(operation, status, "http_error") from None
+            if isinstance(envelope, dict):
+                headers = envelope.get("_headers")
         else:
             data = json.dumps(
                 {"query": document, "variables": variables},
@@ -2480,9 +2643,18 @@ class LinearTracker(Tracker):
                             operation, response.status, "response_too_large"
                         )
                     status = response.status
+                    headers = response.headers
             except LinearTrackerError:
                 raise
             except urllib.error.HTTPError as error:
+                codes = []
+                try:
+                    codes = self._error_codes(json.loads(error.read(_MAX_RESPONSE_BYTES)))
+                except (OSError, ValueError, UnicodeError):
+                    pass
+                quota = self._quota_error(operation, error.code, error.headers, codes)
+                if quota is not None:
+                    raise quota from None
                 raise LinearTrackerError(operation, error.code, "http_error") from None
             except (OSError, urllib.error.URLError, TimeoutError):
                 raise LinearTrackerError(operation, None, "transport_error") from None
@@ -2492,9 +2664,13 @@ class LinearTracker(Tracker):
                 raise LinearTrackerError(
                     operation, status, "invalid_response"
                 ) from None
+        self._note_rate_limit(headers)
         if not isinstance(envelope, dict):
             raise LinearTrackerError(operation, None, "invalid_response")
         if envelope.get("errors"):
+            quota = self._quota_error(operation, None, headers, self._error_codes(envelope))
+            if quota is not None:
+                raise quota
             raise LinearTrackerError(operation, None, "graphql_error")
         payload = envelope.get("data")
         if not isinstance(payload, dict):
