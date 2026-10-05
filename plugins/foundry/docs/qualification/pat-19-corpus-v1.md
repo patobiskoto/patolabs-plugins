@@ -118,8 +118,9 @@ retirées du fichier de base (une classe vidée reçoit `pass`).
 
 0. refuse par une erreur (`CorpusError`, pas un verdict) un candidat situé dans le checkout de
    développement, qui n'est pas un bundle (pas de `.git`) ou qui a déjà été jugé : le juge écrit
-   les tests protégés dans l'arbre, un bundle jugé ne repart jamais chez un candidat (un fichier
-   `foundry-judged` dans son `.git` le consigne ; PAT-108) ;
+   les tests protégés dans l'arbre, un bundle jugé ne repart jamais chez un candidat (l'état « jugé »
+   est tenu en mémoire par le processus du lanceur, clé : chemin du bundle, et jamais dans l'arbre du
+   candidat qui pourrait le falsifier ou le remplacer par un lien symbolique ; PAT-108) ;
 1. refuse (`REFUSED`, raison dans `note`) s'il n'y a aucun test sélectionné (jamais la suite
    entière), si un chemin protégé (ou un de ses dossiers parents) est un lien symbolique, ou si le
    candidat a créé, modifié ou supprimé n'importe où dans le bundle un `conftest.py`, `pytest.ini`,
@@ -128,7 +129,9 @@ retirées du fichier de base (une classe vidée reçoit `pass`).
    protégés sont exemptés puisqu'ils sont écrasés). Les dossiers d'environnement que le candidat a
    créés (`.venv`, `venv`, `node_modules`, ou tout dossier contenant un `pyvenv.cfg`) et qui
    n'existent pas dans l'arbre de base sont ignorés par ce contrôle, et ne sont jamais sur le
-   chemin de l'interpréteur jugé (PAT-108) ;
+   chemin de l'interpréteur jugé (PAT-108) ; un lien symbolique (fichier ou dossier) sous
+   `plugins/foundry/tooling/` ou `plugins/foundry/hooks/`, ou l'un de leurs parents, est refusé
+   (`symlink_in_product_source`, clé `symlinks` du verdict) : le code produit est importé par pytest ;
 2. écrase les chemins protégés avec les versions du SHA fusionné (supprime d'abord le fichier,
    n'écrit jamais à travers un lien) ; le fichier du candidat à ces chemins ne compte donc jamais ;
 2b. supprime tout `*.pyc` et tout `__pycache__` de l'arbre du candidat (un `.pyc` précompilé,
@@ -257,7 +260,10 @@ PAT-108 (suites des revues de PAT-107) : durcissements du juge et de `verify` d�
 `-c` inconditionnel, erreur d'outillage qui interrompt), clé de rejouabilité
 `origin_refs_containing_count`. Le manifeste est régénéré par `verify` (les 12 tâches sont
 inchangées : 12 sur 12 `ACCEPTED` avec la solution mergée et `REFUSED` sur la base). Le lanceur est
-décrit dans [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md).
+décrit dans [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md). Revue 1 de PAT-108 : état « jugé » tenu
+par le lanceur et refus des liens symboliques du code produit ; le manifeste a été régénéré par `verify`
+(12 sur 12 inchangé, nouvelle clé `symlinks` vide dans chaque verdict, compteurs `origin_refs_containing_count`
+recopiés tels qu'observés sur la machine du jour : +1 sur plusieurs tâches, environnementaux).
 Non documenté car non nécessaire : aucune constante publique, option de `foundry_cli.py`, clé de
 configuration ni table de routage n'a changé. L'application mécanique de R5 reste celle de
 FOUNDRY-123.

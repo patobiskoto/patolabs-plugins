@@ -18,6 +18,49 @@
     "max_correction_rounds": 2,
     "note": "local bounds are protocol coordinates (20 min, 40 steps); cloud_max_seconds and max_correction_rounds are operational bounds chosen by PAT-108 (protocol: 'within the limit of Foundry escalations')"
   },
+  "isolation": {
+    "note": "Launcher choice, not a protocol coordinate. Explicit read-deny list on top of an allow-default sandbox profile, relative to the REAL home of the user. A default-deny of the home (allowing only the harness's isolated home, bundle, attempt directory and tool installation paths) could not be verified without running the harness: PAT-109 should replace this list by that allow list once smoke-tested. Also denied, computed at launch: every checkout/worktree of this repository, the state directory, and the parent directory of --envelope/--campaign/--snapshot/--manifest (keep them apart from --work-root). Local arms: the whole configuration of the user. Cloud arms keep ~/.claude (Claude Code OAuth identity, AGENTS.md R6): the plugin cache there is NOT hidden from a cloud arm.",
+    "deny_read_home": {
+      "local": [
+        ".claude",
+        ".codex",
+        ".config",
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".netrc",
+        "Library/Keychains"
+      ],
+      "cloud": [
+        ".codex",
+        ".config/foundry",
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".netrc",
+        "Library/Keychains"
+      ]
+    }
+  },
+  "non_protocol_choices": {
+    "min_free_disk_gib": {
+      "not_a_protocol_coordinate": true,
+      "value_at": "frozen_machine.min_free_disk_gib",
+      "rationale": "launcher safety margin for model files and bundles; the protocol states no disk threshold"
+    },
+    "economy_time_counted": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the economy verdict adds a wall-clock ratio (rules.comparison.time_ratio_max); the protocol names the premium reduction, the time ratio is the launcher's reading of 'pas trop plus de temps'"
+    },
+    "swap_metric": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "extra swap is measured as the maximum, over local attempts, of (swap after - swap before); the protocol does not define how to measure it"
+    },
+    "premium_work_definition": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "premium work = unweighted sum of the four billing token classes (input, cached input, cache write, output) over ALL models; a limit: an economy model's token weighs the same as a premium one, hence the per-model breakdown in the report, needed to judge path B honestly"
+    }
+  },
   "statement_footer": "\n\n---\nLauncher note (identical for every arm): work only inside this repository. Do not create virtual environments, install packages or create node_modules in the tree; use the interpreter already on PATH. Do not create or edit test configuration files (conftest.py, pytest.ini, pyproject.toml, tox.ini, setup.cfg, sitecustomize.py, *.pth).\n",
   "prompts": {
     "implement": "Implement the task described in {statement_file}. Work only inside the current repository: change the product code and add tests if useful. Run the relevant tests, then stop when you consider the task done.",
@@ -107,7 +150,9 @@
       },
       "session_log": {
         "host": "claude",
-        "projects_dir": "~/.claude/projects"
+        "projects_dir": "~/.claude/projects",
+        "layout_verified": false,
+        "layout_note": "Only <projects_dir>/*/<session>.jsonl is read. Whether the host stores subagent transcripts in separate files is unverified: premium tokens stay unknown until PAT-109 verifies the layout and sets layout_verified to true."
       },
       "model": "sonnet",
       "note": "Claude Code headless, current routed implementer profile (Sonnet 5.5, medium). Flags and session log location unverified; --session-id is how the launcher attaches the log.",
@@ -138,7 +183,9 @@
       },
       "session_log": {
         "host": "claude",
-        "projects_dir": "~/.claude/projects"
+        "projects_dir": "~/.claude/projects",
+        "layout_verified": false,
+        "layout_note": "Only <projects_dir>/*/<session>.jsonl is read. Whether the host stores subagent transcripts in separate files is unverified: premium tokens stay unknown until PAT-109 verifies the layout and sets layout_verified to true."
       },
       "model": "haiku",
       "note": "Claude Code headless, economy tier (Haiku 4.5). Unverified, same caveats.",
@@ -169,7 +216,9 @@
       },
       "session_log": {
         "host": "claude",
-        "projects_dir": "~/.claude/projects"
+        "projects_dir": "~/.claude/projects",
+        "layout_verified": false,
+        "layout_note": "Only <projects_dir>/*/<session>.jsonl is read. Whether the host stores subagent transcripts in separate files is unverified: premium tokens stay unknown until PAT-109 verifies the layout and sets layout_verified to true."
       },
       "model": "opus",
       "note": "Claude Code headless reviewer (Opus 5.5, high), identical for every arm. Unverified.",

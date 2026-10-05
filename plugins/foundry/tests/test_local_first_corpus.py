@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -765,6 +766,54 @@ def test_a_bundle_is_judged_once_fresh_bundle_per_attempt(mini_repo, tmp_path):
             lfc.judge(repo, task, dest)
     finally:
         lfc.remove_bundle(dest)
+
+
+def test_judged_state_is_launcher_side_and_a_forged_marker_changes_nothing(mini_repo, tmp_path):
+    """PAT-108 N8: the judged state is not a file of the candidate's tree (a dangling symlink or a
+    forged file there neither hides a judged bundle nor makes the judge write through a link)."""
+    repo, snap, _, _ = mini_repo
+    task = snap["prs"][0]
+    dest = lfc.build_bundle(repo, task, tmp_path / "forged")
+    try:
+        target = tmp_path / "never-written"
+        (dest / ".git" / "foundry-judged").symlink_to(target)  # dangling link planted by the arm
+        assert not lfc.is_judged(dest)
+        assert lfc.judge(repo, task, dest)["verdict"] == "REFUSED"
+        assert lfc.is_judged(dest) and not target.exists()
+        with pytest.raises(lfc.CorpusError, match="already judged"):
+            lfc.judge(repo, task, dest)
+    finally:
+        lfc.remove_bundle(dest)
+    assert not lfc.is_judged(dest)
+    fresh = lfc.build_bundle(repo, task, tmp_path / "forged2")
+    try:
+        (fresh / ".git" / "foundry-judged").write_text("judged\n", encoding="utf-8")
+        assert not lfc.is_judged(fresh)  # a forged marker in the tree is not the judged state
+    finally:
+        lfc.remove_bundle(fresh)
+
+
+def test_a_symlink_under_the_product_source_prefixes_is_refused(mini_repo, tmp_path):
+    """PAT-108 N8: product code is imported by pytest; a link there could point anywhere."""
+    repo, snap, _, _ = mini_repo
+    task = snap["prs"][0]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "m.py").write_text(FIXED_MODULE, encoding="utf-8")
+    cases = {"file": lambda d: ((d / MOD).unlink(), (d / MOD).symlink_to(outside / "m.py")),
+             "directory": lambda d: (d / "plugins/foundry/tooling/foundry/sub").symlink_to(outside),
+             "parent": lambda d: (shutil.rmtree(d / "plugins/foundry/tooling"),
+                                  (d / "plugins/foundry/tooling").symlink_to(outside))}
+    for name, plant in cases.items():
+        dest = lfc.build_bundle(repo, task, tmp_path / f"link-{name}")
+        try:
+            plant(dest)
+            verdict = lfc.judge(repo, task, dest)
+        finally:
+            lfc.remove_bundle(dest)
+        assert verdict["verdict"] == "REFUSED", name
+        assert verdict["note"].startswith("symlink_in_product_source:"), (name, verdict["note"])
+        assert verdict["symlinks"], name
 
 
 def test_candidate_environments_are_ignored_but_product_dirs_are_not(mini_repo, tmp_path):

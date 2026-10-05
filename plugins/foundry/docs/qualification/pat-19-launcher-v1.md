@@ -12,6 +12,10 @@ ne charge aucun modèle (aucune commande `lms load`), n'appelle ni tracker ni r�
 rien. Ce ticket ne l'exerce qu'avec des parcours **factices** (mode à blanc) ; les exécutions réelles
 sont celles de PAT-109, avec la confirmation du mainteneur.
 
+Le protocole a été amendé sur place avant tout essai (candidat 2, trois téléchargements) ; le mainteneur
+l'a validé le 2026-10-05. La note datée en tête de [`pat-19-protocol-v1.md`](pat-19-protocol-v1.md) en
+fait l'historique ; aucun essai n'avait eu lieu et aucun fichier v2 n'existe.
+
 ## Fichiers
 
 | Fichier | Rôle |
@@ -35,8 +39,9 @@ python3 -m foundry.local_first_runner compare --campaign <cfg> --envelope <env> 
 python3 -m foundry.local_first_runner report --campaign <cfg> --results <results-<campagne>.jsonl>
 ```
 
-Codes de sortie : 0 terminé, 2 refus (pas d'enveloppe, enveloppe invalide, préflight refusé, pilote non
-vérifié, dossier de travail dans le checkout…), 3 plafond d'enveloppe atteint.
+Codes de sortie : 0 terminé, 2 refus ou erreur d'outil (pas d'enveloppe, enveloppe invalide, préflight
+refusé, pilote non vérifié, dossier de travail dans le checkout, tentative déjà consignée, état mêlant
+essai à blanc et réel, candidat inconnu, rapport sous une autre configuration…), 3 plafond d'enveloppe atteint.
 
 - `--work-root` est un dossier jetable **hors du checkout de développement** (refusé sinon). Chaque
   tentative y reçoit un bundle neuf (`attempt-NNNN-…/bundle`) et un dossier d'essai
@@ -45,9 +50,18 @@ vérifié, dossier de travail dans le checkout…), 3 plafond d'enveloppe attein
 - `screen` ne fait que des tentatives locales (candidat × tâche du tamis) et le juge : aucune
   exécution cloud n'est possible dans ce mode (`EnvelopeError`, testé). Il accepte plusieurs
   `--candidate` ; le préflight est refait pour chacun, donc le mainteneur charge le modèle suivant
-  entre deux candidats (le lanceur ne charge rien) et relance avec les candidats restants.
+  entre deux candidats (le lanceur ne charge rien) et relance avec les candidats restants. Le
+  préflight machine est refait avant **chaque tâche**.
+- **Pas de reprise** : le lanceur refuse de démarrer une tentative dont la clé (parcours, tâche, jeu,
+  candidat pour une tentative locale, segment, numéro) a déjà un enregistrement, et `report` refuse un
+  fichier qui en contient deux. Une campagne interrompue ne se rejoue pas dans le même état : il faut un
+  autre identifiant de campagne (donc une autre enveloppe) ou un autre dossier d'état. Choix assumé, plus
+  simple et plus sûr qu'une reprise par saut des tentatives terminées : un candidat rejoué ne peut pas
+  gagner par répétition (« une tentative locale », protocole).
 - `compare` joue chaque tâche de comparaison dans les parcours demandés, dans l'ordre. `N` est la
   tentative locale sous le harnais neutre sans validation cloud (coût : du temps machine seulement).
+  `--paths A,B` n'a pas besoin du modèle local : aucun préflight machine n'est lancé (seuls `C` et `N`
+  l'exigent, avant chaque tâche).
 - `--dry-run` n'accepte que des pilotes marqués `"fake": true`, utilise des faits machine
   canoniques (aucune commande lancée) et n'applique pas le bac à sable sauf avec `--sandbox`. Un
   vrai lancement refuse les pilotes `fake` et tout pilote sans `"verified": true`.
@@ -94,16 +108,24 @@ Refus : fichier absent ou invalide, schéma inconnu, identifiant non simple, dat
 autorisé, plafond manquant ou négatif. `screen` exige une enveloppe aussi (`cloud_executions` peut être
 0). Les plafonds sont des plafonds de **campagne** (cumulés dans le registre) :
 
-- exécutions cloud : une exécution est inscrite dans le registre **avant** de démarrer
-  (`cloud_started`, avec son identifiant de session) puis le plafond est vérifié ;
+- exécutions cloud : le plafond est vérifié, puis l'exécution est inscrite dans le registre
+  (`cloud_started`, avec son identifiant de session), puis elle démarre (ordre du code) ; la date
+  d'expiration de l'enveloppe est revérifiée avant **chaque** exécution cloud, pas seulement au chargement ;
 - tokens premium : somme des quatre compteurs facturables (entrée non mise en cache, entrée lue en
   cache, entrée écrite en cache, sortie) des exécutions réglées ; l'exécution en cours peut dépasser le
   plafond (le lanceur s'arrête ensuite) ; si les tokens d'une exécution sont inconnus, la campagne
-  s'arrête (`premium_tokens_unmeasurable`) : un plafond ne se vérifie pas sur une donnée inconnue ;
+  s'arrête (`premium_tokens_unmeasurable`) : un plafond ne se vérifie pas sur une donnée inconnue.
+  `settled` porte l'identifiant de session de son `cloud_started` ; un `cloud_started` sans `settled`
+  apparié (lanceur tué, interruption, exception) rend les tokens inconnus : aucune nouvelle exécution
+  cloud ne démarre, y compris après un redémarrage (jamais « 0 token » par défaut) ;
 - durée : somme des durées murales (locales et cloud) ; elle borne aussi le délai de chaque exécution.
 
-Le registre est `<state-dir>/ledger-<campagne>.jsonl`, en ajout seul (`session_started` avec le
-sha256 de l'enveloppe, `preflight`, `cloud_started`, `settled`, `stopped`).
+Le registre est `<state-dir>/ledger-<campagne>.jsonl`, en ajout seul (`session_started` avec les sha256 de
+l'enveloppe, de la configuration de campagne et du manifeste, `preflight`, `cloud_started`, `settled`,
+`stopped`). Chaque ligne du registre et chaque enregistrement de résultat porte `dry_run` ; un état qui
+contient des lignes de l'autre nature est refusé (jamais d'exécution à blanc comptée contre un plafond
+réel). Chaque enregistrement de résultat porte aussi `campaign_sha256`, `manifest_sha256` et
+`envelope_sha256` : le lanceur refuse de continuer dans un fichier écrit sous d'autres valeurs.
 
 ## Préflight (le lanceur ne charge aucun modèle)
 
@@ -132,7 +154,10 @@ Clés : `frozen_machine`, `server_process_pattern` (expression pour la mémoire 
 | `home`, `network` | `isolated`/`real`, `loopback`/`open` ; un pilote local est toujours `isolated` + `loopback` (refusé au chargement sinon) |
 | `env_allow`, `home_files`, `extra_write` | variables transmises en plus (jamais `FOUNDRY_*`, jeton, clé, secret, agent SSH), fichiers placés dans le HOME isolé, dossiers inscriptibles en plus |
 | `stream` | `{"format": "omp-json" \| "none", "speed_usage_keys": …}` |
-| `session_log` | `{"host": "claude", "projects_dir": "~/.claude/projects"}` (pilotes cloud) |
+| `session_log` | `{"host": "claude", "projects_dir": "~/.claude/projects", "layout_verified": false}` (pilotes cloud) : seul `<projects_dir>/*/<session>.jsonl` est lu ; tant que `layout_verified` n'est pas `true`, les tokens premium de l'exécution sont inconnus (`log_layout_unverified`) |
+
+Clés de la configuration : `isolation.deny_read_home` (listes `local` et `cloud` d'entrées du HOME réel à
+interdire en lecture, relatives, sans `..`) et `non_protocol_choices` (voir plus bas).
 
 Le pilote `local_harness` est la commande `omp` (18.4.10) éprouvée le 2026-10-05 ; le harnais neutre
 et les trois pilotes cloud (Claude Code en mode non interactif) sont déclarés `"verified": false`.
@@ -149,10 +174,21 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
 `machine` (`before`/`after` : `swap_used_mib`, `pressure_free_percent`, `server_rss_kib`), `unknown`
 (raison de chaque donnée absente). Une donnée absente est `null` avec sa raison, jamais 0.
 
+- **Provenance** : `dry_run`, `campaign_sha256` (sha256 du fichier de campagne), `manifest_sha256`,
+  `envelope_sha256` sur chaque enregistrement ; `report` les vérifie (une seule valeur par fichier, la
+  configuration passée à `--campaign` doit avoir le sha256 des résultats), refuse les tentatives en double
+  et les fichiers mêlant essai à blanc et réel, puis imprime `rules_applied` et `provenance`.
+- **Panne d'outil** : une `CorpusError`/`RunnerError` n'est jamais un verdict. Elle écrit un
+  enregistrement `status: tool_error` (avec `reason`, et le coût déjà engagé) avant l'arrêt
+  (`stopped`, raison `tool_error:…`, code de sortie 2). Une revue illisible est `review_unreadable` :
+  `accepted` nul et qualité `unavailable` (pas `fail`). Une tentative locale tronquée par le budget de
+  durée restant consigne la borne **effective** (`local.max_seconds`) et la borne nominale
+  (`local.nominal_max_seconds`).
 - **Tokens premium** : chaque exécution cloud reçoit un identifiant de session généré par le lanceur
   (`--session-id`) ; le journal de session de l'hôte est retrouvé par cet identifiant (jamais par
-  fenêtre de temps) et lu par `cost_attribution.read_host_log`. Journal absent, ambigu, illisible ou d'une
-  autre session : tous les compteurs de l'exécution sont inconnus. La classe de raisonnement que l'hôte ne
+  fenêtre de temps) et lu par `cost_attribution.read_host_log`. Journal absent, ambigu, illisible, d'une
+  autre session ou de disposition non vérifiée : tous les compteurs de l'exécution sont inconnus. Le
+  détail par modèle (`premium.by_model`) est consigné et repris par le rapport. La classe de raisonnement que l'hôte ne
   rapporte pas est inconnue. Rôles : `implementer`, `corrector`, `reviewer`.
 - **Étapes** : comptées dans le flux d'événements `omp` (`tool_execution_start`) ; inconnues pour un flux
   `none`. **Vitesses** de préremplissage et de génération : lues seulement si `speed_usage_keys` déclare
@@ -170,13 +206,22 @@ comparé (`pass`, `fail` ou `unavailable`) et ne promeut jamais (`"promotion": f
 
 - **tamis** : le candidat qui fait accepter le plus de tâches ; à égalité la durée totale la plus courte ;
   sous `min_accepted` (2) aucun candidat, « conserver le cloud » ; égalité de durée : non résolue ;
+  `selected` reste nul (`incomplete_screening`) tant que chaque candidat n'a pas un enregistrement pour
+  chaque tâche du tamis (une panne d'outil n'est pas un refus : elle rend le tamis incomplet) ;
 - **compatibilité** (C) : aucune tentative interrompue sur un signal extérieur et swap supplémentaire sous
   `extra_swap_gib_max` (10 Go) ; swap non mesuré : `unavailable` ;
-- **qualité** : toutes les tâches acceptées et pas plus de tours de revue au total que A ;
+- **qualité** : toutes les tâches acceptées et pas plus de tours de revue au total que A ; une tâche
+  dont le verdict est inconnu (revue illisible, panne d'outil, arrêt sur plafond) rend la qualité
+  `unavailable`, pas `fail` ;
 - **économie** : travail premium total inférieur d'au moins 25 % à A **et** durée totale au plus 2 fois A ;
-  `unavailable` si le travail premium d'un des deux parcours n'est pas mesurable ;
+  `unavailable` si le travail premium d'un des deux parcours n'est pas mesurable. Le travail premium est
+  la somme **non pondérée** des quatre classes de tokens facturables sur tous les modèles : c'est une
+  limite (un token d'un modèle économique pèse autant qu'un token premium), d'où le détail par modèle
+  (`economy_detail.premium_by_model`) nécessaire pour juger honnêtement le parcours B ;
 - décision : `retained` (recommandation B si B suffit, sinon C) seulement si les trois verdicts passent
-  sur le nombre de tâches prévu ; `keep_cloud` sur un échec ou un arrêt anticipé ; sinon `inconclusive`.
+  sur le nombre de tâches prévu ; `keep_cloud` sur un échec ou sur un arrêt anticipé **de règle**
+  (`fewer_than_min_local_successes`, `premium_c_not_below_a`) ; un arrêt sur plafond ou sur panne
+  d'outil laisse une campagne incomplète : `inconclusive`.
 
 Le rapport ne dit pas qu'un échantillon de 6 tâches est une preuve statistique générale : il ne l'est pas.
 
@@ -185,30 +230,85 @@ Le rapport ne dit pas qu'un échantillon de 6 tâches est une preuve statistique
 Appliqué à chaque pilote lancé par le lanceur (`execute_driver`) :
 
 - **Dépôt** : bundle PAT-107 (un commit racine, sans lien avec le dépôt de développement), hors du
-  checkout ; ni les tests protégés, ni le SHA fusionné, ni les seuils n'y figurent (testé).
-- **Bac à sable macOS** (`sandbox-exec`, profil généré, `sandbox_profile`) : écriture interdite
-  hors du bundle et du dossier d'essai (plus `extra_write` pour un pilote cloud), lecture interdite du
-  checkout de développement et du dossier d'état (registre, enveloppe, seuils), réseau limité à la
-  boucle locale pour un pilote local. Un vrai lancement exige `sandbox-exec` (refusé ailleurs).
+  checkout ; ni les tests protégés, ni le SHA fusionné, ni les seuils n'y figurent (testé). Le pied
+  d'énoncé est commité dans la base : `git diff HEAD` du relecteur ne montre que le travail du bras.
+- **Bac à sable macOS** (`sandbox-exec`, profil généré par `sandbox_profile` : `(allow default)` puis
+  refus) : écriture interdite hors du bundle et du dossier d'essai (plus `extra_write` pour un pilote
+  cloud) ; **lecture interdite** (liste explicite, `read_deny_list`) de : chaque checkout et worktree de ce
+  dépôt que `git worktree list` énumère, le dossier d'état, le dossier parent de chacun des fichiers
+  `--envelope`, `--campaign`, `--snapshot`, `--manifest` (à garder à part de `--work-root`, sinon le
+  lanceur refuse de générer le profil), et dans le HOME **réel** les entrées de
+  `isolation.deny_read_home` : pour un pilote local `.claude` (dont le cache de plugins qui contient les
+  tests fusionnés), `.codex`, `.config`, `.ssh`, `.gnupg`, `.aws`, `.netrc`, `Library/Keychains` ; pour un
+  pilote cloud la même liste sans `.claude` ni `.config` entier (identité OAuth, AGENTS.md R6), avec
+  `.config/foundry`. Réseau limité à la boucle locale pour un pilote local. Un vrai lancement exige
+  `sandbox-exec` (refusé ailleurs).
+  Ce n'est **pas** un refus par défaut du HOME avec liste d'autorisation (outil, bundle, dossier d'essai,
+  installation de l'interpréteur) : cette forme, préférable, n'est pas vérifiable sans lancer `omp`, ce que
+  ce ticket n'a pas le droit de faire ; la liste de refus est une coordonnée de configuration
+  (`isolation.deny_read_home`) que PAT-109 doit remplacer par la liste d'autorisation après test de fumée.
 - **Environnement** : liste blanche (`PATH`, `LANG`, `LC_ALL`), HOME et XDG isolés dans le dossier
   d'essai, aucune variable `FOUNDRY_*`, aucun jeton, aucun agent SSH ; un pilote cloud garde le vrai
   HOME (identité OAuth de Claude Code, AGENTS.md R6) et ne reçoit que ce que `env_allow` nomme ;
-  entrée standard fermée ; groupe de processus tué à la borne de durée ou d'étapes.
-- **Sondes de confinement** testées sous `sandbox-exec` (écriture hors dossier, lecture des seuils,
-  connexion non bouclée refusées par `EPERM`, boucle locale permise, variable canari absente) ; ignorées
-  explicitement avec leur raison là où `sandbox-exec` est indisponible (CI Linux), où le profil généré
-  et la liste blanche d'environnement restent testés.
+  entrée standard fermée.
+- **Interruption et durée** : le groupe de processus du bras est tué à la borne de durée ou d'étapes, et
+  aussi sur Ctrl-C, SIGTERM, SIGHUP ou toute exception du lanceur (`try/finally` ; SIGTERM et SIGHUP sont
+  convertis en `SystemExit` pendant l'exécution). Une exécution cloud interrompue est réglée dans le
+  registre avec des tokens inconnus. **Non imposé** : un enfant qui appelle `setsid` sort du groupe et
+  survit au `kill` ; seule parade, un contrôle de quiétude avant le jugement : le lanceur compare deux
+  empreintes (chemin, taille, mtime) du bundle à 0,2 s d'écart et refuse de juger (`tool_error`) si
+  elles diffèrent. Un enfant échappé qui ne fait rien ne se voit pas.
+- **Git sur un bundle** : toute commande git du lanceur sur un bundle neutralise la configuration
+  (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` vers `/dev/null`, `core.fsmonitor=false`,
+  `core.hooksPath=/dev/null`, `protocol.file.allow=never`, `core.attributesFile=/dev/null`, `--no-ext-diff`,
+  `--no-textconv`) et refuse un bundle dont `.git` n'est plus un dossier simple, dont `.git/config`,
+  `.git/info/attributes` ou un `.gitattributes` a changé depuis le commit racine. Le patch est pris contre
+  le SHA du commit racine enregistré à la construction (un bras qui commite donne son patch) et les
+  fichiers nouveaux y figurent ; il est appliqué avec `--index` pour la revue.
+- **Juge** (`local_first_corpus`) : l'état « jugé » est tenu par le lanceur (clé : chemin du bundle),
+  jamais dans l'arbre du candidat ; un lien symbolique sous les préfixes de code produit (ou l'un de leurs
+  parents) donne un `REFUSED` (`symlink_in_product_source`).
+- **Sondes de confinement** testées sous `sandbox-exec` : écriture hors dossier, lecture des seuils,
+  lecture d'un fichier canari sous un faux `~/.claude/plugins`, `~/.ssh`, `~/.config`, `~/.aws` et dans le
+  dossier de l'enveloppe, connexion non bouclée refusées par `EPERM`, boucle locale permise, variable
+  canari absente. Là où `sandbox-exec` est indisponible (CI Linux) ou déjà confiné, les sondes sont
+  **ignorées** avec leur raison (`pytest -rs`) ; le profil généré, la liste de refus et la liste blanche
+  d'environnement restent testés. Chaque exécution de la suite indique donc explicitement « passées » ou
+  « ignorées » : à reporter dans la PR pour la machine qui a fait tourner les tests.
 
-Ce que l'isolement **n'impose pas** : le candidat lit le reste du disque (le profil ne refuse que les
-chemins nommés), un pilote cloud a le réseau ouvert et l'écriture dans `~/.claude`, le binaire du
-harnais et sa configuration réelle ne sont pas vérifiés ici (PAT-109), et le code produit reste
-importé dans le processus de test (limite du juge). Le suivi du tracker et des secrets repose sur la
-liste blanche d'environnement et sur le refus de lecture, pas sur une preuve d'absence.
+Ce que l'isolement **n'impose pas** : le candidat lit le reste du disque (liste de refus, pas liste
+d'autorisation : tout chemin non nommé est lisible, par exemple une copie des tests fusionnés ailleurs que
+dans le cache de plugins), un pilote cloud a le réseau ouvert, l'écriture dans `~/.claude` et la lecture de
+`~/.claude` (donc du cache de plugins et des tests fusionnés : biais possible sur les bras cloud, à
+traiter par PAT-109), le binaire du harnais et sa configuration réelle ne sont pas vérifiés ici (PAT-109),
+un enfant sorti du groupe par `setsid`, et le code produit reste importé dans le processus de test (limite
+du juge). Le suivi du tracker et des secrets repose sur la liste blanche d'environnement et sur les
+refus de lecture ci-dessus, pas sur une preuve d'absence.
+
+## Choix du lanceur qui ne sont pas des coordonnées du protocole
+
+Étiquetés `not_a_protocol_coordinate: true` avec leur raison dans `non_protocol_choices` de la
+configuration de campagne : `min_free_disk_gib` (30, marge de sécurité) ; le temps compté dans le verdict
+d'économie (`time_ratio_max`) ; le swap supplémentaire mesuré comme le maximum, sur les tentatives locales,
+de (après − avant) ; le « travail premium » défini comme la somme non pondérée des quatre classes de
+tokens sur tous les modèles (limite : voir Rapport). `bounds.cloud_max_seconds`, `max_correction_rounds`,
+`isolation` et le pied d'énoncé sont aussi des choix du lanceur. Ils ne sont pas gelés par le protocole.
+
+## Préconditions pour PAT-109
+
+Avant toute exécution réelle : tester et épingler chaque pilote non vérifié ; **vérifier la disposition des
+journaux de session** de l'hôte cloud (les transcriptions de sous-agents sont-elles dans d'autres
+fichiers ? tant que ce n'est pas établi, `session_log.layout_verified` reste `false` et les tokens premium
+sont inconnus, donc aucune campagne cloud plafonnée ne peut avancer au-delà de la première exécution) ;
+remplacer la liste de refus de lecture par une liste d'autorisation après test de fumée de `omp` ;
+décider du biais des bras cloud qui lisent `~/.claude` ; consigner les empreintes des poids.
 
 ## Statut documentaire (AGENTS.md R5)
 
-Artefacts documentés ici : la surface CLI de `foundry.local_first_runner`, la configuration de campagne
-(`pat-19-campaign-v1.json`), le format d'enveloppe et de registre, le schéma des résultats, les règles du
-rapport et le périmètre de l'isolement. Aucune constante publique, option de `foundry_cli.py`, clé de
+Artefacts documentés ici : la surface CLI de `foundry.local_first_runner` (dont l'absence de reprise et
+le refus d'une configuration différente à `report`), la configuration de campagne
+(`pat-19-campaign-v1.json` : `isolation`, `non_protocol_choices`, `session_log.layout_verified`), le format
+d'enveloppe et de registre (`dry_run`, empreintes, `settled` apparié), le schéma des résultats (`tool_error`,
+`premium.by_model`), les règles du rapport et le périmètre de l'isolement. Aucune constante publique, option de `foundry_cli.py`, clé de
 configuration produit ni table de routage n'a changé. L'application mécanique de R5 reste celle de
 FOUNDRY-123.

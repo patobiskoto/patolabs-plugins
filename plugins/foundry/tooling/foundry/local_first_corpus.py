@@ -51,7 +51,10 @@ TRIPWIRE_SUFFIXES = (".pth",)
 # tripwire and by the bytecode purge, never on the judged interpreter path. Only when absent from
 # the base tree (a product directory of that name is still inspected).
 ENV_DIR_NAMES = frozenset({".venv", "venv", "node_modules"})
-JUDGED_MARKER = "foundry-judged"  # file inside the bundle's .git: a bundle is judged once
+# A bundle is judged once. The judged state lives in the launcher process (keyed by the bundle's
+# resolved path), never inside the candidate's tree, which the candidate could forge or replace by a
+# dangling symlink (PAT-108 N8).
+_JUDGED: set[Path] = set()
 BUNDLE_AUTHOR = {"GIT_AUTHOR_NAME": "Corpus Bundle", "GIT_AUTHOR_EMAIL": "corpus@example.invalid",
                  "GIT_COMMITTER_NAME": "Corpus Bundle", "GIT_COMMITTER_EMAIL": "corpus@example.invalid",
                  "GIT_AUTHOR_DATE": "2000-01-01T00:00:00+0000",
@@ -528,6 +531,7 @@ def remove_bundle(dest: Path) -> None:
         raise CorpusError(f"refusing to delete a directory this run did not create: {dest}")
     shutil.rmtree(dest, ignore_errors=True)
     _CREATED_BUNDLES.discard(dest)
+    _JUDGED.discard(dest)
 
 
 def apply_solution(repo: Path, task: Mapping[str, Any], dest: Path) -> None:
@@ -617,17 +621,24 @@ def _candidate_changes(repo: Path, task: Mapping[str, Any], candidate: Path,
     base = _base_tree(repo, task)
     seen: set[str] = set()
     changed: list[str] = []
-    for root, _dirs, files in _walk_candidate(candidate, base):
+    symlinks: list[str] = []
+    for root, dirs, files in _walk_candidate(candidate, base):
+        for d in dirs:  # os.walk does not follow them: a directory link is seen here only
+            rel = (root / d).relative_to(candidate).as_posix()
+            if (root / d).is_symlink() and _on_product_path(rel):
+                symlinks.append(rel)
         for name in files:
             full = root / name
             rel = full.relative_to(candidate).as_posix()
             seen.add(rel)
             if rel in exempt or name.endswith(".pyc") or rel == "TASK.md":
                 continue
-            if rel.startswith(SOURCE_PREFIXES) and not _is_tripwire(rel):
-                continue
             if full.is_symlink():
                 changed.append(rel)
+                if _on_product_path(rel):
+                    symlinks.append(rel)
+                continue
+            if rel.startswith(SOURCE_PREFIXES) and not _is_tripwire(rel):
                 continue
             data = full.read_bytes()
             oid = hashlib.new(algo, b"blob %d\0" % len(data) + data).hexdigest()
@@ -636,7 +647,13 @@ def _candidate_changes(repo: Path, task: Mapping[str, Any], candidate: Path,
     deleted = [p for p in base if p not in seen and _is_tripwire(p) and p not in exempt
                and not _has_symlink(candidate, p)]
     return {"tripwire": sorted(p for p in changed + deleted if _is_tripwire(p)),
-            "outside_product": sorted(p for p in changed if not p.startswith(SOURCE_PREFIXES))}
+            "outside_product": sorted(p for p in changed if not p.startswith(SOURCE_PREFIXES)),
+            "symlinks": sorted(symlinks)}
+
+
+def _on_product_path(rel: str) -> bool:
+    """Inside a product source prefix, or one of its parents (a link there redirects the prefix)."""
+    return rel.startswith(SOURCE_PREFIXES) or any(prefix.startswith(rel + "/") for prefix in SOURCE_PREFIXES)
 
 
 def inside_developer_checkout(repo: Path, path: Path) -> bool:
@@ -645,7 +662,7 @@ def inside_developer_checkout(repo: Path, path: Path) -> bool:
 
 
 def is_judged(candidate: Path) -> bool:
-    return (candidate / ".git" / JUDGED_MARKER).exists()
+    return candidate.resolve() in _JUDGED
 
 
 def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any]:
@@ -669,7 +686,7 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any
                 selected.extend(f"{entry['path'][len(PLUGIN_PREFIX):]}::{n}" for n in entry["nodes"])
             else:
                 selected.append(entry["path"][len(PLUGIN_PREFIX):])
-    extra: dict[str, Any] = {"tripwire": [], "changed_outside_product": []}
+    extra: dict[str, Any] = {"tripwire": [], "changed_outside_product": [], "symlinks": []}
     if not selected:
         return _verdict("no_selected_tests", selected, 0, 0, 0, 0, None, extra)
     if not candidate.is_dir():
@@ -684,11 +701,14 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any
         raise CorpusError(f"bundle was already judged; use a fresh bundle: {candidate}")
     changes = _candidate_changes(repo, task, candidate, {e["path"] for e in entries})
     extra = {"tripwire": changes["tripwire"],
-             "changed_outside_product": changes["outside_product"]}
+             "changed_outside_product": changes["outside_product"], "symlinks": changes["symlinks"]}
     if changes["tripwire"]:
         return _verdict("harness_files_changed:" + ",".join(changes["tripwire"]), selected,
                         0, 0, 0, 0, None, extra)
-    (candidate / ".git" / JUDGED_MARKER).write_text("judged\n", encoding="utf-8")
+    if changes["symlinks"]:  # product code is imported by pytest: a link could point anywhere
+        return _verdict("symlink_in_product_source:" + ",".join(changes["symlinks"]), selected,
+                        0, 0, 0, 0, None, extra)
+    _JUDGED.add(candidate)
     purge_bytecode(candidate, _base_tree(repo, task))
     for entry in entries:
         content = _git(repo, "show", f"{task['head_sha']}:{entry['path']}", text=False)

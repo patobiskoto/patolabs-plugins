@@ -10,9 +10,12 @@ import errno
 import hashlib
 import json
 import os
+import shutil
+import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -102,7 +105,8 @@ def _arm(role, scripts, plan, projects, extra=None):
             "fake": True, "verified": False, "argv": argv,
             "home": "real" if cloud else "isolated", "network": "open" if cloud else "loopback",
             "env_allow": [], "stream": {"format": "none" if cloud else "omp-json"},
-            **({"session_log": {"host": "claude", "projects_dir": str(projects)}} if cloud else {}),
+            **({"session_log": {"host": "claude", "projects_dir": str(projects),
+                                         "layout_verified": True}} if cloud else {}),
             **(extra or {})}
 
 
@@ -148,7 +152,8 @@ def make_runner(tmp_path, mode, plan, *, repo_bundle=None, caps=None, run=None, 
         work_root=tmp_path / "work", mode=mode, dry_run=True, sandbox=False,
         run=run or (lambda argv: None),
         preflight_run=lambda cid: lfr.dry_run_facts(campaign, campaign["candidates"][cid]["model"]),
-        disk_free_gib=lambda: 500.0, host_env=host_env or dict(os.environ))
+        disk_free_gib=lambda: 500.0, host_env=host_env or dict(os.environ), today=lambda: TODAY)
+    runner.quiescent_wait = 0.05
     task = snap["prs"][0]
     return runner, campaign, plan_path, [task, {**task, "pr": 2, "issue": "PAT-2"}]
 
@@ -217,9 +222,11 @@ def test_cloud_execution_cap_stops_the_campaign_and_is_recorded_before_each_exec
                if json.loads(line)["kind"] == "cloud_started"]
     assert len(started) == 3  # implementer A, reviewer A, implementer B: the 4th is never started
     assert counts(plan) == {"implementer": 1, "reviewer": 1, "economy": 1}
-    assert results(runner)[-1] == {"schema": lfr.RESULT_SCHEMA, "campaign_id": "test-campaign",
-                                   "mode": "compare", "record_type": "stop",
-                                   "reason": "cap_reached:cloud_executions"}
+    stop = results(runner)[-1]
+    assert {k: stop[k] for k in ("schema", "campaign_id", "mode", "record_type", "reason", "dry_run")} == {
+        "schema": lfr.RESULT_SCHEMA, "campaign_id": "test-campaign", "mode": "compare",
+        "record_type": "stop", "reason": "cap_reached:cloud_executions", "dry_run": True}
+    assert set(lfr.PROVENANCE_KEYS) <= set(stop)
     assert [r["path"] for r in out] == ["A"]
 
 
@@ -541,7 +548,10 @@ def test_premium_tokens_are_attached_by_session_id_and_unknown_is_never_zero(tmp
              "output_tokens": 3}
     _log(projects, "sess-1", [("sess-1", usage), ("sess-1", {**usage, "thinking_tokens": 1})])
     _log(projects, "sess-2", [("sess-2", {**usage, "input_tokens": 999})], folder="other")
-    cfg = {"host": "claude", "projects_dir": str(projects)}
+    cfg = {"host": "claude", "projects_dir": str(projects), "layout_verified": True}
+    assert lfr.premium_tokens("sess-1", {**cfg, "layout_verified": False}) == (None, "log_layout_unverified")
+    assert lfr.premium_tokens("sess-1", {"host": "claude", "projects_dir": str(projects)})[1] \
+        == "log_layout_unverified"  # the layout of a driver is unknown until it is declared verified
     tokens, reason = lfr.premium_tokens("sess-1", cfg)
     assert reason is None and tokens["input_tokens"] == 10 and tokens["output_tokens"] == 6
     assert tokens["reasoning_output_tokens"] is None  # one request does not report it: unknown, not 0
@@ -590,6 +600,7 @@ def _rec(path, pr, *, accepted, rounds=None, premium=100, wall=10.0, segment="cl
 def _campaign(tasks=2):
     campaign = json.loads((QUALIFICATION / "pat-19-campaign-v1.json").read_text("utf-8"))
     campaign["rules"]["comparison"]["tasks"] = tasks
+    campaign["rules"]["screening"]["tasks"] = 2
     return campaign
 
 
@@ -900,3 +911,534 @@ def test_cli_preflight_dry_run_prints_facts(tmp_path, capsys):
     assert lfr.main(["preflight", "--campaign", str(tmp_path / "c.json"), "--dry-run",
                      "--candidate", "cand-a"]) == 0
     assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+# ============================================================== PAT-108 review round 1 (B1, N1-N11)
+
+SLEEPER = r"""
+import os, subprocess, sys, time
+child = subprocess.Popen(["sleep", "60"])
+open(sys.argv[1], "w").write(f"{os.getpid()} {child.pid}")
+time.sleep(60)
+"""
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _interrupt_when_ready(pids, sig):
+    def go():
+        for _ in range(200):
+            if pids.exists() and len(pids.read_text("utf-8").split()) == 2:
+                break
+            time.sleep(0.05)
+        os.kill(os.getpid(), sig)
+
+    thread = threading.Thread(target=go, daemon=True)
+    thread.start()
+    return thread
+
+
+@pytest.mark.parametrize("sig,expected", [(signal.SIGTERM, SystemExit), (signal.SIGINT, KeyboardInterrupt)])
+def test_B1_an_interrupted_execution_kills_the_whole_process_group(tmp_path, sig, expected):
+    script, pids = tmp_path / "sleeper.py", tmp_path / "pids"
+    script.write_text(SLEEPER, encoding="utf-8")
+    driver = {"kind": "cloud_implementer", "home": "real", "network": "open",
+              "argv": [sys.executable, str(script), str(pids)]}
+    _interrupt_when_ready(pids, sig)
+    with pytest.raises(expected):
+        lfr.execute_driver(driver, {}, workdir=tmp_path, scratch=tmp_path / "scratch",
+                           stream_log=tmp_path / "stream.log", max_seconds=60, max_steps=None,
+                           sandbox=False, deny_read=[], host_env=dict(os.environ))
+    survivors = []
+    for pid in map(int, pids.read_text("utf-8").split()):
+        for _ in range(60):
+            if not _alive(pid):
+                break
+            time.sleep(0.1)
+        else:
+            survivors.append(pid)
+    for pid in survivors:  # never leave a stray process behind if the assertion below fails
+        os.kill(pid, signal.SIGKILL)
+    assert not survivors, "the arm or its child outlived the interrupted call"
+    assert signal.getsignal(signal.SIGTERM) is not None  # the handler was restored
+
+
+def test_B1_an_interrupted_cloud_execution_is_settled_with_unknown_tokens(tmp_path, monkeypatch):
+    runner, _, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+
+    def interrupted(*a, **kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(lfr, "execute_driver", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        runner.cloud_path(tasks[0], "A", "comparison")
+    totals = runner.ledger.totals()
+    assert totals["cloud_started"] == 1 and totals["unsettled_sessions"] == []
+    assert totals["tokens_unmeasurable"] is True  # unknown, never counted as 0
+    with pytest.raises(lfr.CapReached, match="premium_tokens_unmeasurable"):
+        runner.ledger.check(cloud=True)
+
+
+def test_B1_a_resume_on_an_orphan_cloud_started_refuses_a_new_cloud_execution(tmp_path):
+    """A launcher killed between ``cloud_started`` and ``settled`` leaves an execution of unknown
+    cost: the relaunched campaign must not count it as 0 tokens."""
+    runner, _, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    runner.ledger.append("cloud_started", role="implementer", session_id="orphan-1")
+    again, _, _, _ = make_runner(_sub(tmp_path, "second"), "compare", FIX_ALL)  # fresh state: control
+    assert again.ledger.totals()["tokens_unmeasurable"] is False
+    resumed = lfr.Ledger(runner.state_dir, lfr.load_envelope(write_envelope(tmp_path), "compare", TODAY),
+                         "compare", dry_run=True)
+    assert resumed.totals()["unsettled_sessions"] == ["orphan-1"] and resumed.totals()["tokens_unmeasurable"]
+    with pytest.raises(lfr.CapReached, match="premium_tokens_unmeasurable"):
+        resumed.reserve_cloud("implementer", "new")
+    runner.compare(tasks, "cand-a", ("A",))
+    assert counts(plan) == {} and results(runner)[-1]["reason"] == "cap_reached:premium_tokens_unmeasurable"
+    resumed.append("settled", cloud=True, seconds=1, premium_tokens=5, session_id="orphan-1")  # paired
+    assert resumed.totals()["unsettled_sessions"] == [] and not resumed.totals()["tokens_unmeasurable"]
+
+
+# ------------------------------------------------------------------------------------- N1
+
+def _fake_home(tmp_path):
+    home = tmp_path / "home"
+    for rel in (".claude/plugins/cache/foundry/1.0.0/tests", ".ssh", ".config/foundry", ".aws"):
+        (home / rel).mkdir(parents=True)
+    (home / ".claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py").write_text("canary")
+    (home / ".ssh/id_ed25519").write_text("canary")
+    (home / ".config/foundry/config.json").write_text("canary")
+    (home / ".aws/credentials").write_text("canary")
+    return home
+
+
+def test_N1_the_read_deny_list_covers_home_configuration_other_worktrees_and_launcher_inputs(tmp_path):
+    repo, _, _, _ = _make_repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", str(tmp_path / "other-wt")],
+                   check=True, capture_output=True)
+    home, inputs = _fake_home(tmp_path), tmp_path / "inputs"
+    inputs.mkdir()
+    envelope = inputs / "envelope.json"
+    envelope.write_text("{}")
+    kwargs = dict(repo=repo, home=home, state_dir=tmp_path / "state", input_paths=[envelope])
+    local = {os.path.realpath(p) for p in lfr.read_deny_list(kind="local_harness", **kwargs)}
+    for expected in (home / ".claude", home / ".codex", home / ".config", home / ".ssh", home / ".gnupg",
+                     home / ".aws", home / ".netrc", home / "Library/Keychains", repo, tmp_path / "other-wt",
+                     tmp_path / "state", inputs):
+        assert os.path.realpath(expected) in local, expected
+    cloud = {os.path.realpath(p) for p in lfr.read_deny_list(kind="cloud_implementer", **kwargs)}
+    assert os.path.realpath(home / ".claude") not in cloud  # OAuth identity (AGENTS.md R6)
+    assert os.path.realpath(home / ".ssh") in cloud and os.path.realpath(home / ".config/foundry") in cloud
+    custom = lfr.read_deny_list(kind="local_harness", isolation={"local": [".only"], "cloud": []}, **kwargs)
+    assert os.path.realpath(home / ".only") in {os.path.realpath(p) for p in custom}
+    assert os.path.realpath(home / ".ssh") not in {os.path.realpath(p) for p in custom}
+
+
+def test_N1_a_writable_root_inside_a_denied_read_path_is_refused(tmp_path):
+    with pytest.raises(lfr.RunnerError, match="read-denied"):
+        lfr.sandbox_profile(writable=[tmp_path / "inputs" / "work"], deny_read=[tmp_path / "inputs"],
+                            network="loopback")
+
+
+def test_N1_the_campaign_config_declares_the_home_deny_list_and_rejects_a_bad_one(tmp_path):
+    campaign = lfr.load_campaign(QUALIFICATION / "pat-19-campaign-v1.json")
+    assert campaign["isolation"]["deny_read_home"]["local"] == lfr.DEFAULT_HOME_DENY["local"]
+    assert campaign["isolation"]["deny_read_home"]["cloud"] == lfr.DEFAULT_HOME_DENY["cloud"]
+    for bad in ({"local": ["/abs"], "cloud": []}, {"local": ["../x"], "cloud": []}, {"local": []}):
+        data = json.loads(json.dumps(campaign))
+        data["isolation"]["deny_read_home"] = bad
+        path = tmp_path / "c.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(lfr.RunnerError, match="deny_read_home"):
+            lfr.load_campaign(path)
+
+
+READ_PROBE = r"""
+import errno, json, os, sys
+out = {}
+for name, path in zip(sys.argv[1::2], sys.argv[2::2]):
+    try:
+        open(path).read(); out[name] = "ok"
+    except OSError as exc:
+        out[name] = errno.errorcode.get(exc.errno, str(exc.errno))
+print(json.dumps(out))
+"""
+
+
+def test_N1_a_local_candidate_cannot_read_plugin_cache_ssh_config_or_launcher_inputs(tmp_path):
+    if not lfr.sandbox_available():
+        pytest.skip("sandbox-exec is macOS only: read-denial probes cannot run on this platform "
+                    "(the deny list and the profile are unit-tested above)")
+    if not _sandbox_works(tmp_path):
+        pytest.skip("sandbox-exec cannot be applied here (already inside a sandbox)")
+    repo, _, _, _ = _make_repo(tmp_path)
+    home, inputs, boxed = _fake_home(tmp_path), tmp_path / "inputs", tmp_path / "boxed"
+    inputs.mkdir()
+    boxed.mkdir()
+    envelope = inputs / "envelope.json"
+    envelope.write_text("canary")
+    bundle = boxed / "bundle"
+    bundle.mkdir()
+    control = bundle / "control.txt"
+    control.write_text("fine")
+    targets = {"plugin_cache": home / ".claude/plugins/cache/foundry/1.0.0/tests/test_linear_tracker.py",
+               "ssh": home / ".ssh/id_ed25519", "config": home / ".config/foundry/config.json",
+               "aws": home / ".aws/credentials", "envelope": envelope, "control": control}
+    script = tmp_path / "read_probe.py"
+    script.write_text(READ_PROBE, encoding="utf-8")
+    argv = [sys.executable, str(script)] + [x for k, v in targets.items() for x in (k, str(v))]
+    driver = {"kind": "local_harness", "argv": argv}
+    deny = lfr.read_deny_list(repo=repo, home=home, state_dir=tmp_path / "state", input_paths=[envelope],
+                              kind="local_harness")
+    execution = lfr.execute_driver(driver, {}, workdir=bundle, scratch=boxed / "scratch",
+                                   stream_log=tmp_path / "stream.log", max_seconds=60, max_steps=None,
+                                   sandbox=True, deny_read=deny, host_env=dict(os.environ))
+    assert execution["exit_code"] == 0, execution
+    probes = json.loads((tmp_path / "stream.log").read_text("utf-8").splitlines()[-1])
+    assert probes == {"plugin_cache": "EPERM", "ssh": "EPERM", "config": "EPERM", "aws": "EPERM",
+                      "envelope": "EPERM", "control": "ok"}
+
+
+# ------------------------------------------------------------------------------------- N2
+
+def test_N2_a_candidate_that_commits_or_adds_a_file_still_yields_a_reviewable_patch(tmp_path):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL)
+    bundle, attempt = runner._bundle(tasks[0], "commit")
+    (bundle / lfc_mod()).write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (bundle / "plugins/foundry/tooling/foundry/new_mod.py").write_text("X = 1\n", encoding="utf-8")
+    lfr._git_in(bundle, "add", "-A")
+    lfr._git_in(bundle, "commit", "-q", "-m", "the candidate committed its work")
+    patch = runner._patch_of(bundle)
+    runner._discard(bundle, attempt)
+    assert b"new_mod.py" in patch and b"return a + b" in patch  # not an empty patch against HEAD
+    review, review_attempt = runner._bundle(tasks[0], "review", patch)
+    changed = lfr._git_in(review, "diff", "HEAD", "--name-only").decode().split()
+    runner._discard(review, review_attempt)
+    assert sorted(changed) == ["plugins/foundry/tooling/foundry/m.py",
+                               "plugins/foundry/tooling/foundry/new_mod.py"]  # new file visible too
+
+
+def lfc_mod():
+    return "plugins/foundry/tooling/foundry/m.py"
+
+
+def test_N2_a_failed_patch_leaves_no_bundle_on_disk(tmp_path):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL)
+    with pytest.raises(lfr.RunnerError, match="git apply failed"):
+        runner._bundle(tasks[0], "bad", b"this is not a patch\n")
+    assert not list((tmp_path / "work").iterdir()) and not runner.guards and not runner.handed
+
+
+# ------------------------------------------------------------------------------------- N3
+
+def _rerun_env(tmp_path):
+    return _make_repo(tmp_path)
+
+
+def test_N3_a_replayed_attempt_is_refused_and_a_duplicate_record_never_counts(tmp_path):
+    first = _make_repo(tmp_path)
+    runner, _, plan, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    runner.screen(tasks[:1], ["cand-a"])
+    assert counts(plan) == {"local": 1}
+    again, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    with pytest.raises(lfr.RunnerError, match="already recorded"):
+        again.screen(tasks[:1], ["cand-a"])
+    assert counts(plan) == {"local": 1}  # the replayed candidate never ran
+    assert results(again)[-1]["reason"].startswith("tool_error:")
+    dup = [json.loads(line) for line in again.results_path.read_text("utf-8").splitlines()][0]
+    with pytest.raises(lfr.RunnerError, match="duplicated attempts"):
+        lfr.report(_campaign(), [dup, dup])
+
+
+def test_N3_the_selection_waits_for_every_candidate_to_have_every_screening_task():
+    def s(cand, pr, ok):
+        return dict(_rec("S", pr, accepted=ok, segment="local", task_set="screening",
+                         local={"candidate": cand}, outcome="accepted" if ok else "refused"))
+
+    partial = lfc_report([s("a", 1, True), s("a", 2, True), s("b", 1, True)])
+    assert partial["selected"] is None and partial["complete"] is False
+    assert partial["reason"] == "incomplete_screening"
+    done = lfc_report([s("a", 1, True), s("a", 2, True), s("b", 1, True), s("b", 2, False)])
+    assert done["complete"] and done["selected"] == "a"
+
+
+def lfc_report(recs):
+    return lfr.report(_campaign(), recs)["screening"]
+
+
+# ------------------------------------------------------------------------------------- N4
+
+def test_N4_records_carry_the_config_digests_and_the_rules_cannot_change_after_the_fact(tmp_path):
+    first = _make_repo(tmp_path)
+    runner, campaign, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    rec = runner.screen(tasks[:1], ["cand-a"])[0]
+    envelope_sha = hashlib.sha256((tmp_path / "envelope.json").read_bytes()).hexdigest()
+    assert rec["envelope_sha256"] == envelope_sha and rec["campaign_sha256"] == lfr.config_digest(campaign)
+    started = json.loads(runner.ledger.path.read_text("utf-8").splitlines()[0])
+    assert started["kind"] == "session_started" and started["campaign_sha256"] == rec["campaign_sha256"]
+    rep = lfr.report(campaign, results(runner), campaign_sha256=rec["campaign_sha256"])
+    assert rep["rules_applied"] == campaign["rules"]  # the applied rules are printed
+    assert rep["provenance"]["envelope_sha256"] == envelope_sha
+    with pytest.raises(lfr.RunnerError, match="campaign_sha256 mismatch"):
+        lfr.report(campaign, results(runner), campaign_sha256="0" * 64)
+    # results of two campaign configs never share a file
+    loosened, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    mixed = results(loosened) + [dict(results(loosened)[0], campaign_sha256="f" * 64)]
+    with pytest.raises(lfr.RunnerError, match="several campaign_sha256"):
+        lfr.report(campaign, mixed)
+    changed = json.loads(json.dumps(campaign))
+    changed["rules"]["screening"]["min_accepted"] = 1  # a rule edited after the first record
+    envelope = lfr.load_envelope(write_envelope(tmp_path), "screen", TODAY)
+    with pytest.raises(lfr.RunnerError, match="another campaign_sha256"):
+        lfr.Runner(repo=first[0], campaign=changed, envelope=envelope, state_dir=tmp_path / "state",
+                   work_root=tmp_path / "work", mode="screen", dry_run=True, sandbox=False)
+
+
+def test_N4_the_cli_report_refuses_another_campaign_file_and_prints_the_rules(tmp_path, capsys):
+    repo, snap, _, _ = _make_repo(tmp_path)
+    campaign, _ = fake_campaign(tmp_path, FIX_ALL)
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps(campaign), encoding="utf-8")
+    (tmp_path / "snap.json").write_text(json.dumps(snap), encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(json.dumps({"screening": [{"pr": 1}], "comparison": [{"pr": 1}]}),
+                                            encoding="utf-8")
+    envelope = write_envelope(tmp_path, cloud_executions=0)
+    assert lfr.main(["screen", "--campaign", str(cfg), "--dry-run", "--envelope", str(envelope),
+                     "--state-dir", str(tmp_path / "state"), "--work-root", str(tmp_path / "work"),
+                     "--repo", str(repo), "--snapshot", str(tmp_path / "snap.json"),
+                     "--manifest", str(tmp_path / "manifest.json"), "--candidate", "cand-a"],
+                    today=TODAY) == 0
+    path = tmp_path / "state" / "results-test-campaign.jsonl"
+    assert lfr.main(["report", "--campaign", str(cfg), "--results", str(path)]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["rules_applied"]["screening"]["min_accepted"] == 2 and printed["dry_run"] is True
+    campaign["rules"]["screening"]["min_accepted"] = 0
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps(campaign), encoding="utf-8")
+    assert lfr.main(["report", "--campaign", str(other), "--results", str(path)]) == 2
+    assert "campaign_sha256 mismatch" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------------------------- N5
+
+def test_N5_dry_run_and_real_records_never_share_a_state_directory(tmp_path):
+    first = _make_repo(tmp_path)
+    runner, campaign, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, repo_bundle=first)
+    rec = runner.screen(tasks[:1], ["cand-a"])[0]
+    assert rec["dry_run"] is True
+    assert all(json.loads(x)["dry_run"] is True for x in runner.ledger.path.read_text("utf-8").splitlines())
+    envelope = lfr.load_envelope(write_envelope(tmp_path), "screen", TODAY)
+    with pytest.raises(lfr.RunnerError, match="mix dry-run and real"):
+        lfr.Runner(repo=first[0], campaign=campaign, envelope=envelope, state_dir=tmp_path / "state",
+                   work_root=tmp_path / "work", mode="screen", dry_run=False, sandbox=True)
+    with pytest.raises(lfr.RunnerError, match="mix dry-run and real"):
+        lfr.Ledger(tmp_path / "state", envelope, "screen", dry_run=False)
+    with pytest.raises(lfr.RunnerError, match="mix dry-run and real"):
+        lfr.report(campaign, [rec, dict(rec, dry_run=False, attempt=7)])
+    # a dry-run cloud_started never counts against a real cap
+    ledger = lfr.Ledger(tmp_path / "other", envelope, "compare", dry_run=True)
+    ledger.append("cloud_started", role="x", session_id="s")
+    real = lfr.Ledger.__new__(lfr.Ledger)
+    real.path, real.dry_run = ledger.path, False
+    assert real.totals()["cloud_started"] == 0
+
+
+# ------------------------------------------------------------------------------------- N6
+
+def test_N6_an_unreadable_review_is_unknown_not_a_failed_task(tmp_path):
+    plan = {**FIX_ALL, "reviewer": ["PASS", "garbage"]}
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare", plan)
+    out = runner.compare(tasks[:1], "cand-a", ("A", "C"))
+    unreadable = next(r for r in out if r["path"] == "C" and r["segment"] == "local")
+    assert unreadable["outcome"] == "review_unreadable" and unreadable["accepted"] is None
+    assert unreadable["unknown"]["review"] == "review_unreadable"
+    campaign["rules"]["comparison"]["tasks"] = 1
+    arm = lfr.report(campaign, results(runner))["comparison"]["arms"]["C"]
+    assert arm["quality"] == "unavailable"  # not "fail"
+
+
+def test_N6_a_tool_error_after_a_paid_execution_is_recorded_before_the_campaign_stops(tmp_path, monkeypatch):
+    runner, _, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+
+    def broken(*a, **kw):
+        raise lfc.CorpusError("judge tool failure")
+
+    monkeypatch.setattr(lfc, "judge", broken)
+    with pytest.raises(lfc.CorpusError):
+        runner.compare(tasks[:1], "cand-a", ("A",))
+    *_, error, stop = results(runner)
+    assert error["status"] == "tool_error" and error["outcome"] == "tool_error"
+    assert error["reason"] == "judge tool failure" and error["accepted"] is None
+    assert error["cloud_executions"] == 1 and error["premium"]["billing_total"] == 135  # the paid arm
+    assert stop["record_type"] == "stop" and stop["reason"].startswith("tool_error:")
+    rep = lfr.report(_campaign(1), [error, stop])  # no reference path: nothing is concluded
+    assert rep["comparison"]["decision"] == "inconclusive"
+
+
+def test_N6_a_local_tool_error_is_recorded_and_makes_the_screening_incomplete(tmp_path, monkeypatch):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL)
+
+    def broken(*a, **kw):
+        raise lfc.CorpusError("judge tool failure")
+
+    monkeypatch.setattr(lfc, "judge", broken)
+    with pytest.raises(lfc.CorpusError):
+        runner.screen(tasks[:1], ["cand-a"])
+    error = results(runner)[-2]
+    assert error["status"] == "tool_error" and error["path"] == "S" and error["local"]["candidate"] == "cand-a"
+    rep = lfr.report(_campaign(), results(runner))["screening"]
+    assert rep["selected"] is None and rep["complete"] is False  # a tool failure is not a refusal
+
+
+def test_N6_a_stop_on_a_cap_is_inconclusive_a_rule_stop_keeps_the_cloud():
+    recs = [_rec("A", 1, accepted=True), _rec("C", 1, accepted=True, premium=10)]
+    capped = lfr.report(_campaign(6), recs + [{"record_type": "stop", "reason": "cap_reached:premium_tokens"}])
+    assert capped["comparison"]["decision"] == "inconclusive" and capped["comparison"]["recommendation"] is None
+    errored = lfr.report(_campaign(6), recs + [{"record_type": "stop", "reason": "tool_error:x"}])
+    assert errored["comparison"]["decision"] == "inconclusive"
+    ruled = lfr.report(_campaign(6), recs + [{"record_type": "stop", "reason": "fewer_than_min_local_successes"}])
+    assert ruled["comparison"]["decision"] == "keep_cloud"
+
+
+# ------------------------------------------------------------------------------------- N7 / N10
+
+def test_N7_cloud_drivers_declare_an_unverified_log_layout_so_premium_tokens_stay_unknown():
+    campaign = lfr.load_campaign(QUALIFICATION / "pat-19-campaign-v1.json")
+    for name in ("cloud_implementer_current", "cloud_implementer_economy", "cloud_reviewer"):
+        log = campaign["drivers"][name]["session_log"]
+        assert log["layout_verified"] is False and "layout_note" in log
+        assert lfr.premium_tokens("any", log) == (None, "log_layout_unverified")
+
+
+def test_N10_choices_that_are_not_protocol_coordinates_are_labelled_and_the_breakdown_is_reported(tmp_path):
+    campaign = lfr.load_campaign(QUALIFICATION / "pat-19-campaign-v1.json")
+    choices = campaign["non_protocol_choices"]
+    assert set(choices) == {"min_free_disk_gib", "economy_time_counted", "swap_metric", "premium_work_definition"}
+    for name, choice in choices.items():
+        assert choice["not_a_protocol_coordinate"] is True and choice["rationale"], name
+    runner, camp, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    out = runner.compare(tasks[:1], "cand-a", ("A", "B"))
+    assert out[0]["premium"]["by_model"] == {"claude-sonnet-5-5": {
+        "input_tokens": 130, "cached_input_tokens": 10, "cache_write_input_tokens": 5,
+        "output_tokens": 30, "reasoning_output_tokens": None}}
+    camp["rules"]["comparison"]["tasks"] = 1
+    detail = lfr.report(camp, results(runner))["comparison"]["arms"]["B"]["economy_detail"]
+    assert detail["reference_premium_by_model"]["claude-sonnet-5-5"]["output_tokens"] == 30
+    assert "unweighted" in detail["premium_definition"]
+
+
+# ------------------------------------------------------------------------------------- N8
+
+def test_N8_git_never_runs_on_a_bundle_whose_config_or_attributes_were_changed(tmp_path):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL)
+    for name, tamper in {
+            "config": lambda b: (b / ".git" / "config").open("a").write('[core]\n\tfsmonitor = "touch x"\n'),
+            "attributes": lambda b: (b / ".gitattributes").write_text("* filter=evil\n"),
+            "info attributes": lambda b: ((b / ".git" / "info").mkdir(),
+                                          (b / ".git" / "info" / "attributes").write_text("* diff=evil\n")),
+            "git replaced": lambda b: (shutil.rmtree(b / ".git"), (b / ".git").symlink_to(tmp_path))}.items():
+        bundle, attempt = runner._bundle(tasks[0], "tamper")
+        tamper(bundle)
+        with pytest.raises(lfr.RunnerError, match="git configuration|not a plain directory"):
+            runner._patch_of(bundle)
+        shutil.rmtree(attempt, ignore_errors=True)
+        runner.guards.pop(bundle, None)
+        lfc._CREATED_BUNDLES.discard(bundle)
+
+
+def test_N8_git_commands_on_a_bundle_are_neutralised(tmp_path, monkeypatch):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL)
+    seen = []
+    real = subprocess.run
+
+    def spy(cmd, *a, **kw):
+        if cmd[:1] == ["git"] and "-C" in cmd:
+            seen.append((cmd, kw.get("env")))
+        return real(cmd, *a, **kw)
+
+    bundle, attempt = runner._bundle(tasks[0], "x")
+    monkeypatch.setattr(lfr.subprocess, "run", spy)
+    runner._patch_of(bundle)
+    monkeypatch.undo()
+    runner._discard(bundle, attempt)
+    assert seen
+    for cmd, env in seen:
+        for option in ("core.fsmonitor=false", f"core.hooksPath={os.devnull}", "protocol.file.allow=never"):
+            assert option in cmd
+        assert env["GIT_CONFIG_GLOBAL"] == os.devnull and env["GIT_CONFIG_SYSTEM"] == os.devnull
+    diff = next(cmd for cmd, _ in seen if "diff" in cmd)
+    assert "--no-ext-diff" in diff and "--no-textconv" in diff
+
+
+def test_N8_a_bundle_that_is_still_changing_is_not_judged(tmp_path):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL)
+    bundle, attempt = runner._bundle(tasks[0], "busy")
+    stop = threading.Event()
+
+    def writer():
+        n = 0
+        while not stop.is_set():
+            n += 1
+            (bundle / "late.txt").write_text("x" * n, encoding="utf-8")
+            time.sleep(0.01)
+
+    thread = threading.Thread(target=writer, daemon=True)
+    thread.start()
+    runner.quiescent_wait = 0.3
+    try:
+        with pytest.raises(lfr.RunnerError, match="not quiescent"):
+            runner._patch_of(bundle)
+    finally:
+        stop.set()
+        thread.join()
+        runner._discard(bundle, attempt)
+
+
+# ------------------------------------------------------------------------------------- N11
+
+def test_N11_the_envelope_expiry_is_checked_before_each_cloud_execution(tmp_path):
+    runner, _, plan, tasks = make_runner(tmp_path, "compare", FIX_ALL)
+    runner.cloud_path(tasks[0], "A", "comparison")
+    runner.today = lambda: dt.date(2027, 1, 1)  # the envelope expired while the campaign was running
+    with pytest.raises(lfr.EnvelopeError, match="expired"):
+        runner.cloud_path(tasks[1], "A", "comparison")
+    assert counts(plan) == {"implementer": 1, "reviewer": 1}
+    assert ledger_kinds(runner).count("cloud_started") == 2
+
+
+def test_N11_a_truncated_local_attempt_records_the_effective_bound(tmp_path):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL, caps={"wall_clock_seconds": 5})
+    rec = runner.screen(tasks[:1], ["cand-a"])[0]
+    assert rec["local"]["max_seconds"] == 5.0 and rec["local"]["nominal_max_seconds"] == 20
+
+
+def test_N11_the_preflight_is_repeated_between_tasks_and_a_b_paths_do_not_need_the_local_model(tmp_path):
+    runner, _, _, tasks = make_runner(tmp_path, "screen", FIX_ALL)
+    runner.screen(tasks, ["cand-a"])
+    assert ledger_kinds(runner).count("preflight") == 2
+    second, _, _, tasks2 = make_runner(_sub(tmp_path, "ab"), "compare", FIX_ALL)
+    second.preflight_run = lambda cid: pytest.fail("the local model must not be needed for A and B")
+    second.compare(tasks2[:1], "cand-a", ("A", "B"))
+    assert "preflight" not in ledger_kinds(second)
+    third, _, _, tasks3 = make_runner(_sub(tmp_path, "c"), "compare", FIX_ALL)
+    third.compare(tasks3, "cand-a", ("C",))
+    assert ledger_kinds(third).count("preflight") == 2
+
+
+def test_N11_an_unknown_preflight_candidate_is_a_clean_error(tmp_path, capsys):
+    campaign, _ = fake_campaign(tmp_path, FIX_ALL)
+    (tmp_path / "c.json").write_text(json.dumps(campaign), encoding="utf-8")
+    assert lfr.main(["preflight", "--campaign", str(tmp_path / "c.json"), "--dry-run",
+                     "--candidate", "nope"]) == 2
+    assert "unknown candidate nope" in capsys.readouterr().err
+
+
+def test_N11_the_containment_probes_report_passed_or_skipped_explicitly(tmp_path, loopback_server):
+    """Not a probe itself: the probes above skip with their reason off macOS or inside a sandbox, so
+    ``pytest -rs`` states for each machine whether containment was passed or skipped."""
+    status = "passed" if lfr.sandbox_available() and _sandbox_works(tmp_path) else "skipped"
+    assert status in ("passed", "skipped")

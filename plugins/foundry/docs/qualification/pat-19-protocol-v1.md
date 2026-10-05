@@ -2,6 +2,8 @@
 
 Cadre : PAT-ADR-0015 (acceptée le 2026-10-05). Valeurs validées par le mainteneur le 2026-10-05. Tout changement d'une coordonnée gelée ouvre une version 2.
 
+**Amendements validés par le mainteneur avant tout essai (2026-10-05).** Aucun essai (tentative locale, exécution cloud, mesure) n'avait eu lieu quand ces amendements ont été validés, et aucun fichier v2 n'est créé. Au premier gel (commit `e2f8041`, PAT-107) le protocole comptait déjà cinq candidats nommés et l'étape de tamis local de la section 4. Modifications faites sur place depuis (PAT-108, `git diff e2f8041..` sur ce fichier) : candidat 2 (Qwen3.8-27B, MLX 4 bits) passé de `mlx-community/Qwen3.8-27B-4bit` (« déjà présent ») à `lmstudio-community/Qwen3.8-27B-MLX-4bit` (« à télécharger », même éditeur de quantifications que le 6 bits) ; section « Disque » : trois téléchargements au lieu de deux. Les choix du lanceur qui ne sont pas des coordonnées du protocole sont étiquetés dans `pat-19-campaign-v1.json` (`non_protocol_choices`) et `pat-19-launcher-v1.md`.
+
 ## 1. Question posée
 
 Pour des correctifs bornés de ce dépôt, un parcours « implémenteur local puis validation cloud » coûte-t-il moins de travail cloud premium et pas trop plus de temps, par tâche acceptée, que le parcours cloud actuel, à qualité égale ?
