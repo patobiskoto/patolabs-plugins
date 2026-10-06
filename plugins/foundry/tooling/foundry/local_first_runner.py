@@ -396,6 +396,7 @@ class Ledger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         expected = {"envelope_sha256": envelope["sha256"], **(provenance or {})}
         self.launch = 1  # this launcher's rank in the campaign: keeps attempt names unique across launches
+        self.appended = 0  # lines this launcher wrote (tells whether anything happened since a given line)
         if self.path.exists():  # a dry run and a real run never share a ledger (nor a cap)
             for entry in _read_jsonl(self.path):
                 if bool(entry.get("dry_run", False)) != dry_run:
@@ -417,6 +418,7 @@ class Ledger:
             handle.write(line)
             handle.flush()
             os.fsync(handle.fileno())
+        self.appended += 1
 
     def totals(self) -> dict[str, Any]:
         out: dict[str, Any] = {"cloud_started": 0, "premium_tokens": 0, "tokens_unmeasurable": False,
@@ -1911,28 +1913,8 @@ class Runner:
         a void record, or an ``attempt_started`` with no record and no settlement; the second element
         is the ``replay_of`` to record), ``undecided`` (cut twice, or settled with no record, so a
         verdict may have been received: never replayed) or ``fresh``."""
-        base = (path, task["pr"], task_set, candidate, segment, attempt)
-        recs = [r for r in self.prior_records
-                if r.get("record_type") == "attempt" and _logical_key(r) == base]
-        for rec in recs:
-            if rec.get("judge"):
-                return "decided", rec
-        starts = [e for e in self.prior_ledger if e.get("kind") == "attempt_started" and
-                  (e.get("path"), e.get("pr"), e.get("set"), e.get("candidate"), e.get("segment"),
-                   e.get("attempt")) == base]
-        if not recs and not starts:
-            return "fresh", None
-        if max(len(recs), len(starts)) > 1 or (recs and recs[0].get("outcome") not in LOST_OUTCOMES):
-            return "undecided", None
-        name = starts[0].get("attempt_dir") if starts else None
-        if recs:
-            outcome, reason = recs[0]["outcome"], recs[0].get("reason")
-        elif any(e.get("kind") == "settled" and not e.get("cloud") and e.get("attempt_dir") == name
-                 for e in self.prior_ledger):
-            return "undecided", None
-        else:
-            outcome, reason = "hard_kill", "attempt_started without settlement"
-        return "replay", {"attempt": attempt, "attempt_dir": name, "outcome": outcome, "reason": reason}
+        return _resume_state(self.prior_records, self.prior_ledger,
+                             (path, task["pr"], task_set, candidate, segment, attempt))
 
     def _cloud_resume(self, prior: Sequence[Mapping[str, Any]], first_attempt: int
                       ) -> dict[str, Any] | None:
@@ -2166,7 +2148,6 @@ class Runner:
                 "max_seconds": str(seconds),
                 "max_duration": f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s",
                 "review_file": str(attempt_dir / "scratch" / "review.json"),
-                "report_file": str(attempt_dir / "scratch" / "report.json"),
                 "feedback_file": str(attempt_dir / "scratch" / "feedback.md"), **extra}
 
     def _prompt(self, key: str, values: Mapping[str, str]) -> str:
@@ -2605,13 +2586,6 @@ class Runner:
                 self.truths[task["pr"]] = entry
         return self.truths[task["pr"]]
 
-    def _explore_values(self, bundle: Path, attempt_dir: Path, **extra: str) -> dict[str, str]:
-        b = self.campaign["bounds"]
-        seconds = b["explorer_max_seconds"]
-        return self._values(bundle, attempt_dir, max_steps=str(b["explorer_max_steps"]),
-                            max_seconds=str(seconds),
-                            max_duration=f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s", **extra)
-
     @contextlib.contextmanager
     def _guarded(self):
         """The signal, cap and failure handling of ``screen`` and ``compare`` for a whole v2 call: an
@@ -2658,8 +2632,8 @@ class Runner:
         try:
             bundle, attempt_dir = self._bundle(task, "", name=name)
             try:
-                values = self._explore_values(bundle, attempt_dir, model=model,
-                                              **({exe["placeholder"]: exe["path"]} if exe else {}))
+                values = self._values(bundle, attempt_dir, model=model,  # v2: the explorer's bounds
+                                      **({exe["placeholder"]: exe["path"]} if exe else {}))
                 values["prompt"] = self._prompt("explore", values)
                 before = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
                 budget = min(bounds["explorer_max_seconds"], max(self.ledger.remaining_seconds(), 0))
@@ -2878,23 +2852,29 @@ class Runner:
         exploration comes first, inside the same envelope; an arm whose explorer yields no usable report
         runs its implementer on the plain statement (the explorer's cost stays counted). An explorer that
         is contaminated, or cut twice, leaves the arm undecided. Arm ``L`` needs the local model (preflight,
-        dedicated machine included, before each task) and the candidate the screening selected."""
+        dedicated machine included, before each task) and the candidate the screening selected. The
+        start-of-run preflight is ledgered ``phase: "start"``; the one right before a local exploration is
+        not run again when this launcher wrote nothing to the ledger since (it would be the same check twice
+        in a row, and two preflights with nothing between them read as a launcher killed in between)."""
         out: list[dict[str, Any]] = []
         limits = self.campaign["exploration"]["report_render_limits"]
+        checked: int | None = None  # ledger position right after the start-of-run preflight
         if "L" in arms:  # refused before any claim or reservation
             self._check_selected(candidate_id)
             self._check_harness(driver_id)
             if any(self._local_state("L", t, "comparison", candidate_id, "explore", 0)[0] in ("fresh", "replay")
                    for t in tasks):
-                self.preflight(candidate_id)  # a busy machine is refused before any cloud spend
+                self.preflight(candidate_id, phase="start")  # a busy machine is refused before any cloud spend
+                checked = self.ledger.appended
         with self._guarded():
             for task in tasks:
                 for arm in arms:
                     if arm == "A":
                         out += self.cloud_path(task, "A", "comparison")
                         continue
-                    if arm == "L" and self._local_state("L", task, "comparison", candidate_id, "explore",
-                                                        0)[0] in ("fresh", "replay"):
+                    if (arm == "L" and self.ledger.appended != checked
+                            and self._local_state("L", task, "comparison", candidate_id, "explore",
+                                                  0)[0] in ("fresh", "replay")):
                         self.preflight(candidate_id)  # right before each local exploration, after the cloud work
                     explored, report, skip = (self._explore_step_local(task, candidate_id, driver_id)
                                               if arm == "L" else self._explore_step_cloud(task))
@@ -2905,14 +2885,15 @@ class Runner:
         return out
 
     # ---- orchestration
-    def preflight(self, candidate_id: str) -> dict[str, Any]:
+    def preflight(self, candidate_id: str, phase: str | None = None) -> dict[str, Any]:
         model = self.campaign["candidates"][candidate_id]["model"]
         result = preflight(self.campaign, model, self.preflight_run(candidate_id), self.disk_free_gib,
                            self.campaign["candidates"][candidate_id], dedicated=self.exploring)
         self.dedicated = result["facts"].get("dedicated_machine")
         self.ledger.append("preflight", candidate=candidate_id, ok=result["ok"],
                            refusals=result["refusals"],
-                           **({"dedicated_machine": self.dedicated} if self.exploring else {}))
+                           **({"dedicated_machine": self.dedicated} if self.exploring else {}),
+                           **({"phase": phase} if phase else {}))
         if not result["ok"]:
             raise PreflightRefused(result["refusals"])
         return result
@@ -3101,6 +3082,33 @@ _PATCH_EXCLUDES = (":(exclude)TASK.md", ":(exclude,glob)**/__pycache__/**", ":(e
 _GIT_NEUTRAL = ("-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
                 "-c", "protocol.file.allow=never", "-c", f"core.attributesFile={os.devnull}",
                 "-c", "commit.gpgsign=false")
+
+
+def _resume_state(records: Sequence[Mapping[str, Any]], ledger: Sequence[Mapping[str, Any]],
+                  base: tuple) -> tuple[str, Any]:
+    """The resume rule of a local attempt (``Runner._local_state``), from the records and the ledger
+    entries alone, so that the report reads a task the same way a relaunch would."""
+    recs = [r for r in records
+            if r.get("record_type") == "attempt" and _logical_key(r) == base]
+    for rec in recs:
+        if rec.get("judge"):
+            return "decided", rec
+    starts = [e for e in ledger if e.get("kind") == "attempt_started" and
+              (e.get("path"), e.get("pr"), e.get("set"), e.get("candidate"), e.get("segment"),
+               e.get("attempt")) == base]
+    if not recs and not starts:
+        return "fresh", None
+    if max(len(recs), len(starts)) > 1 or (recs and recs[0].get("outcome") not in LOST_OUTCOMES):
+        return "undecided", None
+    name = starts[0].get("attempt_dir") if starts else None
+    if recs:
+        outcome, reason = recs[0]["outcome"], recs[0].get("reason")
+    elif any(e.get("kind") == "settled" and not e.get("cloud") and e.get("attempt_dir") == name
+             for e in ledger):
+        return "undecided", None
+    else:
+        outcome, reason = "hard_kill", "attempt_started without settlement"
+    return "replay", {"attempt": base[5], "attempt_dir": name, "outcome": outcome, "reason": reason}
 
 
 def _cut(exc: BaseException) -> str:
@@ -3414,7 +3422,7 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
     comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
     if exploring:
         out["exploration_screening"] = _report_exploration_screening(rules["exploration_screening"],
-                                                                     attempts, killed)
+                                                                     attempts, killed, ledger)
         out["exploration_screening"]["warnings"] = [h["warning"] for h in open_holes
                                                     if h["mode"] == "screen_exploration"]
         out["exploration_comparison"] = _report_exploration_comparison(
@@ -3475,14 +3483,17 @@ def _unsettled_starts(ledger: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
     every passed machine preflight followed by no attempt start (the launcher was killed between
     them) before the next preflight or session: a killed attempt writes neither record nor
     settlement, and a relaunch may have replayed it. A preflight followed by a clean ``stopped`` is
-    not one. ``mode`` is the mode of the session that wrote the entry."""
+    not one. ``mode`` is the mode of the session that wrote the entry. Protocol v2: a start-of-run
+    preflight (``phase: "start"``, written by ``compare_exploration`` only) that the same launch follows
+    with another preflight was not killed: the launcher went on to the check right before the local
+    exploration (after cloud work, or after nothing at all on a resume), so it is not a hole."""
     settled = {e.get("attempt_dir") for e in ledger if e.get("kind") == "settled" and not e.get("cloud")}
     out: list[dict[str, Any]] = []
     mode: Any = None
     window: dict[str, Any] | None = None
 
-    def close() -> None:
-        if window is not None and not window["attempts"]:
+    def close(by_preflight: bool = False) -> None:
+        if window is not None and not window["attempts"] and not (by_preflight and window["start"]):
             out.append({"kind": "preflight", "mode": window["mode"], "ledger_line": window["line"],
                         "candidate": window["candidate"],
                         "warning": f"preflight_without_attempt:{window['candidate']}"
@@ -3491,14 +3502,15 @@ def _unsettled_starts(ledger: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
     for line, entry in enumerate(ledger, 1):
         kind = entry.get("kind")
         if kind in ("session_started", "preflight"):
-            close()
+            close(kind == "preflight")
             window = None
         elif kind == "stopped":
             window = None
         if kind == "session_started":
             mode = entry.get("mode")
         elif kind == "preflight" and entry.get("ok") is True:
-            window = {"mode": mode, "line": line, "candidate": entry.get("candidate"), "attempts": False}
+            window = {"mode": mode, "line": line, "candidate": entry.get("candidate"), "attempts": False,
+                      "start": entry.get("phase") == "start"}
         elif kind == "cloud_started" and mode == "compare_exploration" and window is not None:
             window["attempts"] = True  # v2: the start-of-run preflight is followed by the cloud arms first
         elif kind == "attempt_started":
@@ -3706,11 +3718,18 @@ def _compatibility(rule: Mapping[str, Any], locals_: Sequence[Mapping[str, Any]]
 # ------------------------------------------------------ protocol v2 report (PAT-114)
 
 def _report_exploration_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
-                                  killed: int = 0) -> dict[str, Any]:
+                                  killed: int = 0, ledger: Sequence[Mapping[str, Any]] = ()
+                                  ) -> dict[str, Any]:
     """The v2 screening table (function recall first, then file precision and file recall, durations per
     candidate) and the pre-registered rule (``lfe.apply_screening_rule``). A tool failure or an interruption is not a
     refusal: it leaves the task undecided and the screening incomplete (no candidate selected). A
-    contaminated attempt is decided and counts as 0 (``judge.verdict`` ``CONTAMINATED``)."""
+    contaminated attempt is decided and counts as 0 (``judge.verdict`` ``CONTAMINATED``).
+    ``campaign_conclusion``: ``candidate_selected``, ``keep_cloud`` (the rule stopped),
+    ``incomplete_screening`` (a relaunch can still complete it), or ``keep_cloud_insufficient_evidence``
+    when the screening can no longer be completed under the resume rule: every frozen candidate has all
+    its tasks either decided or undecided for good (cut twice, or settled without a record:
+    ``not_completable_tasks``). PAT-ADR-0015: insufficient proof keeps the cloud; no candidate is retained
+    and a new attempt needs a protocol v3."""
     by_candidate: dict[str, list[dict[str, Any]]] = {}
     undecided: dict[tuple, dict[str, Any]] = {}
     gone = _superseded(attempts)
@@ -3737,9 +3756,24 @@ def _report_exploration_screening(rule: Mapping[str, Any], attempts: Sequence[Ma
     complete = bool(rows) and not lost and not missing
     outcome = (lfe.apply_screening_rule(rule, {c: r for c, r in rows.items() if c in frozen}, complete)
                if rows or not undecided_tasks else {"selected": None, "reason": "incomplete_screening", "stop": None})
+    keys = {_logical_key(r) for r in attempts if r["path"] == "XS"} | {
+        (e.get("path"), e.get("pr"), e.get("set"), e.get("candidate"), e.get("segment"), e.get("attempt"))
+        for e in ledger if e.get("kind") == "attempt_started" and e.get("path") == "XS"}
+    states = {key: _resume_state(attempts, ledger, key)[0] for key in keys}  # what a relaunch would do
+    dead = sorted((key[3], key[1]) for key, state in states.items() if state == "undecided")
+    settled_for_good = all(
+        (rows[c]["tasks"] if c in rows else 0) + sum(1 for cid, _ in dead if cid == c) == rule["tasks"]
+        for c in frozen)
+    stuck = bool(dead) and settled_for_good and "replay" not in states.values()
+    conclusion = ("candidate_selected" if outcome["selected"] else
+                  "keep_cloud" if outcome.get("stop") == "keep_cloud" else
+                  "keep_cloud_insufficient_evidence" if stuck else
+                  "incomplete_screening" if not complete else "no_candidate_selected")
     return {"candidates": {c: {k: v for k, v in r.items() if not k.startswith("_")} for c, r in rows.items()},
             **outcome, "complete": complete, "missing_candidates": missing,
-            "undecided_tasks": undecided_tasks, "killed_not_replayed": killed}
+            "undecided_tasks": undecided_tasks, "killed_not_replayed": killed,
+            "not_completable_tasks": [{"candidate": c, "pr": pr} for c, pr in dead],
+            "campaign_conclusion": conclusion}
 
 
 def _check_compared_explorer(screening: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
@@ -3779,6 +3813,13 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
         a_tasks = [reference["tasks"][t] for t in shared]
         x_tasks = [arm["tasks"][t] for t in shared]
         explores = [r for r in attempts if r["path"] == path and r.get("segment") == "explore"]
+        # An exploration that yielded its report (or a refusal) but whose implementer has no record yet (the
+        # launcher was cut between the two; a relaunch plays it) is NOT a rejected task: it is undecided.
+        played = {r["task"]["pr"] for r in attempts if r["path"] == path and r.get("segment") != "explore"}
+        awaiting = sorted({r["task"]["pr"] for r in explores if not r.get("contaminated")
+                           and r.get("outcome") not in UNKNOWN_OUTCOMES} - played)
+        for pr in awaiting:
+            arm["tasks"][pr]["unknown"] = True
         economy = lfe.economy_verdict(rule, a_tasks, x_tasks, unknown_work)
         if path == "L":
             locals_ = [r for r in explores if r.get("outcome") not in LOST_OUTCOMES]
@@ -3798,7 +3839,7 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
                                  local_explorer_wall_seconds=(round(sum(r["wall_seconds"] for r in explores), 3)
                                                               if path == "L" else None))
         out["arms"][path] = {
-            "tasks_compared": len(shared), "informative": path == "E",
+            "tasks_compared": len(shared), "informative": path == "E", "awaiting_implementer": awaiting,
             "compatibility": compat, "quality": lfe.quality_verdict(a_tasks, x_tasks) if shared else "unavailable",
             "economy": economy["verdict"], "economy_detail": economy["detail"],
             "accepted": sum(1 for t in x_tasks if t["accepted"]),
@@ -3812,7 +3853,8 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     # The rule is the rule of the whole corpus (v2 has no sequential stop): a partial campaign (cap, tool
     # failure, interruption) concludes nothing, whatever the verdicts of the tasks played so far.
     out["complete"] = bool(mine) and mine["tasks_compared"] == rule["tasks"] and (
-        arms["A"]["tasks"].keys() == arms["L"]["tasks"].keys() and len(arms["A"]["tasks"]) == rule["tasks"])
+        arms["A"]["tasks"].keys() == arms["L"]["tasks"].keys() and len(arms["A"]["tasks"]) == rule["tasks"]
+        and not mine["awaiting_implementer"])
     if mine and out["complete"]:
         verdicts = (mine["compatibility"], mine["quality"], mine["economy"])
         if all(v == "pass" for v in verdicts):

@@ -560,8 +560,16 @@ def test_the_score_determining_rules_are_protocol_coordinates_not_launcher_choic
     assert coordinates["function_cap"]["value"] == lfe.MAX_FUNCTIONS == 10
     assert {"function_name_match", "empty_report_precision", "localization_ground_truth"} <= set(coordinates)
     assert "v3" in coordinates["note"]
-    for name in ("function_name_match", "empty_report_precision", "localization_ground_truth"):
+    # the rules that determine the verdicts of the comparison (protocol section 6) are coordinates too
+    verdict_rules = ("premium_work_definition", "refused_report_in_comparison", "quality_bounds_on_undecided",
+                     "economy_unavailable_cases")
+    assert set(verdict_rules) <= set(coordinates)
+    for name in ("function_cap", "function_name_match", "empty_report_precision", "localization_ground_truth",
+                 *verdict_rules):  # never declared twice
         assert name not in CAMPAIGN["non_protocol_choices"]
+    assert "to be pinned" not in json.dumps(CAMPAIGN["non_protocol_choices"])
+    # the rules of 2026-10-07 are dated as the coordinator's, not as validated by the maintainer
+    assert "2026-10-07 by the coordinator" in CAMPAIGN["note"] and "NOT yet validated" in CAMPAIGN["note"]
     assert "10 functions" not in CAMPAIGN["non_protocol_choices"]["report_render_limits"]["rationale"].split(".")[0]
     for stale in ("economy_time_counted", "time_ratio_max"):
         assert stale not in json.dumps(CAMPAIGN)

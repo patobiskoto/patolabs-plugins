@@ -1,7 +1,7 @@
 {
   "schema": "foundry.local-first-campaign.v2",
   "protocol": "pat-19-protocol-v2",
-  "note": "Frozen campaign config of the PAT-19 protocol v2 (PAT-114): read-only exploration judged first on localization (screening, no cloud) then on its downstream effect (comparison A / L / E). Values validated by the maintainer on 2026-10-06. It reuses the v1 machinery and the v1 corpus (same manifest, same 12 tasks, no new draw) and leaves pat-19-campaign-v1.json untouched. The two explorer drivers were trial-run for real on 2026-10-06 on a toy repository with the launcher's own execute_driver (evidence: pat-19-preflight-v2-2026-10-06.json); the omp tool names were corrected by that trial (--tools=read,grep,glob: 'ls' and 'find' are refused or unavailable in omp 18.6.1) before the freeze. The implementer and reviewer drivers are the v1 pinned ones (trial-run in PAT-111). Changing a coordinate, a bound or a rule opens a protocol v3.",
+  "note": "Frozen campaign config of the PAT-19 protocol v2 (PAT-114): read-only exploration judged first on localization (screening, no cloud) then on its downstream effect (comparison A / L / E). Values validated by the maintainer on 2026-10-06: the corpus and the five candidates, the read-only explorer and its bounds (10 min, 25 steps), arms A / L / E and the three verdicts, the report format, the screening rule (function recall as the main metric, thresholds 0.5), the comparison rule (acceptance >= A and premium per accepted task <= 0.85 x A, cloud explorer counted as premium), the cap of 120 cloud executions, and the three review-round-1 arbitrations (cap of 10 functions, file precision over every file of the diff, dedicated-machine thresholds 2 GiB and 35 %). Announced to the maintainer on 2026-10-06 as execution fixes and set by the coordinator: an exploration cut by a bound is refused, bounds announced in the prompt, the committed ground truth as single source, all five candidates required, threshold before the tie, tool names read/grep/glob. Set by the coordinator without being submitted: a refused or contaminated screening attempt counts 0 and never blocks the screening; the token and wall-clock caps of the recommended envelopes. Execution rules added on 2026-10-07 by the coordinator, under the autonomy the maintainer gave on 2026-10-06 evening for the whole v2 campaign, BEFORE any corpus trial, and NOT yet validated by the maintainer (their explicit validation is requested in the campaign report): the narrowed system allow-list of the dedicated-machine check, an exploration whose wall time reaches the bound is a refusal, a start_error is a void attempt, the conclusion keep_cloud_insufficient_evidence (complete comparison with an unavailable verdict and no fail; screening that can no longer be completed under the resume rule), the start-of-run preflight of the comparison. It reuses the v1 machinery and the v1 corpus (same manifest, same 12 tasks, no new draw) and leaves pat-19-campaign-v1.json untouched. The two explorer drivers were trial-run for real on 2026-10-06 on a toy repository with the launcher's own execute_driver (evidence: pat-19-preflight-v2-2026-10-06.json); the omp tool names were corrected by that trial (--tools=read,grep,glob: 'ls' and 'find' are refused or unavailable in omp 18.6.1) before the freeze. The implementer and reviewer drivers are the v1 pinned ones (trial-run in PAT-111). Changing a coordinate, a bound or a rule opens a protocol v3.",
   "frozen_machine": {
     "chip_contains": "M5 Pro",
     "memory_gib": 64,
@@ -86,7 +86,7 @@
   ],
   "cloud_bash_deny_note": "Best-effort Bash permission rules added to --disallowedTools of the three cloud drivers (the loader refuses a real cloud driver whose argv lacks one of them). Claude Code matches a rule against the COMMAND PREFIX: they stop the direct use of the tracker, merge, network and other-agent tools (gh, git push/remote/clone/fetch/pull, curl, wget, claude, codex, omp, ssh, scp, nc, npm, pip install, python -m http, security, open). They are NOT a sandbox: a determined agent evades them (a script, an interpreter one-liner, a renamed binary, an alias, a path-qualified executable, a library call), and the cloud arm keeps the real home, an open network, the user's implicit credentials and bypassPermissions. The post-run audit (command and path audit, contaminated records) detects the direct shapes; it does not prevent anything.",
   "dedicated_machine": {
-    "note": "Protocol v2 admission (maintainer, 2026-10-06), applied by the preflight of screen-exploration (before every task) and of compare-exploration when arm L runs: refuse when a process outside the allow-list below holds more than max_other_process_rss_gib of resident memory (ps -axo rss=,command=), or when the free memory percentage of memory_pressure is under min_free_percent (35: replaces the 'swap de départ' threshold of the ticket's original AC; swap in use does not come down without a reboot, and the process rule is the real guard, see pat-19-preflight-v2-2026-10-06.json#dedicated_machine_measurement). Both commands are already in the launcher's read-only list. An unreadable output refuses. Only a process NAME (application name or executable basename, never an argument) is recorded with the observed values. The system patterns are deliberately narrow: /System/Library/ (daemons and frameworks), /usr/libexec|sbin|bin, /sbin, /Library/Apple and kernel_task; NOT /System/Applications/ (consumer apps such as Mail or Photos) nor /System/Volumes/Preboot/Cryptexes/App/ (Safari/WebKit), which are ordinary memory consumers.",
+    "note": "Protocol v2 admission (thresholds: maintainer, 2026-10-06; narrowed system patterns: coordinator, 2026-10-07, before any corpus trial, validation requested in the campaign report), applied by the preflight of screen-exploration (before every task) and of compare-exploration when arm L runs: refuse when a process outside the allow-list below holds more than max_other_process_rss_gib of resident memory (ps -axo rss=,command=), or when the free memory percentage of memory_pressure is under min_free_percent (35: replaces the 'swap de départ' threshold of the ticket's original AC; swap in use does not come down without a reboot, and the process rule is the real guard, see pat-19-preflight-v2-2026-10-06.json#dedicated_machine_measurement). Both commands are already in the launcher's read-only list. An unreadable output refuses. Only a process NAME (application name or executable basename, never an argument) is recorded with the observed values. The system patterns are deliberately narrow: /System/Library/ (daemons and frameworks), /usr/libexec|sbin|bin, /sbin, /Library/Apple and kernel_task; NOT /System/Applications/ (consumer apps such as Mail or Photos) nor /System/Volumes/Preboot/Cryptexes/App/ (Safari/WebKit), which are ordinary memory consumers.",
     "max_other_process_rss_gib": 2,
     "min_free_percent": 35,
     "allowed_command_patterns": {
@@ -121,14 +121,18 @@
       "note": "the single source of the ground truth: the launcher loads this committed file and refuses (campaign load, code 2, before any attempt) a file whose sha256 differs"
     },
     "protocol_coordinates": {
-      "note": "These determine the score and are stated in the protocol: they ARE protocol coordinates, validated with the rest of the v2; changing one opens a protocol v3.",
+      "note": "These determine the score or the verdicts of the comparison and are stated in the protocol (sections 4 to 6): they ARE protocol coordinates; changing one opens a protocol v3.",
       "function_cap": {
         "value": 10,
         "rationale": "only the first 10 functions of a report count for function recall and reach the implementer of arms L and E (report_render_limits.max_functions must equal it)"
       },
       "function_name_match": "a reported function name matches a true function in the same file when it equals the qualified name or its last component",
       "empty_report_precision": "a valid report with no file has file precision 0 (undefined ratio counted as 0, so the precision floor cannot be met by saying nothing)",
-      "localization_ground_truth": "recall uses the product files and functions only (the judge's own classification: SOURCE_PREFIXES, not tests, not documentation); precision counts a reported file as correct when the merged diff really changed or created it, product or not; files the diff adds are not counted in recall and functions that do not exist at the base SHA are not counted in function recall: an explorer cannot find what does not exist yet. A removed line is read in the base source, an added line in the merged source; the diff algorithm is pinned (myers)"
+      "localization_ground_truth": "recall uses the product files and functions only (the judge's own classification: SOURCE_PREFIXES, not tests, not documentation); precision counts a reported file as correct when the merged diff really changed or created it, product or not; files the diff adds are not counted in recall and functions that do not exist at the base SHA are not counted in function recall: an explorer cannot find what does not exist yet. A removed line is read in the base source, an added line in the merged source; the diff algorithm is pinned (myers)",
+      "premium_work_definition": "premium work = unweighted sum of the four billing token classes (input, cached input, cache write, output) over ALL models, explorer included: a Haiku explorer counts as premium, local tokens do not; a limit: an economy model's token weighs the same as a premium one, hence the per-model breakdown in the report",
+      "refused_report_in_comparison": "when an explorer of the comparison yields no usable report, its implementer runs on the plain statement and the explorer's cost stays counted (the end-to-end cost of using the explorer); a contaminated or twice-cut explorer leaves the arm undecided for that task",
+      "quality_bounds_on_undecided": "quality compares acceptance counts with undecided tasks as bounds: pass only if it holds in the worst case, fail only if it fails in the best case, else unavailable",
+      "economy_unavailable_cases": "premium per accepted task is unavailable (never zero) when a compared task is undecided, spent work is unknown, a premium total is unknown or an arm accepted no task"
     }
   },
   "non_protocol_choices": {
@@ -141,33 +145,17 @@
       "not_a_protocol_coordinate": true,
       "rationale": "extra swap is measured as the maximum, over local attempts, of (swap after - swap before); the protocol does not define how to measure it"
     },
-    "premium_work_definition": {
-      "not_a_protocol_coordinate": true,
-      "rationale": "premium work = unweighted sum of the four billing token classes (input, cached input, cache write, output) over ALL models; a limit: an economy model's token weighs the same as a premium one, hence the per-model breakdown in the report, needed to judge path B honestly"
-    },
     "explorer_tool_names": {
       "not_a_protocol_coordinate": true,
       "rationale": "the read-only tool set of the local explorer is --tools=read,grep,glob. The maintainer validated the read-only intent on 2026-10-06 as read,grep,find,ls; the toy trial of omp 18.6.1 refused it (\"Unknown tool in --tools: ls\"; find is \"unavailable in this session\"; the built-ins include read, grep, glob), so the names were corrected to the same trio as the cloud explorer (Read/Grep/Glob) before the freeze. The loader accepts only read, grep, glob."
     },
     "report_source_and_prompt": {
       "not_a_protocol_coordinate": true,
-      "rationale": "the pinned tool sets have no file-writing tool, so the prompt asks for the JSON as the final message and the launcher reads it from the stream; an arm-written <scratch>/report.json is also accepted. The shapes of the final messages are to be pinned by the trials"
+      "rationale": "the pinned tool sets have no file-writing tool, so the prompt asks for the JSON as the final message and the launcher reads it from the stream; an arm-written <scratch>/report.json is also accepted. The shapes of the final messages were pinned by the real toy trials of 2026-10-06 and, with the frozen prompt, of 2026-10-07 (pat-19-preflight-v2-2026-10-06.json: drivers, final_prompt_trial)"
     },
     "report_render_limits": {
       "not_a_protocol_coordinate": true,
       "rationale": "a report appended to a statement is cut at 20 files and 1500 rationale characters, with a visible note; the scoring is not affected. The cap of 10 functions is a protocol coordinate (exploration.protocol_coordinates.function_cap)"
-    },
-    "refused_report_in_comparison": {
-      "not_a_protocol_coordinate": true,
-      "rationale": "when an explorer of the comparison yields no usable report, its implementer runs on the plain statement and the explorer's cost stays counted (the end-to-end cost of using the explorer); a contaminated or twice-cut explorer leaves the arm undecided for that task"
-    },
-    "quality_bounds_on_undecided": {
-      "not_a_protocol_coordinate": true,
-      "rationale": "quality compares acceptance counts with undecided tasks as bounds: pass only if it holds in the worst case, fail only if it fails in the best case, else unavailable"
-    },
-    "economy_unavailable_cases": {
-      "not_a_protocol_coordinate": true,
-      "rationale": "premium per accepted task is unavailable (never zero) when a compared task is undecided, spent work is unknown, a premium total is unknown or an arm accepted no task"
     },
     "envelope_recommendation": {
       "not_a_protocol_coordinate": true,

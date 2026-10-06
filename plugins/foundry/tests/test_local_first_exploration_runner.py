@@ -846,7 +846,7 @@ def test_the_dedicated_machine_is_rechecked_right_before_each_local_exploration_
     runner, _, _, tasks = make_runner(tmp_path, "compare_exploration", {**PLAN, "reviewer": ["PASS"]})
     events = []
     real_pre, real_path = runner.preflight, runner.cloud_path
-    runner.preflight = lambda cid: (events.append("preflight"), real_pre(cid))[1]
+    runner.preflight = lambda cid, **k: (events.append("preflight"), real_pre(cid, **k))[1]
     runner.cloud_path = lambda t, path, *a, **k: (events.append(f"cloud:{path}"), real_path(t, path, *a, **k))[1]
     runner.compare_exploration(tasks[:1], "cand-a", arms=("A", "L"))
     # once at the very start (a busy machine is refused before any cloud spend), again after A's long cloud
@@ -858,6 +858,157 @@ def test_the_dedicated_machine_is_rechecked_right_before_each_local_exploration_
         busy.compare_exploration(tasks2[:1], "cand-a", arms=("A", "L"))
     assert counts(plan) == {}  # the refusal comes before any cloud spend: A did not run either
     assert "cloud_started" not in [e["kind"] for e in ledger_of(busy)]
+
+
+RETAINING = {**PLAN, "reviewer": ["BLOCK", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS"]}
+
+
+def _preflights(runner):
+    return [(e.get("phase"), e["ok"]) for e in ledger_of(runner) if e["kind"] == "preflight"]
+
+
+def test_arm_l_alone_runs_one_preflight_before_its_first_exploration_and_leaves_no_warning(tmp_path):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare_exploration", {**PLAN, "reviewer": ["PASS"]})
+    runner.compare_exploration(tasks, "cand-a", arms=("L",))
+    rep = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert rep["exploration_comparison"]["warnings"] == []
+    assert [h for h in rep["ledger"]["unsettled_starts"] if h["kind"] == "preflight"] == []
+    # the start preflight IS the one before the first exploration (nothing was written since): not run twice;
+    # the second task gets its own, after the cloud work of the first
+    assert _preflights(runner) == [("start", True), (None, True)]
+
+
+def test_a_resume_after_a_refused_preflight_before_l_does_not_degrade_a_complete_comparison(tmp_path):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare_exploration", RETAINING)
+    machine = {"ps": None}
+    runner.preflight_run = lambda cid: facts_with(campaign, campaign["candidates"][cid]["model"], machine["ps"])
+    real = runner.cloud_path
+
+    def then_busy(*args, **kwargs):  # the machine gets busy during A's cloud work
+        out = real(*args, **kwargs)
+        machine["ps"] = BIG
+        return out
+
+    runner.cloud_path = then_busy
+    with pytest.raises(lfr.PreflightRefused):
+        runner.compare_exploration(tasks, "cand-a", arms=("A", "L"))
+    assert [ok for _, ok in _preflights(runner)] == [True, False]  # refused right before the exploration
+    resumed, _, _, rtasks = _resumed(tmp_path, runner, tasks, "compare_exploration", RETAINING)
+    resumed.compare_exploration(rtasks, "cand-a", arms=("A", "L"))  # the documented resume: machine freed
+    comparison = lfr.report(campaign, results(resumed), ledger_of(resumed))["exploration_comparison"]
+    arm = comparison["arms"]["L"]
+    assert (arm["compatibility"], arm["quality"], arm["economy"]) == ("pass", "pass", "pass")
+    assert comparison["warnings"] == [] and comparison["complete"] is True
+    assert comparison["decision"] == "retained" and comparison["campaign_conclusion"] == "retain_local_explorer"
+    assert _preflights(resumed) == [("start", True), (None, False), ("start", True), (None, True)]
+
+
+def test_a_resume_after_a_void_local_exploration_does_not_degrade_a_complete_comparison(tmp_path, monkeypatch):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare_exploration", RETAINING)
+    real = lfr.execute_driver
+
+    def no_explorer(driver, *args, **kwargs):
+        if driver["kind"] == "local_explorer":
+            raise lfr.RunnerError("the launcher failed before the explorer started")
+        return real(driver, *args, **kwargs)
+
+    monkeypatch.setattr(lfr, "execute_driver", no_explorer)
+    with pytest.raises(lfr.RunnerError):
+        runner.compare_exploration(tasks, "cand-a", arms=("A", "L"))
+    monkeypatch.setattr(lfr, "execute_driver", real)
+    resumed, _, _, rtasks = _resumed(tmp_path, runner, tasks, "compare_exploration", RETAINING)
+    out = resumed.compare_exploration(rtasks, "cand-a", arms=("A", "L"))
+    assert out[0]["segment"] == "explore" and out[0]["replay_of"]["outcome"] == "tool_error"
+    comparison = lfr.report(campaign, results(resumed), ledger_of(resumed))["exploration_comparison"]
+    assert comparison["warnings"] == [] and comparison["complete"] is True
+    assert comparison["decision"] == "retained" and comparison["campaign_conclusion"] == "retain_local_explorer"
+    # A of task 1 is done: nothing lies between the start preflight of the relaunch and the replayed exploration
+    assert _preflights(resumed) == [("start", True), (None, True), ("start", True), (None, True)]
+
+
+def test_a_start_preflight_followed_by_another_is_no_hole_but_a_killed_one_still_is():
+    def entry(kind, **kw):
+        return {"kind": kind, **kw}
+
+    session = entry("session_started", mode="compare_exploration")
+    start = entry("preflight", ok=True, candidate="c1", phase="start")
+    again = entry("preflight", ok=True, candidate="c1")
+    begun = entry("attempt_started", attempt_dir="d1", path="L", candidate="c1")
+    done = entry("settled", cloud=False, attempt_dir="d1")
+    assert lfr._unsettled_starts([session, start, again, begun, done]) == []
+    assert lfr._unsettled_starts([session, start, entry("preflight", ok=False, candidate="c1")]) == []
+    assert lfr._unsettled_starts([session, start, begun, done]) == []  # the start one right before the attempt
+    # killed after the start preflight, or after the one before the exploration: still listed
+    killed = lfr._unsettled_starts([session, start, session, start, begun, done])
+    assert [h["warning"] for h in killed] == ["preflight_without_attempt:c1@ledger_line_2"]
+    killed = lfr._unsettled_starts([session, start, again])
+    assert [h["warning"] for h in killed] == ["preflight_without_attempt:c1@ledger_line_3"]
+    # an unmarked preflight (v1, and the v2 screening) keeps the v1 reading
+    v1 = lfr._unsettled_starts([entry("session_started", mode="compare"), again, again, begun, done])
+    assert [h["warning"] for h in v1] == ["preflight_without_attempt:c1@ledger_line_2"]
+
+
+def test_a_task_with_its_exploration_but_no_implementer_yet_is_undecided_not_rejected(tmp_path):
+    plan = {**PLAN, "reviewer": ["PASS"]}
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare_exploration", plan)
+    campaign["rules"]["exploration_comparison"]["tasks"] = 1  # a one-task corpus: only the cut makes it partial
+    runner.compare_exploration(tasks[:1], "cand-a", arms=("A",))
+    real = runner.cloud_path
+
+    def boom(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    runner.cloud_path = boom  # cut between the exploration and the implementer
+    with pytest.raises(KeyboardInterrupt):
+        runner.compare_exploration(tasks[:1], "cand-a", arms=("L",))
+    runner.cloud_path = real
+    comparison = lfr.report(campaign, results(runner), ledger_of(runner))["exploration_comparison"]
+    arm = comparison["arms"]["L"]
+    assert arm["awaiting_implementer"] == [1] and arm["quality"] == "unavailable" and arm["economy"] == "unavailable"
+    assert comparison["complete"] is False and comparison["campaign_conclusion"] == "incomplete_campaign"
+    assert comparison["decision"] == "inconclusive"
+    resumed, _, _, rtasks = _resumed(tmp_path, runner, tasks, "compare_exploration", plan)
+    resumed.campaign["rules"]["exploration_comparison"]["tasks"] = 1
+    resumed.compare_exploration(rtasks[:1], "cand-a", arms=("L",))  # the relaunch plays the missing implementer
+    after = lfr.report(resumed.campaign, results(resumed), ledger_of(resumed))["exploration_comparison"]
+    assert after["arms"]["L"]["awaiting_implementer"] == [] and after["complete"] is True
+    assert after["arms"]["L"]["quality"] == "pass" and after["campaign_conclusion"] != "incomplete_campaign"
+
+
+def test_a_screening_that_can_no_longer_be_completed_keeps_the_cloud_for_lack_of_evidence(tmp_path, monkeypatch):
+    caps = {"cloud_executions": 0}
+    runner, campaign, _, tasks = make_runner(tmp_path, "screen_exploration", caps=caps)
+    real = lfr.execute_driver
+
+    def failing(*args, **kwargs):
+        raise lfr.RunnerError("the launcher failed before the arm started")
+
+    def screening(of):
+        return lfr.report(campaign, results(of), ledger_of(of))["exploration_screening"]
+
+    monkeypatch.setattr(lfr, "execute_driver", failing)
+    with pytest.raises(lfr.RunnerError):
+        runner.screen_exploration(tasks, ["cand-a"])
+    once = screening(runner)  # cut once: a relaunch replays it, nothing is concluded
+    assert once["campaign_conclusion"] == "incomplete_screening" and once["not_completable_tasks"] == []
+    second, _, _, stasks = _resumed(tmp_path, runner, tasks, "screen_exploration", PLAN, caps=caps)
+    with pytest.raises(lfr.RunnerError):
+        second.screen_exploration(stasks, ["cand-a"])
+    twice = screening(second)  # cut twice, but the other task was never played: still completable in part
+    assert twice["not_completable_tasks"] == [{"candidate": "cand-a", "pr": 1}]
+    assert twice["campaign_conclusion"] == "incomplete_screening"
+    monkeypatch.setattr(lfr, "execute_driver", real)
+    third, _, plan_path, ttasks = _resumed(tmp_path, runner, tasks, "screen_exploration", PLAN, caps=caps)
+    out = third.screen_exploration(ttasks, ["cand-a"])
+    assert [r["task"]["pr"] for r in out] == [2] and counts(plan_path) == {"xlocal": 1}  # task 1 is never replayed
+    final = screening(third)
+    assert final["complete"] is False and final["selected"] is None and final["reason"] == "incomplete_screening"
+    assert final["not_completable_tasks"] == [{"candidate": "cand-a", "pr": 1}]
+    assert final["campaign_conclusion"] == "keep_cloud_insufficient_evidence"  # PAT-ADR-0015; a retry needs a v3
+    fourth, _, _, ftasks = _resumed(tmp_path, runner, tasks, "compare_exploration", PLAN, caps=caps,
+                                    require_screening=True)
+    with pytest.raises(lfr.RunnerError, match="incomplete_screening"):
+        fourth.compare_exploration(ftasks, "cand-a", arms=("L",))
 
 
 def test_a_bound_reached_by_the_harness_itself_is_a_refusal_and_a_start_error_is_void(tmp_path, monkeypatch):
