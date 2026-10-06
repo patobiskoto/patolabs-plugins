@@ -536,6 +536,37 @@ def test_another_process_over_2_gib_refuses_and_names_only_the_process():
     assert secret not in json.dumps(out)  # no argument is ever recorded
 
 
+def test_the_system_allow_list_is_narrow_consumer_apps_are_ordinary_consumers():
+    cryptex = ("/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app/Contents/MacOS/Safari "
+               "--secret=hunter2")
+    mail = "/System/Applications/Mail.app/Contents/MacOS/Mail"
+    daemon = "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer -daemon"
+    pressure = "System-wide memory free percentage: 80%"
+    out = lfe.check_dedicated_machine(DEDICATED, _ps((6 * GIB, cryptex), (3 * GIB, mail), (5 * GIB, daemon)),
+                                      pressure)
+    assert out["refusals"] == ["dedicated_machine_process_over_2gib:Safari:6144MiB",
+                               "dedicated_machine_process_over_2gib:Mail:3072MiB"]  # the daemon is allowed
+    assert "hunter2" not in json.dumps(out)
+    assert lfe.check_dedicated_machine(DEDICATED, _ps((5 * GIB, daemon), (3 * GIB, "/usr/libexec/x")), pressure)["ok"]
+    for app in ("/Applications/ChatGPT.app/Contents/Frameworks/Codex", "/Applications/OrbStack.app/Contents/x",
+                "/Applications/Claude.app/Contents/x", "/Applications/Arc.app/Contents/x"):  # seen on the machine
+        assert not lfe.check_dedicated_machine(DEDICATED, _ps((3 * GIB, app)), pressure)["ok"]
+    patterns = DEDICATED["allowed_command_patterns"]["system"]
+    assert "^/System/Library/" in patterns and "^/System/" not in patterns
+
+
+def test_the_score_determining_rules_are_protocol_coordinates_not_launcher_choices():
+    coordinates = CAMPAIGN["exploration"]["protocol_coordinates"]
+    assert coordinates["function_cap"]["value"] == lfe.MAX_FUNCTIONS == 10
+    assert {"function_name_match", "empty_report_precision", "localization_ground_truth"} <= set(coordinates)
+    assert "v3" in coordinates["note"]
+    for name in ("function_name_match", "empty_report_precision", "localization_ground_truth"):
+        assert name not in CAMPAIGN["non_protocol_choices"]
+    assert "10 functions" not in CAMPAIGN["non_protocol_choices"]["report_render_limits"]["rationale"].split(".")[0]
+    for stale in ("economy_time_counted", "time_ratio_max"):
+        assert stale not in json.dumps(CAMPAIGN)
+
+
 def test_free_memory_under_35_percent_refuses_and_an_unknown_value_refuses():
     ps = _ps((100, "/bin/zsh"))
     low = lfe.check_dedicated_machine(DEDICATED, ps, "System-wide memory free percentage: 34%")

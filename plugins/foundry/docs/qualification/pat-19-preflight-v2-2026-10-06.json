@@ -133,5 +133,54 @@
       "refusing_process_note": "the ChatGPT application, 2.5 GiB resident, was still open and was refused as expected by the process rule"
     },
     "reading": "the free-memory criterion is lowered from 50 % to 35 %; the process rule (no process outside LM Studio, the launcher and the system above 2 GiB) is the real guard: it would have refused the 18 GiB foreign process of the v1 run. The free-memory criterion replaces the 'swap de d\u00e9part' threshold of the ticket's original AC, because swap in use does not come down without a reboot."
+  },
+  "final_prompt_trial": {
+    "date": "2026-10-07",
+    "note": "Both explorers re-run by the coordinator on the toy repository with the FROZEN explore prompt (bounds and the 10-function cap announced), through the launcher's execute_driver with the drivers of pat-19-campaign-v2.json. Maintainer had authorized the whole v2 campaign on 2026-10-06.",
+    "local_explorer": {
+      "model": "Qwen3.6-35B-A3B MLX 4-bit, pinned load_command",
+      "argv_tools": "--tools=read,grep,glob",
+      "exit_code": 0,
+      "wall_seconds": 15.6,
+      "steps": 5,
+      "tools": {
+        "read": 3,
+        "grep": 1,
+        "glob": 1
+      },
+      "bundle_unchanged": true,
+      "report_source": "final_message",
+      "toy_score": {
+        "file_recall": 1.0,
+        "file_precision": 1.0,
+        "function_recall": 1.0
+      }
+    },
+    "cloud_explorer_economy": {
+      "model": "claude-haiku-4-5-20251001",
+      "exit_code": 0,
+      "wall_seconds": 16.1,
+      "init_tools": [
+        "Bash",
+        "Read"
+      ],
+      "tools": {
+        "Read": 3,
+        "Bash": 1
+      },
+      "bundle_unchanged": true,
+      "report_source": "final_message",
+      "toy_score": {
+        "file_recall": 1.0,
+        "file_precision": 1.0,
+        "function_recall": 1.0
+      },
+      "launcher_read_tokens_equal_host_usage": {
+        "input": 42,
+        "cache_read": 54724,
+        "cache_write": 6708,
+        "output": 1338
+      }
+    }
   }
 }

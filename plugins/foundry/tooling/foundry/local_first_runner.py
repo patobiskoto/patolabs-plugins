@@ -2674,11 +2674,14 @@ class Runner:
                     sandbox=self._sandboxed(driver), deny_read=self._deny_read(driver),
                     host_env=self.host_env, deny_home=deny_home, allow_read=allow_read,
                     workdir_writable=False)
+                if execution["start_error"]:  # the arm never ran: a launcher/environment failure, void (replayable)
+                    raise RunnerError(f"the explorer could not be started: {execution['start_error']}")
                 after = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
                 with self._critical():  # a signal right after the audit never loses its result
                     contamination = self._audit(stream_log, bundle, attempt_dir / "scratch", driver, exe=exe)
                 modified = self._bundle_modified(status_before, self._bundle_status(bundle))
-                if execution["timed_out"] or execution["step_limit_hit"]:  # cut by a bound: refused, even with a draft
+                if (execution["timed_out"] or execution["step_limit_hit"]
+                        or execution["wall_seconds"] >= bounds["explorer_max_seconds"]):  # a bound: refused, even with a draft
                     report, source, refusal = None, "none", BOUND_HIT
                 elif modified:
                     report, source, refusal = None, "none", BUNDLE_MODIFIED
@@ -2810,12 +2813,15 @@ class Runner:
                     "explorer", CLOUD_EXPLORER_DRIVER, bundle, attempt_dir, "explore",
                     seconds_key="explorer_max_seconds")
                 seconds = execution["wall_seconds"]
+                if execution["start_error"]:  # the arm never ran: void (replayable once), not a refusal
+                    raise RunnerError(f"the explorer could not be started: {execution['start_error']}")
                 modified = self._bundle_modified(status_before, self._bundle_status(bundle))
                 by_role["explorer"] = tokens
                 _merge_models(models, execution["by_model"])
                 if tokens is None:
                     unknown["premium.explorer"] = reason or "unknown"
-                if execution["timed_out"]:  # cut by the time bound: refused, even with a draft
+                if execution["timed_out"] or seconds >= self.campaign["bounds"]["explorer_max_seconds"]:
+                    # cut by the time bound (or stopped at it by the harness): refused, even with a draft
                     report, source, refusal = None, "none", BOUND_HIT
                 elif modified:  # the explorer is read-only: a changed bundle refuses the exploration
                     report, source, refusal = None, "none", BUNDLE_MODIFIED
@@ -2878,6 +2884,9 @@ class Runner:
         if "L" in arms:  # refused before any claim or reservation
             self._check_selected(candidate_id)
             self._check_harness(driver_id)
+            if any(self._local_state("L", t, "comparison", candidate_id, "explore", 0)[0] in ("fresh", "replay")
+                   for t in tasks):
+                self.preflight(candidate_id)  # a busy machine is refused before any cloud spend
         with self._guarded():
             for task in tasks:
                 for arm in arms:
@@ -3490,6 +3499,8 @@ def _unsettled_starts(ledger: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
             mode = entry.get("mode")
         elif kind == "preflight" and entry.get("ok") is True:
             window = {"mode": mode, "line": line, "candidate": entry.get("candidate"), "attempts": False}
+        elif kind == "cloud_started" and mode == "compare_exploration" and window is not None:
+            window["attempts"] = True  # v2: the start-of-run preflight is followed by the cloud arms first
         elif kind == "attempt_started":
             if window is not None:
                 window["attempts"] = True
@@ -3757,6 +3768,7 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     reference = arms.get("A")
     if reference is None:
         out["reason"] = "no_reference_path_A"
+        out["campaign_conclusion"] = "incomplete_campaign"
         return out
     gone = _superseded(attempts)
     for path in ("L", "E"):
@@ -3810,6 +3822,13 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     if unknown_work or warnings or any(r.get("outcome") == "interrupted" and id(r) not in gone
                                        for r in attempts):
         out["decision"], out["recommendation"] = "inconclusive", None
+    # PAT-ADR-0015: insufficient proof keeps the cloud. A COMPLETE comparison that is neither retained nor
+    # failed (an ``unavailable`` verdict) concludes the campaign on keeping the cloud; no replay, no extra
+    # task under v2 (a new attempt needs a v3). An incomplete campaign concludes nothing yet.
+    out["campaign_conclusion"] = (
+        "incomplete_campaign" if not out["complete"] else
+        "retain_local_explorer" if out["decision"] == "retained" else
+        "keep_cloud" if out["decision"] == "keep_cloud" else "keep_cloud_insufficient_evidence")
     return out
 
 

@@ -86,7 +86,7 @@
   ],
   "cloud_bash_deny_note": "Best-effort Bash permission rules added to --disallowedTools of the three cloud drivers (the loader refuses a real cloud driver whose argv lacks one of them). Claude Code matches a rule against the COMMAND PREFIX: they stop the direct use of the tracker, merge, network and other-agent tools (gh, git push/remote/clone/fetch/pull, curl, wget, claude, codex, omp, ssh, scp, nc, npm, pip install, python -m http, security, open). They are NOT a sandbox: a determined agent evades them (a script, an interpreter one-liner, a renamed binary, an alias, a path-qualified executable, a library call), and the cloud arm keeps the real home, an open network, the user's implicit credentials and bypassPermissions. The post-run audit (command and path audit, contaminated records) detects the direct shapes; it does not prevent anything.",
   "dedicated_machine": {
-    "note": "Protocol v2 admission (maintainer, 2026-10-06), applied by the preflight of screen-exploration (before every task) and of compare-exploration when arm L runs: refuse when a process outside the allow-list below holds more than max_other_process_rss_gib of resident memory (ps -axo rss=,command=), or when the free memory percentage of memory_pressure is under min_free_percent (35: replaces the 'swap de départ' threshold of the ticket's original AC; swap in use does not come down without a reboot, and the process rule is the real guard, see pat-19-preflight-v2-2026-10-06.json#dedicated_machine_measurement). Both commands are already in the launcher's read-only list. An unreadable output refuses. Only a process NAME (application name or executable basename, never an argument) is recorded with the observed values.",
+    "note": "Protocol v2 admission (maintainer, 2026-10-06), applied by the preflight of screen-exploration (before every task) and of compare-exploration when arm L runs: refuse when a process outside the allow-list below holds more than max_other_process_rss_gib of resident memory (ps -axo rss=,command=), or when the free memory percentage of memory_pressure is under min_free_percent (35: replaces the 'swap de départ' threshold of the ticket's original AC; swap in use does not come down without a reboot, and the process rule is the real guard, see pat-19-preflight-v2-2026-10-06.json#dedicated_machine_measurement). Both commands are already in the launcher's read-only list. An unreadable output refuses. Only a process NAME (application name or executable basename, never an argument) is recorded with the observed values. The system patterns are deliberately narrow: /System/Library/ (daemons and frameworks), /usr/libexec|sbin|bin, /sbin, /Library/Apple and kernel_task; NOT /System/Applications/ (consumer apps such as Mail or Photos) nor /System/Volumes/Preboot/Cryptexes/App/ (Safari/WebKit), which are ordinary memory consumers.",
     "max_other_process_rss_gib": 2,
     "min_free_percent": 35,
     "allowed_command_patterns": {
@@ -100,7 +100,7 @@
         "local_first_runner\\.py"
       ],
       "system": [
-        "^/System/",
+        "^/System/Library/",
         "^/usr/(libexec|sbin|bin)/",
         "^/sbin/",
         "^/Library/Apple/",
@@ -119,6 +119,16 @@
       "file": "pat-19-exploration-truth-v2.json",
       "sha256": "9172feb07762d65f43280a2f8fa06181c4f13ed1c09c979227b9e4e58e21784c",
       "note": "the single source of the ground truth: the launcher loads this committed file and refuses (campaign load, code 2, before any attempt) a file whose sha256 differs"
+    },
+    "protocol_coordinates": {
+      "note": "These determine the score and are stated in the protocol: they ARE protocol coordinates, validated with the rest of the v2; changing one opens a protocol v3.",
+      "function_cap": {
+        "value": 10,
+        "rationale": "only the first 10 functions of a report count for function recall and reach the implementer of arms L and E (report_render_limits.max_functions must equal it)"
+      },
+      "function_name_match": "a reported function name matches a true function in the same file when it equals the qualified name or its last component",
+      "empty_report_precision": "a valid report with no file has file precision 0 (undefined ratio counted as 0, so the precision floor cannot be met by saying nothing)",
+      "localization_ground_truth": "recall uses the product files and functions only (the judge's own classification: SOURCE_PREFIXES, not tests, not documentation); precision counts a reported file as correct when the merged diff really changed or created it, product or not; files the diff adds are not counted in recall and functions that do not exist at the base SHA are not counted in function recall: an explorer cannot find what does not exist yet. A removed line is read in the base source, an added line in the merged source; the diff algorithm is pinned (myers)"
     }
   },
   "non_protocol_choices": {
@@ -145,19 +155,7 @@
     },
     "report_render_limits": {
       "not_a_protocol_coordinate": true,
-      "rationale": "a report appended to a statement is cut at 20 files, 10 functions (the function cap of the protocol) and 1500 rationale characters, with a visible note; the scoring uses all the files and the first 10 functions"
-    },
-    "localization_ground_truth": {
-      "not_a_protocol_coordinate": true,
-      "rationale": "recall uses the product files and functions only (the judge's own classification: SOURCE_PREFIXES, not tests, not documentation); precision counts a reported file as correct when the merged diff really changed or created it, product or not; files the diff adds are not counted in recall and functions that do not exist at the base SHA are not counted in function recall: an explorer cannot find what does not exist yet. A removed line is read in the base source, an added line in the merged source"
-    },
-    "empty_report_precision": {
-      "not_a_protocol_coordinate": true,
-      "rationale": "a valid report with no file has file precision 0 (undefined ratio, counted as 0 so that the precision floor cannot be met by saying nothing)"
-    },
-    "function_name_match": {
-      "not_a_protocol_coordinate": true,
-      "rationale": "a reported function name matches a true function in the same file when it equals the qualified name or its last component"
+      "rationale": "a report appended to a statement is cut at 20 files and 1500 rationale characters, with a visible note; the scoring is not affected. The cap of 10 functions is a protocol coordinate (exploration.protocol_coordinates.function_cap)"
     },
     "refused_report_in_comparison": {
       "not_a_protocol_coordinate": true,
@@ -185,13 +183,13 @@
     "implement": "Implement the task described in {statement_file}. Work only inside the current repository: change the product code and add tests if useful. Run the relevant tests, then stop when you consider the task done.",
     "correct": "The task is described in {statement_file}. A previous attempt is already applied in this repository. Apply the corrections listed in {feedback_file}, run the relevant tests, then stop.",
     "review": "Independently review the uncommitted change in this repository (git diff HEAD) against the task in {statement_file}. Do not modify any file. Write {review_file} as JSON: {\"verdict\": \"PASS\" or \"BLOCK\", \"findings\": [\"...\"]}.",
-    "explore": "Prepare the task described in {statement_file} by exploring this repository READ-ONLY: do not modify any file, do not run tests, do not write anything. You have at most {max_duration} and {max_steps} tool steps: answer with the JSON BEFORE reaching them, an exploration cut by either bound is refused and scores 0. Find where the change must be made. Your final message must be exactly one JSON object and nothing else: {\"files\": [\"repo-relative path\", ...], \"functions\": [{\"file\": \"repo-relative path\", \"name\": \"function or Class.method\"}], \"rationale\": \"short explanation\"}. List the files and the functions that need to change, not the ones you merely read; at most 10 functions, most relevant first (only the first 10 count)."
+    "explore": "Prepare the task described in {statement_file} by exploring this repository READ-ONLY: do not modify any file, do not run tests, do not write anything. You have at most {max_duration} (and at most {max_steps} tool steps where the harness counts them): answer with the JSON BEFORE reaching them, an exploration cut by a bound is refused and scores 0. Find where the change must be made. Your final message must be exactly one JSON object and nothing else: {\"files\": [\"repo-relative path\", ...], \"functions\": [{\"file\": \"repo-relative path\", \"name\": \"function or Class.method\"}], \"rationale\": \"short explanation\"}. List the files and the functions that need to change, not the ones you merely read; at most 10 functions, most relevant first (only the first 10 count)."
   },
   "rules": {
     "exploration_screening": {
       "tasks": 6,
       "file_precision_min": 0.5,
-      "note": "MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Retained = highest mean function recall among the candidates with mean file precision >= 0.5; a tie goes to the shortest total duration; STOP 'conserver le cloud' when no candidate has mean file precision >= 0.5 or when the retained candidate's mean function recall is < 0.5 (0.5 inclusive: exactly 0.5 is retained). File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. Refused and contaminated attempts count 0 on every metric: the screening is never blocked by one flag (frozen with v2, before any result). The screening is complete only when ALL FIVE frozen candidates (rules.exploration_screening.candidates, in this order) have their 6 tasks decided: a subset never retains a candidate. The threshold is tested BEFORE the tie (a tie below 0.5 is keep_cloud); a tie still unresolved after the duration goes to the candidate listed first in this order. A contaminated or refused attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown).",
+      "note": "MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates are the five frozen ones (candidates, in this order) and the screening is complete only when all five have their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Frozen with v2, before any result.",
       "retained_function_recall_min": 0.5,
       "candidates": [
         "qwen3.8-27b-mlx-6bit",
@@ -385,7 +383,7 @@
         "host": "claude",
         "projects_dir": "~/.claude/projects",
         "layout_verified": true,
-        "layout_note": "Verified on 2026-10-05 (PAT-111): the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly for the three drivers, one file per session id. Conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools (Bash, Edit, Read, Write; so no sub-agent, workflow, web or scheduling tool): a record whose init event lists any other tool, or has none, is refused (tool_error)."
+        "layout_note": "Verified on 2026-10-05 (PAT-111): the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly for the three drivers, one file per session id. Conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools (Bash, Glob, Grep, Read; so no sub-agent, workflow, web or scheduling tool): a record whose init event lists any other tool, or has none, is refused (tool_error)."
       },
       "model": "claude-haiku-4-5-20251001",
       "note": "Protocol v2 cloud economy explorer: Claude Code 2.1.285 headless with Haiku 4.5 (null effort), same read-only role and report format as the local explorer. The v1 argv of the economy implementer with Edit and Write added to the denied tools. Trial-run on 2026-10-06 (see evidence): init tools exactly Bash and Read (no separate Grep/Glob tool with this argv; a subset of the allow-list), tools used Read 3 and Bash 1, bundle unchanged, final-message report parsed, launcher-read tokens equal to the host's result.usage. LIMIT: its read-only behaviour is NOT enforced (Bash open, no sandbox: Claude Code does not authenticate under sandbox-exec); the unchanged bundle was observed, not guaranteed, hence the launcher's before/after git status check that refuses an exploration that changed the bundle. Bash keeps the v1 deny rules.",

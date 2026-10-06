@@ -414,6 +414,7 @@ def test_an_exploration_the_envelope_would_cut_short_is_not_started_and_not_scor
 def test_the_prompt_announces_the_bounds_and_the_function_cap(tmp_path):
     prompt = V2["prompts"]["explore"]
     assert "{max_duration}" in prompt and "{max_steps}" in prompt and "BEFORE reaching them" in prompt
+    assert "where the harness counts them" in prompt  # the cloud explorer is not step-bounded: truthful for both
     assert "at most 10 functions, most relevant first" in prompt
     runner, _, _, _ = make_runner(tmp_path, "screen_exploration")
     values = runner._values(tmp_path / "bundle", tmp_path / "attempt")
@@ -610,6 +611,7 @@ def test_the_three_verdicts_and_the_rule_on_the_comparison(tmp_path):
     assert arm_e["economy_detail"]["premium_billing_tokens"] == 400 and arm_e["informative"] is True  # explorer included
     assert (arm_e["compatibility"], arm_e["quality"], arm_e["economy"]) == ("pass", "pass", "pass")
     assert comparison["decision"] == "retained" and comparison["recommendation"] == "L"
+    assert comparison["campaign_conclusion"] == "retain_local_explorer"
     assert comparison["informative_arms"] == ["E"] and rep["promotion"] is False
     assert comparison["complete"] is True and comparison["warnings"] == []
     assert [x["file_recall"] for x in arm_l["explorer_localization"]] == [1.0, 1.0]
@@ -623,6 +625,20 @@ def test_l_fails_the_economy_rule_when_it_is_not_cheaper_per_accepted_task(tmp_p
     assert comparison["arms"]["L"]["economy"] == "fail"  # 175 vs 175: ratio 1.0 > 0.85
     assert comparison["arms"]["E"]["economy"] == "fail"  # the Haiku explorer makes E dearer than A
     assert comparison["decision"] == "keep_cloud" and comparison["recommendation"] == "A"
+    assert comparison["campaign_conclusion"] == "keep_cloud"
+
+
+def test_a_complete_comparison_with_an_unavailable_verdict_and_no_fail_keeps_the_cloud(tmp_path):
+    plan = {**PLAN, "reviewer": ["BLOCK", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS", "PASS"]}
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare_exploration", plan, swap=False)  # swap not measured
+    runner.compare_exploration(tasks, "cand-a")
+    comparison = lfr.report(campaign, results(runner), ledger_of(runner))["exploration_comparison"]
+    arm = comparison["arms"]["L"]
+    assert (arm["compatibility"], arm["quality"], arm["economy"]) == ("unavailable", "pass", "pass")
+    assert comparison["complete"] is True and comparison["decision"] == "inconclusive"
+    # PAT-ADR-0015: insufficient proof keeps the cloud; no replay, no extra task under v2
+    assert comparison["campaign_conclusion"] == "keep_cloud_insufficient_evidence"
+    assert comparison["recommendation"] is None
 
 
 def test_an_unknown_premium_makes_the_economy_unavailable_and_the_decision_inconclusive(tmp_path):
@@ -652,6 +668,7 @@ def test_the_cloud_execution_cap_stops_the_v2_comparison(tmp_path):
     comparison = lfr.report(campaign, results(runner), ledger_of(runner))["exploration_comparison"]
     # a partial campaign concludes nothing, whatever the verdicts of the tasks played so far
     assert comparison["complete"] is False and comparison["decision"] == "inconclusive"
+    assert comparison["campaign_conclusion"] == "incomplete_campaign"
 
 
 def test_screen_exploration_can_never_start_a_cloud_execution(tmp_path):
@@ -832,12 +849,48 @@ def test_the_dedicated_machine_is_rechecked_right_before_each_local_exploration_
     runner.preflight = lambda cid: (events.append("preflight"), real_pre(cid))[1]
     runner.cloud_path = lambda t, path, *a, **k: (events.append(f"cloud:{path}"), real_path(t, path, *a, **k))[1]
     runner.compare_exploration(tasks[:1], "cand-a", arms=("A", "L"))
-    assert events == ["cloud:A", "preflight", "cloud:L"]  # after A's long cloud work, before the exploration
+    # once at the very start (a busy machine is refused before any cloud spend), again after A's long cloud
+    # work and right before the exploration
+    assert events == ["preflight", "cloud:A", "preflight", "cloud:L"]
     busy, _, plan, tasks2 = make_runner(_sub(tmp_path, "busy"), "compare_exploration", {**PLAN, "reviewer": ["PASS"]},
                                         ps=BIG)
     with pytest.raises(lfr.PreflightRefused):
         busy.compare_exploration(tasks2[:1], "cand-a", arms=("A", "L"))
-    assert counts(plan).get("xlocal") is None and counts(plan).get("implementer") == 1  # A ran, L did not
+    assert counts(plan) == {}  # the refusal comes before any cloud spend: A did not run either
+    assert "cloud_started" not in [e["kind"] for e in ledger_of(busy)]
+
+
+def test_a_bound_reached_by_the_harness_itself_is_a_refusal_and_a_start_error_is_void(tmp_path, monkeypatch):
+    runner, _, plan, tasks = make_runner(tmp_path, "screen_exploration", caps={"cloud_executions": 0})
+    real = lfr.execute_driver
+
+    def at_the_bound(*args, **kwargs):  # the harness stopped by itself at --max-time: timed_out stays false
+        out = real(*args, **kwargs)
+        return {**out, "wall_seconds": runner.campaign["bounds"]["explorer_max_seconds"], "timed_out": False}
+
+    monkeypatch.setattr(lfr, "execute_driver", at_the_bound)
+    record = runner.screen_exploration(tasks[:1], ["cand-a"])[0]
+    assert record["local"]["timed_out"] is False and record["judge"]["note"] == lfr.BOUND_HIT
+    assert record["judge"]["verdict"] == "REFUSED" and record["exploration"]["report"] is None
+    monkeypatch.setattr(lfr, "execute_driver", real)
+    # an arm that never started (the executable is missing) is a launcher failure: void, replayed once
+    sub = _sub(tmp_path, "nostart")
+    broken, campaign, _, tasks2 = make_runner(sub, "screen_exploration", caps={"cloud_executions": 0})
+    good_argv = list(broken.campaign["drivers"]["local_explorer"]["argv"])
+    broken.campaign["drivers"]["local_explorer"]["argv"] = ["/nonexistent/explorer", *good_argv[1:]]
+    with pytest.raises(lfr.RunnerError, match="could not be started"):
+        broken.screen_exploration(tasks2[:1], ["cand-a"])
+    void = [r for r in results(broken) if r.get("record_type") == "attempt"][0]
+    assert void["outcome"] == "tool_error" and void["judge"] is None
+    again, _, _, atasks = _resumed(sub, broken, tasks2, "screen_exploration", PLAN, caps={"cloud_executions": 0})
+    out = again.screen_exploration(atasks[:1], ["cand-a"])
+    assert out[0]["replay_of"]["outcome"] == "tool_error" and out[0]["judge"]["verdict"] == "SCORED"
+
+
+def test_the_implementer_driver_default_of_v1_paths_is_kept():
+    assert lfr.IMPLEMENTER_DRIVER.get("C", lfr.IMPLEMENTER_DRIVER["A"]) == "cloud_implementer_current"
+    assert lfr.IMPLEMENTER_DRIVER["B"] == "cloud_implementer_economy"
+    assert lfr.IMPLEMENTER_DRIVER["A"] == lfr.IMPLEMENTER_DRIVER["L"] == lfr.IMPLEMENTER_DRIVER["E"]
 
 
 # --------------------------------------------------------------------------- v1 unchanged
