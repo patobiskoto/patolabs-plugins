@@ -1,0 +1,1 @@
+{"schema": "foundry.local-first-envelope.v1", "campaign_id": "pat-19-screen-1", "expires_on": "2026-10-31", "allowed_modes": ["screen"], "caps": {"cloud_executions": 0, "premium_tokens": 0, "wall_clock_seconds": 43200}}
