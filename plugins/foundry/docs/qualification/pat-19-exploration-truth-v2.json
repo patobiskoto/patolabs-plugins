@@ -1,0 +1,362 @@
+{
+ "schema": "foundry.local-first-exploration-truth-set.v2",
+ "note": "Ground truth of the 12 corpus tasks for the PAT-19 v2 localization judge, computed from the merged diffs (lfe.ground_truth, diff algorithm and indent heuristic pinned) and committed before any v2 result. It is the launcher's single source: the campaign config records its sha256 and the launcher refuses a different file. The tests recompute it where the merged commits are available.",
+ "snapshot": "pat-19-corpus-snapshot-v1.json",
+ "tasks": {
+  "30": {
+   "set": "screening",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 30,
+   "base_sha": "7db48eb7d8163ed90678ba1e659c649600e96c55",
+   "head_sha": "8b128c57ba876d294ae107c5665975a9d67595de",
+   "files": [
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "_linear_markdown_readback_body"
+    ]
+   ],
+   "new_functions": [
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "_linear_foundry_adr_0012_v1_readback"
+    ]
+   ]
+  },
+  "83": {
+   "set": "screening",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 83,
+   "base_sha": "f740bebe48f8940fb09b087e70ac713f18c1f62a",
+   "head_sha": "58d3df8d1a2a27a6e00f86bf02db1da4ecd2e885",
+   "files": [
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/CHANGELOG.md",
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "LinearTracker._recover_supersession_pair"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "_linear_markdown_readback_body"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "_linear_observed_list_blank_lines"
+    ]
+   ],
+   "new_functions": []
+  },
+  "27": {
+   "set": "screening",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 27,
+   "base_sha": "3a96eadf0bdb4059c7a51745f64c889d4af3dd37",
+   "head_sha": "9fb276be297009ca373d08b2ae21ba8a72ce5d95",
+   "files": [
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "LinearTracker.import_adr_batch"
+    ]
+   ],
+   "new_functions": []
+  },
+  "24": {
+   "set": "screening",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 24,
+   "base_sha": "e70d50dd0fe4eec20a3ec3a0255df670891550aa",
+   "head_sha": "ebd77b9229b487440dbc9cf904ddfb38aad6392e",
+   "files": [
+    "plugins/foundry/tooling/foundry/frame.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/skills/frame/SKILL.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/frame.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/frame.py",
+     "materialize"
+    ]
+   ],
+   "new_functions": []
+  },
+  "48": {
+   "set": "screening",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 48,
+   "base_sha": "1f8658e4e0d13e02ecc92bd790e0df539a040829",
+   "head_sha": "9603302cc1b04d04e603256465beb9c011166250",
+   "files": [
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "_linear_markdown_readback_body"
+    ]
+   ],
+   "new_functions": [
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "_linear_pat_72_readback"
+    ]
+   ]
+  },
+  "19": {
+   "set": "screening",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 19,
+   "base_sha": "3e2c66b614b0c88c07b3d75892125711fa4e16f1",
+   "head_sha": "772bb0baa0f142830c4195edd9a90773d3f5072e",
+   "files": [
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "LinearTracker._project_lifecycle"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "LinearTracker._validate_native_state_history"
+    ]
+   ],
+   "new_functions": []
+  },
+  "26": {
+   "set": "comparison",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 26,
+   "base_sha": "a3f4e7f511b4a505fba024db592d0c51bdfcf215",
+   "head_sha": "3a96eadf0bdb4059c7a51745f64c889d4af3dd37",
+   "files": [
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/trackers/linear.py",
+     "LinearTracker.import_adr_batch"
+    ]
+   ],
+   "new_functions": []
+  },
+  "38": {
+   "set": "comparison",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 38,
+   "base_sha": "04fe0e9a011aab79bc0bf269ac4b24be0041b458",
+   "head_sha": "eae7231a89a7ba0a8ab726b0e84363fdeed5265d",
+   "files": [
+    "plugins/foundry/tooling/foundry/doctor.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/README.md",
+    "plugins/foundry/tests/test_doctor.py",
+    "plugins/foundry/tooling/foundry/doctor.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/doctor.py",
+     "_print_local_hook"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/doctor.py",
+     "local_hook_diagnostic"
+    ]
+   ],
+   "new_functions": [
+    [
+     "plugins/foundry/tooling/foundry/doctor.py",
+     "_hook_dir_healthy"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/doctor.py",
+     "_matching_candidate"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/doctor.py",
+     "_repo_toplevel"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/doctor.py",
+     "_suggested_hook_dir"
+    ]
+   ]
+  },
+  "25": {
+   "set": "comparison",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 25,
+   "base_sha": "ebd77b9229b487440dbc9cf904ddfb38aad6392e",
+   "head_sha": "a3f4e7f511b4a505fba024db592d0c51bdfcf215",
+   "files": [
+    "plugins/foundry/tooling/foundry/frame.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/skills/frame/SKILL.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/frame.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/frame.py",
+     "materialize"
+    ]
+   ],
+   "new_functions": [
+    [
+     "plugins/foundry/tooling/foundry/frame.py",
+     "_register_adr_alias"
+    ]
+   ]
+  },
+  "42": {
+   "set": "comparison",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 42,
+   "base_sha": "6befb22bda22b3024046624f42fab8f35c86cb98",
+   "head_sha": "2c1239cf4581fbf3f478020bd59677b38bb3615c",
+   "files": [
+    "plugins/foundry/tooling/foundry/registry.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/README.md",
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_registry_sharing.py",
+    "plugins/foundry/tooling/foundry/registry.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/registry.py",
+     "register"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/registry.py",
+     "register_alias"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/registry.py",
+     "repository_tracker_binding"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/registry.py",
+     "resolve"
+    ]
+   ],
+   "new_functions": []
+  },
+  "33": {
+   "set": "comparison",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 33,
+   "base_sha": "8b128c57ba876d294ae107c5665975a9d67595de",
+   "head_sha": "37606adcc40cfdb32f82bfbc605003e4069a96fb",
+   "files": [
+    "plugins/foundry/tooling/foundry/query.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/skills/merge-pr/SKILL.md",
+    "plugins/foundry/skills/resume-issue/SKILL.md",
+    "plugins/foundry/skills/start-issue/SKILL.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tests/test_pure.py",
+    "plugins/foundry/tooling/foundry/query.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/query.py",
+     "_adr_index_or_capability"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/query.py",
+     "issue"
+    ]
+   ],
+   "new_functions": []
+  },
+  "37": {
+   "set": "comparison",
+   "schema": "foundry.local-first-exploration-truth.v2",
+   "pr": 37,
+   "base_sha": "6a2f5ac35fa243a9819e1c613ef01692c0fb83e1",
+   "head_sha": "04fe0e9a011aab79bc0bf269ac4b24be0041b458",
+   "files": [
+    "plugins/foundry/tooling/foundry/query.py"
+   ],
+   "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/skills/merge-pr/SKILL.md",
+    "plugins/foundry/skills/resume-issue/SKILL.md",
+    "plugins/foundry/skills/start-issue/SKILL.md",
+    "plugins/foundry/tests/test_pure.py",
+    "plugins/foundry/tooling/foundry/query.py"
+   ],
+   "functions": [
+    [
+     "plugins/foundry/tooling/foundry/query.py",
+     "_adr_index_or_capability"
+    ],
+    [
+     "plugins/foundry/tooling/foundry/query.py",
+     "issue"
+    ]
+   ],
+   "new_functions": []
+  }
+ }
+}

@@ -1,0 +1,754 @@
+{
+  "schema": "foundry.local-first-campaign.v2",
+  "protocol": "pat-19-protocol-v2",
+  "note": "Frozen campaign config of the PAT-19 protocol v2 (PAT-114): read-only exploration judged first on localization (screening, no cloud) then on its downstream effect (comparison A / L / E). Values validated by the maintainer on 2026-10-06: the corpus and the five candidates, the read-only explorer and its bounds (10 min, 25 steps), arms A / L / E and the three verdicts, the report format, the screening rule (function recall as the main metric, thresholds 0.5), the comparison rule (acceptance >= A and premium per accepted task <= 0.85 x A, cloud explorer counted as premium), the cap of 120 cloud executions, and the three review-round-1 arbitrations (cap of 10 functions, file precision over every file of the diff, dedicated-machine thresholds 2 GiB and 35 %). Announced to the maintainer on 2026-10-06 as execution fixes and set by the coordinator: an exploration cut by a bound is refused, bounds announced in the prompt, the committed ground truth as single source, all five candidates required, threshold before the tie, tool names read/grep/glob. Set by the coordinator without being submitted: a refused or contaminated screening attempt counts 0 and never blocks the screening; the token and wall-clock caps of the recommended envelopes. Execution rules added on 2026-10-07 by the coordinator, under the autonomy the maintainer gave on 2026-10-06 evening for the whole v2 campaign, BEFORE any corpus trial, and NOT yet validated by the maintainer (their explicit validation is requested in the campaign report): the narrowed system allow-list of the dedicated-machine check, an exploration whose wall time reaches the bound is a refusal, a start_error is a void attempt, the conclusion keep_cloud_insufficient_evidence (complete comparison with an unavailable verdict and no fail; screening that can no longer be completed under the resume rule), the start-of-run preflight of the comparison. It reuses the v1 machinery and the v1 corpus (same manifest, same 12 tasks, no new draw) and leaves pat-19-campaign-v1.json untouched. The two explorer drivers were trial-run for real on 2026-10-06 on a toy repository with the launcher's own execute_driver (evidence: pat-19-preflight-v2-2026-10-06.json); the omp tool names were corrected by that trial (--tools=read,grep,glob: 'ls' and 'find' are refused or unavailable in omp 18.6.1) before the freeze. The implementer and reviewer drivers are the v1 pinned ones (trial-run in PAT-111). Changing a coordinate, a bound or a rule opens a protocol v3.",
+  "frozen_machine": {
+    "chip_contains": "M5 Pro",
+    "memory_gib": 64,
+    "os_version": "27.0.1",
+    "lm_studio_version_contains": "0.4.25",
+    "mlx_runtime_contains": "1.11.0",
+    "min_free_disk_gib": 30
+  },
+  "server_process_pattern": "LM Studio",
+  "bounds": {
+    "local_max_seconds": 1200,
+    "local_max_steps": 40,
+    "cloud_max_seconds": 3600,
+    "max_correction_rounds": 2,
+    "note": "v2 protocol coordinates: explorer_max_seconds 600 (10 min) and explorer_max_steps 25. local_max_seconds and local_max_steps are inherited from v1 and unused in v2 (no local implementer); cloud_max_seconds and max_correction_rounds are the v1 operational bounds (the implementer arms and the review). The cloud explorer (arm E) takes explorer_max_seconds as its time bound; its steps are not enforced (cloud drivers have no step count).",
+    "explorer_max_seconds": 600,
+    "explorer_max_steps": 25
+  },
+  "isolation": {
+    "note": "Launcher choice, not a protocol coordinate. LOCAL drivers (sandbox-exec): reads under the user's REAL home are denied by default (deny_home_by_default, true), then only the entries of allow_read_home (relative to the home, empty by default) and the root of the harness executable's environment when it lives in the home are allowed back, plus the bundle and the attempt directory (outside the real home in a normal run); the explicit read-deny list below stays on top as a second layer (the last matching rule wins), together with every checkout/worktree of this repository, the state directory and the parent directory of --envelope/--campaign/--snapshot/--manifest (keep them apart from --work-root). Default-deny is unit-tested on the generated profile and was trial-run on 2026-10-05 with the real omp 18.6.1 and mini-swe-agent 2.4.6 (Qwen3.8-27B MLX 4-bit, allow_read_home empty): both passed, so deny_home_by_default stays true (explicit list exercised with the real local harness by PAT-111 as well). The CLOUD drivers run WITHOUT sandbox-exec (sandbox: false with its reason) and NO read denial applies to them: neither deny_home_by_default nor the cloud list below is enforced for them (kept as data for the audit); an unsandboxed cloud arm can read anything the user can (plugin cache, ~/.config, ~/.ssh, repositories), reach the network, and use the user's implicit credentials (git credential helper through the keychain, gh configuration, ~/.config/foundry), and runs without Foundry hooks (--setting-sources project,local: the R1 guard on gh pr merge / git push does not apply). What stands between a cloud arm and the tracker, secrets and merge is: the best-effort cloud_bash_deny rules, the post-run audit of commands and paths (a record whose tool calls ran a forbidden command or touched the plugin cache, another checkout, the user's configuration, the home or an ancestor of the bundle is `contaminated`, undecided, cost kept, never replayed), and the fact that the bundle has no remote. The generated profile is itself denied to a sandboxed arm. Not covered: '(allow default)' leaves Mach access to the security daemon, so denying Library/Keychains does not prevent a keychain query.",
+    "deny_home_by_default": true,
+    "allow_read_home": [],
+    "deny_read_home": {
+      "local": [
+        ".claude",
+        ".claude.json",
+        ".codex",
+        ".config",
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".netrc",
+        "Library/Keychains",
+        ".git-credentials",
+        ".npmrc",
+        ".pypirc",
+        ".docker",
+        ".kube",
+        ".zsh_history",
+        ".bash_history",
+        ".python_history"
+      ],
+      "cloud": [
+        ".codex",
+        ".config/foundry",
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".netrc",
+        "Library/Keychains",
+        ".git-credentials",
+        ".npmrc",
+        ".pypirc",
+        ".docker",
+        ".kube",
+        ".zsh_history",
+        ".bash_history",
+        ".python_history"
+      ]
+    }
+  },
+  "cloud_bash_deny": [
+    "Bash(gh:*)",
+    "Bash(git push:*)",
+    "Bash(git remote:*)",
+    "Bash(git clone:*)",
+    "Bash(git fetch:*)",
+    "Bash(git pull:*)",
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+    "Bash(claude:*)",
+    "Bash(codex:*)",
+    "Bash(omp:*)",
+    "Bash(ssh:*)",
+    "Bash(scp:*)",
+    "Bash(nc:*)",
+    "Bash(python3 -m http:*)",
+    "Bash(pip install:*)",
+    "Bash(npm:*)",
+    "Bash(security:*)",
+    "Bash(open:*)"
+  ],
+  "cloud_bash_deny_note": "Best-effort Bash permission rules added to --disallowedTools of the three cloud drivers (the loader refuses a real cloud driver whose argv lacks one of them). Claude Code matches a rule against the COMMAND PREFIX: they stop the direct use of the tracker, merge, network and other-agent tools (gh, git push/remote/clone/fetch/pull, curl, wget, claude, codex, omp, ssh, scp, nc, npm, pip install, python -m http, security, open). They are NOT a sandbox: a determined agent evades them (a script, an interpreter one-liner, a renamed binary, an alias, a path-qualified executable, a library call), and the cloud arm keeps the real home, an open network, the user's implicit credentials and bypassPermissions. The post-run audit (command and path audit, contaminated records) detects the direct shapes; it does not prevent anything.",
+  "dedicated_machine": {
+    "note": "Protocol v2 admission (thresholds: maintainer, 2026-10-06; narrowed system patterns: coordinator, 2026-10-07, before any corpus trial, validation requested in the campaign report), applied by the preflight of screen-exploration (before every task) and of compare-exploration when arm L runs: refuse when a process outside the allow-list below holds more than max_other_process_rss_gib of resident memory (ps -axo rss=,command=), or when the free memory percentage of memory_pressure is under min_free_percent (35: replaces the 'swap de départ' threshold of the ticket's original AC; swap in use does not come down without a reboot, and the process rule is the real guard, see pat-19-preflight-v2-2026-10-06.json#dedicated_machine_measurement). Both commands are already in the launcher's read-only list. An unreadable output refuses. Only a process NAME (application name or executable basename, never an argument) is recorded with the observed values. The system patterns are deliberately narrow: /System/Library/ (daemons and frameworks), /usr/libexec|sbin|bin, /sbin, /Library/Apple and kernel_task; NOT /System/Applications/ (consumer apps such as Mail or Photos) nor /System/Volumes/Preboot/Cryptexes/App/ (Safari/WebKit), which are ordinary memory consumers.",
+    "max_other_process_rss_gib": 2,
+    "min_free_percent": 35,
+    "allowed_command_patterns": {
+      "lm_studio": [
+        "/LM Studio\\.app/",
+        "/\\.lmstudio/",
+        "(^|/)lms( |$)"
+      ],
+      "launcher": [
+        "foundry[._]local_first_runner",
+        "local_first_runner\\.py"
+      ],
+      "system": [
+        "^/System/Library/",
+        "^/usr/(libexec|sbin|bin)/",
+        "^/sbin/",
+        "^/Library/Apple/",
+        "^kernel_task( |$)"
+      ]
+    }
+  },
+  "exploration": {
+    "note": "Report format of the explorers: one JSON object {\"files\": [repo-relative paths], \"functions\": [{\"file\", \"name\"}], \"rationale\": str}; all three keys required. Read from <scratch>/report.json when the arm wrote one, else from the final message of its stream. A missing or unusable report, an exploration cut by a bound (time or steps) or a bundle whose git status changed is a refusal (score 0), never a void attempt. Only the FIRST 10 functions of a report count for function recall and are passed to the implementer of arms L and E (report_render_limits.max_functions must stay 10).",
+    "report_render_limits": {
+      "max_files": 20,
+      "max_functions": 10,
+      "max_rationale_chars": 1500
+    },
+    "ground_truth": {
+      "file": "pat-19-exploration-truth-v2.json",
+      "sha256": "9172feb07762d65f43280a2f8fa06181c4f13ed1c09c979227b9e4e58e21784c",
+      "note": "the single source of the ground truth: the launcher loads this committed file and refuses (campaign load, code 2, before any attempt) a file whose sha256 differs"
+    },
+    "protocol_coordinates": {
+      "note": "These determine the score or the verdicts of the comparison and are stated in the protocol (sections 4 to 6): they ARE protocol coordinates; changing one opens a protocol v3.",
+      "function_cap": {
+        "value": 10,
+        "rationale": "only the first 10 functions of a report count for function recall and reach the implementer of arms L and E (report_render_limits.max_functions must equal it)"
+      },
+      "function_name_match": "a reported function name matches a true function in the same file when it equals the qualified name or its last component",
+      "empty_report_precision": "a valid report with no file has file precision 0 (undefined ratio counted as 0, so the precision floor cannot be met by saying nothing)",
+      "localization_ground_truth": "recall uses the product files and functions only (the judge's own classification: SOURCE_PREFIXES, not tests, not documentation); precision counts a reported file as correct when the merged diff really changed or created it, product or not; files the diff adds are not counted in recall and functions that do not exist at the base SHA are not counted in function recall: an explorer cannot find what does not exist yet. A removed line is read in the base source, an added line in the merged source; the diff algorithm is pinned (myers)",
+      "premium_work_definition": "premium work = unweighted sum of the four billing token classes (input, cached input, cache write, output) over ALL models, explorer included: a Haiku explorer counts as premium, local tokens do not; a limit: an economy model's token weighs the same as a premium one, hence the per-model breakdown in the report",
+      "refused_report_in_comparison": "when an explorer of the comparison yields no usable report, its implementer runs on the plain statement and the explorer's cost stays counted (the end-to-end cost of using the explorer); a contaminated or twice-cut explorer leaves the arm undecided for that task",
+      "quality_bounds_on_undecided": "quality compares acceptance counts with undecided tasks as bounds: pass only if it holds in the worst case, fail only if it fails in the best case, else unavailable",
+      "economy_unavailable_cases": "premium per accepted task is unavailable (never zero) when a compared task is undecided, spent work is unknown, a premium total is unknown or an arm accepted no task"
+    }
+  },
+  "non_protocol_choices": {
+    "min_free_disk_gib": {
+      "not_a_protocol_coordinate": true,
+      "value_at": "frozen_machine.min_free_disk_gib",
+      "rationale": "launcher safety margin for model files and bundles; the protocol states no disk threshold"
+    },
+    "swap_metric": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "extra swap is measured as the maximum, over local attempts, of (swap after - swap before); the protocol does not define how to measure it"
+    },
+    "explorer_tool_names": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the read-only tool set of the local explorer is --tools=read,grep,glob. The maintainer validated the read-only intent on 2026-10-06 as read,grep,find,ls; the toy trial of omp 18.6.1 refused it (\"Unknown tool in --tools: ls\"; find is \"unavailable in this session\"; the built-ins include read, grep, glob), so the names were corrected to the same trio as the cloud explorer (Read/Grep/Glob) before the freeze. The loader accepts only read, grep, glob."
+    },
+    "report_source_and_prompt": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the pinned tool sets have no file-writing tool, so the prompt asks for the JSON as the final message and the launcher reads it from the stream; an arm-written <scratch>/report.json is also accepted. The shapes of the final messages were pinned by the real toy trials of 2026-10-06 and, with the frozen prompt, of 2026-10-07 (pat-19-preflight-v2-2026-10-06.json: drivers, final_prompt_trial)"
+    },
+    "report_render_limits": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "a report appended to a statement is cut at 20 files and 1500 rationale characters, with a visible note; the scoring is not affected. The cap of 10 functions is a protocol coordinate (exploration.protocol_coordinates.function_cap)"
+    },
+    "envelope_recommendation": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the caps below are a recommendation for the operator's envelope file (the launcher never writes one); the envelope stays the operator's"
+    },
+    "explorer_bundle_unchanged_check": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the launcher records git status --porcelain of the bundle before and after each exploration (local and cloud); a modified or unreadable bundle refuses the exploration (score 0, never replayed). Needed because the cloud explorer is not sandboxed (Bash open): its read-only behaviour is observed, not enforced"
+    }
+  },
+  "statement_footer": "\n\n---\nLauncher note (identical for every arm): work only inside this repository. Do not create virtual environments, install packages or create node_modules in the tree; use the interpreter already on PATH. Do not create or edit test configuration files (conftest.py, pytest.ini, pyproject.toml, tox.ini, setup.cfg, sitecustomize.py, *.pth).\n",
+  "prompts": {
+    "implement": "Implement the task described in {statement_file}. Work only inside the current repository: change the product code and add tests if useful. Run the relevant tests, then stop when you consider the task done.",
+    "correct": "The task is described in {statement_file}. A previous attempt is already applied in this repository. Apply the corrections listed in {feedback_file}, run the relevant tests, then stop.",
+    "review": "Independently review the uncommitted change in this repository (git diff HEAD) against the task in {statement_file}. Do not modify any file. Write {review_file} as JSON: {\"verdict\": \"PASS\" or \"BLOCK\", \"findings\": [\"...\"]}.",
+    "explore": "Prepare the task described in {statement_file} by exploring this repository READ-ONLY: do not modify any file, do not run tests, do not write anything. You have at most {max_duration} (and at most {max_steps} tool steps where the harness counts them): answer with the JSON BEFORE reaching them, an exploration cut by a bound is refused and scores 0. Find where the change must be made. Your final message must be exactly one JSON object and nothing else: {\"files\": [\"repo-relative path\", ...], \"functions\": [{\"file\": \"repo-relative path\", \"name\": \"function or Class.method\"}], \"rationale\": \"short explanation\"}. List the files and the functions that need to change, not the ones you merely read; at most 10 functions, most relevant first (only the first 10 count)."
+  },
+  "rules": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates are the five frozen ones (candidates, in this order) and the screening is complete only when all five have their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Frozen with v2, before any result.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.8-27b-mlx-6bit",
+        "qwen3.8-27b-mlx-4bit",
+        "qwen3.6-35b-a3b-mlx-4bit",
+        "muse-glimmer-30b-gguf",
+        "qwen3-coder-30b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 6,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "arm L is retained only if compatibility AND quality AND economy all pass on the 6 tasks: its acceptance rate >= A's AND its premium tokens per accepted task (explorer included; a Haiku explorer counts as premium, local tokens do not) <= 0.85 x A's, and compatibility (the v1 machine criterion: no external signal, extra swap under extra_swap_gib_max) passes. E vs A is computed with the same rule and is informative. Local wall time is reported; no time ratio is part of the v2 rule."
+    }
+  },
+  "envelope_recommended": {
+    "screen_exploration": {
+      "allowed_modes": [
+        "screen_exploration"
+      ],
+      "caps": {
+        "cloud_executions": 0,
+        "premium_tokens": 0,
+        "wall_clock_seconds": 36000
+      },
+      "justification": "5 candidates x 6 tasks x at most 600 s = 18 000 s; 36 000 s leaves room for the one replay of a void attempt and the preflights. No cloud."
+    },
+    "compare_exploration": {
+      "allowed_modes": [
+        "compare_exploration"
+      ],
+      "caps": {
+        "cloud_executions": 120,
+        "premium_tokens": 60000000,
+        "wall_clock_seconds": 100000
+      },
+      "justification": "Per task and arm at most 1 implementer + 2 corrections and 3 reviews = 6 executions: 3 arms x 6 tasks x 6 = 108, plus 6 Haiku explorations = 114 <= 120 (the cap holds the worst case; the minimum is 42). premium_tokens 60 000 000 is 500 000 per execution of 120: v1's 20 000 000 for 45 executions was about 444 000, and a real task is unknown before measurement (a cap stops the campaign, it is not an estimate). wall_clock 100 000 s (27.8 h) covers 114 cloud executions at ~10 min plus 6 x 600 s of local exploration, below the sum of the worst-case bounds."
+    }
+  },
+  "drivers": {
+    "local_explorer": {
+      "kind": "local_explorer",
+      "verified": true,
+      "home": "isolated",
+      "network": "loopback",
+      "env_allow": [],
+      "home_files": {},
+      "note": "Protocol v2 read-only local explorer: omp 18.6.1 as the v1 local_harness plus --tools=read,grep,glob (no edit, write or bash tool), the bundle READ-ONLY in the sandbox profile (only the attempt scratch writable), bounded by explorer_max_seconds/steps. Trial-run on 2026-10-06 (see evidence): with Qwen3.6-35B-A3B MLX 4-bit, sandbox on, bundle read-only, deny-home: exit 0, 14.0 s, 4 steps, bundle unchanged, final-message report parsed. The first argv (--tools=read,grep,find,ls) was refused by omp.",
+      "stream": {
+        "format": "omp-json",
+        "speed_usage_keys": null
+      },
+      "argv": [
+        "omp",
+        "-p",
+        "--mode",
+        "json",
+        "--model",
+        "lm-studio/{model}",
+        "--cwd",
+        "{workdir}",
+        "--no-session",
+        "--auto-approve",
+        "--tools=read,grep,glob",
+        "--no-extensions",
+        "--no-skills",
+        "--no-rules",
+        "--no-lsp",
+        "--no-title",
+        "--max-time",
+        "{max_duration}",
+        "{prompt}"
+      ],
+      "version": "omp 18.6.1",
+      "binary_version": {
+        "command": [
+          "omp",
+          "--version"
+        ],
+        "pattern": "^omp/(\\d+\\.\\d+\\.\\d+)$",
+        "version": "18.6.1"
+      },
+      "evidence": "pat-19-preflight-v2-2026-10-06.json#drivers.local_explorer"
+    },
+    "cloud_implementer_current": {
+      "kind": "cloud_implementer",
+      "verified": true,
+      "home": "real",
+      "network": "open",
+      "env_allow": [],
+      "stream": {
+        "format": "claude-stream-json"
+      },
+      "session_log": {
+        "host": "claude",
+        "projects_dir": "~/.claude/projects",
+        "layout_verified": true,
+        "layout_note": "Verified on 2026-10-05 (PAT-111): the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly for the three drivers, one file per session id. Conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools (Bash, Edit, Read, Write; so no sub-agent, workflow, web or scheduling tool): a record whose init event lists any other tool, or has none, is refused (tool_error)."
+      },
+      "model": "claude-sonnet-5-5",
+      "note": "Claude Code 2.1.285 headless, current routed implementer profile (Sonnet 5.5, effort medium). The first 2026-10-05 trial ran with `--disallowedTools Agent` only; the FINAL argv (29 tool names + the cloud_bash_deny rules) was then trial-run on the toy task on 2026-10-05 (init: exactly Bash, Edit, Read, Write) and passed, see the evidence. Bare Claude Code with the protocol's model and effort: no Foundry plugin, hook, agent definition (not the Eiffel or Maigret definitions), --permission-mode bypassPermissions, tools restricted to Read/Edit/Write/Bash with Bash otherwise unrestricted except for the best-effort deny rules.",
+      "argv": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--session-id",
+        "{session_id}",
+        "--model",
+        "{model}",
+        "--effort",
+        "medium",
+        "--permission-mode",
+        "bypassPermissions",
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "Task",
+        "TaskStop",
+        "Workflow",
+        "SendMessage",
+        "ListAgents",
+        "Monitor",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        "RemoteTrigger",
+        "PushNotification",
+        "WebFetch",
+        "WebSearch",
+        "Skill",
+        "DesignSync",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ReportFindings",
+        "ToolSearch",
+        "NotebookEdit",
+        "Artifact",
+        "ArtifactComments",
+        "ArtifactData",
+        "SendFeedback",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "Bash(gh:*)",
+        "Bash(git push:*)",
+        "Bash(git remote:*)",
+        "Bash(git clone:*)",
+        "Bash(git fetch:*)",
+        "Bash(git pull:*)",
+        "Bash(curl:*)",
+        "Bash(wget:*)",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(omp:*)",
+        "Bash(ssh:*)",
+        "Bash(scp:*)",
+        "Bash(nc:*)",
+        "Bash(python3 -m http:*)",
+        "Bash(pip install:*)",
+        "Bash(npm:*)",
+        "Bash(security:*)",
+        "Bash(open:*)",
+        "--output-format",
+        "stream-json",
+        "--verbose"
+      ],
+      "evidence": "pat-19-preflight-2026-10-05.json#drivers.cloud_implementer_current",
+      "sandbox": false,
+      "sandbox_reason": "Claude Code cannot authenticate under sandbox-exec ('Not logged in' with the keychain denied, '401 OAuth access token has been revoked' with it allowed; cause not established). The arm runs unsandboxed with the AGENTS.md R6 environment intact (real HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER) in the disposable bundle; its tool calls are audited after the run. Consequences, not mitigated by the launcher: real home, open network, the user's implicit credentials, no Foundry hook (no R1 guard); see cloud_bash_deny and isolation.note.",
+      "allowed_tools": [
+        "Bash",
+        "Edit",
+        "Read",
+        "Write"
+      ]
+    },
+    "cloud_explorer_economy": {
+      "kind": "cloud_explorer",
+      "verified": true,
+      "home": "real",
+      "network": "open",
+      "env_allow": [],
+      "stream": {
+        "format": "claude-stream-json"
+      },
+      "session_log": {
+        "host": "claude",
+        "projects_dir": "~/.claude/projects",
+        "layout_verified": true,
+        "layout_note": "Verified on 2026-10-05 (PAT-111): the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly for the three drivers, one file per session id. Conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools (Bash, Glob, Grep, Read; so no sub-agent, workflow, web or scheduling tool): a record whose init event lists any other tool, or has none, is refused (tool_error)."
+      },
+      "model": "claude-haiku-4-5-20251001",
+      "note": "Protocol v2 cloud economy explorer: Claude Code 2.1.285 headless with Haiku 4.5 (null effort), same read-only role and report format as the local explorer. The v1 argv of the economy implementer with Edit and Write added to the denied tools. Trial-run on 2026-10-06 (see evidence): init tools exactly Bash and Read (no separate Grep/Glob tool with this argv; a subset of the allow-list), tools used Read 3 and Bash 1, bundle unchanged, final-message report parsed, launcher-read tokens equal to the host's result.usage. LIMIT: its read-only behaviour is NOT enforced (Bash open, no sandbox: Claude Code does not authenticate under sandbox-exec); the unchanged bundle was observed, not guaranteed, hence the launcher's before/after git status check that refuses an exploration that changed the bundle. Bash keeps the v1 deny rules.",
+      "argv": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--session-id",
+        "{session_id}",
+        "--model",
+        "{model}",
+        "--permission-mode",
+        "bypassPermissions",
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "Task",
+        "TaskStop",
+        "Workflow",
+        "SendMessage",
+        "ListAgents",
+        "Monitor",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        "RemoteTrigger",
+        "PushNotification",
+        "WebFetch",
+        "WebSearch",
+        "Skill",
+        "DesignSync",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ReportFindings",
+        "ToolSearch",
+        "NotebookEdit",
+        "Artifact",
+        "ArtifactComments",
+        "ArtifactData",
+        "SendFeedback",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "Edit",
+        "Write",
+        "Bash(gh:*)",
+        "Bash(git push:*)",
+        "Bash(git remote:*)",
+        "Bash(git clone:*)",
+        "Bash(git fetch:*)",
+        "Bash(git pull:*)",
+        "Bash(curl:*)",
+        "Bash(wget:*)",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(omp:*)",
+        "Bash(ssh:*)",
+        "Bash(scp:*)",
+        "Bash(nc:*)",
+        "Bash(python3 -m http:*)",
+        "Bash(pip install:*)",
+        "Bash(npm:*)",
+        "Bash(security:*)",
+        "Bash(open:*)",
+        "--output-format",
+        "stream-json",
+        "--verbose"
+      ],
+      "sandbox": false,
+      "sandbox_reason": "Claude Code cannot authenticate under sandbox-exec ('Not logged in' with the keychain denied, '401 OAuth access token has been revoked' with it allowed; cause not established). The arm runs unsandboxed with the AGENTS.md R6 environment intact (real HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER) in the disposable bundle; its tool calls are audited after the run. Consequences, not mitigated by the launcher: real home, open network, the user's implicit credentials, no Foundry hook (no R1 guard); see cloud_bash_deny and isolation.note.",
+      "allowed_tools": [
+        "Bash",
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "evidence": "pat-19-preflight-v2-2026-10-06.json#drivers.cloud_explorer_economy"
+    },
+    "cloud_reviewer": {
+      "kind": "cloud_reviewer",
+      "verified": true,
+      "home": "real",
+      "network": "open",
+      "env_allow": [],
+      "stream": {
+        "format": "claude-stream-json"
+      },
+      "session_log": {
+        "host": "claude",
+        "projects_dir": "~/.claude/projects",
+        "layout_verified": true,
+        "layout_note": "Verified on 2026-10-05 (PAT-111): the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly for the three drivers, one file per session id. Conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools (Bash, Edit, Read, Write; so no sub-agent, workflow, web or scheduling tool): a record whose init event lists any other tool, or has none, is refused (tool_error)."
+      },
+      "model": "claude-opus-5-5",
+      "note": "Claude Code 2.1.285 headless reviewer (Opus 5.5, effort high), identical for every arm. The first 2026-10-05 trial ran with `--disallowedTools Agent` only; the FINAL argv (29 tool names + the cloud_bash_deny rules) was then trial-run on the toy task on 2026-10-05 (init: exactly Bash, Edit, Read, Write) and passed, see the evidence. Bare Claude Code with the protocol's model and effort: no Foundry plugin, hook, agent definition (not the Eiffel or Maigret definitions), --permission-mode bypassPermissions, tools restricted to Read/Edit/Write/Bash with Bash otherwise unrestricted except for the best-effort deny rules.",
+      "argv": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--session-id",
+        "{session_id}",
+        "--model",
+        "{model}",
+        "--effort",
+        "high",
+        "--permission-mode",
+        "bypassPermissions",
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "Task",
+        "TaskStop",
+        "Workflow",
+        "SendMessage",
+        "ListAgents",
+        "Monitor",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        "RemoteTrigger",
+        "PushNotification",
+        "WebFetch",
+        "WebSearch",
+        "Skill",
+        "DesignSync",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ReportFindings",
+        "ToolSearch",
+        "NotebookEdit",
+        "Artifact",
+        "ArtifactComments",
+        "ArtifactData",
+        "SendFeedback",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "Bash(gh:*)",
+        "Bash(git push:*)",
+        "Bash(git remote:*)",
+        "Bash(git clone:*)",
+        "Bash(git fetch:*)",
+        "Bash(git pull:*)",
+        "Bash(curl:*)",
+        "Bash(wget:*)",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(omp:*)",
+        "Bash(ssh:*)",
+        "Bash(scp:*)",
+        "Bash(nc:*)",
+        "Bash(python3 -m http:*)",
+        "Bash(pip install:*)",
+        "Bash(npm:*)",
+        "Bash(security:*)",
+        "Bash(open:*)",
+        "--output-format",
+        "stream-json",
+        "--verbose"
+      ],
+      "evidence": "pat-19-preflight-2026-10-05.json#drivers.cloud_reviewer",
+      "sandbox": false,
+      "sandbox_reason": "Claude Code cannot authenticate under sandbox-exec ('Not logged in' with the keychain denied, '401 OAuth access token has been revoked' with it allowed; cause not established). The arm runs unsandboxed with the AGENTS.md R6 environment intact (real HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER) in the disposable bundle; its tool calls are audited after the run. Consequences, not mitigated by the launcher: real home, open network, the user's implicit credentials, no Foundry hook (no R1 guard); see cloud_bash_deny and isolation.note.",
+      "allowed_tools": [
+        "Bash",
+        "Edit",
+        "Read",
+        "Write"
+      ]
+    }
+  },
+  "candidates": {
+    "qwen3.8-27b-mlx-6bit": {
+      "model": "qwen3.8-27b-mlx-alias",
+      "lm_studio_key": "qwen3.8-27b-mlx-alias",
+      "engine": "mlx",
+      "quantization": "6bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.8-27B-MLX-6bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen3.8-27b-mlx-alias",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen3.8-27b-mlx-alias",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "config.json": "f2490d237e42fc8418ee62b7416e360785b7de308f43d8f794ccf4f185bdeec9",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00005.safetensors": "39a48bfd79609b341f4ed420cdc92e3edce316cd3f5ef7db2dcd371f48c90588",
+        "model-00002-of-00005.safetensors": "d9011deb397afa986754a8abe3872b87a21c2bd6d7f9ed50bd8cba3890b782f9",
+        "model-00003-of-00005.safetensors": "760d392182ee77093df96328110596e230a9f4cab37febd70ae29173f7ff7e01",
+        "model-00004-of-00005.safetensors": "513fbeb37662c2b6020ebe4d61e5e9192f7abb5970aef0cd291b7a55f445c23e",
+        "model-00005-of-00005.safetensors": "6ed59540691cfb8f8adeaa186506d3fc44b0f0ce392c7caf59116bb6ae580c01",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "45fc17c8dd2474af6b493b52483c26c0584b0082d368c480f9fa611e73070040",
+        "tokenizer_config.json": "47a7a8371379b07650b22f3c8a78c32fed85c4e35ea88e3da0c4b7a7611e8082",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit.deny_home_trial"
+      },
+      "note": "Reached through the LM Studio model key qwen3.8-27b-mlx-alias: a folder of hard links (pat19-campaign/Qwen3.8-27B-MLX-6bit-alias) to the 6-bit files, because LM Studio groups the 4-bit and 6-bit variants under qwen/qwen3.8-27b and no CLI or API key selects the 6-bit variant."
+    },
+    "qwen3.8-27b-mlx-4bit": {
+      "model": "qwen/qwen3.8-27b",
+      "lm_studio_key": "qwen/qwen3.8-27b",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.8-27B-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen/qwen3.8-27b",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen/qwen3.8-27b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "config.json": "14b65a0ee06517060a6bbd979bb1a8ff54e7b304b1a1f01d54344b88b8285e85",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00003.safetensors": "471a9a81b54dddbfef43e8a71960ca24ad3c727891c6b0750a9db9a214aab504",
+        "model-00002-of-00003.safetensors": "e7474b8f968f4078dfd4889925961c5b0da9939219b614dba08eb63c46590de7",
+        "model-00003-of-00003.safetensors": "1038989bed1346ecdb541a45c078df2aae99a9509f35bfd51e7a04802a5d8402",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "45fc17c8dd2474af6b493b52483c26c0584b0082d368c480f9fa611e73070040",
+        "tokenizer_config.json": "47a7a8371379b07650b22f3c8a78c32fed85c4e35ea88e3da0c4b7a7611e8082",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit.deny_home_trial"
+      },
+      "note": "The selected variant of qwen/qwen3.8-27b must be the 4-bit one: the preflight refuses a loaded instance whose quantization is not 4bit."
+    },
+    "qwen3.6-35b-a3b-mlx-4bit": {
+      "model": "qwen/qwen3.6-35b-a3b",
+      "lm_studio_key": "qwen/qwen3.6-35b-a3b",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen/qwen3.6-35b-a3b",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen/qwen3.6-35b-a3b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259",
+        "config.json": "a822a9e48b0aafbe3144ec37d4fb067e178ed96615ce6e4420b3149893cc5767",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00004.safetensors": "09f3e6ecb0b7af6e6a38bc8169a134c821b0924c2679b2bb8f4426ad38d032b8",
+        "model-00002-of-00004.safetensors": "31dcdb1c49eebdb1505bd14e3cb33f9cf900bd2546b638f2464694ae763a033f",
+        "model-00003-of-00004.safetensors": "3e66de06a1f03dade16a612a368cfce4a4c9caa4efd7d28185454384082cec03",
+        "model-00004-of-00004.safetensors": "a5d0cf03519c26f8b506df6b0ba60526e5c08c8cea22d0c21ce92950e58a5422",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1",
+        "tokenizer_config.json": "672488283cdbf3530ecd2e3f90da54f9998cbae6befb5b32877590f72c7a9b2c",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit.deny_home_trial"
+      }
+    },
+    "muse-glimmer-30b-gguf": {
+      "model": "muse-glimmer-30b",
+      "lm_studio_key": "muse-glimmer-30b",
+      "engine": "llama.cpp",
+      "quantization": "Q4_K_M",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Muse-Glimmer-30B-GGUF",
+      "load_command": [
+        "lms",
+        "load",
+        "muse-glimmer-30b",
+        "-c",
+        "65536",
+        "--identifier",
+        "muse-glimmer-30b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf": "4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e",
+        "mmproj-Muse-Glimmer-30B-Q4_K_M.gguf": "f48b452316f9b213758e8659444029b961a24a07f99a1abb2a9f88b06f7c00c6"
+      },
+      "chat_template_sha256": null,
+      "generation_config_sha256": null,
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.muse-glimmer-30b-gguf",
+        "failed_at_default_8192": true,
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.muse-glimmer-30b-gguf.deny_home_trial"
+      },
+      "note": "Chat template embedded in the GGUF (covered by the file digest)."
+    },
+    "qwen3-coder-30b-a3b-mlx-4bit": {
+      "model": "qwen3-coder-30b-a3b-instruct-mlx",
+      "lm_studio_key": "qwen3-coder-30b-a3b-instruct-mlx",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen3-coder-30b-a3b-instruct-mlx",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen3-coder-30b-a3b-instruct-mlx",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "672e747c77e990320152343b0a4951222e40de5645297905d89afba05586d827",
+        "config.json": "6fb72959ce0deb110c85627c09041cbcad46163c3802914ebefd02bbcf3304e6",
+        "generation_config.json": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d",
+        "model-00001-of-00004.safetensors": "961d4610b969fcf61b015f59654da6b12a158af5a1104be0fadd75268bd9535c",
+        "model-00002-of-00004.safetensors": "916440f8de7a85b62ae74711a36b7d59bf8b04101e85a23717287cbd60fdd193",
+        "model-00003-of-00004.safetensors": "02be309a7a17b0ab0e6df48e5d6070940e05492392a3501a629c7f21d18588e2",
+        "model-00004-of-00004.safetensors": "17701098bfd26cfe4d14e4ec96e3a483a6cfe3798d4c6586638beaab48c6bf51",
+        "tokenizer_config.json": "c8785e5cc844c31853fa42c926e80aa7659e6d3cb237dcbbe6071ae93917ade7"
+      },
+      "chat_template_sha256": "672e747c77e990320152343b0a4951222e40de5645297905d89afba05586d827",
+      "generation_config_sha256": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3-coder-30b-a3b-mlx-4bit",
+        "failed_at_default_8192": true,
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3-coder-30b-a3b-mlx-4bit.deny_home_trial"
+      }
+    },
+    "devstral-small-2-24b-gguf": {
+      "model": "lmstudio-community/Devstral-Small-2-24B-Instruct-2512-GGUF",
+      "engine": "llama.cpp",
+      "unused": true,
+      "note": "declared fallback of muse-glimmer-30b-gguf, UNUSED: Muse passed the tool-call smoke test at 65536; never loaded, no key, quantization or digest recorded"
+    }
+  },
+  "candidates_note": "model = the LM Studio model key, which is also the identifier the operator gives at load (lms load <key> -c 65536 --identifier <key> --parallel 1) and the name the harness sends; the HF repo of the protocol is kept as hf_repo_provenance. The operator loads, the launcher loads nothing. The preflight reads the loaded instance (lms ps --json) and refuses when its model key differs, its quantization differs or its context length is below min_context (65536, a frozen coordinate: LM Studio ignored -c for some MLX builds). File digests, chat-template digest and generation parameters are recorded here and in pat-19-preflight-2026-10-05.json; they are not recomputed by the launcher. Generation parameters are the server and harness defaults, not overridden."
+}
