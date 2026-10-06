@@ -7,6 +7,10 @@ PAT-107 bundles, judged by ``local_first_corpus``; premium tokens are read from 
 logs (``cost_attribution``, FOUNDRY-ADR-0015) and attached to an execution by the session id the
 launcher itself hands to the driver.
 
+Protocol v2 (PAT-114, ``screen-exploration`` and ``compare-exploration``, config schema v2) reuses the same
+machinery for a read-only explorer judged on localization (``local_first_exploration``) and then on its
+downstream effect; see ``docs/qualification/pat-19-protocol-v2.md``.
+
 The tool loads no model and calls no tracker. A real arm runs only from a campaign config whose
 driver is marked ``verified``, under an authorization envelope (FOUNDRY-ADR-0010) and a passing
 machine preflight; ``--dry-run`` accepts only ``fake`` drivers. See
@@ -38,16 +42,30 @@ from typing import Any, Callable, Collection, Mapping, Sequence
 
 from foundry import cost_attribution as ca
 from foundry import local_first_corpus as lfc
+from foundry import local_first_exploration as lfe
 
 CAMPAIGN_SCHEMA = "foundry.local-first-campaign.v1"
+CAMPAIGN_SCHEMA_V2 = "foundry.local-first-campaign.v2"  # protocol v2 (PAT-114): read-only exploration
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
-MODES = ("screen", "compare")
-DRIVER_KINDS = ("local_harness", "neutral_harness", "cloud_implementer", "cloud_reviewer")
-LOCAL_KINDS = ("local_harness", "neutral_harness")
+# ``screen`` and ``compare`` are the protocol v1 modes; the two ``*_exploration`` modes are protocol v2.
+EXPLORE_MODES = ("screen_exploration", "compare_exploration")
+MODES = ("screen", "compare", *EXPLORE_MODES)
+CLOUD_MODES = ("compare", "compare_exploration")  # the only modes that may start a cloud execution
+DRIVER_KINDS = ("local_harness", "neutral_harness", "cloud_implementer", "cloud_reviewer",
+                "local_explorer", "cloud_explorer")
+LOCAL_KINDS = ("local_harness", "neutral_harness", "local_explorer")
+CLOUD_KINDS = ("cloud_implementer", "cloud_reviewer", "cloud_explorer")
 PATHS = ("A", "B", "C", "N")
-IMPLEMENTER_DRIVER = {"A": "cloud_implementer_current", "B": "cloud_implementer_economy"}
+# Protocol v2 paths: ``XS`` = exploration screening attempt; ``A`` (no report), ``L`` (report of the
+# retained local explorer) and ``E`` (report of the cloud economy explorer) in the comparison.
+EXPLORE_ARMS = ("A", "L", "E")
+IMPLEMENTER_DRIVER = {"A": "cloud_implementer_current", "B": "cloud_implementer_economy",
+                      "L": "cloud_implementer_current", "E": "cloud_implementer_current"}
 REVIEWER_DRIVER = "cloud_reviewer"
+LOCAL_EXPLORER_DRIVER = "local_explorer"
+CLOUD_EXPLORER_DRIVER = "cloud_explorer_economy"
+BUNDLE_MODIFIED = "the explorer modified the bundle (it is a read-only role): exploration refused"
 # Home entries a candidate may not read (campaign config ``isolation.deny_read_home`` overrides this
 # list, which is a launcher choice and not a protocol coordinate). A local arm may read nothing of the
 # user's configuration; a cloud arm keeps ``~/.claude`` (OAuth identity, AGENTS.md R6) and ``~/.config``.
@@ -67,7 +85,7 @@ READ_ONLY_COMMANDS = frozenset({
     ("sysctl", "-n", "machdep.cpu.brand_string"), ("sysctl", "-n", "hw.memsize"),
     ("sysctl", "-n", "vm.swapusage"), ("sw_vers", "-productVersion"), ("memory_pressure",),
     LM_STUDIO_VERSION_COMMAND, ("lms", "runtime", "ls"), ("lms", "ps", "--json"),
-    ("ps", "-axo", "rss=,command=")})
+    ("ps", "-axo", "rss=,command=")})  # the v2 dedicated-machine check uses only these same two probes
 _SECRET_NAME = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|SSH_AUTH_SOCK|^FOUNDRY_)", re.I)
 _PLACEHOLDER = re.compile(r"\{(\w+)\}")
 _ID = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -116,7 +134,7 @@ class PreflightRefused(RunnerError):
 def load_campaign(path: Path) -> dict[str, Any]:
     """The frozen campaign config. Fails closed on any missing piece."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("schema") != CAMPAIGN_SCHEMA:
+    if not isinstance(data, dict) or data.get("schema") not in (CAMPAIGN_SCHEMA, CAMPAIGN_SCHEMA_V2):
         raise RunnerError(f"{path}: unexpected schema")
     for key in ("frozen_machine", "bounds", "statement_footer", "prompts", "rules", "drivers",
                 "candidates"):
@@ -164,7 +182,59 @@ def load_campaign(path: Path) -> dict[str, Any]:
         for key, kind in (("min_context", int), ("lm_studio_key", str), ("quantization", str)):
             if key in cand and (type(cand[key]) is not kind or not cand[key] or cand[key] is True):
                 raise RunnerError(f"{path}: candidate {cid}: {key} must be a non-empty {kind.__name__}")
+    if data["schema"] == CAMPAIGN_SCHEMA_V2:
+        _check_exploration_config(path, data)
     return data
+
+
+def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
+    """What a protocol v2 campaign must declare (PAT-114): the explorer bounds, the explore prompt, the
+    pre-registered rules, the dedicated-machine thresholds and an explorer driver of each kind whose
+    argv cannot silently lose its read-only tool set."""
+    for key in ("explorer_max_seconds", "explorer_max_steps"):
+        if type(data["bounds"].get(key)) is not int or data["bounds"][key] <= 0:
+            raise RunnerError(f"{path}: bounds.{key} must be a positive integer")
+    if not isinstance(data["prompts"].get("explore"), str):
+        raise RunnerError(f"{path}: prompts.explore missing")
+    rules = data["rules"]
+    shape = (("exploration_screening", ("tasks", "file_precision_min", "retained_function_recall_min")),
+             ("exploration_comparison", ("tasks", "premium_per_accepted_ratio_max", "extra_swap_gib_max")))
+    for name, keys in shape:
+        if not isinstance(rules.get(name), dict) or not all(
+                isinstance(rules[name].get(k), (int, float)) and not isinstance(rules[name][k], bool)
+                for k in keys):
+            raise RunnerError(f"{path}: rules.{name} needs numeric {', '.join(keys)}")
+    machine = data.get("dedicated_machine")
+    if not isinstance(machine, dict) or not all(
+            isinstance(machine.get(k), (int, float)) and not isinstance(machine.get(k), bool)
+            for k in ("max_other_process_rss_gib", "min_free_percent")):
+        raise RunnerError(f"{path}: dedicated_machine needs max_other_process_rss_gib and min_free_percent")
+    patterns = machine.get("allowed_command_patterns")
+    if not isinstance(patterns, dict) or not patterns or not all(
+            isinstance(v, list) and all(isinstance(p, str) for p in v) for v in patterns.values()):
+        raise RunnerError(f"{path}: dedicated_machine.allowed_command_patterns needs lists of patterns")
+    for pats in patterns.values():
+        for pattern in pats:
+            try:
+                re.compile(pattern)
+            except re.error:
+                raise RunnerError(f"{path}: dedicated_machine pattern {pattern!r} is not a regex") from None
+    limits = (data.get("exploration") or {}).get("report_render_limits")
+    if not isinstance(limits, dict) or not all(
+            type(limits.get(k)) is int and limits[k] > 0 for k in ("max_files", "max_functions",
+                                                                    "max_rationale_chars")):
+        raise RunnerError(f"{path}: exploration.report_render_limits needs positive integers")
+    for name, driver in data["drivers"].items():
+        argv = driver["argv"]
+        if driver["kind"] == "local_explorer":
+            tools = [a for a in argv if a.startswith("--tools=")]
+            if len(tools) != 1 or not set(tools[0][len("--tools="):].split(",")) <= {"read", "grep", "glob"}:
+                raise RunnerError(f"{path}: driver {name}: a local explorer needs exactly one --tools= "
+                                  "flag naming only read, grep, glob")
+        elif driver["kind"] == "cloud_explorer":
+            denied = argv[argv.index("--disallowedTools") + 1:] if "--disallowedTools" in argv else []
+            if not {"Edit", "Write"} <= set(denied):
+                raise RunnerError(f"{path}: driver {name}: a cloud explorer must deny Edit and Write")
 
 
 def _check_driver_pins(path: Path, name: str, driver: Mapping[str, Any]) -> None:
@@ -186,7 +256,7 @@ def _check_driver_pins(path: Path, name: str, driver: Mapping[str, Any]) -> None
             isinstance(driver.get("evidence"), str) and driver["evidence"].strip()):
         raise RunnerError(f"{path}: driver {name} is verified without evidence (the proof of its trial)")
     log = driver.get("session_log") or {}
-    if (kind in ("cloud_implementer", "cloud_reviewer") and not fake and log.get("layout_verified") is True
+    if (kind in CLOUD_KINDS and not fake and log.get("layout_verified") is True
             and (driver.get("stream") or {}).get("format") != "claude-stream-json"):
         raise RunnerError(f"{path}: driver {name} declares a verified log layout without the "
                           "claude-stream-json stream: the no-sub-agent assertion needs the init event")
@@ -214,7 +284,7 @@ def _check_driver_pins(path: Path, name: str, driver: Mapping[str, Any]) -> None
     allowed = driver.get("allowed_tools")
     if allowed is not None and not (isinstance(allowed, list) and all(isinstance(t, str) for t in allowed)):
         raise RunnerError(f"{path}: driver {name}: allowed_tools must be a list of tool names")
-    if (kind in ("cloud_implementer", "cloud_reviewer") and not fake and driver.get("verified") is True
+    if (kind in CLOUD_KINDS and not fake and driver.get("verified") is True
             and not allowed):
         raise RunnerError(f"{path}: verified cloud driver {name} needs allowed_tools (the init-event allowlist)")
     traj = driver.get("trajectory")
@@ -232,7 +302,7 @@ def _check_cloud_bash_deny(path: Path, data: Mapping[str, Any]) -> None:
     the ``--disallowedTools`` of every real Claude driver: the pinned argv is what runs."""
     rules = data.get("cloud_bash_deny")
     cloud = {name: d for name, d in data["drivers"].items()
-             if d["kind"] in ("cloud_implementer", "cloud_reviewer") and not d.get("fake")
+             if d["kind"] in CLOUD_KINDS and not d.get("fake")
              and (d.get("stream") or {}).get("format") == "claude-stream-json"}
     if rules is None:
         if cloud:
@@ -367,7 +437,7 @@ class Ledger:
                 raise CapReached("premium_tokens")
 
     def reserve_cloud(self, role: str, session_id: str) -> None:
-        if self.mode != "compare":
+        if self.mode not in CLOUD_MODES:
             raise EnvelopeError(f"mode {self.mode!r} can never start a cloud execution")
         self.check(cloud=True)
         self.append("cloud_started", role=role, session_id=session_id)
@@ -475,10 +545,12 @@ def _check_loaded_instance(item: Mapping[str, Any], candidate: Mapping[str, Any]
 def preflight(campaign: Mapping[str, Any], expected_model: str,
               run: Callable[[Sequence[str]], str | None] = default_run,
               disk_free_gib: Callable[[], float] | None = None,
-              candidate: Mapping[str, Any] | None = None) -> dict[str, Any]:
+              candidate: Mapping[str, Any] | None = None, dedicated: bool = False) -> dict[str, Any]:
     """Machine facts against the frozen coordinates; refuses on any difference. Loads nothing.
     ``candidate`` (its entry of the campaign) adds the loaded-instance checks: context length,
-    quantization and model key read from ``lms ps --json``."""
+    quantization and model key read from ``lms ps --json``. ``dedicated`` (protocol v2) adds the
+    dedicated-machine admission (``lfe.check_dedicated_machine``): the observed values are recorded in
+    ``facts["dedicated_machine"]`` and a refusal is named ``dedicated_machine_*``."""
     frozen, refusals = campaign["frozen_machine"], []
     facts: dict[str, Any] = {}
 
@@ -526,6 +598,11 @@ def preflight(campaign: Mapping[str, Any], expected_model: str,
     if free < frozen["min_free_disk_gib"]:
         refusals.append("disk_below_minimum")
     facts["baseline"] = machine_snapshot(run, campaign.get("server_process_pattern"))
+    if dedicated:
+        admission = lfe.check_dedicated_machine(campaign["dedicated_machine"],
+                                                run(["ps", "-axo", "rss=,command="]), run(["memory_pressure"]))
+        facts["dedicated_machine"] = admission["observed"]
+        refusals.extend(admission["refusals"])
     return {"ok": not refusals, "refusals": refusals, "facts": facts, "expected_model": expected_model}
 
 
@@ -776,9 +853,11 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
                    scratch: Path, stream_log: Path, max_seconds: float, max_steps: int | None,
                    sandbox: bool, deny_read: Sequence[Path], extra_write: Sequence[Path] = (),
                    host_env: Mapping[str, str] | None = None, deny_home: Path | None = None,
-                   allow_read: Sequence[Path] = ()) -> dict[str, Any]:
+                   allow_read: Sequence[Path] = (), workdir_writable: bool = True) -> dict[str, Any]:
     """Run one arm command: process group killed at ``max_seconds`` (and at ``max_steps`` when
-    the event stream exposes steps), stdin closed, whitelisted environment, optional sandbox."""
+    the event stream exposes steps), stdin closed, whitelisted environment, optional sandbox.
+    ``workdir_writable=False`` (protocol v2 explorers) makes the bundle READ-ONLY in the sandbox
+    profile: only the attempt scratch (and ``extra_write``) is writable, the bundle stays readable."""
     host_env = os.environ if host_env is None else host_env
     scratch.mkdir(parents=True, exist_ok=True)
     env = isolated_environment(driver, scratch, host_env)
@@ -796,11 +875,13 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
     argv = [_substitute(a, values) for a in driver["argv"]]
     profile_dir = None
     if sandbox:
-        sandbox_text(driver, [workdir, scratch, *extra_write], deny_read, deny_home, allow_read)  # no file yet
+        writable = [workdir, scratch, *extra_write] if workdir_writable else [scratch, *extra_write]
+        readable = list(allow_read) if workdir_writable else [*allow_read, workdir]
+        sandbox_text(driver, writable, deny_read, deny_home, readable)  # no file yet
         profile_dir = Path(os.path.realpath(tempfile.mkdtemp(prefix="foundry-sb-")))
         profile = profile_dir / "profile.sb"  # it names every denied path: the arm may not read it
-        profile.write_text(sandbox_text(driver, [workdir, scratch, *extra_write],
-                                        [*deny_read, profile_dir], deny_home, allow_read), encoding="utf-8")
+        profile.write_text(sandbox_text(driver, writable, [*deny_read, profile_dir], deny_home, readable),
+                           encoding="utf-8")
         argv = ["sandbox-exec", "-f", str(profile), *argv]
     stats = StreamStats(driver.get("stream"))
     state = {"step_limit": False, "timed_out": False}
@@ -1728,6 +1809,10 @@ class Runner:
                  screening_campaign: str | None = None):
         if mode not in MODES:
             raise RunnerError(f"unknown mode {mode!r}")
+        if (mode in EXPLORE_MODES) != (campaign.get("schema") == CAMPAIGN_SCHEMA_V2):
+            raise RunnerError(f"mode {mode!r} does not match the campaign schema "
+                              f"{campaign.get('schema')!r} (protocol v2 modes need a v2 campaign, and "
+                              "protocol v1 modes a v1 campaign)")
         self.repo, self.campaign, self.envelope = Path(repo).resolve(), campaign, envelope
         self.state_dir, self.work_root = Path(state_dir).resolve(), Path(work_root).resolve()
         self.mode, self.dry_run, self.sandbox = mode, dry_run, sandbox
@@ -1748,7 +1833,7 @@ class Runner:
         self.prior_ledger: list[dict[str, Any]] = []
         if sandbox:  # a configuration error must cost nothing: checked before any claim or reservation
             for driver in campaign["drivers"].values():
-                if (mode == "compare" or driver["kind"] in LOCAL_KINDS) and driver.get("sandbox", True):
+                if (mode in CLOUD_MODES or driver["kind"] in LOCAL_KINDS) and driver.get("sandbox", True):
                     sandbox_text(driver, [self.work_root, *_extra_write(driver)], self._deny_read(driver),
                                  *self._home_policy(driver))
         self.sessions: list[str] = []  # session id of every cloud execution reserved in the ledger
@@ -1766,6 +1851,10 @@ class Runner:
         self.handed: set[Path] = set()
         self.guards: dict[Path, tuple[str, dict[str, str | None]]] = {}
         self.literals: dict[Path, frozenset[str]] = {}  # ``base_literals`` of each bundle handed out
+        self.exploring = mode in EXPLORE_MODES  # protocol v2: exploration screening and comparison
+        self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
+        self.dedicated: dict[str, Any] | None = None  # observed values of the last dedicated-machine check
+        self.truths: dict[Any, dict[str, Any]] = {}  # localization ground truth of each task, by PR
 
     # ---- bookkeeping
     def _scan_results(self) -> set[tuple]:
@@ -1978,17 +2067,18 @@ class Runner:
         return f"attempt-l{self.launch:02d}-{self.counter:04d}-pr{task['pr']}-{label}"
 
     def _bundle(self, task: Mapping[str, Any], label: str, patch: bytes | None = None,
-                name: str | None = None) -> tuple[Path, Path]:
+                name: str | None = None, statement_extra: str = "") -> tuple[Path, Path]:
         """A FRESH bundle for one attempt (a judged bundle is never handed back to a candidate)
         and its attempt directory (scratch). The statement carries the launcher footer, identical
-        for every arm. The patch (a previous attempt) is applied to the index so that
-        ``git diff HEAD`` shows every change, new files included."""
+        for every arm; ``statement_extra`` (protocol v2: an exploration report) follows the footer and
+        is part of the committed base, like the footer. The patch (a previous attempt) is applied to the
+        index so that ``git diff HEAD`` shows every change, new files included."""
         attempt_dir = self.work_root / (name or self._attempt_name(task, label))
         bundle = lfc.build_bundle(self.repo, task, attempt_dir / "bundle")
         try:
             statement = bundle / "TASK.md"
             statement.write_text(statement.read_text(encoding="utf-8")
-                                 + self.campaign["statement_footer"], encoding="utf-8")
+                                 + self.campaign["statement_footer"] + statement_extra, encoding="utf-8")
             _git_in(bundle, "add", "TASK.md")  # the footer is part of the base: a diff shows only the arm
             _git_in(bundle, "commit", "-q", "--amend", "--no-edit", "--no-verify")
             root = _git_in(bundle, "rev-parse", "HEAD").decode().strip()
@@ -2056,6 +2146,7 @@ class Runner:
                 "max_duration": (f"{b['local_max_seconds'] // 60}m" if b["local_max_seconds"] % 60 == 0
                                  else f"{b['local_max_seconds']}s"),
                 "review_file": str(attempt_dir / "scratch" / "review.json"),
+                "report_file": str(attempt_dir / "scratch" / "report.json"),
                 "feedback_file": str(attempt_dir / "scratch" / "feedback.md"), **extra}
 
     def _prompt(self, key: str, values: Mapping[str, str]) -> str:
@@ -2207,12 +2298,12 @@ class Runner:
 
     # ---- one cloud execution
     def cloud_execution(self, role: str, driver_id: str, bundle: Path, attempt_dir: Path,
-                        prompt_key: str, feedback: str | None = None
+                        prompt_key: str, feedback: str | None = None, seconds_key: str = "cloud_max_seconds"
                         ) -> tuple[dict[str, Any], dict[str, int | None] | None, str | None]:
-        if self.mode != "compare":
+        if self.mode not in CLOUD_MODES:
             raise EnvelopeError(f"mode {self.mode!r} can never start a cloud execution")
         driver = self._driver(driver_id)
-        if driver["kind"] not in ("cloud_implementer", "cloud_reviewer"):
+        if driver["kind"] not in CLOUD_KINDS:
             raise RunnerError(f"{driver_id} is not a cloud driver")
         if self.today() > dt.date.fromisoformat(str(self.envelope["expires_on"])):
             raise EnvelopeError(f"envelope expired on {self.envelope['expires_on']}")  # checked EACH time
@@ -2228,7 +2319,7 @@ class Runner:
         deny = self._deny_read(driver)
         if self._sandboxed(driver):  # a profile that cannot be generated must not burn a reservation
             sandbox_text(driver, [bundle, scratch, *extra], deny)
-        budget = min(self.campaign["bounds"]["cloud_max_seconds"],
+        budget = min(self.campaign["bounds"][seconds_key],
                      max(self.ledger.remaining_seconds(), 0))
         reserved = False
         started = time.monotonic()
@@ -2253,6 +2344,7 @@ class Runner:
         self.ledger.settle(cloud=True, seconds=execution["wall_seconds"],
                            premium_tokens=billing_total(tokens), session_id=session_id)
         execution["session_id"] = session_id
+        execution["stream_log"] = stream_log
         execution["by_model"] = by_model if tokens is not None else {}
         refusal = tool_allowlist_refusal(driver, execution["stream"])
         with self._critical():  # refused or not; a signal right after the audit never loses its result
@@ -2285,9 +2377,12 @@ class Runner:
 
     # ---- cloud path (A, B and the takeover of C)
     def cloud_path(self, task: Mapping[str, Any], path: str, task_set: str = "",
-                   segment: str = "cloud", first_attempt: int = 0) -> list[dict[str, Any]]:
-        """Implementer, mechanical judge, independent review, corrections (bounded)."""
-        implementer = IMPLEMENTER_DRIVER["A" if path in ("A", "C") else "B"]
+                   segment: str = "cloud", first_attempt: int = 0, statement_extra: str = ""
+                   ) -> list[dict[str, Any]]:
+        """Implementer, mechanical judge, independent review, corrections (bounded). Protocol v2:
+        ``statement_extra`` (an exploration report) follows the statement of the implementer and of every
+        correction bundle, never the reviewer's (the review is identical for every arm)."""
+        implementer = IMPLEMENTER_DRIVER.get(path, IMPLEMENTER_DRIVER["A"])
         records: list[dict[str, Any]] = []
         patch: bytes | None = None
         feedback: str | None = None
@@ -2329,7 +2424,8 @@ class Runner:
                     **({"replay_of": again} if again else {})}))
 
             try:
-                bundle, attempt_dir = self._bundle(task, f"{path}-{role}{index}", patch)
+                bundle, attempt_dir = self._bundle(task, f"{path}-{role}{index}", patch,
+                                                   statement_extra=statement_extra)
                 try:
                     execution, tokens, reason = self.cloud_execution(
                         role, implementer, bundle, attempt_dir,
@@ -2456,13 +2552,319 @@ class Runner:
             records += self.cloud_path(task, "C", task_set, segment="takeover", first_attempt=1)
         return records
 
+    # ---- protocol v2: read-only exploration (PAT-114)
+    @staticmethod
+    def _bundle_status(bundle: Path) -> str | None:
+        """``git status --porcelain`` of a bundle (neutral git), ``None`` when git cannot read it."""
+        try:
+            return _git_in(bundle, "status", "--porcelain", "--untracked-files=all").decode("utf-8", "replace")
+        except (RunnerError, OSError):
+            return None
+
+    @staticmethod
+    def _bundle_modified(before: str | None, after: str | None) -> bool:
+        """An explorer is read-only: a bundle whose status changed (or became unreadable) refuses the
+        exploration. Observed, not guaranteed, for the unsandboxed cloud explorer."""
+        return after is None or after != before
+
+    def _truth(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        """Ground truth of a task from its merged diff, read before any claim or spend (fail closed)."""
+        if task["pr"] not in self.truths:
+            self.truths[task["pr"]] = lfe.ground_truth(self.repo, task)
+        return self.truths[task["pr"]]
+
+    def _explore_values(self, bundle: Path, attempt_dir: Path, **extra: str) -> dict[str, str]:
+        b = self.campaign["bounds"]
+        seconds = b["explorer_max_seconds"]
+        return self._values(bundle, attempt_dir, max_steps=str(b["explorer_max_steps"]),
+                            max_seconds=str(seconds),
+                            max_duration=f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s", **extra)
+
+    @contextlib.contextmanager
+    def _guarded(self):
+        """The signal, cap and failure handling of ``screen`` and ``compare`` for a whole v2 call: an
+        interruption anywhere leaves a record and a stop; a cap is a stop, not an error."""
+        with self._signals():
+            try:
+                yield
+            except PreflightRefused:
+                raise
+            except CapReached as exc:
+                self._stop(f"cap_reached:{exc}", exc)
+            except (RunnerError, lfc.CorpusError) as exc:
+                self._stop(f"tool_error:{str(exc)[:160]}", exc)
+                raise
+            except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
+                self._stop(f"interrupted:{type(exc).__name__}", exc)
+                raise
+
+    def explore_local(self, task: Mapping[str, Any], candidate_id: str, driver_id: str, path: str,
+                      task_set: str, *, segment: str = "local", attempt: int = 0,
+                      replay_of: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """One bounded read-only exploration by a local candidate (10 minutes, 25 steps), judged on
+        localization (``lfe.verdict_of``): the bundle is READ-ONLY in the sandbox profile, only the attempt
+        scratch is writable; the report is read from the scratch or from the final message. The verdict is
+        the ``judge`` of the record, so the resume rules of v1 apply as they are: a decided attempt is never
+        replayed, a missing or unusable report is a refusal (score 0) and never a void attempt, only a
+        launcher failure before the arm ran is void. A contaminated attempt counts as 0 (v2 rule)."""
+        driver = self._driver(driver_id)
+        if driver["kind"] != "local_explorer":
+            raise RunnerError(f"{driver_id} is not a local explorer")
+        exe = self._executable(driver)  # refused before any claim, reservation or file
+        truth = self._truth(task)
+        self.ledger.check(cloud=False)
+        self._claim(path, task, task_set, candidate_id, segment, attempt, 1 if replay_of else 0)
+        bounds = self.campaign["bounds"]
+        model = self.campaign["candidates"][candidate_id]["model"]
+        execution, started, verdict = None, None, None
+        contamination: list[str] = []
+        hold = contextlib.ExitStack()  # once a verdict exists, a signal waits until the attempt is settled
+        name = self._attempt_name(task, f"{path}-explore-{candidate_id}")
+        self.ledger.append("attempt_started", attempt_dir=name, path=path, pr=task["pr"],
+                           set=task_set, candidate=candidate_id, segment=segment, attempt=attempt)
+        try:
+            bundle, attempt_dir = self._bundle(task, "", name=name)
+            try:
+                values = self._explore_values(bundle, attempt_dir, model=model,
+                                              **({exe["placeholder"]: exe["path"]} if exe else {}))
+                values["prompt"] = self._prompt("explore", values)
+                before = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
+                budget = min(bounds["explorer_max_seconds"], max(self.ledger.remaining_seconds(), 0))
+                deny_home, allow_read = self._home_policy(driver, exe)
+                status_before = self._bundle_status(bundle)
+                started = time.monotonic()
+                stream_log = (self.state_dir / "streams"
+                              / f"{self.envelope['campaign_id']}-{attempt_dir.name}.jsonl")
+                execution = execute_driver(
+                    driver, values, workdir=bundle, scratch=attempt_dir / "scratch", stream_log=stream_log,
+                    max_seconds=budget, max_steps=bounds["explorer_max_steps"],
+                    sandbox=self._sandboxed(driver), deny_read=self._deny_read(driver),
+                    host_env=self.host_env, deny_home=deny_home, allow_read=allow_read,
+                    workdir_writable=False)
+                after = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
+                with self._critical():  # a signal right after the audit never loses its result
+                    contamination = self._audit(stream_log, bundle, attempt_dir / "scratch", driver, exe=exe)
+                modified = self._bundle_modified(status_before, self._bundle_status(bundle))
+                if modified:
+                    report, source, refusal = None, "none", BUNDLE_MODIFIED
+                else:
+                    report, source, refusal = lfe.load_report(
+                        attempt_dir / "scratch", stream_log, (driver.get("stream") or {}).get("format", "none"),
+                        root=str(bundle))
+                verdict = lfe.verdict_of(truth, report, refusal, bool(contamination))
+                hold.enter_context(self._critical())  # no gap between the try and the settle below
+            finally:
+                self._discard(bundle, attempt_dir)
+        except BaseException as exc:  # tool failure or interruption: time is counted, the attempt is
+            with hold, self._critical():  # recorded; a verdict already received is kept on it
+                wall = 0.0
+                if started is not None:
+                    wall = execution["wall_seconds"] if execution else time.monotonic() - started
+                self.ledger.settle(cloud=False, seconds=wall, premium_tokens=None, attempt_dir=name,
+                                   **({"interrupted": True} if _cut(exc) == "interrupted" else {}))
+                self._tool_error(task, path, segment, attempt, task_set, exc, wall=wall,
+                                 local={"harness": driver_id, "harness_kind": driver["kind"],
+                                        "candidate": candidate_id}, replay_of=replay_of, judge=verdict,
+                                 contamination=contamination)
+            raise
+        with hold, self._critical():  # settled and registered as unrecorded together (see ``_stop``)
+            self.ledger.settle(cloud=False, seconds=execution["wall_seconds"], premium_tokens=None,
+                               attempt_dir=name)
+            stream = execution["stream"]
+            unknown = {f"local.{k}": v for k, v in stream["unknown"].items()}
+            unknown.update({f"machine.{k}": v for k, v in {**before["unknown"], **after["unknown"]}.items()})
+            local = {"harness": driver_id, "harness_kind": driver["kind"], "candidate": candidate_id,
+                     "max_seconds": round(budget, 3), "nominal_max_seconds": bounds["explorer_max_seconds"],
+                     "max_steps": bounds["explorer_max_steps"], "steps": stream["steps"],
+                     "stream_tokens": stream["stream_tokens"],
+                     "prefill_tokens_per_second": stream["prefill_tokens_per_second"],
+                     "generation_tokens_per_second": stream["generation_tokens_per_second"],
+                     "timed_out": execution["timed_out"], "step_limit_hit": execution["step_limit_hit"],
+                     "exit_code": execution["exit_code"], "signal": execution["signal"],
+                     "ended_by_external_signal": execution["signal"] is not None
+                     and not execution["launcher_kill"], "start_error": execution["start_error"],
+                     **({"harness_executable": {k: exe[k] for k in ("env", "package", "version")}}
+                        if exe else {})}
+            if contamination:
+                unknown["contaminated"] = _CONTAMINATED
+            if verdict["verdict"] == "REFUSED":
+                unknown["exploration.report"] = verdict["note"]
+            record = {"record_type": "attempt", "task": _task_ref(task, task_set), "path": path,
+                      "segment": segment, "attempt": attempt, "judge": verdict,
+                      "local_outcome": {"SCORED": "scored", "REFUSED": "refused",
+                                       "CONTAMINATED": "contaminated"}[verdict["verdict"]],
+                      **({"contaminated": True, "contamination": _contamination(contamination),
+                          "outcome": "contaminated"} if contamination else {}),
+                      "accepted": None, "review": {"rounds": 0, "verdicts": []},
+                      "wall_seconds": execution["wall_seconds"], "cloud_executions": 0, "cloud_sessions": [],
+                      "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
+                      "machine": {"before": _strip(before), "after": _strip(after),
+                                  **({"dedicated": self.dedicated} if self.dedicated else {})},
+                      "exploration": {"report": None if contamination else report, "report_source": source,
+                                      "refusal": refusal, "bundle_modified": modified,
+                                      "score": {k: verdict[k] for k in ("verdict", "file_recall", "file_precision",
+                                                                        "function_recall", "counts")}},
+                      "unknown": unknown, **({"replay_of": dict(replay_of)} if replay_of else {})}
+            self.unrecorded = record  # until ``_emit`` writes it, an interruption writes it as interrupted
+        return record
+
+    def screen_exploration(self, tasks: Sequence[Mapping[str, Any]], candidate_ids: Sequence[str],
+                           driver_id: str = LOCAL_EXPLORER_DRIVER) -> list[dict[str, Any]]:
+        """Local read-only explorations only (candidate x task) judged on localization: no cloud, ever.
+        The machine preflight, dedicated-machine admission included, is re-run before every task."""
+        out: list[dict[str, Any]] = []
+        self._check_harness(driver_id)  # an unresolvable harness executable costs nothing
+        with self._guarded():
+            for candidate_id in candidate_ids:
+                for task in tasks:
+                    state, info = self._local_state("XS", task, "screening", candidate_id, "local", 0)
+                    if state in ("decided", "undecided"):
+                        continue  # resume: a decided task is never replayed, an undecided one stays so
+                    self.preflight(candidate_id)
+                    out.append(self._emit(self.explore_local(task, candidate_id, driver_id, "XS", "screening",
+                                                             replay_of=info)))
+        return out
+
+    def _explore_step_local(self, task: Mapping[str, Any], candidate_id: str, driver_id: str
+                            ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, bool]:
+        """Exploration of arm L: ``(records, report, skip)``; ``skip`` leaves the arm undecided (a
+        contaminated explorer, or an exploration cut twice): no implementation is spent on it."""
+        state, info = self._local_state("L", task, "comparison", candidate_id, "explore", 0)
+        if state == "undecided":
+            return [], None, True
+        if state == "decided":  # resume: the report was kept on the record
+            skip = bool(info.get("contaminated")) or info.get("outcome") in LOST_OUTCOMES
+            return [], (None if skip else (info.get("exploration") or {}).get("report")), skip
+        record = self._emit(self.explore_local(task, candidate_id, driver_id, "L", "comparison",
+                                               segment="explore", replay_of=info))
+        return [record], record["exploration"]["report"], bool(record.get("contaminated"))
+
+    def _explore_step_cloud(self, task: Mapping[str, Any]
+                            ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, bool]:
+        """Exploration of arm E by the cloud economy explorer (Haiku 4.5, same read-only role and report
+        format): one execution, premium tokens counted. A first execution cut before it was recorded is
+        replayed once (it passes the caps again); a recorded one is never replayed."""
+        prior = [r for r in self.prior_records if r.get("record_type") == "attempt"
+                 and (r["path"], r["task"]["pr"], r["task"].get("set"), r.get("segment")) ==
+                 ("E", task["pr"], "comparison", "explore")]
+        replay = None
+        if prior:
+            kept = [r for r in prior if r.get("outcome") not in LOST_OUTCOMES]
+            if kept:  # recorded: never replayed; its report was kept on the record
+                rec = kept[0]
+                skip = bool(rec.get("contaminated")) or rec.get("outcome") == "stopped_by_cap"
+                return [], (None if skip else (rec.get("exploration") or {}).get("report")), skip
+            if len(prior) != 1:  # cut twice: undecided
+                return [], None, True
+            self.ledger.check(cloud=True)
+            replay = {"attempt": 0, "attempt_dir": None, "outcome": prior[0]["outcome"],
+                      "reason": prior[0].get("reason"), "cloud_sessions": list(prior[0]["cloud_sessions"])}
+        truth = self._truth(task)
+        self._claim("E", task, "comparison", None, "explore", 0, 1 if replay else 0)
+        mark = len(self.sessions)
+        by_role: dict[str, Any] = {}
+        models: dict[str, dict[str, int | None]] = {}
+        unknown: dict[str, str] = {}
+        seconds, report, source, refusal = 0.0, None, None, None
+        try:
+            bundle, attempt_dir = self._bundle(task, "E-explore")
+            try:
+                status_before = self._bundle_status(bundle)
+                execution, tokens, reason = self.cloud_execution(
+                    "explorer", CLOUD_EXPLORER_DRIVER, bundle, attempt_dir, "explore",
+                    seconds_key="explorer_max_seconds")
+                seconds = execution["wall_seconds"]
+                modified = self._bundle_modified(status_before, self._bundle_status(bundle))
+                by_role["explorer"] = tokens
+                _merge_models(models, execution["by_model"])
+                if tokens is None:
+                    unknown["premium.explorer"] = reason or "unknown"
+                if modified:  # the explorer is read-only: a changed bundle refuses the exploration
+                    report, source, refusal = None, "none", BUNDLE_MODIFIED
+                else:
+                    report, source, refusal = lfe.load_report(
+                        attempt_dir / "scratch", execution["stream_log"],
+                        (self._driver(CLOUD_EXPLORER_DRIVER).get("stream") or {}).get("format", "none"),
+                        root=str(bundle))
+            finally:
+                self._discard(bundle, attempt_dir)
+            contamination = execution["contamination"]
+            verdict = lfe.verdict_of(truth, report, refusal, bool(contamination))
+            spent = self.sessions[mark:]
+            if contamination:
+                unknown["contaminated"] = _CONTAMINATED
+            record = self._emit({
+                "record_type": "attempt", "task": _task_ref(task, "comparison"), "path": "E",
+                "segment": "explore", "attempt": 0, "outcome": "contaminated" if contamination else "explored",
+                "judge": None, "accepted": None, "review": {"rounds": 0, "verdicts": []},
+                "wall_seconds": round(seconds, 3), "cloud_executions": len(spent), "cloud_sessions": spent,
+                "premium": {"by_role": {r: _classes(t) for r, t in by_role.items()}, "by_model": models,
+                            "billing_total": _record_total(by_role, spent)},
+                "local": None, "machine": None, "unknown": unknown,
+                "exploration": {"report": None if contamination else report, "report_source": source,
+                                "refusal": refusal, "bundle_modified": modified,
+                                "score": {k: verdict[k] for k in ("verdict", "file_recall", "file_precision",
+                                                                  "function_recall", "counts")}},
+                **({"contaminated": True, "contamination": _contamination(contamination)}
+                   if contamination else {}),
+                **({"replay_of": replay} if replay else {})})
+        except CapReached:  # the cut execution is recorded: the task is not decided, never a refusal
+            spent = self.sessions[mark:]
+            self._emit({"record_type": "attempt", "task": _task_ref(task, "comparison"), "path": "E",
+                        "segment": "explore", "attempt": 0, "outcome": "stopped_by_cap", "judge": None,
+                        "accepted": None, "review": {"rounds": 0, "verdicts": []}, "wall_seconds": 0.0,
+                        "cloud_executions": len(spent), "cloud_sessions": spent,
+                        "premium": {"by_role": {}, "by_model": {}, "billing_total": _record_total({}, spent)},
+                        "local": None, "machine": None, "unknown": {"stopped_by_cap": "cap reached"}})
+            raise
+        except BaseException as exc:  # tool failure, Ctrl-C, SIGTERM, anything: never silent
+            self._tool_error(task, "E", "explore", 0, "comparison", exc, wall=seconds,
+                             sessions=self.sessions[mark:], by_role=by_role, by_model=models, replay_of=replay,
+                             contamination=self._audited_since(mark))
+            raise
+        return [record], None if contamination else report, bool(contamination)
+
+    def compare_exploration(self, tasks: Sequence[Mapping[str, Any]], candidate_id: str,
+                            arms: Sequence[str] = EXPLORE_ARMS, driver_id: str = LOCAL_EXPLORER_DRIVER
+                            ) -> list[dict[str, Any]]:
+        """Protocol v2 comparison, each task in each requested arm from the same base: ``A`` the current
+        cloud implementer without a report, ``L`` the same with the report of the retained local explorer
+        appended to the statement, ``E`` the same with the report of the cloud economy explorer; the review
+        is identical for every arm (A's: Opus, at most ``max_correction_rounds`` corrections). The
+        exploration comes first, inside the same envelope; an arm whose explorer yields no usable report
+        runs its implementer on the plain statement (the explorer's cost stays counted). An explorer that
+        is contaminated, or cut twice, leaves the arm undecided. Arm ``L`` needs the local model (preflight,
+        dedicated machine included, before each task) and the candidate the screening selected."""
+        out: list[dict[str, Any]] = []
+        limits = self.campaign["exploration"]["report_render_limits"]
+        if "L" in arms:  # refused before any claim or reservation
+            self._check_selected(candidate_id)
+            self._check_harness(driver_id)
+        with self._guarded():
+            for task in tasks:
+                if "L" in arms:
+                    self.preflight(candidate_id)
+                for arm in arms:
+                    if arm == "A":
+                        out += self.cloud_path(task, "A", "comparison")
+                        continue
+                    explored, report, skip = (self._explore_step_local(task, candidate_id, driver_id)
+                                              if arm == "L" else self._explore_step_cloud(task))
+                    out += explored
+                    if not skip:
+                        out += self.cloud_path(task, arm, "comparison", statement_extra=(
+                            lfe.render_report_section(report, limits) if report else ""))
+        return out
+
     # ---- orchestration
     def preflight(self, candidate_id: str) -> dict[str, Any]:
         model = self.campaign["candidates"][candidate_id]["model"]
         result = preflight(self.campaign, model, self.preflight_run(candidate_id), self.disk_free_gib,
-                           self.campaign["candidates"][candidate_id])
+                           self.campaign["candidates"][candidate_id], dedicated=self.exploring)
+        self.dedicated = result["facts"].get("dedicated_machine")
         self.ledger.append("preflight", candidate=candidate_id, ok=result["ok"],
-                           refusals=result["refusals"])
+                           refusals=result["refusals"],
+                           **({"dedicated_machine": self.dedicated} if self.exploring else {}))
         if not result["ok"]:
             raise PreflightRefused(result["refusals"])
         return result
@@ -2578,11 +2980,12 @@ class Runner:
         another campaign id whose results (read-only, same campaign config, same dry-run nature) hold a
         completed screening that selected this candidate."""
         attempts = [r for r in self.prior_records if r.get("record_type") == "attempt"]
-        if not any(r["path"] == "S" for r in attempts):
+        if not any(r["path"] == self.screen_path for r in attempts):
             if not self.require_screening:
                 return
             attempts = self._foreign_screening()
-        screening = _report_screening(self.campaign["rules"]["screening"], attempts)
+        screening = (_report_exploration_screening(self.campaign["rules"]["exploration_screening"], attempts)
+                     if self.exploring else _report_screening(self.campaign["rules"]["screening"], attempts))
         if screening["selected"] != candidate_id:
             raise RunnerError(f"candidate {candidate_id} is not the one the screening selected "
                               f"({screening['selected']}: {screening['reason']})")
@@ -2601,7 +3004,7 @@ class Runner:
             raise RunnerError(f"no screening results at {path.name} in the state directory")
         records = _read_jsonl(path)
         attempts = [r for r in records if r.get("record_type") == "attempt"]
-        if not any(r["path"] == "S" for r in attempts):
+        if not any(r["path"] == self.screen_path for r in attempts):
             raise RunnerError(f"{path.name} holds no screening attempt")
         for rec in records:
             if bool(rec.get("dry_run", False)) != self.dry_run or rec.get("campaign_id") != other or (
@@ -2953,14 +3356,27 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                                         "candidate": (r.get("local") or {}).get("candidate"),
                                         "segment": r.get("segment"), "attempt": r.get("attempt"),
                                         "outcome": r.get("outcome"), "replay_of": r["replay_of"]}
-                                       for r in attempts if r.get("replay_of")],
-                           "screening": _report_screening(rules["screening"], attempts, len({
-                               (h["path"], h["pr"], h["candidate"], h["segment"], h["attempt"])
-                               for h in open_holes if h["kind"] == "attempt_started" and h["path"] == "S"
-                               and (h["path"], h["pr"], h["set"], h["candidate"], h["segment"],
-                                    h["attempt"]) not in counted}))}
-    out["screening"]["warnings"] = [h["warning"] for h in open_holes if h["mode"] == "screen"]
+                                       for r in attempts if r.get("replay_of")]}
+    exploring = campaign.get("schema") == CAMPAIGN_SCHEMA_V2  # protocol v2: other paths, other rules
+    screen_path = "XS" if exploring else "S"
+    killed = len({(h["path"], h["pr"], h["candidate"], h["segment"], h["attempt"])
+                  for h in open_holes if h["kind"] == "attempt_started" and h["path"] == screen_path
+                  and (h["path"], h["pr"], h["set"], h["candidate"], h["segment"],
+                       h["attempt"]) not in counted})
     comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
+    if exploring:
+        out["exploration_screening"] = _report_exploration_screening(rules["exploration_screening"],
+                                                                     attempts, killed)
+        out["exploration_screening"]["warnings"] = [h["warning"] for h in open_holes
+                                                    if h["mode"] == "screen_exploration"]
+        out["exploration_comparison"] = _report_exploration_comparison(
+            rules["exploration_comparison"], comparison, stops, bool(unknown_work),
+            [h["warning"] for h in open_holes if h["mode"] == "compare_exploration"])
+        out["exploration_comparison"]["screening_selected"] = _check_compared_explorer(
+            out["exploration_screening"], attempts, comparison)
+        return out
+    out["screening"] = _report_screening(rules["screening"], attempts, killed)
+    out["screening"]["warnings"] = [h["warning"] for h in open_holes if h["mode"] == "screen"]
     out["comparison"] = _report_comparison(rules["comparison"], comparison, stops, bool(unknown_work),
                                            [h["warning"] for h in open_holes if h["mode"] == "compare"])
     out["comparison"]["screening_selected"] = _check_compared_candidate(
@@ -3237,6 +3653,125 @@ def _compatibility(rule: Mapping[str, Any], locals_: Sequence[Mapping[str, Any]]
     return "pass" if max(deltas) < rule["extra_swap_gib_max"] * 1024 else "fail"
 
 
+# ------------------------------------------------------ protocol v2 report (PAT-114)
+
+def _report_exploration_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
+                                  killed: int = 0) -> dict[str, Any]:
+    """The v2 screening table (file recall, file precision, function recall, durations per candidate) and
+    the pre-registered rule (``lfe.apply_screening_rule``). A tool failure or an interruption is not a
+    refusal: it leaves the task undecided and the screening incomplete (no candidate selected). A
+    contaminated attempt is decided and counts as 0 (``judge.verdict`` ``CONTAMINATED``)."""
+    by_candidate: dict[str, list[dict[str, Any]]] = {}
+    undecided: dict[tuple, dict[str, Any]] = {}
+    gone = _superseded(attempts)
+    for rec in attempts:
+        if rec["path"] != "XS":
+            continue
+        cid = rec["local"]["candidate"]
+        if rec.get("outcome") in LOST_OUTCOMES:
+            if id(rec) not in gone:
+                undecided[_logical_key(rec)] = {"candidate": cid, "pr": rec["task"]["pr"],
+                                                "outcome": rec["outcome"], "replayed": bool(rec.get("replay_of"))}
+        else:
+            by_candidate.setdefault(cid, []).append({"pr": rec["task"]["pr"], "judge": rec["judge"],
+                                                     "wall_seconds": rec["wall_seconds"], "rec": rec})
+    rows = {cid: lfe.candidate_row(items) for cid, items in sorted(by_candidate.items())}
+    for cid, row in rows.items():
+        swaps = [i["rec"]["machine"]["after"]["swap_used_mib"] for i in by_candidate[cid]]
+        row["peak_swap_used_mib"] = None if any(x is None for x in swaps) else max(swaps)
+        row["harness"] = sorted({i["rec"]["local"]["harness"] for i in by_candidate[cid]})
+    undecided_tasks = list(undecided.values())
+    lost = len(undecided_tasks) + killed
+    complete = bool(rows) and not lost and all(r["tasks"] == rule["tasks"] for r in rows.values())
+    outcome = (lfe.apply_screening_rule(rule, rows, complete) if rows or not undecided_tasks
+               else {"selected": None, "reason": "incomplete_screening", "stop": None})
+    return {"candidates": {c: {k: v for k, v in r.items() if not k.startswith("_")} for c, r in rows.items()},
+            **outcome, "complete": complete, "undecided_tasks": undecided_tasks,
+            "killed_not_replayed": killed}
+
+
+def _check_compared_explorer(screening: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
+                             comparison: Sequence[Mapping[str, Any]]) -> str:
+    """Arm ``L`` must use the candidate the v2 screening selected (as ``_check_compared_candidate``)."""
+    compared = {(r.get("local") or {}).get("candidate") for r in comparison if r["path"] == "L"}
+    compared.discard(None)
+    if not any(r["path"] == "XS" for r in attempts):
+        return "screening_results_not_available"
+    if compared and compared != {screening["selected"]}:
+        raise RunnerError(f"the compared candidate(s) {sorted(compared)} are not the one the exploration "
+                          f"screening selected ({screening['selected']}: {screening['reason']})")
+    return screening["selected"] or "none_selected"
+
+
+def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
+                                   stops: Sequence[str], unknown_work: bool = False,
+                                   warnings: Sequence[str] = ()) -> dict[str, Any]:
+    """Arms ``L`` (retained local explorer) and ``E`` (cloud economy explorer) against ``A`` with the three
+    verdicts kept separate. The decision concerns ``L`` only (``retained`` = the local exploration is
+    worth it for this use); ``E`` is informative, never recommended. Nothing is promoted."""
+    arms = {p: _arm_totals([r for r in attempts if r["path"] == p]) for p in EXPLORE_ARMS
+            if any(r["path"] == p for r in attempts)}
+    out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None,
+                           "warnings": list(warnings), "informative_arms": ["E"]}
+    reference = arms.get("A")
+    if reference is None:
+        out["reason"] = "no_reference_path_A"
+        return out
+    gone = _superseded(attempts)
+    for path in ("L", "E"):
+        if path not in arms:
+            continue
+        arm = arms[path]
+        shared = sorted(set(arm["tasks"]) & set(reference["tasks"]))
+        a_tasks = [reference["tasks"][t] for t in shared]
+        x_tasks = [arm["tasks"][t] for t in shared]
+        explores = [r for r in attempts if r["path"] == path and r.get("segment") == "explore"]
+        economy = lfe.economy_verdict(rule, a_tasks, x_tasks, unknown_work)
+        if path == "L":
+            locals_ = [r for r in explores if r.get("outcome") not in LOST_OUTCOMES]
+            lost = any(r.get("outcome") in LOST_OUTCOMES and id(r) not in gone for r in explores)
+            compat = _compatibility(rule, locals_, lost)
+        else:
+            compat = "pass"  # no local work: nothing machine-bound to fail
+        models_x: dict[str, dict[str, int | None]] = {}
+        models_a: dict[str, dict[str, int | None]] = {}
+        for t in x_tasks:
+            _merge_models(models_x, t["premium_by_model"])
+        for t in a_tasks:
+            _merge_models(models_a, t["premium_by_model"])
+        economy["detail"].update(premium_by_model=models_x, reference_premium_by_model=models_a,
+                                 wall_seconds=round(sum(t["wall_seconds"] for t in x_tasks), 3),
+                                 reference_wall_seconds=round(sum(t["wall_seconds"] for t in a_tasks), 3),
+                                 local_explorer_wall_seconds=(round(sum(r["wall_seconds"] for r in explores), 3)
+                                                              if path == "L" else None))
+        out["arms"][path] = {
+            "tasks_compared": len(shared), "informative": path == "E",
+            "compatibility": compat, "quality": lfe.quality_verdict(a_tasks, x_tasks) if shared else "unavailable",
+            "economy": economy["verdict"], "economy_detail": economy["detail"],
+            "accepted": sum(1 for t in x_tasks if t["accepted"]),
+            "reference_accepted": sum(1 for t in a_tasks if t["accepted"]),
+            "explorer_localization": [
+                {"pr": r["task"]["pr"], "outcome": r.get("outcome"),
+                 **{k: ((r.get("exploration") or {}).get("score") or {}).get(k)
+                    for k in ("verdict", "file_recall", "file_precision", "function_recall")}}
+                for r in explores]}
+    mine = out["arms"].get("L")
+    # The rule is the rule of the whole corpus (v2 has no sequential stop): a partial campaign (cap, tool
+    # failure, interruption) concludes nothing, whatever the verdicts of the tasks played so far.
+    out["complete"] = bool(mine) and mine["tasks_compared"] == rule["tasks"] and (
+        arms["A"]["tasks"].keys() == arms["L"]["tasks"].keys() and len(arms["A"]["tasks"]) == rule["tasks"])
+    if mine and out["complete"]:
+        verdicts = (mine["compatibility"], mine["quality"], mine["economy"])
+        if all(v == "pass" for v in verdicts):
+            out["decision"], out["recommendation"] = "retained", "L"
+        elif "fail" in verdicts:
+            out["decision"], out["recommendation"] = "keep_cloud", "A"
+    if unknown_work or warnings or any(r.get("outcome") == "interrupted" and id(r) not in gone
+                                       for r in attempts):
+        out["decision"], out["recommendation"] = "inconclusive", None
+    return out
+
+
 # ----------------------------------------------------------------------------------- CLI
 
 def _tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], group: str) -> list[dict[str, Any]]:
@@ -3247,23 +3782,27 @@ def _tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], group: str)
 def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> int:
     parser = argparse.ArgumentParser(prog="foundry.local_first_runner", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("preflight", "screen", "compare"):
+    for name in ("preflight", "screen", "compare", "screen-exploration", "compare-exploration"):
         p = sub.add_parser(name)
         p.add_argument("--campaign", required=True, help="the campaign config JSON")
         p.add_argument("--dry-run", action="store_true", help="fake drivers only, canned machine facts")
-        p.add_argument("--candidate", nargs="+" if name == "screen" else None, required=True)
-        if name != "preflight":
+        p.add_argument("--candidate", nargs="+" if name.startswith("screen") else None, required=True)
+        if name == "preflight":
+            p.add_argument("--dedicated", action="store_true",
+                           help="also run the protocol v2 dedicated-machine admission")
+        else:
             p.add_argument("--envelope", help="authorization envelope (mandatory)")
             p.add_argument("--state-dir", required=True)
             p.add_argument("--work-root", required=True, help="disposable area outside the checkout")
             p.add_argument("--repo", default=".")
             p.add_argument("--snapshot", required=True)
             p.add_argument("--manifest", required=True)
-            p.add_argument("--harness", default="local_harness",
-                           choices=("local_harness", "neutral_harness"))
+            if not name.endswith("exploration"):  # protocol v2 has one explorer driver per kind
+                p.add_argument("--harness", default="local_harness",
+                               choices=("local_harness", "neutral_harness"))
             p.add_argument("--sandbox", action="store_true", help="also sandbox a dry run")
-        if name == "compare":
-            p.add_argument("--paths", default="A,B,C")
+        if name in ("compare", "compare-exploration"):
+            p.add_argument("--paths", default="A,L,E" if name == "compare-exploration" else "A,B,C")
             p.add_argument("--screening-campaign", default=None,
                            help="campaign id of a completed screening (results read-only in --state-dir) "
                                 "when this campaign id holds none; C and N need one or the other")
@@ -3297,20 +3836,23 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             return 2
         model = campaign["candidates"][args.candidate]["model"]
         run = dry_run_facts(campaign, model) if args.dry_run else default_run
+        if args.dedicated and "dedicated_machine" not in campaign:
+            print("refused: this campaign declares no dedicated_machine", file=sys.stderr)
+            return 2
         result = preflight(campaign, model, run, (lambda: 1e6) if args.dry_run else None,
-                           campaign["candidates"][args.candidate])
+                           campaign["candidates"][args.candidate], dedicated=args.dedicated)
         print(json.dumps(result, indent=2))
         return 0 if result["ok"] else 2
-    mode = args.cmd
+    mode = args.cmd.replace("-", "_")
     try:
         envelope = load_envelope(Path(args.envelope) if args.envelope else None, mode,
                                  today or dt.date.today())
-        candidates = args.candidate if mode == "screen" else [args.candidate]
+        candidates = args.candidate if mode in ("screen", "screen_exploration") else [args.candidate]
         for cid in candidates:
             if cid not in campaign["candidates"]:
                 raise RunnerError(f"unknown candidate {cid}")
-        paths = args.paths.split(",") if mode == "compare" else []
-        if not set(paths) <= set(PATHS):
+        paths = args.paths.split(",") if mode in CLOUD_MODES else []
+        if not set(paths) <= set(EXPLORE_ARMS if mode == "compare_exploration" else PATHS):
             raise RunnerError(f"unknown path in {args.paths}")
         manifest = json.loads(Path(args.manifest).read_text("utf-8"))
         snapshot = json.loads(Path(args.snapshot).read_text("utf-8"))
@@ -3330,6 +3872,10 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             disk_free_gib=(lambda: 1e6) if args.dry_run else None)
         if mode == "screen":
             runner.screen(_tasks(manifest, snapshot, "screening"), candidates, args.harness)
+        elif mode == "screen_exploration":
+            runner.screen_exploration(_tasks(manifest, snapshot, "screening"), candidates)
+        elif mode == "compare_exploration":
+            runner.compare_exploration(_tasks(manifest, snapshot, "comparison"), candidates[0], paths)
         else:
             runner.compare(_tasks(manifest, snapshot, "comparison"), candidates[0], paths, args.harness)
         if runner.stopped and runner.stopped.startswith("cap_reached"):

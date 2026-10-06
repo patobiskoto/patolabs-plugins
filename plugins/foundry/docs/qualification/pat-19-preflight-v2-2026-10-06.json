@@ -1,0 +1,125 @@
+{
+  "schema": "foundry.local-first-preflight.v2",
+  "ticket": "PAT-114",
+  "date": "2026-10-06",
+  "note": "Real toy trials of the two protocol v2 explorer drivers (maintainer authorization of 2026-10-06), run by the coordinator on a toy repository (src/calc.py, a bug in mean) with the launcher's own execute_driver and the drivers of pat-19-campaign-v2.json. No corpus task was played. No absolute path and no secret in this file.",
+  "drivers": {
+    "local_explorer": {
+      "version": "omp 18.6.1",
+      "rejected_argv": {
+        "tools_flag": "--tools=read,grep,find,ls",
+        "result": "refused by omp 18.6.1: \"Unknown tool in --tools: ls\"; \"Built-in tool unavailable in this session: find\"",
+        "built_in_tools_listed": [
+          "read",
+          "bash",
+          "edit",
+          "ast_grep",
+          "ast_edit",
+          "ask",
+          "debug",
+          "ida",
+          "eval",
+          "github",
+          "glob",
+          "grep",
+          "find",
+          "lsp",
+          "checkpoint",
+          "rewind",
+          "context_notes",
+          "new_context",
+          "security_scan",
+          "task",
+          "wait",
+          "todo",
+          "web_search",
+          "write",
+          "memory_edit",
+          "retain",
+          "recall",
+          "reflect",
+          "learn",
+          "manage_skill"
+        ],
+        "consequence": "names corrected to --tools=read,grep,glob before the freeze; the read-only intent validated by the maintainer is unchanged"
+      },
+      "pinned_argv_tools_flag": "--tools=read,grep,glob",
+      "model": "Qwen3.6-35B-A3B MLX 4-bit (candidate qwen3.6-35b-a3b-mlx-4bit), loaded with its pinned load_command, identifier qwen/qwen3.6-35b-a3b",
+      "conditions": {
+        "sandbox": "on",
+        "workdir_writable": false,
+        "deny_home": true
+      },
+      "result": {
+        "exit_code": 0,
+        "wall_seconds": 14.0,
+        "steps": 4,
+        "tools_used": {
+          "read": 2,
+          "grep": 1,
+          "glob": 1
+        },
+        "bundle_unchanged": "git status identical before and after",
+        "report": {
+          "parsed_by": "load_report",
+          "source": "final_message"
+        },
+        "toy_score": {
+          "file_recall": 1.0,
+          "file_precision": 1.0,
+          "function_recall": 1.0
+        }
+      },
+      "passed": true
+    },
+    "cloud_explorer_economy": {
+      "version": "Claude Code 2.1.285",
+      "model": "claude-haiku-4-5-20251001",
+      "effort": "none (null, Haiku 4.5)",
+      "conditions": {
+        "sandbox": "none (Claude Code does not authenticate under sandbox-exec)",
+        "home": "real",
+        "environment": "AGENTS.md R6 allow-list"
+      },
+      "result": {
+        "exit_code": 0,
+        "wall_seconds": 15.1,
+        "init_tools": [
+          "Bash",
+          "Read"
+        ],
+        "init_tools_note": "Claude Code 2.1.285 announces no separate Grep or Glob tool with this argv; a subset of the allow-list Bash, Glob, Grep, Read",
+        "tools_used": {
+          "Read": 3,
+          "Bash": 1
+        },
+        "bundle_unchanged": "observed (git status), not guaranteed",
+        "report": {
+          "parsed_by": "load_report",
+          "source": "final_message"
+        },
+        "toy_score": {
+          "file_recall": 1.0,
+          "file_precision": 1.0,
+          "function_recall": 1.0
+        },
+        "premium_tokens": {
+          "launcher_read": {
+            "input": 42,
+            "cache_read": 54945,
+            "cache_write": 6902,
+            "output": 1274
+          },
+          "host_result_usage": "equal",
+          "equal_to_launcher_reading": true
+        }
+      },
+      "limit": "read-only behaviour is not enforced (Bash open, no sandbox); the unchanged bundle was observed, not guaranteed; the launcher checks git status before and after each exploration and refuses one that changed the bundle",
+      "passed": true
+    },
+    "inherited_from_v1": [
+      "cloud_implementer_current",
+      "cloud_reviewer"
+    ]
+  }
+}

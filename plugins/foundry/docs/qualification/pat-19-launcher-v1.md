@@ -21,7 +21,7 @@ lui-même n'a lancé aucun modèle ni appel cloud pour ce ticket.
 
 Le protocole a été amendé sur place avant tout essai (candidat 2, trois téléchargements) ; le mainteneur
 l'a validé le 2026-10-05. La note datée en tête de [`pat-19-protocol-v1.md`](pat-19-protocol-v1.md) en
-fait l'historique ; aucun essai n'avait eu lieu et aucun fichier v2 n'existe.
+fait l'historique ; aucun essai n'avait eu lieu et aucun fichier v2 n'existait alors (le protocole v2, PAT-114, est décrit dans la section « Protocole v2 » en fin de ce fichier et dans [`pat-19-protocol-v2.md`](pat-19-protocol-v2.md) ; la v1 reste gelée).
 
 ## Fichiers
 
@@ -854,3 +854,31 @@ détection des chemins ou commandes construits à l'exécution par l'audit ; tou
 contre un bras cloud (lecture ou écriture : seul un chemin nommé dans un appel est relevé) ; la fenêtre de quelques instructions
 entre le retour du juge et l'affectation de son verdict. L'application mécanique de R5 reste celle de
 FOUNDRY-123.
+
+## Protocole v2 : exploration en lecture seule (PAT-114)
+
+Protocole gelé : [`pat-19-protocol-v2.md`](pat-19-protocol-v2.md) ; configuration : `pat-19-campaign-v2.json` ; vérité terrain des 12 tâches : `pat-19-exploration-truth-v2.json`. Le lanceur v1 est étendu, pas doublé (FOUNDRY-ADR-0019) : mêmes enveloppe, registre, reprise bornée, signaux, isolement, audit de contamination, préflight, pilotes cloud, bundles et revue. **Rien de la v1 ne change de comportement** (les tests de la v1 passent tels quels) : `pat-19-protocol-v1.md`, `pat-19-campaign-v1.json` et les résultats v1 ne sont pas modifiés. Ce ticket n'a lancé aucun modèle, harnais ni appel cloud (bras factices).
+
+**Fichiers.** `../../tooling/foundry/local_first_exploration.py` (pur : vérité terrain, format et lecture du rapport, juge de localisation, règle du tamis, contrôle de machine dédiée, règles de qualité et d'économie, rendu du rapport dans l'énoncé) ; `local_first_runner.py` (modes, pilotes, enregistrements, rapport) ; tests `test_local_first_exploration.py` (pur, y compris les 12 vrais diffs fusionnés) et `test_local_first_exploration_runner.py` (bras factices).
+
+```
+python3 -m foundry.local_first_runner screen-exploration  --campaign <cfg-v2> --envelope <env> --state-dir <dir> --work-root <dir> \
+    --repo <clone complet> --snapshot <snapshot> --manifest <manifeste> --candidate <id> [<id> ...] [--dry-run] [--sandbox]
+python3 -m foundry.local_first_runner compare-exploration ... --candidate <id> [--paths A,L,E] [--screening-campaign <id>]
+python3 -m foundry.local_first_runner preflight --campaign <cfg-v2> --candidate <id> --dedicated
+```
+
+- **Modes** `screen_exploration` et `compare_exploration` (enveloppe : `allowed_modes`) ; une configuration `foundry.local-first-campaign.v2` n'est acceptée que par eux, une v1 que par `screen` et `compare` (refus, code 2). `screen_exploration` ne peut jamais lancer d'exécution cloud (comme `screen`).
+- **Pilotes** : types `local_explorer` (local : toujours dans le bac à sable, HOME isolé, boucle locale) et `cloud_explorer` (cloud : règles Bash de la v1 obligatoires, `Edit` et `Write` interdits). Le chargement refuse un explorateur local sans exactement un `--tools=` limité à `read,grep,glob`, et un explorateur cloud qui n'interdit pas `Edit` et `Write` : le jeu d'outils en lecture seule ne se perd pas en silence. Les deux sont `verified: true` (essais réels du 2026-10-06 sur un dépôt jouet, preuves `pat-19-preflight-v2-2026-10-06.json`) ; les noms d'outils d'`omp` ont été corrigés par cet essai (`find` et `ls` refusés).
+- **Bundle en lecture seule** : l'exploration locale passe `workdir_writable=False` à `execute_driver` ; le profil `sandbox-exec` n'autorise l'écriture que dans le dossier d'essai de la tentative (le bundle reste lisible). Pas de contrôle de quiétude ni de patch ; en revanche `git status --porcelain` du bundle est relevé avant et après chaque exploration (locale et cloud) : un bundle modifié ou illisible refuse l'exploration (`BUNDLE_MODIFIED`, score 0, `exploration.bundle_modified`).
+- **Enregistrements** (`foundry.local-first-result.v1`) : tamis = chemin `XS`, segment `local`, tâche `screening`, tentative 0 ; comparaison = chemins `A` (segment `cloud`), `L` et `E` (segment `explore` puis `cloud`). Le verdict du juge de localisation est le champ `judge` (`verdict` : `SCORED`, `REFUSED`, `CONTAMINATED` ; `file_recall`, `file_precision`, `function_recall`, `counts` entiers), donc **les règles de reprise de la v1 s'appliquent telles quelles** : décidée (verdict reçu) = sautée, jamais rejouée ; nulle (panne du lanceur avant le bras, ou coupure avant le verdict) = rejouée une fois, avec `replay_of`. Un rapport absent ou illisible est un **refus** décidé (score 0), jamais une tentative nulle. `exploration` porte le rapport normalisé (rejoué à la reprise pour construire l'énoncé), sa source (`file` ou `final_message`), le motif de refus et le score. L'explorateur cloud (un enregistrement `E`/`explore`, une exécution, jamais rejouée une fois enregistrée ; coupée avant son enregistrement : rejouée une fois sous les plafonds).
+- **Rapport lu** dans `<dossier d'essai>/report.json` si le bras l'a écrit, sinon dans le message final du flux (`result` d'un flux Claude, dernier `message_end` assistant d'un flux `omp`).
+- **Énoncé des bras L et E** : le rapport rendu (`render_report_section`, coupé à `exploration.report_render_limits` avec une mention visible) suit le pied d'énoncé dans le `TASK.md` de l'implémenteur et de ses corrections (`_bundle(statement_extra=...)`, validé dans la base commitée comme le pied) ; le relecteur reçoit l'énoncé simple. Le bras A reçoit l'énoncé simple.
+- **Machine dédiée** : `preflight(..., dedicated=True)` (sans effet en v1) ajoute `facts.dedicated_machine` (valeurs observées) et les refus `dedicated_machine_process_over_<N>gib:<nom>:<Mio>`, `dedicated_machine_free_memory_below_minimum:<n><<min>`, `dedicated_machine_ps_unavailable`, `dedicated_machine_memory_pressure_unavailable`. La seule sonde nouvelle est la lecture de la sortie de `ps -axo rss=,command=` et `memory_pressure`, déjà autorisés : `READ_ONLY_COMMANDS` ne change pas.
+- **Rapport** (`report`, détecté par le schéma de la configuration) : `exploration_screening` et `exploration_comparison` à la place de `screening` et `comparison` ; le registre reste obligatoire et croisé avec les résultats comme en v1 ; l'invariant « chaque session cloud est nommée par exactement un enregistrement » vaut aussi pour les explorations E. Le candidat comparé (bras L) doit être celui que le tamis v2 a retenu (`compare-exploration` le vérifie au démarrage, `--screening-campaign` comme en v1).
+- **Tamis v2** : règle sur le rappel moyen de **fonctions** (principal, seuil d'arrêt 0,5 inclus), précision moyenne de fichiers ≥ 0,5 ; la table du rapport donne le rappel de fonctions en premier, puis précision et rappel de fichiers (mesurés, ne décident pas) ; clé de configuration `rules.exploration_screening.retained_function_recall_min`.
+- **Décision** : voir le protocole (section 6) ; une campagne partielle est `inconclusive`, un `fail` d'une campagne complète est `keep_cloud`, E n'est jamais recommandé.
+
+Modifications du code v1 partagé (sans effet sur la v1) : `MODES`, `DRIVER_KINDS`, `LOCAL_KINDS`, `CLOUD_KINDS`, `IMPLEMENTER_DRIVER` (clés `L` et `E`), `Ledger.reserve_cloud` et `cloud_execution` (autorisés aussi en `compare_exploration`, avec un délai `seconds_key`), `_bundle` et `cloud_path` (paramètre `statement_extra`), `preflight` (paramètre `dedicated`), `execute_driver` (paramètre `workdir_writable`), `_check_selected` (chemin et règle de tamis selon le mode), `report` (schéma v2).
+
+**Statut documentaire (R5)** : voir la section 12 de `pat-19-protocol-v2.md` (surface CLI, schéma de configuration v2, types de pilote, chemins de résultats, module et fichier de vérité terrain, contrôle de machine dédiée). Non appliqué mécaniquement, dit explicitement : la lecture seule de l'explorateur cloud (Bash ouvert, pas de bac à sable : bundle inchangé observé après coup, non garanti).
