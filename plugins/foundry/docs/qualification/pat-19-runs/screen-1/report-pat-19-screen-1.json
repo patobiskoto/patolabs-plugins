@@ -1,0 +1,116 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "screening": {
+      "tasks": 6,
+      "min_accepted": 2
+    },
+    "comparison": {
+      "tasks": 6,
+      "min_local_successes": 2,
+      "premium_reduction_min": 0.25,
+      "time_ratio_max": 2.0,
+      "extra_swap_gib_max": 10
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "a678dc6781b84058c20727a9002b55c84319bf43d90a3f6e70eb1a079d962ffc",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "84aad4315151191f1e3005652074c81dd25f39acff5e2e6e6d2a2665722b410f"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [
+    {
+      "path": "S",
+      "task": {
+        "issue": "PAT-72",
+        "pr": 48,
+        "set": "screening"
+      },
+      "candidate": "qwen3.8-27b-mlx-4bit",
+      "segment": "local",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work"
+      ],
+      "commands": []
+    }
+  ],
+  "replays": [],
+  "screening": {
+    "candidates": {
+      "muse-glimmer-30b-gguf": {
+        "tasks": 6,
+        "accepted": 0,
+        "total_seconds": 6789.766,
+        "peak_swap_used_mib": 25311.5,
+        "harness": [
+          "local_harness"
+        ]
+      },
+      "qwen3-coder-30b-a3b-mlx-4bit": {
+        "tasks": 6,
+        "accepted": 0,
+        "total_seconds": 6825.609,
+        "peak_swap_used_mib": 30575.0,
+        "harness": [
+          "local_harness"
+        ]
+      },
+      "qwen3.6-35b-a3b-mlx-4bit": {
+        "tasks": 6,
+        "accepted": 0,
+        "total_seconds": 4033.299,
+        "peak_swap_used_mib": 25455.5,
+        "harness": [
+          "local_harness"
+        ]
+      },
+      "qwen3.8-27b-mlx-4bit": {
+        "tasks": 5,
+        "accepted": 0,
+        "total_seconds": 6000.168,
+        "peak_swap_used_mib": 25511.5,
+        "harness": [
+          "local_harness"
+        ]
+      },
+      "qwen3.8-27b-mlx-6bit": {
+        "tasks": 6,
+        "accepted": 0,
+        "total_seconds": 7200.197,
+        "peak_swap_used_mib": 25407.69,
+        "harness": [
+          "local_harness"
+        ]
+      }
+    },
+    "selected": null,
+    "reason": "incomplete_screening",
+    "complete": false,
+    "undecided_tasks": [
+      {
+        "candidate": "qwen3.8-27b-mlx-4bit",
+        "pr": 48,
+        "outcome": "contaminated",
+        "replayed": false
+      }
+    ],
+    "killed_not_replayed": 0,
+    "warnings": []
+  },
+  "comparison": {
+    "arms": {},
+    "decision": "inconclusive",
+    "recommendation": null,
+    "warnings": [],
+    "reason": "no_reference_path_A",
+    "screening_selected": "none_selected"
+  }
+}

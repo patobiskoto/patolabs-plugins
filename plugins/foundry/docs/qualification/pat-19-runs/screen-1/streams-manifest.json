@@ -1,0 +1,125 @@
+{
+  "note": "Raw omp event streams of the 30 screening attempts, kept on the maintainer machine (49 MB; they embed repository file contents). sha256 and size per file.",
+  "files": {
+    "pat-19-screen-1-attempt-l01-0001-pr30-S-local-qwen3.8-27b-mlx-6bit.jsonl": {
+      "sha256": "1b3cfdda744ef9c6dd3ee6f96f262f17f3d6e6bbd00d223fc1956a17bddbee2d",
+      "bytes": 1278734
+    },
+    "pat-19-screen-1-attempt-l01-0002-pr83-S-local-qwen3.8-27b-mlx-6bit.jsonl": {
+      "sha256": "e08b2991d3336913674564cd9945ef61cbd1006d4ac25fe2fe339bf9ea7c7040",
+      "bytes": 1609899
+    },
+    "pat-19-screen-1-attempt-l01-0003-pr27-S-local-qwen3.8-27b-mlx-6bit.jsonl": {
+      "sha256": "aa90c78c4854a2257df39b5e567c463f001e4ce2d5e5b9b1d36aefeeea1ba044",
+      "bytes": 1253720
+    },
+    "pat-19-screen-1-attempt-l01-0004-pr24-S-local-qwen3.8-27b-mlx-6bit.jsonl": {
+      "sha256": "acce026631fc0f8891a2062f0fba9fed43cb9beaa67f901432ef5e0c17cd47e4",
+      "bytes": 1357520
+    },
+    "pat-19-screen-1-attempt-l01-0005-pr48-S-local-qwen3.8-27b-mlx-6bit.jsonl": {
+      "sha256": "3e67284040251308a8c930d3e52876df5093281d81e2cfc0f7b70dee5f759444",
+      "bytes": 1114189
+    },
+    "pat-19-screen-1-attempt-l01-0006-pr19-S-local-qwen3.8-27b-mlx-6bit.jsonl": {
+      "sha256": "b9cdde98d8e5b6ced70375415b159d0a2802d23bb36f39d312881b33577cc881",
+      "bytes": 1112226
+    },
+    "pat-19-screen-1-attempt-l02-0001-pr30-S-local-qwen3.8-27b-mlx-4bit.jsonl": {
+      "sha256": "76b460a7d1ec98175d5a3bf4b6a7d41a75345fce0da7bf3345c5f75c3ca8f844",
+      "bytes": 1579782
+    },
+    "pat-19-screen-1-attempt-l02-0002-pr83-S-local-qwen3.8-27b-mlx-4bit.jsonl": {
+      "sha256": "fc1fdb48e225ec43dc60227bb366c3162f889e288f27e89865a58885ae293c70",
+      "bytes": 1227977
+    },
+    "pat-19-screen-1-attempt-l02-0003-pr27-S-local-qwen3.8-27b-mlx-4bit.jsonl": {
+      "sha256": "96062f2a14c410452ca3e0fa23615d013f5ae68ec5b5d534feb15c68ce343588",
+      "bytes": 1220729
+    },
+    "pat-19-screen-1-attempt-l02-0004-pr24-S-local-qwen3.8-27b-mlx-4bit.jsonl": {
+      "sha256": "6d4ea5c730682cfbf7e4ee07ed3635273913fe820cff43ec116f287d543c58e8",
+      "bytes": 1769016
+    },
+    "pat-19-screen-1-attempt-l02-0005-pr48-S-local-qwen3.8-27b-mlx-4bit.jsonl": {
+      "sha256": "88e0be6f5cb183d4bf4f3ba8e56996341008d55c23fd7957284a61f3d66baa0b",
+      "bytes": 2184778
+    },
+    "pat-19-screen-1-attempt-l02-0006-pr19-S-local-qwen3.8-27b-mlx-4bit.jsonl": {
+      "sha256": "bdbaf91652850623fef691f162cbf1d714c5de88d352e10bd7a1351c929a4630",
+      "bytes": 2066114
+    },
+    "pat-19-screen-1-attempt-l03-0001-pr30-S-local-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "e62653543be9a45ede033896f19e0a72ec0ff8df45434210fd22b9ee16293c9b",
+      "bytes": 1687711
+    },
+    "pat-19-screen-1-attempt-l03-0002-pr83-S-local-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "059615fbd07e09a281db6f049e31ef4a315ad2af0cd45939b08e2b7671e5f1df",
+      "bytes": 3821830
+    },
+    "pat-19-screen-1-attempt-l03-0003-pr27-S-local-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "843cacdf97057ad1ae0e3dc9698b605d70bd5c8f86f9a4e8fefa72eaa581d963",
+      "bytes": 1820278
+    },
+    "pat-19-screen-1-attempt-l03-0004-pr24-S-local-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "91337a3c02c4db9da99af2dea839e02c96e63464ebc93f2d67301583febb10f1",
+      "bytes": 1683382
+    },
+    "pat-19-screen-1-attempt-l03-0005-pr48-S-local-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "658ebac62cdc5d0048d22837ef09bde8a2a4623cb93e511252d58c9f1ae321cd",
+      "bytes": 3325299
+    },
+    "pat-19-screen-1-attempt-l03-0006-pr19-S-local-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "3eaf38c0cd16a509c7763fcf97973ea822eabb45dde8d6329028cd9156006b7d",
+      "bytes": 1507860
+    },
+    "pat-19-screen-1-attempt-l04-0001-pr30-S-local-muse-glimmer-30b-gguf.jsonl": {
+      "sha256": "7fd024caf20e715a739d1fe71b245c3f55b174c4e07741dc570f00f8cf1f17b6",
+      "bytes": 1940612
+    },
+    "pat-19-screen-1-attempt-l04-0002-pr83-S-local-muse-glimmer-30b-gguf.jsonl": {
+      "sha256": "1f6a7a7fc6f56cb7cbf0e56da73e2821cc30f719dc0255f3b98017342f427e87",
+      "bytes": 1646446
+    },
+    "pat-19-screen-1-attempt-l04-0003-pr27-S-local-muse-glimmer-30b-gguf.jsonl": {
+      "sha256": "3497a89087ac666d99cb1ccea0c2f8a1a926e86d7a0a11818d40dab7a256e0d2",
+      "bytes": 1489587
+    },
+    "pat-19-screen-1-attempt-l04-0004-pr24-S-local-muse-glimmer-30b-gguf.jsonl": {
+      "sha256": "f59ef52f44a7ac8e95e0821f310e27d9200d5815371ed968ae76312deb0b7f19",
+      "bytes": 1934058
+    },
+    "pat-19-screen-1-attempt-l04-0005-pr48-S-local-muse-glimmer-30b-gguf.jsonl": {
+      "sha256": "aedd94a5980656caa64501098897ee60edab7302af21abf615d0464e99b8daa5",
+      "bytes": 2318636
+    },
+    "pat-19-screen-1-attempt-l04-0006-pr19-S-local-muse-glimmer-30b-gguf.jsonl": {
+      "sha256": "07de0b6b518c06094ec4060659b5ae6c46f0249fd5d84a501cc4dfe5e9d0b830",
+      "bytes": 1530009
+    },
+    "pat-19-screen-1-attempt-l05-0001-pr30-S-local-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "e32ab6bece7962e14175428420fbd619c8316ad716f330690cbcbbcfec46577a",
+      "bytes": 2071359
+    },
+    "pat-19-screen-1-attempt-l05-0002-pr83-S-local-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "5b83060bfe9348891a97122c75a800a2bcf43a00dcc98d3c6d47c07a046565f9",
+      "bytes": 1213246
+    },
+    "pat-19-screen-1-attempt-l05-0003-pr27-S-local-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "f4fcc7ac9995cf55b3e621e29846f74d1fa8408666182322eacd9c36daf04cb2",
+      "bytes": 753623
+    },
+    "pat-19-screen-1-attempt-l05-0004-pr24-S-local-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "c50d27281a865b0a256f0801e9423bafebaa0e331404ffbb412bb91fa669e2fd",
+      "bytes": 1249730
+    },
+    "pat-19-screen-1-attempt-l05-0005-pr48-S-local-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "d61817235473bce24a92b19146edac0db539e324e7ccd4e75b15e502caa62145",
+      "bytes": 1493101
+    },
+    "pat-19-screen-1-attempt-l05-0006-pr19-S-local-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "b1364cec48a155697741803aeeaabf5b3f9dd98c8147804f5d7fc0ef72a1a10d",
+      "bytes": 372783
+    }
+  }
+}

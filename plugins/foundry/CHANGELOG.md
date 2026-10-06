@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Docs/evidence (PAT-109; the diff contains no code change and no cloud call; the run itself loaded five models): raw results and written report of the real PAT-19 v1
+  screening run on 2026-10-06 (`pat-19-screen-1`, code `879e7b7`): 0 accepted of 30 (5 candidates x 6 tasks), so the
+  protocol section 4 rule stops the campaign on "keep the cloud" for autonomous ticket implementation; no comparison
+  run, no cloud spend. Files: `docs/qualification/pat-19-screening-results-v1.md` and
+  `docs/qualification/pat-19-runs/screen-1/` (ledger, results, report, envelope, streams manifest; the 49 MB raw
+  streams are not committed). R5: documented in `pat-19-screening-results-v1.md`, linked from `pat-19-launcher-v1.md`
+  and `pat-19-protocol-v1.md` (no protocol coordinate changed); no CLI verb, option, public constant or routing table changed.
 - Fixed (PAT-112; no model load): the launcher preflight read the LM Studio version from `lms version`, which prints
   only the CLI commit, so every real candidate was refused (`lm_studio_version_differs`). It now reads the app's
   `CFBundleShortVersionString` with the read-only `plutil -extract ... raw` on `/Applications/LM Studio.app/Contents/Info.plist`
