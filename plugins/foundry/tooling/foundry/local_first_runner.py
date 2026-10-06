@@ -65,6 +65,7 @@ IMPLEMENTER_DRIVER = {"A": "cloud_implementer_current", "B": "cloud_implementer_
 REVIEWER_DRIVER = "cloud_reviewer"
 LOCAL_EXPLORER_DRIVER = "local_explorer"
 CLOUD_EXPLORER_DRIVER = "cloud_explorer_economy"
+BOUND_HIT = "the exploration was cut by a bound (time or steps): refused, whatever a draft contains"
 BUNDLE_MODIFIED = "the explorer modified the bundle (it is a read-only role): exploration refused"
 # Home entries a candidate may not read (campaign config ``isolation.deny_read_home`` overrides this
 # list, which is a launcher choice and not a protocol coordinate). A local arm may read nothing of the
@@ -224,13 +225,30 @@ def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
             type(limits.get(k)) is int and limits[k] > 0 for k in ("max_files", "max_functions",
                                                                     "max_rationale_chars")):
         raise RunnerError(f"{path}: exploration.report_render_limits needs positive integers")
+    if limits["max_functions"] != lfe.MAX_FUNCTIONS:
+        raise RunnerError(f"{path}: report_render_limits.max_functions must be {lfe.MAX_FUNCTIONS} "
+                          "(the function cap of the protocol)")
+    frozen = rules["exploration_screening"].get("candidates")
+    if not isinstance(frozen, list) or not frozen or len(set(frozen)) != len(frozen) or not set(frozen) <= set(
+            data["candidates"]):
+        raise RunnerError(f"{path}: rules.exploration_screening.candidates must list the frozen candidates "
+                          "(declared candidates, once each)")
+    spec = (data.get("exploration") or {}).get("ground_truth")
+    if not isinstance(spec, dict) or not all(isinstance(spec.get(k), str) and spec[k] for k in ("file", "sha256")):
+        raise RunnerError(f"{path}: exploration.ground_truth needs file and sha256")
+    try:
+        lfe.load_truth_set(Path(path).parent, spec)  # the frozen truth cannot drift: sha256 verified at load
+    except lfe.ExplorationError as exc:
+        raise RunnerError(f"{path}: {exc}") from None
     for name, driver in data["drivers"].items():
         argv = driver["argv"]
         if driver["kind"] == "local_explorer":
-            tools = [a for a in argv if a.startswith("--tools=")]
-            if len(tools) != 1 or not set(tools[0][len("--tools="):].split(",")) <= {"read", "grep", "glob"}:
+            flags = [a for a in argv if a == "--tools" or a.startswith("--tools")]
+            tools = [a for a in flags if a.startswith("--tools=")]
+            if len(flags) != 1 or len(tools) != 1 or not set(tools[0][len("--tools="):].split(",")) <= {
+                    "read", "grep", "glob"}:
                 raise RunnerError(f"{path}: driver {name}: a local explorer needs exactly one --tools= "
-                                  "flag naming only read, grep, glob")
+                                  "flag (one argument, no second tools flag) naming only read, grep, glob")
         elif driver["kind"] == "cloud_explorer":
             denied = argv[argv.index("--disallowedTools") + 1:] if "--disallowedTools" in argv else []
             if not {"Edit", "Write"} <= set(denied):
@@ -1806,7 +1824,7 @@ class Runner:
                  host_env: Mapping[str, str] | None = None, now: Callable[[], float] = time.time,
                  today: Callable[[], dt.date] = dt.date.today, input_paths: Sequence[Path] = (),
                  provenance: Mapping[str, Any] | None = None, require_screening: bool = True,
-                 screening_campaign: str | None = None):
+                 screening_campaign: str | None = None, truths: Mapping[str, Any] | None = None):
         if mode not in MODES:
             raise RunnerError(f"unknown mode {mode!r}")
         if (mode in EXPLORE_MODES) != (campaign.get("schema") == CAMPAIGN_SCHEMA_V2):
@@ -1855,6 +1873,7 @@ class Runner:
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
         self.dedicated: dict[str, Any] | None = None  # observed values of the last dedicated-machine check
         self.truths: dict[Any, dict[str, Any]] = {}  # localization ground truth of each task, by PR
+        self.frozen_truths = truths  # the committed truth file (CLI); ``None``: computed from the repository
 
     # ---- bookkeeping
     def _scan_results(self) -> set[tuple]:
@@ -2140,11 +2159,12 @@ class Runner:
 
     def _values(self, bundle: Path, attempt_dir: Path, **extra: str) -> dict[str, str]:
         b = self.campaign["bounds"]
+        steps, seconds = ((b["explorer_max_steps"], b["explorer_max_seconds"]) if self.exploring
+                          else (b["local_max_steps"], b["local_max_seconds"]))  # v2: the explorer's bounds
         return {"workdir": str(bundle), "statement_file": str(bundle / "TASK.md"),
-                "scratch": str(attempt_dir / "scratch"), "max_steps": str(b["local_max_steps"]),
-                "max_seconds": str(b["local_max_seconds"]),
-                "max_duration": (f"{b['local_max_seconds'] // 60}m" if b["local_max_seconds"] % 60 == 0
-                                 else f"{b['local_max_seconds']}s"),
+                "scratch": str(attempt_dir / "scratch"), "max_steps": str(steps),
+                "max_seconds": str(seconds),
+                "max_duration": f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s",
                 "review_file": str(attempt_dir / "scratch" / "review.json"),
                 "report_file": str(attempt_dir / "scratch" / "report.json"),
                 "feedback_file": str(attempt_dir / "scratch" / "feedback.md"), **extra}
@@ -2553,6 +2573,12 @@ class Runner:
         return records
 
     # ---- protocol v2: read-only exploration (PAT-114)
+    def _full_budget_left(self) -> None:
+        """An exploration whose time budget the envelope would cut below the protocol bound is not started
+        (a cap stop): its refusal would be the envelope's doing, not the model's."""
+        if self.ledger.remaining_seconds() < self.campaign["bounds"]["explorer_max_seconds"]:
+            raise CapReached("wall_clock_seconds")
+
     @staticmethod
     def _bundle_status(bundle: Path) -> str | None:
         """``git status --porcelain`` of a bundle (neutral git), ``None`` when git cannot read it."""
@@ -2570,7 +2596,13 @@ class Runner:
     def _truth(self, task: Mapping[str, Any]) -> dict[str, Any]:
         """Ground truth of a task from its merged diff, read before any claim or spend (fail closed)."""
         if task["pr"] not in self.truths:
-            self.truths[task["pr"]] = lfe.ground_truth(self.repo, task)
+            if self.frozen_truths is None:
+                self.truths[task["pr"]] = lfe.ground_truth(self.repo, task)
+            else:  # the committed file is the single source; it must describe this very task
+                entry = self.frozen_truths.get(str(task["pr"]))
+                if entry is None or (entry["base_sha"], entry["head_sha"]) != (task["base_sha"], task["head_sha"]):
+                    raise RunnerError(f"no frozen ground truth for PR {task['pr']} at these SHAs")
+                self.truths[task["pr"]] = entry
         return self.truths[task["pr"]]
 
     def _explore_values(self, bundle: Path, attempt_dir: Path, **extra: str) -> dict[str, str]:
@@ -2613,6 +2645,7 @@ class Runner:
         exe = self._executable(driver)  # refused before any claim, reservation or file
         truth = self._truth(task)
         self.ledger.check(cloud=False)
+        self._full_budget_left()
         self._claim(path, task, task_set, candidate_id, segment, attempt, 1 if replay_of else 0)
         bounds = self.campaign["bounds"]
         model = self.campaign["candidates"][candidate_id]["model"]
@@ -2645,7 +2678,9 @@ class Runner:
                 with self._critical():  # a signal right after the audit never loses its result
                     contamination = self._audit(stream_log, bundle, attempt_dir / "scratch", driver, exe=exe)
                 modified = self._bundle_modified(status_before, self._bundle_status(bundle))
-                if modified:
+                if execution["timed_out"] or execution["step_limit_hit"]:  # cut by a bound: refused, even with a draft
+                    report, source, refusal = None, "none", BOUND_HIT
+                elif modified:
                     report, source, refusal = None, "none", BUNDLE_MODIFIED
                 else:
                     report, source, refusal = lfe.load_report(
@@ -2760,6 +2795,7 @@ class Runner:
             replay = {"attempt": 0, "attempt_dir": None, "outcome": prior[0]["outcome"],
                       "reason": prior[0].get("reason"), "cloud_sessions": list(prior[0]["cloud_sessions"])}
         truth = self._truth(task)
+        self._full_budget_left()
         self._claim("E", task, "comparison", None, "explore", 0, 1 if replay else 0)
         mark = len(self.sessions)
         by_role: dict[str, Any] = {}
@@ -2779,7 +2815,9 @@ class Runner:
                 _merge_models(models, execution["by_model"])
                 if tokens is None:
                     unknown["premium.explorer"] = reason or "unknown"
-                if modified:  # the explorer is read-only: a changed bundle refuses the exploration
+                if execution["timed_out"]:  # cut by the time bound: refused, even with a draft
+                    report, source, refusal = None, "none", BOUND_HIT
+                elif modified:  # the explorer is read-only: a changed bundle refuses the exploration
                     report, source, refusal = None, "none", BUNDLE_MODIFIED
                 else:
                     report, source, refusal = lfe.load_report(
@@ -2842,12 +2880,13 @@ class Runner:
             self._check_harness(driver_id)
         with self._guarded():
             for task in tasks:
-                if "L" in arms:
-                    self.preflight(candidate_id)
                 for arm in arms:
                     if arm == "A":
                         out += self.cloud_path(task, "A", "comparison")
                         continue
+                    if arm == "L" and self._local_state("L", task, "comparison", candidate_id, "explore",
+                                                        0)[0] in ("fresh", "replay"):
+                        self.preflight(candidate_id)  # right before each local exploration, after the cloud work
                     explored, report, skip = (self._explore_step_local(task, candidate_id, driver_id)
                                               if arm == "L" else self._explore_step_cloud(task))
                     out += explored
@@ -3657,8 +3696,8 @@ def _compatibility(rule: Mapping[str, Any], locals_: Sequence[Mapping[str, Any]]
 
 def _report_exploration_screening(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
                                   killed: int = 0) -> dict[str, Any]:
-    """The v2 screening table (file recall, file precision, function recall, durations per candidate) and
-    the pre-registered rule (``lfe.apply_screening_rule``). A tool failure or an interruption is not a
+    """The v2 screening table (function recall first, then file precision and file recall, durations per
+    candidate) and the pre-registered rule (``lfe.apply_screening_rule``). A tool failure or an interruption is not a
     refusal: it leaves the task undecided and the screening incomplete (no candidate selected). A
     contaminated attempt is decided and counts as 0 (``judge.verdict`` ``CONTAMINATED``)."""
     by_candidate: dict[str, list[dict[str, Any]]] = {}
@@ -3682,12 +3721,14 @@ def _report_exploration_screening(rule: Mapping[str, Any], attempts: Sequence[Ma
         row["harness"] = sorted({i["rec"]["local"]["harness"] for i in by_candidate[cid]})
     undecided_tasks = list(undecided.values())
     lost = len(undecided_tasks) + killed
-    complete = bool(rows) and not lost and all(r["tasks"] == rule["tasks"] for r in rows.values())
-    outcome = (lfe.apply_screening_rule(rule, rows, complete) if rows or not undecided_tasks
-               else {"selected": None, "reason": "incomplete_screening", "stop": None})
+    frozen = list(rule["candidates"])  # complete only when ALL the frozen candidates have all their tasks
+    missing = [c for c in frozen if c not in rows or rows[c]["tasks"] != rule["tasks"]]
+    complete = bool(rows) and not lost and not missing
+    outcome = (lfe.apply_screening_rule(rule, {c: r for c, r in rows.items() if c in frozen}, complete)
+               if rows or not undecided_tasks else {"selected": None, "reason": "incomplete_screening", "stop": None})
     return {"candidates": {c: {k: v for k, v in r.items() if not k.startswith("_")} for c, r in rows.items()},
-            **outcome, "complete": complete, "undecided_tasks": undecided_tasks,
-            "killed_not_replayed": killed}
+            **outcome, "complete": complete, "missing_candidates": missing,
+            "undecided_tasks": undecided_tasks, "killed_not_replayed": killed}
 
 
 def _check_compared_explorer(screening: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
@@ -3811,7 +3852,11 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     r.add_argument("--results", required=True,
                    help="results-<campaign>.jsonl; ledger-<campaign>.jsonl is read beside it (mandatory)")
     args = parser.parse_args(argv)
-    campaign = load_campaign(Path(args.campaign))
+    try:
+        campaign = load_campaign(Path(args.campaign))
+    except (RunnerError, OSError, ValueError) as exc:  # e.g. a frozen ground truth whose sha256 changed
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
     if args.cmd == "report":
         try:
             results = Path(args.results)
@@ -3865,6 +3910,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             provenance={"campaign_sha256": hashlib.sha256(Path(args.campaign).read_bytes()).hexdigest(),
                         "manifest_sha256": hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()},
             screening_campaign=getattr(args, "screening_campaign", None),
+            truths=(lfe.load_truth_set(Path(args.campaign).parent, campaign["exploration"]["ground_truth"])
+                    if mode in EXPLORE_MODES else None),
             sandbox=(not args.dry_run) or args.sandbox,
             run=(lambda _argv: None) if args.dry_run else default_run,
             preflight_run=(lambda cid: dry_run_facts(campaign, campaign["candidates"][cid]["model"]))
@@ -3884,7 +3931,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     except PreflightRefused as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    except (RunnerError, lfc.CorpusError) as exc:
+    except (RunnerError, lfc.CorpusError) as exc:  # includes a frozen truth that changed (ExplorationError)
         print(f"refused: {exc}", file=sys.stderr)
         return 2
     return 0

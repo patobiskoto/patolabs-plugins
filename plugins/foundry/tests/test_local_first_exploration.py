@@ -5,7 +5,9 @@ format and its parsing, the localization judge, the screening rule, the dedicate
 quality and economy rules and the statement rendering. No model, no cloud, no network."""
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
 from fractions import Fraction
 from pathlib import Path
@@ -41,6 +43,37 @@ def test_the_truth_file_covers_exactly_the_12_frozen_tasks():
         assert not any(f.startswith(lfc.TESTS_PREFIX) or lfc._is_doc(f) for f in entry["files"])
         assert entry["functions"], f"PR {pr}: no function in the truth"  # all 12 touch existing functions
         assert all(fn[0] in entry["files"] for fn in entry["functions"])
+        # every file the merged diff touches, product or not: the precision's reference
+        assert entry["all_changed_files"] == sorted(f["path"] for f in task["files"])
+        assert set(entry["files"]) <= set(entry["all_changed_files"])
+
+
+def test_the_campaign_records_the_sha256_of_the_frozen_truth_file():
+    spec = CAMPAIGN["exploration"]["ground_truth"]
+    raw = (QUALIFICATION / spec["file"]).read_bytes()
+    assert spec["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert lfe.load_truth_set(QUALIFICATION, spec)["83"]["files"] == TRUTH["tasks"]["83"]["files"]
+    with pytest.raises(lfe.ExplorationError, match="sha256"):
+        lfe.load_truth_set(QUALIFICATION, {**spec, "sha256": "0" * 64})
+    with pytest.raises(lfe.ExplorationError, match="unreadable"):
+        lfe.load_truth_set(QUALIFICATION, {**spec, "file": "absent.json"})
+
+
+def test_precision_counts_every_file_the_merged_diff_changed_product_or_not():
+    truth = TRUTH["tasks"]["83"]  # product file, a test, a doc and the changelog
+    product = truth["files"][0]
+    everything = [product, "plugins/foundry/tests/test_linear_tracker.py", "plugins/foundry/CHANGELOG.md",
+                  "plugins/foundry/docs/linear-tracker.md"]
+    score = lfe.score_report(truth, {"files": everything, "functions": [], "rationale": ""})
+    assert score["file_precision"] == 1.0 and score["file_recall"] == 1.0
+    three = lfe.score_report(truth, {"files": everything[:3], "functions": [], "rationale": ""})
+    assert three["file_precision"] == 1.0
+    lowered = lfe.score_report(truth, {"files": [*everything[:3], "plugins/foundry/tests/test_other.py"],
+                                       "functions": [], "rationale": ""})
+    assert lowered["file_precision"] == 0.75 and lowered["file_recall"] == 1.0  # recall: product files only
+    only_test = lfe.score_report(truth, {"files": ["plugins/foundry/tests/test_linear_tracker.py"],
+                                         "functions": [], "rationale": ""})
+    assert only_test["file_precision"] == 1.0 and only_test["file_recall"] == 0.0
 
 
 @pytest.mark.parametrize("pr", ALL_PRS)
@@ -73,8 +106,11 @@ def _real_commits_available() -> bool:
 
 
 def test_the_committed_truth_is_what_the_merged_diffs_give():
-    if not _real_commits_available():  # a shallow clone: the committed file stays the witness
-        pytest.skip("the merged commits of the corpus are not in this clone")
+    if not _real_commits_available():  # a shallow clone: the committed file (sha256 in the config) is the witness
+        message = "the merged commits of the corpus are not in this clone (shallow history): truth NOT recomputed"
+        if os.environ.get("PAT19_REQUIRE_TRUTH_HISTORY"):  # set it where the history is expected: no silent skip
+            pytest.fail(message)
+        pytest.skip(message)
     for pr in ALL_PRS:
         live = lfe.ground_truth(REPO_ROOT, TASKS[pr])
         assert live == {k: v for k, v in TRUTH["tasks"][str(pr)].items() if k != "set"}, pr
@@ -182,6 +218,39 @@ def test_a_module_level_change_gives_the_file_and_no_function(tmp_path):
     assert score["file_recall"] == 1.0 and score["function_recall"] is None  # undefined, never 0
 
 
+def test_the_truth_computation_pins_the_diff_algorithm(tmp_path, monkeypatch):
+    repo, snap, _, _ = _make_repo(tmp_path)
+    calls = []
+    real = lfc._git
+
+    def spy(repo_, *args, **kw):
+        calls.append(args)
+        return real(repo_, *args, **kw)
+
+    monkeypatch.setattr(lfc, "_git", spy)
+    lfe.ground_truth(repo, snap["prs"][0])
+    diffs = [a for a in calls if "diff" in a]
+    assert diffs and all("diff.algorithm=myers" in a and "--diff-algorithm=myers" in a
+                         and "--no-indent-heuristic" in a and "diff.indentHeuristic=false" in a for a in diffs)
+
+
+def test_a_whole_deleted_function_is_truth_and_does_not_blame_its_neighbour(tmp_path):
+    base = "def f():\n    return 1\n\n\ndef g():\n    return 2\n\n\ndef h():\n    return 3\n"
+    head = "def f():\n    return 1\n\n\ndef h():\n    return 3\n"
+    repo, snap, _, _ = _make_repo(tmp_path, base_files={MOD: base}, head_files={MOD: head})
+    truth = lfe.ground_truth(repo, snap["prs"][0])
+    assert truth["functions"] == [[MOD, "g"]] and truth["new_functions"] == []  # not f (the anchor line), not h
+    # a function added between two others is new, not true
+    repo2, snap2, _, _ = _make_repo(_sub_dir(tmp_path), base_files={MOD: head}, head_files={MOD: base})
+    assert lfe.ground_truth(repo2, snap2["prs"][0])["functions"] == []
+    assert lfe.ground_truth(repo2, snap2["prs"][0])["new_functions"] == [[MOD, "g"]]
+
+
+def _sub_dir(tmp_path):
+    (tmp_path / "second").mkdir()
+    return tmp_path / "second"
+
+
 def test_a_pure_deletion_inside_a_function_counts_that_function(tmp_path):
     base = "def f():\n    a = 1\n    b = 2\n    return a + b\n\n\ndef g():\n    return 0\n"
     head = "def f():\n    a = 1\n    return a\n\n\ndef g():\n    return 0\n"
@@ -203,9 +272,26 @@ def test_precision_counts_created_files_and_an_empty_report_scores_zero_precisio
     score = lfe.score_report(truth, {"files": ["a.py", "c.py", "d.py", "e.py"], "functions": [], "rationale": ""})
     assert (score["file_recall"], score["file_precision"]) == (0.5, 0.5)
     assert score["counts"] == {"truth_files": 2, "found_files": 1, "reported_files": 4, "correct_files": 2,
-                               "truth_functions": 0, "found_functions": 0}
+                               "truth_functions": 0, "found_functions": 0, "counted_functions": 0}
     empty = lfe.score_report(truth, {"files": [], "functions": [], "rationale": "nothing"})
     assert empty["file_precision"] == 0.0  # undefined ratio counted as 0
+
+
+def test_only_the_first_10_functions_of_a_report_count():
+    names = [f"fn{i}" for i in range(12)]
+    truth = {"pr": 1, "files": ["a.py"], "created_files": [], "functions": [["a.py", n] for n in names]}
+    every = {"files": ["a.py"], "functions": [{"file": "a.py", "name": n} for n in names], "rationale": ""}
+    score = lfe.score_report(truth, every)  # a report listing every function of the file: first 10 scored
+    assert score["counts"]["found_functions"] == 10 and score["counts"]["counted_functions"] == 10
+    assert score["function_recall"] == round(10 / 12, 6)
+    only_11th = {"files": [], "rationale": "", "functions": [
+        *({"file": "a.py", "name": f"other{i}"} for i in range(10)), {"file": "a.py", "name": "fn11"}]}
+    assert lfe.score_report(truth, only_11th)["function_recall"] == 0.0  # the 11th, correct, is not counted
+    ten = {"files": [], "rationale": "", "functions": [
+        *({"file": "a.py", "name": f"other{i}"} for i in range(9)), {"file": "a.py", "name": "fn11"}]}
+    assert lfe.score_report(truth, ten)["function_recall"] == round(1 / 12, 6)  # the 10th counts
+    assert lfe.MAX_FUNCTIONS == 10 == CAMPAIGN["exploration"]["report_render_limits"]["max_functions"]
+    assert "at most 10 functions, most relevant first" in CAMPAIGN["prompts"]["explore"]
 
 
 # ------------------------------------------------------------------------------- report
@@ -307,6 +393,8 @@ def _row(*found, **kw):
 
 def test_the_screening_values_are_the_validated_ones():
     assert RULE == {**RULE, "tasks": 6, "file_precision_min": 0.5, "retained_function_recall_min": 0.5}
+    assert len(RULE["candidates"]) == 5 and set(RULE["candidates"]) <= set(CAMPAIGN["candidates"])
+    assert "devstral-small-2-24b-gguf" not in RULE["candidates"]  # unused stays unused
     assert "retained_recall_min" not in RULE  # the file-recall threshold is gone
     assert CAMPAIGN["rules"]["exploration_comparison"]["premium_per_accepted_ratio_max"] == 0.85
 
@@ -331,14 +419,28 @@ def test_perfect_file_recall_with_zero_function_recall_is_not_retained_over_func
     assert alone["reason"] == "retained_candidate_function_recall_below_minimum: keep_cloud"
 
 
-def test_screening_tie_goes_to_the_shortest_total_duration_then_is_unresolved():
+def test_screening_tie_goes_to_the_shortest_total_duration_then_to_the_frozen_candidate_order():
     fast = lfe.candidate_row([_task(i, 1, seconds=5.0) for i in range(6)])
     slow = lfe.candidate_row([_task(i, 1, seconds=9.0) for i in range(6)])
     assert lfe.apply_screening_rule(RULE, {"slow": slow, "fast": fast}, True) == {
         "selected": "fast", "reason": "tie_broken_by_total_duration", "stop": None}
     same = lfe.candidate_row([_task(i, 1, seconds=5.0) for i in range(6)])
-    out = lfe.apply_screening_rule(RULE, {"x": same, "y": fast}, True)
-    assert out["selected"] is None and out["reason"] == "tie_not_resolved" and out["tied"] == ["x", "y"]
+    rule = {**RULE, "candidates": ["y", "x"]}
+    out = lfe.apply_screening_rule(rule, {"x": same, "y": fast}, True)  # still tied: the first of the frozen order
+    assert out["selected"] == "y" and out["reason"] == "tie_broken_by_frozen_candidate_order"
+    assert out["tied"] == ["x", "y"] or out["tied"] == ["y", "x"]
+    assert lfe.apply_screening_rule({**RULE, "candidates": ["x", "y"]}, {"x": same, "y": fast}, True)["selected"] == "x"
+
+
+def test_the_threshold_is_tested_before_the_tie():
+    low_a = lfe.candidate_row([_task(i, int(i < 2), fn_truth=1) for i in range(6)])  # 1/3 < 0.5
+    low_b = lfe.candidate_row([_task(i, int(i < 2), fn_truth=1, seconds=1.0) for i in range(6)])
+    out = lfe.apply_screening_rule(RULE, {"a": low_a, "b": low_b}, True)  # a tie below the threshold
+    assert out["selected"] is None and out["stop"] == "keep_cloud"
+    assert out["reason"] == "retained_candidate_function_recall_below_minimum: keep_cloud"
+    at = lfe.candidate_row([_task(i, int(i < 3)) for i in range(6)])  # exactly 0.5, tied: resolved, not stopped
+    out = lfe.apply_screening_rule({**RULE, "candidates": ["a", "b"]}, {"a": at, "b": at}, True)
+    assert out["selected"] == "a" and out["stop"] is None
 
 
 def test_the_precision_floor_is_applied_before_the_function_recall_comparison():
@@ -402,7 +504,7 @@ def _ps(*lines):
 
 
 def test_the_dedicated_machine_thresholds_are_the_validated_ones():
-    assert DEDICATED["max_other_process_rss_gib"] == 2 and DEDICATED["min_free_percent"] == 50
+    assert DEDICATED["max_other_process_rss_gib"] == 2 and DEDICATED["min_free_percent"] == 35
     assert set(DEDICATED["allowed_command_patterns"]) == {"lm_studio", "launcher", "system"}
 
 
@@ -415,9 +517,9 @@ def test_a_dedicated_machine_passes_with_lm_studio_the_launcher_and_the_system_b
              (3 * GIB, "/usr/libexec/something"), (3 * GIB, "kernel_task"),
              (2 * GIB, "/Applications/Safari.app/Contents/MacOS/Safari"),  # exactly 2 GiB: not over
              (100, "/bin/zsh -l"))
-    out = lfe.check_dedicated_machine(DEDICATED, ps, "System-wide memory free percentage: 50%")
+    out = lfe.check_dedicated_machine(DEDICATED, ps, "System-wide memory free percentage: 35%")
     assert out["ok"] and out["refusals"] == []
-    assert out["observed"]["free_percent"] == 50 and out["observed"]["processes"] == 9
+    assert out["observed"]["free_percent"] == 35 and out["observed"]["processes"] == 9
     assert out["observed"]["allowed_rss_mib"]["lm_studio"] == 37 * 1024
     assert out["observed"]["largest_other_processes"][0] == {"process": "Safari", "rss_mib": 2048}
 
@@ -434,11 +536,12 @@ def test_another_process_over_2_gib_refuses_and_names_only_the_process():
     assert secret not in json.dumps(out)  # no argument is ever recorded
 
 
-def test_free_memory_under_50_percent_refuses_and_an_unknown_value_refuses():
+def test_free_memory_under_35_percent_refuses_and_an_unknown_value_refuses():
     ps = _ps((100, "/bin/zsh"))
-    low = lfe.check_dedicated_machine(DEDICATED, ps, "System-wide memory free percentage: 49%")
-    assert low["refusals"] == ["dedicated_machine_free_memory_below_minimum:49<50"]
-    assert lfe.check_dedicated_machine(DEDICATED, ps, "System-wide memory free percentage: 50%")["ok"]
+    low = lfe.check_dedicated_machine(DEDICATED, ps, "System-wide memory free percentage: 34%")
+    assert low["refusals"] == ["dedicated_machine_free_memory_below_minimum:34<35"]
+    assert lfe.check_dedicated_machine(DEDICATED, ps, "System-wide memory free percentage: 35%")["ok"]
+    assert lfe.check_dedicated_machine(DEDICATED, ps, "System-wide memory free percentage: 51%")["ok"]  # measured
     assert lfe.check_dedicated_machine(DEDICATED, ps, None)["refusals"] == [
         "dedicated_machine_memory_pressure_unavailable"]
     assert lfe.check_dedicated_machine(DEDICATED, ps, "garbage")["ok"] is False
@@ -499,6 +602,9 @@ def test_the_report_section_is_deterministic_and_says_when_it_cuts():
     text = lfe.render_report_section(report, limits)
     assert text == lfe.render_report_section(report, limits)
     assert "- f19.py" in text and "- f20.py" not in text and "5 more not shown" in text
+    many = {"files": [], "functions": [{"file": "a.py", "name": f"g{i}"} for i in range(12)], "rationale": ""}
+    shown = lfe.render_report_section(many, limits)
+    assert "a.py: g9" in shown and "a.py: g10" not in shown and "2 more not shown" in shown  # the cap of 10
     assert text.count("r") >= 1500 and "r" * 1501 not in text
     assert "(none reported)" in lfe.render_report_section({"files": [], "functions": [], "rationale": ""}, limits)
     assert "read-only explorer" in text and "can be incomplete or wrong" in text

@@ -4,6 +4,7 @@ Only FAKE arms run (small Python scripts in temp dirs): the fake explorers write
 fake implementers and reviewers are the v1 ones. No model, no cloud, no network; machine facts injected."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -46,7 +47,7 @@ step = steps[min(i, len(steps) - 1)]
 mode, report = step["mode"], step.get("report")
 def event(kind, **kw):
     print(json.dumps({"type": kind, **kw}), flush=True)
-text = json.dumps(report) if mode in ("final", "file") else "I could not find anything."
+text = json.dumps(report) if mode in ("final", "file", "draft_then_hang", "draft_then_steps") else "I could not find anything."
 if a.init_tools is not None:
     event("system", subtype="init", tools=[t for t in a.init_tools.split(",") if t])
 if mode == "peek":
@@ -56,6 +57,15 @@ if mode == "peek":
 if mode == "write_bundle":  # a read-only role that changes the bundle (the sandbox is off in these tests)
     open(os.path.join(a.workdir, "stray.txt"), "w").write("x")
     mode = "final"
+if mode in ("draft_then_hang", "draft_then_steps"):  # a usable draft appears, then a bound cuts the arm
+    if a.role == "xlocal":
+        event("message_end", message={"role": "assistant", "content": [{"type": "text", "text": text}]})
+    else:
+        event("result", result=text)
+    if mode == "draft_then_steps":
+        for _ in range(200):
+            event("tool_execution_start", tool="read")
+    time.sleep(60)
 if mode == "hang":
     time.sleep(60)
 if mode == "many_steps":
@@ -91,7 +101,7 @@ PLAN = {"xlocal": [FINAL], "xcloud": [FINAL], "local": ["fix"], "neutral": ["fix
         "economy": ["fix"], "reviewer": ["PASS"]}
 
 
-def v2_campaign(tmp_path, plan, **overrides):
+def v2_campaign(tmp_path, plan, frozen=("cand-a",), **overrides):
     v1_arm = tmp_path / "v1_arm.py"
     v1_arm.write_text(FAKE_ARM, encoding="utf-8")
     script = tmp_path / "fake_v2.py"
@@ -104,6 +114,7 @@ def v2_campaign(tmp_path, plan, **overrides):
                            "explorer_max_steps": 25})
     base["rules"]["exploration_screening"]["tasks"] = 2
     base["rules"]["exploration_comparison"]["tasks"] = 2
+    base["rules"]["exploration_screening"]["candidates"] = list(frozen)  # the frozen candidates of the fake run
     impl = _arm("implementer", script, plan_path, projects)
     review = _arm("reviewer", script, plan_path, projects)
     local = _arm("local", script, plan_path, projects)
@@ -139,9 +150,9 @@ def facts_with(campaign, model, ps=None, pressure=None):
 
 
 def make_runner(tmp_path, mode, plan=None, *, repo_bundle=None, caps=None, campaign_over=None, ps=None,
-                pressure=None, campaign_id="test-v2", require_screening=False, swap=True):
+                pressure=None, campaign_id="test-v2", require_screening=False, swap=True, frozen=("cand-a",)):
     repo, snap, _, _ = repo_bundle or _make_repo(tmp_path)
-    campaign, plan_path = v2_campaign(tmp_path, plan or PLAN, **(campaign_over or {}))
+    campaign, plan_path = v2_campaign(tmp_path, plan or PLAN, frozen=frozen, **(campaign_over or {}))
     envelope = lfr.load_envelope(_envelope(tmp_path, lfr.EXPLORE_MODES, campaign_id, **(caps or {})), mode, TODAY)
     runner = lfr.Runner(
         repo=repo, campaign=campaign, envelope=envelope, state_dir=tmp_path / "state",
@@ -201,12 +212,18 @@ def test_the_v2_campaign_loads_and_pins_the_validated_values():
 
 
 def test_the_loader_refuses_a_v2_campaign_that_loses_its_read_only_pins(tmp_path):
+    spec = V2["exploration"]["ground_truth"]
+    (tmp_path / spec["file"]).write_bytes((QUALIFICATION / spec["file"]).read_bytes())  # beside the config
+
     def broken(edit):
         data = json.loads(json.dumps(V2))
         edit(data)
         path = tmp_path / "broken.json"
         path.write_text(json.dumps(data), encoding="utf-8")
         return path
+
+    def argv_edit(edit):
+        return lambda d: edit(d["drivers"]["local_explorer"]["argv"])
 
     def tools(value):
         def edit(d):
@@ -219,6 +236,17 @@ def test_the_loader_refuses_a_v2_campaign_that_loses_its_read_only_pins(tmp_path
             (tools("--tools=read,grep,glob,write"), "--tools="),
             (tools("--tools=read,bash"), "--tools="),
             (lambda d: d["drivers"]["local_explorer"]["argv"].remove("--tools=read,grep,glob"), "--tools="),
+            # the flag given as two arguments, or a second tools flag, is refused as well
+            (argv_edit(lambda a: a.__setitem__(slice(a.index("--tools=read,grep,glob"),
+                                                      a.index("--tools=read,grep,glob") + 1),
+                                               ["--tools", "read,bash"])), "exactly one --tools="),
+            (argv_edit(lambda a: a.extend(["--tools", "read,bash"])), "exactly one --tools="),
+            (argv_edit(lambda a: a.append("--tools=read")), "exactly one --tools="),
+            (lambda d: d["exploration"]["ground_truth"].update(sha256="0" * 64), "sha256"),
+            (lambda d: d["exploration"].pop("ground_truth"), "ground_truth"),
+            (lambda d: d["exploration"]["report_render_limits"].update(max_functions=40), "max_functions"),
+            (lambda d: d["rules"]["exploration_screening"].update(candidates=["nope"]), "frozen candidates"),
+            (lambda d: d["rules"]["exploration_screening"].pop("candidates"), "frozen candidates"),
             (lambda d: d["drivers"]["cloud_explorer_economy"]["argv"].remove("Write"), "deny Edit and Write"),
             (lambda d: d.pop("dedicated_machine"), "dedicated_machine"),
             (lambda d: d["dedicated_machine"].update(allowed_command_patterns={"x": ["("]}), "not a regex"),
@@ -255,7 +283,7 @@ def test_the_envelope_names_the_v2_modes(tmp_path):
 def test_screen_exploration_scores_localization_and_spends_no_cloud(tmp_path):
     plan = {**PLAN, "xlocal": [FINAL, {"mode": "file", "report": WRONG_REPORT}, FINAL, FINAL]}
     runner, campaign, plan_path, tasks = make_runner(tmp_path, "screen_exploration", plan,
-                                                     caps={"cloud_executions": 0})
+                                                     caps={"cloud_executions": 0}, frozen=("cand-a", "cand-b"))
     spent = []
     runner.cloud_execution = lambda *a, **k: spent.append(a)
     out = runner.screen_exploration(tasks, ["cand-a", "cand-b"])
@@ -336,14 +364,62 @@ def test_a_contaminated_exploration_counts_as_zero_and_is_decided(tmp_path):
     assert counts(plan_path) == {"xlocal": 2}
 
 
-def test_the_explorer_bounds_are_enforced_time_and_steps(tmp_path):
+def test_an_exploration_cut_by_a_bound_is_a_refusal_even_with_a_draft(tmp_path):
+    steps = [{"mode": "hang"}, {"mode": "many_steps"}, {"mode": "draft_then_hang", "report": GOOD_REPORT},
+             {"mode": "draft_then_steps", "report": GOOD_REPORT}]
     runner, _, plan, tasks = make_runner(
-        tmp_path, "screen_exploration", {**PLAN, "xlocal": [{"mode": "hang"}, {"mode": "many_steps"}]},
+        tmp_path, "screen_exploration", {**PLAN, "xlocal": steps},
         campaign_over={"bounds": {"explorer_max_seconds": 2}}, caps={"cloud_executions": 0})
-    first, second = runner.screen_exploration(tasks, ["cand-a"])
-    assert first["local"]["timed_out"] and first["judge"]["verdict"] == "REFUSED"
-    assert second["local"]["step_limit_hit"] and second["local"]["steps"] > 25  # the kill can lag the 26th step
-    assert first["local"]["ended_by_external_signal"] is False
+    tasks = [*tasks, {**tasks[0], "pr": 3}, {**tasks[0], "pr": 4}]
+    out = runner.screen_exploration(tasks, ["cand-a"])
+    assert out[0]["local"]["timed_out"] and out[1]["local"]["step_limit_hit"]
+    assert out[1]["local"]["steps"] > 25  # the kill can lag the 26th step
+    assert out[2]["local"]["timed_out"] and out[3]["local"]["step_limit_hit"]
+    for record in out:  # a JSON draft in a message does not save an exploration cut by a bound
+        assert record["judge"]["verdict"] == "REFUSED" and record["judge"]["note"] == lfr.BOUND_HIT
+        assert record["judge"]["file_recall"] == 0.0 and record["exploration"]["report"] is None
+        assert record["local"]["ended_by_external_signal"] is False and record.get("outcome") is None
+    rerun, _, _, _ = _resumed(tmp_path, runner, tasks, "screen_exploration", {**PLAN, "xlocal": steps},
+                              campaign_over={"bounds": {"explorer_max_seconds": 2}}, caps={"cloud_executions": 0})
+    assert rerun.screen_exploration(tasks, ["cand-a"]) == []  # decided: never replayed
+
+
+def test_a_cloud_explorer_cut_by_the_time_bound_is_refused_and_its_cost_stays_unknown(tmp_path):
+    plan = {**PLAN, "xcloud": [{"mode": "draft_then_hang", "report": GOOD_REPORT}], "reviewer": ["PASS"]}
+    runner, _, plan_path, tasks = make_runner(tmp_path, "compare_exploration", plan,
+                                              campaign_over={"bounds": {"explorer_max_seconds": 2}})
+    out = runner.compare_exploration(tasks[:1], "cand-a", arms=("E",))
+    explore = [r for r in out if r["segment"] == "explore"][0]
+    assert explore["exploration"]["refusal"] == lfr.BOUND_HIT and explore["exploration"]["report"] is None
+    assert explore["exploration"]["score"]["verdict"] == "REFUSED"
+    # the arm never reached the log: its tokens are unknown, so the campaign stops (v1 cap rule), never zero
+    assert explore["premium"]["billing_total"] is None
+    assert results(runner)[-1]["reason"] == "cap_reached:premium_tokens_unmeasurable"
+
+
+def test_an_exploration_the_envelope_would_cut_short_is_not_started_and_not_scored(tmp_path):
+    # explorer bound 20 s, 5 s of wall clock left: a cap stop, not a model refusal
+    runner, _, plan, tasks = make_runner(tmp_path, "screen_exploration", caps={"cloud_executions": 0,
+                                                                              "wall_clock_seconds": 5})
+    assert runner.screen_exploration(tasks, ["cand-a"]) == []
+    assert results(runner)[-1]["reason"] == "cap_reached:wall_clock_seconds"
+    assert [r for r in results(runner) if r.get("record_type") == "attempt"] == [] and counts(plan) == {}
+    assert "attempt_started" not in [e["kind"] for e in ledger_of(runner)]
+    cloud, _, plan2, tasks2 = make_runner(_sub(tmp_path, "cloud"), "compare_exploration",
+                                          {**PLAN, "reviewer": ["PASS"]}, caps={"wall_clock_seconds": 5})
+    assert cloud.compare_exploration(tasks2[:1], "cand-a", arms=("E",)) == []
+    assert results(cloud)[-1]["reason"] == "cap_reached:wall_clock_seconds" and counts(plan2) == {}
+
+
+def test_the_prompt_announces_the_bounds_and_the_function_cap(tmp_path):
+    prompt = V2["prompts"]["explore"]
+    assert "{max_duration}" in prompt and "{max_steps}" in prompt and "BEFORE reaching them" in prompt
+    assert "at most 10 functions, most relevant first" in prompt
+    runner, _, _, _ = make_runner(tmp_path, "screen_exploration")
+    values = runner._values(tmp_path / "bundle", tmp_path / "attempt")
+    assert (values["max_duration"], values["max_steps"]) == ("20s", "25")  # the explorer's bounds, not the local ones
+    rendered = lfr._substitute(prompt, values)
+    assert "{max_" not in rendered and "25 tool steps" in rendered
 
 
 def test_the_explorer_prompt_carries_the_report_format_and_the_read_only_instruction(tmp_path):
@@ -427,11 +503,11 @@ def test_a_busy_machine_is_refused_before_any_exploration_starts(tmp_path):
 
 def test_low_free_memory_is_refused_and_a_dedicated_machine_passes(tmp_path):
     runner, _, plan, tasks = make_runner(tmp_path, "screen_exploration", caps={"cloud_executions": 0},
-                                         pressure="System-wide memory free percentage: 49%")
-    with pytest.raises(lfr.PreflightRefused, match="free_memory_below_minimum:49<50"):
+                                         pressure="System-wide memory free percentage: 34%")
+    with pytest.raises(lfr.PreflightRefused, match="free_memory_below_minimum:34<35"):
         runner.screen_exploration(tasks, ["cand-a"])
     ok, _, plan2, tasks2 = make_runner(_sub(tmp_path, "ok"), "screen_exploration", caps={"cloud_executions": 0},
-                                       ps="100 /bin/zsh\n", pressure="System-wide memory free percentage: 50%")
+                                       ps="100 /bin/zsh\n", pressure="System-wide memory free percentage: 35%")
     assert len(ok.screen_exploration(tasks2[:1], ["cand-a"])) == 1
 
 
@@ -450,6 +526,8 @@ def test_the_v1_modes_do_not_run_the_dedicated_check(tmp_path):
 def test_the_cli_preflight_can_check_the_dedicated_machine_in_a_dry_run(tmp_path, capsys):
     path = tmp_path / "campaign.json"
     path.write_text(json.dumps(V2), encoding="utf-8")
+    spec = V2["exploration"]["ground_truth"]  # the frozen truth file sits beside the configuration
+    (tmp_path / spec["file"]).write_bytes((QUALIFICATION / spec["file"]).read_bytes())
     assert lfr.main(["preflight", "--campaign", str(path), "--dry-run", "--dedicated",
                      "--candidate", "qwen3.8-27b-mlx-4bit"]) == 0
     out = json.loads(capsys.readouterr().out)
@@ -619,11 +697,12 @@ def test_arm_l_needs_the_candidate_the_screening_selected(tmp_path):
     shared = _sub(tmp_path, "shared")
     plan = {**PLAN, "reviewer": ["PASS"], "xlocal": [FINAL, FINAL, {"mode": "final", "report": WRONG_REPORT},
                                                       {"mode": "final", "report": WRONG_REPORT}]}
-    screen, campaign, _, stasks = make_runner(shared, "screen_exploration", plan, campaign_id="shared-id")
+    screen, campaign, _, stasks = make_runner(shared, "screen_exploration", plan, campaign_id="shared-id",
+                                              frozen=("cand-a", "cand-b"))
     screen.screen_exploration(stasks, ["cand-a", "cand-b"])
     assert lfr.report(campaign, results(screen), ledger_of(screen))["exploration_screening"]["selected"] == "cand-a"
     follow, _, _, ftasks = _resumed(shared, screen, stasks, "compare_exploration", plan, campaign_id="shared-id",
-                                    require_screening=True)
+                                    require_screening=True, frozen=("cand-a", "cand-b"))
     with pytest.raises(lfr.RunnerError, match="not the one the screening selected"):
         follow.compare_exploration(ftasks, "cand-b", arms=("L",))
     assert len(follow.compare_exploration(ftasks[:1], "cand-a", arms=("L",))) == 2  # exploration + implementation
@@ -726,6 +805,41 @@ def test_an_explorer_that_changes_the_bundle_is_refused_local_and_cloud(tmp_path
     assert len(implementers) == 1 and "Exploration report" not in implementers[0]  # plain statement
 
 
+def test_a_subset_of_the_frozen_candidates_never_retains_one_and_blocks_the_comparison(tmp_path):
+    runner, campaign, _, tasks = make_runner(tmp_path, "screen_exploration", caps={"cloud_executions": 0},
+                                             frozen=("cand-a", "cand-b"), campaign_id="subset")
+    runner.screen_exploration(tasks, ["cand-a"])  # cand-a is perfect, cand-b was never screened
+    table = lfr.report(campaign, results(runner), ledger_of(runner))["exploration_screening"]
+    assert table["candidates"]["cand-a"]["mean_function_recall"] == 1.0
+    assert table["selected"] is None and table["reason"] == "incomplete_screening"
+    assert table["complete"] is False and table["missing_candidates"] == ["cand-b"]
+    follow, _, _, ftasks = _resumed(tmp_path, runner, tasks, "compare_exploration", PLAN, campaign_id="subset",
+                                    require_screening=True, frozen=("cand-a", "cand-b"),
+                                    caps={"cloud_executions": 0})
+    with pytest.raises(lfr.RunnerError, match="incomplete_screening"):
+        follow.compare_exploration(ftasks, "cand-a", arms=("L",))
+    assert counts(_plan_of(follow)).get("xlocal") == 2  # nothing ran for the comparison
+    runner.screen_exploration(tasks, ["cand-b"])  # the missing candidate completes it
+    done = lfr.report(campaign, results(runner), ledger_of(runner))["exploration_screening"]
+    assert done["complete"] and done["missing_candidates"] == [] and done["selected"] in ("cand-a", "cand-b")
+    assert done["reason"] == "tie_broken_by_frozen_candidate_order" or done["reason"] == "tie_broken_by_total_duration"
+
+
+def test_the_dedicated_machine_is_rechecked_right_before_each_local_exploration_of_arm_l(tmp_path):
+    runner, _, _, tasks = make_runner(tmp_path, "compare_exploration", {**PLAN, "reviewer": ["PASS"]})
+    events = []
+    real_pre, real_path = runner.preflight, runner.cloud_path
+    runner.preflight = lambda cid: (events.append("preflight"), real_pre(cid))[1]
+    runner.cloud_path = lambda t, path, *a, **k: (events.append(f"cloud:{path}"), real_path(t, path, *a, **k))[1]
+    runner.compare_exploration(tasks[:1], "cand-a", arms=("A", "L"))
+    assert events == ["cloud:A", "preflight", "cloud:L"]  # after A's long cloud work, before the exploration
+    busy, _, plan, tasks2 = make_runner(_sub(tmp_path, "busy"), "compare_exploration", {**PLAN, "reviewer": ["PASS"]},
+                                        ps=BIG)
+    with pytest.raises(lfr.PreflightRefused):
+        busy.compare_exploration(tasks2[:1], "cand-a", arms=("A", "L"))
+    assert counts(plan).get("xlocal") is None and counts(plan).get("implementer") == 1  # A ran, L did not
+
+
 # --------------------------------------------------------------------------- v1 unchanged
 
 def test_the_v1_drivers_modes_and_paths_are_unchanged():
@@ -741,6 +855,10 @@ def test_the_v1_drivers_modes_and_paths_are_unchanged():
 def test_cli_dry_run_of_the_two_v2_modes(tmp_path, capsys):
     repo, snap, _, _ = _make_repo(tmp_path)
     campaign, plan_path = v2_campaign(tmp_path, {**PLAN, "reviewer": ["PASS"]})
+    truth = {"schema": "x", "tasks": {"1": lfe.ground_truth(repo, snap["prs"][0])}}  # the frozen truth of the fake task
+    (tmp_path / "truth.json").write_text(json.dumps(truth), encoding="utf-8")
+    campaign["exploration"]["ground_truth"] = {"file": "truth.json", "sha256": hashlib.sha256(
+        (tmp_path / "truth.json").read_bytes()).hexdigest()}
     (tmp_path / "c.json").write_text(json.dumps(campaign), encoding="utf-8")
     (tmp_path / "snap.json").write_text(json.dumps(snap), encoding="utf-8")
     (tmp_path / "manifest.json").write_text(json.dumps({"screening": [{"pr": 1}], "comparison": [{"pr": 1}]}),
@@ -766,6 +884,12 @@ def test_cli_dry_run_of_the_two_v2_modes(tmp_path, capsys):
                      "--candidate", "cand-a", "--paths", "A"], today=TODAY) == 2
     assert lfr.main(["compare-exploration", *common, "--envelope", str(screen_env), "--candidate", "cand-a",
                      "--paths", "A,B"], today=TODAY) == 2  # B is not a v2 arm
+    # a frozen truth file that changed is refused (code 2) before any attempt
+    (tmp_path / "truth.json").write_text(json.dumps({**truth, "tasks": {}}), encoding="utf-8")
+    capsys.readouterr()
+    assert lfr.main(["screen-exploration", *common, "--envelope", str(screen_env), "--candidate", "cand-a"],
+                    today=TODAY) == 2
+    assert "sha256" in capsys.readouterr().err and counts(plan_path) == {"xlocal": 1}
 
 
 def test_module_path_is_the_corpus_path():  # the fake repository's module is the one the truth is built on

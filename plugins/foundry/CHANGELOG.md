@@ -2,19 +2,20 @@
 
 ## Unreleased
 
-- Added (PAT-114; fake arms only, no real model, harness or cloud call; v1 protocol, campaign config and results
-  untouched): PAT-19 protocol v2 frozen (`docs/qualification/pat-19-protocol-v2.md`, French, values validated by the
+- Added (PAT-114; the diff's tests use fake arms only, the coordinator ran two real toy trials of the explorer drivers on
+  2026-10-06; v1 protocol, campaign config and results untouched): PAT-19 protocol v2 frozen (`docs/qualification/pat-19-protocol-v2.md`, French, values validated by the
   maintainer on 2026-10-06): read-only exploration judged first on localization (local screening, no cloud: retained =
   highest mean FUNCTION recall among candidates with mean file precision >= 0.5, tie on shortest duration, STOP "keep
   the cloud" when the retained function recall is < 0.5, file recall measured but not deciding because each task has a
   single product file shared by 5 of 6 screening tasks; a contaminated or refused attempt counts as 0) then on its downstream effect (arms
   A / L / E on the 6 frozen comparison tasks, premium tokens per accepted task with the explorer included, L retained
-  if its acceptance >= A's and its premium per accepted task <= 0.85 x A's; E vs A informative; three separate
-  verdicts). The launcher gains the modes `screen-exploration` and `compare-exploration`, the type `local_explorer`
+  if compatibility, quality (acceptance >= A's) and economy (premium per accepted task <= 0.85 x A's) all pass; E vs A informative; three separate
+  verdicts). Review round 1 (rules validated 2026-10-06): file precision counts any file the merged diff changed (tests, docs, CHANGELOG
+  included); only the first 10 functions of a report count and reach the implementer; dedicated machine free memory >= 35 % (replaces the swap-at-start threshold; the process rule is the real guard) and re-run right before each local exploration; a ground truth loaded from the committed file whose sha256 is in the config; an exploration cut by a bound is refused; the screening needs all five frozen candidates; the threshold is tested before the tie. The launcher gains the modes `screen-exploration` and `compare-exploration`, the type `local_explorer`
   (omp `--tools=read,grep,glob`, bundle read-only in the sandbox profile, 10 min / 25 steps) and `cloud_explorer`
   (Haiku 4.5), a deterministic localization judge (`foundry.local_first_exploration`, ground truth from the merged
   diffs, committed for the 12 tasks in `pat-19-exploration-truth-v2.json`), a dedicated-machine admission at preflight
-  (another process over 2 GiB or under 50 % free memory refuses) and the new config `pat-19-campaign-v2.json`; the v1
+  (another process over 2 GiB or under 35 % free memory refuses) and the new config `pat-19-campaign-v2.json`; the v1
   modes behave as before. The two explorer drivers were trial-run for real on 2026-10-06 on a toy repository (evidence `pat-19-preflight-v2-2026-10-06.json`) and are `verified: true`; the trial refused omp `--tools=read,grep,find,ls`, so the tool names were corrected to `read,grep,glob` before the freeze (loader accepts only these). The unsandboxed cloud explorer's read-only behaviour is observed, not enforced: the launcher checks the bundle's `git status` before and after each exploration and refuses one that changed it. R5:
   documented in `pat-19-protocol-v2.md` and the "Protocole v2" section of `pat-19-launcher-v1.md` (new CLI verbs
   `screen-exploration`, `compare-exploration`, `preflight --dedicated` of the campaign tool, config schema v2, driver

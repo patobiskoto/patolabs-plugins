@@ -121,5 +121,17 @@
       "cloud_implementer_current",
       "cloud_reviewer"
     ]
+  },
+  "dedicated_machine_measurement": {
+    "date": "2026-10-06",
+    "command": "preflight --dedicated with the largest candidate loaded",
+    "candidate": "qwen3.8-27b-mlx-6bit (LM Studio resident memory 17.9 GiB)",
+    "observed": {
+      "free_percent": 51,
+      "baseline_swap_gib": 6.5,
+      "refusal": "dedicated_machine_process_over_2gib:ChatGPT",
+      "refusing_process_note": "the ChatGPT application, 2.5 GiB resident, was still open and was refused as expected by the process rule"
+    },
+    "reading": "the free-memory criterion is lowered from 50 % to 35 %; the process rule (no process outside LM Studio, the launcher and the system above 2 GiB) is the real guard: it would have refused the 18 GiB foreign process of the v1 run. The free-memory criterion replaces the 'swap de d\u00e9part' threshold of the ticket's original AC, because swap in use does not come down without a reboot."
   }
 }

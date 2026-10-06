@@ -1,6 +1,6 @@
 {
  "schema": "foundry.local-first-exploration-truth-set.v2",
- "note": "Ground truth of the 12 corpus tasks for the PAT-19 v2 localization judge, computed from the merged diffs (lfe.ground_truth) and committed before any v2 result; the launcher recomputes it live and the tests check both agree where the commits are available.",
+ "note": "Ground truth of the 12 corpus tasks for the PAT-19 v2 localization judge, computed from the merged diffs (lfe.ground_truth, diff algorithm and indent heuristic pinned) and committed before any v2 result. It is the launcher's single source: the campaign config records its sha256 and the launcher refuses a different file. The tests recompute it where the merged commits are available.",
  "snapshot": "pat-19-corpus-snapshot-v1.json",
  "tasks": {
   "30": {
@@ -13,6 +13,11 @@
     "plugins/foundry/tooling/foundry/trackers/linear.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/trackers/linear.py",
@@ -36,6 +41,12 @@
     "plugins/foundry/tooling/foundry/trackers/linear.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/CHANGELOG.md",
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/trackers/linear.py",
@@ -62,6 +73,11 @@
     "plugins/foundry/tooling/foundry/trackers/linear.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/trackers/linear.py",
@@ -80,6 +96,12 @@
     "plugins/foundry/tooling/foundry/frame.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/skills/frame/SKILL.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/frame.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/frame.py",
@@ -98,6 +120,11 @@
     "plugins/foundry/tooling/foundry/trackers/linear.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/trackers/linear.py",
@@ -121,6 +148,11 @@
     "plugins/foundry/tooling/foundry/trackers/linear.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/trackers/linear.py",
@@ -143,6 +175,11 @@
     "plugins/foundry/tooling/foundry/trackers/linear.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/trackers/linear.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/trackers/linear.py",
@@ -161,6 +198,11 @@
     "plugins/foundry/tooling/foundry/doctor.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/README.md",
+    "plugins/foundry/tests/test_doctor.py",
+    "plugins/foundry/tooling/foundry/doctor.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/doctor.py",
@@ -200,6 +242,12 @@
     "plugins/foundry/tooling/foundry/frame.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/skills/frame/SKILL.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tooling/foundry/frame.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/frame.py",
@@ -223,6 +271,12 @@
     "plugins/foundry/tooling/foundry/registry.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/README.md",
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/tests/test_registry_sharing.py",
+    "plugins/foundry/tooling/foundry/registry.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/registry.py",
@@ -253,6 +307,15 @@
     "plugins/foundry/tooling/foundry/query.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/skills/merge-pr/SKILL.md",
+    "plugins/foundry/skills/resume-issue/SKILL.md",
+    "plugins/foundry/skills/start-issue/SKILL.md",
+    "plugins/foundry/tests/test_linear_tracker.py",
+    "plugins/foundry/tests/test_pure.py",
+    "plugins/foundry/tooling/foundry/query.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/query.py",
@@ -275,6 +338,14 @@
     "plugins/foundry/tooling/foundry/query.py"
    ],
    "created_files": [],
+   "all_changed_files": [
+    "plugins/foundry/docs/linear-tracker.md",
+    "plugins/foundry/skills/merge-pr/SKILL.md",
+    "plugins/foundry/skills/resume-issue/SKILL.md",
+    "plugins/foundry/skills/start-issue/SKILL.md",
+    "plugins/foundry/tests/test_pure.py",
+    "plugins/foundry/tooling/foundry/query.py"
+   ],
    "functions": [
     [
      "plugins/foundry/tooling/foundry/query.py",

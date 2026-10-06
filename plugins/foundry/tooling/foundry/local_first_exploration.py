@@ -10,6 +10,7 @@ product role). See ``docs/qualification/pat-19-protocol-v2.md``.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,9 @@ from foundry import local_first_corpus as lfc
 
 TRUTH_SCHEMA = "foundry.local-first-exploration-truth.v2"
 REPORT_KEYS = ("files", "functions", "rationale")
+MAX_FUNCTIONS = 10  # only the first 10 functions of a report count for recall and reach the implementer
+GIT_DIFF_PINS = ("-c", "diff.algorithm=myers", "-c", "diff.indentHeuristic=false", "-c", "diff.renames=false",
+                 "-c", "core.quotepath=false")
 VERDICTS = ("SCORED", "REFUSED", "CONTAMINATED")
 
 
@@ -62,16 +66,22 @@ def _function_spans(source: str, filename: str) -> list[tuple[int, int, str]]:
     return spans
 
 
-def _new_side_lines(repo: Path, base: str, head: str, path: str) -> set[int]:
-    """Lines of ``path`` at ``head`` that the merged diff touches (``git diff -U0``): the added or
-    changed lines, and for a pure deletion the line before it."""
-    diff = lfc._git(repo, "diff", "-U0", "--no-renames", "--no-ext-diff", "--no-textconv", base, head,
-                    "--", path)
-    lines: set[int] = set()
-    for found in re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", diff, re.M):
-        start, count = int(found.group(1)), int(found.group(2) if found.group(2) is not None else 1)
-        lines.update(range(start, start + count) if count else {max(start, 1)})
-    return lines
+def _changed_lines(repo: Path, base: str, head: str, path: str) -> tuple[set[int], set[int]]:
+    """``(old lines, new lines)`` of ``path`` that the merged diff touches (``git diff -U0``): the old-side
+    lines are those removed or replaced (read in the base source), the new-side lines those added or
+    replaced (read in the merged source). A pure deletion has no new line: it never borrows the line
+    before it, so a deleted function does not blame its neighbour. The diff algorithm and every
+    configuration that moves hunks are pinned: the truth does not depend on the user's git configuration."""
+    diff = lfc._git(repo, *GIT_DIFF_PINS, "diff", "-U0", "--diff-algorithm=myers", "--no-indent-heuristic",
+                    "--no-renames", "--no-ext-diff", "--no-textconv", base, head, "--", path)
+    old: set[int] = set()
+    new: set[int] = set()
+    for found in re.finditer(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", diff, re.M):
+        o_start, o_count = int(found.group(1)), int(found.group(2) if found.group(2) is not None else 1)
+        n_start, n_count = int(found.group(3)), int(found.group(4) if found.group(4) is not None else 1)
+        old.update(range(o_start, o_start + o_count))
+        new.update(range(n_start, n_start + n_count))
+    return old, new
 
 
 def ground_truth(repo: Path, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -79,11 +89,13 @@ def ground_truth(repo: Path, task: Mapping[str, Any]) -> dict[str, Any]:
 
     ``files``: product files the diff modifies or deletes (they exist at the base SHA). ``created_files``:
     product files it adds (an explorer cannot find what does not exist: not part of recall, accepted by
-    precision). ``functions``: ``[file, qualified name]`` of the functions and methods of a modified
-    Python file that enclose a changed line at the merged SHA and exist at the base SHA; a changed line
-    outside any function (module level) gives none (file-level only); ``new_functions``: the ones that
-    do not exist at the base (not part of recall). Tests, docs and every non-product path are ignored.
-    Non-Python product files are file-level only."""
+    precision). ``all_changed_files``: every path the merged diff touches, product or not (tests, docs,
+    changelog): a reported file is correct for the precision when it is there. ``functions``:
+    ``[file, qualified name]`` of the functions and methods of a modified Python file that enclose a
+    changed line (a removed line in the base source, an added line in the merged source) and exist at the
+    base SHA; a changed line outside any function (module level) gives none (file-level only);
+    ``new_functions``: the ones that do not exist at the base (not part of recall). Recall uses the product
+    files and functions only. Non-Python product files are file-level only."""
     repo = Path(lfc._git(repo, "rev-parse", "--show-toplevel").strip())  # the diff paths are root-relative
     files, created = [], []
     for item in task["files"]:
@@ -99,13 +111,16 @@ def ground_truth(repo: Path, task: Mapping[str, Any]) -> dict[str, Any]:
         if status != "M":
             continue
         spans = _function_spans(lfc._blob(repo, head, path), path)
-        at_base = {name for _, _, name in _function_spans(lfc._blob(repo, base, path), path)}
-        touched = {name for line in _new_side_lines(repo, base, head, path)
-                   for first, last, name in spans if first <= line <= last}
+        base_spans = _function_spans(lfc._blob(repo, base, path), path)
+        at_base = {name for _, _, name in base_spans}
+        old_lines, new_lines = _changed_lines(repo, base, head, path)
+        touched = {name for line in new_lines for first, last, name in spans if first <= line <= last}
+        touched |= {name for line in old_lines for first, last, name in base_spans if first <= line <= last}
         functions += [[path, name] for name in sorted(touched & at_base)]
         fresh += [[path, name] for name in sorted(touched - at_base)]
     return {"schema": TRUTH_SCHEMA, "pr": task["pr"], "base_sha": base, "head_sha": head,
-            "files": sorted(files), "created_files": sorted(created), "functions": functions,
+            "files": sorted(files), "created_files": sorted(created),
+            "all_changed_files": sorted(item["path"] for item in task["files"]), "functions": functions,
             "new_functions": fresh}
 
 
@@ -170,8 +185,8 @@ def _text_of(content: Any) -> str:
 
 def final_message_text(stream_log: Path, fmt: str) -> str | None:
     """The explorer's final answer in the kept event stream: the ``result`` event of a Claude stream
-    (else its last assistant text), the last assistant ``message_end`` of an omp stream. The shapes are
-    pinned by the coordinator's trial of each explorer driver (not yet run: ``verified`` is false)."""
+    (else its last assistant text), the last assistant ``message_end`` of an omp stream. The shapes were
+    observed in the coordinator's toy trials of 2026-10-06 (``pat-19-preflight-v2-2026-10-06.json``)."""
     result = last = None
     try:
         lines = Path(stream_log).read_text("utf-8", errors="replace").splitlines()
@@ -225,21 +240,24 @@ def _function_match(reported: Mapping[str, str], truth: Sequence[str]) -> bool:
 
 
 def score_report(truth: Mapping[str, Any], report: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Deterministic localization metrics. ``file_recall`` (the main one): true files found / true
-    files. ``file_precision``: reported files that are true or created by the diff / reported files
-    (0 when nothing is reported). ``function_recall``: true functions found / true functions (``None``
-    when the diff touches no function: undefined, never 0). A missing report scores 0 on every metric.
-    ``counts`` are the integers the screening rule computes exactly with."""
+    """Deterministic localization metrics. ``function_recall`` (the MAIN metric of the screening): true
+    functions found among the FIRST ``MAX_FUNCTIONS`` (10) functions of the report / true functions
+    (``None`` when the diff touches no function: undefined, never 0). ``file_precision``: reported files
+    that the merged diff really changed or created, product or not (tests, docs, changelog included) /
+    reported files (0 when nothing is reported). ``file_recall`` (measured and reported, does not decide):
+    true product files found / true product files. A missing report scores 0 on every metric. ``counts``
+    are the integers the screening rule computes exactly with."""
     if not truth["files"]:
         raise ExplorationError(f"PR {truth.get('pr')}: empty ground truth, nothing to score")
     reported = list(report["files"]) if report else []
+    counted = list(report["functions"])[:MAX_FUNCTIONS] if report else []
+    changed = set(truth.get("all_changed_files", [])) | set(truth["files"]) | set(truth["created_files"])
     right = [f for f in reported if f in truth["files"]]
-    correct = [f for f in reported if f in truth["files"] or f in truth["created_files"]]
-    found = [t for t in truth["functions"] if report and any(_function_match(r, t)
-                                                             for r in report["functions"])]
+    correct = [f for f in reported if f in changed]
+    found = [t for t in truth["functions"] if any(_function_match(r, t) for r in counted)]
     counts = {"truth_files": len(truth["files"]), "found_files": len(right), "reported_files": len(reported),
               "correct_files": len(correct), "truth_functions": len(truth["functions"]),
-              "found_functions": len(found)}
+              "found_functions": len(found), "counted_functions": len(counted)}
     return {"file_recall": round(len(right) / len(truth["files"]), 6),
             "file_precision": round(len(correct) / len(reported), 6) if reported else 0.0,
             "function_recall": (round(len(found) / len(truth["functions"]), 6)
@@ -299,11 +317,13 @@ def apply_screening_rule(rule: Mapping[str, Any], rows: Mapping[str, Mapping[str
                          complete: bool) -> dict[str, Any]:
     """The pre-registered rule of the v2 screening, on exact fractions: retained = highest mean FUNCTION
     recall over the tasks among the candidates whose mean file precision is at least
-    ``file_precision_min``; a tie goes to the shortest total duration; STOP on keep-cloud when no
-    candidate meets the precision floor or the retained candidate's mean function recall is under
-    ``retained_function_recall_min``. File recall is measured and reported but does not decide (the
-    truth of each task is a single product file, shared by 5 of the 6 screening tasks). Nothing is
-    selected before every candidate has a decided record for every task (``complete``)."""
+    ``file_precision_min``. The threshold comes BEFORE the tie: STOP on keep-cloud when no candidate meets
+    the precision floor or when the best mean function recall (tied or not) is under
+    ``retained_function_recall_min``. Then a tie goes to the shortest total duration, and a tie still
+    unresolved goes to the candidate listed first in ``rule["candidates"]`` (the frozen order): no choice is
+    left after the results. File recall is measured and reported but does not decide (the truth of each
+    task is a single product file, shared by 5 of the 6 screening tasks). Nothing is selected before every
+    frozen candidate has a decided record for every task (``complete``)."""
     if not rows:
         return {"selected": None, "reason": "no_screening_results", "stop": None}
     if not complete:
@@ -318,18 +338,34 @@ def apply_screening_rule(rule: Mapping[str, Any], rows: Mapping[str, Mapping[str
         return {"selected": None, "reason": "no_function_in_the_ground_truth", "stop": None}
     best = max(r["_function"] for r in eligible.values())
     tied = sorted(c for c, r in eligible.items() if r["_function"] == best)
-    if len(tied) > 1:
-        fastest = min(eligible[c]["total_seconds"] for c in tied)
-        tied = [c for c in tied if eligible[c]["total_seconds"] == fastest]
-        if len(tied) > 1:
-            return {"selected": None, "reason": "tie_not_resolved", "stop": None, "tied": tied}
-        reason = "tie_broken_by_total_duration"
-    else:
-        reason = "highest_mean_function_recall"
     if best < minimum:
         return {"selected": None, "reason": "retained_candidate_function_recall_below_minimum: keep_cloud",
-                "stop": "keep_cloud", "best_candidate": tied[0]}
-    return {"selected": tied[0], "reason": reason, "stop": None}
+                "stop": "keep_cloud", "best_candidate": tied[0], **({"tied": tied} if len(tied) > 1 else {})}
+    if len(tied) == 1:
+        return {"selected": tied[0], "reason": "highest_mean_function_recall", "stop": None}
+    fastest = min(eligible[c]["total_seconds"] for c in tied)
+    quickest = [c for c in tied if eligible[c]["total_seconds"] == fastest]
+    if len(quickest) == 1:
+        return {"selected": quickest[0], "reason": "tie_broken_by_total_duration", "stop": None}
+    order = list(rule.get("candidates", []))
+    first = min(quickest, key=lambda c: order.index(c) if c in order else len(order))
+    return {"selected": first, "reason": "tie_broken_by_frozen_candidate_order", "stop": None,
+            "tied": quickest}
+
+
+def load_truth_set(directory: Path, spec: Mapping[str, Any]) -> dict[str, Any]:
+    """The committed ground truth of the 12 tasks (``exploration.ground_truth`` of the campaign:
+    ``{file, sha256}``), the single source of the launcher: refused when absent or when its sha256 is not
+    the recorded one, so the truth cannot drift between the freeze and the run."""
+    path = Path(directory) / spec["file"]
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ExplorationError(f"ground truth file {spec['file']} unreadable: {exc}") from None
+    if hashlib.sha256(raw).hexdigest() != spec["sha256"]:
+        raise ExplorationError(f"ground truth file {spec['file']} does not match the sha256 recorded in the "
+                               "campaign config: the frozen truth changed")
+    return json.loads(raw)["tasks"]
 
 
 # --------------------------------------------------------------------- dedicated machine
