@@ -442,7 +442,12 @@ def test_the_explorer_bundle_is_read_only_in_the_sandbox_profile(tmp_path, monke
         return "(version 1)\n"
 
     monkeypatch.setattr(lfr, "sandbox_text", spy)
-    runner.sandbox = True  # execute_driver is asked to sandbox: the profile is only generated (CI on Linux)
+    fake_bin = tmp_path / "fake-bin"  # a stand-in `sandbox-exec -f <profile> argv...` (none on the Linux CI)
+    fake_bin.mkdir()
+    (fake_bin / "sandbox-exec").write_text('#!/bin/sh\nshift 2\nexec "$@"\n', encoding="utf-8")
+    (fake_bin / "sandbox-exec").chmod(0o755)
+    runner.host_env["PATH"] = f"{fake_bin}{os.pathsep}{runner.host_env['PATH']}"  # the arm's PATH comes from host_env
+    runner.sandbox = True  # execute_driver is asked to sandbox: only the generated profile is checked
     runner.screen_exploration(tasks[:1], ["cand-a"])
     assert seen, "no profile was generated"
     for call in seen:
