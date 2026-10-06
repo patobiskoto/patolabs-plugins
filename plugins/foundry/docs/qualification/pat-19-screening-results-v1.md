@@ -14,7 +14,7 @@ par la règle de la section 4 du protocole, la campagne s'arrête sur « conserv
 (implémentation autonome d'un ticket). La comparaison n'a pas été lancée ; aucun quota cloud n'a été dépensé
 (`cloud_executions` = 0 sur les 30 résultats).
 
-Décision du mainteneur du 2026-10-06 (à formaliser par PAT-110) : conserver le cloud pour l'implémentation
+Décision du mainteneur du 2026-10-06, consignée par PAT-110 dans [`pat-19-decision-v1.md`](pat-19-decision-v1.md) : conserver le cloud pour l'implémentation
 autonome ; ensuite, un protocole v2 pour l'exploration en lecture seule (PAT-114, PAT-115).
 
 ## Conditions de l'essai

@@ -5,7 +5,7 @@ promotion), FOUNDRY-ADR-0019 (comparaison bornée, règle fixée d'avance, arrê
 matrice ni de second cadre), FOUNDRY-ADR-0010 (enveloppe d'autorisation vérifiée avant toute
 frontière hôte), FOUNDRY-ADR-0015 (coût lu dans les journaux de session de l'hôte : une donnée
 inconnue reste inconnue, jamais zéro), FOUNDRY-ADR-0007 (aucun rôle local dans le produit). Protocole :
-[`pat-19-protocol-v1.md`](pat-19-protocol-v1.md) ; corpus et juge : [`pat-19-corpus-v1.md`](pat-19-corpus-v1.md) ; résultats du premier essai réel (tamis, 2026-10-06) : [`pat-19-screening-results-v1.md`](pat-19-screening-results-v1.md).
+[`pat-19-protocol-v1.md`](pat-19-protocol-v1.md) ; corpus et juge : [`pat-19-corpus-v1.md`](pat-19-corpus-v1.md) ; résultats du premier essai réel (tamis, 2026-10-06) : [`pat-19-screening-results-v1.md`](pat-19-screening-results-v1.md) ; décision qui en découle (PAT-110) : [`pat-19-decision-v1.md`](pat-19-decision-v1.md).
 
 C'est un outil de campagne : il ne touche ni routage, ni mappings, ni rôles, ni valeurs par défaut,
 ne charge aucun modèle (aucune commande `lms load`), n'appelle ni tracker ni réseau, et ne promeut

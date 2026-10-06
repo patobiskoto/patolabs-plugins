@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Docs/decision (PAT-110; docs only, no code, no model load, no cloud call): PAT-19 v1 decision recorded in
+  `docs/qualification/pat-19-decision-v1.md`. Autonomous ticket implementation by a local model: keep the cloud
+  (v1 screening 0/30); no adoption, no local model, profile or default activated, no new ADR; v1 is not extended to
+  12 tasks. Next usage to qualify: read-only exploration for a cloud implementer (local Lupin) under a protocol v2
+  (PAT-114 freezes it, PAT-115 runs it). PAT-87 milestones PAT-88, PAT-89, PAT-90, PAT-91 postponed until the PAT-115
+  verdict (none abandoned). PAT-19 stays open. R5: documented in the new decision file, linked from
+  `pat-19-screening-results-v1.md` and `pat-19-launcher-v1.md`; no CLI verb, option, public constant or routing table
+  changed, no protocol coordinate changed.
 - Docs/evidence (PAT-109; the diff contains no code change and no cloud call; the run itself loaded five models): raw results and written report of the real PAT-19 v1
   screening run on 2026-10-06 (`pat-19-screen-1`, code `879e7b7`): 0 accepted of 30 (5 candidates x 6 tasks), so the
   protocol section 4 rule stops the campaign on "keep the cloud" for autonomous ticket implementation; no comparison
