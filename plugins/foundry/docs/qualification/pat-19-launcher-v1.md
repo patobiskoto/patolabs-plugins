@@ -430,6 +430,14 @@ bras n'a pas démarré un autre agent (les tokens d'un sous-processus `claude` n
 accepté explicitement ce risque résiduel le 2026-10-05, avec les atténuations ci-dessus (règles d'interdiction
 de commandes, audit de contamination, bundle sans dépôt distant).
 
+### État Foundry d'un bras cloud (PAT-120, durcissement d'exécution)
+
+Incident du 2026-10-07 (voir « Incident » de [`pat-19-exploration-results-v3.md`](pat-19-exploration-results-v3.md)) : un bras cloud a lancé les tests du dépôt à une ancienne base, un test posait `FOUNDRY_DATA_DIR` au lieu de `FOUNDRY_DATA`, et `registry._save` a écrasé le registre du mainteneur. Deux mesures, **pour tout lancement ultérieur de n'importe quel protocole** (v1, v2, v3 : implémenteur, corrections, relecteur, explorateur cloud). C'est un durcissement d'exécution : les protocoles et configurations gelés ne changent pas, le sha256 de la configuration de campagne (coordonnée de décision) est inchangé.
+
+- **`FOUNDRY_DATA` imposé par le lanceur** : `execute_driver` pose `FOUNDRY_DATA` sur `<dossier d'essai>/foundry-data`, un dossier créé vide à chaque exécution, **après** `env_set` (jamais pris de la configuration ni de l'environnement de l'hôte ; le chargeur refuse toujours `FOUNDRY_*` dans `env_set`, `env_allow` ne peut pas le surcharger). La règle `registry.data_dir` (`FOUNDRY_DATA` sinon `~/.config/foundry`) écrit donc dans le dossier d'essai, que le HOME soit réel ou non. Les variables d'AGENTS.md R6 (`HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `TMPDIR`, `USER`) ne sont pas touchées. Par symétrie (trivial) les bras **locaux**, déjà en HOME isolé, reçoivent aussi `FOUNDRY_DATA` dans leur dossier d'essai.
+- **Empreinte du registre réel** : avant et après chaque exécution cloud, le lanceur relève le sha256 des octets de `registry.json` du dossier de données **réel** (résolu dans l'environnement de l'hôte comme `data_dir` : `FOUNDRY_DATA` de l'hôte sinon `<HOME>/.config/foundry`), ou `absent` (`unreadable:<erreur>` si illisible). Si elle a changé : l'exécution est d'abord réglée (coût et jetons comptés, audit de contamination fait), puis l'enregistrement de la tentative est écrit avec `outcome: contaminated` (donc **non acceptée, indécise, jamais rejouée**, coût conservé), `foundry_state_changed: {before, after}` (les empreintes, **jamais le contenu**) et `unknown.foundry_state_changed`, puis l'enregistrement d'arrêt `stop` avec la raison **`foundry_state_changed`**, et le lanceur sort en **code 4** (message sur la sortie d'erreur). Rien n'est rejoué, ni relu, ni réécrit : le lanceur **n'écrit ni ne restaure jamais** le registre ; l'opérateur enquête et restaure lui-même (voir la sauvegarde dans [`pat-19-v3-operator.md`](pat-19-v3-operator.md)). Aucun nouveau bras cloud ne doit être lancé avant cette enquête.
+- **Limite restante, dite** : un bras cloud non sandboxé peut encore écrire **ailleurs dans le vrai HOME** (le garde ne couvre que `FOUNDRY_DATA` pour l'écriture et le seul `registry.json` pour la détection : `config.env`, le marqueur d'installation, le trousseau, `~/.claude`, etc. ne sont pas surveillés). Les autres états écrits hors du bundle par les tests du dépôt **ne sont pas recensés : inconnu**. Un relevé rapide (`grep`) des tests actuels ne montre, hors `tests/conftest.py` (qui redirige `HOME`, vide `FOUNDRY_DATA`/`FOUNDRY_CONFIG`/`FOUNDRY_EXECUTION_RECEIPTS_DIR` et garde `~/.config/foundry` et `~/.config/orfeo-poc` par un crochet d'audit, PAT-104), rien d'évident qui écrive sous HOME/XDG ; ce relevé n'est pas une preuve d'exhaustivité, et surtout les bundles d'une campagne sont à des **bases anciennes** dont les tests n'ont pas ce garde (c'est l'incident). Le garde de l'empreinte ne détecte qu'un changement du registre, a posteriori.
+
 ## Audit de contamination
 
 Après chaque exécution (locale ou cloud, une fois le flux conservé), le lanceur lit les appels d'outils du
@@ -590,7 +598,7 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   reçoit un enregistrement `stopped_by_cap` : la tâche n'est pas décidée, ce n'est pas un refus.
 - **Panne d'outil** : une `CorpusError`/`RunnerError` n'est jamais un verdict (sauf une panne causée par le candidat, qui est un refus : voir « Nulle »). Elle écrit un
   enregistrement `status: tool_error` (avec `reason`, et le coût déjà engagé) avant l'arrêt
-  (`stopped`, raison `tool_error:…`, code de sortie 2). Une revue illisible est `review_unreadable` :
+  (`stopped`, raison `tool_error:…`, code de sortie 2 ; registre Foundry réel modifié par un bras cloud : raison `foundry_state_changed`, code 4, voir « État Foundry d'un bras cloud »). Une revue illisible est `review_unreadable` :
   `accepted` nul et qualité `unavailable` (pas `fail`). Une tentative locale tronquée par le budget de
   durée restant consigne la borne **effective** (`local.max_seconds`) et la borne nominale
   (`local.nominal_max_seconds`).
@@ -822,6 +830,8 @@ variable) et, s'il est au trousseau, refuser ce service dans le profil, par exem
 test de fumée : non essayé ici).
 
 ## Statut documentaire (AGENTS.md R5)
+
+PAT-120 : `FOUNDRY_DATA` imposé aux bras, empreinte du registre réel, raison d'arrêt `foundry_state_changed`, champ d'enregistrement `foundry_state_changed`, code de sortie 4, fonction `registry_fingerprint` : documentés dans « État Foundry d'un bras cloud » ; sauvegarde opérateur dans `pat-19-v3-operator.md`. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.
 
 Artefacts documentés ici : la surface CLI de `foundry.local_first_runner` (dont `--screening-campaign`, la reprise
 bornée et le refus d'une configuration différente à `report`), la configuration de campagne

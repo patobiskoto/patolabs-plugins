@@ -69,7 +69,7 @@ for m in json.load(sys.stdin):
   WR=$(printf '%s\n' "$OUT" | grep -E '^pat19-v3: work_remains=(yes|no)$' | tail -1 || true)
   log "launch $n: launcher exit code $CODE ${WR:-no work_remains line}"
   if [ "$CODE" -ne 0 ]; then
-    log "STOP: launcher exited $CODE (2 = refused/preflight, 3 = cap reached): re-run this script to resume"
+    log "STOP: launcher exited $CODE (2 = refused/preflight, 3 = cap reached, 4 = real Foundry registry changed by a cloud arm: investigate first): re-run this script to resume"
     exit "$CODE"
   fi
   case "$WR" in

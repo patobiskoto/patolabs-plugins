@@ -113,6 +113,17 @@ if behavior == "dotclaude":  # project settings the reviewer's host would load
     os.makedirs(os.path.join(a.workdir, ".claude"), exist_ok=True)
     open(os.path.join(a.workdir, ".claude", "settings.json"), "w").write("{}\n")
     behavior = "fix"
+if os.environ.get("FOUNDRY_DATA") is not None or behavior in ("regwrite", "regtouch") or behavior.startswith("regtouch:"):
+    with open(a.plan + ".foundry", "a") as handle:  # PAT-120: what the launcher gave this arm
+        handle.write(a.role + " " + os.environ.get("FOUNDRY_DATA", "") + "\n")
+if behavior == "regwrite":  # a test that writes the registry by Foundry's own data-dir rule
+    data = os.environ.get("FOUNDRY_DATA") or os.path.join(os.environ["HOME"], ".config", "foundry")
+    os.makedirs(data, exist_ok=True)
+    open(os.path.join(data, "registry.json"), "w").write('{"written": "by the arm"}')
+    behavior = "PASS" if a.role == "reviewer" else "fix"
+if behavior.startswith("regtouch:"):  # the arm writes the REAL registry by absolute path
+    open(behavior[len("regtouch:"):], "w").write('{"overwritten": true}')
+    behavior = "PASS" if a.role == "reviewer" else "fix"
 if behavior == "crash":
     sys.exit(3)
 if behavior == "hang":
@@ -207,7 +218,8 @@ def make_runner(tmp_path, mode, plan, *, repo_bundle=None, caps=None, run=None, 
         work_root=tmp_path / "work", mode=mode, dry_run=True, sandbox=False,
         run=run or (lambda argv: None),
         preflight_run=lambda cid: lfr.dry_run_facts(campaign, campaign["candidates"][cid]["model"]),
-        disk_free_gib=lambda: 500.0, host_env=host_env or dict(os.environ), today=lambda: TODAY,
+        disk_free_gib=lambda: 500.0, host_env=host_env or {**os.environ, "HOME": str(tmp_path / "host-home")},  # PAT-120: never the real HOME
+        today=lambda: TODAY,
         require_screening=require_screening, screening_campaign=screening_campaign)
     runner.quiescent_wait = 0.05
     task = snap["prs"][0]
@@ -888,7 +900,7 @@ attempt("non_loopback", non_loopback)
 def loopback():
     s = socket.socket(); s.settimeout(3); s.connect(("127.0.0.1", int(sys.argv[4])))
 attempt("loopback", loopback)
-out["canary_env"] = "present" if any(k.startswith(("CANARY", "FOUNDRY_", "LINEAR")) for k in os.environ) else "absent"
+out["canary_env"] = "present" if any(k.startswith(("CANARY", "FOUNDRY_", "LINEAR")) and k != "FOUNDRY_DATA" for k in os.environ) else "absent"
 out["home"] = os.environ.get("HOME")
 print(json.dumps(out))
 '''
@@ -4075,3 +4087,90 @@ def test_pat111_fix4_n4_audit_literals_cover_results_only(tmp_path):
     assert audit(raw=[other], literals=lit) == ["tool_result:~/.codex/worktrees/x/sub"]
     assert audit(("claude", "Bash", {"command": f"cat {literal}"}), literals=lit) == ["~/.codex/worktrees/x"]
     assert audit(("claude", "Read", {"file_path": literal}), literals=lit) == ["~/.codex/worktrees/x"]
+
+
+# ------------------------------------------------ PAT-120: a cloud arm never writes the real Foundry state
+
+def _real_foundry(tmp_path, content='{"real": "registry"}'):
+    home = tmp_path / "realhome"
+    data = home / ".config" / "foundry"
+    data.mkdir(parents=True)
+    (data / "registry.json").write_text(content, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k != "FOUNDRY_DATA"}
+    return {**env, "HOME": str(home)}, data / "registry.json"
+
+
+def test_pat120_a_cloud_arm_registry_write_lands_in_its_scratch_not_in_the_real_data_dir(tmp_path):
+    host, real = _real_foundry(tmp_path)
+    before = real.read_bytes()
+    runner, _, plan, tasks = make_runner(
+        tmp_path, "compare", {**FIX_ALL, "implementer": ["regwrite"], "reviewer": ["regwrite"]},
+        host_env=host)
+    runner.compare(tasks[:1], "cand-a", ("A",))
+    assert real.read_bytes() == before  # the real registry is untouched
+    given = [line.split(" ", 1) for line in Path(str(plan) + ".foundry").read_text("utf-8").splitlines()]
+    assert {role for role, _ in given} == {"implementer", "reviewer"}
+    assert len({path for _, path in given}) == 2  # a fresh directory per execution
+    for _, path in given:
+        assert path.startswith(str(tmp_path / "work")) and "realhome" not in path
+        assert "scratch" in Path(path).parts
+    assert not any(r.get("record_type") == "stop" for r in results(runner))
+    assert any(r.get("outcome") == "accepted" for r in results(runner))
+
+
+def test_pat120_the_launcher_sets_foundry_data_over_the_host_and_the_config(tmp_path):
+    host, real = _real_foundry(tmp_path)
+    host["FOUNDRY_DATA"] = str(real.parent)  # the host points at the real data dir
+    driver = {"kind": "cloud_implementer", "home": "real", "env_allow": ["FOUNDRY_DATA"],
+              "env_set": {"FOUNDRY_DATA": "/etc"},
+              "argv": [sys.executable, "-c", "import os;print(os.environ['FOUNDRY_DATA'], os.environ['HOME'])"]}
+    scratch = tmp_path / "scratch"
+    out = tmp_path / "stream.jsonl"
+    lfr.execute_driver(driver, {}, workdir=tmp_path, scratch=scratch, stream_log=out, max_seconds=30,
+                       max_steps=None, sandbox=False, deny_read=[], host_env=host)
+    data, home = out.read_text("utf-8").split()
+    assert data == str(scratch / "foundry-data") and Path(data).is_dir() and not any(Path(data).iterdir())
+    assert home == host["HOME"]  # the R6 variables are untouched
+    local = {**driver, "home": "isolated"}
+    lfr.execute_driver(local, {}, workdir=tmp_path, scratch=tmp_path / "s2", stream_log=out, max_seconds=30,
+                       max_steps=None, sandbox=False, deny_read=[], host_env=host)
+    assert out.read_text("utf-8").split()[0] == str(tmp_path / "s2" / "foundry-data")  # symmetry
+
+
+def test_pat120_registry_fingerprint_follows_the_data_dir_rule(tmp_path):
+    home = tmp_path / "h"
+    assert lfr.registry_fingerprint({"HOME": str(home)}) == "absent"
+    (home / ".config" / "foundry").mkdir(parents=True)
+    (home / ".config" / "foundry" / "registry.json").write_bytes(b"abc")
+    assert lfr.registry_fingerprint({"HOME": str(home)}) == hashlib.sha256(b"abc").hexdigest()
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "registry.json").write_bytes(b"xyz")
+    assert lfr.registry_fingerprint({"HOME": str(home), "FOUNDRY_DATA": str(tmp_path / "d")}) \
+        == hashlib.sha256(b"xyz").hexdigest()
+
+
+@pytest.mark.parametrize("role", ["implementer", "reviewer"])
+def test_pat120_a_changed_real_registry_stops_the_campaign_after_the_execution_settles(tmp_path, role):
+    host, real = _real_foundry(tmp_path)
+    before = hashlib.sha256(real.read_bytes()).hexdigest()
+    plan = {**FIX_ALL, role: [f"regtouch:{real}"]}
+    runner, _, plan_path, tasks = make_runner(tmp_path, "compare", plan, host_env=host)
+    with pytest.raises(lfr.FoundryStateChanged):
+        runner.compare(tasks[:1], "cand-a", ("A",))
+    after = hashlib.sha256(real.read_bytes()).hexdigest()
+    assert after != before and real.read_text("utf-8") == '{"overwritten": true}'  # never restored
+    *_, rec, stop = results(runner)
+    assert stop["record_type"] == "stop" and stop["reason"] == lfr.STATE_CHANGED_STOP
+    assert rec["outcome"] == "contaminated" and rec["accepted"] is None  # not accepted, never replayed
+    assert rec["foundry_state_changed"] == {"before": before, "after": after}  # fingerprints, no content
+    assert "overwritten" not in json.dumps(rec) and "foundry_state_changed" in rec["unknown"]
+    assert rec["cloud_executions"] >= 1 and "settled" in ledger_kinds(runner)  # settled, cost kept
+    if role == "implementer":
+        assert counts(plan_path).get("reviewer") is None  # nothing went on after the stop
+
+
+def test_pat120_an_unchanged_real_registry_lets_the_campaign_continue(tmp_path):
+    host, real = _real_foundry(tmp_path)
+    runner, _, _, tasks = make_runner(tmp_path, "compare", FIX_ALL, host_env=host)
+    recs = runner.compare(tasks[:1], "cand-a", ("A",))
+    assert recs and not any(r.get("record_type") == "stop" for r in results(runner))

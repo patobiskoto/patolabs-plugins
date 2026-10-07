@@ -128,6 +128,34 @@ class ToolsetRefused(RunnerError):
         self.contamination = list(contamination)
 
 
+class FoundryStateChanged(RunnerError):
+    """The real Foundry registry changed during a cloud execution (PAT-120). The attempt is not accepted
+    (recorded undecided, never replayed, cost kept) and the campaign stops; carries the fingerprints
+    (never the content) and the contamination audit of the same stream."""
+
+    def __init__(self, before: str, after: str, contamination: Sequence[str] = ()):
+        super().__init__(f"the real Foundry registry changed during a cloud execution "
+                         f"(sha256 {before} -> {after})")
+        self.fingerprints = {"before": before, "after": after}
+        self.contamination = list(contamination)
+
+
+STATE_CHANGED_STOP = "foundry_state_changed"  # stop reason; exit code 4 of the launcher
+
+
+def registry_fingerprint(host_env: Mapping[str, str]) -> str:
+    """sha256 of the REAL Foundry ``registry.json`` bytes, or ``"absent"``. The data dir is resolved as
+    ``registry.data_dir`` does: host ``FOUNDRY_DATA`` if set, else ``<HOME>/.config/foundry``. Read-only."""
+    base = host_env.get("FOUNDRY_DATA") or os.path.join(host_env.get("HOME") or os.path.expanduser("~"),
+                                                        ".config", "foundry")
+    try:
+        return hashlib.sha256((Path(base) / "registry.json").read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return "absent"
+    except OSError as exc:  # unreadable is a distinct, comparable state, never a silent "unchanged"
+        return f"unreadable:{type(exc).__name__}"
+
+
 class PreflightRefused(RunnerError):
     def __init__(self, refusals: Sequence[str]):
         super().__init__("preflight refused: " + ", ".join(refusals))
@@ -906,6 +934,13 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
     env.update({k: _substitute(v, values) for k, v in (driver.get("env_set") or {}).items()})
     for rel_dir in driver.get("make_dirs") or []:  # e.g. the harness's own configuration directory
         Path(_substitute(rel_dir, values)).mkdir(parents=True, exist_ok=True)
+    # PAT-120: the launcher alone decides where Foundry's own state goes (never the config or the host):
+    # a fresh empty directory in the attempt scratch, for local and cloud arms alike.
+    foundry_data = scratch / "foundry-data"
+    foundry_data.mkdir(parents=True, exist_ok=True)
+    if any(foundry_data.iterdir()):
+        raise RunnerError(f"{foundry_data} is not empty: a Foundry data dir is fresh for each execution")
+    env["FOUNDRY_DATA"] = str(foundry_data)
     argv = [_substitute(a, values) for a in driver["argv"]]
     profile_dir = None
     if sandbox:
@@ -2208,6 +2243,9 @@ class Runner:
         if found:  # refused or cut AND contaminated: never replayed either
             record.update(contaminated=True, outcome="contaminated", contamination=_contamination(found))
             record["unknown"]["contaminated"] = _CONTAMINATED
+        if isinstance(exc, FoundryStateChanged):  # not accepted, undecided, never replayed; cost kept
+            record.update(contaminated=True, outcome="contaminated", foundry_state_changed=exc.fingerprints)
+            record["unknown"][STATE_CHANGED_STOP] = reason
         if _record_key(record) in self.emitted:  # the attempt reached the results just before the cut
             return None
         return self._emit(record)
@@ -2348,10 +2386,13 @@ class Runner:
                 reserved = True
                 self.sessions.append(session_id)  # every reserved execution is named by a record
             stream_log = self.state_dir / "streams" / f"{self.envelope['campaign_id']}-{session_id}.jsonl"
+            env = os.environ if self.host_env is None else self.host_env
+            fingerprint = registry_fingerprint(env)
             execution = execute_driver(
                 driver, values, workdir=bundle, scratch=scratch, stream_log=stream_log,
                 max_seconds=budget, max_steps=None, sandbox=self._sandboxed(driver), deny_read=deny,
                 extra_write=extra, host_env=self.host_env)
+            fingerprint_after = registry_fingerprint(env)
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
             if reserved:
                 with self._critical():
@@ -2369,6 +2410,8 @@ class Runner:
         with self._critical():  # refused or not; a signal right after the audit never loses its result
             execution["contamination"] = self._audit(stream_log, bundle, scratch, driver, session_id)
             self.audited[session_id] = execution["contamination"]
+        if fingerprint_after != fingerprint:  # PAT-120: settled and audited above, then the campaign stops
+            raise FoundryStateChanged(fingerprint, fingerprint_after, execution["contamination"])
         if refusal:  # money is settled above; the record is refused (a tool error, never a verdict)
             raise ToolsetRefused(refusal, execution["contamination"])
         return execution, tokens, reason
@@ -2616,7 +2659,7 @@ class Runner:
             except CapReached as exc:
                 self._stop(f"cap_reached:{exc}", exc)
             except (RunnerError, lfc.CorpusError) as exc:
-                self._stop(f"tool_error:{str(exc)[:160]}", exc)
+                self._stop(_stop_reason(exc), exc)
                 raise
             except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
                 self._stop(f"interrupted:{type(exc).__name__}", exc)
@@ -2959,7 +3002,7 @@ class Runner:
             except CapReached as exc:
                 self._stop(f"cap_reached:{exc}", exc)
             except (RunnerError, lfc.CorpusError) as exc:
-                self._stop(f"tool_error:{str(exc)[:160]}", exc)
+                self._stop(_stop_reason(exc), exc)
                 raise
             except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
                 self._stop(f"interrupted:{type(exc).__name__}", exc)
@@ -3032,7 +3075,7 @@ class Runner:
             except CapReached as exc:
                 self._stop(f"cap_reached:{exc}", exc)
             except (RunnerError, lfc.CorpusError) as exc:
-                self._stop(f"tool_error:{str(exc)[:160]}", exc)
+                self._stop(_stop_reason(exc), exc)
                 raise
             except BaseException as exc:  # Ctrl-C, SIGTERM/SIGHUP (SystemExit) or an unexpected error
                 self._stop(f"interrupted:{type(exc).__name__}", exc)
@@ -3146,6 +3189,10 @@ def _resume_state(records: Sequence[Mapping[str, Any]], ledger: Sequence[Mapping
     else:
         outcome, reason = "hard_kill", "attempt_started without settlement"
     return "replay", {"attempt": base[5], "attempt_dir": name, "outcome": outcome, "reason": reason}
+
+
+def _stop_reason(exc: BaseException) -> str:
+    return STATE_CHANGED_STOP if isinstance(exc, FoundryStateChanged) else f"tool_error:{str(exc)[:160]}"
 
 
 def _cut(exc: BaseException) -> str:
@@ -4031,6 +4078,9 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     except PreflightRefused as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except FoundryStateChanged as exc:  # stopped, recorded, nothing replayed: the operator investigates
+        print(f"stopped: {STATE_CHANGED_STOP}: {exc}", file=sys.stderr)
+        return 4
     except (RunnerError, lfc.CorpusError) as exc:  # includes a frozen truth that changed (ExplorationError)
         print(f"refused: {exc}", file=sys.stderr)
         return 2
