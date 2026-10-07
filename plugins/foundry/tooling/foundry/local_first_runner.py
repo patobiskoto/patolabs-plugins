@@ -49,7 +49,7 @@ CAMPAIGN_SCHEMA_V2 = "foundry.local-first-campaign.v2"  # protocol v2 (PAT-114):
 PROTOCOL_V3 = "pat-19-protocol-v3"  # protocol v3 (PAT-116): a v2-schema campaign with a wider budget, 2 candidates
 V3_CANDIDATES = ("qwen3.6-35b-a3b-mlx-4bit", "qwen3-coder-30b-a3b-mlx-4bit")
 V3_BOUNDS = {"explorer_max_steps": 60, "explorer_max_seconds": 900}
-PROTOCOL_V4 = "pat-19-protocol-v4"  # protocol v4 (PAT-121): v3 repaired instrument, one fixed candidate, arms A and L
+PROTOCOL_V4 = "pat-19-protocol-v4"  # protocol v4 (PAT-121): v3 + feedback and private root, fixed candidate, A and L
 V4_CANDIDATES = ("qwen3.6-35b-a3b-mlx-4bit",)
 V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_chars": 300, "max_name_chars": 200}
 V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
@@ -225,6 +225,8 @@ def load_campaign(path: Path) -> dict[str, Any]:
     if not isinstance(allow, list) or not all(
             isinstance(x, str) and x and not x.startswith("/") and ".." not in Path(x).parts for x in allow):
         raise RunnerError(f"{path}: isolation.allow_read_home needs a list of relative home entries")
+    if data.get("protocol") == PROTOCOL_V4 and data["schema"] != CAMPAIGN_SCHEMA_V2:
+        raise RunnerError(f"{path}: protocol v4 requires the exploration schema {CAMPAIGN_SCHEMA_V2}")
     if data.get("protocol") != PROTOCOL_V4 and (
             "correction_feedback" in data or "private_attempt_root" in iso
             or {"fixed_candidate", "comparison_task_group"} & set(data.get("exploration") or {})):
@@ -252,7 +254,7 @@ def _check_correction_feedback(path: Path, data: Mapping[str, Any]) -> None:
     if not isinstance(spec, dict) or set(spec) - {"hidden_test_failures", "max_failures", "max_message_chars",
                                                    "max_name_chars", "note"} or type(spec.get("hidden_test_failures")) is not bool:
         raise RunnerError(f"{path}: correction_feedback needs a boolean hidden_test_failures (and "
-                          "max_failures, max_message_chars)")
+                          "max_failures, max_message_chars, max_name_chars)")
     if spec["hidden_test_failures"] and not all(
             type(spec.get(k)) is int and spec[k] > 0 for k in ("max_failures", "max_message_chars", "max_name_chars")):
         raise RunnerError(f"{path}: correction_feedback.max_failures, max_message_chars and max_name_chars "
@@ -2527,6 +2529,7 @@ class Runner:
         records: list[dict[str, Any]] = []
         patch: bytes | None = None
         feedback: str | None = None
+        told: dict[str, Any] | None = None  # protocol v4: counters of what the corrector of this round was told
         prior = [r for r in self.prior_records if r.get("record_type") == "attempt"
                  and (r["path"], r["task"]["pr"], r["task"].get("set"), r.get("segment")) ==
                  (path, task["pr"], task_set, segment)]
@@ -2562,6 +2565,7 @@ class Runner:
                        if state.get("contamination") else {}),
                     **({"review_excluded": state["review_excluded"]} if state.get("review_excluded")
                        else {}),
+                    **({"feedback": told} if told else {}),
                     **({"replay_of": again} if again else {})}))
 
             try:
@@ -2626,6 +2630,8 @@ class Runner:
             outcome = state["outcome"]
             if outcome in ("accepted", "review_unreadable", "contaminated"):
                 break
+            told = (_feedback_counters(verdict, self.feedback_spec)
+                    if self.feedback_spec and outcome != "review_block" else None)
             feedback = (findings if outcome == "review_block" else
                         "The mechanical acceptance check refused the change: "
                         f"{verdict.get('note') or 'tests failing'} "
@@ -3451,6 +3457,15 @@ def _failure_feedback(verdict: Mapping[str, Any], spec: Mapping[str, Any]) -> st
     return "\n".join(lines)
 
 
+def _feedback_counters(verdict: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, Any]:
+    """What a corrector was told after a judge refusal, as counters only (never a message): the tests shown,
+    the failing tests in total and whether a collection failure was among them."""
+    failures = verdict.get("failures") or []
+    return {"failing_shown": min(len(failures), spec["max_failures"]), "failing_total": len(failures),
+            "collection_failure": any(str(f.get("message", "")).startswith("collection failure")
+                                      for f in failures)}
+
+
 def _judge_summary(verdict: Mapping[str, Any]) -> dict[str, Any]:
     return {k: verdict[k] for k in ("verdict", "passed", "failed", "errors", "skipped", "note")}
 
@@ -4169,7 +4184,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                 raise RunnerError(f"unknown candidate {cid}")
         default = ",".join(V4_ARMS) if campaign.get("protocol") == PROTOCOL_V4 else (
             "A,L,E" if mode == "compare_exploration" else "A,B,C")
-        paths = (args.paths or default).split(",") if mode in CLOUD_MODES else []
+        paths = (default if args.paths is None else args.paths).split(",") if mode in CLOUD_MODES else []
         if not set(paths) <= set(EXPLORE_ARMS if mode == "compare_exploration" else PATHS):
             raise RunnerError(f"unknown path in {args.paths}")
         manifest = json.loads(Path(args.manifest).read_text("utf-8"))

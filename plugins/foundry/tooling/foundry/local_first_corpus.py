@@ -773,9 +773,11 @@ def _junit_counts(path: Path) -> tuple[int, int, int, int]:
 
 
 def _mask(text: str, paths: Mapping[Path, str]) -> str:
-    for path, label in paths.items():
-        for spelled in {str(path), os.path.realpath(path)}:
-            text = text.replace(spelled, label)
+    """Replace every spelling of each path by its label, the longest spelling first (so that
+    ``/private/var/x/y`` is not half-replaced through its prefix ``/private/var/x``)."""
+    pairs = {(spelled, label) for path, label in paths.items() for spelled in {str(path), os.path.realpath(path)}}
+    for spelled, label in sorted(pairs, key=lambda pair: len(pair[0]), reverse=True):
+        text = text.replace(spelled, label)
     return text
 
 

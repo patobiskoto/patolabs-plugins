@@ -1,4 +1,4 @@
-"""PAT-121: protocol v4 (the v3 instrument repaired: hidden-test feedback to the corrector, a private root per
+"""PAT-121: protocol v4 (the v3 instrument with two changes: hidden-test feedback to the corrector, a private root per
 attempt, a fixed candidate compared on the six v3 screening tasks, arms A and L).
 
 Fake arms only (the helpers of the v2 exploration tests): no model, no cloud, no network, and never the real
@@ -137,8 +137,14 @@ def test_the_judge_returns_failure_names_and_messages_only_when_asked(tmp_path):
     names = [f["name"] for f in with_failures["failures"]]
     assert sorted(n.rsplit("::", 1)[1] for n in names) == ["test_added", "test_changed"]
     blob = json.dumps(with_failures["failures"])
-    assert str(asked) not in blob and "def test_" not in blob and "test_m.py" not in blob
+    # what is guaranteed: no test source code and not the candidate's location; the test module and name ARE
+    # visible (junit classname::name), and so is any other path a message may carry
+    assert str(asked) not in blob and "def test_" not in blob
+    assert all(n.startswith("tests.test_m::") for n in names)
     assert lfc._mask("x /a/b/c y", {Path("/a/b"): "<bundle>"}) == "x <bundle>/c y"
+    nested = {Path("/a/b"): "<bundle>", Path("/a/b/c"): "<tmp>"}  # the longest path first, whatever the order
+    assert lfc._mask("/a/b/c/x /a/b/y", nested) == "<tmp>/x <bundle>/y"
+    assert lfc._mask("/a/b/c/x", dict(reversed(list(nested.items())))) == "<tmp>/x"
     junit = tmp_path / "j.xml"
     junit.write_text('<testsuite><testcase classname="c" name="n"><failure message="at %s/home/x and %s/f"/>'
                      '</testcase></testsuite>' % (tmp_path / "tmpdir", asked), encoding="utf-8")
@@ -158,8 +164,13 @@ def test_after_a_refusal_the_corrector_of_both_arms_gets_the_same_failing_tests_
     assert text.startswith("The mechanical acceptance check refused the change:")
     assert "Failing hidden tests (2 shown of 2):" in text
     assert "::test_added: " in text and "::test_changed: " in text
-    assert str(tmp_path) not in text and "def test_" not in text and "test_m.py" not in text
+    assert str(tmp_path) not in text and "def test_" not in text  # source code and the bundle location only
+    assert "tests.test_m::test_added" in text  # the module and test name are visible
     recs = [r for r in results(runner) if r.get("segment") == "cloud" and r["path"] in ("A", "L")]
+    # counters only, on the corrector's record (what it was told), never on the implementer's
+    assert [r.get("feedback") for r in recs] == [None, {"failing_shown": 2, "failing_total": 2,
+                                                       "collection_failure": False}] * 2
+    assert "test_added" not in json.dumps(recs)
     assert [(r["path"], r["outcome"]) for r in recs] == [("A", "judge_refused"), ("A", "accepted"),
                                                          ("L", "judge_refused"), ("L", "accepted")]
 
@@ -177,6 +188,7 @@ def test_without_the_key_the_corrector_is_told_exactly_what_it_was_before(tmp_pa
     runner, _, plan, tasks = make_runner(tmp_path, "compare_exploration", REFUSED_THEN_FIXED)
     runner.compare_exploration(tasks[:1], "cand-a", ("A",))
     told, = _feedbacks(plan)
+    assert not any("feedback" in r for r in results(runner))  # the key is absent when the feedback is off
     assert told.startswith("The mechanical acceptance check refused the change:") and told.endswith(
         "(passed 0, failed 2, errors 0).") and "Failing hidden tests" not in told
 
@@ -360,3 +372,45 @@ def test_report_of_a_fixed_candidate_campaign_says_no_screening(tmp_path):
                                             "reason": "no screening: candidate fixed by the protocol"}
     assert out["exploration_comparison"]["screening_selected"] == "fixed_by_protocol:cand-a"
     assert "incomplete_screening" not in json.dumps(out) and "screening_results_not_available" not in json.dumps(out)
+
+
+# ------------------------------------------------------------------------------- review round 2
+
+def test_feedback_counters_cover_a_collection_failure_and_the_cap():
+    spec = FEEDBACK["correction_feedback"]
+    many = [{"name": f"t{n}", "message": "m"} for n in range(25)]
+    assert lfr._feedback_counters({"failures": many}, spec) == {
+        "failing_shown": 20, "failing_total": 25, "collection_failure": False}
+    assert lfr._feedback_counters({"failures": [{"name": "m", "message": "collection failure\nImportError"}]},
+                                  spec) == {"failing_shown": 1, "failing_total": 1, "collection_failure": True}
+    assert lfr._feedback_counters({}, spec) == {"failing_shown": 0, "failing_total": 0,
+                                                "collection_failure": False}
+
+
+def test_an_empty_paths_option_is_refused_not_defaulted(tmp_path, monkeypatch, capsys):
+    from test_local_first_corpus import _make_repo
+    repo, snap, _, _ = _make_repo(tmp_path)
+    (tmp_path / "c.json").write_text(json.dumps(_v4_data(tmp_path)), encoding="utf-8")
+    (tmp_path / "snap.json").write_text(json.dumps(snap), encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(json.dumps({"screening": [{"pr": 1}], "comparison": [{"pr": 1}]}),
+                                            encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path / "host-home"))
+    env = tmp_path / "envelope.json"
+    env.write_text(json.dumps({"schema": lfr.ENVELOPE_SCHEMA, "campaign_id": "e", "expires_on": "2026-12-31",
+                               "allowed_modes": ["compare_exploration"],
+                               "caps": {"cloud_executions": 10, "premium_tokens": 10**6,
+                                        "wall_clock_seconds": 10**5}}), encoding="utf-8")
+    code = lfr.main(["compare-exploration", "--campaign", str(tmp_path / "c.json"), "--dry-run", "--paths", "",
+                     "--candidate", "qwen3.6-35b-a3b-mlx-4bit", "--envelope", str(env),
+                     "--state-dir", str(tmp_path / "st"), "--work-root", str(tmp_path / "work"),
+                     "--repo", str(repo), "--snapshot", str(tmp_path / "snap.json"),
+                     "--manifest", str(tmp_path / "manifest.json")], today=__import__("datetime").date(2026, 10, 6))
+    assert code == 2 and "unknown path" in capsys.readouterr().err and not (tmp_path / "st").exists()
+
+
+def test_a_schema_v1_config_cannot_declare_protocol_v4(tmp_path):
+    data = json.loads((QUALIFICATION / "pat-19-campaign-v1.json").read_text("utf-8"))
+    data["protocol"] = "pat-19-protocol-v4"
+    (tmp_path / "c.json").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(lfr.RunnerError, match="requires the exploration schema"):
+        lfr.load_campaign(tmp_path / "c.json")
