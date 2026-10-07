@@ -46,6 +46,10 @@ from foundry import local_first_exploration as lfe
 
 CAMPAIGN_SCHEMA = "foundry.local-first-campaign.v1"
 CAMPAIGN_SCHEMA_V2 = "foundry.local-first-campaign.v2"  # protocol v2 (PAT-114): read-only exploration
+PROTOCOL_V3 = "pat-19-protocol-v3"  # protocol v3 (PAT-116): a v2-schema campaign with a wider budget, 2 candidates
+V3_CANDIDATES = ("qwen3.6-35b-a3b-mlx-4bit", "qwen3-coder-30b-a3b-mlx-4bit")
+V3_BOUNDS = {"explorer_max_steps": 60, "explorer_max_seconds": 900}
+WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
 # ``screen`` and ``compare`` are the protocol v1 modes; the two ``*_exploration`` modes are protocol v2.
@@ -233,6 +237,16 @@ def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
             data["candidates"]):
         raise RunnerError(f"{path}: rules.exploration_screening.candidates must list the frozen candidates "
                           "(declared candidates, once each)")
+    if type((data.get("exploration") or {}).get("one_task_per_launch", False)) is not bool:
+        raise RunnerError(f"{path}: exploration.one_task_per_launch must be a boolean")
+    if data.get("protocol") == PROTOCOL_V3:  # the v3 coordinates are pinned (a drift would be a v4)
+        if tuple(frozen) != V3_CANDIDATES or tuple(data["candidates"]) != V3_CANDIDATES:
+            raise RunnerError(f"{path}: protocol v3 freezes exactly the candidates {list(V3_CANDIDATES)}")
+        if any(data["bounds"][k] != v for k, v in V3_BOUNDS.items()):
+            raise RunnerError(f"{path}: protocol v3 freezes the explorer bounds at {V3_BOUNDS}")
+        if data["exploration"].get("one_task_per_launch") is not True:
+            raise RunnerError(f"{path}: protocol v3 requires exploration.one_task_per_launch true "
+                              "(the model is reloaded before each task)")
     spec = (data.get("exploration") or {}).get("ground_truth")
     if not isinstance(spec, dict) or not all(isinstance(spec.get(k), str) and spec[k] for k in ("file", "sha256")):
         raise RunnerError(f"{path}: exploration.ground_truth needs file and sha256")
@@ -1872,6 +1886,10 @@ class Runner:
         self.guards: dict[Path, tuple[str, dict[str, str | None]]] = {}
         self.literals: dict[Path, frozenset[str]] = {}  # ``base_literals`` of each bundle handed out
         self.exploring = mode in EXPLORE_MODES  # protocol v2: exploration screening and comparison
+        # protocol v3: at most one undecided task per launch (the operator reloads the model between launches);
+        # ``work_remains`` is set by such a launch (None when the rule is off or the launch was cut)
+        self.one_task = bool((campaign.get("exploration") or {}).get("one_task_per_launch")) and self.exploring
+        self.work_remains: bool | None = None
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
         self.dedicated: dict[str, Any] | None = None  # observed values of the last dedicated-machine check
         self.truths: dict[Any, dict[str, Any]] = {}  # localization ground truth of each task, by PR
@@ -2727,14 +2745,21 @@ class Runner:
         out: list[dict[str, Any]] = []
         self._check_harness(driver_id)  # an unresolvable harness executable costs nothing
         with self._guarded():
-            for candidate_id in candidate_ids:
-                for task in tasks:
-                    state, info = self._local_state("XS", task, "screening", candidate_id, "local", 0)
-                    if state in ("decided", "undecided"):
-                        continue  # resume: a decided task is never replayed, an undecided one stays so
-                    self.preflight(candidate_id)
-                    out.append(self._emit(self.explore_local(task, candidate_id, driver_id, "XS", "screening",
-                                                             replay_of=info)))
+            pending = [(c, t) for c in candidate_ids for t in tasks]
+            for index, (candidate_id, task) in enumerate(pending):
+                state, info = self._local_state("XS", task, "screening", candidate_id, "local", 0)
+                if state in ("decided", "undecided"):
+                    continue  # resume: a decided task is never replayed, an undecided one stays so
+                self.preflight(candidate_id)
+                out.append(self._emit(self.explore_local(task, candidate_id, driver_id, "XS", "screening",
+                                                         replay_of=info)))
+                if self.one_task:  # v3: one task per launch, the operator reloads the model
+                    self.work_remains = any(
+                        self._local_state("XS", t, "screening", c, "local", 0)[0] in ("fresh", "replay")
+                        for c, t in pending[index + 1:])
+                    break
+            if self.one_task and self.work_remains is None:
+                self.work_remains = False  # nothing was left to play
         return out
 
     def _explore_step_local(self, task: Mapping[str, Any], candidate_id: str, driver_id: str
@@ -2867,7 +2892,8 @@ class Runner:
                 self.preflight(candidate_id, phase="start")  # a busy machine is refused before any cloud spend
                 checked = self.ledger.appended
         with self._guarded():
-            for task in tasks:
+            for index, task in enumerate(tasks):
+                played = len(out)
                 for arm in arms:
                     if arm == "A":
                         out += self.cloud_path(task, "A", "comparison")
@@ -2882,6 +2908,17 @@ class Runner:
                     if not skip:
                         out += self.cloud_path(task, arm, "comparison", statement_extra=(
                             lfe.render_report_section(report, limits) if report else ""))
+                if self.one_task and len(out) > played:  # v3: one task per launch (reload between launches)
+                    # conservative: a later task with an arm that has no record yet may still have work; a
+                    # launch that then plays nothing says "no", so the operator loop always ends
+                    self.work_remains = any(
+                        not all(any(r.get("record_type") == "attempt" and r["path"] == arm
+                                    and r["task"]["pr"] == t["pr"] and r["task"].get("set") == "comparison"
+                                    for r in self.prior_records) for arm in arms)
+                        for t in tasks[index + 1:])
+                    break
+            if self.one_task and self.work_remains is None:
+                self.work_remains = False
         return out
 
     # ---- orchestration
@@ -3989,6 +4026,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         if runner.stopped and runner.stopped.startswith("cap_reached"):
             print(f"stopped: {runner.stopped}", file=sys.stderr)
             return 3
+        if runner.work_remains is not None:  # protocol v3: the operator loop reads this line
+            print(WORK_REMAINS_LINE.format("yes" if runner.work_remains else "no"))
     except PreflightRefused as exc:
         print(str(exc), file=sys.stderr)
         return 2
