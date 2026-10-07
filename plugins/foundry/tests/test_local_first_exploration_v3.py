@@ -5,6 +5,9 @@ loads no model; the one-task-per-launch rule is what lets the operator reload it
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -55,7 +58,10 @@ def test_the_v3_campaign_pins_the_validated_values_and_inherits_the_rest_from_v2
             k: v for k, v in b.items() if k not in ("note", "candidates")}
     assert v3["exploration"]["ground_truth"] == v2["exploration"]["ground_truth"]  # same file, same sha256
     assert v3["exploration"]["report_render_limits"] == v2["exploration"]["report_render_limits"]
-    assert v3["exploration"]["protocol_coordinates"] == v2["exploration"]["protocol_coordinates"]
+    coords3, coords2 = v3["exploration"]["protocol_coordinates"], v2["exploration"]["protocol_coordinates"]
+    assert {k: v for k, v in coords3.items() if k != "note"} == {k: v for k, v in coords2.items() if k != "note"}
+    assert "protocol v4" in coords3["note"]
+    assert "requested in the campaign report" not in v3["dedicated_machine"]["note"]
     assert v3["envelope_recommended"]["compare_exploration"]["caps"]["cloud_executions"] == 120
     assert "one_task_per_launch" not in v2["exploration"] and v2["bounds"]["explorer_max_seconds"] == 600
 
@@ -200,11 +206,43 @@ def test_a_decided_comparison_task_is_skipped_and_the_next_one_is_played(tmp_pat
     assert counts(plan_path) == before
 
 
+def test_a_comparison_task_cut_midway_resumes_without_replaying_its_exploration(tmp_path):
+    runner, campaign, plan_path, tasks = make_runner(tmp_path, "compare_exploration", COMPARE_PLAN, campaign_over=ONE)
+
+    def boom(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    runner.cloud_path = boom  # the launch is cut right after the exploration of arm L of the first task
+    with pytest.raises(KeyboardInterrupt):
+        runner.compare_exploration(tasks, "cand-a", arms=("L",))
+    assert runner.work_remains is None and counts(plan_path) == {"xlocal": 1}
+    resumed, _, _, _ = _resumed(tmp_path, runner, tasks, "compare_exploration", COMPARE_PLAN, campaign_over=ONE)
+    first = resumed.compare_exploration(tasks, "cand-a")  # relaunch: the kept report is reused
+    assert {r["task"]["pr"] for r in first} == {1} and resumed.work_remains is True
+    assert counts(plan_path)["xlocal"] == 1
+    again, _, _, _ = _resumed(tmp_path, resumed, tasks, "compare_exploration", COMPARE_PLAN, campaign_over=ONE)
+    second = again.compare_exploration(tasks, "cand-a")
+    assert {r["task"]["pr"] for r in second} == {2} and again.work_remains is False
+    assert counts(plan_path)["xlocal"] == 2
+
+
+def test_the_operator_script_is_syntactically_valid_and_never_loads_from_the_launcher():
+    script = QUALIFICATION / "pat-19-v3-operator.sh"
+    text = script.read_text("utf-8")
+    assert "set -euo pipefail" in text and "lms unload --all" in text and "< /dev/null" in text
+    assert not re.search(r"\$\{?ENV\b", text)
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash available")
+    assert subprocess.run([bash, "-n", str(script)], capture_output=True).returncode == 0
+    # an unknown mode, or a missing argument, is a usage error before anything runs
+    assert subprocess.run([bash, str(script), "nope"], capture_output=True).returncode == 64
+
+
 # ------------------------------------------------------------------ the command line
 
 def test_the_cli_prints_whether_work_remains_and_exits_zero(tmp_path, capsys):
     from test_local_first_exploration_runner import _envelope
-    from test_local_first_runner import write_envelope  # noqa: F401
     import hashlib
     from foundry import local_first_exploration as lfe
     from test_local_first_corpus import _make_repo
