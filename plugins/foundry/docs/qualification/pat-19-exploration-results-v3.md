@@ -12,7 +12,7 @@ Les nombres ci-dessous sont des décomptes recalculés ; toute lecture est marqu
 
 ## Résumé
 
-**Incident à lire d'abord** : pendant la comparaison, un bras cloud a écrasé le registre Foundry du mainteneur en lançant les tests du dépôt (voir « Incident ») ; fichier restauré le même jour, résultats non affectés, aucun bras cloud à relancer avant correction.
+**Incident à lire d'abord** : pendant la comparaison, un bras cloud a écrasé le registre Foundry du mainteneur en lançant les tests du dépôt (voir « Incident ») ; fichier restauré le même jour ; les ENREGISTREMENTS de la campagne sont intacts, mais l'influence de l'incident sur l'issue des tentatives jouées après 10:03:46 est INCONNUE (voir « Incident ») ; la conclusion mécanique est inchangée ; correctif : PAT-120 ; aucun bras cloud à relancer avant lui.
 
 Deux campagnes, le 2026-10-07 (heure locale, UTC+2) :
 
@@ -27,11 +27,13 @@ Deux campagnes, le 2026-10-07 (heure locale, UTC+2) :
   `keep_cloud_insufficient_evidence` (campagne complète ; qualité et économie `unavailable` pour L). Par PAT-ADR-0015, des
   preuves insuffisantes conservent le cloud. Aucune promotion, pas de rejeu sous la v3.
 
-Constat sur l'instrument, énoncé sans en tirer de verdict pour ou contre le local : **le bras de référence A (implémenteur
-cloud seul, jusqu'à trois tours) n'a fait accepter aucune tâche** (3 refusées par les tests protégés cachés à tous les tours,
-3 indécidées par contamination). Le corpus et le juge ne discriminent donc pas les bras : l'effet aval de l'exploration n'a
-pas pu être mesuré. Le résultat du tamis v1 (0 sur 30 pour des implémenteurs locaux, sans référence cloud) doit être lu à la
-lumière de ce constat : lecture, non démontrée.
+Ce que les données soutiennent : **le bras de référence A n'a fait accepter aucune tâche**, et la comparaison n'a donc pas pu
+mesurer l'effet aval de l'exploration. Décomposition recalculée des 0 sur 6 de A : 3 tâches (PR 26, 38, 25) refusées par le
+juge aux 3 tours, et 3 tâches (PR 42, 33, 37) **jamais jugées** (`judge: null`, drapeaux de contamination que ce document
+tient pour des faux positifs probables, non arbitrés) : la moitié du zéro vient de l'audit, pas du corpus ni du juge. Autres
+faits : sur PR 33 le juge a accepté L et E (A n'a pas été jugé) ; sur PR 25 l'instrument a discriminé (E accepté, A et L
+refusés). Lecture (hypothèse) : le résultat du tamis v1 (0 sur 30 pour des implémenteurs locaux, sans référence cloud) doit
+être lu à la lumière de ce que la comparaison n'a pas pu mesurer ; ce n'est pas un résultat pour ou contre le local.
 
 Les 7 drapeaux de contamination ont tous la même forme (un bras cloud a nommé la racine de travail du lanceur). Ils sont
 appliqués tels que gelés et **non arbitrés** (voir « Contamination »).
@@ -39,7 +41,10 @@ appliqués tels que gelés et **non arbitrés** (voir « Contamination »).
 ## Conditions de l'essai
 
 - Code : `main` à `00eee40` (PAT-116 fusionné), arbre de travail détaché gelé ; harnais omp 18.6.1 ; LM Studio
-  0.4.25+1 ; contexte 65 536. Empreinte de campagne `95b7a071…` (identique dans les deux rapports), manifeste `8ac65091…`.
+  0.4.25+1 ; contexte demandé 65 536 (`-c 65536`, plancher gelé `min_context`). **Contexte observé** par le script
+  opérateur (`lms ps`, journaux versés) : **262 144 pour qwen3.6** (les 12 chargements, tamis et comparaison, malgré `-c 65536`)
+  et **65 536 pour qwen3-coder** (6 chargements) ; le plancher est respecté, mais les deux candidats classés n'ont pas tourné
+  au même contexte. Empreinte de campagne `95b7a071…` (identique dans les deux rapports), manifeste `8ac65091…`.
   Enveloppes : `pat-19-x3screen-1` mode `screen_exploration`, 0 exécution cloud, 0 token premium, 36 000 s ;
   `pat-19-x3compare-1` mode `compare_exploration`, 120 exécutions cloud, 60 000 000 tokens premium, 100 000 s.
 - Bornes de l'explorateur local : 900 s et 60 étapes (v3). Un lancement par tâche (`one_task_per_launch`) : le script
@@ -50,11 +55,14 @@ appliqués tels que gelés et **non arbitrés** (voir « Contamination »).
   12 acceptés), 6 sessions. Aucun refus de préflight dans les deux campagnes.
 - Machine dédiée (condition du protocole) : application ChatGPT fermée, services d'un autre projet arrêtés (observation du
   coordinateur, hors dépôt, absente du registre).
-- Candidat de la comparaison : qwen3.6 (le préflight et l'explorateur L du registre le nomment). Note : le rapport de la
-  comparaison lit un état où les résultats du tamis ne figurent pas sous son identifiant de campagne ; il affiche donc
-  `exploration_screening.campaign_conclusion` `incomplete_screening` et `screening_selected`
-  `screening_results_not_available`. C'est un artefact de lecture du rapport de comparaison, la conclusion de la comparaison
-  étant celle de `exploration_comparison` ; le tamis a son propre rapport.
+- Candidat de la comparaison : qwen3.6 (le préflight et l'explorateur L du registre le nomment). Le script opérateur
+  `pat-19-v3-operator.sh` passe `--screening-campaign pat-19-x3screen-1` au lanceur (comportement documenté du script ; le
+  journal opérateur versé ne consigne pas la ligne de commande) et les résultats et le registre du tamis ont été copiés en
+  lecture seule dans le dossier d'état de la comparaison (observation du coordinateur ; ces copies ne sont pas versées).
+  Pourtant le rapport versé de la comparaison affiche `exploration_screening.campaign_conclusion` `incomplete_screening` et
+  `screening_selected` `screening_results_not_available` : **le lien entre le tamis et la comparaison n'est donc pas attesté
+  mécaniquement par le rapport versé** ; il repose sur le script, le registre (qui nomme qwen3.6) et le rapport du tamis. La
+  conclusion de la comparaison est celle de `exploration_comparison`.
 
 ## Tamis (`pat-19-x3screen-1`)
 
@@ -121,8 +129,8 @@ A 3, L 4, E 3.
 
 Définition (rapport) : somme non pondérée des quatre classes de tokens de facturation, tous modèles, explorateur inclus ;
 les lectures de cache comptent comme n'importe quel token (les explorations Haiku sont en grande partie des lectures de
-cache : pour `claude-haiku-4-5-20251001` dans le bras E, le rapport donne 5 237 209 tokens de cache lu sur 5 521 134 au
-total, soit environ 95 %).
+cache : pour `claude-haiku-4-5-20251001` dans le bras E, 5 237 209 tokens de cache lu sur 5 499 632 de facturation (somme des
+quatre classes ; les 21 502 tokens de raisonnement du rapport ne sont pas dans cette somme), soit environ 95 %).
 
 | Bras | Exécutions cloud | Tokens premium | Détail |
 | --- | --- | --- | --- |
@@ -153,8 +161,9 @@ Jamais utilisées pour le réglage, notées par le même juge ; **informatif, pa
 L : zéro token premium. E : 567 615 à 1 539 306 tokens premium par exploration. Le rappel de fichiers de E est 1,0 sur les
 six. Aucune exploration n'a été coupée par une borne ; aucun signal externe.
 
-Lecture (hypothèse, non testée) : sur ces six tâches l'explorateur local localise au moins aussi bien que l'explorateur
-Haiku ; cela ne dit rien de l'effet aval, que cette comparaison n'a pas pu mesurer. Six tâches ne font pas une preuve
+Lecture (hypothèse, non testée) : pour le rappel de fonctions, l'explorateur local égale ou dépasse l'explorateur Haiku sur
+chacune des six tâches ; pour la précision de fichiers, non (0,875 contre 0,917 ; L est plus bas sur PR 38 et PR 37, plus
+haut sur PR 42) ; cela ne dit rien de l'effet aval, que cette comparaison n'a pas pu mesurer. Six tâches ne font pas une preuve
 générale.
 
 ### Compatibilité
@@ -171,6 +180,10 @@ sa tentative) dans un chemin ou un glob. Valeurs enregistrées : `/private/tmp/p
 `/private/tmp/pat19-work/README.md` (A PR 42), `/private/tmp/pat19-work/*.md` (A PR 37), et pour L PR 33 les deux valeurs
 `/private/tmp/pat19-work` et `/private/tmp/pat19-work/README.md`. **Aucune commande interdite** (`commands` vide pour les
 7), aucun chemin du répertoire personnel.
+
+Deux des sept drapeaux (L PR 33 et E PR 33) viennent du **relecteur**, non du bras d'implémentation (vérifiable dans les résultats versés : ces deux enregistrements, et eux seuls, portent sous `unknown.contaminated` le
+texte « the reviewer's tool calls… », et ce sont les deux seules tentatives contaminées avec une revue, donc 2 exécutions cloud). La tentative de L que le juge a acceptée avec une
+revue PASS est donc perdue sur un drapeau du relecteur.
 
 Conséquence : 3 des 6 tâches de A, 2 de L et 2 de E sont indécidées ; une tentative de L que le juge a acceptée et que la
 revue a passée n'est pas comptée.
@@ -198,11 +211,21 @@ Conséquences : toutes les commandes Foundry de la machine ont refusé (« bindi
 jusqu'à la restauration ; le coordinateur n'a rien réécrit (le registre contient d'autres projets du mainteneur) ; le mainteneur
 a restauré le fichier le même jour depuis un instantané Time Machine local antérieur à l'incident (fichier d'origine, daté du
 2026-10-04). Parmi les fichiers du dossier personnel modifiés pendant la comparaison, le coordinateur n'a trouvé aucun autre
-dégât (observation hors dépôt). Les résultats de la campagne ne sont pas affectés : registre de campagne, résultats et flux
-sont dans le dossier d'état, intact.
+dégât (observation hors dépôt). Les **enregistrements** de la campagne sont intacts (registre de campagne, résultats et flux sont dans le dossier d'état).
+**L'influence de l'incident sur l'issue des tentatives jouées après 10:03:46 est INCONNUE**, non « sans effet » : les bras
+tournent avec le vrai HOME et les tests de ces bases peuvent lire le vrai registre par le même défaut d'isolation, ce qui peut
+changer un résultat de test. Tentatives concernées (horodatages du registre versé) : L PR 42 tour 0 (l'incident lui-même,
+10:03:21 à 10:05:18), L PR 42 tours 1 et 2, E PR 42, toutes les tentatives de PR 33 (A, L, E) et de PR 37 (A, L, E), soit 16
+sessions d'implémentation et de revue ; les tentatives de 09:15 à 09:58 sont antérieures. Les tests protégés de PR 42 portent
+précisément sur le registre (`test_registry_sharing.py`). La conclusion mécanique (`keep_cloud_insufficient_evidence`) est
+inchangée, aucune tentative n'est reclassée ni rejouée. Pour mémoire, PR 26 et PR 38 (jouées avant) ont les mêmes comptes de
+tests sur leurs 9 tentatives. L'exposition de l'exécution des tests cachés par le juge lui-même est INCONNUE : le document du
+corpus (`pat-19-corpus-v1.md`) dit que le juge les lance dans un environnement réduit, avec `HOME` et `TMPDIR` pointant vers un
+dossier temporaire neuf et aucune variable `FOUNDRY_*`, ce qui est une garantie de conception, non une vérification sur ces
+exécutions.
 
 Ce que cela change : aucun bras cloud ne doit être relancé avant qu'il ne reçoive un état Foundry isolé (`FOUNDRY_DATA` dans son
-dossier d'essai) ; c'est une correction à faire par un ticket distinct, pas dans ce diff. Plus largement, l'incident montre
+dossier d'essai) ; le correctif est le ticket PAT-120 (créé le 2026-10-07 : `FOUNDRY_DATA` isolé par exécution cloud, empreinte du registre vérifiée autour de chaque exécution cloud, sauvegarde par l'opérateur), pas ce diff. Plus largement, l'incident montre
 que la limite « bras cloud non confinés » n'est pas théorique sur ce corpus : exécuter les tests d'une ancienne base du dépôt
 peut écrire hors du bundle.
 
@@ -217,14 +240,23 @@ peut écrire hors du bundle.
 
 - **Chargements de modèles** autorisés en bloc par le mainteneur le 2026-10-07, non confirmés un par un (écart à « chaque
   chargement confirmé »).
+- **Quatrième variable, le contexte** : qwen3.6 a tourné à 262 144 et qwen3-coder à 65 536 (observé, voir « Conditions »).
+  Le classement entre les deux candidats et la comparaison v2 vers v3 (v2 : contexte >= 65 536, valeur observée non relue ici)
+  portent donc sur quatre variables à la fois (budget, jeu de candidats, régime de chargement, contexte). Indice non prouvé :
+  entrée moyenne du flux par étape au tamis, 34 981 tokens pour qwen3.6 (6 296 550 sur 180 étapes) contre 26 044 pour
+  qwen3-coder (6 693 269 sur 257 étapes) ; nous ne savons pas si le contexte plus large a joué.
 - **Limites connues du protocole** : le tamis est ajusté sur ses six tâches ; le bras A s'exécute avant l'exploration locale L
   de la même tâche (ordre non contrebalancé).
 - **Définition des tokens premium non pondérée** : les lectures de cache comptent comme n'importe quel token, ce qui pèse sur
   les explorations Haiku (majoritairement des lectures de cache) ; un autre barème changerait les ratios, non calculé.
 - **Contamination** : 7 drapeaux de forme unique, non arbitrés ; effet sur la conclusion inconnu si elle était reclassée
   (non calculé, non demandé).
-- **Le corpus et le juge ne discriminent pas les bras** : A, la référence, a 0 tâche acceptée. Un défaut de l'instrument
-  (juge, tests cachés, énoncés) est possible ; la cause n'est pas établie. C'est un constat sur l'instrument, pas un
+- **Ce que la comparaison n'a pas pu mesurer** : l'effet aval de l'exploration, car A (référence) n'a aucune tâche acceptée
+  (3 refusées par le juge à tous les tours, 3 jamais jugées par contamination). Sur PR 33 le juge a accepté L et E ; sur PR 25
+  il a discriminé (E accepté, A et L refusés). Recalculé : sur PR 26 les 9 tentatives (3 bras x 3 tours) ont le même compte
+  (0 passé, 1 échoué), et sur PR 38 les 9 aussi (28 passés, 8 échoués). Lecture (hypothèse) : ces comptes strictement
+  identiques rendent un défaut de l'instrument plausible sur ces deux tâches ; non établi. L'acceptation de chaque tâche repose
+  sur les tests protégés du PR d'origine (un ou deux nœuds, `protected.entries` du manifeste et du cliché). Ce n'est pas un
   résultat en faveur du local ou du cloud.
 - Six tâches ne sont pas une preuve générale ; une seule machine, un seul moteur de local (MLX), une seule exécution par
   couple tâche / bras.
