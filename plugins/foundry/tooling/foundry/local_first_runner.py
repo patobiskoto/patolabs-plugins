@@ -2900,8 +2900,8 @@ class Runner:
     def _report_for_arm(self, report: Mapping[str, Any]) -> Mapping[str, Any]:
         """Protocol v4 (private attempt roots): the free text of an explorer's report may cite an absolute path
         of the explorer's own (discarded) bundle. Arm L would read it in its statement and the audit, which
-        treats the work root as sensitive, would flag the arm (arm A has no report). Every spelling of the
-        work root (raw and resolved, longest first) is therefore replaced: an explorer bundle path by the
+        treats the work root as sensitive, would flag the arm (arm A has no report). The resolved spelling of the
+        work root (the only one the launcher hands out) is therefore replaced: an explorer bundle path by the
         bundle-relative path, any other path under the work root by ``<work-root>``. Unchanged (the very same
         report) when the private root is off: the v1 to v3 rendering is byte for byte what it was."""
         if not self.private_root:
