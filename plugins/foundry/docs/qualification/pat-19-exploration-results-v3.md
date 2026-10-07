@@ -30,7 +30,7 @@ Deux campagnes, le 2026-10-07 (heure locale, UTC+2) :
 Ce que les données soutiennent : **le bras de référence A n'a fait accepter aucune tâche**, et la comparaison n'a donc pas pu
 mesurer l'effet aval de l'exploration. Décomposition recalculée des 0 sur 6 de A : 3 tâches (PR 26, 38, 25) refusées par le
 juge aux 3 tours, et 3 tâches (PR 42, 33, 37) **jamais jugées** (`judge: null`, drapeaux de contamination que ce document
-tient pour des faux positifs probables, non arbitrés) : la moitié du zéro vient de l'audit, pas du corpus ni du juge. Autres
+tient pour des faux positifs probables, non arbitrés) : 3 des 6 tâches de A n'ont donc pas été jugées (ce que le juge aurait rendu sur elles est inconnu). Fait recalculé sur les résultats versés : sur les 32 refus du juge de la comparaison, aucun tour de correction n'a changé un seul compte de tests (PR 26 : 0 passé / 1 échoué sur 9 ; PR 38 : 28 / 8 sur 9 ; PR 25 : 1 / 4 sur 5 ; PR 42 : 0 / 4 sur 3 ; PR 37 : 1 / 1 sur 6). Autres
 faits : sur PR 33 le juge a accepté L et E (A n'a pas été jugé) ; sur PR 25 l'instrument a discriminé (E accepté, A et L
 refusés). Lecture (hypothèse) : le résultat du tamis v1 (0 sur 30 pour des implémenteurs locaux, sans référence cloud) doit
 être lu à la lumière de ce que la comparaison n'a pas pu mesurer ; ce n'est pas un résultat pour ou contre le local.
@@ -216,10 +216,10 @@ dégât (observation hors dépôt). Les **enregistrements** de la campagne sont 
 tournent avec le vrai HOME et les tests de ces bases peuvent lire le vrai registre par le même défaut d'isolation, ce qui peut
 changer un résultat de test. Tentatives concernées (horodatages du registre versé) : L PR 42 tour 0 (l'incident lui-même,
 10:03:21 à 10:05:18), L PR 42 tours 1 et 2, E PR 42, toutes les tentatives de PR 33 (A, L, E) et de PR 37 (A, L, E), soit 16
-sessions d'implémentation et de revue ; les tentatives de 09:15 à 09:58 sont antérieures. Les tests protégés de PR 42 portent
+sessions d'implémentation et de revue ; les tentatives de 09:15 à 09:58 sont antérieures. Sont aussi postérieures à 10:03:46 et non comptées dans ces 16 : les explorations Haiku de PR 42, PR 33 et PR 37 et les explorations locales de PR 33 et PR 37, qui alimentent le tableau L contre E ; l'influence de l'incident sur elles est également inconnue (une exploration est en lecture seule et n'exécute pas de test, ce qui la rend moins exposée : lecture, non établie). Les tests protégés de PR 42 portent
 précisément sur le registre (`test_registry_sharing.py`). La conclusion mécanique (`keep_cloud_insufficient_evidence`) est
-inchangée, aucune tentative n'est reclassée ni rejouée. Pour mémoire, PR 26 et PR 38 (jouées avant) ont les mêmes comptes de
-tests sur leurs 9 tentatives. L'exposition de l'exécution des tests cachés par le juge lui-même est INCONNUE : le document du
+inchangée, aucune tentative n'est reclassée ni rejouée. Pour mémoire, les comptes de tests sont invariants d'un tour à l'autre sur toutes les tâches refusées, celles jouées avant
+l'incident (PR 26, PR 38, PR 25) comme celles jouées après (PR 42, PR 37). L'exposition de l'exécution des tests cachés par le juge lui-même est INCONNUE : le document du
 corpus (`pat-19-corpus-v1.md`) dit que le juge les lance dans un environnement réduit, avec `HOME` et `TMPDIR` pointant vers un
 dossier temporaire neuf et aucune variable `FOUNDRY_*`, ce qui est une garantie de conception, non une vérification sur ces
 exécutions.
@@ -256,7 +256,7 @@ peut écrire hors du bundle.
   il a discriminé (E accepté, A et L refusés). Recalculé : sur PR 26 les 9 tentatives (3 bras x 3 tours) ont le même compte
   (0 passé, 1 échoué), et sur PR 38 les 9 aussi (28 passés, 8 échoués). Lecture (hypothèse) : ces comptes strictement
   identiques rendent un défaut de l'instrument plausible sur ces deux tâches ; non établi. L'acceptation de chaque tâche repose
-  sur les tests protégés du PR d'origine (un ou deux nœuds, `protected.entries` du manifeste et du cliché). Ce n'est pas un
+  sur les tests protégés du PR d'origine (les nœuds de test sélectionnés par `protected.entries` du cliché ; le nombre de tests que le juge compte varie selon la tâche, de 1 sur PR 26 à 172 sur PR 33 d'après les résultats versés). Ce n'est pas un
   résultat en faveur du local ou du cloud.
 - Six tâches ne sont pas une preuve générale ; une seule machine, un seul moteur de local (MLX), une seule exécution par
   couple tâche / bras.
