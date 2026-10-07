@@ -12,6 +12,8 @@ Les nombres ci-dessous sont des décomptes recalculés ; toute lecture est marqu
 
 ## Résumé
 
+**Incident à lire d'abord** : pendant la comparaison, un bras cloud a écrasé le registre Foundry du mainteneur en lançant les tests du dépôt (voir « Incident ») ; fichier restauré le même jour, résultats non affectés, aucun bras cloud à relancer avant correction.
+
 Deux campagnes, le 2026-10-07 (heure locale, UTC+2) :
 
 - **Tamis `pat-19-x3screen-1`** (08:23 à 09:13, 12 lancements, 0 exécution cloud) : les deux candidats passent les seuils
@@ -180,6 +182,29 @@ telle que gelée ; rien n'a été reclassé**, aucune tentative n'a été rejou�
 PAT-111 / PAT-113 pour le cloud seul (un appel refusé par une règle de refus compte comme contamination ; corps de
 heredoc d'interpréteur non audités) n'ont pas été corrigées avant cette comparaison ; **aucune des 7 contaminations n'en
 provient** (toutes sont de la forme racine de travail ci-dessus, `commands` vide).
+
+## Incident : un bras cloud a écrasé le registre Foundry du mainteneur
+
+Pendant la comparaison, le 2026-10-07 à 10:03:46 (heure locale), le registre Foundry du mainteneur (fichier `registry.json` de
+son dossier de configuration Foundry, hors dépôt) a été remplacé par une fixture de test. Cause établie par le flux brut de la
+session concernée (hors dépôt) : le bras L de la tâche PR 42 (implémenteur cloud, tour 0) a lancé `python3 -m pytest tests`
+dans son bundle ; à cette base du dépôt, `tests/test_registry_sharing.py` posait la variable `FOUNDRY_DATA_DIR` au lieu de
+`FOUNDRY_DATA` avant d'appeler `registry._save(...)`, donc la fixture a été écrite dans le vrai registre. Les bras cloud
+tournent sans bac à sable, avec le vrai HOME (limite déclarée depuis PAT-111, risque résiduel accepté par le mainteneur le
+2026-10-05) : ni les règles Bash interdites ni l'audit de contamination ne voient l'effet de bord d'un test exécuté, et cette
+tentative n'a d'ailleurs pas été signalée contaminée.
+
+Conséquences : toutes les commandes Foundry de la machine ont refusé (« binding tracker du marqueur absent du registre »)
+jusqu'à la restauration ; le coordinateur n'a rien réécrit (le registre contient d'autres projets du mainteneur) ; le mainteneur
+a restauré le fichier le même jour depuis un instantané Time Machine local antérieur à l'incident (fichier d'origine, daté du
+2026-10-04). Parmi les fichiers du dossier personnel modifiés pendant la comparaison, le coordinateur n'a trouvé aucun autre
+dégât (observation hors dépôt). Les résultats de la campagne ne sont pas affectés : registre de campagne, résultats et flux
+sont dans le dossier d'état, intact.
+
+Ce que cela change : aucun bras cloud ne doit être relancé avant qu'il ne reçoive un état Foundry isolé (`FOUNDRY_DATA` dans son
+dossier d'essai) ; c'est une correction à faire par un ticket distinct, pas dans ce diff. Plus largement, l'incident montre
+que la limite « bras cloud non confinés » n'est pas théorique sur ce corpus : exécuter les tests d'une ancienne base du dépôt
+peut écrire hors du bundle.
 
 ## Les trois verdicts (PAT-ADR-0015)
 
