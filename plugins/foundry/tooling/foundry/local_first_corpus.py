@@ -665,7 +665,7 @@ def is_judged(candidate: Path) -> bool:
     return candidate.resolve() in _JUDGED
 
 
-def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any]:
+def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: bool = False) -> dict[str, Any]:
     """Restore the protected tests from the merged SHA over the candidate bundle, run only
     them and return a mechanical verdict. Tests the candidate wrote never count: the protected
     paths are overwritten and only their node ids are run.
@@ -674,7 +674,13 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any
     setup.cfg/sitecustomize/usercustomize/``*.pth`` edits (REFUSED), symlinks at protected
     paths, ambient HOME/environment, conftest files above ``tests/``. Not prevented: product
     code tampering with pytest in-process, edits of non-protected support files (reported in
-    ``changed_outside_product``)."""
+    ``changed_outside_product``).
+
+    ``failures=True`` (PAT-121) adds ``failures`` to the verdict: ``[{"name", "message"}]``, one per failing
+    or erroring test of the junit report (``name`` is the junit ``classname::name``, ``message`` the junit
+    ``message`` attribute with the candidate path replaced by ``<bundle>`` and the judge's temporary
+    directory by ``<tmp>``): never the test source code (the module and test name are visible).
+    Off by default: the verdict is then exactly what it was."""
     candidate = candidate.resolve()
     if inside_developer_checkout(repo, candidate):  # PAT-108 N-B: the judge rewrites the tree
         raise CorpusError(f"candidate is inside the developer checkout: {candidate}")
@@ -749,6 +755,8 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path) -> dict[str, Any
         except subprocess.TimeoutExpired:
             return _verdict("timeout", selected, 0, 0, 0, 0, None, extra)
         counts = _junit_counts(junit)
+        if failures:
+            extra = {**extra, "failures": _junit_failures(junit, candidate, tmp_dir)}
     passed, failed, errors, skipped = counts
     return _verdict(None, selected, passed, failed, errors, skipped, code, extra)
 
@@ -763,6 +771,33 @@ def _junit_counts(path: Path) -> tuple[int, int, int, int]:
     total, failed = int(suite.get("tests", 0)), int(suite.get("failures", 0))
     errors, skipped = int(suite.get("errors", 0)), int(suite.get("skipped", 0))
     return total - failed - errors - skipped, failed, errors, skipped
+
+
+def _mask(text: str, paths: Mapping[Path, str]) -> str:
+    """Replace every spelling of each path by its label, the longest spelling first (so that
+    ``/private/var/x/y`` is not half-replaced through its prefix ``/private/var/x``)."""
+    pairs = {(spelled, label) for path, label in paths.items() for spelled in {str(path), os.path.realpath(path)}}
+    for spelled, label in sorted(pairs, key=lambda pair: len(pair[0]), reverse=True):
+        text = text.replace(spelled, label)
+    return text
+
+
+def _junit_failures(path: Path, candidate: Path, tmp_dir: Path) -> list[dict[str, str]]:
+    """Name and message of every failing or erroring test case of a junit report (PAT-121). The test
+    source and the traceback body are never read; the candidate's location and the judge's temporary directory are hidden from the message."""
+    if not path.exists():
+        return []
+    out: list[dict[str, str]] = []
+    for case in ET.parse(path).getroot().iter("testcase"):
+        bad = case.find("failure")
+        bad = case.find("error") if bad is None else bad
+        if bad is None:
+            continue
+        name = case.get("name", "")
+        classname = case.get("classname")
+        out.append({"name": f"{classname}::{name}" if classname else name,
+                    "message": _mask(bad.get("message") or "", {candidate: "<bundle>", tmp_dir: "<tmp>"})})
+    return out
 
 
 def _verdict(note: str | None, selected: Sequence[str], passed: int, failed: int,

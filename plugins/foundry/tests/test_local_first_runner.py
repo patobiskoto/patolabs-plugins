@@ -46,6 +46,10 @@ steps = json.load(open(a.plan))[a.role]
 behavior = steps[min(i, len(steps) - 1)]
 with open(a.plan + ".statements", "a") as handle:
     handle.write(hashlib.sha256(open(a.statement, "rb").read()).hexdigest() + "\n")
+feedback_file = os.path.join(os.path.dirname(a.review_file), "feedback.md") if a.review_file else ""
+if feedback_file and os.path.exists(feedback_file):  # PAT-121: what a corrector was told
+    with open(a.plan + ".feedback", "a") as handle:
+        handle.write(json.dumps(open(feedback_file).read()) + "\n")
 module = os.path.join(a.workdir, "plugins/foundry/tooling/foundry/m.py")
 FIXED = "def add(a, b):\n    return a + b\n"
 def event(kind, **kw):
@@ -907,7 +911,7 @@ attempt("non_loopback", non_loopback)
 def loopback():
     s = socket.socket(); s.settimeout(3); s.connect(("127.0.0.1", int(sys.argv[4])))
 attempt("loopback", loopback)
-out["canary_env"] = "present" if any(k.startswith(("CANARY", "FOUNDRY_", "LINEAR")) and k != "FOUNDRY_DATA" for k in os.environ) else "absent"
+out["canary_env"] = "present" if any(k.startswith(("CANARY", "FOUNDRY_", "LINEAR")) for k in os.environ) else "absent"
 out["home"] = os.environ.get("HOME")
 print(json.dumps(out))
 '''
@@ -4153,11 +4157,19 @@ def test_pat120_the_launcher_sets_foundry_data_over_the_host_and_the_config(tmp_
     data, home = out.read_text("utf-8").split()
     assert data == str(scratch / "foundry-data") and Path(data).is_dir() and not any(Path(data).iterdir())
     assert home == host["HOME"]  # the R6 variables are untouched
-    local = {**driver, "home": "isolated", "env_set": {}, "env_allow": [],
-             "argv": [sys.executable, "-c", "import os;print('FOUNDRY_DATA' in os.environ)"]}
-    lfr.execute_driver(local, {}, workdir=tmp_path, scratch=tmp_path / "s2", stream_log=out, max_seconds=30,
+    probe = {"env_set": {}, "argv": [sys.executable, "-c", "import os;print(os.environ.get('FOUNDRY_DATA'))"]}
+    for n, extra in enumerate(({"kind": "local_harness", "home": "isolated", "env_allow": []},
+                               # PAT-121 N2: even a (programmatic) local driver that asks for it gets no host value
+                               {"kind": "local_explorer", "home": "isolated", "env_allow": ["FOUNDRY_DATA"]})):
+        lfr.execute_driver({**probe, **extra}, {}, workdir=tmp_path, scratch=tmp_path / f"s{n}",
+                           stream_log=out, max_seconds=30, max_steps=None, sandbox=False, deny_read=[],
+                           host_env=host)
+        assert out.read_text("utf-8").strip() == "None"  # a local arm keeps exactly its previous environment
+    # PAT-121 N2: the launcher imposes it by driver KIND, not by the HOME policy of the driver
+    lfr.execute_driver({**probe, "kind": "cloud_reviewer", "home": "isolated", "env_allow": ["FOUNDRY_DATA"]}, {},
+                       workdir=tmp_path, scratch=tmp_path / "s9", stream_log=out, max_seconds=30,
                        max_steps=None, sandbox=False, deny_read=[], host_env=host)
-    assert out.read_text("utf-8").strip() == "False"  # a local arm keeps exactly its previous environment
+    assert out.read_text("utf-8").strip() == str(tmp_path / "s9" / "foundry-data")
 
 
 def test_pat120_registry_fingerprints_watch_both_places(tmp_path):

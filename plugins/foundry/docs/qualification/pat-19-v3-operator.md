@@ -14,13 +14,19 @@ pat-19-v3-operator.sh compare <candidat> <id-campagne-tamis>   <checkout> <runs>
 - Le bac à sable est actif par défaut (pas de `--dry-run`). `lms unload --all` est à vérifier sur la version installée avant l'essai ; le script n'a pas été joué pour de vrai (aucun appel modèle).
 - Le registre contient un préflight par lancement ; avec le journal opérateur, c'est la trace du rechargement par tâche (le lanceur ne l'atteste pas).
 
-## Avant une campagne : sauvegarder la configuration Foundry (PAT-120)
+## Avant une campagne : sauvegarder la configuration Foundry (PAT-120, PAT-121)
 
-Le lanceur impose maintenant `FOUNDRY_DATA` aux bras et arrête la campagne si le `registry.json` réel change (voir « État Foundry d'un bras cloud » dans [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md)), mais un bras cloud garde le vrai HOME : sauvegarder à la main, **hors du dépôt**, avant tout lancement (le script ne copie rien, la sauvegarde contient des secrets : ne la versionner ni la copier dans un dépôt, une note ou la mémoire) :
+Le lanceur impose maintenant `FOUNDRY_DATA` aux bras cloud et arrête la campagne si le `registry.json` réel change (voir « État Foundry d'un bras cloud » dans [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md)), mais un bras cloud garde le vrai HOME : sauvegarder à la main, **hors du dépôt**, avant tout lancement (le script ne copie rien, la sauvegarde contient des secrets : ne la versionner ni la copier dans un dépôt, une note ou la mémoire). Le registre peut être à **deux** endroits, et le lanceur surveille les deux : `~/.config/foundry` et le dossier désigné par `FOUNDRY_DATA` quand l'opérateur l'exporte. Sauvegarder les deux :
 
 ```sh
-cp -Rp "${FOUNDRY_DATA:-$HOME/.config/foundry}" "$HOME/foundry-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP="$HOME/foundry-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$BACKUP"
+if [ -d "$HOME/.config/foundry" ]; then cp -Rp "$HOME/.config/foundry" "$BACKUP/home-config-foundry"; fi
+if [ -n "${FOUNDRY_DATA:-}" ] && [ -d "$FOUNDRY_DATA" ]; then cp -Rp "$FOUNDRY_DATA" "$BACKUP/foundry-data"; fi
+ls "$BACKUP"
 ```
+
+(`FOUNDRY_DATA` non exporté : seul le premier dossier existe ; exporté vers le même dossier que le premier : la deuxième copie est redondante, sans conséquence.)
 
 Pendant qu'une campagne tourne, ne lancer depuis aucun autre terminal une commande Foundry qui écrit le registre (`register`, bascule, etc.) : le lanceur verrait le changement, arrêterait la campagne et marquerait la tentative en cours `contaminated`, jamais rejouée.
 

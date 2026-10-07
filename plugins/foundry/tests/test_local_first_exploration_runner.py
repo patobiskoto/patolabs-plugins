@@ -47,7 +47,7 @@ step = steps[min(i, len(steps) - 1)]
 mode, report = step["mode"], step.get("report")
 def event(kind, **kw):
     print(json.dumps({"type": kind, **kw}), flush=True)
-text = json.dumps(report) if mode in ("final", "file", "draft_then_hang", "draft_then_steps") else "I could not find anything."
+text = json.dumps(report).replace("{workdir}", a.workdir) if mode in ("final", "file", "draft_then_hang", "draft_then_steps") else "I could not find anything."
 if a.init_tools is not None:
     event("system", subtype="init", tools=[t for t in a.init_tools.split(",") if t])
 if mode == "peek":
@@ -136,7 +136,7 @@ def v2_campaign(tmp_path, plan, frozen=("cand-a",), **overrides):
                        "cloud_explorer_economy": cloud, "cloud_reviewer": review}
     base["candidates"] = {"cand-a": {"model": "fake/model-a"}, "cand-b": {"model": "fake/model-b"}}
     for key, value in overrides.items():
-        base[key].update(value)
+        base.setdefault(key, {}).update(value)
     return base, plan_path
 
 

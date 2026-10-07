@@ -49,6 +49,12 @@ CAMPAIGN_SCHEMA_V2 = "foundry.local-first-campaign.v2"  # protocol v2 (PAT-114):
 PROTOCOL_V3 = "pat-19-protocol-v3"  # protocol v3 (PAT-116): a v2-schema campaign with a wider budget, 2 candidates
 V3_CANDIDATES = ("qwen3.6-35b-a3b-mlx-4bit", "qwen3-coder-30b-a3b-mlx-4bit")
 V3_BOUNDS = {"explorer_max_steps": 60, "explorer_max_seconds": 900}
+PROTOCOL_V4 = "pat-19-protocol-v4"  # protocol v4 (PAT-121): v3 + feedback and private root, fixed candidate, A and L
+V4_CANDIDATES = ("qwen3.6-35b-a3b-mlx-4bit",)
+V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_chars": 300, "max_name_chars": 200}
+V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
+V4_KEYS = "correction_feedback, isolation.private_attempt_root, exploration.fixed_candidate and " \
+          "exploration.comparison_task_group"
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
@@ -219,6 +225,15 @@ def load_campaign(path: Path) -> dict[str, Any]:
     if not isinstance(allow, list) or not all(
             isinstance(x, str) and x and not x.startswith("/") and ".." not in Path(x).parts for x in allow):
         raise RunnerError(f"{path}: isolation.allow_read_home needs a list of relative home entries")
+    if data.get("protocol") == PROTOCOL_V4 and data["schema"] != CAMPAIGN_SCHEMA_V2:
+        raise RunnerError(f"{path}: protocol v4 requires the exploration schema {CAMPAIGN_SCHEMA_V2}")
+    if data.get("protocol") != PROTOCOL_V4 and (
+            "correction_feedback" in data or "private_attempt_root" in iso
+            or {"fixed_candidate", "comparison_task_group"} & set(data.get("exploration") or {})):
+        raise RunnerError(f"{path}: {V4_KEYS} are accepted only under protocol {PROTOCOL_V4}")
+    if type(iso.get("private_attempt_root", False)) is not bool:
+        raise RunnerError(f"{path}: isolation.private_attempt_root must be a boolean")
+    _check_correction_feedback(path, data)
     _check_cloud_bash_deny(path, data)
     for cid, cand in data["candidates"].items():
         if not _ID.match(cid) or not isinstance(cand.get("model"), str):
@@ -229,6 +244,21 @@ def load_campaign(path: Path) -> dict[str, Any]:
     if data["schema"] == CAMPAIGN_SCHEMA_V2:
         _check_exploration_config(path, data)
     return data
+
+
+def _check_correction_feedback(path: Path, data: Mapping[str, Any]) -> None:
+    """``correction_feedback`` (PAT-121, absent = off): what a corrector learns after a judge refusal."""
+    spec = data.get("correction_feedback")
+    if spec is None:
+        return
+    if not isinstance(spec, dict) or set(spec) - {"hidden_test_failures", "max_failures", "max_message_chars",
+                                                   "max_name_chars", "note"} or type(spec.get("hidden_test_failures")) is not bool:
+        raise RunnerError(f"{path}: correction_feedback needs a boolean hidden_test_failures (and "
+                          "max_failures, max_message_chars, max_name_chars)")
+    if spec["hidden_test_failures"] and not all(
+            type(spec.get(k)) is int and spec[k] > 0 for k in ("max_failures", "max_message_chars", "max_name_chars")):
+        raise RunnerError(f"{path}: correction_feedback.max_failures, max_message_chars and max_name_chars "
+                          "must be positive integers")
 
 
 def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
@@ -286,6 +316,23 @@ def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
         if data["exploration"].get("one_task_per_launch") is not True:
             raise RunnerError(f"{path}: protocol v3 requires exploration.one_task_per_launch true "
                               "(the model is reloaded before each task)")
+    group, fixed = ((data.get("exploration") or {}).get(k) for k in ("comparison_task_group", "fixed_candidate"))
+    if group not in (None, "screening", "comparison") or (fixed is not None and fixed not in data["candidates"]):
+        raise RunnerError(f"{path}: exploration.comparison_task_group is screening or comparison and "
+                          "exploration.fixed_candidate a declared candidate")
+    if data.get("protocol") == PROTOCOL_V4:  # the v4 coordinates are pinned (a drift would be a v5)
+        if tuple(frozen) != V4_CANDIDATES or tuple(data["candidates"]) != V4_CANDIDATES or fixed != V4_CANDIDATES[0]:
+            raise RunnerError(f"{path}: protocol v4 freezes exactly the candidate {list(V4_CANDIDATES)}")
+        if any(data["bounds"][k] != v for k, v in V3_BOUNDS.items()) or data["bounds"]["max_correction_rounds"] != 2:
+            raise RunnerError(f"{path}: protocol v4 freezes the explorer bounds at {V3_BOUNDS} and 2 corrections")
+        if (data.get("exploration") or {}).get("one_task_per_launch") is not True or group != "screening":
+            raise RunnerError(f"{path}: protocol v4 requires one_task_per_launch true and the six tasks of the "
+                              "v3 screening as the comparison set (comparison_task_group screening)")
+        feedback = data.get("correction_feedback") or {}
+        if {k: feedback.get(k) for k in V4_FEEDBACK} != V4_FEEDBACK or not (
+                data.get("isolation") or {}).get("private_attempt_root"):
+            raise RunnerError(f"{path}: protocol v4 requires correction_feedback {V4_FEEDBACK} and "
+                              "isolation.private_attempt_root true")
     spec = (data.get("exploration") or {}).get("ground_truth")
     if not isinstance(spec, dict) or not all(isinstance(spec.get(k), str) and spec[k] for k in ("file", "sha256")):
         raise RunnerError(f"{path}: exploration.ground_truth needs file and sha256")
@@ -777,12 +824,15 @@ def read_deny_list(*, repo: Path, home: str | Path, state_dir: Path, input_paths
 
 def isolated_environment(driver: Mapping[str, Any], scratch: Path,
                          host_env: Mapping[str, str]) -> dict[str, str]:
-    """Whitelisted environment: no token, no FOUNDRY_*, no agent socket; isolated HOME/XDG for a
-    local arm (a cloud arm keeps the real HOME, the Claude Code OAuth identity: AGENTS.md R6)."""
+    """Whitelisted environment: no token, no agent socket; isolated HOME/XDG for a local arm (a cloud arm
+    keeps the real HOME, the Claude Code OAuth identity: AGENTS.md R6). No ``FOUNDRY_*`` from the host: the
+    campaign loader refuses them in ``env_allow``/``env_set``, and any that slips through is dropped here;
+    the launcher alone sets ``FOUNDRY_DATA``, for the cloud drivers (``execute_driver``)."""
     names = ("PATH", "LANG", "LC_ALL") if driver.get("home", "isolated") == "isolated" else (
         "PATH", "LANG", "LC_ALL", "HOME", "LOGNAME", "USER", "TMPDIR")
     env = {n: host_env[n] for n in names if n in host_env}
-    env.update({n: host_env[n] for n in driver.get("env_allow", []) if n in host_env})
+    env.update({n: host_env[n] for n in driver.get("env_allow", [])
+                if n in host_env and not n.startswith("FOUNDRY_")})
     if driver.get("home", "isolated") == "isolated":
         home = scratch / "home"
         env.update({"HOME": str(home), "TMPDIR": str(scratch / "tmp"), "TERM": "dumb",
@@ -946,8 +996,8 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
     for rel_dir in driver.get("make_dirs") or []:  # e.g. the harness's own configuration directory
         Path(_substitute(rel_dir, values)).mkdir(parents=True, exist_ok=True)
     # PAT-120: the launcher alone decides where Foundry's own state goes (never the config or the host):
-    # a fresh empty directory in the attempt scratch, for cloud arms (a local arm has an isolated HOME).
-    if driver.get("home", "isolated") != "isolated":  # cloud arms only: a local arm keeps its environment
+    # a fresh empty directory in the attempt scratch, for the cloud drivers (a local arm has an isolated HOME).
+    if driver.get("kind") in CLOUD_KINDS:  # by driver kind, not by HOME: a local arm keeps its environment
         foundry_data = scratch / "foundry-data"
         foundry_data.mkdir(parents=True, exist_ok=True)
         if any(foundry_data.iterdir()):
@@ -1680,7 +1730,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                      own_session: tuple[str, str] | None = None,
                      literals: Collection[str] = frozenset(),
                      sandbox_denied: tuple[str, Sequence[str], Sequence[str]] | None = None,
-                     attempt_dir: Path | None = None) -> list[str]:
+                     attempt_dir: Path | None = None, private_root: Path | None = None) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -1712,6 +1762,9 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     readable paths are audited as before. A cloud arm has no such sandbox: never passed for it.
     ``attempt_dir`` (the launcher-managed parent of the bundle and scratch) is allowed itself, so ``ls ..``
     from the bundle is clean; its parent (the work root, which may hold another attempt) is not.
+    ``private_root`` (PAT-121, ``isolation.private_attempt_root``: the parent of ``attempt_dir``, which holds
+    nothing but this attempt) is allowed too, so ``ls ../..`` is clean; the caller then lists the work root
+    among ``sensitive``, so the work root itself and every other attempt under it stay hits.
     Best effort on a command line (a path or a command built at run time, or run by a script, is
     not seen). A non-empty result makes the attempt ``contaminated``. ``~`` shows as the home directory
     in the result. Known limit: a token made only of slashes (``/``, ``//``) is the division operator of
@@ -1729,6 +1782,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     allowed = [bundle_real, Path(os.path.realpath(scratch))]
     if attempt_dir is not None:
         allowed.append(Path(os.path.realpath(attempt_dir)))
+    if private_root is not None:
+        allowed.append(Path(os.path.realpath(private_root)))
     roots = [Path(os.path.realpath(p)) for p in sensitive]
     projects: Path | None = None
     if own_session is not None and own_session[1]:
@@ -1937,6 +1992,12 @@ class Runner:
         # ``work_remains`` is set by such a launch (None when the rule is off or the launch was cut)
         self.one_task = bool((campaign.get("exploration") or {}).get("one_task_per_launch")) and self.exploring
         self.work_remains: bool | None = None
+        # protocol v4 (PAT-121), all off when the keys are absent: the hidden-test feedback of a refusal, a
+        # private parent directory per attempt, and a candidate fixed by the protocol (no screening)
+        feedback = campaign.get("correction_feedback") or {}
+        self.feedback_spec = feedback if feedback.get("hidden_test_failures") else None
+        self.private_root = bool((campaign.get("isolation") or {}).get("private_attempt_root"))
+        self.fixed_candidate = (campaign.get("exploration") or {}).get("fixed_candidate")
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
         self.dedicated: dict[str, Any] | None = None  # observed values of the last dedicated-machine check
         self.truths: dict[Any, dict[str, Any]] = {}  # localization ground truth of each task, by PR
@@ -2107,6 +2168,8 @@ class Runner:
         sensitive = read_deny_list(
             repo=self.repo, home=home, state_dir=self.state_dir, input_paths=self.input_paths,
             kind="local_harness", isolation=(self.campaign.get("isolation") or {}).get("deny_read_home"))
+        if self.private_root:  # the work root holds the other attempts: all of it but this root is off limits
+            sensitive.append(self.work_root)
         isolated = driver.get("home", "isolated") == "isolated"
         own = None
         if session_id and not isolated:
@@ -2119,7 +2182,8 @@ class Runner:
         return audit_transcript(stream_log, bundle=bundle, scratch=scratch, sensitive=sensitive, home=home,
                                 arm_home=str(scratch / "home") if isolated else None, own_session=own,
                                 literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled,
-                                attempt_dir=bundle.parent)  # ``_bundle`` builds <attempt dir>/bundle
+                                attempt_dir=bundle.parent,  # ``_bundle`` builds <attempt dir>/bundle
+                                private_root=bundle.parent.parent if self.private_root else None)
 
     def _home(self) -> str:
         """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""
@@ -2139,7 +2203,9 @@ class Runner:
         for every arm; ``statement_extra`` (protocol v2: an exploration report) follows the footer and
         is part of the committed base, like the footer. The patch (a previous attempt) is applied to the
         index so that ``git diff HEAD`` shows every change, new files included."""
-        attempt_dir = self.work_root / (name or self._attempt_name(task, label))
+        name = name or self._attempt_name(task, label)
+        # PAT-121: with a private root the parent of the attempt holds this attempt and nothing else
+        attempt_dir = self.work_root / (f"private-{name}" if self.private_root else ".") / name
         bundle = lfc.build_bundle(self.repo, task, attempt_dir / "bundle")
         try:
             statement = bundle / "TASK.md"
@@ -2158,7 +2224,7 @@ class Runner:
             self.guards.pop(bundle, None)
             self.literals.pop(bundle, None)
             lfc.remove_bundle(bundle)
-            shutil.rmtree(attempt_dir, ignore_errors=True)
+            self._remove_attempt(attempt_dir)
             raise
         self.handed.add(bundle)
         return bundle, attempt_dir
@@ -2167,7 +2233,10 @@ class Runner:
         self.guards.pop(bundle, None)
         self.literals.pop(bundle, None)
         lfc.remove_bundle(bundle)
-        shutil.rmtree(attempt_dir, ignore_errors=True)
+        self._remove_attempt(attempt_dir)
+
+    def _remove_attempt(self, attempt_dir: Path) -> None:
+        shutil.rmtree(attempt_dir.parent if self.private_root else attempt_dir, ignore_errors=True)
 
     def _patch_of(self, bundle: Path) -> bytes:
         """The candidate's change against the ROOT commit recorded at construction (a candidate
@@ -2194,7 +2263,7 @@ class Runner:
         (``candidate_fault``), never a void attempt. Any other ``OSError`` (the launcher's environment)
         propagates and leaves the attempt void."""
         try:
-            return lfc.judge(self.repo, task, bundle)
+            return lfc.judge(self.repo, task, bundle, **({"failures": True} if self.feedback_spec else {}))
         except OSError as exc:
             real = Path(os.path.realpath(bundle))
             name = Path(os.path.realpath(exc.filename)) if isinstance(exc.filename, str) else None
@@ -2460,6 +2529,7 @@ class Runner:
         records: list[dict[str, Any]] = []
         patch: bytes | None = None
         feedback: str | None = None
+        told: dict[str, Any] | None = None  # protocol v4: counters of what the corrector of this round was told
         prior = [r for r in self.prior_records if r.get("record_type") == "attempt"
                  and (r["path"], r["task"]["pr"], r["task"].get("set"), r.get("segment")) ==
                  (path, task["pr"], task_set, segment)]
@@ -2495,6 +2565,7 @@ class Runner:
                        if state.get("contamination") else {}),
                     **({"review_excluded": state["review_excluded"]} if state.get("review_excluded")
                        else {}),
+                    **({"feedback": told} if told else {}),
                     **({"replay_of": again} if again else {})}))
 
             try:
@@ -2559,11 +2630,14 @@ class Runner:
             outcome = state["outcome"]
             if outcome in ("accepted", "review_unreadable", "contaminated"):
                 break
+            told = (_feedback_counters(verdict, self.feedback_spec)
+                    if self.feedback_spec and outcome != "review_block" else None)
             feedback = (findings if outcome == "review_block" else
                         "The mechanical acceptance check refused the change: "
                         f"{verdict.get('note') or 'tests failing'} "
                         f"(passed {verdict['passed']}, failed {verdict['failed']}, "
-                        f"errors {verdict['errors']}).")
+                        f"errors {verdict['errors']})."
+                        + (_failure_feedback(verdict, self.feedback_spec) if self.feedback_spec else ""))
         return records
 
     # ---- path C
@@ -2802,6 +2876,8 @@ class Runner:
         """Local read-only explorations only (candidate x task) judged on localization: no cloud, ever.
         The machine preflight, dedicated-machine admission included, is re-run before every task."""
         out: list[dict[str, Any]] = []
+        if self.fixed_candidate is not None:
+            raise RunnerError("this campaign fixes its candidate (exploration.fixed_candidate): no screening")
         self._check_harness(driver_id)  # an unresolvable harness executable costs nothing
         with self._guarded():
             pending = [(c, t) for c in candidate_ids for t in tasks]
@@ -2820,6 +2896,26 @@ class Runner:
             if self.one_task and self.work_remains is None:
                 self.work_remains = False  # nothing was left to play
         return out
+
+    def _report_for_arm(self, report: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Protocol v4 (private attempt roots): the free text of an explorer's report may cite an absolute path
+        of the explorer's own (discarded) bundle. Arm L would read it in its statement and the audit, which
+        treats the work root as sensitive, would flag the arm (arm A has no report). The resolved spelling of the
+        work root (the only one the launcher hands out) is therefore replaced: an explorer bundle path by the
+        bundle-relative path, any other path under the work root by ``<work-root>``. Unchanged (the very same
+        report) when the private root is off: the v1 to v3 rendering is byte for byte what it was."""
+        if not self.private_root:
+            return report
+        spellings = sorted({str(self.work_root), os.path.realpath(self.work_root)}, key=len, reverse=True)
+        root = "|".join(re.escape(x) for x in spellings)
+        bundle = re.compile(rf"(?:{root})/private-[^/\s]+/[^/\s]+/bundle(/)?")
+        work = re.compile(root)
+
+        def mask(text: str) -> str:
+            return work.sub("<work-root>", bundle.sub(lambda m: "" if m.group(1) else ".", text))
+
+        return {**report, "files": [mask(f) for f in report["files"]], "rationale": mask(report["rationale"]),
+                "functions": [{**f, "file": mask(f["file"]), "name": mask(f["name"])} for f in report["functions"]]}
 
     def _explore_step_local(self, task: Mapping[str, Any], candidate_id: str, driver_id: str
                             ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, bool]:
@@ -2940,6 +3036,9 @@ class Runner:
         start-of-run preflight is ledgered ``phase: "start"``; the one right before a local exploration is
         not run again when this launcher wrote nothing to the ledger since (it would be the same check twice
         in a row, and two preflights with nothing between them read as a launcher killed in between)."""
+        if self.campaign.get("protocol") == PROTOCOL_V4 and not set(arms) <= set(V4_ARMS):
+            raise RunnerError(f"protocol v4 has arms {list(V4_ARMS)} only (no Haiku arm): refused before any "
+                              f"claim or spend, got {list(arms)}")
         out: list[dict[str, Any]] = []
         limits = self.campaign["exploration"]["report_render_limits"]
         checked: int | None = None  # ledger position right after the start-of-run preflight
@@ -2966,7 +3065,7 @@ class Runner:
                     out += explored
                     if not skip:
                         out += self.cloud_path(task, arm, "comparison", statement_extra=(
-                            lfe.render_report_section(report, limits) if report else ""))
+                            lfe.render_report_section(self._report_for_arm(report), limits) if report else ""))
                 if self.one_task and len(out) > played:  # v3: one task per launch (reload between launches)
                     # conservative: a later task with an arm that has no record yet may still have work; a
                     # launch that then plays nothing says "no", so the operator loop always ends
@@ -3103,7 +3202,13 @@ class Runner:
         screening results are those of THIS campaign id (same state directory and file). When there are
         none, a comparison of a local candidate (C or N) is refused, unless ``screening_campaign`` names
         another campaign id whose results (read-only, same campaign config, same dry-run nature) hold a
-        completed screening that selected this candidate."""
+        completed screening that selected this candidate. A campaign that fixes its candidate
+        (``exploration.fixed_candidate``, protocol v4) has no screening: only that candidate is accepted."""
+        if self.fixed_candidate is not None:
+            if candidate_id != self.fixed_candidate:
+                raise RunnerError(f"candidate {candidate_id} is not the candidate this campaign fixes "
+                                  f"({self.fixed_candidate})")
+            return
         attempts = [r for r in self.prior_records if r.get("record_type") == "attempt"]
         if not any(r["path"] == self.screen_path for r in attempts):
             if not self.require_screening:
@@ -3356,6 +3461,31 @@ def _fault_verdict(fault: BaseException) -> dict[str, Any]:
             "note": f"candidate_fault: {fault}"[:200]}
 
 
+def _failure_feedback(verdict: Mapping[str, Any], spec: Mapping[str, Any]) -> str:
+    """What a corrector learns of a judge refusal (PAT-121, same text for every arm): the names of the
+    failing or erroring hidden tests, at most ``max_failures``, each name cut to ``max_name_chars`` and
+    each message to ``max_message_chars``. Never a test's source code (the module and name are visible). Empty when the judge gave no list."""
+    failures = verdict.get("failures") or []
+    if not failures:
+        return ""
+    shown = failures[:spec["max_failures"]]
+    lines = ["", "", f"Failing hidden tests ({len(shown)} shown of {len(failures)}):"]
+    for item in shown:
+        message = " ".join(str(item.get("message", "")).split())[:spec["max_message_chars"]]
+        name = str(item["name"])[:spec["max_name_chars"]]  # a parametrized id can carry test data
+        lines.append(f"- {name}: {message}" if message else f"- {name}")
+    return "\n".join(lines)
+
+
+def _feedback_counters(verdict: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, Any]:
+    """What a corrector was told after a judge refusal, as counters only (never a message): the tests shown,
+    the failing tests in total and whether a collection failure was among them."""
+    failures = verdict.get("failures") or []
+    return {"failing_shown": min(len(failures), spec["max_failures"]), "failing_total": len(failures),
+            "collection_failure": any(str(f.get("message", "")).startswith("collection failure")
+                                      for f in failures)}
+
+
 def _judge_summary(verdict: Mapping[str, Any]) -> dict[str, Any]:
     return {k: verdict[k] for k in ("verdict", "passed", "failed", "errors", "skipped", "note")}
 
@@ -3521,15 +3651,28 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                        h["attempt"]) not in counted})
     comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
     if exploring:
-        out["exploration_screening"] = _report_exploration_screening(rules["exploration_screening"],
-                                                                     attempts, killed, ledger)
-        out["exploration_screening"]["warnings"] = [h["warning"] for h in open_holes
-                                                    if h["mode"] == "screen_exploration"]
+        fixed = (campaign.get("exploration") or {}).get("fixed_candidate")
+        if fixed is not None:  # protocol v4: no screening, the candidate is fixed by the protocol
+            out["exploration_screening"] = {"state": "no_screening", "selected": fixed,
+                                            "reason": "no screening: candidate fixed by the protocol"}
+        else:
+            out["exploration_screening"] = _report_exploration_screening(rules["exploration_screening"],
+                                                                         attempts, killed, ledger)
+            out["exploration_screening"]["warnings"] = [h["warning"] for h in open_holes
+                                                        if h["mode"] == "screen_exploration"]
         out["exploration_comparison"] = _report_exploration_comparison(
             rules["exploration_comparison"], comparison, stops, bool(unknown_work),
             [h["warning"] for h in open_holes if h["mode"] == "compare_exploration"])
-        out["exploration_comparison"]["screening_selected"] = _check_compared_explorer(
-            out["exploration_screening"], attempts, comparison)
+        if fixed is not None:
+            compared = {(r.get("local") or {}).get("candidate") for r in comparison if r["path"] == "L"}
+            compared.discard(None)
+            if compared - {fixed}:
+                raise RunnerError(f"the compared candidate(s) {sorted(compared)} are not the one the "
+                                  f"protocol fixes ({fixed})")
+            out["exploration_comparison"]["screening_selected"] = f"fixed_by_protocol:{fixed}"
+        else:
+            out["exploration_comparison"]["screening_selected"] = _check_compared_explorer(
+                out["exploration_screening"], attempts, comparison)
         return out
     out["screening"] = _report_screening(rules["screening"], attempts, killed)
     out["screening"]["warnings"] = [h["warning"] for h in open_holes if h["mode"] == "screen"]
@@ -4004,7 +4147,9 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                                choices=("local_harness", "neutral_harness"))
             p.add_argument("--sandbox", action="store_true", help="also sandbox a dry run")
         if name in ("compare", "compare-exploration"):
-            p.add_argument("--paths", default="A,L,E" if name == "compare-exploration" else "A,B,C")
+            p.add_argument("--paths", default=None,
+                           help="arms to play (default A,L,E for compare-exploration, A,B,C for compare; "
+                                "A,L under protocol v4)")
             p.add_argument("--screening-campaign", default=None,
                            help="campaign id of a completed screening (results read-only in --state-dir) "
                                 "when this campaign id holds none; C and N need one or the other")
@@ -4057,7 +4202,9 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         for cid in candidates:
             if cid not in campaign["candidates"]:
                 raise RunnerError(f"unknown candidate {cid}")
-        paths = args.paths.split(",") if mode in CLOUD_MODES else []
+        default = ",".join(V4_ARMS) if campaign.get("protocol") == PROTOCOL_V4 else (
+            "A,L,E" if mode == "compare_exploration" else "A,B,C")
+        paths = (default if args.paths is None else args.paths).split(",") if mode in CLOUD_MODES else []
         if not set(paths) <= set(EXPLORE_ARMS if mode == "compare_exploration" else PATHS):
             raise RunnerError(f"unknown path in {args.paths}")
         manifest = json.loads(Path(args.manifest).read_text("utf-8"))
@@ -4083,7 +4230,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         elif mode == "screen_exploration":
             runner.screen_exploration(_tasks(manifest, snapshot, "screening"), candidates)
         elif mode == "compare_exploration":
-            runner.compare_exploration(_tasks(manifest, snapshot, "comparison"), candidates[0], paths)
+            group = campaign["exploration"].get("comparison_task_group", "comparison")  # v4: "screening"
+            runner.compare_exploration(_tasks(manifest, snapshot, group), candidates[0], paths)
         else:
             runner.compare(_tasks(manifest, snapshot, "comparison"), candidates[0], paths, args.harness)
         if runner.stopped and runner.stopped.startswith("cap_reached"):
