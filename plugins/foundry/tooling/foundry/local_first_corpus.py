@@ -678,7 +678,8 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: boo
 
     ``failures=True`` (PAT-121) adds ``failures`` to the verdict: ``[{"name", "message"}]``, one per failing
     or erroring test of the junit report (``name`` is the junit ``classname::name``, ``message`` the junit
-    ``message`` attribute with the candidate path replaced by ``<bundle>``): never the test source code.
+    ``message`` attribute with the candidate path replaced by ``<bundle>`` and the judge's temporary
+    directory by ``<tmp>``): never the test source code (the module and test name are visible).
     Off by default: the verdict is then exactly what it was."""
     candidate = candidate.resolve()
     if inside_developer_checkout(repo, candidate):  # PAT-108 N-B: the judge rewrites the tree

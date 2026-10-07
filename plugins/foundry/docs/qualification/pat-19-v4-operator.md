@@ -11,8 +11,10 @@ pat-19-v4-operator.sh compare qwen3.6-35b-a3b-mlx-4bit <checkout> <runs> <work-r
 - **Le script ne vérifie pas la sauvegarde** (ni son existence ni son contenu) : c'est un préalable de l'opérateur (section ci-dessous). La boucle de rechargement utilise `-y` ; **chaque lancement réel exige l'accord explicite du mainteneur pour charger le modèle, consigné dans le rapport de la campagne** (aucune autorisation permanente n'est supposée).
 - Le script n'a pas été joué pour de vrai (aucun appel modèle ni cloud) ; `lms unload --all` est à vérifier sur la version installée avant l'essai.
 
-## Avant la campagne : sauvegarder l'état Foundry (préalable du protocole)
+## Valeurs du retour au correcteur
 
 Valeurs du retour au correcteur (20 noms, 300 caractères par message, 200 par nom, 2 corrections) : fixées par le coordinateur, confirmées par le mainteneur le 2026-10-07 avant tout essai ; une valeur différente ouvre une v5 ([protocole v4](pat-19-protocol-v4.md), section 3.1).
+
+## Avant la campagne : sauvegarder l'état Foundry (préalable du protocole)
 
 La sauvegarde couvre les **deux** emplacements du registre, à faire **hors du dépôt** (elle contient des secrets : ne la versionner ni la copier dans un dépôt, une note ou la mémoire) : voir [`pat-19-v3-operator.md`](pat-19-v3-operator.md), section « Avant une campagne » (commandes écrites avec `if … ; then cp … ; fi`, sûres sous `set -e`), et ne lancer aucune commande Foundry qui écrit le registre pendant la campagne.

@@ -47,7 +47,7 @@ step = steps[min(i, len(steps) - 1)]
 mode, report = step["mode"], step.get("report")
 def event(kind, **kw):
     print(json.dumps({"type": kind, **kw}), flush=True)
-text = json.dumps(report) if mode in ("final", "file", "draft_then_hang", "draft_then_steps") else "I could not find anything."
+text = json.dumps(report).replace("{workdir}", a.workdir) if mode in ("final", "file", "draft_then_hang", "draft_then_steps") else "I could not find anything."
 if a.init_tools is not None:
     event("system", subtype="init", tools=[t for t in a.init_tools.split(",") if t])
 if mode == "peek":

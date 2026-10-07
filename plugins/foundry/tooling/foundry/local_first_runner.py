@@ -2897,6 +2897,26 @@ class Runner:
                 self.work_remains = False  # nothing was left to play
         return out
 
+    def _report_for_arm(self, report: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Protocol v4 (private attempt roots): the free text of an explorer's report may cite an absolute path
+        of the explorer's own (discarded) bundle. Arm L would read it in its statement and the audit, which
+        treats the work root as sensitive, would flag the arm (arm A has no report). Every spelling of the
+        work root (raw and resolved, longest first) is therefore replaced: an explorer bundle path by the
+        bundle-relative path, any other path under the work root by ``<work-root>``. Unchanged (the very same
+        report) when the private root is off: the v1 to v3 rendering is byte for byte what it was."""
+        if not self.private_root:
+            return report
+        spellings = sorted({str(self.work_root), os.path.realpath(self.work_root)}, key=len, reverse=True)
+        root = "|".join(re.escape(x) for x in spellings)
+        bundle = re.compile(rf"(?:{root})/private-[^/\s]+/[^/\s]+/bundle(/)?")
+        work = re.compile(root)
+
+        def mask(text: str) -> str:
+            return work.sub("<work-root>", bundle.sub(lambda m: "" if m.group(1) else ".", text))
+
+        return {**report, "files": [mask(f) for f in report["files"]], "rationale": mask(report["rationale"]),
+                "functions": [{**f, "file": mask(f["file"]), "name": mask(f["name"])} for f in report["functions"]]}
+
     def _explore_step_local(self, task: Mapping[str, Any], candidate_id: str, driver_id: str
                             ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, bool]:
         """Exploration of arm L: ``(records, report, skip)``; ``skip`` leaves the arm undecided (a
@@ -3045,7 +3065,7 @@ class Runner:
                     out += explored
                     if not skip:
                         out += self.cloud_path(task, arm, "comparison", statement_extra=(
-                            lfe.render_report_section(report, limits) if report else ""))
+                            lfe.render_report_section(self._report_for_arm(report), limits) if report else ""))
                 if self.one_task and len(out) > played:  # v3: one task per launch (reload between launches)
                     # conservative: a later task with an arm that has no record yet may still have work; a
                     # launch that then plays nothing says "no", so the operator loop always ends
@@ -3444,7 +3464,7 @@ def _fault_verdict(fault: BaseException) -> dict[str, Any]:
 def _failure_feedback(verdict: Mapping[str, Any], spec: Mapping[str, Any]) -> str:
     """What a corrector learns of a judge refusal (PAT-121, same text for every arm): the names of the
     failing or erroring hidden tests, at most ``max_failures``, each name cut to ``max_name_chars`` and
-    each message to ``max_message_chars``. Never a test's source code or location. Empty when the judge gave no list."""
+    each message to ``max_message_chars``. Never a test's source code (the module and name are visible). Empty when the judge gave no list."""
     failures = verdict.get("failures") or []
     if not failures:
         return ""

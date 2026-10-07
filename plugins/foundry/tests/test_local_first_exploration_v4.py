@@ -12,7 +12,8 @@ import pytest
 
 from foundry import local_first_corpus as lfc
 from foundry import local_first_runner as lfr
-from test_local_first_exploration_runner import PLAN, make_runner
+from test_local_first_corpus import MOD
+from test_local_first_exploration_runner import GOOD_REPORT, PLAN, make_runner
 from test_local_first_runner import _stream, counts, ledger_kinds, results
 
 QUALIFICATION = Path(__file__).resolve().parents[1] / "docs" / "qualification"
@@ -55,7 +56,10 @@ def test_the_v4_campaign_pins_the_validated_values_and_leaves_v3_alone():
     assert v4["rules"]["exploration_comparison"]["premium_per_accepted_ratio_max"] == 0.85
     assert v4["exploration"]["ground_truth"] == v3["exploration"]["ground_truth"]
     for name in ("local_explorer", "cloud_implementer_current", "cloud_reviewer"):
-        assert v4["drivers"][name] == v3["drivers"][name]
+        def bare(driver):  # the only difference: the wording of the log layout note (three drivers in v3)
+            log = {k: v for k, v in driver.get("session_log", {}).items() if k != "layout_note"}
+            return {**driver, "session_log": log}
+        assert bare(v4["drivers"][name]) == bare(v3["drivers"][name])
     for key in ("frozen_machine", "dedicated_machine", "prompts", "statement_footer", "cloud_bash_deny"):
         assert {k: v for k, v in v4[key].items() if k != "note"} == {
             k: v for k, v in v3[key].items() if k != "note"} if isinstance(v4[key], dict) else v4[key] == v3[key]
@@ -110,7 +114,7 @@ def test_a_loaded_campaign_cannot_forward_or_set_a_foundry_variable(tmp_path):
 
 # ------------------------------------------------------------------ hidden-test feedback to the corrector
 
-def test_the_feedback_text_is_bounded_and_names_tests_never_sources_or_paths():
+def test_the_feedback_text_is_bounded_and_names_tests_never_their_source():
     spec = FEEDBACK["correction_feedback"]
     many = [{"name": f"tests.test_x::test_{n}", "message": "assert 1 == 2 " + "x" * 400 + "\n + where\n 1 = f()"}
             for n in range(25)]
@@ -414,3 +418,39 @@ def test_a_schema_v1_config_cannot_declare_protocol_v4(tmp_path):
     (tmp_path / "c.json").write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(lfr.RunnerError, match="requires the exploration schema"):
         lfr.load_campaign(tmp_path / "c.json")
+
+
+# ----------------------------------------------------------------------- review round 3 (W1)
+
+CITING = {**GOOD_REPORT, "rationale": "see {workdir}/plugins/foundry/tooling/foundry/m.py, in {workdir}"}
+READS_STATEMENT = {**PLAN, "xlocal": [{"mode": "final", "report": CITING}], "implementer": ["show:TASK.md"],
+                   "reviewer": ["PASS"]}
+
+
+def test_a_report_citing_the_explorers_own_bundle_does_not_flag_arm_l_under_a_private_root(tmp_path, monkeypatch):
+    runner, _, plan, tasks = make_runner(tmp_path, "compare_exploration", READS_STATEMENT, campaign_over=PRIVATE)
+    runner.compare_exploration(tasks[:1], "cand-a", ("A", "L"))
+    recs = {r["path"]: r for r in results(runner) if r.get("segment") == "cloud"}
+    assert not recs["L"].get("contaminated") and recs["L"]["outcome"] == "accepted"
+    told = [json.loads(line)["text"] for line in Path(str(plan) + ".texts").read_text("utf-8").splitlines()
+            if json.loads(line)["role"] == "implementer"]
+    statement = told[1]  # the second implementer run is arm L's
+    assert "plugins/foundry/tooling/foundry/m.py, in ." in statement and str(tmp_path / "work") not in statement
+    # without the masking the very same run IS flagged (the test would not prove anything otherwise)
+    other, _, _, tasks2 = make_runner(_sub(tmp_path, "unmasked"), "compare_exploration", READS_STATEMENT,
+                                      campaign_over=PRIVATE)
+    monkeypatch.setattr(lfr.Runner, "_report_for_arm", lambda self, report: report)
+    other.compare_exploration(tasks2[:1], "cand-a", ("L",))
+    flagged = [r for r in results(other) if r.get("segment") == "cloud"][0]
+    assert flagged["outcome"] == "contaminated"
+
+
+def test_the_report_rendering_is_untouched_without_a_private_root(tmp_path):
+    runner, _, _, _ = make_runner(tmp_path, "compare_exploration", PLAN)
+    report = {**GOOD_REPORT, "rationale": f"see {tmp_path}/work/attempt-x/bundle/m.py"}
+    assert runner._report_for_arm(report) is report  # the v1 to v3 rendering is byte for byte what it was
+    private, _, _, _ = make_runner(_sub(tmp_path, "p"), "compare_exploration", PLAN, campaign_over=PRIVATE)
+    work = str(private.work_root)
+    masked = private._report_for_arm({**GOOD_REPORT, "functions": [{"file": MOD, "name": "add"}],
+                                      "rationale": f"{work}/private-a/a/bundle/x.py {work}/private-a/a/bundle {work}"})
+    assert masked["rationale"] == "x.py . <work-root>" and masked["functions"] == [{"file": MOD, "name": "add"}]
