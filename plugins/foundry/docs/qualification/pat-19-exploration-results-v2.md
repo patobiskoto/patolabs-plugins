@@ -2,7 +2,7 @@
 
 PAT-115. Cadre : PAT-ADR-0015 (exploration jugée seulement par son effet aval, tamis local sans cloud à règle écrite
 d'avance, trois verdicts séparés, aucune promotion, une donnée absente n'est jamais zéro hors de ce filtre),
-FOUNDRY-ADR-0019 (comparaison bornée, règle fixée d'avance, arrêt séquentiel). Protocole gelé :
+FOUNDRY-ADR-0019 (comparaison bornée, règle fixée d'avance ; la v2 n'a pas d'arrêt séquentiel, l'arrêt ci-dessous est la règle du tamis de la section 5). Protocole gelé :
 [`pat-19-protocol-v2.md`](pat-19-protocol-v2.md) (section 5) ; configuration : `pat-19-campaign-v2.json` ; vérité terrain :
 `pat-19-exploration-truth-v2.json` ; lanceur : [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md) (section « Protocole v2 ») ;
 modèle de ce document : [`pat-19-screening-results-v1.md`](pat-19-screening-results-v1.md). Aucune règle ni coordonnée du
@@ -18,10 +18,15 @@ seule). Le rapport mécanique est complet et conclut `no_candidate_meets_precisi
 `campaign_conclusion` `keep_cloud`. La comparaison (bras A / L / E) n'a pas été lancée ; aucun quota cloud n'a été
 dépensé (`cloud_executions` = 0 sur les 30 résultats, enveloppe sans cloud).
 
-Observation, pas un résultat sur le rôle : sur 30 explorations, **24 n'ont pas rendu de rapport exploitable dans les bornes**
-(15 coupées par le temps, 8 par les étapes, 1 rapport invalide) ; sur les 4 qui ont rendu un rapport non vide, les 4 ont nommé le bon
-fichier. La limite observée est de conclure en 10 min et 25 étapes, pas la précision de localisation quand un rapport
-existe. Par PAT-ADR-0015, une exploration ne se juge que par son effet aval, qui n'a pas été mesuré.
+Décompte des 30 tentatives (observation, pas un résultat sur le rôle) : 23 coupées par une borne (15 de temps, 8 d'étapes) ;
+7 ont répondu dans les bornes, dont 1 rapport invalide (clés manquantes), 2 rapports vides (zéro étape) et 4 rapports non
+vides. Les 4 rapports non vides nomment tous le bon fichier, avec un rappel de fonctions de 1,0, 1,0, 1,0 et 0,5. Par
+PAT-ADR-0015, une exploration ne se juge que par son effet aval, qui n'a pas été mesuré.
+
+**Le résultat du dernier candidat (qwen3-coder) est mêlé à une intervention d'opérateur** : il a tourné sur 3 chargements
+(lancements `l05`, `l06`, `l07`) contre 1 pour chacun des quatre autres, ses deux seules réponses à zéro étape suivent chacune
+un rechargement, et ces deux tentatives sont ce qui le sépare du seuil dans le cas hypothétique. Voir « Dernier candidat et
+mémoire de la machine ».
 
 ## Conditions de l'essai
 
@@ -32,9 +37,18 @@ existe. Par PAT-ADR-0015, une exploration ne se juge que par son effet aval, qui
 - Explorateur : `omp --tools=read,grep,glob`, bundle en lecture seule, bornes 10 min et 25 étapes ; un candidat à la fois,
   chargé avec sa `load_command` épinglée.
 - Machine dédiée (condition de la section 8, contrôle refusant) : l'application ChatGPT (environ 3 Gio) a été quittée avant
-  l'essai avec l'accord du mainteneur ; les services d'un autre projet avaient été arrêtés la veille. 32 préflights au
+  l'essai avec l'accord du mainteneur ; les services d'un autre projet avaient été arrêtés la veille. Avant le lancement,
+  le coordinateur a exécuté `preflight --dedicated` avec le premier candidat chargé : ok, 53 % de mémoire libre, plus gros
+  processus étranger OrbStack à 1,5 Gio (observation hors dépôt, absente du registre de cette campagne). 32 préflights au
   registre, 30 verts et **2 refusés**, tous deux pendant le dernier candidat (voir plus bas) ; 7 sessions du lanceur
   (`l01` à `l07`). Temps total des tentatives : 12 729,5 s (somme des `wall_seconds`).
+- Chargements de modèles : autorisés en bloc par le mainteneur le 2026-10-06 pour toute la campagne v2, et non confirmés un
+  par un (écart à « chaque chargement confirmé »). 7 chargements dans les lancements de cette campagne (5 initiaux et 2
+  rechargements de qwen3-coder), plus celui du préflight avant lancement.
+- Consigne de la section 11 « inspecter le premier enregistrement avant de continuer » : non respectée à la lettre. Le
+  coordinateur a inspecté le premier enregistrement alors que la campagne continuait déjà (le registre montre la deuxième
+  tentative démarrant 0,42 s après la fin de la première), pas avant. L'inspection a trouvé un enregistrement sain (audit
+  exécuté, aucune contamination, bundle inchangé).
 - Moteurs : Muse Glimmer est un GGUF servi par llama.cpp, les quatre autres candidats par MLX (variable de plus dans la
   comparaison entre candidats, comme en v1).
 
@@ -77,20 +91,34 @@ sont celles qui ont conclu à temps).
 
 ### Rapports vides de qwen3-coder
 
-Deux tentatives de qwen3-coder (PR 27 et PR 19) sont notées (`SCORED`, rappel 0) alors que le modèle a répondu en 5 à 6,5 s,
-sans aucune étape d'outil, par un rapport aux listes vides (`{"files": [], "functions": [], ...}`), sans avoir lu l'énoncé.
-Constat lu dans les flux bruts hors dépôt. Ces deux tentatives sont les **premières de leur lancement**, juste après un
-rechargement du modèle (lancements `l06` et `l07`) ; si le rechargement a influencé ces réponses, c'est inconnu. Elles sont
+Deux tentatives de qwen3-coder (PR 27 et PR 19) sont notées (`SCORED`, rappel 0) alors que le modèle a répondu en 5,2 à 6,5 s,
+avec `steps: 0` et 5 802 tokens d'entrée chacune (vérifiable dans les résultats versés : ce sont les deux seules tentatives
+à zéro étape des 30), par un rapport aux listes vides (`{"files": [], "functions": [], ...}`). Que le modèle ait répondu sans
+avoir lu l'énoncé est lu dans les flux bruts hors dépôt, non vérifiable depuis le dépôt. Ces deux tentatives sont les **premières de leur lancement**, juste après un
+rechargement du modèle (lancements `l06` et `l07`) : 2 sur 2 après un rechargement, contre 0 sur 5 premières tentatives après
+les chargements initiaux. Ce sont ces deux tentatives qui séparent ce candidat du seuil dans le cas hypothétique ci-dessous. Si le rechargement a influencé ces réponses, c'est inconnu. Elles sont
 décidées et jamais rejouées sous la règle gelée.
 
 ## Dernier candidat et mémoire de la machine
 
 Après sa deuxième tâche (fin de `l05`), le préflight de machine dédiée a refusé : `dedicated_machine_free_memory_below_minimum:9<35`
-(9 % de mémoire libre) ; il a refusé de nouveau après trois tâches de plus (`l06`, 17 < 35). Aucun processus étranger n'était en
-cause (les plus gros hors LM Studio : OrbStack, environ 0,9 à 1,1 Gio, Arc, environ 0,3 Gio, sous le seuil de 2 Gio) : c'est la
-croissance mémoire du modèle lui-même ; la mémoire libre est revenue à 87 % une fois le modèle déchargé. Conformément à la
-section 11 du protocole, le coordinateur a libéré la machine (déchargement puis rechargement avec la commande épinglée) et a
-repris sous le même identifiant de campagne (lancements `l05`, `l06`, `l07`). Aucune règle n'a été modifiée.
+(9 % de mémoire libre) ; il a refusé de nouveau après trois tâches de plus (`l06`, 17 < 35). Aucun processus étranger de plus
+de 2 Gio n'a été observé (les plus gros hors LM Studio : OrbStack, environ 0,9 à 1,1 Gio, Arc, environ 0,3 Gio). **La cause
+n'est pas établie.** Le registre montre la mémoire résidente de LM Studio qui BAISSE aux deux refus (13 875 -> 8 289 MiB, puis
+17 639 -> 2 562 MiB) alors que la mémoire libre tombe à 9 % puis 17 % : la croissance de la mémoire résidente du modèle ne
+l'explique donc pas ; une mémoire retenue hors de l'ensemble résident (par exemple compressée ou câblée) est plausible, non
+vérifiée. La valeur de 87 % de mémoire libre « une fois le modèle déchargé » a été lue par le coordinateur avec
+`memory_pressure` après le déchargement par le pilote (observation hors dépôt). Séparément, les préflights qui ont suivi les
+rechargements, enregistrés au registre, donnent 87 % de mémoire libre et 17 561 MiB résidents pour LM Studio (`l06`), puis 87 %
+et 17 572 MiB (`l07`).
+
+**Décision du coordinateur, prise en cours de campagne**, après que deux tâches de ce candidat avaient déjà été refusées par
+le préflight : décharger puis recharger le candidat lui-même (commande de chargement épinglée) et reprendre sous le même
+identifiant de campagne (lancements `l05`, `l06`, `l07`). C'est fait **par analogie avec la section 11** (sa clause « Préflight
+refusé » est écrite pour `compare-exploration` et parle de libérer la machine ; pour le tamis, le protocole ne prévoit que la
+relance d'un tamis incomplet, section 5), et non en application de la section 11. Aucun seuil n'a été modifié. Cette décision
+s'ajoute à la liste des décisions du coordinateur dont la validation est demandée au mainteneur. Elle ne change pas le verdict :
+une tentative notée n'est jamais rejouée, et des preuves insuffisantes conservent le cloud.
 
 Cas hypothétique, **non un résultat** : si les deux rapports vides avaient été parfaits (rappel 1,0 chacun), ce candidat aurait
 atteint exactement 0,5 de rappel moyen de fonctions et 0,5 de précision moyenne de fichiers ((1+1+1)/6), seuil inclus. Ce calcul
@@ -113,16 +141,20 @@ corpus) sont celles de l'en-tête de `pat-19-protocol-v2.md`. Parmi elles, ont �
   rejeu (0, `replays` vide), égalité (aucune), `keep_cloud_insufficient_evidence` (le tamis est complet).
 
 **La validation explicite par le mainteneur des règles fixées par le coordinateur est DEMANDÉE par le présent rapport**
-(l'en-tête du protocole la déclare « pas encore validée »).
+(l'en-tête du protocole la déclare « pas encore validée »), **ainsi que celle de la décision d'opérateur prise en cours de
+campagne** (déchargement et rechargement de qwen3-coder, section « Dernier candidat et mémoire de la machine »).
 
 ## Les trois verdicts (PAT-ADR-0015)
 
 - **Compatibilité** : les cinq candidats exécutent l'explorateur en lecture seule sous le harnais réel (outils `read`, `grep`
-  et `glob` seuls utilisés dans les 30 flux, `bundle_modified` faux sur les 30 enregistrements, aucune contamination,
+  et `glob` seuls utilisés, constat lu dans les 30 flux bruts hors dépôt ; `bundle_modified` faux sur les 30 enregistrements, aucune contamination,
   `ended_by_external_signal` faux sur les 30). Critère machine (supplément de swap par tentative sous 10 Gio) : supplément
-  maximal **+1094,7 MiB (1,07 Gio)**, qwen3-coder, PR 83 (suivi de +919,4 MiB, PR 48) ; **rempli**. Pics de swap par candidat
-  (`peak_swap_used_mib`) : 4412,9 (muse), 6419,0 (qwen3-coder), 4436,9 (qwen3.6), 4452,9 (qwen3.8 4 bits), 4460,9 (qwen3.8 6 bits)
-  MiB, contre 25 à 30 Gio en v1 sur une machine non dédiée.
+  maximal **+1094,7 MiB (1,07 Gio)**, qwen3-coder, PR 83 (suivi de +919,4 MiB, PR 48) ; **rempli** sur ce critère préenregistré
+  (swap, signal externe). En revanche qwen3-coder a fait descendre la mémoire libre à 9 % et n'a terminé ses 6 tâches qu'avec
+  deux rechargements. `peak_swap_used_mib` du rapport est le maximum des relevés « après » : 4412,9 (muse), 6419,0
+  (qwen3-coder), 4436,9 (qwen3.6), 4452,9 (qwen3.8 4 bits), 4460,9 (qwen3.8 6 bits) MiB. Le vrai maximum sur les relevés avant et
+  après diffère pour deux candidats : 4452,9 pour qwen3.6 (relevé avant) et 4468,9 pour qwen3.8 6 bits (4468,88 avant, 4460,88
+  après) ; les trois autres sont identiques. Ordre de grandeur en v1 sur une machine non dédiée : 25 à 30 Gio.
 - **Qualité** (filtre du tamis) : **échec au seuil** : meilleur rappel moyen de fonctions 0,25 < 0,5 et aucun candidat avec une
   précision moyenne de fichiers >= 0,5. Comparaison à une référence cloud : non mesurée (aucune référence cloud sur ces
   6 tâches).
@@ -138,7 +170,8 @@ Aucune promotion. Conséquence par la règle gelée : « conserver le cloud » p
   bornes de 10 min et 25 étapes sont gelées en v2, les changer ouvre une v3.
 - **Origine des échecs** (modèle, harnais, moteur, contexte) inconnue ; les paramètres d'échantillonnage effectifs ne sont pas
   enregistrés.
-- **Effet du rechargement** sur les deux rapports vides de qwen3-coder : inconnu.
+- **Effet du rechargement** sur les deux rapports vides de qwen3-coder : inconnu (2 sur 2 après un rechargement, 0 sur 5 après
+  un chargement initial ; l'échantillon ne permet pas de conclure).
 - **Aucune référence d'explorateur cloud** sur ces 6 tâches : leur difficulté n'est pas calibrée.
 - 6 tâches ne constituent pas une preuve générale ; la machine, les moteurs (MLX et GGUF) et l'ordre des candidats sont des
   variables non contrôlées.
@@ -150,9 +183,11 @@ Aucune promotion. Conséquence par la règle gelée : « conserver le cloud » p
 Dans [`pat-19-runs/xscreen-1/`](pat-19-runs/xscreen-1/), copiées telles quelles : `ledger-pat-19-xscreen-1.jsonl`,
 `results-pat-19-xscreen-1.jsonl`, `report-pat-19-xscreen-1.json`, `envelope-pat-19-xscreen-1.json`, `streams-manifest.json`.
 Les 30 flux d'événements omp bruts ne sont pas versionnés (environ 48 Mo, ils embarquent des contenus du dépôt) ; ils restent
-sur la machine du mainteneur et `streams-manifest.json` donne leur sha256 et leur taille. Les rapports vides de qwen3-coder
-et l'usage des seuls outils `read`, `grep`, `glob` ont été lus dans ces flux bruts hors dépôt. Tous les chiffres de ce document
-ont été recalculés à partir des fichiers versés.
+sur la machine du mainteneur et `streams-manifest.json` donne leur sha256 et leur taille. Deux constats viennent de ces flux bruts hors
+dépôt et ne sont pas vérifiables depuis le dépôt : « seuls `read`, `grep`, `glob` utilisés dans les 30 flux » et « le modèle a
+répondu sans avoir lu l'énoncé » (seul `steps: 0` est dans les résultats versés). Les autres chiffres de ce document ont été
+recalculés à partir des fichiers versés, hors les observations hors dépôt signalées dans le texte (préflight avant lancement,
+87 % lu par `memory_pressure`, accord du mainteneur, arrêt des services d'un autre projet).
 
 ## Statut documentaire (R5)
 
