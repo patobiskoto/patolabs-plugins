@@ -22,4 +22,6 @@ Le lanceur impose maintenant `FOUNDRY_DATA` aux bras et arrête la campagne si l
 cp -Rp "${FOUNDRY_DATA:-$HOME/.config/foundry}" "$HOME/foundry-backup-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
+Pendant qu'une campagne tourne, ne lancer depuis aucun autre terminal une commande Foundry qui écrit le registre (`register`, bascule, etc.) : le lanceur verrait le changement, arrêterait la campagne et marquerait la tentative en cours `contaminated`, jamais rejouée.
+
 Sortie 4 du lanceur : ne rien relancer ; comparer l'empreinte du `registry.json` avec la sauvegarde, restaurer à la main si besoin, puis seulement reprendre.

@@ -130,30 +130,41 @@ class ToolsetRefused(RunnerError):
 
 class FoundryStateChanged(RunnerError):
     """The real Foundry registry changed during a cloud execution (PAT-120). The attempt is not accepted
-    (recorded undecided, never replayed, cost kept) and the campaign stops; carries the fingerprints
-    (never the content) and the contamination audit of the same stream."""
+    (recorded undecided, never replayed; the ledger settles the execution, the record's billing total is
+    null) and the campaign stops; carries the fingerprints (never the content) and the contamination
+    audit of the same stream."""
 
-    def __init__(self, before: str, after: str, contamination: Sequence[str] = ()):
-        super().__init__(f"the real Foundry registry changed during a cloud execution "
-                         f"(sha256 {before} -> {after})")
-        self.fingerprints = {"before": before, "after": after}
+    def __init__(self, before: Mapping[str, str], after: Mapping[str, str],
+                 contamination: Sequence[str] = ()):
+        changed = sorted(k for k in after if after[k] != before.get(k))
+        super().__init__("the real Foundry registry changed during a cloud execution "
+                         f"({', '.join(changed)}: " + "; ".join(
+                             f"{k} {before.get(k)} -> {after[k]}" for k in changed) + ")")
+        self.fingerprints = {"before": dict(before), "after": dict(after)}
         self.contamination = list(contamination)
 
 
 STATE_CHANGED_STOP = "foundry_state_changed"  # stop reason; exit code 4 of the launcher
 
 
-def registry_fingerprint(host_env: Mapping[str, str]) -> str:
-    """sha256 of the REAL Foundry ``registry.json`` bytes, or ``"absent"``. The data dir is resolved as
-    ``registry.data_dir`` does: host ``FOUNDRY_DATA`` if set, else ``<HOME>/.config/foundry``. Read-only."""
-    base = host_env.get("FOUNDRY_DATA") or os.path.join(host_env.get("HOME") or os.path.expanduser("~"),
-                                                        ".config", "foundry")
+def _file_fingerprint(path: Path) -> str:
     try:
-        return hashlib.sha256((Path(base) / "registry.json").read_bytes()).hexdigest()
+        return hashlib.sha256(path.read_bytes()).hexdigest()
     except FileNotFoundError:
         return "absent"
     except OSError as exc:  # unreadable is a distinct, comparable state, never a silent "unchanged"
         return f"unreadable:{type(exc).__name__}"
+
+
+def registry_fingerprints(host_env: Mapping[str, str]) -> dict[str, str]:
+    """sha256 of the bytes of the REAL Foundry ``registry.json`` (or ``absent``), read-only, at BOTH
+    places a Foundry process of the host could use: the host's ``FOUNDRY_DATA`` (when it exports one)
+    and ``<HOME>/.config/foundry`` (``registry.data_dir`` falls back to it when the variable is unset)."""
+    home = host_env.get("HOME") or os.path.expanduser("~")
+    places = {"home_config": Path(home) / ".config" / "foundry" / "registry.json"}
+    if host_env.get("FOUNDRY_DATA"):
+        places["host_foundry_data"] = Path(host_env["FOUNDRY_DATA"]) / "registry.json"
+    return {name: _file_fingerprint(path) for name, path in places.items()}
 
 
 class PreflightRefused(RunnerError):
@@ -935,12 +946,13 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
     for rel_dir in driver.get("make_dirs") or []:  # e.g. the harness's own configuration directory
         Path(_substitute(rel_dir, values)).mkdir(parents=True, exist_ok=True)
     # PAT-120: the launcher alone decides where Foundry's own state goes (never the config or the host):
-    # a fresh empty directory in the attempt scratch, for local and cloud arms alike.
-    foundry_data = scratch / "foundry-data"
-    foundry_data.mkdir(parents=True, exist_ok=True)
-    if any(foundry_data.iterdir()):
-        raise RunnerError(f"{foundry_data} is not empty: a Foundry data dir is fresh for each execution")
-    env["FOUNDRY_DATA"] = str(foundry_data)
+    # a fresh empty directory in the attempt scratch, for cloud arms (a local arm has an isolated HOME).
+    if driver.get("home", "isolated") != "isolated":  # cloud arms only: a local arm keeps its environment
+        foundry_data = scratch / "foundry-data"
+        foundry_data.mkdir(parents=True, exist_ok=True)
+        if any(foundry_data.iterdir()):
+            raise RunnerError(f"{foundry_data} is not empty: a Foundry data dir is fresh for each execution")
+        env["FOUNDRY_DATA"] = str(foundry_data)
     argv = [_substitute(a, values) for a in driver["argv"]]
     profile_dir = None
     if sandbox:
@@ -2387,12 +2399,12 @@ class Runner:
                 self.sessions.append(session_id)  # every reserved execution is named by a record
             stream_log = self.state_dir / "streams" / f"{self.envelope['campaign_id']}-{session_id}.jsonl"
             env = os.environ if self.host_env is None else self.host_env
-            fingerprint = registry_fingerprint(env)
+            fingerprint = registry_fingerprints(env)
             execution = execute_driver(
                 driver, values, workdir=bundle, scratch=scratch, stream_log=stream_log,
                 max_seconds=budget, max_steps=None, sandbox=self._sandboxed(driver), deny_read=deny,
                 extra_write=extra, host_env=self.host_env)
-            fingerprint_after = registry_fingerprint(env)
+            fingerprint_after = registry_fingerprints(env)
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
             if reserved:
                 with self._critical():
@@ -2605,6 +2617,10 @@ class Runner:
                     local.update(contaminated=True, accepted=None, outcome="contaminated",
                                  contamination=_contamination(found))
                     local["unknown"]["contaminated"] = "the reviewer's " + _CONTAMINATED[len("the arm's "):]
+                if isinstance(exc, FoundryStateChanged):  # same record as on the cloud path
+                    local.update(contaminated=True, accepted=None, outcome="contaminated",
+                                 foundry_state_changed=exc.fingerprints)
+                    local["unknown"][STATE_CHANGED_STOP] = local["reason"]
                 self._emit(local)
                 raise
         else:

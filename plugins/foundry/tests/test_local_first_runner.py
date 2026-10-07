@@ -116,6 +116,13 @@ if behavior == "dotclaude":  # project settings the reviewer's host would load
 if os.environ.get("FOUNDRY_DATA") is not None or behavior in ("regwrite", "regtouch") or behavior.startswith("regtouch:"):
     with open(a.plan + ".foundry", "a") as handle:  # PAT-120: what the launcher gave this arm
         handle.write(a.role + " " + os.environ.get("FOUNDRY_DATA", "") + "\n")
+if behavior.startswith("regsave:"):  # the REAL foundry.registry code (data_dir, _save) of the tooling
+    sys.path.insert(0, behavior[len("regsave:"):])
+    from foundry import registry
+    with open(a.plan + ".registry-path", "a") as handle:
+        handle.write(registry.path() + "\n")
+    registry._save({"pat120": {}})
+    behavior = "PASS" if a.role == "reviewer" else "fix"
 if behavior == "regwrite":  # a test that writes the registry by Foundry's own data-dir rule
     data = os.environ.get("FOUNDRY_DATA") or os.path.join(os.environ["HOME"], ".config", "foundry")
     os.makedirs(data, exist_ok=True)
@@ -4100,6 +4107,21 @@ def _real_foundry(tmp_path, content='{"real": "registry"}'):
     return {**env, "HOME": str(home)}, data / "registry.json"
 
 
+TOOLING = str(Path(lfr.__file__).resolve().parent.parent)
+
+
+def test_pat120_the_real_registry_code_writes_inside_the_scratch(tmp_path):
+    host, real = _real_foundry(tmp_path)
+    before = real.read_bytes()
+    runner, _, plan, tasks = make_runner(
+        tmp_path, "compare", {**FIX_ALL, "implementer": [f"regsave:{TOOLING}"]}, host_env=host)
+    runner.compare(tasks[:1], "cand-a", ("A",))
+    assert real.read_bytes() == before
+    written = Path(str(plan) + ".registry-path").read_text("utf-8").split()
+    assert len(written) == 1 and written[0].startswith(str(tmp_path / "work"))
+    assert (Path(written[0]).parent / "registry.json").is_file() or not Path(written[0]).parent.exists()
+
+
 def test_pat120_a_cloud_arm_registry_write_lands_in_its_scratch_not_in_the_real_data_dir(tmp_path):
     host, real = _real_foundry(tmp_path)
     before = real.read_bytes()
@@ -4131,22 +4153,71 @@ def test_pat120_the_launcher_sets_foundry_data_over_the_host_and_the_config(tmp_
     data, home = out.read_text("utf-8").split()
     assert data == str(scratch / "foundry-data") and Path(data).is_dir() and not any(Path(data).iterdir())
     assert home == host["HOME"]  # the R6 variables are untouched
-    local = {**driver, "home": "isolated"}
+    local = {**driver, "home": "isolated", "env_set": {}, "env_allow": [],
+             "argv": [sys.executable, "-c", "import os;print('FOUNDRY_DATA' in os.environ)"]}
     lfr.execute_driver(local, {}, workdir=tmp_path, scratch=tmp_path / "s2", stream_log=out, max_seconds=30,
                        max_steps=None, sandbox=False, deny_read=[], host_env=host)
-    assert out.read_text("utf-8").split()[0] == str(tmp_path / "s2" / "foundry-data")  # symmetry
+    assert out.read_text("utf-8").strip() == "False"  # a local arm keeps exactly its previous environment
 
 
-def test_pat120_registry_fingerprint_follows_the_data_dir_rule(tmp_path):
+def test_pat120_registry_fingerprints_watch_both_places(tmp_path):
     home = tmp_path / "h"
-    assert lfr.registry_fingerprint({"HOME": str(home)}) == "absent"
+    assert lfr.registry_fingerprints({"HOME": str(home)}) == {"home_config": "absent"}
     (home / ".config" / "foundry").mkdir(parents=True)
     (home / ".config" / "foundry" / "registry.json").write_bytes(b"abc")
-    assert lfr.registry_fingerprint({"HOME": str(home)}) == hashlib.sha256(b"abc").hexdigest()
     (tmp_path / "d").mkdir()
     (tmp_path / "d" / "registry.json").write_bytes(b"xyz")
-    assert lfr.registry_fingerprint({"HOME": str(home), "FOUNDRY_DATA": str(tmp_path / "d")}) \
-        == hashlib.sha256(b"xyz").hexdigest()
+    assert lfr.registry_fingerprints({"HOME": str(home), "FOUNDRY_DATA": str(tmp_path / "d")}) == {
+        "home_config": hashlib.sha256(b"abc").hexdigest(), "host_foundry_data": hashlib.sha256(b"xyz").hexdigest()}
+
+
+def test_pat120_a_change_of_the_host_foundry_data_registry_also_stops(tmp_path):
+    host, _ = _real_foundry(tmp_path)
+    other = tmp_path / "exported"
+    other.mkdir()
+    (other / "registry.json").write_text("exported", encoding="utf-8")
+    host["FOUNDRY_DATA"] = str(other)
+    runner, _, _, tasks = make_runner(
+        tmp_path, "compare", {**FIX_ALL, "implementer": [f"regtouch:{other / 'registry.json'}"]}, host_env=host)
+    with pytest.raises(lfr.FoundryStateChanged):
+        runner.compare(tasks[:1], "cand-a", ("A",))
+    *_, rec, stop = results(runner)
+    fp = rec["foundry_state_changed"]
+    assert fp["before"]["home_config"] == fp["after"]["home_config"]
+    assert fp["before"]["host_foundry_data"] != fp["after"]["host_foundry_data"]
+
+
+def test_pat120_a_changed_registry_during_the_review_of_a_path_C_local_attempt_is_recorded_undecided(tmp_path):
+    host, real = _real_foundry(tmp_path)
+    runner, _, plan, tasks = make_runner(
+        tmp_path, "compare", {**FIX_ALL, "reviewer": [f"regtouch:{real}"]}, host_env=host)
+    with pytest.raises(lfr.FoundryStateChanged):
+        runner.compare(tasks[:1], "cand-a", ("C",))
+    *_, rec, stop = results(runner)
+    assert stop["reason"] == lfr.STATE_CHANGED_STOP and rec["path"] == "C"
+    assert rec["outcome"] == "contaminated" and rec["accepted"] is None and rec["contaminated"] is True
+    assert set(rec["foundry_state_changed"]) == {"before", "after"} and lfr.STATE_CHANGED_STOP in rec["unknown"]
+    assert counts(plan).get("implementer") is None  # no takeover
+
+
+def test_pat120_main_exits_4_when_the_real_registry_changed(tmp_path, monkeypatch):
+    home = tmp_path / "mainhome"
+    real = home / ".config" / "foundry" / "registry.json"
+    real.parent.mkdir(parents=True)
+    real.write_text("registry", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    repo, snap, _, _ = _make_repo(tmp_path)
+    campaign, _ = fake_campaign(tmp_path, {**FIX_ALL, "implementer": [f"regtouch:{real}"]})
+    (tmp_path / "c.json").write_text(json.dumps(campaign), encoding="utf-8")
+    (tmp_path / "snap.json").write_text(json.dumps(snap), encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(json.dumps({"screening": [{"pr": 1}], "comparison": [{"pr": 1}]}),
+                                            encoding="utf-8")
+    args = ["compare", "--campaign", str(tmp_path / "c.json"), "--dry-run", "--envelope",
+            str(write_envelope(tmp_path)), "--state-dir", str(tmp_path / "state"), "--work-root",
+            str(tmp_path / "work"), "--repo", str(repo), "--snapshot", str(tmp_path / "snap.json"),
+            "--manifest", str(tmp_path / "manifest.json"), "--candidate", "cand-a", "--paths", "A"]
+    assert lfr.main(args, today=TODAY) == 4
+    assert "foundry_state_changed" in (tmp_path / "state" / "results-test-campaign.jsonl").read_text("utf-8")
 
 
 @pytest.mark.parametrize("role", ["implementer", "reviewer"])
@@ -4162,7 +4233,8 @@ def test_pat120_a_changed_real_registry_stops_the_campaign_after_the_execution_s
     *_, rec, stop = results(runner)
     assert stop["record_type"] == "stop" and stop["reason"] == lfr.STATE_CHANGED_STOP
     assert rec["outcome"] == "contaminated" and rec["accepted"] is None  # not accepted, never replayed
-    assert rec["foundry_state_changed"] == {"before": before, "after": after}  # fingerprints, no content
+    assert rec["foundry_state_changed"] == {"before": {"home_config": before},
+                                            "after": {"home_config": after}}  # fingerprints, no content
     assert "overwritten" not in json.dumps(rec) and "foundry_state_changed" in rec["unknown"]
     assert rec["cloud_executions"] >= 1 and "settled" in ledger_kinds(runner)  # settled, cost kept
     if role == "implementer":
