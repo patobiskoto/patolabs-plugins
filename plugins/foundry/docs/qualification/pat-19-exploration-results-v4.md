@@ -16,7 +16,7 @@ et ce qui vient d'un diagnostic indépendant ou d'une observation hors dépôt e
 
 Une campagne, `pat-19-x4compare-1`, le 2026-10-07 (heure locale, UTC+2) : comparaison A (Sonnet seul) contre L (Sonnet avec le
 rapport de l'explorateur local qwen3.6-35b-a3b-mlx-4bit) sur les six tâches du tamis v3 (PR 30, 83, 27, 24, 48, 19), 6
-lancements, 6 chargements du modèle (un avant chaque tâche), **30 exécutions cloud** (plafond 80), **7 004 823 tokens de
+lancements, 6 chargements du modèle (un avant chaque tâche ; 7 en comptant celui du lancement refusé), **30 exécutions cloud** (plafond 80), **7 004 823 tokens de
 facturation premium** (A 4 134 697 ; L 2 870 126).
 
 **Verdict tel que la règle gelée le rend** : décision `inconclusive`, `campaign_conclusion`
@@ -25,7 +25,7 @@ PAT-ADR-0015, des preuves insuffisantes conservent le cloud. Aucune promotion, a
 gain de facture annoncé.
 
 Tâches acceptées : **A 1 sur 6** (PR 27, revue PASS), **L 0 sur 6**. Tâches indécidées (au moins une tentative marquée
-contaminée) : A 4, L 4 ; refusées par le juge à tous les tours : A 1 (PR 19), L 2 (PR 24, PR 19). 8 des 32 enregistrements
+contaminée) : A 4, L 4 ; décidées non acceptées : A 1 (PR 19), L 2 (PR 24, PR 19 ; sur PR 24 le juge a accepté le tour 1 et c'est la revue qui a bloqué). 8 des 32 enregistrements
 sont `contaminated`. Un diagnostic en lecture seule, mené par un agent indépendant (voir « Contamination »), conclut que
 **5 de ces 8 drapeaux sont des erreurs de l'audit** et que **3 sont des drapeaux corrects**. La règle gelée compte les 8
 tels quels ; le verdict ci-dessus n'est pas recalculé « sans les faux drapeaux ».
@@ -94,8 +94,8 @@ moins une tentative de la tâche porte un drapeau de contamination, la tâche n'
 | 48 | tours 0 et 1 refusés (223 / 122), correcteur du tour 2 contaminé | exploration contaminée ; aucun enregistrement d'implémenteur |
 | 19 | refusé aux 3 tours (7 / 2) | refusé aux 3 tours |
 
-Tâches acceptées : **A 1 sur 6, L 0 sur 6**. Tâches indécidées : A 4 (PR 30, 83, 24, 48), L 4 (PR 30, 83, 27, 48). Refusées à
-tous les tours : A 1 (PR 19), L 2 (PR 24, PR 19). **Une seule tâche est décidée dans les deux bras : PR 19, refusée dans les
+Tâches acceptées : **A 1 sur 6, L 0 sur 6**. Tâches indécidées : A 4 (PR 30, 83, 24, 48), L 4 (PR 30, 83, 27, 48). Décidées
+non acceptées : A 1 (PR 19, refusée par le juge aux 3 tours), L 2 (PR 19, refusée par le juge aux 3 tours ; PR 24, acceptée par le juge au tour 1 puis bloquée par la revue). **Une seule tâche est décidée dans les deux bras : PR 19, refusée dans les
 deux** (décompte recalculé). Tentatives acceptées par le juge : A 2 (PR 27 ; PR 24 tour 2, contaminée), L 2 (PR 83 tour 1,
 contaminée ; PR 24 tour 1, revue BLOCK). Sur PR 48, l'exploration contaminée de L est suivie d'aucun enregistrement
 d'implémenteur : lecture du code du rapport (`local_first_runner.py` vers la ligne 4062) : une exploration contaminée n'est pas
@@ -207,11 +207,13 @@ dans les flux bruts locaux, des commandes `find / -iname "*ADR-0012*"` (session 
 - **(B)** `_command_paths` repart du bundle à chaque appel Bash (ligne 1643 : `cwd, out = bundle, []`), alors que Claude Code
   conserve le dossier de travail d'un appel au suivant ;
 - **(déclencheur)** la v4 a rendu la racine de travail sensible (ligne 2172 : `sensitive.append(self.work_root)`) : les deux
-  défauts existaient avant, mais les chemins mal résolus ne tombaient sous aucune racine sensible ;
+  défauts existaient avant ; selon le diagnostic, les chemins mal résolus ne tombaient alors sous aucune racine sensible (lecture
+  non vérifiée pour tous les cas : pour les chemins issus de `_command_paths`, l'audit relève aussi les ancêtres du bundle par un
+  autre chemin de code, lignes 1823-1825, ce qui n'a pas été rejoué sur la v3) ;
 - **(imputation)** une contamination de la session du relecteur marque toute la tentative (les deux cas du 4).
 
-Dit sans détour : le risque résiduel que le protocole v4 énonçait en section 5 (« la racine privée peut ne faire que déplacer le
-problème ») **s'est réalisé**, et, selon le diagnostic, le changement de la v4 qui rend la racine de travail sensible (protocole
+Dit sans détour : le risque résiduel que le protocole v4 énonçait en section 5 (un geste `../../..` depuis un sous-dossier atteint
+encore la racine de travail, devenue sensible, et est encore relevé) **s'est réalisé**, et, selon le diagnostic, le changement de la v4 qui rend la racine de travail sensible (protocole
 §3.2, une mesure sur l'instrument et non une valeur de la règle) est ce qui a transformé deux défauts d'audit préexistants en
 drapeaux. **5 des 8 drapeaux sont des erreurs de l'audit** (cas 3, 4, 5) selon le diagnostic ; la règle gelée les
 compte quand même, et le verdict reste celui qu'elle donne.
@@ -327,6 +329,11 @@ changement du lanceur dans cette PR). De même, `exploration_screening` est `no_
   relecteur), et un seul essai par couple tâche / bras.
 - Six tâches ne sont **pas** une preuve générale ; une seule machine, un seul moteur local (MLX), un seul candidat ; ce résultat
   ne dit rien d'autres familles de tâches ni d'un explorateur cloud économique.
+- **Incident de confinement, distinct de l'audit** : le `find /` du cas 1 a fait parvenir à une session cloud 10 noms de fichiers
+  du dossier personnel du mainteneur (aucun contenu lu, selon le diagnostic). L'audit l'a relevé après coup, il ne l'a pas
+  empêché : les bras cloud tournent sans bac à sable (AGENTS.md R6), risque résiduel connu et accepté par le mainteneur, qui s'est
+  réalisé ici. Le réduire (règle d'outil refusant un parcours hors du bundle, par exemple) demande un ticket propre passant par
+  `foundry:intake`.
 - **Suite possible (non engagée ici)** : réparer l'audit (jetons relatifs qui ignorent un `cd`, dossier de travail réinitialisé
   à chaque appel, imputation au relecteur) et le champ `informative_arms` demande un ticket propre passant par `foundry:intake` ;
   cette PR ne change aucun code du lanceur et ne relance rien.
