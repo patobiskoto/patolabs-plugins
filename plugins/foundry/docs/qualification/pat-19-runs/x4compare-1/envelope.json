@@ -1,0 +1,13 @@
+{
+ "schema": "foundry.local-first-envelope.v1",
+ "campaign_id": "pat-19-x4compare-1",
+ "expires_on": "2026-10-31",
+ "allowed_modes": [
+  "compare_exploration"
+ ],
+ "caps": {
+  "cloud_executions": 80,
+  "premium_tokens": 40000000,
+  "wall_clock_seconds": 100000
+ }
+}

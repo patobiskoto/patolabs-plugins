@@ -1,0 +1,286 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "Not played in v4 (the candidate is fixed, exploration.fixed_candidate; screen-exploration is refused). Kept so that the v2 schema is satisfied and so that the v3 rule stays readable: MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates were the two frozen ones of v3 (in v4 the candidates list holds only qwen3.6-35b-a3b-mlx-4bit, fixed) and the v3 screening was complete only when both had their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Inherited from v2 and v3; kept readable, not applied in v4.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.6-35b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 6,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "arm L is retained only if compatibility AND quality AND economy all pass on the 6 tasks: its acceptance rate >= A's AND its premium tokens per accepted task (explorer included; a Haiku explorer counts as premium, local tokens do not) <= 0.85 x A's, and compatibility (the v1 machine criterion: no external signal, extra swap under extra_swap_gib_max) passes. v4 has no arm E. Local wall time is reported; no time ratio is part of the v2 rule. Rule unchanged from v2 and v3; v4 runs it on the six tasks of the v3 screening."
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "3bc88cf496f9838779adae431e72754615576c276033cc7436c151d3a10b8605",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "1d05c1bf6ed73365db746ebe132dae63b43c4b19ea3f796cde66fdd66c6a71fb"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [
+    {
+      "path": "A",
+      "task": {
+        "issue": "PAT-39",
+        "pr": 30,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 1,
+      "paths": [
+        "/"
+      ],
+      "commands": []
+    },
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-39",
+        "pr": 30,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work4"
+      ],
+      "commands": []
+    },
+    {
+      "path": "A",
+      "task": {
+        "issue": "PAT-101",
+        "pr": 83,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work4/tests/test_agent_routing.py"
+      ],
+      "commands": []
+    },
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-101",
+        "pr": 83,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 1,
+      "paths": [
+        "/private/tmp/pat19-work4/scratch/stderr.log"
+      ],
+      "commands": []
+    },
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-36",
+        "pr": 27,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 2,
+      "paths": [
+        "/private/tmp/pat19-work4/tests/test_linear_tracker.py"
+      ],
+      "commands": []
+    },
+    {
+      "path": "A",
+      "task": {
+        "issue": "PAT-33",
+        "pr": 24,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 2,
+      "paths": [
+        "/private/tmp/pat19-work4/scratch",
+        "/private/tmp/pat19-work4/scratch/foundry-data",
+        "/private/tmp/pat19-work4/scratch/stderr.log"
+      ],
+      "commands": []
+    },
+    {
+      "path": "A",
+      "task": {
+        "issue": "PAT-72",
+        "pr": 48,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 2,
+      "paths": [
+        "/private/tmp/pat19-work4",
+        "/private/tmp/pat19-work4/scratch"
+      ],
+      "commands": []
+    },
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-72",
+        "pr": 48,
+        "set": "comparison"
+      },
+      "candidate": "qwen3.6-35b-a3b-mlx-4bit",
+      "segment": "explore",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
+        "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
+        "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
+        "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md"
+      ],
+      "commands": []
+    }
+  ],
+  "replays": [],
+  "exploration_screening": {
+    "state": "no_screening",
+    "selected": "qwen3.6-35b-a3b-mlx-4bit",
+    "reason": "no screening: candidate fixed by the protocol"
+  },
+  "exploration_comparison": {
+    "arms": {
+      "L": {
+        "tasks_compared": 6,
+        "informative": false,
+        "awaiting_implementer": [],
+        "compatibility": "pass",
+        "quality": "unavailable",
+        "economy": "unavailable",
+        "economy_detail": {
+          "premium_billing_tokens": 2870126,
+          "reference_premium_billing_tokens": 4134697,
+          "accepted": 0,
+          "reference_accepted": 1,
+          "premium_per_accepted": null,
+          "reference_premium_per_accepted": 4134697.0,
+          "ratio_max": 0.85,
+          "ratio": null,
+          "premium_pass": null,
+          "premium_definition": "unweighted sum of the four billing token classes over all models, explorer included (an economy model counts as premium; local tokens do not)",
+          "premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 244,
+              "cached_input_tokens": 2063361,
+              "cache_write_input_tokens": 264011,
+              "output_tokens": 52125,
+              "reasoning_output_tokens": 12011
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 32,
+              "cached_input_tokens": 390889,
+              "cache_write_input_tokens": 80140,
+              "output_tokens": 19324,
+              "reasoning_output_tokens": 5511
+            }
+          },
+          "reference_premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 352,
+              "cached_input_tokens": 3256247,
+              "cache_write_input_tokens": 327146,
+              "output_tokens": 64013,
+              "reasoning_output_tokens": 15184
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 38,
+              "cached_input_tokens": 402809,
+              "cache_write_input_tokens": 65003,
+              "output_tokens": 19089,
+              "reasoning_output_tokens": 6109
+            }
+          },
+          "wall_seconds": 2462.139,
+          "reference_wall_seconds": 1528.582,
+          "local_explorer_wall_seconds": 1196.299
+        },
+        "accepted": 0,
+        "reference_accepted": 1,
+        "explorer_localization": [
+          {
+            "pr": 30,
+            "outcome": null,
+            "verdict": "REFUSED",
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "function_recall": 0.0
+          },
+          {
+            "pr": 83,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 27,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 0.75,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 24,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 0.0
+          },
+          {
+            "pr": 48,
+            "outcome": "contaminated",
+            "verdict": "CONTAMINATED",
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "function_recall": 0.0
+          },
+          {
+            "pr": 19,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 0.5
+          }
+        ]
+      }
+    },
+    "decision": "inconclusive",
+    "recommendation": null,
+    "warnings": [],
+    "informative_arms": [
+      "E"
+    ],
+    "complete": true,
+    "campaign_conclusion": "keep_cloud_insufficient_evidence",
+    "screening_selected": "fixed_by_protocol:qwen3.6-35b-a3b-mlx-4bit"
+  }
+}
