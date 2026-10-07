@@ -39,10 +39,15 @@ class Layout:
         self.sensitive = [self.home / ".config" / "foundry", self.work]
         self.stream = tmp_path / "stream.jsonl"
 
-    def claude(self, *commands):
-        self.stream.write_text("\n".join(json.dumps({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": c}}]}})
-            for i, c in enumerate(commands)) + "\n", encoding="utf-8")
+    def claude(self, *commands, results=None):
+        """A Claude Code stream: each command, then its result (default ``ok``: the command printed no error)."""
+        lines = []
+        for i, c in enumerate(commands):
+            lines.append({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": c}}]}})
+            lines.append({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"t{i}", "content": (results or {}).get(i, "ok")}]}})
+        self.stream.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
         return self
 
     def omp(self, *commands):
@@ -82,12 +87,15 @@ def test_the_directory_of_a_call_is_kept_for_the_next_one_and_reset_when_it_ends
     # A48: call 1 stays in plugins/foundry, call 2 climbs back to the bundle, lists its attempt directory and scratch
     old, new = lay.claude("cd plugins/foundry && ls", "cd ../..; ls ..; ls ../scratch").both()
     assert _shown(old, lay) == ["W", "W/scratch"] and new == []
-    # ``cd ..`` ends in the attempt directory, outside the project: Claude Code resets to the bundle
-    # ("Shell cwd was reset to ..."), so the next relative path starts in the bundle again
-    old, new = lay.claude("cd ..; tail scratch/stderr.log", "cat ../scratch/x").both()
+    # ``cd ..`` ends in the attempt directory, outside the project: Claude Code resets to the bundle and says so in the
+    # result, so the next relative path starts in the bundle again
+    reset = {0: f"Shell cwd was reset to {lay.bundle}"}
+    old, new = lay.claude("cd ..; tail scratch/stderr.log", "cat ../scratch/x", results=reset).both()
     assert new == [] and old == []
     # the reset is real: from the bundle ``../../../x`` is the work root, from the attempt directory it would not be
-    assert _shown(lay.claude("cd ..", "cat ../../../x").audit(R2), lay) == ["W/x"]
+    assert _shown(lay.claude("cd ..", "cat ../../../x", results=reset).audit(R2), lay) == ["W/x"]
+    # without that line the behaviour is not the observed one: both directories are candidates, the stricter one wins
+    assert _shown(lay.claude("cd ..", "cat ../../../x").audit(R2), lay) == [str(lay.tmp.resolve()) + "/x", "W/x"]
 
 
 def test_an_omp_stream_starts_every_call_in_the_bundle(tmp_path):
@@ -104,10 +112,10 @@ def test_the_raw_token_pass_follows_cd_but_still_sees_a_climb_hidden_in_a_word(t
     # an assignment or an option value is read in the walk of the line, in the directory it has there
     for command in ("cd plugins; X=../../../../x; cat $X", "cd plugins; cat --file=../../../../x",
                     "cd plugins; python3 -c \"open('../../../../x')\"", "cd plugins; cat ../../../../x"):
-        assert _shown(lay.claude(command).audit(R2), lay) == ["W/x"], command
+        assert "W/x" in _shown(lay.claude(command).audit(R2), lay), command
 
 
-def test_nothing_is_weakened_the_real_excursions_are_still_flagged(tmp_path):
+def test_the_listed_real_excursions_are_still_flagged_by_revision_2(tmp_path):
     lay = Layout(tmp_path)
     (lay.work / "private-b" / "b" / "bundle" / "x").write_text("t", encoding="utf-8")
     for command in ("ls ../../..",  # the work root, which lists the other attempts
@@ -222,9 +230,24 @@ def test_the_frozen_configurations_do_not_carry_the_key_and_refuse_it(tmp_path):
         config = json.loads((QUALIFICATION / f"pat-19-campaign-v{v}.json").read_text("utf-8"))
         assert "audit_revision" not in (config.get("isolation") or {}), v
         assert lfr.load_campaign(QUALIFICATION / f"pat-19-campaign-v{v}.json")  # as they load today
-        with pytest.raises(lfr.RunnerError, match="audit_revision .* frozen protocol"):
+        with pytest.raises(lfr.RunnerError, match="audit_revision .* after v4"):
             lfr.load_campaign(_config(tmp_path, v, audit_revision=R2))
     assert lfr.FROZEN_PROTOCOLS == tuple(f"pat-19-protocol-v{v}" for v in (1, 2, 3, 4))
+
+
+def test_the_revision_is_gated_by_an_allow_list_of_later_protocols(tmp_path):
+    for protocol in (None, "", "pat-19-protocol-v4x", "pat-19-protocol-v10x", "other", "pat-19-protocol-v0"):
+        path = _config(tmp_path, 2, protocol="x", audit_revision=R2)
+        data = json.loads(path.read_text("utf-8"))
+        if protocol is None:
+            data.pop("protocol")
+        else:
+            data["protocol"] = protocol
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(lfr.RunnerError, match="after v4"):
+            lfr.load_campaign(path)
+    for protocol in ("pat-19-protocol-v5", "pat-19-protocol-v12"):
+        assert lfr.load_campaign(_config(tmp_path, 2, protocol=protocol, audit_revision=R2))
 
 
 def test_a_later_protocol_enables_the_revision_and_only_1_or_2_are_valid(tmp_path):
@@ -359,7 +382,7 @@ class Replay:
     def attempt_dir(self, name):
         return self.work / f"private-{name}" / name
 
-    def cloud(self, pr, session, commands, *, review=None, recorded=None, name=None):
+    def cloud(self, pr, session, commands, *, results=None, review=None, recorded=None, name=None):
         name = name or f"attempt-l01-{pr:04d}-pr{pr}-A-implementer0"
         stream = self.streams / f"cid-{session}.jsonl"
         bundle = self.attempt_dir(name) / "bundle"
@@ -368,6 +391,8 @@ class Replay:
         for i, command in enumerate(commands):
             events.append({"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "id": f"{session}{i}", "name": "Bash", "input": {"command": command}}]}})
+            events.append({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"{session}{i}", "content": (results or {}).get(i, "ok")}]}})
         stream.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
         return session, recorded
 
@@ -402,14 +427,15 @@ def test_the_replay_gives_old_and_new_classification_per_record_offline(tmp_path
     result = rp.run()
     by_pr = {r["pr"]: r for r in result["records"]}
     assert by_pr[1]["classification"] == "flag_removed" and by_pr[1]["new"]["hits"] == []
-    assert by_pr[2]["classification"] == "flag_kept" and by_pr[2]["new"]["hits"] == [work]  # the real directory
+    assert by_pr[2]["classification"] == "flag_kept_changed" and by_pr[2]["new"]["hits"] == [work]  # real directory
     assert by_pr[3]["classification"] == "flag_kept" and by_pr[3]["new"]["hits"] == ["/"]
     assert by_pr[4]["classification"] == "flag_removed" and by_pr[4]["old"]["session"] == "arm"
     assert by_pr[4]["old"]["hits"] == sorted([work, work + "/scratch"]) and by_pr[4]["new"]["hits"] == []
     assert all(by_pr[n]["fidelity"] == "match" for n in range(1, 6))
     assert by_pr[5]["classification"] == "clean"
     assert by_pr[6]["classification"] == "unavailable" and "stream missing" in by_pr[6]["unavailable"]  # never clean
-    assert result["summary"]["classification"] == {"clean": 1, "flag_kept": 2, "flag_removed": 2, "unavailable": 1}
+    assert result["summary"]["classification"] == {"clean": 1, "flag_kept": 1, "flag_kept_changed": 1, "flag_removed": 2,
+                                                   "unavailable": 1}
     assert result["summary"]["flagged_recorded"] == 5 and result["summary"]["flagged_now"] == 2
     assert str(rp.home) not in json.dumps(result)
 
@@ -463,3 +489,198 @@ def test_the_cli_replays_a_finished_campaign_and_never_overwrites_a_result(tmp_p
     assert json.loads(out.read_text("utf-8")) == written
     assert lfr.main([a for a in argv if a != "--out" and a != str(out)]) == 0  # stdout
     assert "replay_limits" in capsys.readouterr().out
+
+
+# ------------------------------------------- B1: the audit never trusts a directory it is not sure of
+
+UNSURE_FORMS = {  # each line really leaves the shell in the bundle (or where the next line starts), so ``../../../x``
+    # below is the work root, while a tracked ``cd`` would put the audit in a deeper directory
+    "subshell": ("(cd plugins/foundry && pytest -q); cat ../../../tests/test_hidden.py", {}),
+    "other attempt": ("(cd plugins && ls); cat ../../../private-b/b/bundle/x", {}),
+    "failed cd then ;": ("cd nope; cat ../../../x", {0: "cd: no such file or directory: nope"}),
+    "failed cd then newline": ("cd nope\ncat ../../../x", {0: "cd: no such file or directory: nope"}),
+    "failed cd, error hidden": ("cd nope 2>/dev/null; cat ../../../x", {}),
+    "false && cd": ("false && cd plugins/foundry; cat ../../../x", {}),
+    "cd || ...": ("cd nope || cat ../../../x", {}),
+    "if then cd": ("if true; then cd plugins/foundry; fi; cat ../../../x", {}),
+    "substitution": ("X=$(cd plugins/foundry && pwd); cat ../../../x", {}),
+    "sh -c": ("bash -c 'cd plugins/foundry'; cat ../../../x", {}),
+    "pipe": ("cd plugins/foundry | cat; cat ../../../x", {}),
+    "background": ("cd plugins/foundry & cat ../../../x", {}),
+    "group": ("{ cd plugins/foundry; }; cat ../../../x", {}),
+    "variable target": ("cd $WHERE; cat ../../../x", {}),
+    "cd -": ("cd plugins/foundry; cd -; cat ../../../x", {}),
+    "pushd": ("pushd plugins/foundry; popd; cat ../../../x", {}),
+}
+
+
+@pytest.mark.parametrize("name", sorted(UNSURE_FORMS))
+def test_a_cd_the_audit_cannot_be_sure_of_never_hides_a_climb(tmp_path, name):
+    lay = Layout(tmp_path)
+    command, results = UNSURE_FORMS[name]
+    hits = lay.claude(command, results=results).audit(R2)
+    assert hits, name  # the false-negative of the first revision-2 draft: a deeper cwd made the climb land inside
+
+
+def test_an_uncertain_cd_is_carried_across_calls_as_candidates_not_as_the_deeper_directory(tmp_path):
+    lay = Layout(tmp_path)
+    assert lay.claude("(cd plugins/foundry && pytest)", "cat ../../../tests/x").audit(R2)
+    assert lay.claude("cd nope", "cat ../../../tests/x", results={0: "cd: no such file or directory: nope"}).audit(R2)
+    # a certain cd (top level, unconditional, no failure in the result) IS carried: that is the repair
+    assert lay.claude("cd plugins/foundry", "cat ../../../tests/x").audit(R2) == []
+
+
+def test_a_heredoc_body_a_shell_runs_starts_in_any_directory_the_line_went_through(tmp_path):
+    lay = Layout(tmp_path)
+    command = "cd ../..; bash <<'E'\ncat ../../x\nE"  # the body runs in the private root: ``../../x`` leaves the work root
+    assert lay.claude(command).audit(R2)
+    assert lay.claude("cd plugins/foundry; bash <<'E'\ncat ../../x\nE").audit(R2) == []  # attempt directory: allowed
+
+
+def test_the_tool_result_decides_the_directory_when_it_says_so_and_a_spoofed_line_only_adds_strictness(tmp_path):
+    lay = Layout(tmp_path)
+    reset = {0: f"Shell cwd was reset to {lay.bundle}"}
+    assert lay.claude("cd plugins/foundry", "cat ../../../x", results=reset).audit(R2)  # root is the shallowest
+    assert lay.claude("cd plugins/foundry", "cat ../../../x").audit(R2) == []
+
+
+# ------------------------------- B1: a real shell as the oracle (property: revision 2 flags a superset)
+
+PROBE = 'probe() { printf "%s\\n" "$PWD/$1" >> "$PROBE_OUT"; }; trap \'pwd -P > "$PWD_OUT"\' EXIT\n'
+_DIRS = ("plugins", "plugins/foundry", "d", "..", "../..", "nope", "plugins/..", ".")
+_ARGS = ("../x", "../../x", "../../../x", "../../../../x", "./y", "plugins/../../x", "../../../private-b/x")
+
+
+def _statement(rng):
+    d, a = rng.choice(_DIRS), rng.choice(_ARGS)
+    return rng.choice([
+        f"cd {d}", f"probe {a}", f"cd {d} && probe {a}", f"cd {d} || probe {a}", f"false && cd {d}", f"true && cd {d}",
+        f"(cd {d}; probe {a})", f"(cd {d})", f"cd {d} | cat", f"cd {d} &", f"if true; then cd {d}; fi",
+        f"X=$(cd {d} && pwd)", f"bash -c 'cd {d}'", f"{{ cd {d}; }}", f"cd {d} 2>/dev/null", f"cd {d}\nprobe {a}",
+        f"probe {a}; cd {d}; probe {a}", "true"])
+
+
+def _oracle(lay, calls):
+    """Run the calls in a real bash from the bundle, the directory kept between calls as Claude Code keeps it, and
+    return (the paths ``probe`` was given, resolved, the result text of each call)."""
+    import os
+    import subprocess as sp
+    cwd, paths, texts = lay.bundle, set(), {}
+    for i, line in enumerate(calls):
+        probe, final = lay.tmp / "probe.out", lay.tmp / "pwd.out"
+        probe.write_text("", encoding="utf-8")
+        final.write_text(str(cwd), encoding="utf-8")
+        run = sp.run(["/bin/bash", "-c", PROBE + line + "\nwait"], cwd=cwd, stdin=sp.DEVNULL, capture_output=True,
+                     text=True, env={"PATH": "/usr/bin:/bin", "PROBE_OUT": str(probe), "PWD_OUT": str(final)})
+        paths |= {os.path.realpath(x) for x in probe.read_text("utf-8").splitlines()}
+        end = Path(os.path.realpath(final.read_text("utf-8").strip()))
+        text = run.stdout + run.stderr
+        if end == lay.bundle.resolve() or lay.bundle.resolve() in end.parents:
+            cwd = end
+        else:
+            cwd = lay.bundle
+            text += f"\nShell cwd was reset to {lay.bundle}"
+        texts[i] = text or "ok"
+    return paths, texts
+
+
+def test_revision_2_flags_a_superset_of_what_a_real_shell_does_outside_the_zone(tmp_path):
+    import os
+    import random
+    lay = Layout(tmp_path)
+    for d in ("plugins/foundry", "d"):
+        (lay.bundle / d).mkdir(parents=True, exist_ok=True)
+    zone = [Path(os.path.realpath(p)) for p in (lay.bundle, lay.scratch, lay.attempt, lay.private)]
+    rng, checked, outside_total = random.Random(123), 0, 0
+    for _ in range(250):
+        calls = ["\n".join(_statement(rng) for _ in range(rng.randint(1, 3))) for _ in range(rng.randint(1, 3))]
+        paths, texts = _oracle(lay, calls)
+        outside = {p for p in paths if not any(Path(p) == z or z in Path(p).parents for z in zone)}
+        hits = set(lay.claude(*calls, results=texts).audit(R2))
+        assert {str(p) for p in outside} <= hits, (calls, sorted(outside), sorted(hits))
+        checked += 1
+        outside_total += bool(outside)
+    assert checked == 250 and outside_total > 20  # the generator does reach outside the zone
+
+
+# --------------------------------------------- B2: a flagged reviewer decides nothing, whatever it said
+
+def _flagged_review(tmp_path, name, verdict):
+    (tmp_path / name).mkdir()
+    runner, _, plan, tasks = make_runner(
+        tmp_path / name, "compare_exploration",
+        {**PLAN, "implementer": ["fix", "fix", "fix"], "reviewer": ["cmd:ls ../../.."]},
+        campaign_over={"isolation": {"private_attempt_root": True, "audit_revision": R2}})
+    real = runner._review
+
+    def review(task, patch, label):  # the real (flagged) review, with the verdict the test wants it to have
+        got = real(task, patch, label)
+        return (verdict, "FINDINGS-FROM-A-FLAGGED-REVIEWER", *got[2:]) if verdict else got
+
+    runner._review = review
+    runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+    return runner, plan
+
+
+@pytest.mark.parametrize("verdict", ["PASS", "BLOCK"])
+def test_a_flagged_reviewer_yields_an_undecided_attempt_stops_the_loop_and_passes_no_findings(tmp_path, verdict):
+    from test_local_first_exploration_v4 import _feedbacks
+    runner, plan = _flagged_review(tmp_path, verdict, verdict)
+    first = [r for r in results(runner) if r["path"] == "A" and r["segment"] == "cloud"]
+    assert [r["attempt"] for r in first] == [0]  # no corrector round followed
+    rec = first[0]
+    assert rec["outcome"] == "review_unreadable" and rec["accepted"] is None and "contaminated" not in rec
+    assert rec["judge"]["verdict"] == "ACCEPTED" and rec["review"]["verdicts"] == [verdict]  # both readable
+    assert rec["review"]["contamination"]["paths"] and rec["unknown"]["review.contaminated"]
+    texts_seen = [str(x) for x in _feedbacks(plan)]
+    assert not any("FINDINGS-FROM-A-FLAGGED-REVIEWER" in x for x in texts_seen)  # nothing flowed to a corrector
+    assert lfr.json.loads(plan.with_name(plan.name + ".count").read_text("utf-8")).get("implementer") == 1
+
+
+def test_an_unflagged_block_still_feeds_the_corrector_under_revision_2(tmp_path):
+    (tmp_path / "u").mkdir()
+    runner, _, plan, tasks = make_runner(
+        tmp_path / "u", "compare_exploration", {**PLAN, "implementer": ["fix"], "reviewer": ["BLOCK", "PASS"]},
+        campaign_over={"isolation": {"private_attempt_root": True, "audit_revision": R2}})
+    runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+    rows = [r for r in results(runner) if r["path"] == "A" and r["segment"] == "cloud"]
+    assert [r["outcome"] for r in rows][:2] == ["review_block", "accepted"]
+
+
+# ------------------------------------------------------ replay classes and the scope measurement
+
+def test_replay_classes_tell_a_changed_kept_flag_and_a_not_found_path_apart(tmp_path):
+    rp = Replay(tmp_path)
+    work = str(rp.work.resolve())
+    rp.cloud(1, "k1", ["ls ../../.."])
+    rp.record("A", 1, ["k1"], [work])  # identical before and after
+    rp.cloud(2, "k2", ["cd plugins", "ls ../../../.."])
+    rp.record("A", 2, ["k2"], [str(rp.work.resolve().parent)])  # kept, with another path
+    # an exploration whose only access is a path that does not exist (the flag-8 shape)
+    name = "attempt-l01-0003-pr3-L-explore-m"
+    bundle = rp.attempt_dir(name) / "bundle"
+    bundle.mkdir(parents=True)
+    typo = str(rp.work / "private-attempt-l01-0003/pr3-typo/bundle/f.md")
+    events = [{"type": "session", "cwd": str(bundle)},
+              {"type": "tool_execution_start", "toolCallId": "c1", "toolName": "grep", "args": {"path": typo}},
+              {"type": "tool_execution_end", "toolCallId": "c1", "toolName": "grep", "isError": True,
+               "result": {"content": [{"type": "text", "text": f"Path not found: {typo}"}]}}]
+    (rp.streams / f"cid-{name}.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    rp.ledger.append({"kind": "attempt_started", "path": "L", "pr": 3, "segment": "explore", "attempt": 0,
+                      "attempt_dir": name})
+    rp.record("L", 3, [], [typo, "tool_result:" + typo], segment="explore")
+    by_pr = {r["pr"]: r for r in rp.run()["records"]}
+    assert by_pr[1]["classification"] == "flag_kept"
+    assert by_pr[2]["classification"] == "flag_kept_changed"
+    assert by_pr[3]["classification"] == "flag_moved_to_not_found" and len(by_pr[3]["new"]["not_found"]) == 1
+
+
+def test_the_scope_measurement_leaves_the_work_root_out_of_the_sensitive_list(tmp_path):
+    rp = Replay(tmp_path)
+    work = str(rp.work.resolve())
+    rp.cloud(1, "w1", ["cd plugins/foundry; grep x ../../../tests/t.py"])  # only the sensitive work root made this a hit
+    rp.record("A", 1, ["w1"], [work + "/tests/t.py"])
+    with_root = rp.run()["records"][0]
+    without = rp.run(work_root_sensitive=False)["records"][0]
+    assert with_root["old"]["hits"] == [work + "/tests/t.py"] and without["old"]["hits"] == []
+    assert without["fidelity"] == "mismatch"  # the recorded flag is no longer reproduced: the measurement says so

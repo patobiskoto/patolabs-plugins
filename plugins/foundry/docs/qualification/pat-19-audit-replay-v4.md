@@ -17,31 +17,45 @@ Il ne lance aucun pilote, aucun modèle, aucun appel cloud ; il lit des fichiers
 ## Ce que montre le rejeu
 
 Fidélité : pour les 32 enregistrements, la révision 1 rejouée retrouve exactement la liste de chemins enregistrée (0 écart).
+La révision 2 est celle de la fin de la revue de PAT-123 : elle ne croit un `cd` que s'il est certain et garde sinon plusieurs
+répertoires candidats (voir le lanceur). Elle est donc **plus prudente** que sa première version, et le rejeu le paie.
 
 | # | Enregistrement | Enregistré | Révision 2 |
 | --- | --- | --- | --- |
 | 1 | A PR 30, correcteur (tour 1) | `/` (`find /`) | **gardé** : excursion réelle |
 | 2 | L PR 30, implémenteur (tour 0) | racine de travail (`find <racine>`) | **gardé** : excursion réelle |
-| 3 | A PR 83, implémenteur (tour 0) | `<racine>/tests/…` (`../../../tests/…` depuis un sous-dossier) | retiré : fichier du bundle du bras |
-| 4 | L PR 83 (tour 1), session du relecteur | `<racine>/scratch/stderr.log` | retiré : dossier de travail réel |
-| 5 | L PR 27, correcteur (tour 2) | `<racine>/tests/…` | retiré : fichier du bundle du bras |
-| 6 | A PR 24 (tour 2), session du relecteur | `<racine>/scratch…` (3 chemins) | retiré : dossier de travail réel |
-| 7 | A PR 48, correcteur (tour 2) | `<racine>` et `<racine>/scratch` (`cd ../..; ls ..; ls ../scratch`) | retiré : dossier de travail hérité du bundle |
-| 8 | L PR 48, exploration locale | 2 chemins et leur écho dans 2 résultats | retiré des lectures ; **2 chemins inexistants** consignés à part (`new.not_found`) |
+| 3 | A PR 83, implémenteur (tour 0) | `<racine>/tests/…` | retiré : le `cd` relatif d'un appel précédent a échoué dans le flux, le dossier gardé est connu |
+| 4 | L PR 83 (tour 1), session du relecteur | `<racine>/scratch/stderr.log` | **ne disparaît pas tel quel** : le chemin d'origine n'est plus relevé, mais la session du relecteur est relevée pour `cd $T/…` (`T=$(mktemp -d)`), cible non résoluble ; classé `flag_moved_to_review` |
+| 5 | L PR 27, correcteur (tour 2) | `<racine>/tests/…` | retiré : `cd` certain d'un appel à l'autre |
+| 6 | A PR 24 (tour 2), session du relecteur | `<racine>/scratch…` (3 chemins) | retiré |
+| 7 | A PR 48, correcteur (tour 2) | `<racine>` et `<racine>/scratch` | retiré : un `cd` raté du flux (visible dans son résultat) laisse le dossier tel qu'il était |
+| 8 | L PR 48, exploration locale | 2 chemins et leur écho dans 2 résultats | plus de lecture ; **2 chemins inexistants** consignés à part ; classé `flag_moved_to_not_found` |
 
-Bilan : 8 drapeaux enregistrés, **2 gardés** (1 et 2), **6 retirés** (3 à 7 : les 5 erreurs de l'audit du diagnostic de PAT-122 ; 8 :
-faute de frappe sans accès). **Aucun drapeau ajouté** sur les 32 enregistrements ; les 24 autres restent propres.
+Bilan honnête : 8 drapeaux enregistrés → **2 gardés** (1 et 2, `flag_kept`), **4 retirés** (3, 5, 6, 7), 1 **déplacé vers une
+autre cause** (4 : plus le chemin d'origine mais un `cd` non résoluble du relecteur) et 1 **déplacé à part** (8, chemins
+inexistants). Des 5 faux drapeaux du diagnostic (3, 4, 5, 6, 7), **4 disparaissent** et 1 (le 4) revient sous une autre forme,
+parce que le flux est ambigu (le relecteur se place dans un répertoire temporaire dont le nom est calculé à l'exécution :
+l'audit ne peut pas savoir où il est). **Un drapeau est ajouté** : A PR 27 (session du relecteur du tour 1), enregistré propre,
+relevé maintenant pour la même raison (`cd $T/…`). Les 23 autres enregistrements restent propres. Sous la règle B2, ces deux
+relecteurs relevés seraient *indécidés* dans une campagne future ; rien n'est recalculé ici. Le coût d'une révision qui ne
+devine pas est là : un relecteur qui travaille dans un répertoire temporaire est relevé tant qu'on ne sait pas modéliser
+`mktemp` (suite possible, à passer par `foundry:intake`).
+
+Mesure de ce que le changement de la v4 explique ([`pat-19-audit-replay-v4-scope.json`](pat-19-audit-replay-v4-scope.json),
+même rejeu avec `--work-root-not-sensitive`, révision 1 inchangée) : sans la racine de travail dans la liste sensible, la
+révision 1 ne relève plus A PR 83, L PR 83, L PR 27 ni L PR 48 (4 enregistrements), relève encore `<racine>` seule pour A PR 48
+(la partie `<racine>/scratch` disparaît) et relève toujours A PR 24 (3 chemins), A PR 30 et L PR 30. Les fidélités y sont
+« mismatch » par construction (l'enregistré, lui, avait la racine sensible).
 
 Le drapeau 8 : le modèle local a tapé un chemin faux d'un caractère, l'outil a répondu `Path not found: <ce chemin>` (erreur) et
-rien n'a été lu. Il n'est pas compté comme une lecture (ce n'en est pas une, comme une tentative bloquée par le bac à sable n'en
-est pas une) mais il n'est pas non plus effacé : il est consigné à part, dans `new.not_found` du rejeu et dans `audit.not_found` de l'enregistrement
-d'une campagne future, pour qu'un lecteur voie que le bras a nommé un chemin de la zone interdite. La reconnaissance est étroite
-(voir le lanceur) : un autre texte d'erreur, un résultat qui nomme un autre chemin, une commande Bash qui nomme le chemin, ou un
-même chemin lu ensuite avec succès restent des drapeaux.
+rien n'a été lu. Il n'est pas compté comme une lecture mais n'est pas effacé : il est consigné à part (`new.not_found` du rejeu,
+`audit.not_found` de l'enregistrement d'une campagne future) et a sa classe. `not_found` dit « le bras a nommé ce chemin », non
+« le bras a visé la zone interdite » : trois chemins inexistants de l'exploration de L PR 83 sont dans sa propre racine privée.
+La reconnaissance est étroite (voir le lanceur).
 
-L'imputation au relecteur (drapeaux 4 et 6) : sur la v4, les deux sont des erreurs de résolution de chemin, que la réparation du
-dossier de travail suffit à retirer ; la règle « une session de relecteur ne marque plus l'essai du bras » n'est donc pas
-exercée par ces flux et n'est démontrée que par les tests (bras factices), pas par la campagne.
+L'imputation au relecteur et B2 : sur la v4, les flux ne passent par cette branche qu'à travers les deux relecteurs relevés
+ci-dessus ; la règle (un relecteur relevé ne décide rien, quel que soit son verdict, ne nourrit aucun correcteur) est démontrée
+par les tests sur bras factices (PASS et BLOCK), non par la campagne.
 
 ## Limites du rejeu (dites, non cachées)
 
@@ -49,6 +63,10 @@ exercée par ces flux et n'est démontrée que par les tests (bras factices), pa
   (pas ceux du jour de la campagne) ; les littéraux de base viennent de l'extraction courante, non de chaque bundle ; le refus du
   bac à sable local n'est pas reconstruit. La fidélité de 32 sur 32 limite ce risque pour cette campagne, sans le supprimer pour
   une autre.
+- Les rôles sont déduits de l'ordre : la première session cloud d'un enregistrement est prise pour celle du bras, les suivantes
+  pour celles du relecteur (vrai pour les chemins A et L, faux pour le chemin C ou un enregistrement repris).
+- La révision 2 suppose le comportement observé de Claude Code (version 2.1.285 dans cette campagne) : dossier gardé d'un appel à
+  l'autre tant qu'il reste dans le bundle, remis à la racine sinon avec « Shell cwd was reset to … ».
 - Le contexte d'un flux (bundle, dossier d'essai) est le `cwd` qu'il annonce ; un flux absent laisse l'enregistrement
   `unavailable`, jamais propre.
 - L'audit reste « au mieux » : un chemin construit à l'exécution ou lu par un script n'est pas vu, avant comme après.
@@ -59,7 +77,7 @@ exercée par ces flux et n'est démontrée que par les tests (bras factices), pa
 
 ## Statut documentaire (AGENTS.md R5)
 
-Ajouté : ce document et son JSON ; section « Révision 2 de l'audit » et « Rejeu hors ligne » de
+Ajouté : ce document, son JSON et la mesure `-scope` ; section « Révision 2 de l'audit » et « Rejeu hors ligne » de
 [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md) (verbe `replay-audit`, clé `isolation.audit_revision`, constantes
 `AUDIT_REVISION` et `FROZEN_PROTOCOLS`, exclusions de capture `_PATCH_EXCLUDES_V2`, champs `audit`, `review.contamination` et
 `informative_arms`) ; CHANGELOG. Aucun verbe de `foundry_cli.py`, table de routage ou constante de routage modifiés. Détecteur

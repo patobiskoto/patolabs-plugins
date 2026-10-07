@@ -159,8 +159,8 @@
     },
     {
       "attempt": 0,
-      "classification": "flag_removed",
-      "fidelity": "match",
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
       "new": {
         "contaminated": false,
         "hits": [],
@@ -168,11 +168,9 @@
         "reviewer_hits": []
       },
       "old": {
-        "contaminated": true,
-        "hits": [
-          "/private/tmp/pat19-work4/tests/test_agent_routing.py"
-        ],
-        "session": "arm"
+        "contaminated": false,
+        "hits": [],
+        "session": null
       },
       "path": "A",
       "pr": 83,
@@ -188,9 +186,7 @@
         {
           "new": [],
           "not_found": [],
-          "old": [
-            "/private/tmp/pat19-work4/tests/test_agent_routing.py"
-          ],
+          "old": [],
           "role": "arm",
           "sha256": "8a0e532aef440aa6073ab70e973a54c5fb834491263069570cb23739a0cffc68",
           "stream": "cloud_sessions[0]"
@@ -275,8 +271,8 @@
     },
     {
       "attempt": 1,
-      "classification": "flag_moved_to_review",
-      "fidelity": "match",
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
       "new": {
         "contaminated": false,
         "hits": [],
@@ -286,11 +282,9 @@
         ]
       },
       "old": {
-        "contaminated": true,
-        "hits": [
-          "/private/tmp/pat19-work4/scratch/stderr.log"
-        ],
-        "session": "reviewer"
+        "contaminated": false,
+        "hits": [],
+        "session": null
       },
       "path": "L",
       "pr": 83,
@@ -316,9 +310,7 @@
             "/<unknown-working-directory>"
           ],
           "not_found": [],
-          "old": [
-            "/private/tmp/pat19-work4/scratch/stderr.log"
-          ],
+          "old": [],
           "role": "reviewer",
           "sha256": "461316f73b40d7d9f6a5e2051cf58c865a68de18b88d98107f79ae968a4b4138",
           "stream": "cloud_sessions[1]"
@@ -509,8 +501,8 @@
     },
     {
       "attempt": 2,
-      "classification": "flag_removed",
-      "fidelity": "match",
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
       "new": {
         "contaminated": false,
         "hits": [],
@@ -518,11 +510,9 @@
         "reviewer_hits": []
       },
       "old": {
-        "contaminated": true,
-        "hits": [
-          "/private/tmp/pat19-work4/tests/test_linear_tracker.py"
-        ],
-        "session": "arm"
+        "contaminated": false,
+        "hits": [],
+        "session": null
       },
       "path": "L",
       "pr": 27,
@@ -538,9 +528,7 @@
         {
           "new": [],
           "not_found": [],
-          "old": [
-            "/private/tmp/pat19-work4/tests/test_linear_tracker.py"
-          ],
+          "old": [],
           "role": "arm",
           "sha256": "c243afe6d9b828eff5aec8e3363719099bb2d0febe17599776883de9442ee3ef",
           "stream": "cloud_sessions[0]"
@@ -883,8 +871,8 @@
     },
     {
       "attempt": 2,
-      "classification": "flag_removed",
-      "fidelity": "match",
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
       "new": {
         "contaminated": false,
         "hits": [],
@@ -894,8 +882,7 @@
       "old": {
         "contaminated": true,
         "hits": [
-          "/private/tmp/pat19-work4",
-          "/private/tmp/pat19-work4/scratch"
+          "/private/tmp/pat19-work4"
         ],
         "session": "arm"
       },
@@ -915,8 +902,7 @@
           "new": [],
           "not_found": [],
           "old": [
-            "/private/tmp/pat19-work4",
-            "/private/tmp/pat19-work4/scratch"
+            "/private/tmp/pat19-work4"
           ],
           "role": "arm",
           "sha256": "3bc95652b581d99c12d8342ecf7a76209495798b340207bf11482a3ef597f718",
@@ -926,8 +912,8 @@
     },
     {
       "attempt": 0,
-      "classification": "flag_moved_to_not_found",
-      "fidelity": "match",
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
       "new": {
         "contaminated": false,
         "hits": [],
@@ -938,14 +924,9 @@
         "reviewer_hits": []
       },
       "old": {
-        "contaminated": true,
-        "hits": [
-          "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
-          "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
-          "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
-          "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md"
-        ],
-        "session": "arm"
+        "contaminated": false,
+        "hits": [],
+        "session": null
       },
       "path": "L",
       "pr": 48,
@@ -967,12 +948,7 @@
             "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
             "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md"
           ],
-          "old": [
-            "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
-            "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
-            "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
-            "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md"
-          ],
+          "old": [],
           "role": "arm",
           "sha256": "ec40849eab422fe4c591e4c9d7767f44f69d1e85fdf2848f83f1b1b34abd860f",
           "stream": "local:attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit"
@@ -1223,7 +1199,7 @@
     "sensitive roots rebuilt from the repository, state directory and home of the replay",
     "base literals come from the checkout of the replay, not from each bundle; the local sandbox denial is not reconstructed",
     "roles: the first cloud session of a record is taken as the arm's and the others as the reviewer's (true for paths A and L; wrong for path C or a resumed record)",
-    "work root sensitive in the rebuilt list: yes"
+    "work root sensitive in the rebuilt list: no (scope measurement)"
   ],
   "results_sha256": "47c01eda6d340435ae0cd8a533b341675a0606b95f732b3d5cc12cdb1a827fd0",
   "revisions": {
@@ -1236,11 +1212,10 @@
       "clean": 23,
       "flag_added": 1,
       "flag_kept": 2,
-      "flag_moved_to_not_found": 1,
-      "flag_moved_to_review": 1,
-      "flag_removed": 4
+      "flag_removed": 1,
+      "not_comparable": 5
     },
-    "fidelity_mismatch": 0,
+    "fidelity_mismatch": 5,
     "flagged_now": 2,
     "flagged_recorded": 8,
     "records": 32

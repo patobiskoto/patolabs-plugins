@@ -239,9 +239,11 @@ def load_campaign(path: Path) -> dict[str, Any]:
         raise RunnerError(f"{path}: isolation.private_attempt_root must be a boolean")
     if iso.get("audit_revision", 1) not in (1, AUDIT_REVISION) or type(iso.get("audit_revision", 1)) is not int:
         raise RunnerError(f"{path}: isolation.audit_revision must be 1 or {AUDIT_REVISION}")
-    if iso.get("audit_revision", 1) != 1 and data.get("protocol") in FROZEN_PROTOCOLS:
-        raise RunnerError(f"{path}: isolation.audit_revision {AUDIT_REVISION} is refused under the frozen "
-                          f"protocol {data.get('protocol')} (a new protocol version enables it)")
+    if iso.get("audit_revision", 1) != 1 and not re.fullmatch(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)",
+                                                              str(data.get("protocol"))):
+        raise RunnerError(f"{path}: isolation.audit_revision {AUDIT_REVISION} is accepted only under a protocol "
+                          f"after v4 (pat-19-protocol-v5 or later), not under the frozen protocol "
+                          f"{data.get('protocol')!r}")
     _check_correction_feedback(path, data)
     _check_cloud_bash_deny(path, data)
     for cid, cand in data["candidates"].items():
@@ -1678,35 +1680,158 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
     return _walk_command(command, bundle, home, bundle, False)[0]
 
 
-def _walk_command(command: str, bundle: Path, home: str, start: Path, follow: bool
-                  ) -> tuple[list[tuple[Path, bool]], Path]:
+# PAT-123 (audit revision 2). A directory the audit cannot name: a relative path from it is always a hit.
+UNKNOWN_CWD = Path("/<unknown-working-directory>")
+_UNRESOLVED = re.compile(r"[$`*?\[]")
+_CD_WORD = re.compile(r"(?<![\w./$-])cd(?![\w.-])")
+# What a shell and Claude Code print: a failed ``cd``, and the reset of the shell directory to the project root.
+_CD_FAILED = re.compile(r"\bcd\b[^\n]*(no such file|not a directory|permission denied|too many arguments|"
+                        r"string not in pwd)", re.I)
+_CWD_RESET = re.compile(r"Shell cwd was reset to ")
+_UNSEEN_MOVERS = frozenset({"pushd", "popd", "eval", "source", "."})  # change the directory out of sight
+
+
+def _cd_scan(command: str) -> tuple[bool, int]:
+    """``(plain, count)``: whether every ``cd`` of the line is a top-level, unconditional command, and how many
+    ``cd`` commands the scan found. Plain means: the line has no subshell, group, substitution, backquote,
+    heredoc or ``exec``, and each ``cd`` stands first after ``;`` or a newline (or at the start), with no
+    wrapper or keyword before it, no redirection, and no ``|`` or ``&`` after it. ``a && cd x``,
+    ``cd x || y``-preceded forms, ``if ...; then cd x``, ``cd x | y``, ``cd x &``, ``(cd x)`` and
+    ``$(cd x)`` are not plain. The scan is conservative: a ``(`` inside quotes also makes a line with a ``cd``
+    not plain (more candidate directories, never fewer)."""
+    if not _CD_WORD.search(command):
+        return True, 0
+    if re.search(r"[(){}`]|<<|\bexec\b", command):
+        return False, -1
+    commands: list[tuple[str, list[str], str, bool]] = []
+    words: list[str] = []
+    cur: list[str] = []
+    state = {"started": False, "redirect": False, "prev": "start"}
+    quote: str | None = None
+
+    def flush() -> None:
+        if state["started"]:
+            words.append("".join(cur))
+        cur.clear()
+        state["started"] = False
+
+    def end(sep: str) -> None:
+        nonlocal words
+        flush()
+        if words:
+            commands.append((state["prev"], words, sep, state["redirect"]))
+        words = []
+        state["redirect"], state["prev"] = False, sep
+
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        nxt = command[i + 1] if i + 1 < n else ""
+        if quote:
+            if ch == "\\" and quote == '"' and nxt:
+                cur.append(nxt)
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            else:
+                cur.append(ch)
+        elif ch in "'\"":
+            quote, state["started"] = ch, True
+        elif ch == "\\" and nxt:
+            cur.append(nxt)
+            state["started"] = True
+            i += 1
+        elif ch in " \t":
+            flush()
+        elif ch in "\n;":
+            end(";")
+        elif ch == "#" and not state["started"]:
+            while i < n and command[i] != "\n":
+                i += 1
+            continue
+        elif ch == "&" and nxt == "&":
+            end("&&")
+            i += 1
+        elif ch == "|" and nxt == "|":
+            end("||")
+            i += 1
+        elif ch == "|":
+            end("|")
+        elif ch == "&" and (nxt == ">" or (cur and cur[-1] in "<>")):
+            state["redirect"], state["started"] = True, True
+            cur.append(ch)
+        elif ch == "&":
+            end("&")
+        elif ch in "<>":
+            state["redirect"], state["started"] = True, True
+            cur.append(ch)
+        else:
+            cur.append(ch)
+            state["started"] = True
+        i += 1
+    end("end")
+    count, plain = 0, True
+    if any(after == "||" for _, _, after, _ in commands):  # the right side of ``||`` runs when a ``cd`` FAILED
+        plain = False
+    for prev, ws, after, redirect in commands:
+        rest, stripped = list(ws), False
+        while rest and (_ASSIGNMENT.match(rest[0]) or rest[0] in _KEYWORDS
+                        or os.path.basename(rest[0]) in _WRAPPERS):
+            rest.pop(0)
+            stripped = True
+        if rest and os.path.basename(rest[0]) == "cd":
+            count += 1
+            if stripped or redirect or prev in ("&&", "||", "|", "&") or after in ("|", "&"):
+                plain = False
+    return plain, count
+
+
+def _walk_command(command: str, bundle: Path, home: str, start: Path | Collection[Path], follow: bool,
+                  trusted: bool = False) -> tuple[list[tuple[Path, bool]], frozenset[Path], frozenset[Path], int]:
     """Every path a command line names, resolved against the working directory the line has at that
     point (``cd`` is followed): ``find ~``, ``cd ~ && cat .claude/x``, ``src/../../..`` included; a bare
     ``/`` only as an argument of a filesystem reader (``find / -name x``, see ``_reads_root``); the
     script of a ``sh -c`` is read the same way. The flag says the path was RELATIVE to the bundle (an
     honest arm never climbs out of it). ``home`` is what ``~`` and ``$HOME`` mean for the arm. Expects
-    the command without its heredoc bodies (``_without_heredocs``). The line starts in ``start`` and the
-    directory it ends in is returned. ``follow`` (audit revision 2): any relative path counts as relative
-    whatever the directory, and a path-like piece inside a word (``X=../x``) is read too, since the raw
-    token pass no longer resolves relative tokens against the bundle."""
-    cwd, out = start, []
+    the command without its heredoc bodies (``_without_heredocs``). Returns the paths, the set of
+    directories the line may end in, every directory it may have been in, and the number of top-level ``cd``.
 
-    def resolve(token: str) -> tuple[Path, bool] | None:
+    Revision 1 (``follow`` false): one directory, ``start``, every ``cd`` obeyed. Revision 2 (``follow``): a SET of
+    candidate directories, never fewer than reality. Each relative path is resolved against every candidate. A
+    ``cd`` replaces the set only when ``trusted`` (the caller checked ``_cd_scan``: top-level, unconditional,
+    and the call's result shows no failed ``cd``); in every other case (subshell, ``&&``, ``if``, a pipe,
+    ``sh -c``, a failing target) the candidates before AND after are kept, as are the targets that cannot be
+    resolved (``cd $X``, ``cd -``, a glob: ``UNKNOWN_CWD``, from which every relative path is a hit) and the
+    commands that move the shell out of sight (``pushd``, ``eval``, ``source``). A path-like piece inside a
+    word (``X=../x``) is read too, since the raw token pass no longer resolves relative tokens."""
+    cwds = frozenset(start) if isinstance(start, (set, frozenset, list, tuple)) else frozenset([start])
+    seen, out, top_cd = set(cwds), [], 0
+
+    def resolve(token: str) -> list[tuple[Path, bool]]:
         expanded = _expand(token, home)
         if expanded is None:
-            return None
-        relative = not os.path.isabs(expanded) and (follow or cwd == bundle)
-        return Path(os.path.realpath(expanded if os.path.isabs(expanded) else cwd / expanded)), relative
+            return []
+        found: list[tuple[Path, bool]] = []
+        for cwd in sorted(cwds):
+            if os.path.isabs(expanded):
+                item = (Path(os.path.realpath(expanded)), False)
+            elif cwd == UNKNOWN_CWD:
+                item = (UNKNOWN_CWD, True)
+            else:
+                item = (Path(os.path.realpath(cwd / expanded)), follow or cwd == bundle)
+            if item not in found:
+                found.append(item)
+        return found
 
     def walk(text: str, depth: int = 0) -> None:
-        nonlocal cwd
+        nonlocal cwds, top_cd
         for segment in _segments(text):
             words = _unwrapped(segment)
             if follow:  # what the wrappers hid (``X=../x cat $X``, ``env F=../x cmd``) is read as text, here
                 for neutral, _ in segment[:len(segment) - len(words)]:
                     for token in _path_tokens(neutral):
-                        if (found := resolve(token)) is not None:
-                            out.append(found)
+                        out.extend(resolve(token))
             tokens = [w for w, _ in words]
             script = _shell_script([r for _, r in words])
             if script is not None and depth < 8:
@@ -1714,12 +1839,22 @@ def _walk_command(command: str, bundle: Path, home: str, start: Path, follow: bo
                 for text in (stripped, *executed):
                     walk(text, depth + 1)
                 continue
+            if follow and tokens and os.path.basename(tokens[0]) in _UNSEEN_MOVERS:
+                cwds = cwds | {UNKNOWN_CWD}
+                seen.update(cwds)
             if tokens and os.path.basename(tokens[0]) == "cd":
                 target = next((t for t in tokens[1:] if not t.startswith("-")), "~")
-                found = resolve(target)
-                if found is not None:
-                    out.append(found)
-                    cwd = found[0]
+                top_cd += depth == 0
+                expanded = _expand(target, home)
+                unresolved = follow and (expanded is None or tokens[1:] == ["-"] or bool(_UNRESOLVED.search(expanded)))
+                found = [] if unresolved else resolve(target)
+                out.extend(found)
+                if found or unresolved:
+                    new = {UNKNOWN_CWD} if unresolved else {p for p, _ in found}
+                    sure = not follow or (trusted and depth == 0 and not unresolved
+                                          and len([t for t in tokens[1:] if not t.startswith("-")]) <= 1)
+                    cwds = frozenset(new) if sure else cwds | new
+                    seen.update(cwds)
                 continue
             root_reader = _reads_root(tokens)
             for word in tokens:  # a quoted word is also read piece by piece (``python3 -c "open('../x')"``)
@@ -1727,12 +1862,64 @@ def _walk_command(command: str, bundle: Path, home: str, start: Path, follow: bo
                     token = _REDIRECTION.sub("", token)
                     if token.startswith("-"):
                         token = token.partition("=")[2]
-                    if token and (_pathlike(token) or (root_reader and not token.strip("/"))) \
-                            and (found := resolve(token)) is not None:
-                        out.append(found)
+                    if token and (_pathlike(token) or (root_reader and not token.strip("/"))):
+                        out.extend(resolve(token))
 
     walk(command)
-    return out, cwd
+    return out, cwds, frozenset(seen), top_cd
+
+
+def _walk_line(command: str, bundle: Path, home: str, start: Collection[Path], trusted: bool
+               ) -> tuple[list[tuple[Path, bool]], frozenset[Path], frozenset[Path], bool]:
+    """Revision 2 walk of one line: ``(paths, end set, every directory seen, sure)``. ``sure`` says the ``cd``
+    of the line (if any) were all obeyed as certain: the scan found them plain, the walk found the same number."""
+    plain, count = _cd_scan(command) if trusted else (False, -1)
+    sure = trusted and plain
+    result = _walk_command(command, bundle, home, start, True, sure)
+    if sure and result[3] != count:
+        sure = False
+        result = _walk_command(command, bundle, home, start, True, False)
+    return result[0], result[1], result[2], sure
+
+
+def _call_results(lines: Sequence[str]) -> dict[str, str]:
+    """Text of the result of each tool call, by call id (Claude ``tool_result`` of a user message, omp
+    ``tool_execution_end``)."""
+    out: dict[str, str] = {}
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "user" and isinstance(event.get("message"), dict):
+            content = event["message"].get("content")
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id"):
+                    out[str(block["tool_use_id"])] = "\n".join(t for k, t in _strings(block.get("content"))
+                                                              if k in (None, "text"))
+        elif event.get("type") == "tool_execution_end" and event.get("toolCallId"):
+            out[str(event["toolCallId"])] = "\n".join(t for k, t in _strings(event.get("result")) if k == "text")
+    return out
+
+
+def _next_session(end: Collection[Path], result: str, bundle: Path) -> frozenset[Path]:
+    """The directories a Claude Code shell may start the next call in. Observed behaviour: the directory is kept
+    while it stays inside the project (the bundle) and reset to the project root otherwise, and the result then
+    says ``Shell cwd was reset to ...``. That line, when present, decides (the root is the shallowest inside
+    directory, so a spoofed line can only make the audit stricter). A directory outside the project WITHOUT that
+    line is not the observed behaviour: it is kept, with the root. After an uncertain ``cd`` the candidates are
+    those before and after it (the real directory is one of them, whatever happened); the root is not added, since
+    the carry-over is the observed behaviour this audit relies on. More than 32 candidates collapse to the root and
+    ``UNKNOWN_CWD``."""
+    if _CWD_RESET.search(result):
+        return frozenset({bundle})
+    inside = {c for c in end if c != UNKNOWN_CWD and _within(c, bundle)}
+    nxt = set(inside)
+    if len(inside) != len(end):
+        nxt |= set(end) | {bundle}
+    return frozenset(nxt) if len(nxt) <= 32 else frozenset({bundle, UNKNOWN_CWD})
 
 
 def _result_token(token: str) -> str:
@@ -1884,7 +2071,9 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     commands: dict[str, None] = {}
     follow = revision >= AUDIT_REVISION
     missing = _missing_paths(lines) if follow else {}
-    session_cwd = bundle_real  # Claude Code: the shell directory kept from one Bash call to the next
+    results = _call_results(lines) if follow else {}
+    session = frozenset({bundle_real})  # Claude Code: where the shell may start the next call (kept between calls)
+    omp_dirs = {bundle_real}  # omp: nothing is known of its shell, every directory a call may have left it in
 
     def consider(path: Path, broad: bool, relative: bool = False) -> None:
         if permitted(path):
@@ -1896,7 +2085,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
 
     for call_id, name, args, host in _tool_events(lines):
         path_keys = _PATH_KEYS | ({"pattern"} if name.lower() in _GLOB_TOOLS else frozenset())
-        call_start, call_end = session_cwd if host == "claude" else bundle_real, None
+        call_start = (session if host == "claude" else frozenset(omp_dirs)) if follow else bundle_real
+        call_end, call_seen = None, frozenset(call_start) if follow else frozenset()
         for key, text in _strings(args):
             if call_id in missing and key == "path" and text == missing[call_id]:
                 if not_found is not None:
@@ -1918,15 +2108,24 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                     consider(Path(os.path.realpath(token if os.path.isabs(token) else bundle / token)),
                              key in path_keys, key in path_keys and not os.path.isabs(token))
             if key in _COMMAND_KEYS:
-                for script in scripts:
-                    walked, ended = _walk_command(script, bundle_real, tilde, call_start, follow)
-                    call_end = ended if call_end is None else call_end  # the line itself, not a heredoc body
+                for n, script in enumerate(scripts):
+                    if not follow:
+                        walked = _walk_command(script, bundle_real, tilde, bundle_real, False)[0]
+                    elif n == 0:  # the line itself; a heredoc body a shell runs may start wherever the line was
+                        got = results.get(call_id)
+                        walked, call_end, call_seen, _ = _walk_line(
+                            script, bundle_real, tilde, call_start, got is not None and not _CD_FAILED.search(got))
+                    else:
+                        walked = _walk_line(script, bundle_real, tilde, call_seen, False)[0]
                     for path, relative in walked:
                         consider(path, True, relative)
                     for found in _forbidden_commands(script):
                         commands[f"command:{found}"] = None
-        if follow and host == "claude" and call_end is not None:
-            session_cwd = call_end if _within(call_end, bundle_real) else bundle_real
+        if follow and call_end is not None:
+            if host == "claude":
+                session = _next_session(call_end, results.get(call_id) or "", bundle_real)
+            else:
+                omp_dirs |= set(call_end)
     seen: dict[str, None] = {}
     for text in _tool_results(lines):
         if follow and text.startswith(_NOT_FOUND) and text[len(_NOT_FOUND):] in missing.values():
@@ -2720,13 +2919,14 @@ class Runner:
                         unknown["review"] = "review_unreadable"
                     if rev_exec["contamination"] and self.audit_revision >= AUDIT_REVISION:
                         # PAT-123: the reviewer's session is flagged on the review, not on the arm's attempt. The
-                        # judge and the review verdicts stay on the record; a PASS from a flagged reviewer cannot
-                        # accept the attempt (undecided, never replayed), a BLOCK is kept
+                        # judge and the review verdicts stay readable on the record, but a flagged reviewer decides
+                        # nothing, whatever it said: the attempt is undecided (``review_unreadable``, never replayed),
+                        # the loop stops and its findings reach no corrector (a possible leak flows nowhere)
                         state["review_contamination"] = rev_exec["contamination"]
                         unknown["review.contaminated"] = (
-                            "the reviewer's " + _CONTAMINATED[len("the arm's "):] + "; its verdict is kept")
-                        if state["outcome"] == "accepted":
-                            state.update(outcome="review_unreadable", accepted=None)
+                            "the reviewer's " + _CONTAMINATED[len("the arm's "):] + "; its verdict is kept on the "
+                            "record but decides nothing")
+                        state.update(outcome="review_unreadable", accepted=None)
                     elif rev_exec["contamination"]:  # the review itself touched sensitive paths
                         state.update(contamination=rev_exec["contamination"], outcome="contaminated",
                                      accepted=None)
@@ -3398,7 +3598,10 @@ _PATCH_EXCLUDES = (":(exclude)TASK.md", ":(exclude,glob)**/__pycache__/**", ":(e
                    ":(exclude,glob)**/venv/**")
 # PAT-123 (audit revision 2): the tool caches an arm's own test and lint runs leave in its bundle. The capture
 # forces ignored files in (``add -A -f``), so the repository's ``.gitignore`` did not keep them out of the
-# patch: v4 reviewers saw ``.pytest_cache/`` (and ``.ruff_cache/``) as the bulk of the diff.
+# patch: v4 reviewers saw ``.pytest_cache/`` (and ``.ruff_cache/``) as the bulk of the diff. Only these two caches
+# are excluded, the two the v4 streams show; ``-f`` stays, because dropping it would change what the capture keeps
+# beyond them (any other ignored file an arm legitimately adds) and the judge's inputs with it; another cache
+# (``.mypy_cache``, ``.hypothesis``, ``.coverage``) would still be captured until a campaign shows it.
 _PATCH_EXCLUDES_V2 = (*_PATCH_EXCLUDES, ":(exclude,glob)**/.pytest_cache/**", ":(exclude,glob)**/.ruff_cache/**")
 # git never reads a user/system configuration, hooks, a filesystem monitor or file protocol helper on
 # a bundle the candidate controlled.
@@ -4273,7 +4476,8 @@ def _hidden_home(hit: str, home: str) -> str:
 
 def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                  ledger: Sequence[Mapping[str, Any]], *, streams_dir: Path, work_root: Path, repo: Path,
-                 state_dir: Path, home: str, results_sha256: str | None = None) -> dict[str, Any]:
+                 state_dir: Path, home: str, results_sha256: str | None = None,
+                 work_root_sensitive: bool = True) -> dict[str, Any]:
     """Audit revision 1 (what ran) and revision 2 (PAT-123) applied to the RAW transcripts of a finished
     campaign, record by record. Offline: it reads the streams, the results and the ledger and runs no
     driver, no model and no cloud call; it writes and recomputes nothing (no verdict, no outcome, no
@@ -4296,7 +4500,7 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
     work = Path(os.path.realpath(work_root))
     sensitive = read_deny_list(repo=Path(repo), home=home, state_dir=Path(state_dir), input_paths=[],
                                kind="local_harness", isolation=iso.get("deny_read_home"))
-    if private:
+    if private and work_root_sensitive:  # False: the measurement of what the v4 sensitive-root change explains
         sensitive.append(work)
     home_real = os.path.realpath(home)
     literals = base_literals(Path(repo), home)  # the checkout of now stands for the bundles of then
@@ -4367,9 +4571,10 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
                       "not_found": not_found}
         row["classification"] = (
             "not_comparable" if row["fidelity"] == "mismatch" else
-            "flag_kept" if was and now else
-            "flag_removed" if was and not now and not new_review else
-            "flag_moved_to_review" if was and not now else
+            ("flag_kept" if set(old_arm) == set(new_arm) else "flag_kept_changed") if was and now else
+            "flag_moved_to_review" if was and new_review else
+            "flag_moved_to_not_found" if was and not_found else
+            "flag_removed" if was else
             "flag_added" if now or new_review else "clean")
         row["streams"] = streams
         rows.append(row)
@@ -4385,7 +4590,11 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
            "replay_limits": ["offline: no model, no cloud call; nothing is recomputed (verdicts, outcomes, report)",
                              "sensitive roots rebuilt from the repository, state directory and home of the replay",
                              "base literals come from the checkout of the replay, not from each bundle; the local "
-                             "sandbox denial is not reconstructed"]}
+                             "sandbox denial is not reconstructed",
+                             "roles: the first cloud session of a record is taken as the arm's and the others as the "
+                             "reviewer's (true for paths A and L; wrong for path C or a resumed record)",
+                             "work root sensitive in the rebuilt list: " + ("yes" if work_root_sensitive else
+                                                                         "no (scope measurement)")]}
     text = json.dumps(out, sort_keys=True)
     if home_real not in ("/", "") and (home_real in text or str(home).rstrip("/") in text):
         raise RunnerError("the replay result would copy a path of the home directory: refused")
@@ -4436,6 +4645,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     ra.add_argument("--work-root", required=True, help="the work root the campaign used (it need not exist)")
     ra.add_argument("--repo", default=".")
     ra.add_argument("--home", default=None, help="the home to rebuild the sensitive list from (default $HOME)")
+    ra.add_argument("--work-root-not-sensitive", action="store_true",
+                    help="leave the work root out of the sensitive list (measures what that v4 change explains)")
     ra.add_argument("--out", default=None, help="write the result here instead of stdout (never overwrites)")
     r = sub.add_parser("report")
     r.add_argument("--campaign", required=True)
@@ -4459,7 +4670,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                 campaign, _read_jsonl(results), _read_jsonl(ledger), streams_dir=streams,
                 work_root=Path(args.work_root), repo=Path(args.repo), state_dir=streams.parent,
                 home=args.home or os.environ.get("HOME") or str(Path.home()),
-                results_sha256=hashlib.sha256(results.read_bytes()).hexdigest())
+                results_sha256=hashlib.sha256(results.read_bytes()).hexdigest(),
+                work_root_sensitive=not args.work_root_not_sensitive)
             text = json.dumps(result, indent=2, sort_keys=True) + "\n"
             if args.out:
                 with Path(args.out).open("x", encoding="utf-8") as handle:  # never rewrites a result

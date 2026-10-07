@@ -208,7 +208,7 @@ dans les flux bruts locaux, des commandes `find / -iname "*ADR-0012*"` (session 
   conserve le dossier de travail d'un appel au suivant ;
 - **(déclencheur)** la v4 a rendu la racine de travail sensible (ligne 2172 : `sensitive.append(self.work_root)`) : les deux
   défauts existaient avant. Portée **exacte**, mesurée par PAT-123 en rejouant l'audit de la v4, inchangé, sur les flux bruts
-  avec l'agencement v4 mais sans la racine de travail dans la liste sensible ([rejeu](pat-19-audit-replay-v4.md)) : ce changement
+  avec l'agencement v4 mais sans la racine de travail dans la liste sensible (mesure committée : [`pat-19-audit-replay-v4-scope.json`](pat-19-audit-replay-v4-scope.json), commande `replay-audit --work-root-not-sensitive`, résumée dans le [rejeu](pat-19-audit-replay-v4.md)) : ce changement
   est la **seule** cause des drapeaux du cas 3 (les deux), du cas 4 de L PR 83, du cas 6 et du chemin `<racine>/scratch` du cas 5 ;
   il n'est **pas** la cause du cas 4 de A PR 24 (trois chemins sous `<racine>/scratch`, relevés tels quels par la règle des
   chemins relatifs qui sortent de la zone permise) ni de `<racine>` elle-même au cas 5 (ancêtre du bundle, relevée par le test
