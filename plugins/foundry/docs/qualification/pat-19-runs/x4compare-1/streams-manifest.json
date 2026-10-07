@@ -1,0 +1,149 @@
+{
+  "note": "Raw event streams kept on the maintainer machine (they embed repository file contents). sha256 and size per file.",
+  "files": {
+    "pat-19-x4compare-1-025fb934-e99e-48f4-aaba-da5b60a724d1.jsonl": {
+      "sha256": "746ed950ab5a8ea13b8682fe16e76bd96ed4574e9584ad6ec34747ae06c3b94e",
+      "bytes": 125160
+    },
+    "pat-19-x4compare-1-07737ff5-8f7b-4860-ac9f-952e96789149.jsonl": {
+      "sha256": "91ef4b5d432531944613c506fe227df248e4a9a455a5272629a85f0ccbfd8483",
+      "bytes": 89335
+    },
+    "pat-19-x4compare-1-117bff0c-2017-4d70-b31a-27d2cc8e314e.jsonl": {
+      "sha256": "748944990deb0729ce050cd6c4096e79e67b98ca2531f866eaecaec220f7de41",
+      "bytes": 78483
+    },
+    "pat-19-x4compare-1-14d6a0cc-087a-41f0-a3df-839c102db7ca.jsonl": {
+      "sha256": "64301b7322050f2fc2cbf823a9a3be3bb69bea40edc33016ffd8d0a27f951488",
+      "bytes": 101456
+    },
+    "pat-19-x4compare-1-155e5079-7164-4126-bd35-a9d84d8ea111.jsonl": {
+      "sha256": "5275e6de698d93242a8ae2cf81f163642c6391d790174deb11ff7de666168388",
+      "bytes": 158416
+    },
+    "pat-19-x4compare-1-1677502f-0797-4590-a17d-eeb5d4fa0561.jsonl": {
+      "sha256": "8a0e532aef440aa6073ab70e973a54c5fb834491263069570cb23739a0cffc68",
+      "bytes": 234160
+    },
+    "pat-19-x4compare-1-16f1160d-693a-491e-819e-4d5d4730ac36.jsonl": {
+      "sha256": "e531a5cb62bc875aaf018ec7bda527cfbb87a5645a695ebe7bd47aff7f09d3b8",
+      "bytes": 123996
+    },
+    "pat-19-x4compare-1-2f4b253a-6d78-4a4b-9d29-aa7150202557.jsonl": {
+      "sha256": "9fef655c665f8d251a9c943f82d675a47bb2b784101e1786c12c3eb0a39eafe2",
+      "bytes": 148435
+    },
+    "pat-19-x4compare-1-30ebbc05-9034-460c-9e32-bc1fbdb0686d.jsonl": {
+      "sha256": "df006b2aaf62e4122b9f294223a262e7eb4a6b03a029b2552f58fe8e5877030e",
+      "bytes": 71208
+    },
+    "pat-19-x4compare-1-3bd5dd54-293d-41e5-87b2-8658c2f87067.jsonl": {
+      "sha256": "e88f602211a1f0af34d86960c52096f5939e51a52770d8a26b71ebce5a15f45d",
+      "bytes": 194617
+    },
+    "pat-19-x4compare-1-3c0ca95d-0781-4d86-acc1-134a81fe1c1f.jsonl": {
+      "sha256": "10723dafda99bc9597072f4783b1cc70c4c35a1fdbde4ef564e24d74a2b35770",
+      "bytes": 68810
+    },
+    "pat-19-x4compare-1-4793bf38-20ff-4a75-afd9-5577284c29e8.jsonl": {
+      "sha256": "5cce1e728f4014d99506b17ab04f9f273b1d40f637e159d5887468434948a97d",
+      "bytes": 131997
+    },
+    "pat-19-x4compare-1-4f80c5b4-15b9-4346-8387-7ea56cda2eab.jsonl": {
+      "sha256": "a649db7571a840c372021e3b389de8c86b5c4912950514c83c5e6030c8bf4414",
+      "bytes": 110081
+    },
+    "pat-19-x4compare-1-513b9f83-3a0f-4eb6-af1a-fa2830a8f59f.jsonl": {
+      "sha256": "eb727968ae4734f3134b0d5954fdfa330095d03ccb68791c0f6e97fc0f661fd1",
+      "bytes": 142156
+    },
+    "pat-19-x4compare-1-5b099b67-b69b-4190-93dd-3723d9a7755c.jsonl": {
+      "sha256": "9025262f97322a2a86e69b3582457de88ed9d948268b9c66486a63c5b68440a0",
+      "bytes": 65103
+    },
+    "pat-19-x4compare-1-644ae23c-972c-4cc2-b2c8-056061db9e14.jsonl": {
+      "sha256": "3bc95652b581d99c12d8342ecf7a76209495798b340207bf11482a3ef597f718",
+      "bytes": 86251
+    },
+    "pat-19-x4compare-1-6ea39892-32f3-4e08-95c2-280b234b8fae.jsonl": {
+      "sha256": "461316f73b40d7d9f6a5e2051cf58c865a68de18b88d98107f79ae968a4b4138",
+      "bytes": 202100
+    },
+    "pat-19-x4compare-1-71177f85-215d-450b-8185-3b3432843e4b.jsonl": {
+      "sha256": "653be276f1b25d20edcedce84c9e5fd8f80e3fa625b60cb409e40f842a9dee64",
+      "bytes": 59184
+    },
+    "pat-19-x4compare-1-7d79685c-aa06-40e9-9455-7af38e7b8c8d.jsonl": {
+      "sha256": "d6c842d2cf17dd1531d02be9233a8241b23cba23615d2ee3f1dfa95725d95103",
+      "bytes": 159069
+    },
+    "pat-19-x4compare-1-84f22c4b-9a09-4013-be5d-df4c91bb318b.jsonl": {
+      "sha256": "c243afe6d9b828eff5aec8e3363719099bb2d0febe17599776883de9442ee3ef",
+      "bytes": 211997
+    },
+    "pat-19-x4compare-1-9556ad80-8f4f-4f77-81de-2bc7bb363ccc.jsonl": {
+      "sha256": "0438a29b76d2abb031507ddb92afba12baf87b5f1bc184efb92ffdf034cbb125",
+      "bytes": 652241
+    },
+    "pat-19-x4compare-1-a8bf8926-fbd2-4f68-a098-a5e7690f4633.jsonl": {
+      "sha256": "49b77a67c094ace1c26240c9827dd69f1e68c81cb17c1123f8215a0b16e79c7b",
+      "bytes": 272917
+    },
+    "pat-19-x4compare-1-af200f97-1074-4165-a791-83171084b0d1.jsonl": {
+      "sha256": "31373db129120b78a68b197cf69ac39a9665b65b841f2b34c069b1c612733b41",
+      "bytes": 88447
+    },
+    "pat-19-x4compare-1-af4b98f1-3716-41fa-8625-5a8baa9819be.jsonl": {
+      "sha256": "454f9b896871b1ea5c41444a3da1621e8c1e7852f755a19923012ed7f0f37bea",
+      "bytes": 75701
+    },
+    "pat-19-x4compare-1-attempt-l02-0003-pr30-L-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "57666c9336a4f678ff5656d84d03691fb9e68a52eed071d630d9f9bd76d0015d",
+      "bytes": 2669408
+    },
+    "pat-19-x4compare-1-attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "5c0f4984f061c3dfe86e7d7d4084c788c8f8eb99d08e9315edf06186602e5cb5",
+      "bytes": 2526007
+    },
+    "pat-19-x4compare-1-attempt-l04-0004-pr27-L-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "21eeaf6ab1f7be03efe1592521374586723faee587c3dc8ac3c6f26e85c70250",
+      "bytes": 2060027
+    },
+    "pat-19-x4compare-1-attempt-l05-0005-pr24-L-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "d858a4f3008bc41ff343622b5378698a3632f8bcde14c5352f2c3ca821b6709f",
+      "bytes": 1864089
+    },
+    "pat-19-x4compare-1-attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "ec40849eab422fe4c591e4c9d7767f44f69d1e85fdf2848f83f1b1b34abd860f",
+      "bytes": 4116062
+    },
+    "pat-19-x4compare-1-attempt-l07-0004-pr19-L-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "af3e1a7da4c16a22eee51ffa592c582ad9401d21b7834d7dd1a7949e811a60af",
+      "bytes": 2082649
+    },
+    "pat-19-x4compare-1-c557f565-7b7b-42e5-ac61-8a24549520c2.jsonl": {
+      "sha256": "085e51b73d9e2a0b7c14222423eed18c7ab97a7f2255e619d7073f098426e860",
+      "bytes": 177402
+    },
+    "pat-19-x4compare-1-c58945e7-8984-4b53-b5ae-4513353f305f.jsonl": {
+      "sha256": "09cc652f7f9c6aae741a314ef38c4eb4c2a09d9913cfc3ce4dbd27acf3d5d2c1",
+      "bytes": 71494
+    },
+    "pat-19-x4compare-1-d26a42ce-e19e-481e-9c46-960e33b3176f.jsonl": {
+      "sha256": "6fea83f5e413914019c9c3415b83efd03d453dcbc3b85e1805ce3493af8bdb2e",
+      "bytes": 178457
+    },
+    "pat-19-x4compare-1-d34b585a-1fd3-453b-8ff1-345da3de7d39.jsonl": {
+      "sha256": "74da7323474a8defb31fa4332bd7aa33bf181e700b78ac5d59075c1fd486f041",
+      "bytes": 97797
+    },
+    "pat-19-x4compare-1-d4cf6d8e-3fa0-4d11-8be6-05463d286efd.jsonl": {
+      "sha256": "4b545348318c0e6b3d5d9967f7f357ccc660ec0e1855fc7734db8ec5d0f7ed6b",
+      "bytes": 146147
+    },
+    "pat-19-x4compare-1-f3dcec64-46bf-4018-b865-e04f021eee6f.jsonl": {
+      "sha256": "dc09c8d81a919a4a260e998203088bf8db87531d07edc923f2b63ab8c0de1252",
+      "bytes": 115591
+    }
+  }
+}
