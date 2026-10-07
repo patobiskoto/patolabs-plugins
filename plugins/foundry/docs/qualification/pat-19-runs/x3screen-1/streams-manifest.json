@@ -1,0 +1,53 @@
+{
+  "note": "Raw event streams kept on the maintainer machine (they embed repository file contents). sha256 and size per file.",
+  "files": {
+    "pat-19-x3screen-1-attempt-l01-0001-pr30-XS-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "a713b23d5fd65c753b867f0a109d48149b006d4c02c618843eebcd784858b9bd",
+      "bytes": 4247974
+    },
+    "pat-19-x3screen-1-attempt-l02-0001-pr83-XS-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "4b95fbaea724037684452c032bfcef9651b59c725fb411c78284eda3e93ae733",
+      "bytes": 3452318
+    },
+    "pat-19-x3screen-1-attempt-l03-0001-pr27-XS-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "70909bc6d93ae1d377698f03fde88bfa7325af8bb33afa85caf4f01b2c03142b",
+      "bytes": 2261698
+    },
+    "pat-19-x3screen-1-attempt-l04-0001-pr24-XS-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "279f38751b54ef0192eaac9ff138fee65397d06f327e756f2bf71725047efb8d",
+      "bytes": 2287766
+    },
+    "pat-19-x3screen-1-attempt-l05-0001-pr48-XS-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "db96a3946a07f706379a4022e10e7eab037fab9a8384ea8d0f3560be6ef879c4",
+      "bytes": 4252107
+    },
+    "pat-19-x3screen-1-attempt-l06-0001-pr19-XS-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "a46bfce324bbfaa4892da5065181fe1dd06c18d7741f533fb1f2c7b822f929ff",
+      "bytes": 1700891
+    },
+    "pat-19-x3screen-1-attempt-l07-0001-pr30-XS-explore-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "4e6c5e3dc56e514a0817a7ee3ba7e5dca33e7200ef52ce0abfbeed7f8873b96c",
+      "bytes": 1911579
+    },
+    "pat-19-x3screen-1-attempt-l08-0001-pr83-XS-explore-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "745ce0f14058aa3e14e30852f2f2fcc870b5610a87e3f8ba3c380f7155a08077",
+      "bytes": 2192569
+    },
+    "pat-19-x3screen-1-attempt-l09-0001-pr27-XS-explore-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "ba624229091ed4e1d91ebd84d6a141cb2d3efdeb0b4cc61d83066ffadaad886a",
+      "bytes": 2131557
+    },
+    "pat-19-x3screen-1-attempt-l10-0001-pr24-XS-explore-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "eddb535348531b2b30b5bd7725ef4b4ae0f310b28f65b7d865d3e4e56f4a062c",
+      "bytes": 900164
+    },
+    "pat-19-x3screen-1-attempt-l11-0001-pr48-XS-explore-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "cc091aefe802d974151cad5eac62f5a4a0b5ee80cb618207e69ac735d555b6ea",
+      "bytes": 4141027
+    },
+    "pat-19-x3screen-1-attempt-l12-0001-pr19-XS-explore-qwen3-coder-30b-a3b-mlx-4bit.jsonl": {
+      "sha256": "5e380f96f87dc8e69072ed3f7a667c7a5e7172988435c11790e19071658347cc",
+      "bytes": 1390203
+    }
+  }
+}

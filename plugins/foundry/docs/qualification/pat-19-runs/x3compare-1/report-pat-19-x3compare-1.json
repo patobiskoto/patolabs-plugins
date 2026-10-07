@@ -1,0 +1,378 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates are the two frozen ones of v3 (candidates, in this order) and the screening is complete only when both have their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Inherited from v2; frozen with v3 before any v3 result.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.6-35b-a3b-mlx-4bit",
+        "qwen3-coder-30b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 6,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "arm L is retained only if compatibility AND quality AND economy all pass on the 6 tasks: its acceptance rate >= A's AND its premium tokens per accepted task (explorer included; a Haiku explorer counts as premium, local tokens do not) <= 0.85 x A's, and compatibility (the v1 machine criterion: no external signal, extra swap under extra_swap_gib_max) passes. E vs A is computed with the same rule and is informative. Local wall time is reported; no time ratio is part of the v2 rule."
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "95b7a0717ecfcc28b6595e4a88dee108d158ff7d85dddc84f7d1c56de8d5fd1d",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "239139d1a8958e4757cad7c0fd32c83aa29f462ae776e038485464cff4378414"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-34",
+        "pr": 25,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 2,
+      "paths": [
+        "/private/tmp/pat19-work"
+      ],
+      "commands": []
+    },
+    {
+      "path": "A",
+      "task": {
+        "issue": "PAT-44",
+        "pr": 42,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work/README.md"
+      ],
+      "commands": []
+    },
+    {
+      "path": "E",
+      "task": {
+        "issue": "PAT-44",
+        "pr": 42,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work"
+      ],
+      "commands": []
+    },
+    {
+      "path": "A",
+      "task": {
+        "issue": "PAT-41",
+        "pr": 33,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work"
+      ],
+      "commands": []
+    },
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-41",
+        "pr": 33,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work",
+        "/private/tmp/pat19-work/README.md"
+      ],
+      "commands": []
+    },
+    {
+      "path": "E",
+      "task": {
+        "issue": "PAT-41",
+        "pr": 33,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work"
+      ],
+      "commands": []
+    },
+    {
+      "path": "A",
+      "task": {
+        "issue": "PAT-48",
+        "pr": 37,
+        "set": "comparison"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work/*.md"
+      ],
+      "commands": []
+    }
+  ],
+  "replays": [],
+  "exploration_screening": {
+    "candidates": {},
+    "selected": null,
+    "reason": "no_screening_results",
+    "stop": null,
+    "complete": false,
+    "missing_candidates": [
+      "qwen3.6-35b-a3b-mlx-4bit",
+      "qwen3-coder-30b-a3b-mlx-4bit"
+    ],
+    "undecided_tasks": [],
+    "killed_not_replayed": 0,
+    "not_completable_tasks": [],
+    "campaign_conclusion": "incomplete_screening",
+    "warnings": []
+  },
+  "exploration_comparison": {
+    "arms": {
+      "L": {
+        "tasks_compared": 6,
+        "informative": false,
+        "awaiting_implementer": [],
+        "compatibility": "pass",
+        "quality": "unavailable",
+        "economy": "unavailable",
+        "economy_detail": {
+          "premium_billing_tokens": 1895995,
+          "reference_premium_billing_tokens": 1556805,
+          "accepted": 0,
+          "reference_accepted": 0,
+          "premium_per_accepted": null,
+          "reference_premium_per_accepted": null,
+          "ratio_max": 0.85,
+          "ratio": null,
+          "premium_pass": null,
+          "premium_definition": "unweighted sum of the four billing token classes over all models, explorer included (an economy model counts as premium; local tokens do not)",
+          "premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 204,
+              "cached_input_tokens": 1233951,
+              "cache_write_input_tokens": 215887,
+              "output_tokens": 33586,
+              "reasoning_output_tokens": 3227
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 26,
+              "cached_input_tokens": 357446,
+              "cache_write_input_tokens": 43457,
+              "output_tokens": 11438,
+              "reasoning_output_tokens": 4266
+            }
+          },
+          "reference_premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 194,
+              "cached_input_tokens": 1308885,
+              "cache_write_input_tokens": 211748,
+              "output_tokens": 35978,
+              "reasoning_output_tokens": 4039
+            }
+          },
+          "wall_seconds": 2158.194,
+          "reference_wall_seconds": 930.107,
+          "local_explorer_wall_seconds": 967.927
+        },
+        "accepted": 0,
+        "reference_accepted": 0,
+        "explorer_localization": [
+          {
+            "pr": 26,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 38,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 0.75,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 25,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 42,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 0.75
+          },
+          {
+            "pr": 33,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 37,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 0.5,
+            "function_recall": 1.0
+          }
+        ]
+      },
+      "E": {
+        "tasks_compared": 6,
+        "informative": true,
+        "awaiting_implementer": [],
+        "compatibility": "pass",
+        "quality": "unavailable",
+        "economy": "unavailable",
+        "economy_detail": {
+          "premium_billing_tokens": 7648526,
+          "reference_premium_billing_tokens": 1556805,
+          "accepted": 1,
+          "reference_accepted": 0,
+          "premium_per_accepted": 7648526.0,
+          "reference_premium_per_accepted": null,
+          "ratio_max": 0.85,
+          "ratio": null,
+          "premium_pass": null,
+          "premium_definition": "unweighted sum of the four billing token classes over all models, explorer included (an economy model counts as premium; local tokens do not)",
+          "premium_by_model": {
+            "claude-haiku-4-5-20251001": {
+              "input_tokens": 1356,
+              "cached_input_tokens": 5237209,
+              "cache_write_input_tokens": 218810,
+              "output_tokens": 42257,
+              "reasoning_output_tokens": 21502
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 52,
+              "cached_input_tokens": 521271,
+              "cache_write_input_tokens": 85635,
+              "output_tokens": 23448,
+              "reasoning_output_tokens": 7064
+            },
+            "claude-sonnet-5-5": {
+              "input_tokens": 192,
+              "cached_input_tokens": 1276398,
+              "cache_write_input_tokens": 204423,
+              "output_tokens": 37475,
+              "reasoning_output_tokens": 3081
+            }
+          },
+          "reference_premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 194,
+              "cached_input_tokens": 1308885,
+              "cache_write_input_tokens": 211748,
+              "output_tokens": 35978,
+              "reasoning_output_tokens": 4039
+            }
+          },
+          "wall_seconds": 1823.883,
+          "reference_wall_seconds": 930.107,
+          "local_explorer_wall_seconds": null
+        },
+        "accepted": 1,
+        "reference_accepted": 0,
+        "explorer_localization": [
+          {
+            "pr": 26,
+            "outcome": "explored",
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 38,
+            "outcome": "explored",
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 25,
+            "outcome": "explored",
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 42,
+            "outcome": "explored",
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 0.5,
+            "function_recall": 0.75
+          },
+          {
+            "pr": 33,
+            "outcome": "explored",
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 0.5
+          },
+          {
+            "pr": 37,
+            "outcome": "explored",
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 0.5
+          }
+        ]
+      }
+    },
+    "decision": "inconclusive",
+    "recommendation": null,
+    "warnings": [],
+    "informative_arms": [
+      "E"
+    ],
+    "complete": true,
+    "campaign_conclusion": "keep_cloud_insufficient_evidence",
+    "screening_selected": "screening_results_not_available"
+  }
+}

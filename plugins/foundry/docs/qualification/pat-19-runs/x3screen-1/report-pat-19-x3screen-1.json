@@ -1,0 +1,189 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates are the two frozen ones of v3 (candidates, in this order) and the screening is complete only when both have their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Inherited from v2; frozen with v3 before any v3 result.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.6-35b-a3b-mlx-4bit",
+        "qwen3-coder-30b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 6,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "arm L is retained only if compatibility AND quality AND economy all pass on the 6 tasks: its acceptance rate >= A's AND its premium tokens per accepted task (explorer included; a Haiku explorer counts as premium, local tokens do not) <= 0.85 x A's, and compatibility (the v1 machine criterion: no external signal, extra swap under extra_swap_gib_max) passes. E vs A is computed with the same rule and is informative. Local wall time is reported; no time ratio is part of the v2 rule."
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "95b7a0717ecfcc28b6595e4a88dee108d158ff7d85dddc84f7d1c56de8d5fd1d",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "d3eaf1de26eb36e5e0b6740391923a67f4b87f2025895fe19329c2f8aa86c8a8"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [],
+  "replays": [],
+  "exploration_screening": {
+    "candidates": {
+      "qwen3-coder-30b-a3b-mlx-4bit": {
+        "tasks": 6,
+        "mean_function_recall": 0.583333,
+        "function_tasks": 6,
+        "mean_file_precision": 0.666667,
+        "mean_file_recall": 0.666667,
+        "total_seconds": 1847.285,
+        "refused": 2,
+        "contaminated": 0,
+        "per_task": [
+          {
+            "pr": 30,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 302.129
+          },
+          {
+            "pr": 83,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 285.942
+          },
+          {
+            "pr": 27,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 167.78
+          },
+          {
+            "pr": 24,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 73.712
+          },
+          {
+            "pr": 48,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 900.032
+          },
+          {
+            "pr": 19,
+            "verdict": "SCORED",
+            "function_recall": 0.5,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 117.69
+          }
+        ],
+        "peak_swap_used_mib": 11702.19,
+        "harness": [
+          "local_explorer"
+        ]
+      },
+      "qwen3.6-35b-a3b-mlx-4bit": {
+        "tasks": 6,
+        "mean_function_recall": 0.638889,
+        "function_tasks": 6,
+        "mean_file_precision": 0.958333,
+        "mean_file_recall": 1.0,
+        "total_seconds": 1101.487,
+        "refused": 0,
+        "contaminated": 0,
+        "per_task": [
+          {
+            "pr": 30,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 232.202
+          },
+          {
+            "pr": 83,
+            "verdict": "SCORED",
+            "function_recall": 0.333333,
+            "file_recall": 1.0,
+            "file_precision": 0.75,
+            "wall_seconds": 270.073
+          },
+          {
+            "pr": 27,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 131.891
+          },
+          {
+            "pr": 24,
+            "verdict": "SCORED",
+            "function_recall": 0.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 115.645
+          },
+          {
+            "pr": 48,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 246.723
+          },
+          {
+            "pr": 19,
+            "verdict": "SCORED",
+            "function_recall": 0.5,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 104.953
+          }
+        ],
+        "peak_swap_used_mib": 5803.0,
+        "harness": [
+          "local_explorer"
+        ]
+      }
+    },
+    "selected": "qwen3.6-35b-a3b-mlx-4bit",
+    "reason": "highest_mean_function_recall",
+    "stop": null,
+    "complete": true,
+    "missing_candidates": [],
+    "undecided_tasks": [],
+    "killed_not_replayed": 0,
+    "not_completable_tasks": [],
+    "campaign_conclusion": "candidate_selected",
+    "warnings": []
+  },
+  "exploration_comparison": {
+    "arms": {},
+    "decision": "inconclusive",
+    "recommendation": null,
+    "warnings": [],
+    "informative_arms": [
+      "E"
+    ],
+    "reason": "no_reference_path_A",
+    "campaign_conclusion": "incomplete_campaign",
+    "screening_selected": "qwen3.6-35b-a3b-mlx-4bit"
+  }
+}
