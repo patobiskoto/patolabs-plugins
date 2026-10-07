@@ -51,7 +51,10 @@ V3_CANDIDATES = ("qwen3.6-35b-a3b-mlx-4bit", "qwen3-coder-30b-a3b-mlx-4bit")
 V3_BOUNDS = {"explorer_max_steps": 60, "explorer_max_seconds": 900}
 PROTOCOL_V4 = "pat-19-protocol-v4"  # protocol v4 (PAT-121): v3 repaired instrument, one fixed candidate, arms A and L
 V4_CANDIDATES = ("qwen3.6-35b-a3b-mlx-4bit",)
-V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_chars": 300}
+V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_chars": 300, "max_name_chars": 200}
+V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
+V4_KEYS = "correction_feedback, isolation.private_attempt_root, exploration.fixed_candidate and " \
+          "exploration.comparison_task_group"
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
@@ -222,6 +225,10 @@ def load_campaign(path: Path) -> dict[str, Any]:
     if not isinstance(allow, list) or not all(
             isinstance(x, str) and x and not x.startswith("/") and ".." not in Path(x).parts for x in allow):
         raise RunnerError(f"{path}: isolation.allow_read_home needs a list of relative home entries")
+    if data.get("protocol") != PROTOCOL_V4 and (
+            "correction_feedback" in data or "private_attempt_root" in iso
+            or {"fixed_candidate", "comparison_task_group"} & set(data.get("exploration") or {})):
+        raise RunnerError(f"{path}: {V4_KEYS} are accepted only under protocol {PROTOCOL_V4}")
     if type(iso.get("private_attempt_root", False)) is not bool:
         raise RunnerError(f"{path}: isolation.private_attempt_root must be a boolean")
     _check_correction_feedback(path, data)
@@ -243,13 +250,13 @@ def _check_correction_feedback(path: Path, data: Mapping[str, Any]) -> None:
     if spec is None:
         return
     if not isinstance(spec, dict) or set(spec) - {"hidden_test_failures", "max_failures", "max_message_chars",
-                                                   "note"} or type(spec.get("hidden_test_failures")) is not bool:
+                                                   "max_name_chars", "note"} or type(spec.get("hidden_test_failures")) is not bool:
         raise RunnerError(f"{path}: correction_feedback needs a boolean hidden_test_failures (and "
                           "max_failures, max_message_chars)")
     if spec["hidden_test_failures"] and not all(
-            type(spec.get(k)) is int and spec[k] > 0 for k in ("max_failures", "max_message_chars")):
-        raise RunnerError(f"{path}: correction_feedback.max_failures and max_message_chars must be "
-                          "positive integers")
+            type(spec.get(k)) is int and spec[k] > 0 for k in ("max_failures", "max_message_chars", "max_name_chars")):
+        raise RunnerError(f"{path}: correction_feedback.max_failures, max_message_chars and max_name_chars "
+                          "must be positive integers")
 
 
 def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
@@ -3003,6 +3010,9 @@ class Runner:
         start-of-run preflight is ledgered ``phase: "start"``; the one right before a local exploration is
         not run again when this launcher wrote nothing to the ledger since (it would be the same check twice
         in a row, and two preflights with nothing between them read as a launcher killed in between)."""
+        if self.campaign.get("protocol") == PROTOCOL_V4 and not set(arms) <= set(V4_ARMS):
+            raise RunnerError(f"protocol v4 has arms {list(V4_ARMS)} only (no Haiku arm): refused before any "
+                              f"claim or spend, got {list(arms)}")
         out: list[dict[str, Any]] = []
         limits = self.campaign["exploration"]["report_render_limits"]
         checked: int | None = None  # ledger position right after the start-of-run preflight
@@ -3427,8 +3437,8 @@ def _fault_verdict(fault: BaseException) -> dict[str, Any]:
 
 def _failure_feedback(verdict: Mapping[str, Any], spec: Mapping[str, Any]) -> str:
     """What a corrector learns of a judge refusal (PAT-121, same text for every arm): the names of the
-    failing or erroring hidden tests, at most ``max_failures``, each with its message cut to
-    ``max_message_chars``. Never a test's source code or location. Empty when the judge gave no list."""
+    failing or erroring hidden tests, at most ``max_failures``, each name cut to ``max_name_chars`` and
+    each message to ``max_message_chars``. Never a test's source code or location. Empty when the judge gave no list."""
     failures = verdict.get("failures") or []
     if not failures:
         return ""
@@ -3436,7 +3446,8 @@ def _failure_feedback(verdict: Mapping[str, Any], spec: Mapping[str, Any]) -> st
     lines = ["", "", f"Failing hidden tests ({len(shown)} shown of {len(failures)}):"]
     for item in shown:
         message = " ".join(str(item.get("message", "")).split())[:spec["max_message_chars"]]
-        lines.append(f"- {item['name']}: {message}" if message else f"- {item['name']}")
+        name = str(item["name"])[:spec["max_name_chars"]]  # a parametrized id can carry test data
+        lines.append(f"- {name}: {message}" if message else f"- {name}")
     return "\n".join(lines)
 
 
@@ -3605,15 +3616,28 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                        h["attempt"]) not in counted})
     comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
     if exploring:
-        out["exploration_screening"] = _report_exploration_screening(rules["exploration_screening"],
-                                                                     attempts, killed, ledger)
-        out["exploration_screening"]["warnings"] = [h["warning"] for h in open_holes
-                                                    if h["mode"] == "screen_exploration"]
+        fixed = (campaign.get("exploration") or {}).get("fixed_candidate")
+        if fixed is not None:  # protocol v4: no screening, the candidate is fixed by the protocol
+            out["exploration_screening"] = {"state": "no_screening", "selected": fixed,
+                                            "reason": "no screening: candidate fixed by the protocol"}
+        else:
+            out["exploration_screening"] = _report_exploration_screening(rules["exploration_screening"],
+                                                                         attempts, killed, ledger)
+            out["exploration_screening"]["warnings"] = [h["warning"] for h in open_holes
+                                                        if h["mode"] == "screen_exploration"]
         out["exploration_comparison"] = _report_exploration_comparison(
             rules["exploration_comparison"], comparison, stops, bool(unknown_work),
             [h["warning"] for h in open_holes if h["mode"] == "compare_exploration"])
-        out["exploration_comparison"]["screening_selected"] = _check_compared_explorer(
-            out["exploration_screening"], attempts, comparison)
+        if fixed is not None:
+            compared = {(r.get("local") or {}).get("candidate") for r in comparison if r["path"] == "L"}
+            compared.discard(None)
+            if compared - {fixed}:
+                raise RunnerError(f"the compared candidate(s) {sorted(compared)} are not the one the "
+                                  f"protocol fixes ({fixed})")
+            out["exploration_comparison"]["screening_selected"] = f"fixed_by_protocol:{fixed}"
+        else:
+            out["exploration_comparison"]["screening_selected"] = _check_compared_explorer(
+                out["exploration_screening"], attempts, comparison)
         return out
     out["screening"] = _report_screening(rules["screening"], attempts, killed)
     out["screening"]["warnings"] = [h["warning"] for h in open_holes if h["mode"] == "screen"]
@@ -4088,7 +4112,9 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                                choices=("local_harness", "neutral_harness"))
             p.add_argument("--sandbox", action="store_true", help="also sandbox a dry run")
         if name in ("compare", "compare-exploration"):
-            p.add_argument("--paths", default="A,L,E" if name == "compare-exploration" else "A,B,C")
+            p.add_argument("--paths", default=None,
+                           help="arms to play (default A,L,E for compare-exploration, A,B,C for compare; "
+                                "A,L under protocol v4)")
             p.add_argument("--screening-campaign", default=None,
                            help="campaign id of a completed screening (results read-only in --state-dir) "
                                 "when this campaign id holds none; C and N need one or the other")
@@ -4141,7 +4167,9 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         for cid in candidates:
             if cid not in campaign["candidates"]:
                 raise RunnerError(f"unknown candidate {cid}")
-        paths = args.paths.split(",") if mode in CLOUD_MODES else []
+        default = ",".join(V4_ARMS) if campaign.get("protocol") == PROTOCOL_V4 else (
+            "A,L,E" if mode == "compare_exploration" else "A,B,C")
+        paths = (args.paths or default).split(",") if mode in CLOUD_MODES else []
         if not set(paths) <= set(EXPLORE_ARMS if mode == "compare_exploration" else PATHS):
             raise RunnerError(f"unknown path in {args.paths}")
         manifest = json.loads(Path(args.manifest).read_text("utf-8"))

@@ -21,8 +21,8 @@ Le lanceur impose maintenant `FOUNDRY_DATA` aux bras cloud et arrête la campagn
 ```sh
 BACKUP="$HOME/foundry-backup-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$BACKUP"
-[ -d "$HOME/.config/foundry" ] && cp -Rp "$HOME/.config/foundry" "$BACKUP/home-config-foundry"
-[ -n "${FOUNDRY_DATA:-}" ] && [ -d "$FOUNDRY_DATA" ] && cp -Rp "$FOUNDRY_DATA" "$BACKUP/foundry-data"
+if [ -d "$HOME/.config/foundry" ]; then cp -Rp "$HOME/.config/foundry" "$BACKUP/home-config-foundry"; fi
+if [ -n "${FOUNDRY_DATA:-}" ] && [ -d "$FOUNDRY_DATA" ]; then cp -Rp "$FOUNDRY_DATA" "$BACKUP/foundry-data"; fi
 ls "$BACKUP"
 ```
 

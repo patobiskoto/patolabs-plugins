@@ -13,12 +13,13 @@ import pytest
 from foundry import local_first_corpus as lfc
 from foundry import local_first_runner as lfr
 from test_local_first_exploration_runner import PLAN, make_runner
-from test_local_first_runner import _stream, counts, results
+from test_local_first_runner import _stream, counts, ledger_kinds, results
 
 QUALIFICATION = Path(__file__).resolve().parents[1] / "docs" / "qualification"
 V3_PATH = QUALIFICATION / "pat-19-campaign-v3.json"
 V4_PATH = QUALIFICATION / "pat-19-campaign-v4.json"
-FEEDBACK = {"correction_feedback": {"hidden_test_failures": True, "max_failures": 20, "max_message_chars": 300}}
+FEEDBACK = {"correction_feedback": {"hidden_test_failures": True, "max_failures": 20, "max_message_chars": 300,
+                                        "max_name_chars": 200}}
 PRIVATE = {"isolation": {"private_attempt_root": True}}
 REFUSED_THEN_FIXED = {**PLAN, "implementer": ["partial", "fix", "partial", "fix"], "reviewer": ["PASS"]}
 
@@ -82,6 +83,8 @@ def test_the_loader_pins_the_v4_coordinates_and_validates_the_new_keys(tmp_path)
             (lambda d: d["exploration"].update(one_task_per_launch=False), "one_task_per_launch true"),
             (lambda d: d["correction_feedback"].update(max_failures=21), "correction_feedback"),
             (lambda d: d["correction_feedback"].update(max_message_chars=299), "correction_feedback"),
+            (lambda d: d["correction_feedback"].update(max_name_chars=201), "correction_feedback"),
+            (lambda d: d["correction_feedback"].pop("max_name_chars"), "correction_feedback|positive integers"),
             (lambda d: d.pop("correction_feedback"), "correction_feedback"),
             (lambda d: d["isolation"].update(private_attempt_root=False), "private_attempt_root true"),
             (lambda d: d["isolation"].update(private_attempt_root="yes"), "must be a boolean"),
@@ -116,6 +119,8 @@ def test_the_feedback_text_is_bounded_and_names_tests_never_sources_or_paths():
     assert "20 shown of 25" in lines[2] and len([x for x in lines if x.startswith("- ")]) == 20
     assert all(len(x.split(": ", 1)[1]) <= 300 for x in lines if x.startswith("- "))
     assert "test_20" not in text and "test_19" in text
+    long_name = lfr._failure_feedback({"failures": [{"name": "t::" + "p" * 500, "message": "m"}]}, spec)
+    assert long_name.splitlines()[-1] == "- " + ("t::" + "p" * 500)[:200] + ": m"
     assert lfr._failure_feedback({"failures": []}, spec) == "" and lfr._failure_feedback({}, spec) == ""
     assert lfr._failure_feedback({"failures": [{"name": "a::b", "message": ""}]}, spec).endswith("- a::b")
 
@@ -133,6 +138,13 @@ def test_the_judge_returns_failure_names_and_messages_only_when_asked(tmp_path):
     assert sorted(n.rsplit("::", 1)[1] for n in names) == ["test_added", "test_changed"]
     blob = json.dumps(with_failures["failures"])
     assert str(asked) not in blob and "def test_" not in blob and "test_m.py" not in blob
+    assert lfc._mask("x /a/b/c y", {Path("/a/b"): "<bundle>"}) == "x <bundle>/c y"
+    junit = tmp_path / "j.xml"
+    junit.write_text('<testsuite><testcase classname="c" name="n"><failure message="at %s/home/x and %s/f"/>'
+                     '</testcase></testsuite>' % (tmp_path / "tmpdir", asked), encoding="utf-8")
+    (tmp_path / "tmpdir").mkdir()
+    assert lfc._junit_failures(junit, asked, tmp_path / "tmpdir") == [
+        {"name": "c::n", "message": "at <tmp>/home/x and <bundle>/f"}]
 
 
 def test_after_a_refusal_the_corrector_of_both_arms_gets_the_same_failing_tests_and_two_rounds_at_most(tmp_path):
@@ -280,31 +292,71 @@ def test_a_campaign_that_fixes_its_candidate_compares_it_without_a_screening_and
 
 def test_the_cli_takes_the_comparison_tasks_from_the_group_the_config_names(tmp_path, monkeypatch):
     from test_local_first_corpus import _make_repo
-    from test_local_first_exploration_runner import v2_campaign
     repo, snap, _, _ = _make_repo(tmp_path)
-    spec = json.loads(V3_PATH.read_text("utf-8"))["exploration"]["ground_truth"]
-    (tmp_path / spec["file"]).write_bytes((QUALIFICATION / spec["file"]).read_bytes())
     snap = {**snap, "prs": [snap["prs"][0], {**snap["prs"][0], "pr": 2}]}
     manifest = {"screening": [{"pr": 2}], "comparison": [{"pr": 1}]}
     seen = {}
     monkeypatch.setattr(lfr.Runner, "compare_exploration", lambda self, tasks, cand, paths: seen.update(
-        prs=[t["pr"] for t in tasks]))
-    for group, expected in (("screening", [2]), (None, [1])):
-        campaign, _ = v2_campaign(tmp_path, PLAN)
-        if group:
-            campaign["exploration"]["comparison_task_group"] = group
-        for name, body in (("c.json", campaign), ("snap.json", snap), ("manifest.json", manifest)):
-            (tmp_path / name).write_text(json.dumps(body), encoding="utf-8")
-        env = tmp_path / "envelope.json"
-        env.write_text(json.dumps({"schema": lfr.ENVELOPE_SCHEMA, "campaign_id": f"cli-{group}",
-                                   "expires_on": "2026-12-31", "allowed_modes": ["compare_exploration"],
-                                   "caps": {"cloud_executions": 10, "premium_tokens": 10**6,
-                                            "wall_clock_seconds": 10**5}}), encoding="utf-8")
-        monkeypatch.setenv("HOME", str(tmp_path / "host-home"))
-        code = lfr.main(["compare-exploration", "--campaign", str(tmp_path / "c.json"), "--dry-run",
-                         "--candidate", "cand-a", "--paths", "A", "--envelope", str(env),
-                         "--state-dir", str(tmp_path / f"state-{group}"), "--work-root", str(tmp_path / "work"),
-                         "--repo", str(repo), "--snapshot", str(tmp_path / "snap.json"),
-                         "--manifest", str(tmp_path / "manifest.json")],
-                        today=__import__("datetime").date(2026, 10, 6))
-        assert code == 0 and seen["prs"] == expected, group
+        prs=[t["pr"] for t in tasks], paths=list(paths)))
+    monkeypatch.setenv("HOME", str(tmp_path / "host-home"))
+    data = _v4_data(tmp_path)  # the real v4 config: group "screening", default arms A,L
+    for name, body in (("c.json", data), ("snap.json", snap), ("manifest.json", manifest)):
+        (tmp_path / name).write_text(json.dumps(body), encoding="utf-8")
+    env = tmp_path / "envelope.json"
+    env.write_text(json.dumps({"schema": lfr.ENVELOPE_SCHEMA, "campaign_id": "cli", "expires_on": "2026-12-31",
+                               "allowed_modes": ["compare_exploration"],
+                               "caps": {"cloud_executions": 10, "premium_tokens": 10**6,
+                                        "wall_clock_seconds": 10**5}}), encoding="utf-8")
+    argv = ["compare-exploration", "--campaign", str(tmp_path / "c.json"), "--dry-run",
+            "--candidate", "qwen3.6-35b-a3b-mlx-4bit", "--envelope", str(env), "--state-dir", str(tmp_path / "st"),
+            "--work-root", str(tmp_path / "work"), "--repo", str(repo), "--snapshot", str(tmp_path / "snap.json"),
+            "--manifest", str(tmp_path / "manifest.json")]
+    assert lfr.main(argv, today=__import__("datetime").date(2026, 10, 6)) == 0
+    assert seen == {"prs": [2], "paths": ["A", "L"]}
+
+
+# ----------------------------------------------------------- review round 1 (R1, R2, R6)
+
+def _v4_data(tmp_path):
+    spec = json.loads(V4_PATH.read_text("utf-8"))["exploration"]["ground_truth"]
+    (tmp_path / spec["file"]).write_bytes((QUALIFICATION / spec["file"]).read_bytes())
+    return json.loads(V4_PATH.read_text("utf-8"))
+
+
+def test_the_v4_keys_are_accepted_only_under_protocol_v4(tmp_path):
+    spec = json.loads(V3_PATH.read_text("utf-8"))["exploration"]["ground_truth"]
+    (tmp_path / spec["file"]).write_bytes((QUALIFICATION / spec["file"]).read_bytes())
+    for edit in (lambda d: d["exploration"].update(fixed_candidate="qwen3.6-35b-a3b-mlx-4bit"),
+                 lambda d: d["exploration"].update(comparison_task_group="screening"),
+                 lambda d: d.update(correction_feedback=FEEDBACK["correction_feedback"]),
+                 lambda d: d["isolation"].update(private_attempt_root=True)):
+        for protocol in ("pat-19-protocol-v3", None):  # v3, and a config with no protocol field
+            data = json.loads(V3_PATH.read_text("utf-8"))
+            edit(data)
+            data.pop("protocol") if protocol is None else None
+            (tmp_path / "c.json").write_text(json.dumps(data), encoding="utf-8")
+            with pytest.raises(lfr.RunnerError, match="accepted only under protocol pat-19-protocol-v4"):
+                lfr.load_campaign(tmp_path / "c.json")
+    lfr.load_campaign(V4_PATH)
+
+
+def test_protocol_v4_refuses_arm_e_before_any_claim_or_spend(tmp_path):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare_exploration", PLAN)
+    runner.campaign = {**campaign, "protocol": lfr.PROTOCOL_V4}
+    for arms in (("A", "L", "E"), ("E",), ("A", "B")):
+        with pytest.raises(lfr.RunnerError, match="arms \\['A', 'L'\\] only"):
+            runner.compare_exploration(tasks[:1], "cand-a", arms)
+    assert counts(plan) == {} and not runner.results_path.exists()
+    assert "cloud_started" not in ledger_kinds(runner)
+
+
+def test_report_of_a_fixed_candidate_campaign_says_no_screening(tmp_path):
+    from test_local_first_runner import ledger_of
+    runner, campaign, _, tasks = make_runner(
+        tmp_path, "compare_exploration", PLAN, campaign_over={"exploration": {"fixed_candidate": "cand-a"}})
+    runner.compare_exploration(tasks[:1], "cand-a", ("A", "L"))
+    out = lfr.report(campaign, results(runner), ledger_of(runner))
+    assert out["exploration_screening"] == {"state": "no_screening", "selected": "cand-a",
+                                            "reason": "no screening: candidate fixed by the protocol"}
+    assert out["exploration_comparison"]["screening_selected"] == "fixed_by_protocol:cand-a"
+    assert "incomplete_screening" not in json.dumps(out) and "screening_results_not_available" not in json.dumps(out)

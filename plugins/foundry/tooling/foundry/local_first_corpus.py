@@ -755,7 +755,7 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: boo
             return _verdict("timeout", selected, 0, 0, 0, 0, None, extra)
         counts = _junit_counts(junit)
         if failures:
-            extra = {**extra, "failures": _junit_failures(junit, candidate)}
+            extra = {**extra, "failures": _junit_failures(junit, candidate, tmp_dir)}
     passed, failed, errors, skipped = counts
     return _verdict(None, selected, passed, failed, errors, skipped, code, extra)
 
@@ -772,9 +772,16 @@ def _junit_counts(path: Path) -> tuple[int, int, int, int]:
     return total - failed - errors - skipped, failed, errors, skipped
 
 
-def _junit_failures(path: Path, candidate: Path) -> list[dict[str, str]]:
+def _mask(text: str, paths: Mapping[Path, str]) -> str:
+    for path, label in paths.items():
+        for spelled in {str(path), os.path.realpath(path)}:
+            text = text.replace(spelled, label)
+    return text
+
+
+def _junit_failures(path: Path, candidate: Path, tmp_dir: Path) -> list[dict[str, str]]:
     """Name and message of every failing or erroring test case of a junit report (PAT-121). The test
-    source and the traceback body are never read; the candidate's location is hidden from the message."""
+    source and the traceback body are never read; the candidate's location and the judge's temporary directory are hidden from the message."""
     if not path.exists():
         return []
     out: list[dict[str, str]] = []
@@ -786,7 +793,7 @@ def _junit_failures(path: Path, candidate: Path) -> list[dict[str, str]]:
         name = case.get("name", "")
         classname = case.get("classname")
         out.append({"name": f"{classname}::{name}" if classname else name,
-                    "message": (bad.get("message") or "").replace(str(candidate), "<bundle>")})
+                    "message": _mask(bad.get("message") or "", {candidate: "<bundle>", tmp_dir: "<tmp>"})})
     return out
 
 
