@@ -136,7 +136,7 @@ def v2_campaign(tmp_path, plan, frozen=("cand-a",), **overrides):
                        "cloud_explorer_economy": cloud, "cloud_reviewer": review}
     base["candidates"] = {"cand-a": {"model": "fake/model-a"}, "cand-b": {"model": "fake/model-b"}}
     for key, value in overrides.items():
-        base[key].update(value)
+        base.setdefault(key, {}).update(value)
     return base, plan_path
 
 
