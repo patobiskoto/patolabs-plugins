@@ -44,10 +44,11 @@ mémoire de la machine ».
   (`l01` à `l07`). Temps total des tentatives : 12 729,5 s (somme des `wall_seconds`).
 - Chargements de modèles : autorisés en bloc par le mainteneur le 2026-10-06 pour toute la campagne v2, et non confirmés un
   par un (écart à « chaque chargement confirmé »). 7 chargements dans les lancements de cette campagne (5 initiaux et 2
-  rechargements de qwen3-coder), plus celui du préflight avant lancement.
+  rechargements de qwen3-coder), plus un chargement distinct du premier candidat pour le préflight avant lancement (le pilote
+  décharge tout puis recharge avant chaque candidat) : 8 chargements en tout, dont 2 pour le premier candidat et 3 pour qwen3-coder.
 - Consigne de la section 11 « inspecter le premier enregistrement avant de continuer » : non respectée à la lettre. Le
-  coordinateur a inspecté le premier enregistrement alors que la campagne continuait déjà (le registre montre la deuxième
-  tentative démarrant 0,42 s après la fin de la première), pas avant. L'inspection a trouvé un enregistrement sain (audit
+  coordinateur a inspecté le premier enregistrement alors que la campagne continuait déjà (au registre, le préflight suivant est à 0,42 s
+  de la fin de la première tentative et le départ de la deuxième à 0,46 s), pas avant. L'inspection a trouvé un enregistrement sain (audit
   exécuté, aucune contamination, bundle inchangé).
 - Moteurs : Muse Glimmer est un GGUF servi par llama.cpp, les quatre autres candidats par MLX (variable de plus dans la
   comparaison entre candidats, comme en v1).
@@ -107,14 +108,17 @@ de 2 Gio n'a été observé (les plus gros hors LM Studio : OrbStack, environ 0,
 n'est pas établie.** Le registre montre la mémoire résidente de LM Studio qui BAISSE aux deux refus (13 875 -> 8 289 MiB, puis
 17 639 -> 2 562 MiB) alors que la mémoire libre tombe à 9 % puis 17 % : la croissance de la mémoire résidente du modèle ne
 l'explique donc pas ; une mémoire retenue hors de l'ensemble résident (par exemple compressée ou câblée) est plausible, non
-vérifiée. La valeur de 87 % de mémoire libre « une fois le modèle déchargé » a été lue par le coordinateur avec
-`memory_pressure` après le déchargement par le pilote (observation hors dépôt). Séparément, les préflights qui ont suivi les
+vérifiée. Après le déchargement du modèle par le pilote, le coordinateur a lu 87 % de mémoire libre avec
+`memory_pressure` (observation hors dépôt). Séparément, les préflights qui ont suivi les
 rechargements, enregistrés au registre, donnent 87 % de mémoire libre et 17 561 MiB résidents pour LM Studio (`l06`), puis 87 %
 et 17 572 MiB (`l07`).
 
-**Décision du coordinateur, prise en cours de campagne**, après que deux tâches de ce candidat avaient déjà été refusées par
-le préflight : décharger puis recharger le candidat lui-même (commande de chargement épinglée) et reprendre sous le même
-identifiant de campagne (lancements `l05`, `l06`, `l07`). C'est fait **par analogie avec la section 11** (sa clause « Préflight
+**Décision du coordinateur, prise en cours de campagne**, après le premier refus du préflight, survenu après la deuxième
+tâche de ce candidat (le préflight n'a refusé aucune tâche : il a empêché un départ, sans enregistrement) : décharger puis
+recharger le candidat lui-même (commande de chargement épinglée) et reprendre sous le même identifiant de campagne
+(lancements `l05`, `l06`, `l07`). Le coordinateur a écrit à ce moment un script de reprise qui recharge et relance à chaque
+refus de mémoire libre ; le second rechargement (`l07`, 4,6 s après le second refus, contre 92 s pour le premier cycle) est
+donc la reconduite automatique de cette même décision, pas une nouvelle décision. C'est fait **par analogie avec la section 11** (sa clause « Préflight
 refusé » est écrite pour `compare-exploration` et parle de libérer la machine ; pour le tamis, le protocole ne prévoit que la
 relance d'un tamis incomplet, section 5), et non en application de la section 11. Aucun seuil n'a été modifié. Cette décision
 s'ajoute à la liste des décisions du coordinateur dont la validation est demandée au mainteneur. Elle ne change pas le verdict :
@@ -150,7 +154,7 @@ campagne** (déchargement et rechargement de qwen3-coder, section « Dernier can
   et `glob` seuls utilisés, constat lu dans les 30 flux bruts hors dépôt ; `bundle_modified` faux sur les 30 enregistrements, aucune contamination,
   `ended_by_external_signal` faux sur les 30). Critère machine (supplément de swap par tentative sous 10 Gio) : supplément
   maximal **+1094,7 MiB (1,07 Gio)**, qwen3-coder, PR 83 (suivi de +919,4 MiB, PR 48) ; **rempli** sur ce critère préenregistré
-  (swap, signal externe). En revanche qwen3-coder a fait descendre la mémoire libre à 9 % et n'a terminé ses 6 tâches qu'avec
+  (swap, signal externe), écrit par le protocole pour le bras L de la comparaison et appliqué ici au tamis par transposition. En revanche qwen3-coder a fait descendre la mémoire libre à 9 % et n'a terminé ses 6 tâches qu'avec
   deux rechargements. `peak_swap_used_mib` du rapport est le maximum des relevés « après » : 4412,9 (muse), 6419,0
   (qwen3-coder), 4436,9 (qwen3.6), 4452,9 (qwen3.8 4 bits), 4460,9 (qwen3.8 6 bits) MiB. Le vrai maximum sur les relevés avant et
   après diffère pour deux candidats : 4452,9 pour qwen3.6 (relevé avant) et 4468,9 pour qwen3.8 6 bits (4468,88 avant, 4460,88
@@ -185,7 +189,7 @@ Dans [`pat-19-runs/xscreen-1/`](pat-19-runs/xscreen-1/), copiées telles quelles
 Les 30 flux d'événements omp bruts ne sont pas versionnés (environ 48 Mo, ils embarquent des contenus du dépôt) ; ils restent
 sur la machine du mainteneur et `streams-manifest.json` donne leur sha256 et leur taille. Deux constats viennent de ces flux bruts hors
 dépôt et ne sont pas vérifiables depuis le dépôt : « seuls `read`, `grep`, `glob` utilisés dans les 30 flux » et « le modèle a
-répondu sans avoir lu l'énoncé » (seul `steps: 0` est dans les résultats versés). Les autres chiffres de ce document ont été
+répondu sans avoir lu l'énoncé » (dans les résultats versés, `steps: 0` et le texte des deux `rationale` le corroborent). Les autres chiffres de ce document ont été
 recalculés à partir des fichiers versés, hors les observations hors dépôt signalées dans le texte (préflight avant lancement,
 87 % lu par `memory_pressure`, accord du mainteneur, arrêt des services d'un autre projet).
 
