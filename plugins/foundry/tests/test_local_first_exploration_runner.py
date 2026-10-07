@@ -66,6 +66,9 @@ if mode in ("draft_then_hang", "draft_then_steps"):  # a usable draft appears, t
         for _ in range(200):
             event("tool_execution_start", tool="read")
     time.sleep(60)
+if mode == "regtouch":  # PAT-120: the explorer overwrites the REAL registry by absolute path
+    open(step["target"], "w").write("overwritten")
+    mode = "final"
 if mode == "hang":
     time.sleep(60)
 if mode == "many_steps":
@@ -1103,3 +1106,18 @@ def test_cli_dry_run_of_the_two_v2_modes(tmp_path, capsys):
 
 def test_module_path_is_the_corpus_path():  # the fake repository's module is the one the truth is built on
     assert lfe.is_product_path(MOD)
+
+
+def test_pat120_a_changed_real_registry_stops_the_cloud_explorer_arm_E(tmp_path):
+    real = Path(os.environ["HOME"]) / ".config" / "foundry" / "registry.json"  # conftest: a temporary HOME
+    real.parent.mkdir(parents=True)
+    real.write_text("registry", encoding="utf-8")
+    plan = {**PLAN, "xcloud": [{"mode": "regtouch", "target": str(real)}]}
+    runner, _, plan_path, tasks = make_runner(tmp_path, "compare_exploration", plan)
+    with pytest.raises(lfr.FoundryStateChanged):
+        runner.compare_exploration(tasks[:1], "cand-a", ("E",))
+    *_, rec, stop = results(runner)
+    assert stop["reason"] == lfr.STATE_CHANGED_STOP
+    assert rec["path"] == "E" and rec["segment"] == "explore" and rec["outcome"] == "contaminated"
+    assert rec["foundry_state_changed"]["before"]["home_config"] != rec["foundry_state_changed"]["after"]["home_config"]
+    assert counts(plan_path).get("implementer") is None  # the arm never went on
