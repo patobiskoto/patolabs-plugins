@@ -55,6 +55,10 @@ V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_ch
 V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
 V4_KEYS = "correction_feedback, isolation.private_attempt_root, exploration.fixed_candidate and " \
           "exploration.comparison_task_group"
+FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4)
+# PAT-123: ``isolation.audit_revision`` 2 (a protocol after v4 only) follows the working directory of a command
+# line, attributes a flag of the reviewer's session to the review, and records a path that does not exist apart
+AUDIT_REVISION = 2
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
@@ -233,6 +237,11 @@ def load_campaign(path: Path) -> dict[str, Any]:
         raise RunnerError(f"{path}: {V4_KEYS} are accepted only under protocol {PROTOCOL_V4}")
     if type(iso.get("private_attempt_root", False)) is not bool:
         raise RunnerError(f"{path}: isolation.private_attempt_root must be a boolean")
+    if iso.get("audit_revision", 1) not in (1, AUDIT_REVISION) or type(iso.get("audit_revision", 1)) is not int:
+        raise RunnerError(f"{path}: isolation.audit_revision must be 1 or {AUDIT_REVISION}")
+    if iso.get("audit_revision", 1) != 1 and data.get("protocol") in FROZEN_PROTOCOLS:
+        raise RunnerError(f"{path}: isolation.audit_revision {AUDIT_REVISION} is refused under the frozen "
+                          f"protocol {data.get('protocol')} (a new protocol version enables it)")
     _check_correction_feedback(path, data)
     _check_cloud_bash_deny(path, data)
     for cid, cand in data["candidates"].items():
@@ -1174,7 +1183,12 @@ def _path_tokens(text: str) -> list[str]:
 def _tool_calls(lines: Sequence[str]) -> list[tuple[str, Any]]:
     """Every tool call of a stream: Claude ``tool_use`` blocks of assistant messages and omp
     ``tool_execution_start`` events, as ``(tool name, arguments)``."""
-    calls: list[tuple[str, Any]] = []
+    return [(name, args) for _, name, args, _ in _tool_events(lines)]
+
+
+def _tool_events(lines: Sequence[str]) -> list[tuple[str | None, str, Any, str]]:
+    """``_tool_calls`` with the id of the call and the host that ran it (``claude`` or ``omp``)."""
+    calls: list[tuple[str | None, str, Any, str]] = []
     for line in lines:
         try:
             event = json.loads(line)
@@ -1183,12 +1197,38 @@ def _tool_calls(lines: Sequence[str]) -> list[tuple[str, Any]]:
         if not isinstance(event, dict):
             continue
         if event.get("type") == "tool_execution_start":
-            calls.append((str(event.get("toolName")), event.get("args")))
+            calls.append((event.get("toolCallId"), str(event.get("toolName")), event.get("args"), "omp"))
         elif event.get("type") == "assistant" and isinstance(event.get("message"), dict):
             for block in event["message"].get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    calls.append((str(block.get("name")), block.get("input")))
+                    calls.append((block.get("id"), str(block.get("name")), block.get("input"), "claude"))
     return calls
+
+
+_NOT_FOUND = "Path not found: "
+
+
+def _missing_paths(lines: Sequence[str]) -> dict[str, str]:
+    """omp tool calls that failed with ``Path not found: <path>`` (an error result of that call, naming the
+    path it was given): ``{call id: path}``. Nothing was read. Another failure text, a result without an id,
+    or a path the result does not name exactly as the call gave it, is not recognised (the audit keeps it)."""
+    given = {i: args.get("path") for i, _, args, host in _tool_events(lines)
+             if i and host == "omp" and isinstance(args, Mapping)}
+    missing: dict[str, str] = {}
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "tool_execution_end" \
+                or event.get("isError") is not True:
+            continue
+        texts = [t for k, t in _strings(event.get("result")) if k == "text"]
+        call = event.get("toolCallId")
+        if len(texts) == 1 and texts[0].startswith(_NOT_FOUND) and call in given \
+                and texts[0][len(_NOT_FOUND):] == given[call]:
+            missing[call] = given[call]
+    return missing
 
 
 def _strings(value: Any, key: str | None = None) -> list[tuple[str | None, str]]:
@@ -1634,25 +1674,39 @@ def _expand(token: str, home: str) -> str | None:
 
 
 def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bool]]:
+    """``_walk_command`` from the bundle, ``cd`` followed inside the line only (audit revision 1)."""
+    return _walk_command(command, bundle, home, bundle, False)[0]
+
+
+def _walk_command(command: str, bundle: Path, home: str, start: Path, follow: bool
+                  ) -> tuple[list[tuple[Path, bool]], Path]:
     """Every path a command line names, resolved against the working directory the line has at that
     point (``cd`` is followed): ``find ~``, ``cd ~ && cat .claude/x``, ``src/../../..`` included; a bare
     ``/`` only as an argument of a filesystem reader (``find / -name x``, see ``_reads_root``); the
     script of a ``sh -c`` is read the same way. The flag says the path was RELATIVE to the bundle (an
     honest arm never climbs out of it). ``home`` is what ``~`` and ``$HOME`` mean for the arm. Expects
-    the command without its heredoc bodies (``_without_heredocs``)."""
-    cwd, out = bundle, []
+    the command without its heredoc bodies (``_without_heredocs``). The line starts in ``start`` and the
+    directory it ends in is returned. ``follow`` (audit revision 2): any relative path counts as relative
+    whatever the directory, and a path-like piece inside a word (``X=../x``) is read too, since the raw
+    token pass no longer resolves relative tokens against the bundle."""
+    cwd, out = start, []
 
     def resolve(token: str) -> tuple[Path, bool] | None:
         expanded = _expand(token, home)
         if expanded is None:
             return None
-        relative = not os.path.isabs(expanded) and cwd == bundle
+        relative = not os.path.isabs(expanded) and (follow or cwd == bundle)
         return Path(os.path.realpath(expanded if os.path.isabs(expanded) else cwd / expanded)), relative
 
     def walk(text: str, depth: int = 0) -> None:
         nonlocal cwd
         for segment in _segments(text):
             words = _unwrapped(segment)
+            if follow:  # what the wrappers hid (``X=../x cat $X``, ``env F=../x cmd``) is read as text, here
+                for neutral, _ in segment[:len(segment) - len(words)]:
+                    for token in _path_tokens(neutral):
+                        if (found := resolve(token)) is not None:
+                            out.append(found)
             tokens = [w for w, _ in words]
             script = _shell_script([r for _, r in words])
             if script is not None and depth < 8:
@@ -1669,7 +1723,7 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
                 continue
             root_reader = _reads_root(tokens)
             for word in tokens:  # a quoted word is also read piece by piece (``python3 -c "open('../x')"``)
-                for token in dict.fromkeys([word, *_QUOTED_PIECES.split(word)]):
+                for token in dict.fromkeys([word, *_QUOTED_PIECES.split(word), *(_path_tokens(word) if follow else ())]):
                     token = _REDIRECTION.sub("", token)
                     if token.startswith("-"):
                         token = token.partition("=")[2]
@@ -1678,7 +1732,7 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
                         out.append(found)
 
     walk(command)
-    return out
+    return out, cwd
 
 
 def _result_token(token: str) -> str:
@@ -1730,7 +1784,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                      own_session: tuple[str, str] | None = None,
                      literals: Collection[str] = frozenset(),
                      sandbox_denied: tuple[str, Sequence[str], Sequence[str]] | None = None,
-                     attempt_dir: Path | None = None, private_root: Path | None = None) -> list[str]:
+                     attempt_dir: Path | None = None, private_root: Path | None = None,
+                     revision: int = 1, not_found: list[str] | None = None) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -1770,7 +1825,18 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     in the result. Known limit: a token made only of slashes (``/``, ``//``) is the division operator of
     code, not a path, EXCEPT as an argument of a filesystem reader (``find``, ``grep -r``, ``rg``, ``ls``,
     ``du``, ``tree``, ``cat``): ``find / -name x -exec cat {} +`` is flagged, while a bare ``/`` reaching
-    the shell any other way (``echo / | xargs ls``, a script) is not seen."""
+    the shell any other way (``echo / | xargs ls``, a script) is not seen.
+
+    ``revision`` 2 (PAT-123, ``isolation.audit_revision``; 1 keeps everything above as it was): a relative
+    path of a command is resolved against the directory the command really runs in. ``cd`` is followed in
+    the line, in the raw token pass too (a relative token is read in the walk of the line, where the
+    directory is known, and no longer against the bundle), and, in a Claude Code session, from one Bash
+    call to the next: Claude Code keeps the working directory between calls while it stays inside the
+    project (the bundle) and resets it to the project root when a command ends outside (``Shell cwd was
+    reset to ...``). An omp stream starts every call in the bundle (nothing is known of its shell). A path
+    an omp tool call gave and the tool answered ``Path not found: <that path>`` was not read: it is not a
+    hit, nor is the echo of it in the error result; it is appended to ``not_found`` (apart, never counted
+    as a read). A path that exists, a command and every other failure text stay audited as before."""
     try:
         lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
     except FileNotFoundError:
@@ -1816,6 +1882,9 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
 
     hits: dict[str, None] = {}
     commands: dict[str, None] = {}
+    follow = revision >= AUDIT_REVISION
+    missing = _missing_paths(lines) if follow else {}
+    session_cwd = bundle_real  # Claude Code: the shell directory kept from one Bash call to the next
 
     def consider(path: Path, broad: bool, relative: bool = False) -> None:
         if permitted(path):
@@ -1825,9 +1894,14 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                 or any(_within(r, path) for r in roots))):
             hits[shown(path)] = None
 
-    for name, args in _tool_calls(lines):
+    for call_id, name, args, host in _tool_events(lines):
         path_keys = _PATH_KEYS | ({"pattern"} if name.lower() in _GLOB_TOOLS else frozenset())
+        call_start, call_end = session_cwd if host == "claude" else bundle_real, None
         for key, text in _strings(args):
+            if call_id in missing and key == "path" and text == missing[call_id]:
+                if not_found is not None:
+                    not_found.append(shown(Path(os.path.realpath(text))))
+                continue
             if key in _COMMAND_KEYS:
                 stripped, executed = _without_heredocs(text)
                 scripts = [stripped, *executed]  # a body a shell runs is a command line too
@@ -1838,17 +1912,25 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                 continue
             for token in tokens:
                 token = _expand(token, tilde)
+                if token is not None and follow and key in _COMMAND_KEYS and not os.path.isabs(token):
+                    continue  # read in the walk of the line, in the directory it has there
                 if token is not None:
                     consider(Path(os.path.realpath(token if os.path.isabs(token) else bundle / token)),
                              key in path_keys, key in path_keys and not os.path.isabs(token))
             if key in _COMMAND_KEYS:
                 for script in scripts:
-                    for path, relative in _command_paths(script, bundle_real, tilde):
+                    walked, ended = _walk_command(script, bundle_real, tilde, call_start, follow)
+                    call_end = ended if call_end is None else call_end  # the line itself, not a heredoc body
+                    for path, relative in walked:
                         consider(path, True, relative)
                     for found in _forbidden_commands(script):
                         commands[f"command:{found}"] = None
+        if follow and host == "claude" and call_end is not None:
+            session_cwd = call_end if _within(call_end, bundle_real) else bundle_real
     seen: dict[str, None] = {}
     for text in _tool_results(lines):
+        if follow and text.startswith(_NOT_FOUND) and text[len(_NOT_FOUND):] in missing.values():
+            continue  # the error of a path that does not exist: it names the path, it shows nothing
         for token in _path_tokens(text):
             token = _result_token(token)  # ``file.py:12:`` locations
             if token in literals:  # the text of a bundle file (``base_literals``), not an access
@@ -1997,6 +2079,10 @@ class Runner:
         feedback = campaign.get("correction_feedback") or {}
         self.feedback_spec = feedback if feedback.get("hidden_test_failures") else None
         self.private_root = bool((campaign.get("isolation") or {}).get("private_attempt_root"))
+        # PAT-123 (a protocol after v4 only, see ``load_campaign``): the repaired audit and capture
+        self.audit_revision = (campaign.get("isolation") or {}).get("audit_revision", 1)
+        self.patch_excludes = _PATCH_EXCLUDES_V2 if self.audit_revision >= AUDIT_REVISION else _PATCH_EXCLUDES
+        self.not_found: dict[str, list[str]] = {}  # paths an arm named that do not exist, by stream log
         self.fixed_candidate = (campaign.get("exploration") or {}).get("fixed_candidate")
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
         self.dedicated: dict[str, Any] | None = None  # observed values of the last dedicated-machine check
@@ -2157,6 +2243,15 @@ class Runner:
 
     def _audit(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
                session_id: str | None = None, exe: Mapping[str, str] | None = None) -> list[str]:
+        """``_audit_stream`` that keeps the paths the arm named without their existing (audit revision 2)
+        in ``self.not_found``, to be recorded apart."""
+        notes: list[str] = []
+        hits = self._audit_stream(stream_log, bundle, scratch, driver, session_id, exe, notes)
+        self.not_found[str(stream_log)] = list(dict.fromkeys(notes))
+        return hits
+
+    def _audit_stream(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
+                      session_id: str | None, exe: Mapping[str, str] | None, notes: list[str]) -> list[str]:
         """Contamination audit of one arm's tool calls, on the stream the launcher kept. Always against
         the strictest list (the one of a local arm): a cloud arm keeps ``~/.claude`` for its identity,
         but reading anything there (the plugin cache holds the merged tests) is a contamination, except
@@ -2183,7 +2278,16 @@ class Runner:
                                 arm_home=str(scratch / "home") if isolated else None, own_session=own,
                                 literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled,
                                 attempt_dir=bundle.parent,  # ``_bundle`` builds <attempt dir>/bundle
-                                private_root=bundle.parent.parent if self.private_root else None)
+                                private_root=bundle.parent.parent if self.private_root else None,
+                                revision=self.audit_revision, not_found=notes)
+
+    def _audit_note(self, stream_logs: Sequence[Path]) -> dict[str, Any]:
+        """The ``audit`` field of a record under audit revision 2: the revision and the paths named that do not
+        exist (apart from the hits, never a read). Absent under revision 1: the frozen records keep their shape."""
+        if self.audit_revision < AUDIT_REVISION:
+            return {}
+        names = [p for log in stream_logs for p in self.not_found.get(str(log), [])]
+        return {"audit": {"revision": self.audit_revision, "not_found": list(dict.fromkeys(names))}}
 
     def _home(self) -> str:
         """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""
@@ -2253,7 +2357,7 @@ class Runner:
         if changed:
             raise CandidateFault("bundle git configuration or attributes changed: refusing to run git on it")
         try:
-            return _capture_patch(bundle, root)
+            return _capture_patch(bundle, root, self.patch_excludes)
         except (RunnerError, OSError) as exc:
             raise CandidateFault(f"bundle unreadable by git: {exc}") from None
 
@@ -2430,7 +2534,7 @@ class Runner:
                       "cloud_sessions": [],
                       "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
                       "machine": {"before": _strip(before), "after": _strip(after)}, "unknown": unknown,
-                      **({"replay_of": dict(replay_of)} if replay_of else {})}
+                      **self._audit_note([stream_log]), **({"replay_of": dict(replay_of)} if replay_of else {})}
             self.unrecorded = record  # until ``_emit`` writes it, an interruption writes it as interrupted
         return record, patch
 
@@ -2544,7 +2648,7 @@ class Runner:
             models: dict[str, dict[str, int | None]] = {}
             unknown: dict[str, str] = {}
             verdict: Mapping[str, Any] | None = None
-            state = {"seconds": 0.0, "rounds": [], "accepted": None, "outcome": "judge_refused"}
+            state = {"seconds": 0.0, "rounds": [], "accepted": None, "outcome": "judge_refused", "logs": []}
             findings = ""
             mark = len(self.sessions)
 
@@ -2555,7 +2659,9 @@ class Runner:
                     "segment": segment, "attempt": first_attempt + index, "outcome": state["outcome"],
                     "judge": _judge_summary(verdict) if verdict else None,
                     "accepted": state["accepted"],
-                    "review": {"rounds": len(state["rounds"]), "verdicts": state["rounds"]},
+                    "review": {"rounds": len(state["rounds"]), "verdicts": state["rounds"],
+                               **({"contamination": _contamination(state["review_contamination"])}
+                                  if state.get("review_contamination") else {})},
                     "wall_seconds": round(state["seconds"], 3), "cloud_executions": len(spent),
                     "cloud_sessions": spent,
                     "premium": {"by_role": {r: _classes(t) for r, t in by_role.items()},
@@ -2565,7 +2671,7 @@ class Runner:
                        if state.get("contamination") else {}),
                     **({"review_excluded": state["review_excluded"]} if state.get("review_excluded")
                        else {}),
-                    **({"feedback": told} if told else {}),
+                    **({"feedback": told} if told else {}), **self._audit_note(state["logs"]),
                     **({"replay_of": again} if again else {})}))
 
             try:
@@ -2576,6 +2682,7 @@ class Runner:
                         role, implementer, bundle, attempt_dir,
                         "implement" if index == 0 else "correct", feedback)
                     state["seconds"] = execution["wall_seconds"]
+                    state["logs"].append(execution["stream_log"])
                     by_role[role] = tokens
                     _merge_models(models, execution["by_model"])
                     if tokens is None:
@@ -2599,6 +2706,7 @@ class Runner:
                     review, findings, rev_exec, rev_tokens, rev_reason = self._review(
                         task, patch, f"{path}-{index}")
                     state["seconds"] += rev_exec["wall_seconds"]
+                    state["logs"].append(rev_exec["stream_log"])
                     state["review_excluded"] = rev_exec.get("review_excluded")
                     by_role["reviewer"] = rev_tokens
                     _merge_models(models, rev_exec["by_model"])
@@ -2610,7 +2718,16 @@ class Runner:
                     state["accepted"] = {"PASS": True, "BLOCK": False, None: None}[review]
                     if review is None:
                         unknown["review"] = "review_unreadable"
-                    if rev_exec["contamination"]:  # the review itself touched sensitive paths
+                    if rev_exec["contamination"] and self.audit_revision >= AUDIT_REVISION:
+                        # PAT-123: the reviewer's session is flagged on the review, not on the arm's attempt. The
+                        # judge and the review verdicts stay on the record; a PASS from a flagged reviewer cannot
+                        # accept the attempt (undecided, never replayed), a BLOCK is kept
+                        state["review_contamination"] = rev_exec["contamination"]
+                        unknown["review.contaminated"] = (
+                            "the reviewer's " + _CONTAMINATED[len("the arm's "):] + "; its verdict is kept")
+                        if state["outcome"] == "accepted":
+                            state.update(outcome="review_unreadable", accepted=None)
+                    elif rev_exec["contamination"]:  # the review itself touched sensitive paths
                         state.update(contamination=rev_exec["contamination"], outcome="contaminated",
                                      accepted=None)
                         unknown["contaminated"] = "the reviewer's " + _CONTAMINATED[len("the arm's "):]
@@ -2867,7 +2984,8 @@ class Runner:
                                       "refusal": refusal, "bundle_modified": modified,
                                       "score": {k: verdict[k] for k in ("verdict", "file_recall", "file_precision",
                                                                         "function_recall", "counts")}},
-                      "unknown": unknown, **({"replay_of": dict(replay_of)} if replay_of else {})}
+                      "unknown": unknown, **self._audit_note([stream_log]),
+                      **({"replay_of": dict(replay_of)} if replay_of else {})}
             self.unrecorded = record  # until ``_emit`` writes it, an interruption writes it as interrupted
         return record
 
@@ -3278,6 +3396,10 @@ class Runner:
 _PATCH_EXCLUDES = (":(exclude)TASK.md", ":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/*.pyc",
                    ":(exclude,glob)**/node_modules/**", ":(exclude,glob)**/.venv/**",
                    ":(exclude,glob)**/venv/**")
+# PAT-123 (audit revision 2): the tool caches an arm's own test and lint runs leave in its bundle. The capture
+# forces ignored files in (``add -A -f``), so the repository's ``.gitignore`` did not keep them out of the
+# patch: v4 reviewers saw ``.pytest_cache/`` (and ``.ruff_cache/``) as the bulk of the diff.
+_PATCH_EXCLUDES_V2 = (*_PATCH_EXCLUDES, ":(exclude,glob)**/.pytest_cache/**", ":(exclude,glob)**/.ruff_cache/**")
 # git never reads a user/system configuration, hooks, a filesystem monitor or file protocol helper on
 # a bundle the candidate controlled.
 _GIT_NEUTRAL = ("-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
@@ -3401,13 +3523,13 @@ def _wait_quiescent(bundle: Path, wait: float) -> None:
         raise CandidateFault("bundle is not quiescent: a process of the arm may have outlived it")
 
 
-def _capture_patch(bundle: Path, root: str) -> bytes:
+def _capture_patch(bundle: Path, root: str, excludes: Sequence[str] = _PATCH_EXCLUDES) -> bytes:
     """The candidate's change as a patch against the ROOT commit ``root`` (recorded when the bundle
     was built, so an arm that commits its work still yields it), taken BEFORE judging (the judge
     writes the protected tests into the bundle, which is then never reused). New files included."""
-    _git_in(bundle, "add", "-A", "-f", "--", ".", *_PATCH_EXCLUDES)
+    _git_in(bundle, "add", "-A", "-f", "--", ".", *excludes)
     return _git_in(bundle, "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", root,
-                   "--", ".", *_PATCH_EXCLUDES)
+                   "--", ".", *excludes)
 
 
 _DIFF_HEADER = re.compile(rb"^diff --git (.*)$", re.M)
@@ -4041,7 +4163,9 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     arms = {p: _arm_totals([r for r in attempts if r["path"] == p]) for p in EXPLORE_ARMS
             if any(r["path"] == p for r in attempts)}
     out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None,
-                           "warnings": list(warnings), "informative_arms": ["E"]}
+                           "warnings": list(warnings),
+                           # PAT-123: only the informative arm that was played (v4 has no arm E)
+                           "informative_arms": [p for p in ("E",) if p in arms]}
     reference = arms.get("A")
     if reference is None:
         out["reason"] = "no_reference_path_A"
@@ -4117,6 +4241,157 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     return out
 
 
+# ------------------------------------------------------------------ offline audit replay (PAT-123)
+
+REPLAY_SCHEMA = "foundry.local-first-audit-replay.v1"
+
+
+def _stream_cwd(stream: Path) -> Path | None:
+    """The bundle of a recorded stream: the ``cwd`` its first events name (Claude ``system``/``init``, omp
+    ``session``). ``None`` when the stream names none."""
+    try:
+        with Path(stream).open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and isinstance(event.get("cwd"), str) and event["cwd"]:
+                    return Path(event["cwd"])
+    except OSError:
+        return None
+    return None
+
+
+def _hidden_home(hit: str, home: str) -> str:
+    """A hit as it may be committed: the name of anything under the real home is not copied."""
+    prefix, path = ("tool_result:", hit[len("tool_result:"):]) if hit.startswith("tool_result:") else ("", hit)
+    if path == "~" or path.startswith("~/") or path.startswith(home.rstrip("/") + "/"):
+        path = "~/<hidden>"
+    return prefix + path
+
+
+def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
+                 ledger: Sequence[Mapping[str, Any]], *, streams_dir: Path, work_root: Path, repo: Path,
+                 state_dir: Path, home: str, results_sha256: str | None = None) -> dict[str, Any]:
+    """Audit revision 1 (what ran) and revision 2 (PAT-123) applied to the RAW transcripts of a finished
+    campaign, record by record. Offline: it reads the streams, the results and the ledger and runs no
+    driver, no model and no cloud call; it writes and recomputes nothing (no verdict, no outcome, no
+    report). Each record gets the hits as recorded, as revision 1 finds them again (``fidelity``: the
+    replay reproduces the recorded flags), and as revision 2 finds them, with the paths named but not
+    existing apart. The context of a stream (bundle, attempt directory) is the ``cwd`` it names; the
+    sensitive list is rebuilt from the repository, the state directory and the home of NOW (``repo``,
+    ``state_dir``, ``home``), the base literals come from ``repo`` and the local sandbox is not
+    reconstructed: the approximations are in ``replay_limits``. A record whose revision-1 replay differs from
+    what was recorded is ``not_comparable``. A stream that is missing leaves its record ``unavailable``,
+    never clean. Nothing under ``home`` is copied to the result."""
+    campaign_id = next((r.get("campaign_id") for r in records if r.get("campaign_id")), None)
+    started = {}
+    for entry in ledger:
+        if entry.get("kind") == "attempt_started" and entry.get("attempt_dir"):
+            started[(entry.get("path"), entry.get("pr"), entry.get("segment"), entry.get("attempt"))] = \
+                entry["attempt_dir"]
+    iso = campaign.get("isolation") or {}
+    private = bool(iso.get("private_attempt_root"))
+    work = Path(os.path.realpath(work_root))
+    sensitive = read_deny_list(repo=Path(repo), home=home, state_dir=Path(state_dir), input_paths=[],
+                               kind="local_harness", isolation=iso.get("deny_read_home"))
+    if private:
+        sensitive.append(work)
+    home_real = os.path.realpath(home)
+    literals = base_literals(Path(repo), home)  # the checkout of now stands for the bundles of then
+
+    def audit(stream: Path, bundle: Path, role: str, path: str, session: str | None, revision: int,
+              notes: list[str]) -> list[str]:
+        attempt = bundle.parent
+        driver = (campaign.get("drivers") or {}).get(
+            REVIEWER_DRIVER if role == "reviewer" else IMPLEMENTER_DRIVER.get(path, ""), {})
+        own = ((driver.get("session_log") or {}).get("projects_dir", "~/.claude/projects"), session) \
+            if session else None
+        return audit_transcript(stream, bundle=bundle, scratch=attempt / "scratch", sensitive=sensitive,
+                                home=home, arm_home=None if session else str(attempt / "scratch" / "home"),
+                                own_session=own, attempt_dir=attempt, literals=literals,
+                                private_root=attempt.parent if private else None,
+                                revision=revision, not_found=notes)
+
+    rows = []
+    for rec in records:
+        if rec.get("record_type") != "attempt":
+            continue
+        key = (rec["path"], rec["task"]["pr"], rec.get("segment"), rec.get("attempt"))
+        # (role, stream file, cloud session id, label): the label names a stream without its session id
+        sources: list[tuple[str, Path, str | None, str]] = []
+        for n, session in enumerate(rec.get("cloud_sessions") or []):
+            sources.append(("arm" if n == 0 else "reviewer",
+                            Path(streams_dir) / f"{campaign_id}-{session}.jsonl", session, f"cloud_sessions[{n}]"))
+        if key in started:
+            sources.append(("arm", Path(streams_dir) / f"{campaign_id}-{started[key]}.jsonl", None,
+                            f"local:{started[key]}"))
+        recorded = [*((rec.get("contamination") or {}).get("paths") or []),
+                    *(f"command:{c}" for c in (rec.get("contamination") or {}).get("commands") or [])]
+        row: dict[str, Any] = {"path": key[0], "pr": key[1], "segment": key[2], "attempt": key[3],
+                               "recorded": {"outcome": rec.get("outcome"),
+                                            "contaminated": bool(rec.get("contaminated")),
+                                            "hits": sorted(_hidden_home(h, home_real) for h in recorded)}}
+        streams, unavailable = [], None
+        for role, stream, session, label in sources:
+            cwd = _stream_cwd(stream) if stream.is_file() else None
+            bundle = Path(os.path.realpath(cwd)) if cwd is not None else None
+            if bundle is None or work not in bundle.parents:
+                unavailable = f"{label}: " + ("stream missing" if not stream.is_file() else
+                                                    "no usable cwd inside the work root")
+                break
+            notes: list[str] = []
+            old = audit(stream, bundle, role, key[0], session, 1, [])
+            new = audit(stream, bundle, role, key[0], session, AUDIT_REVISION, notes)
+            streams.append({"role": role, "stream": label,
+                            "sha256": hashlib.sha256(stream.read_bytes()).hexdigest(),
+                            "old": [_hidden_home(h, home_real) for h in old],
+                            "new": [_hidden_home(h, home_real) for h in new],
+                            "not_found": list(dict.fromkeys(_hidden_home(n, home_real) for n in notes))})
+        if unavailable:
+            row.update(classification="unavailable", unavailable=unavailable)
+            rows.append(row)
+            continue
+        old_arm = [h for st in streams if st["role"] == "arm" for h in st["old"]]
+        old_review = [h for st in streams if st["role"] == "reviewer" for h in st["old"]]
+        new_arm = [h for st in streams if st["role"] == "arm" for h in st["new"]]
+        new_review = [h for st in streams if st["role"] == "reviewer" for h in st["new"]]
+        not_found = [n for st in streams for n in st["not_found"]]
+        old_all = sorted(set(old_arm + old_review))
+        was, now = bool(old_all), bool(new_arm)
+        row["fidelity"] = "match" if old_all == row["recorded"]["hits"] else "mismatch"
+        row["old"] = {"contaminated": was, "session": "arm" if old_arm else "reviewer" if old_review else None,
+                      "hits": old_all}
+        row["new"] = {"contaminated": now, "hits": sorted(set(new_arm)), "reviewer_hits": sorted(set(new_review)),
+                      "not_found": not_found}
+        row["classification"] = (
+            "not_comparable" if row["fidelity"] == "mismatch" else
+            "flag_kept" if was and now else
+            "flag_removed" if was and not now and not new_review else
+            "flag_moved_to_review" if was and not now else
+            "flag_added" if now or new_review else "clean")
+        row["streams"] = streams
+        rows.append(row)
+    classes: dict[str, int] = {}
+    for row in rows:
+        classes[row["classification"]] = classes.get(row["classification"], 0) + 1
+    out = {"schema": REPLAY_SCHEMA, "campaign_id": campaign_id, "revisions": {"old": 1, "new": AUDIT_REVISION},
+           "results_sha256": results_sha256, "records": rows,
+           "summary": {"records": len(rows), "classification": dict(sorted(classes.items())),
+                       "fidelity_mismatch": sum(1 for r in rows if r.get("fidelity") == "mismatch"),
+                       "flagged_recorded": sum(1 for r in rows if r["recorded"]["contaminated"]),
+                       "flagged_now": sum(1 for r in rows if r.get("new", {}).get("contaminated"))},
+           "replay_limits": ["offline: no model, no cloud call; nothing is recomputed (verdicts, outcomes, report)",
+                             "sensitive roots rebuilt from the repository, state directory and home of the replay",
+                             "base literals come from the checkout of the replay, not from each bundle; the local "
+                             "sandbox denial is not reconstructed"]}
+    text = json.dumps(out, sort_keys=True)
+    if home_real not in ("/", "") and (home_real in text or str(home).rstrip("/") in text):
+        raise RunnerError("the replay result would copy a path of the home directory: refused")
+    return out
+
+
 # ----------------------------------------------------------------------------------- CLI
 
 def _tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], group: str) -> list[dict[str, Any]]:
@@ -4153,6 +4428,15 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             p.add_argument("--screening-campaign", default=None,
                            help="campaign id of a completed screening (results read-only in --state-dir) "
                                 "when this campaign id holds none; C and N need one or the other")
+    ra = sub.add_parser("replay-audit", help="apply audit revisions 1 and 2 to the raw streams of a finished "
+                                             "campaign, offline (no model, no cloud call)")
+    ra.add_argument("--campaign", required=True)
+    ra.add_argument("--results", required=True, help="results-<campaign>.jsonl; the ledger is read beside it")
+    ra.add_argument("--streams-dir", required=True, help="the raw transcripts (kept off the repository)")
+    ra.add_argument("--work-root", required=True, help="the work root the campaign used (it need not exist)")
+    ra.add_argument("--repo", default=".")
+    ra.add_argument("--home", default=None, help="the home to rebuild the sensitive list from (default $HOME)")
+    ra.add_argument("--out", default=None, help="write the result here instead of stdout (never overwrites)")
     r = sub.add_parser("report")
     r.add_argument("--campaign", required=True)
     r.add_argument("--results", required=True,
@@ -4163,6 +4447,29 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     except (RunnerError, OSError, ValueError) as exc:  # e.g. a frozen ground truth whose sha256 changed
         print(f"refused: {exc}", file=sys.stderr)
         return 2
+    if args.cmd == "replay-audit":
+        try:
+            results = Path(args.results)
+            name = re.fullmatch(r"results-(.+)\.jsonl", results.name)
+            ledger = results.with_name(f"ledger-{name.group(1)}.jsonl") if name else None
+            if ledger is None or not ledger.is_file():
+                raise RunnerError(f"no ledger beside {results} (expected ledger-<campaign>.jsonl)")
+            streams = Path(args.streams_dir)
+            result = replay_audit(
+                campaign, _read_jsonl(results), _read_jsonl(ledger), streams_dir=streams,
+                work_root=Path(args.work_root), repo=Path(args.repo), state_dir=streams.parent,
+                home=args.home or os.environ.get("HOME") or str(Path.home()),
+                results_sha256=hashlib.sha256(results.read_bytes()).hexdigest())
+            text = json.dumps(result, indent=2, sort_keys=True) + "\n"
+            if args.out:
+                with Path(args.out).open("x", encoding="utf-8") as handle:  # never rewrites a result
+                    handle.write(text)
+            else:
+                print(text, end="")
+        except (RunnerError, OSError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        return 0
     if args.cmd == "report":
         try:
             results = Path(args.results)

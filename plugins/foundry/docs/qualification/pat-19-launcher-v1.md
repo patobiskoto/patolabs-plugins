@@ -928,4 +928,55 @@ Protocole gelé : [`pat-19-protocol-v4.md`](pat-19-protocol-v4.md) ; configurati
 - **Bras** : sous ce protocole, `compare-exploration` refuse tout bras autre que `A` et `L` avant toute réservation (code 2), et `--paths` vaut `A,L` par défaut. `report` d'un candidat fixé affiche `exploration_screening.state: no_screening` et `screening_selected: fixed_by_protocol:<candidat>`, jamais `incomplete_screening`.
 - **Opérateur** : la ligne de fin de lancement reste `pat19-v3: work_remains=…`.
 - **Statut documentaire (R5)** : ce document, le protocole v4 (section 6) et le CHANGELOG. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.
-- **Résultats réels (PAT-122)** : comparaison `pat-19-x4compare-1`, exécutée le 2026-10-07 : [`pat-19-exploration-results-v4.md`](pat-19-exploration-results-v4.md) (pièces brutes dans `pat-19-runs/x4compare-1/`). Le diagnostic qui y figure nomme trois défauts de l'audit de contamination (jetons relatifs résolus contre le bundle sans suivre un `cd`, dossier de travail réinitialisé à chaque appel Bash, imputation à la tentative entière d'une contamination du relecteur) : documentés ici comme constats de ce diagnostic, **non corrigés** (réparation à passer par `foundry:intake`).
+- **Résultats réels (PAT-122)** : comparaison `pat-19-x4compare-1`, exécutée le 2026-10-07 : [`pat-19-exploration-results-v4.md`](pat-19-exploration-results-v4.md) (pièces brutes dans `pat-19-runs/x4compare-1/`). Le diagnostic qui y figure nomme trois défauts de l'audit de contamination (jetons relatifs résolus contre le bundle sans suivre un `cd`, dossier de travail réinitialisé à chaque appel Bash, imputation à la tentative entière d'une contamination du relecteur) : documentés ici comme constats de ce diagnostic. **Corrigés ensuite pour une campagne future** par PAT-123 (section « Révision 2 de l'audit et rejeu hors ligne » ci-dessous), jamais pour la v4.
+
+## Révision 2 de l'audit et rejeu hors ligne (PAT-123)
+
+Les protocoles v1 à v4, leurs configurations et leurs résultats sont gelés et **ne changent pas** : sans la clé ci-dessous, le
+lanceur se comporte exactement comme avant (audit de révision 1, capture du correctif inchangée, enregistrements de même forme).
+La réparation est une **révision 2** de l'audit, activée par une clé de configuration et donc par un protocole postérieur à la v4.
+
+- **`isolation.audit_revision`** (entier, 1 par défaut ou 2). Le chargeur refuse la valeur 2 sous `pat-19-protocol-v1` à `v4`
+  (constante `FROZEN_PROTOCOLS`) et toute valeur autre que 1 ou 2. La révision 2 change quatre choses :
+  - **Dossier courant réel** (`audit_transcript(..., revision=2)`) : un chemin relatif d'une commande est résolu depuis le
+    dossier où la commande s'exécute. `cd` est suivi dans la ligne **et dans la passe des jetons bruts** (un jeton relatif est lu
+    pendant le parcours de la ligne, où le dossier est connu, et non plus contre le bundle ; les morceaux que les enveloppes
+    cachent, `X=../x cat $X`, sont lus aussi), et **d'un appel Bash au suivant dans une session Claude Code** : Claude Code garde
+    le dossier de travail tant qu'il reste dans le projet (le bundle) et le remet à la racine du projet quand une commande finit
+    dehors (« Shell cwd was reset to … » dans le flux). Un flux omp repart du bundle à chaque appel (rien n'est connu de son shell).
+    Un chemin relatif est « relatif » (sorti de la zone permise = relevé) quel que soit le dossier. Meilleure résolution
+    signifie aussi que la révision 2 peut relever ce que la révision 1 résolvait vers un endroit inoffensif (`cd plugins;
+    X=../../../../x; cat $X`) ; sur la campagne v4 elle n'en relève aucun.
+  - **Chemin inexistant** : un appel d'outil omp qui a donné un `path` et dont le résultat est une erreur `Path not found: <ce
+    même chemin>` n'a rien lu : ni le chemin ni l'écho de l'erreur ne sont des drapeaux ; le chemin est consigné dans
+    `audit.not_found` de l'enregistrement. Un autre texte d'erreur, un résultat non erroné, un résultat d'un autre appel, un
+    autre chemin nommé, une commande Bash (clé `command`) ou un second accès réussi au même chemin restent audités comme avant.
+  - **Session du relecteur** (chemin cloud) : un drapeau de la session du relecteur ne met plus `contaminated` sur l'essai du
+    bras. Il est enregistré dans `review.contamination` (`paths`, `commands`) et `unknown["review.contaminated"]` ; le verdict du
+    juge et ceux de la revue restent sur l'enregistrement ; un `PASS` d'un relecteur relevé ne peut pas accepter l'essai (issue
+    `review_unreadable` : indécidé, jamais rejoué), un `BLOCK` reste un `BLOCK`. Le chemin C (v1) garde son comportement.
+  - **Capture du correctif** : `_PATCH_EXCLUDES_V2` ajoute `.pytest_cache/` et `.ruff_cache/` aux exclusions de
+    `_capture_patch`. Origine établie (PAT-123) : le bras lance `pytest` / `ruff` dans son bundle, ce qui crée ces dossiers avec
+    leur propre `.gitignore` ; le `.gitignore` du dépôt ignore déjà `.pytest_cache/` ; `git add -A -f` de la capture force
+    l'ajout des fichiers ignorés et les exclusions ne les couvraient pas : c'est l'**instrument** qui les a mis dans le
+    correctif et dans le diff du relecteur. Les v1 à v4 gardent `_PATCH_EXCLUDES`.
+- **Enregistrement** : sous la révision 2 seulement, chaque enregistrement porte `audit: {revision, not_found}`.
+- **`informative_arms`** (rapport d'exploration) ne nomme plus qu'un bras informatif **joué** (`["E"]` si l'arme E a des
+  enregistrements, `[]` sinon). Ce correctif de sortie s'applique à tout rapport futur, v2 et v3 compris, et ne change aucune
+  décision ni aucun verdict ; les rapports versés ne sont pas recalculés.
+- **Rejeu hors ligne** : `python3 -m foundry.local_first_runner replay-audit --campaign <config> --results
+  results-<id>.jsonl --streams-dir <flux bruts> --work-root <racine de travail> [--repo .] [--home <HOME>] [--out <fichier>]`
+  (le registre `ledger-<id>.jsonl` est lu à côté des résultats ; `--out` n'écrase jamais un fichier existant). Il applique à
+  chaque flux les révisions 1 et 2, sans pilote, sans modèle, sans appel cloud, et rend par enregistrement ce qui a été
+  enregistré, l'ancien classement, le nouveau, les chemins inexistants à part, le `sha256` du flux et une classification
+  (`clean`, `flag_kept`, `flag_removed`, `flag_moved_to_review`, `flag_added`, `not_comparable` si la révision 1 rejouée ne
+  retrouve pas ce qui a été enregistré, `unavailable` si un flux manque : jamais « propre »). Aucun verdict, issue ni rapport n'est
+  recalculé. Limites : racines sensibles reconstruites avec le dépôt, le dossier d'état et le répertoire personnel du rejeu ;
+  littéraux de base de l'extraction courante ; refus du bac à sable local non reconstruit ; un chemin sous le répertoire
+  personnel est écrit `~/<hidden>` et le rejeu refuse de produire un résultat qui en copie un. Résultat sur la v4 :
+  [`pat-19-audit-replay-v4.md`](pat-19-audit-replay-v4.md).
+- **Statut documentaire (R5)** : ce document, le rejeu v4, le CHANGELOG ; artefacts : verbe `replay-audit`, clé
+  `isolation.audit_revision`, constantes `AUDIT_REVISION`, `FROZEN_PROTOCOLS`, `_PATCH_EXCLUDES_V2`, paramètres `revision` et
+  `not_found` de `audit_transcript`, champs `audit` et `review.contamination`, `informative_arms`. Aucun verbe de
+  `foundry_cli.py`, clé de configuration produit, table de routage ni constante de routage modifiés. Détecteur FOUNDRY-123 non
+  livré : statut affirmé ici, vérifié en revue.
