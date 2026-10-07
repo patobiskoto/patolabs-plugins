@@ -1,0 +1,384 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates are the five frozen ones (candidates, in this order) and the screening is complete only when all five have their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Frozen with v2, before any result.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.8-27b-mlx-6bit",
+        "qwen3.8-27b-mlx-4bit",
+        "qwen3.6-35b-a3b-mlx-4bit",
+        "muse-glimmer-30b-gguf",
+        "qwen3-coder-30b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 6,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "arm L is retained only if compatibility AND quality AND economy all pass on the 6 tasks: its acceptance rate >= A's AND its premium tokens per accepted task (explorer included; a Haiku explorer counts as premium, local tokens do not) <= 0.85 x A's, and compatibility (the v1 machine criterion: no external signal, extra swap under extra_swap_gib_max) passes. E vs A is computed with the same rule and is informative. Local wall time is reported; no time ratio is part of the v2 rule."
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "6830629ccd385847ca6b88c730b706407517ac009cb3715daf8c6e7a61ec8d16",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "3c5a78f6800c1aa1a4918fea1f526f9d77f579c626fb506fbea6fe00b379c5fc"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [],
+  "replays": [],
+  "exploration_screening": {
+    "candidates": {
+      "muse-glimmer-30b-gguf": {
+        "tasks": 6,
+        "mean_function_recall": 0.0,
+        "function_tasks": 6,
+        "mean_file_precision": 0.0,
+        "mean_file_recall": 0.0,
+        "total_seconds": 3437.08,
+        "refused": 6,
+        "contaminated": 0,
+        "per_task": [
+          {
+            "pr": 30,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 457.142
+          },
+          {
+            "pr": 83,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.022
+          },
+          {
+            "pr": 27,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 579.847
+          },
+          {
+            "pr": 24,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.022
+          },
+          {
+            "pr": 48,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.026
+          },
+          {
+            "pr": 19,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.021
+          }
+        ],
+        "peak_swap_used_mib": 4412.88,
+        "harness": [
+          "local_explorer"
+        ]
+      },
+      "qwen3-coder-30b-a3b-mlx-4bit": {
+        "tasks": 6,
+        "mean_function_recall": 0.166667,
+        "function_tasks": 6,
+        "mean_file_precision": 0.166667,
+        "mean_file_recall": 0.166667,
+        "total_seconds": 1211.005,
+        "refused": 3,
+        "contaminated": 0,
+        "per_task": [
+          {
+            "pr": 30,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 81.28
+          },
+          {
+            "pr": 83,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 562.776
+          },
+          {
+            "pr": 27,
+            "verdict": "SCORED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 6.499
+          },
+          {
+            "pr": 24,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 76.196
+          },
+          {
+            "pr": 48,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 479.013
+          },
+          {
+            "pr": 19,
+            "verdict": "SCORED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 5.241
+          }
+        ],
+        "peak_swap_used_mib": 6419.0,
+        "harness": [
+          "local_explorer"
+        ]
+      },
+      "qwen3.6-35b-a3b-mlx-4bit": {
+        "tasks": 6,
+        "mean_function_recall": 0.25,
+        "function_tasks": 6,
+        "mean_file_precision": 0.333333,
+        "mean_file_recall": 0.333333,
+        "total_seconds": 891.601,
+        "refused": 4,
+        "contaminated": 0,
+        "per_task": [
+          {
+            "pr": 30,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 160.086
+          },
+          {
+            "pr": 83,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 129.891
+          },
+          {
+            "pr": 27,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 171.523
+          },
+          {
+            "pr": 24,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 146.802
+          },
+          {
+            "pr": 48,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 174.042
+          },
+          {
+            "pr": 19,
+            "verdict": "SCORED",
+            "function_recall": 0.5,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 109.257
+          }
+        ],
+        "peak_swap_used_mib": 4436.88,
+        "harness": [
+          "local_explorer"
+        ]
+      },
+      "qwen3.8-27b-mlx-4bit": {
+        "tasks": 6,
+        "mean_function_recall": 0.166667,
+        "function_tasks": 6,
+        "mean_file_precision": 0.166667,
+        "mean_file_recall": 0.166667,
+        "total_seconds": 3589.673,
+        "refused": 5,
+        "contaminated": 0,
+        "per_task": [
+          {
+            "pr": 30,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.024
+          },
+          {
+            "pr": 83,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.014
+          },
+          {
+            "pr": 27,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.019
+          },
+          {
+            "pr": 24,
+            "verdict": "SCORED",
+            "function_recall": 1.0,
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "wall_seconds": 589.571
+          },
+          {
+            "pr": 48,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.02
+          },
+          {
+            "pr": 19,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.025
+          }
+        ],
+        "peak_swap_used_mib": 4452.88,
+        "harness": [
+          "local_explorer"
+        ]
+      },
+      "qwen3.8-27b-mlx-6bit": {
+        "tasks": 6,
+        "mean_function_recall": 0.0,
+        "function_tasks": 6,
+        "mean_file_precision": 0.0,
+        "mean_file_recall": 0.0,
+        "total_seconds": 3600.145,
+        "refused": 6,
+        "contaminated": 0,
+        "per_task": [
+          {
+            "pr": 30,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.029
+          },
+          {
+            "pr": 83,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.027
+          },
+          {
+            "pr": 27,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.022
+          },
+          {
+            "pr": 24,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.02
+          },
+          {
+            "pr": 48,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.018
+          },
+          {
+            "pr": 19,
+            "verdict": "REFUSED",
+            "function_recall": 0.0,
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "wall_seconds": 600.029
+          }
+        ],
+        "peak_swap_used_mib": 4460.88,
+        "harness": [
+          "local_explorer"
+        ]
+      }
+    },
+    "selected": null,
+    "reason": "no_candidate_meets_precision_floor: keep_cloud",
+    "stop": "keep_cloud",
+    "complete": true,
+    "missing_candidates": [],
+    "undecided_tasks": [],
+    "killed_not_replayed": 0,
+    "not_completable_tasks": [],
+    "campaign_conclusion": "keep_cloud",
+    "warnings": []
+  },
+  "exploration_comparison": {
+    "arms": {},
+    "decision": "inconclusive",
+    "recommendation": null,
+    "warnings": [],
+    "informative_arms": [
+      "E"
+    ],
+    "reason": "no_reference_path_A",
+    "campaign_conclusion": "incomplete_campaign",
+    "screening_selected": "none_selected"
+  }
+}
