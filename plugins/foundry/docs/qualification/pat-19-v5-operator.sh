@@ -8,7 +8,7 @@
 # <runs-dir>  holds envelope.json (read) and state/ (results and ledger); the operator log is written there.
 #             The pilot and the campaign NEVER share a runs-dir, nor a campaign id (checked below and by the launcher).
 # <work-root> disposable area outside every checkout; <repo> the full clone the corpus tasks are built from
-# Refusals before any model is loaded: 64 usage, 65 pinned precondition (campaign id, state directory, Claude Code), 66 file.
+# Refusals before any model is loaded: 64 usage, 65 pinned precondition (campaign id, state directory, python3 with pytest, Claude Code), 66 file.
 set -euo pipefail
 
 usage() { echo "usage: $0 compare|pilot <candidate> <checkout> <runs-dir> <work-root> <repo>" >&2; exit 64; }
@@ -44,6 +44,15 @@ for f in "$STATE"/results-*.jsonl "$STATE"/ledger-*.jsonl; do
   esac
 done
 
+# pytest must be importable by the python3 of THIS shell (the launcher runs under it; the arms inherit its PATH). The
+# first pilot (pat-19-x5pilot-1) was void because a Homebrew python3 without pytest came first on the PATH.
+PY3=$(command -v python3 || true)
+if [ -z "$PY3" ] || ! "$PY3" -c "import pytest" 2>/dev/null; then
+  echo "python3 (${PY3:-not found}) cannot import pytest: launch this script from a clean shell whose python3 has pytest" >&2
+  exit 65
+fi
+echo "python3: $PY3 (pytest $("$PY3" -c 'import pytest; print(pytest.__version__)'))"
+
 # Claude Code is pinned by the config (binary_version): refused here too, before a model is loaded for nothing.
 PIN=$(python3 -c 'import json,sys
 print(json.load(open(sys.argv[1]))["drivers"]["cloud_reviewer"]["binary_version"]["version"])' "$CFG")
@@ -59,7 +68,7 @@ LOAD_CMD=$(python3 -c 'import json,shlex,sys
 c = json.load(open(sys.argv[1]))["candidates"].get(sys.argv[2], {}).get("load_command") or []
 print(shlex.join(c))' "$CFG" "$CAND")
 [ -n "$LOAD_CMD" ] || { echo "no pinned load_command for candidate $CAND in $CFG" >&2; exit 65; }
-log "operator start mode=$MODE candidate=$CAND campaign_id=$CAMPAIGN_ID config=$CFG claude_code=$SEEN load_command='$LOAD_CMD -y'"
+log "operator start mode=$MODE candidate=$CAND campaign_id=$CAMPAIGN_ID config=$CFG python3=$PY3 claude_code=$SEEN load_command='$LOAD_CMD -y'"
 
 finish() { log "final: lms unload --all"; lms unload --all >>"$LOG" 2>&1 || log "final unload failed"; }
 trap finish EXIT

@@ -565,3 +565,195 @@ def test_the_operator_script_keeps_the_pilot_and_the_campaign_apart_and_checks_c
     for n, (mode, campaign_id) in enumerate((("pilot", "pat-19-x5pilot-1"), ("compare", "pat-19-x5compare-1"))):
         done, lms = _operator(_sub(tmp_path, f"ok{n}"), mode, campaign_id=campaign_id)
         assert lms.startswith("unload --all") and done.returncode == 7  # past every check, stopped by the stand-in lms
+
+
+# ------------------------------------------------------------ a judge that cannot run is not a verdict (pilot 1)
+
+def _broken_python(tmp_path):
+    """An interpreter that cannot import pytest (the Homebrew python3 of the void pilot)."""
+    script = tmp_path / "broken-python"
+    script.write_text('#!/bin/sh\necho "No module named pytest" >&2\nexit 1\n', encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+def test_a_judge_that_cannot_run_pytest_is_an_instrument_error_under_v5_and_the_old_verdict_before(tmp_path,
+                                                                                                   monkeypatch):
+    from foundry import local_first_corpus as lfc
+    from test_local_first_corpus import _make_repo
+    repo, snap, _, _ = _make_repo(tmp_path)
+    task = snap["prs"][0]
+    ok = lfc.judge(repo, task, lfc.build_bundle(repo, task, tmp_path / "ok"), strict_report=True)
+    assert ok["verdict"] == "REFUSED" and ok["failed"] + ok["errors"] >= 1  # a real refusal is still a verdict
+    monkeypatch.setattr(lfc.sys, "executable", _broken_python(tmp_path))
+    # v1 to v4 (strict off, the default): the verdict that exists in their records, unchanged
+    old = lfc.judge(repo, task, lfc.build_bundle(repo, task, tmp_path / "old"))
+    assert (old["verdict"], old["passed"], old["failed"], old["errors"]) == ("REFUSED", 0, 0, 0)
+    with pytest.raises(lfc.JudgeInstrumentError, match="No module named pytest"):
+        lfc.judge(repo, task, lfc.build_bundle(repo, task, tmp_path / "new"), strict_report=True)
+
+
+def test_the_runner_records_an_unrunnable_judge_as_a_tool_error_never_a_refusal(tmp_path, monkeypatch):
+    from foundry import local_first_corpus as lfc
+    runner, _, plan, tasks = make_runner(tmp_path, "compare_exploration", PLAN)
+    runner.strict_judge = True
+    runner._check_interpreters = lambda: None  # the preflight would refuse first (tested below): reach the judge
+    monkeypatch.setattr(lfc.sys, "executable", _broken_python(tmp_path))
+    with pytest.raises(lfc.CorpusError, match="judge cannot run"):
+        runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+    recs = [r for r in results(runner) if r.get("record_type") == "attempt"]
+    assert [r["outcome"] for r in recs] == ["tool_error"] and recs[0]["accepted"] is None
+    assert not recs[0].get("judge")  # no verdict, so no corrector was ever told "failed 0"
+    assert counts(plan) == {"implementer": 1}  # no correction round
+    # the same unrunnable judge under a v1 to v4 campaign keeps its old behaviour (a 0/0/0 refusal)
+    other, _, _, tasks2 = make_runner(_sub(tmp_path, "old"), "compare_exploration", PLAN)
+    other.compare_exploration(tasks2[:1], "cand-a", ("A",))
+    assert [r["outcome"] for r in results(other) if r.get("path") == "A"][0] == "judge_refused"
+
+
+# --------------------------------------------------------------------------------- interpreter preflight
+
+def _fake_python(directory, name, *, works, version="8.3.0"):
+    directory.mkdir(parents=True, exist_ok=True)
+    script = directory / name
+    script.write_text(f'#!/bin/sh\n{"echo " + version if works else "echo nope >&2; exit 1"}\n', encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+
+
+def _strict_runner(tmp_path, bin_dir):
+    runner, campaign, plan, tasks = make_runner(tmp_path, "compare_exploration", PLAN)
+    runner.strict_judge = True
+    runner.host_env = {**os.environ, "HOME": str(tmp_path / "home"), "PATH": f"{bin_dir}"}
+    return runner, plan, tasks
+
+
+def test_the_probe_names_the_interpreter_that_cannot_import_pytest_and_masks_the_home(tmp_path):
+    home = tmp_path / "home"
+    _fake_python(home / "bin", "python3", works=False)
+    _fake_python(home / "bin", "python", works=True)
+    driver = {"kind": "cloud_implementer", "home": "real"}
+    out = lfr.probe_interpreters({"HOME": str(home), "PATH": str(home / "bin")}, driver)
+    assert out["refusals"] == ["arm_python3_cannot_import_pytest:~/bin/python3"]
+    assert out["arm_python3"] == {"path": "~/bin/python3", "pytest": None}
+    assert out["arm_python"] == {"path": "~/bin/python", "pytest": "8.3.0"} and out["launcher"]["pytest"]
+    assert str(home) not in json.dumps(out)
+    gone = lfr.probe_interpreters({"HOME": str(home), "PATH": str(tmp_path / "nothing")}, driver)
+    assert gone["refusals"] == ["arm_python3_not_found_on_the_arm_path", "arm_python_not_found_on_the_arm_path"]
+
+
+def test_a_launcher_interpreter_without_pytest_is_named(tmp_path, monkeypatch):
+    monkeypatch.setattr(lfr.sys, "executable", _broken_python(tmp_path))
+    out = lfr.probe_interpreters({"HOME": str(tmp_path)}, None)
+    assert out["refusals"] and out["refusals"][0].startswith("launcher_python_cannot_import_pytest:")
+
+
+def test_a_broken_arm_interpreter_refuses_before_any_claim_model_or_cloud_reservation(tmp_path):
+    bin_dir = tmp_path / "bin"
+    _fake_python(bin_dir, "python3", works=False)
+    _fake_python(bin_dir, "python", works=True)
+    runner, plan, tasks = _strict_runner(tmp_path, bin_dir)
+    with pytest.raises(lfr.PreflightRefused, match="arm_python3_cannot_import_pytest"):
+        runner.compare_exploration(tasks[:1], "cand-a", ("A", "L"))
+    assert counts(plan) == {} and not runner.results_path.exists()
+    kinds = ledger_kinds(runner)
+    assert "cloud_started" not in kinds and "attempt_started" not in kinds
+    entry = [e for e in ledger_of(runner) if e["kind"] == "preflight"][0]
+    assert entry["ok"] is False and entry["refusals"][0].startswith("arm_python3_cannot_import_pytest")
+    assert entry["interpreters"]["arm_python"]["pytest"] == "8.3.0"
+
+
+def test_working_interpreters_are_recorded_in_the_preflight_entry_and_old_protocols_are_not_probed(tmp_path):
+    bin_dir = tmp_path / "bin"
+    _fake_python(bin_dir, "python3", works=True, version="8.3.1")
+    _fake_python(bin_dir, "python", works=True, version="8.3.2")
+    runner, plan, tasks = _strict_runner(tmp_path, bin_dir)
+    runner.compare_exploration(tasks[:1], "cand-a", ("A", "L"))
+    entries = [e for e in ledger_of(runner) if e["kind"] == "preflight" and e["ok"]]
+    probe = entries[0]["interpreters"]
+    assert probe["arm_python3"]["pytest"] == "8.3.1" and probe["arm_python"]["pytest"] == "8.3.2"
+    assert probe["refusals"] == [] and str(tmp_path / "home") not in json.dumps(probe)
+    old, _, _, tasks2 = make_runner(_sub(tmp_path, "old"), "compare_exploration", PLAN)
+    old.host_env = {**os.environ, "PATH": str(tmp_path / "nothing")}  # would fail the probe; v1 to v4 never run it
+    old.compare_exploration(tasks2[:1], "cand-a", ("A",))
+    assert all("interpreters" not in e for e in ledger_of(old))
+
+
+# ------------------------------------------------------------------------------ the offline golden self-check
+
+def test_the_golden_check_passes_on_a_working_judge_and_fails_on_one_that_cannot_run(tmp_path, monkeypatch):
+    import datetime
+    from test_local_first_corpus import _make_repo
+    from test_local_first_exploration_runner import v2_campaign
+    repo, snap, _, _ = _make_repo(tmp_path)
+    campaign, _ = v2_campaign(tmp_path, PLAN)
+    campaign["protocol"] = "pat-19-protocol-v6"  # unpinned, after v4: the strict judge
+    task = snap["prs"][0]
+    day = datetime.date(2026, 10, 6)
+    out = lfr.golden_check(campaign, tmp_path / "c.json", [task], repo=repo, work_root=tmp_path / "w1", today=day)
+    row = out["tasks"][0]
+    assert out["all_ok"] is True and row["ok"] and row["untouched"]["verdict"] == "REFUSED"
+    assert row["untouched"]["failed"] + row["untouched"]["errors"] >= 1 and row["solved"]["verdict"] == "ACCEPTED"
+    assert not list((tmp_path / "w1").iterdir())  # throwaway bundles are gone
+    monkeypatch.setattr(lfr.lfc.sys, "executable", _broken_python(tmp_path))
+    bad = lfr.golden_check(campaign, tmp_path / "c.json", [task], repo=repo, work_root=tmp_path / "w2", today=day)
+    assert bad["all_ok"] is False and "judge cannot run" in bad["tasks"][0]["untouched"]["instrument_error"]
+    campaign.pop("protocol")  # even a v1 to v4 judge: 0/0/0 is never the expected refusal
+    old = lfr.golden_check(campaign, tmp_path / "c.json", [task], repo=repo, work_root=tmp_path / "w3", today=day)
+    assert old["all_ok"] is False and old["tasks"][0]["untouched"]["failed"] == 0
+
+
+def test_the_golden_verb_writes_its_result_once_and_never_overwrites(tmp_path, monkeypatch, capsys):
+    import datetime
+    from test_local_first_corpus import _make_repo
+    repo, snap, _, _ = _make_repo(tmp_path)
+    snap = {**snap, "prs": [{**snap["prs"][0], "pr": 27}]}
+    (tmp_path / "c.json").write_text(json.dumps(_staged(tmp_path, PILOT_PATH)), encoding="utf-8")
+    (tmp_path / "snap.json").write_text(json.dumps(snap), encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(json.dumps({"comparison": [], "screening": [{"pr": 27}]}), encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path / "host-home"))
+    argv = ["golden-check", "--campaign", str(tmp_path / "c.json"), "--repo", str(repo),
+            "--work-root", str(tmp_path / "work"), "--snapshot", str(tmp_path / "snap.json"),
+            "--manifest", str(tmp_path / "manifest.json"), "--out", str(tmp_path / "golden.json")]
+    day = datetime.date(2026, 10, 6)
+    assert lfr.main(argv, today=day) == 0 and "PR 27: untouched REFUSED" in capsys.readouterr().out
+    result = json.loads((tmp_path / "golden.json").read_text("utf-8"))
+    assert result["all_ok"] is True and result["protocol"] == "pat-19-protocol-v5-pilot"
+    assert lfr.main(argv, today=day) == 2 and "never overwritten" in capsys.readouterr().err
+    assert json.loads((tmp_path / "golden.json").read_text("utf-8")) == result
+
+
+def test_the_pilot_ids_of_a_second_pilot_are_accepted_by_the_loader_and_the_script_checks(tmp_path):
+    for n in (1, 2):
+        runner = _runner_for(_sub(tmp_path, f"p{n}"), lfr.PROTOCOL_V5_PILOT, f"pat-19-x5pilot-{n}")
+        assert runner.envelope["campaign_id"] == f"pat-19-x5pilot-{n}"
+    done, lms = _operator(_sub(tmp_path, "s2"), "pilot", campaign_id="pat-19-x5pilot-2")
+    assert lms.startswith("unload --all") and done.returncode == 7
+
+
+def test_the_operator_script_refuses_a_python3_without_pytest_before_any_model(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+    where = _sub(tmp_path, "nopytest")
+    # a ``python3`` that behaves as the real one except that it cannot import pytest
+    qual, runs = where / "checkout" / "plugins" / "foundry" / "docs" / "qualification", where / "runs"
+    qual.mkdir(parents=True)
+    for name in ("pat-19-campaign-v5.json", "pat-19-campaign-v5-pilot.json", "pat-19-corpus-snapshot-v1.json",
+                 "pat-19-corpus-manifest-v1.json"):
+        (qual / name).symlink_to(QUALIFICATION / name)
+    (runs / "state").mkdir(parents=True)
+    (runs / "envelope.json").write_text(json.dumps({"campaign_id": "pat-19-x5pilot-2"}), encoding="utf-8")
+    bin_dir = where / "stand-in"
+    bin_dir.mkdir()
+    (bin_dir / "python3").write_text(
+        f'#!/bin/sh\ncase "$*" in *"import pytest"*) echo "No module named pytest" >&2; exit 1;; esac\n'
+        f'exec {sys.executable} "$@"\n', encoding="utf-8")
+    (bin_dir / "lms").write_text(f'#!/bin/sh\necho "$@" >> "{where}/lms.log"\nexit 7\n', encoding="utf-8")
+    for tool in bin_dir.iterdir():
+        tool.chmod(tool.stat().st_mode | stat.S_IEXEC)
+    done = subprocess.run([shutil.which("bash"), str(SCRIPT), "pilot", "qwen3.6-35b-a3b-mlx-4bit",
+                           str(where / "checkout"), str(runs), str(where / "work"), str(where / "repo")],
+                          capture_output=True, text=True,
+                          env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "HOME": str(where / "home")})
+    assert done.returncode == 65 and "cannot import pytest" in done.stderr and "clean shell" in done.stderr
+    assert not (where / "lms.log").exists() and not list(runs.glob("operator-*"))

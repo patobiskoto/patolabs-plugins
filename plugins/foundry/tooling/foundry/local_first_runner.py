@@ -3092,6 +3092,49 @@ def _merge_models(into: dict[str, dict[str, int | None]], more: Mapping[str, Map
             current[name] = None if (current[name] is None or value is None) else current[name] + value
 
 
+def probe_interpreters(host_env: Mapping[str, str], driver: Mapping[str, Any] | None) -> dict[str, Any]:
+    """PAT-126: can the interpreters that matter import pytest? ``launcher``: ``sys.executable -P`` with the judge's
+    environment (the judge runs pytest with it); ``arm_python3`` and ``arm_python``: what ``python3`` and ``python``
+    resolve to on the PATH the launcher gives a cloud arm (``isolated_environment``, the R6 allow-list). Paths are
+    reported with the home masked as ``~``; ``refusals`` names each failure. Read-only: runs ``-c`` one-liners only."""
+    home = str(host_env.get("HOME") or os.path.expanduser("~"))
+
+    def mask(text: str) -> str:
+        return text.replace(home, "~") if home and home != "/" else text
+
+    def import_pytest(exe: str, args: Sequence[str], env: Mapping[str, str], cwd: str) -> tuple[str | None, str]:
+        try:
+            done = subprocess.run([exe, *args, "-c", "import pytest; print(pytest.__version__)"], env=dict(env),
+                                  cwd=cwd, capture_output=True, text=True, timeout=60, check=False,
+                                  stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return None, type(exc).__name__
+        lines = done.stdout.strip().splitlines()
+        return (lines[-1] if done.returncode == 0 and lines else None), ""
+
+    out: dict[str, Any] = {"refusals": []}
+    with tempfile.TemporaryDirectory(prefix="foundry-probe-") as tmp:
+        judge_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(Path(tmp) / "home"),
+                     "TMPDIR": tmp, "PYTHONNOUSERSITE": "1"}
+        version, why = import_pytest(sys.executable, ["-P"], judge_env, tmp)
+        out["launcher"] = {"path": mask(sys.executable), "pytest": version}
+        if version is None:
+            out["refusals"].append(f"launcher_python_cannot_import_pytest:{mask(sys.executable)}{why and ':' + why}")
+        if driver is not None:
+            env = isolated_environment(driver, Path(tmp) / "arm", host_env)
+            for name in ("python3", "python"):
+                found = shutil.which(name, path=env.get("PATH") or os.defpath)
+                if found is None:
+                    out[f"arm_{name}"] = {"path": None, "pytest": None}
+                    out["refusals"].append(f"arm_{name}_not_found_on_the_arm_path")
+                    continue
+                version, why = import_pytest(found, [], env, tmp)
+                out[f"arm_{name}"] = {"path": mask(found), "pytest": version}
+                if version is None:
+                    out["refusals"].append(f"arm_{name}_cannot_import_pytest:{mask(found)}{why and ':' + why}")
+    return out
+
+
 class Runner:
     """Plays tasks through the paths. Every argument is injected so a test (or a dry run) never
     needs a real machine, model or cloud."""
@@ -3183,6 +3226,10 @@ class Runner:
         self.barriers: dict[str, str] = {}  # what the launcher verified of the barrier, by audited stream log
         self.roles: dict[str, str] = {}  # role of each reserved cloud session
         self.fixed_candidate = (campaign.get("exploration") or {}).get("fixed_candidate")
+        # PAT-126 (a protocol after v4 only): a judge that cannot run is an instrument error, never a 0/0/0 refusal,
+        # and the interpreters the judge and the arms will use are probed before anything is claimed
+        self.strict_judge = bool(_PROTOCOL_AFTER_V4.fullmatch(str(campaign.get("protocol"))))
+        self.interpreters: dict[str, Any] | None = None
         # PAT-126 (a protocol after v4 only): the ``task.set`` label of the comparison records ("comparison" before)
         self.compare_set = _compare_set(campaign)
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
@@ -3535,7 +3582,8 @@ class Runner:
         (``candidate_fault``), never a void attempt. Any other ``OSError`` (the launcher's environment)
         propagates and leaves the attempt void."""
         try:
-            return lfc.judge(self.repo, task, bundle, **({"failures": True} if self.feedback_spec else {}))
+            return lfc.judge(self.repo, task, bundle, **({"failures": True} if self.feedback_spec else {}),
+                             **({"strict_report": True} if self.strict_judge else {}))
         except OSError as exc:
             real = Path(os.path.realpath(bundle))
             name = Path(os.path.realpath(exc.filename)) if isinstance(exc.filename, str) else None
@@ -4334,6 +4382,20 @@ class Runner:
             raise
         return [record], None if contamination else report, bool(contamination)
 
+    def _check_interpreters(self) -> None:
+        """PAT-126 (a protocol after v4 only): refuse, before any claim, model use or cloud reservation, when the
+        launcher's interpreter or the ``python3`` / ``python`` of a cloud arm cannot import pytest (the pilot of
+        2026-10-09 was void because they could not). The probe is kept for the ledger's preflight entries."""
+        if not self.strict_judge:
+            return
+        driver = self.campaign["drivers"].get(IMPLEMENTER_DRIVER["A"])
+        self.interpreters = probe_interpreters(os.environ if self.host_env is None else self.host_env,
+                                               driver if driver and driver["kind"] in CLOUD_KINDS else None)
+        if self.interpreters["refusals"]:
+            self.ledger.append("preflight", candidate=None, ok=False, refusals=self.interpreters["refusals"],
+                               interpreters=self.interpreters, phase="start")
+            raise PreflightRefused(self.interpreters["refusals"])
+
     def _check_cloud_binaries(self, arms: Sequence[str]) -> None:
         """PAT-126: a cloud driver that declares ``binary_version`` (protocol v5 pins Claude Code) is checked with its
         read-only version command before the first claim or reservation of the launch, once per distinct command; any
@@ -4367,6 +4429,7 @@ class Runner:
             raise RunnerError(f"protocol {'v4' if protocol == PROTOCOL_V4 else 'v5'} has arms {list(V4_ARMS)} only "
                               f"(no Haiku arm): refused before any claim or spend, got {list(arms)}")
         self._check_cloud_binaries(arms)  # PAT-126: the pinned Claude Code version, before any claim or spend
+        self._check_interpreters()  # PAT-126: pytest importable by the judge and by the arms, before any claim
         out: list[dict[str, Any]] = []
         limits = self.campaign["exploration"]["report_render_limits"]
         checked: int | None = None  # ledger position right after the start-of-run preflight
@@ -4416,6 +4479,7 @@ class Runner:
         self.ledger.append("preflight", candidate=candidate_id, ok=result["ok"],
                            refusals=result["refusals"],
                            **({"dedicated_machine": self.dedicated} if self.exploring else {}),
+                           **({"interpreters": self.interpreters} if self.interpreters else {}),
                            **({"phase": phase} if phase else {}))
         if not result["ok"]:
             raise PreflightRefused(result["refusals"])
@@ -5682,6 +5746,56 @@ def _listed_tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], prs:
     return [by_pr[n] for n in prs]
 
 
+GOLDEN_SCHEMA = "foundry.local-first-golden-check.v1"
+
+
+def golden_check(campaign: Mapping[str, Any], campaign_path: Path, tasks: Sequence[Mapping[str, Any]], *,
+                 repo: Path, work_root: Path, today: dt.date) -> dict[str, Any]:
+    """PAT-126, offline (local git and pytest only: no model, no cloud, no ``claude``): for each task, a bundle built
+    exactly as a cloud implementer's bundle is built under this config (``Runner._bundle``), judged untouched
+    (expected: ``REFUSED`` with at least one failing or erroring hidden test, never 0/0/0), then a fresh bundle with the
+    merged product change applied and judged (expected: ``ACCEPTED``). A judge that cannot run shows as a failed
+    expectation here, before any campaign money is spent. Pure function of its inputs: it writes nothing but the
+    throwaway bundles under ``work_root``."""
+    rows: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="foundry-golden-") as scratch:
+        envelope_path = Path(scratch) / "envelope.json"
+        envelope_path.write_text(json.dumps({
+            "schema": ENVELOPE_SCHEMA, "expires_on": (today + dt.timedelta(days=1)).isoformat(),
+            "campaign_id": "golden-check-pilot" if campaign.get("protocol") == PROTOCOL_V5_PILOT else "golden-check",
+            "allowed_modes": ["compare_exploration"],
+            "caps": {"cloud_executions": 0, "premium_tokens": 1, "wall_clock_seconds": 1}}), encoding="utf-8")
+        runner = Runner(
+            repo=repo, campaign=campaign, envelope=load_envelope(envelope_path, "compare_exploration", today),
+            state_dir=Path(scratch) / "state", work_root=work_root, mode="compare_exploration", dry_run=True,
+            sandbox=False, today=lambda: today, input_paths=[campaign_path])
+
+        def judged(task: Mapping[str, Any], label: str, solved: bool) -> dict[str, Any]:
+            bundle, attempt_dir = runner._bundle(task, f"golden-{label}")
+            try:
+                if solved:
+                    lfc.apply_solution(runner.repo, task, bundle)
+                verdict = runner._judge(task, bundle)
+            except lfc.CorpusError as exc:  # includes a judge that cannot run (JudgeInstrumentError)
+                return {"verdict": None, "instrument_error": str(exc)[:300]}
+            finally:
+                runner._discard(bundle, attempt_dir)
+            return {k: verdict.get(k) for k in ("verdict", "passed", "failed", "errors", "skipped", "pytest_exit_code",
+                                                "note")}
+
+        for task in tasks:
+            untouched, solved = judged(task, "untouched", False), judged(task, "solved", True)
+            expect_u = untouched["verdict"] == "REFUSED" and (untouched.get("failed", 0) + untouched.get("errors", 0)) >= 1
+            expect_s = solved["verdict"] == "ACCEPTED"
+            rows.append({"pr": task["pr"], "untouched": untouched, "solved": solved,
+                         "untouched_as_expected": expect_u, "solved_as_expected": expect_s,
+                         "ok": expect_u and expect_s})
+    return {"schema": GOLDEN_SCHEMA, "protocol": campaign.get("protocol"), "tasks": rows,
+            "all_ok": bool(rows) and all(r["ok"] for r in rows),
+            "expectations": {"untouched": "REFUSED with at least one failing or erroring hidden test (never 0/0/0)",
+                             "solved": "ACCEPTED"}}
+
+
 def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> int:
     parser = argparse.ArgumentParser(prog="foundry.local_first_runner", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -5711,6 +5825,14 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             p.add_argument("--screening-campaign", default=None,
                            help="campaign id of a completed screening (results read-only in --state-dir) "
                                 "when this campaign id holds none; C and N need one or the other")
+    gc = sub.add_parser("golden-check", help="PAT-126: offline self-check of the judge on the config's tasks "
+                        "(untouched bundle refused with failing tests, merged change accepted); no model, no cloud")
+    gc.add_argument("--campaign", required=True)
+    gc.add_argument("--repo", required=True, help="the full clone the corpus tasks are built from")
+    gc.add_argument("--work-root", required=True, help="a throwaway area outside every checkout")
+    gc.add_argument("--snapshot", required=True)
+    gc.add_argument("--manifest", required=True)
+    gc.add_argument("--out", required=True, help="the result file (never overwritten)")
     ra = sub.add_parser("replay-audit", help="apply audit revisions 1 and 2 to the raw streams of a finished "
                                              "campaign, offline (no model, no cloud call)")
     ra.add_argument("--campaign", required=True)
@@ -5758,6 +5880,28 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     except (RunnerError, OSError, ValueError) as exc:  # e.g. a frozen ground truth whose sha256 changed
         print(f"refused: {exc}", file=sys.stderr)
         return 2
+    if args.cmd == "golden-check":
+        try:
+            manifest = json.loads(Path(args.manifest).read_text("utf-8"))
+            snapshot = json.loads(Path(args.snapshot).read_text("utf-8"))
+            listed = (campaign.get("exploration") or {}).get("comparison_tasks")
+            group = (campaign.get("exploration") or {}).get("comparison_task_group", "comparison")
+            tasks = _listed_tasks(manifest, snapshot, listed) if listed else _tasks(manifest, snapshot, group)
+            out = Path(args.out)
+            if out.exists():
+                raise RunnerError(f"{out} exists: a result is never overwritten")
+            result = golden_check(campaign, Path(args.campaign), tasks, repo=Path(args.repo),
+                                  work_root=Path(args.work_root), today=today or dt.date.today())
+            with out.open("x", encoding="utf-8") as handle:
+                handle.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        except (RunnerError, lfc.CorpusError, OSError, ValueError, KeyError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        for row in result["tasks"]:
+            print(f"PR {row['pr']}: untouched {row['untouched'].get('verdict')} "
+                  f"({row['untouched'].get('passed')}/{row['untouched'].get('failed')}/{row['untouched'].get('errors')}) "
+                  f"solved {row['solved'].get('verdict')} -> {'ok' if row['ok'] else 'FAIL'}")
+        return 0 if result["all_ok"] else 1
     if args.cmd == "native-sandbox-trial":
         from foundry import local_first_native_trial as trial
         try:
