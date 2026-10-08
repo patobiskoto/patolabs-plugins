@@ -26,9 +26,9 @@ ou douze tâches ne sont pas une preuve générale** : chaque ligne ci-dessous v
 | Implémentation autonome d'un ticket par un modèle local | v1 : 0 tâche acceptée sur 30 (5 candidats × 6 tâches), en conditions non dédiées ; décision « conserver le cloud » pour cet usage | l'origine des échecs (modèle ou harnais) ; ce qu'un modèle plus grand, une machine dédiée ou un autre harnais donnerait |
 | Exploration locale en lecture seule, **localisation** | v2 : 23 tentatives sur 30 coupées par une borne, seuil non atteint ; v3, bornes élargies : le tamis passe, qwen3.6 retenu ; v4 et v5 : sur les explorations scorées, rappel de fichiers 1,0 (4 sur 4, puis 9 sur 9), rappel de fonctions 0,625 puis 0,778 | la généralisation hors de ces tâches ; la stabilité d'un passage à l'autre ; la part du contexte observé (262 144) et des bornes |
 | Exploration locale, **effet aval** (prime par tâche acceptée A contre A + L) | v3 inconclusif, v4 inconclusif, v5 `keep_cloud` de justesse (rapport 0,8579 pour un seuil de 0,85, acceptation 5 contre 5) | que L soit moins cher ou meilleur ; l'effet de l'exploration seule ; la reproductibilité |
-| Retour des tests cachés au correcteur (instrument) | v3 : jamais un compte de tests changé sur 32 refus ; v4 : 7 des 12 comparaisons de tours changent les comptes ; v5 : 17 des 30 tours après un refus changent les comptes, 11 arrivent à 0 échoué, toutes les acceptations de L viennent après au moins un tour de correction | si l'effet est une meilleure correction ou un ajustement aux valeurs attendues du message (pas de bras sans retour) |
+| Retour des tests cachés au correcteur (instrument) | v3 : jamais un compte de tests changé sur 32 refus ; v4 : 7 des 12 comparaisons de tours changent les comptes ; v5 : 17 des 30 tours après un refus changent les comptes, 11 arrivent à 0 échoué, toutes les acceptations de L et 4 des 6 de A viennent après au moins un tour de correction | si le retour aide à terminer des tâches [hypothèse], si l'effet est une meilleure correction ou un ajustement aux valeurs attendues du message (pas de bras sans retour) |
 | Exploration par un explorateur cloud économique (bras E de la v3, Haiku 4.5) | v3 : une tâche acceptée sur six pour E, 567 615 à 1 539 306 tokens premium par exploration ; rappel de fonctions 0,792 contre 0,958 pour L sur ces six tâches | ce qu'un autre modèle économique (Haiku 5.5) donnerait ; l'effet aval |
-| Machine, compatibilité | v5 : 24 préflights acceptés, mémoire libre minimale 58 %, supplément de swap 0 MiB, aucun signal externe ; OrbStack et ChatGPT doivent être arrêtés pour satisfaire le préflight | le temps de calcul local, la mémoire et l'énergie ne sont pas chiffrés dans la prime |
+| Machine, compatibilité | v5 : 24 préflights acceptés, mémoire libre minimale 58 %, supplément de swap 0 MiB, aucun signal externe ; OrbStack (au-delà de 2 Gio) doit être arrêté pour satisfaire le préflight ; ChatGPT a été arrêté par précaution (consigne de l'opérateur) | le temps de calcul local, la mémoire et l'énergie ne sont pas chiffrés dans la prime |
 | Autres usages (compression de sorties d'outils, relecteur local, etc.) | | non ouverts : aucun protocole, aucune mesure dans les documents |
 
 ## Ce qui est établi, par campagne
@@ -63,15 +63,16 @@ Permet de dire :
 
 - Sur ces tâches, l'explorateur local localise bien les **fichiers** (rappel 1,0 sur 13 explorations scorées des v4 et v5) et moyennement les
   **fonctions** (0,778 sur 9 scorées en v5) ; il lui arrive d'échouer pour des raisons sans rapport avec la localisation (coupure à 900 s sur PR 30,
-  chemin mal tapé sur PR 42 et PR 33, ce dernier compté contaminé par l'audit).
-- Sur les 12 tâches, l'ajout du rapport local n'a pas fait baisser l'acceptation sur D (5 contre 5) et a baissé la prime totale de 1 304 381
-  tokens sur D (7 874 314 contre 9 178 695, tokens de facturation non pondérés), mais **pas assez pour franchir le seuil pré-enregistré
-  par tâche acceptée**, et les tâches acceptées ne sont pas les mêmes (4 différences sur 10). La différence de prime sur D se trouve surtout
+  chemin mal tapé sur PR 42 et PR 33, les deux explorations comptées contaminées par l'audit).
+- Sur D (10 tâches), L a dépensé 1 304 381 tokens de moins que A (7 874 314 contre 9 178 695, tokens de facturation non pondérés), avec 5
+  tâches acceptées de chaque côté ; l'écart par tâche acceptée ne franchit **pas le seuil pré-enregistré**, et les tâches acceptées
+  diffèrent sur 4 des 10. Aucune cause n'en est établie. La différence de prime sur D se trouve surtout
   sur l'implémenteur (1 256 825 tokens de moins pour L), partiellement compensée par plus de relecture ; ce sont des lectures de fichiers,
   non une explication causale.
-- Le retour de tests cachés au correcteur change les comptes de tests dans une partie des tours et aide à terminer des tâches (toutes les
-  acceptations de L et 4 des 6 de A en v5 viennent après un tour de correction) ; il peut contenir des valeurs attendues (v4 §3.1) : cela ne
-  prouve pas une meilleure correction.
+- Après un tour de correction avec retour de tests cachés, les comptes de tests changent dans une partie des tours (17 sur 30 en v5) ; toutes
+  les acceptations de L et 4 des 6 de A viennent après au moins un tour de correction. Que le retour aide à terminer des tâches est une
+  **hypothèse, non établie** (pas de bras sans retour) ; il peut contenir des valeurs attendues (v4 §3.1) : cela ne prouve pas une meilleure
+  correction.
 
 Ne permet pas de dire :
 
@@ -111,7 +112,7 @@ Chaque option se lit contre une lacune ci-dessus ; aucune n'est recommandée ici
 5. **Cibler les rôles où le cloud dépense en exploration** plutôt que mesurer l'exploration seule : en v5, la prime de A se répartit en
    implémenteur 39 %, correcteur 31 %, relecteur 30 % (12 tâches) ; l'exploration n'est pas isolée dans ces classes ; une mesure du poids de la
    lecture de dépôt dans l'implémenteur cloud est possible sur les flux existants (hors dépôt) sans nouvelle campagne.
-6. **Réduire le bruit d'instrument** avant de remesurer : l'audit (chemin inexistant tapé par le modèle et lu comme un accès par l'outil
+6. **Réduire le bruit d'instrument** avant de remesurer : l'audit (chemin inexistant tapé par le modèle et lu, probablement [hypothèse, non rejouée], comme un accès par l'outil
    `read`), les tests du dépôt qui touchent le home sous le bac à sable, la veille du dossier temporaire partagé. Chaque point passe par `foundry:intake`.
 7. **Ne pas mesurer davantage** et en rester à « conserver le cloud » pour l'exploration, faute de preuve : la règle (PAT-ADR-0015) le permet et
    n'engage rien.

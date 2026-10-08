@@ -60,7 +60,8 @@ sur 12 de la comparaison.
   conversation, pas dans le dépôt ; l'accord explicite du mainteneur sur la règle v5 a été consigné en commentaire sur PAT-126 avant la
   fusion [coord.] (le texte gelé du protocole et `rules_applied` du rapport disent encore « à consigner » : ils précèdent l'accord).
 - **Sauvegarde** [coord.] : l'état Foundry du mainteneur (`~/.config/foundry`) a été copié hors dépôt (dossier horodaté 19:03:49)
-  avant le lancement ; non versée (elle contient des secrets), non lue par moi.
+  avant le lancement ; non versée (elle contient des secrets), non lue par moi. `$FOUNDRY_DATA` : le script de lancement ne l'exportait
+  pas ; l'environnement du shell parent n'a pas été relevé [inconnu].
 - **Machine dédiée** : l'application ChatGPT et OrbStack ont été arrêtés pour la campagne (OrbStack au-delà de 2 Gio fait refuser le
   préflight de machine dédiée, déjà le cas du premier lancement de la v4) [coord.] ; OrbStack a été relancé ensuite, ses 9
   conteneurs sont revenus, avec les mêmes noms que la liste relevée avant le pilote (comparaison du coordinateur) [coord.]. Dans le registre
@@ -204,8 +205,8 @@ Lecture [fichiers], dans l'ordre de la règle (`paired_rule` du rapport, recoup�
    mesuré sur les 12 ; le `signal` 9 de PR 30 est l'arrêt par le lanceur à la borne de 900 s). Lue en dernier.
 6. Donc : acceptation tenue, économie en échec → « conserver le cloud » : décision **`keep_cloud`**, `paired_rule.reason`
    `not_retained_on_paired_set`, `failed_criteria` `["economy"]`, `campaign_conclusion` `keep_cloud`, `recommendation` `A`.
-   `arms.L.quality` et `arms.L.economy` valent `unavailable` dans le rapport sous la v5 (le protocole le dit : les lectures des v2 à v4
-   ne sont jamais imprimées) ; seul `paired_rule.ratio` compte.
+   Le rapport imprime aussi `arms.L.quality` = `pass` et `arms.L.economy` = `fail` : ce sont les lectures sur D (protocole v5, section 2,
+   point 7 ; posées par `_apply_paired_rule`) ; les lectures des v2 à v4 ne sont pas imprimées. Seul `paired_rule.ratio` décide.
 
 **Rien n'est recalculé avec un autre seuil ni un autre ensemble.** Le verdict est celui de la règle gelée avant la campagne, y
 compris le seuil de 9 tâches de D, choisi par jugement sans dérivation statistique (le rapport le dit).
@@ -309,7 +310,7 @@ relecteur, soit 22 attributions : une entrée est attribuée aux deux, le PR 38 
 | Nature de l'entrée | Entrées | Enregistrements |
 | --- | --- | --- |
 | `tool_result:~/.config/foundry/config.env` (écho d'un échec de test) | 10 | 10 : A PR 38 (tours 1 et 2), PR 42 (tour 1), PR 37 (tour 2), PR 27 (tour 1) ; L PR 26 (tour 1), PR 38 (tours 0, 1 et 2), PR 24 (tour 2) |
-| `/<unknown-working-directory>` (un `cd` que l'audit ne sait pas placer) | 3 | L PR 26 (tour 1), A PR 37 (tour 2), L PR 37 (tour 1) : le rapport les attribue au relecteur pour les deux L, et pour A PR 37 aux deux rôles (attribution non relue) |
+| `/<unknown-working-directory>` (un `cd` que l'audit ne sait pas placer) | 3 | L PR 26 (tour 1), A PR 37 (tour 2), L PR 37 (tour 1) : le rapport les attribue au relecteur pour les deux L ; A PR 37 (tour 2) compte 3 entrées pour 3 attributions (bras 1, relecteur 2) : aucune n'y est double (attribution non relue) |
 | chemin sous la racine de travail, commande de l'arme | 7 | L PR 30 (tour 0, six chemins) ; A PR 83 (tour 0, un chemin) |
 | `tool_result:` d'un dossier privé d'une autre tentative | 1 | A PR 37 (tour 2) |
 
@@ -375,7 +376,7 @@ Notée par le même juge de localisation ; **informatif**, la règle de décisio
 | 19 | scoré | 0,5 | 1,0 | 1,0 | 155 (32) |
 
 Sur les 9 explorations scorées : rappel de fichiers 1,0 pour les 9 ; précision moyenne de fichiers 0,907 ; rappel moyen de
-fonctions **0,778** (5 sur 9 à 1,0, deux à 0,5, une à 0,0 : PR 24, même valeur 0,0 qu'au tamis v3 et à la v4). Moyenne sur les 12
+fonctions **0,778** (6 sur 9 à 1,0, deux à 0,5, une à 0,0 : PR 24, même valeur 0,0 qu'au tamis v3 et à la v4). Moyenne sur les 12
 avec refus et contamination à 0 (hypothèse héritée du filtre) : rappel de fonctions 0,583, précision de fichiers 0,681, rappel
 de fichiers 0,75. Ces moyennes sont des calculs séparés, non la règle. Le candidat et le budget ont été retenus sur le score de
 six de ces tâches (protocole §5) : ces chiffres ne mesurent pas une généralisation. Les explorations de PR 42 et PR 33 produisent
@@ -429,8 +430,8 @@ de la mesure, **labellisés comme tels**.
 ## Critères d'arrêt (a) à (f) des pilotes
 
 Le critère d'arrêt (a) à (f) de la section 7.2 du protocole est celui des pilotes. Lu sur le rapport et les enregistrements,
-**aucun arrêt n'a été déclenché pendant la campagne** : pas de tâche vide, pas de relecteur illisible, barrière observée pour
-chaque enregistrement cloud mené à terme, registre réel inchangé [coord.], exploration locale exécutée (12 lancées, 1 coupée par
+**aucun arrêt n'a été déclenché pendant la campagne** : pas de tâche vide, pas de relecteur illisible, `audit.barrier` = `settings_transmitted_version_observed` pour
+chaque enregistrement cloud (réglages transmis et version observée ; le lanceur n'observe pas l'application du bac à sable par le système, protocole §3.1), registre réel inchangé [coord.], exploration locale exécutée (12 lancées, 1 coupée par
 la borne). C'est une lecture du rapport, pas un nouveau verdict. Une question reste ouverte pour le coordinateur : les deux
 explorations contaminées, où le drapeau tient à un chemin inexistant tapé par le modèle, ressemblent au critère (a) (drapeau
 écartant un enregistrement sans que le bras ait quitté son essai) ; le critère était écrit pour les pilotes et je ne rends pas de verdict dessus.
@@ -441,7 +442,9 @@ Le protocole v5 est gelé ; la correction est donc portée ici. La section 2 éc
 `keep_cloud` en v5 »), que « les v2 à v4 n'y voyaient aucun échec : qualité `unavailable` entre ses bornes, économie `unavailable` ».
 
 - **Économie** : exact. `economy_verdict` rend `unavailable` dès qu'une tâche comparée est indécidée (`cut`) [code].
-- **Qualité/acceptation** : la parenthèse est trop large. `quality_verdict` lit l'acceptation **par bornes** : `pass` si L tient dans
+- **Qualité/acceptation** : par définition, le cas (ii) suppose des v2 à v4 `inconclusive` ; l'écart réel est que l'énumération des
+  situations couvre aussi des campagnes `keep_cloud` des deux côtés (qualité `fail` déjà en v2 à v4) et que la parenthèse omet la
+  qualité `pass`. `quality_verdict` lit l'acceptation **par bornes** : `pass` si L tient dans
   le pire cas (acceptés_L minimum ≥ acceptés_A maximum), `fail` si L échoue même dans le meilleur cas (acceptés_L maximum <
   acceptés_A minimum), `unavailable` entre les deux [code]. Une tâche indécidée peut donc déjà donner un **échec** de la qualité
   dans les v2 à v4 ; l'étiquette est alors `keep_cloud` des deux côtés et le cas n'est **pas** un cas (ii). La parenthèse ne vaut que pour les
