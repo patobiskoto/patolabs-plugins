@@ -18,11 +18,17 @@
   "not_established_by_this_trial": [
     "behaviour on a long real task (caches, ruff, temporary files)",
     "the minimum Claude Code version (one version observed)",
+    "no test actually executed under the sandbox (P2 ran pytest --collect-only: collection only)",
     "Glob and Grep: absent from a driver whose tools are Bash, Edit, Read, Write; a driver that enabled them would need its own trial",
     "the Edit permission rule outside the attempt (the Edit tool requires a prior Read, which is refused)",
     "the operating system enforcing the sandbox for a command the probe did not run, in particular a shell write outside the attempt refused by the OS rather than by dontAsk (P9 was refused by dontAsk first)",
+    "P16, a program (python) writing outside the attempt to see the OS refuse a write: added to the tool after this run, not played",
     "a work root under the home (the trial's was outside it): there the home rule is omitted and file tools hold only by blockReadsOutsideWorkingDirectories (Read) and dontAsk (Write, Edit)",
     "project settings written into the bundle's .claude by the Write tool or the shell (P14, P15 added to the tool after this run, not played)",
+    "a project settings file written while the arm runs and merged by the host (hot reload of settings): no probe",
+    "project settings in a directory above the working directory (ancestors are protected according to the documentation): no probe",
+    "the per-user temp directory, readable and writable by the shell and shared by every attempt and process of the account (a channel between attempts): no probe",
+    "the reviewer's mktemp copy in the per-user temp directory: the reviewer made none in this trial (not exercised)",
     "a compound command with a redirection is refused by dontAsk (seen for the reviewer): frequency on a long task unknown"
   ],
   "observations": {
@@ -58,7 +64,7 @@
       "as_expected": true,
       "expected": "allowed",
       "observed": "allowed",
-      "what": "tests of the bundle run (shell)"
+      "what": "tests of the bundle collected (shell, pytest --collect-only: no test executed)"
     },
     "P2b": {
       "as_expected": true,
@@ -127,6 +133,7 @@
     "calls_refused": [
       "Bash"
     ],
+    "mktemp_used": false,
     "patch_was_empty": false,
     "ran": true,
     "verdict_read": true
@@ -217,5 +224,6 @@
       }
     }
   },
+  "settings_source": "rebuilt by the trial tool when the trial ran, NOT taken from the execution (whether it equals the object the execution received was not checked); the reviewer's settings were not reported; this object predates the hardening of review round 1 and does not show it: no sandbox.filesystem.denyWrite, no Edit deny rule on the bundle's .claude, deny rules on sensitive FILE entries with /** only, not bare",
   "unknown": {}
 }

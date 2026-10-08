@@ -70,11 +70,18 @@ BARRIER_OBSERVED = "settings_transmitted_version_observed"
 BARRIERS = (AUDIT_BARRIER, BARRIER_SETTINGS, BARRIER_OBSERVED)
 # PAT-124 (a protocol after v4 only): ``isolation.cloud_native_sandbox`` runs every cloud driver with Claude Code's
 # native Bash sandbox (see ``native_sandbox_settings``). The permission mode is then ``dontAsk``: an edit outside the
-# attempt directory would prompt, so it is denied (``bypassPermissions`` let the Write tool create a file next door).
+# attempt directory would prompt, so it is denied (under ``bypassPermissions`` the Write tool created a file next door:
+# seen by the coordinator's manual trial T1 of 2026-10-08 only, evidence not committed, not the launcher's settings).
 NATIVE_SANDBOX_KEY = "cloud_native_sandbox"
 NATIVE_PERMISSION_MODE = "dontAsk"
 NATIVE_TRIAL_MARKER = ".pat19-native-sandbox-trial"  # in the state directory of a trial, never of a campaign
 NATIVE_GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}  # added to the child's environment
+# Flags a cloud driver may not carry under the key, bare or as ``--flag=value``: they set the mode or the settings
+# themselves, or widen what the session may read, write or run beyond the settings the launcher passes. Exact names:
+# ``--setting-sources``, ``--strict-mcp-config`` and ``--disallowedTools`` are other flags and stay accepted.
+NATIVE_REFUSED_FLAGS = ("--settings", "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions",
+                        "--add-dir", "--allowedTools", "--allowed-tools", "--mcp-config", "--plugin-dir")
+NATIVE_TRIAL_KEY = "_native_trial"  # set in memory by the trial verb only; refused in a config file
 _PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)")
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
@@ -220,9 +227,11 @@ def _check_native_sandbox(path: Any, data: Mapping[str, Any], later: bool) -> No
                           f"isolation.{NATIVE_SANDBOX_KEY} true (the lexical audit is a journal, not a barrier)")
     if native:
         for name, driver in data["drivers"].items():
-            clash = [a for a in driver["argv"] if driver["kind"] in CLOUD_KINDS and (
-                a.startswith(("--permission-mode=", "--settings", "--dangerously-skip-permissions",
-                              "--allow-dangerously-skip-permissions")))]
+            cloud = driver["kind"] in CLOUD_KINDS
+            clash = [a for a in driver["argv"] if cloud and (
+                a.startswith("--permission-mode=") or a.split("=", 1)[0] in NATIVE_REFUSED_FLAGS)]
+            if cloud and driver["argv"].count("--permission-mode") > 1:  # only ONE separated pair is replaced
+                clash.append("--permission-mode more than once")
             if clash:
                 raise RunnerError(f"{path}: isolation.{NATIVE_SANDBOX_KEY}: cloud driver {name} may not carry "
                                   f"{clash[0].split('=')[0]} (the launcher sets the mode and the settings itself)")
@@ -238,6 +247,8 @@ def load_campaign(path: Path) -> dict[str, Any]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(data, dict) or data.get("schema") not in (CAMPAIGN_SCHEMA, CAMPAIGN_SCHEMA_V2):
         raise RunnerError(f"{path}: unexpected schema")
+    if NATIVE_TRIAL_KEY in data:  # PAT-124: the trial verb sets it in memory, after this load
+        raise RunnerError(f"{path}: {NATIVE_TRIAL_KEY} is not a configuration key (the trial verb sets it in memory)")
     for key in ("frozen_machine", "bounds", "statement_footer", "prompts", "rules", "drivers",
                 "candidates"):
         if key not in data:
@@ -912,7 +923,7 @@ def native_sandbox_settings(*, attempt_dir: Path, work_root: Path, home: str | P
     The Bash sandbox (the operating system) denies the shell reads of the home and of the work root and re-allows
     the attempt directory (bundle and scratch; narrower wins), plus ``allow_read``; it writes only in the attempt
     directory, ``allow_write`` and the per-user temp directory (Claude Code's default). The file tools (Read, Edit,
-    Write, Glob, Grep) are OUTSIDE that sandbox: they are confined by permissions: mode ``dontAsk`` (set by
+    Write, Glob, Grep) are OUTSIDE that sandbox: they rely on permissions: mode ``dontAsk`` (set by
     ``execute_driver``) denies whatever would prompt, ``blockReadsOutsideWorkingDirectories`` makes a read outside the
     working directories prompt, ``additionalDirectories`` makes the attempt directory a working directory (the
     scratch is a sibling of the bundle), ``Edit``/``Read`` allow rules cover the attempt directory only (an ``Edit``
@@ -3046,7 +3057,7 @@ class Runner:
         self.provenance = {"campaign_sha256": given.get("campaign_sha256") or config_digest(campaign),
                            "manifest_sha256": given.get("manifest_sha256"),
                            "envelope_sha256": envelope["sha256"]}
-        if (self.state_dir / NATIVE_TRIAL_MARKER).exists() and campaign.get("_native_trial") is not True:
+        if (self.state_dir / NATIVE_TRIAL_MARKER).exists() and campaign.get(NATIVE_TRIAL_KEY) is not True:
             raise RunnerError(f"{self.state_dir} holds a native-sandbox trial (marker {NATIVE_TRIAL_MARKER}): "
                               "a campaign never shares a state directory with a trial")
         self.results_path = self.state_dir / f"results-{envelope['campaign_id']}.jsonl"
@@ -3089,6 +3100,8 @@ class Runner:
         self.host_models: dict[str, str] = {}  # audit revision 2: what the audit could assume of each stream's host
         # PAT-124 (a protocol after v4 only): the cloud drivers run under Claude Code's native Bash sandbox
         self.native_sandbox = bool((campaign.get("isolation") or {}).get(NATIVE_SANDBOX_KEY))
+        # bundle -> paths under ``.claude`` removed from the patch applied to it (filled under the key only)
+        self.stripped: dict[Path, list[str]] = {}
         self.settings_sent: set[str] = set()  # stream logs of the executions that started with ``--settings``
         self.barriers: dict[str, str] = {}  # what the launcher verified of the barrier, by audited stream log
         self.roles: dict[str, str] = {}  # role of each reserved cloud session
@@ -3377,9 +3390,11 @@ class Runner:
         attempt_dir = self.work_root / (f"private-{name}" if self.private_root else ".") / name
         bundle = lfc.build_bundle(self.repo, task, attempt_dir / "bundle")
         try:
-            if self.native_sandbox:  # PAT-124: no project settings of the corpus, of an arm or of a patch in a cloud session
-                _strip_claude_dirs(bundle)
-                patch = _without_claude_dirs(patch)[0] if patch else patch
+            dropped: list[str] = []
+            if self.native_sandbox:  # PAT-124: no project settings of the corpus, of an arm or of a patch in a session
+                _strip_claude_dirs(bundle)  # of the base: for EVERY driver of the campaign, local ones included
+                if patch:
+                    patch, dropped = _without_claude_dirs(patch)
             statement = bundle / "TASK.md"
             statement.write_text(statement.read_text(encoding="utf-8")
                                  + self.campaign["statement_footer"] + statement_extra, encoding="utf-8")
@@ -3390,11 +3405,16 @@ class Runner:
             self.literals[bundle] = base_literals(bundle, self._home())  # before any patch or arm
             if patch:
                 _apply_patch(bundle, patch)
+                if self.native_sandbox:  # a ``.claude`` the patch still brought (a symbolic link has no file section)
+                    dropped += _strip_claude_dirs(bundle)
+            if dropped:
+                self.stripped[bundle] = dropped  # what the arm of this bundle does not see of the patch
             if lfc.is_judged(bundle) or bundle in self.handed:
                 raise RunnerError("refusing to hand a judged or reused bundle to a candidate")
         except BaseException:  # nothing is left on disk when the bundle cannot be prepared
             self.guards.pop(bundle, None)
             self.literals.pop(bundle, None)
+            self.stripped.pop(bundle, None)
             lfc.remove_bundle(bundle)
             self._remove_attempt(attempt_dir)
             raise
@@ -3404,6 +3424,7 @@ class Runner:
     def _discard(self, bundle: Path, attempt_dir: Path) -> None:
         self.guards.pop(bundle, None)
         self.literals.pop(bundle, None)
+        self.stripped.pop(bundle, None)
         lfc.remove_bundle(bundle)
         self._remove_attempt(attempt_dir)
 
@@ -3661,6 +3682,8 @@ class Runner:
                 driver, values, workdir=bundle, scratch=scratch, stream_log=stream_log,
                 max_seconds=budget, max_steps=None, sandbox=self._sandboxed(driver), deny_read=deny,
                 extra_write=extra, host_env=self.host_env, native_settings=native)
+            if native is not None:
+                execution["native_settings"] = native  # the object this execution received (the trial reports it)
             if native is not None and not execution["start_error"]:
                 self.settings_sent.add(str(stream_log))
             fingerprint_after = registry_fingerprints(env)
@@ -3698,7 +3721,7 @@ class Runner:
         try:
             execution, tokens, reason = self.cloud_execution(
                 "reviewer", REVIEWER_DRIVER, bundle, attempt_dir, "review")
-            execution["review_excluded"] = excluded
+            execution["review_excluded"] = excluded + self.stripped.get(bundle, [])
             verdict, findings = None, ""
             with contextlib.suppress(OSError, ValueError, AttributeError):
                 data = json.loads((attempt_dir / "scratch" / "review.json").read_text("utf-8"))
@@ -3757,12 +3780,17 @@ class Runner:
                        if state.get("contamination") else {}),
                     **({"review_excluded": state["review_excluded"]} if state.get("review_excluded")
                        else {}),
+                    **({"correction_excluded": state["correction_excluded"]}
+                       if state.get("correction_excluded") else {}),
                     **({"feedback": told} if told else {}), **self._audit_note(state["logs"]),
                     **({"replay_of": again} if again else {})}))
 
             try:
                 bundle, attempt_dir = self._bundle(task, f"{path}-{role}{index}", patch,
                                                    statement_extra=statement_extra)
+                # PAT-124, under the key only: the ``.claude`` paths of the previous round's patch that this
+                # corrector's bundle does not hold (same shape as the reviewer's ``review_excluded``)
+                state["correction_excluded"] = self.stripped.get(bundle)
                 try:
                     execution, tokens, reason = self.cloud_execution(
                         role, implementer, bundle, attempt_dir,
@@ -4643,17 +4671,30 @@ def _without_claude_dirs(patch: bytes) -> tuple[bytes, list[str]]:
     return b"".join(kept), dropped
 
 
-def _strip_claude_dirs(bundle: Path) -> None:
-    """Remove every ``.claude`` directory of a fresh bundle from the tree and the index (the caller amends the base
-    commit, so the base holds none and a later diff shows no deletion). PAT-124, under the native sandbox key only:
-    Claude Code loads ``<cwd>/.claude/settings*.json`` (``--setting-sources project,local``) and merges arrays."""
-    for root, dirs, _files in os.walk(bundle):
+def _strip_claude_dirs(bundle: Path) -> list[str]:
+    """Remove every ``.claude`` directory, and every symbolic link named ``.claude`` (whatever it points at), of a
+    bundle from the tree and the index, and return their relative paths (the caller amends the base commit, so the
+    base holds none and a later diff shows no deletion). PAT-124, under the native sandbox key only: Claude Code
+    loads ``<cwd>/.claude/settings*.json`` (``--setting-sources project,local``) and merges arrays. A regular FILE
+    named ``.claude`` is left alone (it is not a settings directory). Fails closed if one cannot be removed."""
+    removed: list[str] = []
+    for root, dirs, files in os.walk(bundle):
         dirs[:] = [d for d in dirs if d != ".git"]
-        for d in [d for d in dirs if d == ".claude"]:
-            path = Path(root) / d
-            _git_in(bundle, "rm", "-rq", "--cached", "--ignore-unmatch", "--", str(path.relative_to(bundle)))
-            shutil.rmtree(path, ignore_errors=True)
+        for name in [n for n in (*dirs, *files) if n == ".claude"]:
+            path = Path(root) / name
+            if not (path.is_symlink() or path.is_dir()):
+                continue
+            rel = path.relative_to(bundle).as_posix()
+            _git_in(bundle, "rm", "-rq", "--cached", "--ignore-unmatch", "--", rel)
+            if path.is_symlink():  # ``rmtree`` refuses a link: it would survive
+                path.unlink()
+            else:
+                shutil.rmtree(path, ignore_errors=True)
+            if os.path.lexists(path):
+                raise RunnerError(f"cannot remove {rel} from the bundle: refusing to hand it to an arm")
+            removed.append(rel)
         dirs[:] = [d for d in dirs if d != ".claude"]
+    return removed
 
 
 def _apply_patch(bundle: Path, patch: bytes) -> None:
@@ -5577,6 +5618,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     nt.add_argument("--repo", default=".")
     nt.add_argument("--snapshot", required=True)
     nt.add_argument("--task-pr", type=int, required=True, help="the one corpus task (a PR of the snapshot)")
+    nt.add_argument("--probe-test", required=True, help="one FAST test file of the bundle, relative to it: probe P2 "
+                    "really runs it under the sandbox (the operator's choice; checked before any spend)")
     nt.add_argument("--no-reviewer", action="store_true")
     nt.add_argument("--out", required=True, help="the result file (never overwritten)")
     nr = sub.add_parser("native-sandbox-trial-reeval", help="PAT-124: rebuild the result of a finished trial from "
