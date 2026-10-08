@@ -36,7 +36,15 @@ ap.add_argument("--role"); ap.add_argument("--workdir"); ap.add_argument("--plan
 ap.add_argument("--session-id", default=""); ap.add_argument("--projects-dir", default="")
 ap.add_argument("--review-file", default=""); ap.add_argument("--statement", default="")
 ap.add_argument("--init-tools", default=None); ap.add_argument("--traj", default="")
+ap.add_argument("--settings", default=None); ap.add_argument("--permission-mode", default=None)
+ap.add_argument("--init-version", default=None)  # PAT-124: a Claude Code version in the init event, a result at the end
 a = ap.parse_args()
+if a.settings is not None:  # PAT-124: what the launcher passed under the native sandbox key
+    with open(a.plan + ".native", "a") as handle:
+        handle.write(json.dumps({"role": a.role, "settings": json.loads(a.settings), "mode": a.permission_mode,
+                                 "git_global": os.environ.get("GIT_CONFIG_GLOBAL"),
+                                 "git_nosystem": os.environ.get("GIT_CONFIG_NOSYSTEM"),
+                                 "env": sorted(os.environ)}) + "\n")
 counter = a.plan + ".count"
 counts = json.load(open(counter)) if os.path.exists(counter) else {}
 i = counts.get(a.role, 0)
@@ -67,7 +75,8 @@ def claude_log(usage):
 USAGE = {"implementer": (100, 10, 5, 20), "economy": (40, 0, 0, 8), "reviewer": (30, 0, 0, 10)}
 if a.init_tools is not None:
     print(json.dumps({"type": "system", "subtype": "init",
-                      "tools": [t for t in a.init_tools.split(",") if t]}), flush=True)
+                      "tools": [t for t in a.init_tools.split(",") if t],
+                      **({"claude_code_version": a.init_version} if a.init_version else {})}), flush=True)
 if a.traj:
     json.dump({"info": {"model_stats": {"api_calls": 7}}}, open(a.traj, "w"))
 if behavior.startswith("peek:"):  # the arm reads a path it should not: both stream shapes, then works
@@ -166,6 +175,8 @@ else:
         event("tool_execution_start", tool="bash")
     event("message_end", message={"role": "assistant",
           "usage": {"input": 1000, "output": 50, "reasoningTokens": 7}})
+if a.init_version:
+    event("result", subtype="success", is_error=False)
 '''
 
 
