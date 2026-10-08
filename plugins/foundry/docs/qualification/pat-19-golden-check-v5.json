@@ -1,0 +1,307 @@
+{
+  "all_ok": true,
+  "expectations": {
+    "solved": "ACCEPTED",
+    "untouched": "REFUSED with at least one failing or erroring hidden test (never 0/0/0)"
+  },
+  "protocol": "pat-19-protocol-v5",
+  "provenance": {
+    "campaign_sha256": "9fe6da84c3739302cdaede9a71ab6713bb5c2b27d0b78994c9fdc2a00d5fb366",
+    "date": "2026-10-08",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "snapshot_sha256": "c948cf13178f7ee48467a1888974e84123abd6d0ca316a0fab7f0a7e9baf012a",
+    "tooling_commit": "e6f90c63cf9d290d0b2bd391cb71fd65475b8f2b",
+    "tooling_dirty": false
+  },
+  "schema": "foundry.local-first-golden-check.v1",
+  "tasks": [
+    {
+      "ok": true,
+      "pr": 26,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 1,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 1,
+        "note": null,
+        "passed": 0,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 38,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 36,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 9,
+        "note": null,
+        "passed": 27,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 25,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 5,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 4,
+        "note": null,
+        "passed": 1,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 42,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 4,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 4,
+        "note": null,
+        "passed": 0,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 33,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 172,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 2,
+        "note": null,
+        "passed": 170,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 37,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 2,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 1,
+        "note": null,
+        "passed": 1,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 30,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 163,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 2,
+        "note": null,
+        "passed": 161,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 83,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 18,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 11,
+        "note": null,
+        "passed": 7,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 27,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 3,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 2,
+        "note": null,
+        "passed": 1,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 24,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 10,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 9,
+        "note": null,
+        "passed": 1,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 48,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 345,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 122,
+        "note": null,
+        "passed": 223,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    },
+    {
+      "ok": true,
+      "pr": 19,
+      "solved": {
+        "errors": 0,
+        "failed": 0,
+        "note": null,
+        "passed": 9,
+        "pytest_exit_code": 0,
+        "skipped": 0,
+        "verdict": "ACCEPTED"
+      },
+      "solved_as_expected": true,
+      "untouched": {
+        "errors": 0,
+        "failed": 4,
+        "note": null,
+        "passed": 5,
+        "pytest_exit_code": 1,
+        "skipped": 0,
+        "verdict": "REFUSED"
+      },
+      "untouched_as_expected": true
+    }
+  ]
+}
