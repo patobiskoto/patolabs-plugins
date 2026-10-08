@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PAT-19 protocol v5 operator loop (PAT-126, DRAFT until the freeze): the model is unloaded and reloaded (pinned
+# PAT-19 protocol v5 operator loop (PAT-126, frozen with the protocol v5 on 2026-10-08): the model is unloaded and reloaded (pinned
 # command) before EACH launch, and every launch plays at most one task (exploration.one_task_per_launch). The launcher
 # loads no model. The v5 candidate is fixed by the protocol (no screening) and the arms are A and L (no Haiku arm).
 #   pat-19-v5-operator.sh compare <candidate> <checkout> <runs-dir> <work-root> <repo>   the 12-task campaign

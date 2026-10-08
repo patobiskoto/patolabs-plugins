@@ -55,12 +55,12 @@ V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_ch
 V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
 V4_KEYS = "correction_feedback, isolation.private_attempt_root, exploration.fixed_candidate and " \
           "exploration.comparison_task_group"
-FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4)
-# PAT-126: protocol v5 (DRAFT until its freeze) and its pilot. The pilot is the same instrument on one task, under a
+# PAT-126: protocol v5 (frozen 2026-10-08, before any trial of its campaign) and its pilot. The pilot is the same instrument on one task, under a
 # protocol name and a campaign id of its own, so that its records can never be read as, or mixed with, the campaign's.
 PROTOCOL_V5 = "pat-19-protocol-v5"
 PROTOCOL_V5_PILOT = "pat-19-protocol-v5-pilot"
 V5_PROTOCOLS = (PROTOCOL_V5, PROTOCOL_V5_PILOT)
+FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4, PROTOCOL_V5)
 V5_TASKS = (26, 38, 25, 42, 33, 37, 30, 83, 27, 24, 48, 19)  # the six v3 comparison tasks, then the six v3 screening ones
 V5_PILOT_TASKS = (27,)
 V5_TASK_SET = {PROTOCOL_V5: "pat-19-v5", PROTOCOL_V5_PILOT: "pat-19-v5-pilot"}  # label of ``task.set`` in the records
@@ -2908,8 +2908,9 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     allowRead)`` of the settings the execution received): (1) a tool call whose result is a whole-call refusal of the
     host (``_REFUSED_CALL``, an error result) did not run: it contributes nothing and moves no directory; it is counted
     per tool in ``refused`` (no text); (2) a finding of a SHELL command whose path lies under a ``denyRead`` root and
-    outside every ``allowRead`` entry, or at ``UNKNOWN_CWD``, is appended to ``journal`` and left out of the result; every
-    other finding (a file-tool path, a path the OS does not deny, a result path, a forbidden command) stays in the result.
+    outside every ``allowRead`` entry, or at ``UNKNOWN_CWD``, is appended to ``journal`` and left out of the result; a ``tool_result:`` path under such a root (or a truncated
+    prefix of one) is journaled too; every other finding (a file-tool path, a path the OS does not deny, a result path
+    outside them, a forbidden command) stays in the result.
     Without it the result is exactly what it was."""
     try:
         lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
@@ -3055,6 +3056,18 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
             else:
                 anywhere |= call_seen
     seen: dict[str, None] = {}
+    echoed: dict[str, None] = {}  # policy: result paths under a root the OS denies to the shell (journal)
+    if policy:
+        denied_roots = [Path(os.path.realpath(p)) for p in policy_denied[0]]
+        allowed_roots = [Path(os.path.realpath(p)) for p in policy_denied[1]]
+
+    def os_denied(path: Path, raw: str = "") -> bool:
+        """Under a ``denyRead`` root and outside every ``allowRead`` entry; a truncated path (an output cut by the
+        arm's own ``sed`` or ``cut``) that merely STARTS with a denied root is under it too."""
+        if any(_within(path, a) for a in allowed_roots):
+            return False
+        return any(_within(path, d) or (raw != "" and raw.startswith(str(d))) for d in denied_roots)
+
     for text in _tool_results(lines):
         if follow and text.startswith(_NOT_FOUND) and text[len(_NOT_FOUND):] in missing.values():
             continue  # the error of a path that does not exist: it names the path, it shows nothing
@@ -3065,11 +3078,9 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
             if os.path.isabs(token):  # a literal path only: ``~``/``$HOME`` in text are not expanded
                 path = Path(os.path.realpath(token))
                 if any(_within(path, r) for r in roots) and not permitted(path):
-                    seen[f"tool_result:{shown(path)}"] = None
+                    # policy: text shown in an output is not an access, and the shell that printed it could not read there
+                    (echoed if policy and os_denied(path, token) else seen)[f"tool_result:{shown(path)}"] = None
     if policy:  # journal what the operating system denies to the shell anyway, and the directory nobody can name
-        denied_roots = [Path(os.path.realpath(p)) for p in policy_denied[0]]
-        allowed_roots = [Path(os.path.realpath(p)) for p in policy_denied[1]]
-
         def journaled(name: str) -> bool:
             path = hit_paths[name]
             if name in file_tool:
@@ -3082,6 +3093,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
         moved = [h for h in hits if journaled(h)]
         if journal is not None:
             journal.extend(sorted(moved))
+            journal.extend(sorted(echoed))
         hits = {h: None for h in hits if h not in moved}
     return [*sorted(hits), *sorted(seen), *sorted(commands)]
 
@@ -4476,7 +4488,7 @@ class Runner:
     def _check_interpreters(self) -> None:
         """PAT-126 (a protocol after v4 only): refuse, before any claim, model use or cloud reservation, when the
         launcher's interpreter or the ``python3`` / ``python`` of a cloud arm cannot import pytest (the pilot of
-        2026-10-09 was void because they could not). The probe is kept for the ledger's preflight entries."""
+        2026-10-08 was void because they could not). The probe is kept for the ledger's preflight entries."""
         if not self.strict_judge:
             return
         driver = self.campaign["drivers"].get(IMPLEMENTER_DRIVER["A"])

@@ -36,6 +36,7 @@ FROZEN_SHA256 = {  # the frozen v1 to v4 configurations are never edited (PAT-AD
     "pat-19-campaign-v2.json": "6830629ccd385847ca6b88c730b706407517ac009cb3715daf8c6e7a61ec8d16",
     "pat-19-campaign-v3.json": "95b7a0717ecfcc28b6595e4a88dee108d158ff7d85dddc84f7d1c56de8d5fd1d",
     "pat-19-campaign-v4.json": "3bc88cf496f9838779adae431e72754615576c276033cc7436c151d3a10b8605",
+    "pat-19-campaign-v5.json": "af2b257099b287314ba5fc3e7a8afff5380d293cfefd7c058ce5f09d44c3cbc4",  # frozen 2026-10-08 (PAT-126); the pilot config is NOT pinned
 }
 
 
@@ -59,7 +60,7 @@ def _broken(tmp_path, edit, source=V5_PATH):
 
 # ------------------------------------------------------------------------------------- the DRAFT configurations
 
-def test_the_frozen_configurations_are_byte_for_byte_untouched():
+def test_the_frozen_configurations_are_byte_for_byte_untouched():  # v1 to v5; the pilot config is not pinned
     for name, digest in FROZEN_SHA256.items():
         assert hashlib.sha256((QUALIFICATION / name).read_bytes()).hexdigest() == digest, name
     v4 = lfr.load_campaign(V4_PATH)
@@ -71,7 +72,9 @@ def test_the_frozen_configurations_are_byte_for_byte_untouched():
 def test_the_v5_campaign_pins_the_decided_values_and_says_it_is_a_draft():
     v4, v5 = _load(V4_PATH), lfr.load_campaign(V5_PATH)
     assert v5["schema"] == lfr.CAMPAIGN_SCHEMA_V2 and v5["protocol"] == lfr.PROTOCOL_V5
-    assert v5["note"].startswith("DRAFT") and "NOT FROZEN" in v5["note"] and "mandate of 2026-10-09" in v5["note"]
+    assert v5["note"].startswith("Frozen campaign config") and "2026-10-08" in v5["note"] and "mandate of 2026-10-08" in v5["note"]
+    assert "DRAFT" not in json.dumps(v5) and "DRAFT" not in json.dumps(_load(PILOT_PATH))
+    assert lfr.PROTOCOL_V5 in lfr.FROZEN_PROTOCOLS and lfr.PROTOCOL_V5_PILOT not in lfr.FROZEN_PROTOCOLS
     one = "qwen3.6-35b-a3b-mlx-4bit"
     assert list(v5["candidates"]) == [one] and v5["candidates"] == v4["candidates"]
     assert v5["exploration"]["fixed_candidate"] == one and "comparison_task_group" not in v5["exploration"]
@@ -983,3 +986,21 @@ def test_the_replay_reads_the_policy_per_stream_and_never_recomputes_an_outcome(
     assert out["streams"][1]["class"] == "decisive_kept" and out["outcome_reading_non_decisional"] == "review_unreadable"
     streams[1]["policy"] = {"decisive": [], "journal": [], "refused_calls": {"Bash": 1}}
     assert lfr._policy_reading(rec, streams)["streams"][1]["class"] == "refused_calls_only"
+
+
+def test_a_path_echoed_in_an_output_under_an_os_denied_root_is_journaled_not_decisive(tmp_path):
+    zone = _Zone(tmp_path)
+    work = str(zone.work)
+    truncated = f"{work}/priv"  # the beginning of an attempt path, cut by the arm's own sed (pilot 3)
+    for shown in (f"{work}/private-b/x.py:12: Error", truncated, f"E   assert '{truncated}'", str(zone.home) + "/.config/foundry/r"):
+        calls = [("Bash", {"command": "pytest -q | sed -E 's/x/y/'"}, shown, False)]
+        strict, _, _ = zone.audit(tmp_path, calls, policy=False)
+        out, journal, _ = zone.audit(tmp_path, calls)
+        assert strict and out == [], shown
+        assert [j for j in journal if j.startswith("tool_result:")], shown
+    # a result path outside every denied root (but sensitive) stays decisive; one under the allowed attempt is no finding
+    other = [("Bash", {"command": "echo hi"}, f"see {zone.other}/secret.txt", False)]
+    out, journal, _ = zone.audit(tmp_path, other)
+    assert any(p.startswith("tool_result:") for p in out) and journal == []
+    mine = [("Bash", {"command": "echo hi"}, f"see {zone.scratch}/x", False)]
+    assert zone.audit(tmp_path, mine) == ([], [], {})
