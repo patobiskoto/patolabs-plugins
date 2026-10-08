@@ -400,6 +400,10 @@ contamination »), **pas empêché**. Pour les bras **locaux**, le refus par dé
 
 ## Exposition des bras cloud (ce que le lanceur n'empêche pas)
 
+> Ce qui suit décrit les protocoles v1 à v4 (`bypassPermissions`, aucun refus de lecture). Sous la clé
+> `isolation.cloud_native_sandbox` d'un protocole v5 ou postérieur, les lectures du shell sont refusées par le système
+> d'exploitation et les outils de fichiers par les permissions : voir « Bac à sable natif des bras cloud (PAT-124) ».
+
 Les trois pilotes cloud lancent **Claude Code nu** avec `bypassPermissions`, l'outil Bash, le **vrai HOME**, un
 **réseau ouvert**, les **identifiants implicites de l'utilisateur** (assistant d'identifiants git via le
 trousseau, configuration de `gh`, `~/.config/foundry`) et **sans les crochets de Foundry** (`--setting-sources
@@ -947,12 +951,13 @@ au-delà.
   `GIT_CONFIG_GLOBAL=/dev/null` ; les lectures par le shell d'un dossier voisin, du parent et du répertoire personnel, et les
   écritures par le shell hors du bundle, sont refusées par le système ; l'outil Read hors du bundle est refusé par
   `permissions.blockReadsOutsideWorkingDirectories`. **Trou restant** : l'outil Write peut encore créer un fichier dans un
-  dossier voisin.
-- **Couplage obligatoire.** Un protocole futur ne doit activer la révision 2 **qu'avec** ce bac à sable natif. Aucune clé de
-  configuration du bac à sable natif n'existe aujourd'hui (PAT-124 l'ajoutera) : le lanceur **ne peut donc pas le vérifier**
-  et ne le prétend pas. Sous la révision 2, chaque enregistrement porte `audit.barrier: "not_verified"` (constante
-  `AUDIT_BARRIER`) : un rapport v5 ne peut pas être lu comme « bras confiné » sur la foi de l'audit. Le jour où PAT-124 livre
-  la clé, c'est à ce ticket de lier les deux au chargement et de changer cette valeur.
+  dossier voisin (traité par PAT-124, section « Bac à sable natif des bras cloud » : mode `dontAsk` et règles de permission ;
+  à confirmer par l'essai réel).
+- **Couplage obligatoire (livré par PAT-124).** La révision 2 n'est acceptée **qu'avec** la clé
+  `isolation.cloud_native_sandbox` (section « Bac à sable natif des bras cloud (PAT-124) » ci-dessous). Le lanceur ne voit
+  jamais le système d'exploitation appliquer ce bac à sable : `audit.barrier` dit **ce qu'il a vérifié** (réglages transmis,
+  version de Claude Code observée dans le flux), jamais « confiné ». PAT-123 avait posé `not_verified` constant faute de clé ;
+  cette valeur reste celle d'un enregistrement sans bac à sable natif ou sans rien observé.
 - **Limites connues : contournement délibéré, hors périmètre de PAT-123.** Listées, pas corrigées une à une (les mêmes, L1 à
   L6, en tête du bloc « audit revision 2 » de `local_first_runner.py`) :
   1. **L1, dossier ou lien déplacé sous le shell** : renommer, déplacer, remplacer ou supprimer un dossier ou un lien
@@ -973,6 +978,18 @@ au-delà.
   5. **L5, `cd` caché dans un script ou un interpréteur** (`python3 -c "os.chdir('..'); …"`, `make -C`, `git -C`, un fichier
      de script écrit par le bras) : le dossier de ce programme n'est pas suivi (H8).
   6. **L6, chemin construit à l'exécution** ou gardé dans un fichier pour un appel suivant (H8, comme en révision 1).
+
+  **L5 et L6 ne sont pas des évasions délibérées** : ce sont des angles morts hérités de la révision 1 que rencontre le
+  **travail ordinaire** (`git -C <dossier>`, `make -C <dossier>`, un script que le bras a écrit, un chemin assemblé à
+  l'exécution). La **cible** d'un `-C` reste un chemin lu par l'audit, donc **toujours relevée** si elle sort de la zone
+  (testé : `git -C ../../../` et `make -C ../../../tests` sont relevés ; `git -C ../../b` dans la zone ne l'est pas).
+- **Faux drapeaux du travail ordinaire, coûts connus à porter au ticket v5** (PAT-124, remarque N3 de la quatrième revue) :
+  la révision 2 abandonne le dossier (`UNKNOWN_CWD`, donc le chemin relatif suivant du même appel est relevé) pour
+  `source .venv/bin/activate`, `break` et `continue`, `trap`, `cd "$(git rev-parse --show-toplevel)"`, et un mot `cd` dans un
+  message de validation ou un document en ligne. Mesuré par six tests nommés (la révision 1 n'en relève aucun).
+  `break`/`continue` ne déplacent pas le shell, mais ne sont **pas** rendus inertes : terminer une boucle plus tôt est ce que
+  la lecture de boucle de l'audit ne modélise pas, et le changement n'est pas « clairement sûr » dans les deux shells ; il
+  reste un coût connu.
 
 - **`isolation.audit_revision`** (entier, 1 par défaut ou 2). Liste blanche : le chargeur n'accepte 2 que sous un `protocol` de la
   forme `pat-19-protocol-vN` avec N >= 5 ; une valeur autre que 1 ou 2, un protocole v1 à v4, absent ou inconnu est refusé.
@@ -1118,9 +1135,10 @@ au-delà.
   que la capture garde au-delà de ces deux dossiers (tout autre fichier ignoré qu'un bras ajoute légitimement) et donc ce que
   voit le juge ; un autre cache (`.mypy_cache`, `.hypothesis`, `.coverage`) serait encore capturé jusqu'à ce qu'une campagne le
   montre. Les v1 à v4 gardent `_PATCH_EXCLUDES`.
-- **Enregistrement** : sous la révision 2 seulement, chaque enregistrement d'essai allé à son terme porte `audit: {revision,
-  barrier, not_found, host_models}` ; `barrier` vaut toujours `not_verified` (le lanceur ne vérifie pas le bac à sable natif,
-  voir « Couplage obligatoire ») ; `host_models` dit, par flux audité et dans l'ordre, ce que l'audit a pu supposer de l'hôte
+- **Enregistrement** : sous la révision 2 seulement, chaque enregistrement d'essai **allé à son terme** porte `audit: {revision,
+  barrier, not_found, host_models}` (un enregistrement coupé par une panne d'outil ou une interruption, `_tool_error`, n'en
+  porte pas : il n'est jamais lisible comme vérifié) ; `barrier` dit ce que le lanceur a vérifié du bac à sable natif (valeurs
+  dans la section PAT-124 ; `not_verified` sans bac à sable natif ou sans observation) ; `host_models` dit, par flux audité et dans l'ordre, ce que l'audit a pu supposer de l'hôte
   (`claude-code-2.1.285`, ou `unverified` : repli H9). Un enregistrement coupé (panne d'outil, interruption) ne porte pas ce
   champ, sous aucune révision.
 - **`informative_arms`** (rapport d'exploration) ne nomme plus qu'un bras informatif **joué** (`["E"]` si l'arme E a des
@@ -1152,3 +1170,109 @@ au-delà.
   `review_contaminated` du rapport, compteurs `reviewer_flagged_now` et `host_models` du rejeu, `informative_arms`. Aucun verbe de `foundry_cli.py`, clé de configuration produit, table de routage ni
   constante de routage modifiés. Contrainte opérationnelle documentée ici : la révision 2 ne s'active qu'avec le bac à sable
   natif (PAT-124), non vérifié par le lanceur. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.
+
+## Bac à sable natif des bras cloud (PAT-124)
+
+**Rien ne change sans la clé.** Les protocoles v1 à v4, leurs configurations et leurs résultats sont gelés : sans
+`isolation.cloud_native_sandbox`, la ligne de commande et l'environnement des pilotes cloud sont **octet pour octet** ceux de
+la v4 (test sur la configuration v4). La clé est un booléen accepté **seulement** sous `pat-19-protocol-vN`, N >= 5 (liste
+blanche comme `audit_revision`) : refusée sous v1 à v4, sans protocole ou sous un protocole inconnu. Au chargement :
+`audit_revision: 2` n'est accepté qu'avec elle ; `isolation.private_attempt_root` est maintenant accepté sous un protocole v5
+ou postérieur (les autres clés v4 `correction_feedback`, `exploration.fixed_candidate`, `exploration.comparison_task_group`
+restent v4 seulement : un v5 qui les veut demande un changement du chargeur, non fait ici) ; avec la clé, chaque pilote cloud
+déclare `sandbox: false` (le processus `claude` n'est **jamais** enveloppé : R6, seul son shell est confiné par Claude Code)
+et un flux `claude-stream-json`.
+
+**Ce que le lanceur passe, par exécution** (`native_sandbox_settings`, `with_native_sandbox`, chemins **absolus** résolus pour
+l'essai en cours : `"."` ne désigne pas le dossier courant dans `--settings`) : `--permission-mode dontAsk` (remplace le
+`bypassPermissions` du pilote) et `--settings <json>` ajoutés **à la fin** de la ligne de commande (un drapeau qui en suit un
+autre termine une option variadique comme `--disallowedTools` : rien du pilote n'est avalé ni déplacé). Exemple, attempt
+`/srv/pat19/work/private-a/a`, home `/home/maint` (la forme exacte est `json.dumps(..., sort_keys=True)` compact) :
+
+```json
+{"permissions": {"additionalDirectories": ["/srv/pat19/work/private-a/a"],
+  "allow": ["Read(//srv/pat19/work/private-a/a/**)", "Edit(//srv/pat19/work/private-a/a/**)"],
+  "blockReadsOutsideWorkingDirectories": true,
+  "deny": ["Read(//home/maint/**)", "Edit(//home/maint/**)", "Read(//home/maint/.ssh/**)", "Edit(//home/maint/.ssh/**)",
+           "Read(//srv/dev/repo/**)", "Edit(//srv/dev/repo/**)"]},
+ "sandbox": {"allowUnsandboxedCommands": false, "autoAllowBashIfSandboxed": true, "enabled": true,
+  "failIfUnavailable": true,
+  "filesystem": {"allowRead": ["/srv/pat19/work/private-a/a"], "allowWrite": ["/srv/pat19/work/private-a/a"],
+                 "denyRead": ["/home/maint", "/srv/pat19/work", "/srv/dev/repo"]}}}
+```
+
+- **Shell (système d'exploitation)** : lecture refusée sur le home et sur la racine de travail, **réautorisée sur le dossier
+  de l'essai** (bundle et scratch ; la règle au chemin le plus étroit l'emporte) et sur `isolation.allow_read_home` (relatif au
+  home, vide par défaut : c'est l'endroit où déclarer ce dont le pilote a besoin, par exemple l'interpréteur d'un environnement
+  sous le home) ; écriture dans le dossier de l'essai, `extra_write` du pilote et le dossier temporaire par utilisateur
+  (valeur par défaut de Claude Code). Les chemins refusés de la liste cloud (`deny_read`, dont le dépôt de développement et le
+  dossier d'état) s'ajoutent s'ils ne sont ni sous le home ni sous la racine de travail.
+- **Environnement** : `GIT_CONFIG_GLOBAL=/dev/null` et `GIT_CONFIG_NOSYSTEM=1` sont **ajoutés** à l'environnement du fils
+  **seulement sous cette clé**, après `env_set`. Les variables de l'allow-list R6 (`HOME`, `LANG`, `LC_ALL`, `LOGNAME`,
+  `PATH`, `TMPDIR`, `USER`) sont intactes ; `FOUNDRY_DATA` (PAT-120) aussi.
+- **Outils de fichiers (Read, Edit, Write, Glob, Grep)** : ils sont **hors** du bac à sable (documentation Claude Code,
+  « Sandboxing » : « Claude's file tools … run outside it ») et suivent les règles de permission. Le trou observé
+  (l'outil Write créait un fichier dans un dossier voisin sous `bypassPermissions`, qui ne demande rien) est fermé par le
+  **mode `dontAsk`** (documentation « Permission modes » : tout appel qui demanderait une approbation est **refusé**, sans
+  jamais attendre, adapté à `claude -p`) combiné à : `blockReadsOutsideWorkingDirectories` (une lecture hors des dossiers de
+  travail demande, donc est refusée) ; `additionalDirectories` = le dossier de l'essai (le scratch est un frère du bundle et
+  doit rester lisible : retour du correcteur, `review.json`) ; des règles `allow` `Read`/`Edit` limitées au dossier de l'essai
+  (une règle `Edit` couvre aussi Write ; une règle `Read` couvre Glob et Grep : la documentation précise que Claude Code ne
+  consulte que les règles `Read(...)` et `Edit(...)`, pas `Write(...)` ni `Glob(...)`) ; des règles `deny` `Read`/`Edit` sur
+  le home et sur les chemins sensibles qui ne **contiennent pas** le dossier de l'essai (un refus l'emporte sur un
+  `allow` : si la racine de travail est sous le home, la règle du home est omise, celle du système d'exploitation, à chemin
+  plus étroit, reste). **Source** : <https://code.claude.com/docs/en/permissions> (Read and Edit),
+  <https://code.claude.com/docs/en/permission-modes> (dontAsk, bypassPermissions : « Allow rules have no effect in
+  bypassPermissions »), <https://code.claude.com/docs/en/sandboxing>. **Incertitude** : la documentation dit que la
+  règle `Read` s'applique « au mieux » à Glob et Grep, et le comportement de `dontAsk` avec un bac à sable en
+  `autoAllowBashIfSandboxed` n'a pas été rejoué ici ; c'est ce que l'essai réel doit trancher (liste ci-dessous).
+- **Relecteur** : même zone que l'implémenteur, pour les outils de fichiers : son dossier d'essai (bundle et scratch). Pour le
+  shell, s'y ajoute le dossier temporaire par utilisateur, écrivable par défaut : la copie `mktemp` qu'il fait (observée dans
+  les flux v4) y fonctionne au shell, **pas** aux outils Read/Edit/Write (hors des dossiers de travail). Les instructions du
+  relecteur ne sont **pas** changées ; si l'essai réel montre qu'il lui faut les outils sur sa copie, ce sera un nouveau texte
+  de protocole non gelé pour un protocole futur, jamais l'édition d'un texte gelé.
+- **`audit.barrier`** (enregistrement allé à son terme, révision 2) : `not_verified` (pas de bac à sable natif, ou rien
+  observé, ou le flux montre un autre mode de permission que celui demandé) < `settings_transmitted` (`--settings` passé à un
+  processus qui a démarré) < `settings_transmitted_version_observed` (de plus : le flux nomme **une** version de Claude Code
+  dans son événement `init`, et se termine par un `result` qui n'est pas une erreur). Pour un enregistrement à plusieurs
+  flux, le plus faible. **Aucune valeur ne dit « confiné »** : le lanceur n'observe pas le système d'exploitation appliquer
+  la barrière. Un enregistrement coupé n'a pas de champ `audit` (N1 : « tout enregistrement porte `audit.barrier` » était trop
+  large ; c'est « un enregistrement allé à son terme »).
+- **Limites restantes** : le bac à sable ne couvre que le shell ; les outils de fichiers reposent sur les permissions
+  (documentées « au mieux » pour Glob et Grep) ; le réseau reste ouvert (aucun `network.allowedDomains` n'est passé) et
+  le trousseau, `gh` et les identifiants implicites ne sont pas retirés par ce ticket (les règles `Bash(gh:*)`, etc. de
+  `cloud_bash_deny` restent le seul frein au mieux, voir « Exposition des bras cloud ») ; `find / -maxdepth 1` liste encore la racine du disque
+  (observé : `/Users`, sans pouvoir y entrer) ; la lecture du système (`/usr`, `/etc`, `/opt`, `/Library`…) reste permise ;
+  version de Claude Code observée : **2.1.285** seulement (version minimale non établie ; la documentation cite v2.1.246 pour
+  la prise en compte des entrées `sandbox.filesystem` et v2.1.257 pour `blockReadsOutsideWorkingDirectories` sur les
+  commandes de lecture) ; comportement sur une tâche longue réelle (caches, `ruff`, fichiers temporaires) non établi.
+- **Essai réel borné, préparé et non joué par ce ticket** : verbe `native-sandbox-trial` (dépense : deux exécutions cloud,
+  l'implémenteur de la configuration puis le relecteur, autorisées par le mainteneur le 2026-10-08 ; aucun modèle local, aucun
+  `lms`). Il passe par `Runner.cloud_execution` (enveloppe vérifiée avant tout appel, registre, audit, réglages ci-dessus ; la
+  configuration donnée est lue sans être modifiée, la clé et la révision 2 sont activées en mémoire). Une session de sonde
+  exécute des étapes fixes avec l'outil nommé (tests du bundle et `git add`/`git commit` au shell, Write dans son propre
+  scratch ; lecture d'un autre essai au shell, par Read, Glob et Grep ; lecture d'un fichier du home au shell et par Read ;
+  écriture hors de l'essai au shell, par Write et par Edit ; `ls /`), sur des fichiers que le verbe a préparés (un autre
+  essai, des sentinelles dans le home qu'il supprime ensuite). Il lit le résultat **dans le flux et sur le disque** (une
+  écriture est jugée sur le disque d'abord ; un échec sans signe de refus du système ou des permissions est `unknown`, pas
+  « refusé »), puis lance le relecteur sur le correctif de la sonde. Il écrit un fichier unique (jamais écrasé) :
+  `session_authenticated`, une ligne par sonde (`attendu`, `observé`, `as_expected`), le relecteur (verdict lu), les
+  `barrier` des enregistrements, le nombre de drapeaux d'audit, le total de facturation, les noms de la racine du disque,
+  les réglages passés avec les chemins masqués (`<attempt>`, `<work-root>`, `<home>`), la version de Claude Code, la liste de
+  ce que l'essai n'établit pas ; ni transcript brut, ni identifiant de session, ni chemin du home (le verbe refuse d'écrire un
+  résultat qui en contient un). Commande :
+  `python3 -m foundry.local_first_runner native-sandbox-trial --campaign docs/qualification/pat-19-campaign-v4.json
+  --envelope <enveloppe-compare_exploration> --state-dir <état> --work-root <racine, hors du dépôt et des entrées>
+  --repo . --snapshot docs/qualification/pat-19-corpus-snapshot-v1.json --task-pr <PR> --out <résultat.json>`
+  (`PYTHONPATH=plugins/foundry/tooling`, environnement de la machine authentifiée du mainteneur, R6 ; `--no-reviewer`
+  pour ne pas lancer le relecteur). Sondes : P2 tests du bundle, P2b git, P12 Write dans son scratch (attendus
+  `allowed`) ; P3 shell et P4 Read, P5 Glob, P6 Grep sur un autre essai, P7 shell et P8 Read sur le home, P9 shell, P10
+  Write, P11 Edit hors de l'essai (attendus `refused`) ; P13 `ls /` (`listed`). Un attendu non observé reste `unknown`.
+- **Statut documentaire (R5)** : ce document, le CHANGELOG ; artefacts : clé `isolation.cloud_native_sandbox`, extension de
+  `isolation.private_attempt_root` aux protocoles v5 et suivants, constantes `NATIVE_SANDBOX_KEY`, `NATIVE_PERMISSION_MODE`,
+  `NATIVE_GIT_ENV`, `BARRIERS`, `BARRIER_SETTINGS`, `BARRIER_OBSERVED`, `AUDIT_BARRIER` (désormais une valeur parmi trois),
+  fonctions `native_sandbox_settings` et `with_native_sandbox`, paramètre `native_settings` de `execute_driver`, verbe
+  `native-sandbox-trial` et module `local_first_native_trial`, champ `audit.barrier`. Aucun verbe de `foundry_cli.py`, clé de
+  configuration produit, table de routage ni constante de routage modifiés. Contrainte opérationnelle (R6) : le lanceur d'un
+  protocole v5 tourne sur la machine authentifiée du mainteneur ; le bac à sable natif ne rend pas le processus `claude`
+  confiné. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.

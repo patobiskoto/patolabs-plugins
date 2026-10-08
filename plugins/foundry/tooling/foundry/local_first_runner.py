@@ -59,9 +59,22 @@ FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol
 # PAT-123: ``isolation.audit_revision`` 2 (a protocol after v4 only) follows the working directory of a command
 # line, attributes a flag of the reviewer's session to the review, and records a path that does not exist apart
 AUDIT_REVISION = 2
-# PAT-123: what a record of audit revision 2 says of the barrier (Claude Code's native Bash sandbox, PAT-124). The
-# launcher has no key for it and checks nothing: the audit is a journal, never a proof that an arm was confined.
-AUDIT_BARRIER = "not_verified"
+# PAT-123/PAT-124: what a record of audit revision 2 that ran to completion says of the barrier (Claude Code's
+# native Bash sandbox). The launcher never observes the operating system enforce it: the value says only what it
+# verified, from weakest to strongest; no value reads "confined" (a record cut by an error carries no ``audit``).
+AUDIT_BARRIER = "not_verified"  # no native sandbox configured, or nothing observed (also a local arm)
+BARRIER_SETTINGS = "settings_transmitted"  # ``--settings`` was passed to a process that started
+# ... and the stream names ONE Claude Code version in its ``init`` event(s), the permission mode asked for when it
+# names one, and ends on a ``result`` event that is not an error (the session ran to its end)
+BARRIER_OBSERVED = "settings_transmitted_version_observed"
+BARRIERS = (AUDIT_BARRIER, BARRIER_SETTINGS, BARRIER_OBSERVED)
+# PAT-124 (a protocol after v4 only): ``isolation.cloud_native_sandbox`` runs every cloud driver with Claude Code's
+# native Bash sandbox (see ``native_sandbox_settings``). The permission mode is then ``dontAsk``: an edit outside the
+# attempt directory would prompt, so it is denied (``bypassPermissions`` let the Write tool create a file next door).
+NATIVE_SANDBOX_KEY = "cloud_native_sandbox"
+NATIVE_PERMISSION_MODE = "dontAsk"
+NATIVE_GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}  # added to the child's environment
+_PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)")
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
@@ -188,6 +201,31 @@ class PreflightRefused(RunnerError):
 
 # ------------------------------------------------------------------------ campaign config
 
+def _check_native_sandbox(path: Any, data: Mapping[str, Any], later: bool) -> None:
+    """PAT-124: ``isolation.cloud_native_sandbox`` is a boolean accepted only under a protocol after v4; audit
+    revision 2 is accepted only together with it (the audit is a journal, the native sandbox the barrier); with it
+    every cloud driver reads a Claude Code stream (the barrier is read from it) and is not wrapped in
+    ``sandbox-exec`` (Claude Code cannot authenticate under it: AGENTS.md R6)."""
+    iso = data.get("isolation") or {}
+    if NATIVE_SANDBOX_KEY in iso:
+        if type(iso[NATIVE_SANDBOX_KEY]) is not bool:
+            raise RunnerError(f"{path}: isolation.{NATIVE_SANDBOX_KEY} must be a boolean")
+        if not later:
+            raise RunnerError(f"{path}: isolation.{NATIVE_SANDBOX_KEY} is accepted only under a protocol after v4 "
+                              f"(pat-19-protocol-v5 or later), not under {data.get('protocol')!r}")
+    native = iso.get(NATIVE_SANDBOX_KEY) is True
+    if iso.get("audit_revision", 1) == AUDIT_REVISION and not native:
+        raise RunnerError(f"{path}: isolation.audit_revision {AUDIT_REVISION} is accepted only together with "
+                          f"isolation.{NATIVE_SANDBOX_KEY} true (the lexical audit is a journal, not a barrier)")
+    if native:
+        for name, driver in data["drivers"].items():
+            if driver["kind"] in CLOUD_KINDS and (driver.get("sandbox", True) is not False
+                                                  or (driver.get("stream") or {}).get("format")
+                                                  != "claude-stream-json"):
+                raise RunnerError(f"{path}: isolation.{NATIVE_SANDBOX_KEY} needs cloud driver {name} to declare "
+                                  "sandbox false and a claude-stream-json stream")
+
+
 def load_campaign(path: Path) -> dict[str, Any]:
     """The frozen campaign config. Fails closed on any missing piece."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -234,19 +272,21 @@ def load_campaign(path: Path) -> dict[str, Any]:
         raise RunnerError(f"{path}: isolation.allow_read_home needs a list of relative home entries")
     if data.get("protocol") == PROTOCOL_V4 and data["schema"] != CAMPAIGN_SCHEMA_V2:
         raise RunnerError(f"{path}: protocol v4 requires the exploration schema {CAMPAIGN_SCHEMA_V2}")
+    later = bool(_PROTOCOL_AFTER_V4.fullmatch(str(data.get("protocol"))))
     if data.get("protocol") != PROTOCOL_V4 and (
-            "correction_feedback" in data or "private_attempt_root" in iso
+            "correction_feedback" in data or ("private_attempt_root" in iso and not later)
             or {"fixed_candidate", "comparison_task_group"} & set(data.get("exploration") or {})):
-        raise RunnerError(f"{path}: {V4_KEYS} are accepted only under protocol {PROTOCOL_V4}")
+        raise RunnerError(f"{path}: {V4_KEYS} are accepted only under protocol {PROTOCOL_V4} "
+                          "(isolation.private_attempt_root also under pat-19-protocol-v5 or later)")
     if type(iso.get("private_attempt_root", False)) is not bool:
         raise RunnerError(f"{path}: isolation.private_attempt_root must be a boolean")
     if iso.get("audit_revision", 1) not in (1, AUDIT_REVISION) or type(iso.get("audit_revision", 1)) is not int:
         raise RunnerError(f"{path}: isolation.audit_revision must be 1 or {AUDIT_REVISION}")
-    if iso.get("audit_revision", 1) != 1 and not re.fullmatch(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)",
-                                                              str(data.get("protocol"))):
+    if iso.get("audit_revision", 1) != 1 and not later:
         raise RunnerError(f"{path}: isolation.audit_revision {AUDIT_REVISION} is accepted only under a protocol "
                           f"after v4 (pat-19-protocol-v5 or later), not under the frozen protocol "
                           f"{data.get('protocol')!r}")
+    _check_native_sandbox(path, data, later)
     _check_correction_feedback(path, data)
     _check_cloud_bash_deny(path, data)
     for cid, cand in data["candidates"].items():
@@ -856,6 +896,65 @@ def isolated_environment(driver: Mapping[str, Any], scratch: Path,
     return env
 
 
+def native_sandbox_settings(*, attempt_dir: Path, work_root: Path, home: str | Path,
+                            deny_read: Sequence[Path] = (), allow_read: Sequence[Path] = (),
+                            allow_write: Sequence[Path] = ()) -> dict[str, Any]:
+    """The ``--settings`` object of one cloud execution under ``isolation.cloud_native_sandbox`` (PAT-124). Pure.
+    Every path is absolute and resolved (``"."`` does not designate the working directory in ``--settings``).
+
+    The Bash sandbox (the operating system) denies the shell reads of the home and of the work root and re-allows
+    the attempt directory (bundle and scratch; narrower wins), plus ``allow_read``; it writes only in the attempt
+    directory, ``allow_write`` and the per-user temp directory (Claude Code's default). The file tools (Read, Edit,
+    Write, Glob, Grep) are OUTSIDE that sandbox: they are confined by permissions: mode ``dontAsk`` (set by
+    ``execute_driver``) denies whatever would prompt, ``blockReadsOutsideWorkingDirectories`` makes a read outside the
+    working directories prompt, ``additionalDirectories`` makes the attempt directory a working directory (the
+    scratch is a sibling of the bundle), ``Edit``/``Read`` allow rules cover the attempt directory only (an ``Edit``
+    rule governs Write too; a ``Read`` rule governs Glob and Grep), and ``Read``/``Edit`` deny rules cover the
+    sensitive paths that do not contain the attempt directory. ``allowUnsandboxedCommands`` false and
+    ``failIfUnavailable`` true: no command runs outside the sandbox, and none if it cannot start."""
+    real = os.path.realpath
+    attempt, work, hm = real(attempt_dir), real(work_root), real(home)
+
+    def covers(outer: str, inner: str) -> bool:
+        return inner == outer or inner.startswith(outer.rstrip("/") + "/")
+
+    if not os.path.isabs(str(home)) or hm == "/" or not covers(work, attempt) or attempt == work:
+        raise RunnerError("the native sandbox needs an absolute home and an attempt directory inside the work root")
+    extra = [real(p) for p in deny_read if not covers(hm, real(p)) and not covers(work, real(p))
+             and not covers(real(p), attempt)]
+    deny_sandbox = list(dict.fromkeys([hm, work, *extra]))
+    deny_rules = [p for p in dict.fromkeys([hm, *(real(p) for p in deny_read), *extra]) if not covers(p, attempt)
+                  and p != "/"]
+
+    def rule(tool: str, path: str) -> str:
+        return f"{tool}(//{path.lstrip('/')}/**)"
+
+    return {
+        "permissions": {
+            "blockReadsOutsideWorkingDirectories": True,
+            "additionalDirectories": [attempt],
+            "allow": [rule("Read", attempt), rule("Edit", attempt)],
+            "deny": [rule(tool, p) for p in deny_rules for tool in ("Read", "Edit")]},
+        "sandbox": {
+            "enabled": True, "allowUnsandboxedCommands": False, "failIfUnavailable": True,
+            "autoAllowBashIfSandboxed": True,
+            "filesystem": {"denyRead": deny_sandbox,
+                           "allowRead": list(dict.fromkeys([attempt, *(real(p) for p in allow_read)])),
+                           "allowWrite": list(dict.fromkeys([attempt, *(real(p) for p in allow_write)]))}}}
+
+
+def with_native_sandbox(argv: Sequence[str], settings: Mapping[str, Any]) -> list[str]:
+    """``argv`` of a cloud driver with ``--permission-mode dontAsk`` (replacing the driver's own pair, if any) and
+    ``--settings <json>`` appended. Appended, not inserted after the executable: a flag that follows another flag
+    ends a variadic option such as ``--disallowedTools``, so nothing of the driver's own argv is swallowed or moved."""
+    rest = list(argv)
+    if "--permission-mode" in rest:
+        at = rest.index("--permission-mode")
+        del rest[at:at + 2]
+    return [*rest, "--permission-mode", NATIVE_PERMISSION_MODE,
+            "--settings", json.dumps(settings, sort_keys=True, separators=(",", ":"))]
+
+
 def sandbox_available() -> bool:
     return sys.platform == "darwin" and shutil.which("sandbox-exec") is not None
 
@@ -990,11 +1089,16 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
                    scratch: Path, stream_log: Path, max_seconds: float, max_steps: int | None,
                    sandbox: bool, deny_read: Sequence[Path], extra_write: Sequence[Path] = (),
                    host_env: Mapping[str, str] | None = None, deny_home: Path | None = None,
-                   allow_read: Sequence[Path] = (), workdir_writable: bool = True) -> dict[str, Any]:
+                   allow_read: Sequence[Path] = (), workdir_writable: bool = True,
+                   native_settings: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Run one arm command: process group killed at ``max_seconds`` (and at ``max_steps`` when
     the event stream exposes steps), stdin closed, whitelisted environment, optional sandbox.
     ``workdir_writable=False`` (protocol v2 explorers) makes the bundle READ-ONLY in the sandbox
-    profile: only the attempt scratch (and ``extra_write``) is writable, the bundle stays readable."""
+    profile: only the attempt scratch (and ``extra_write``) is writable, the bundle stays readable.
+    ``native_settings`` (PAT-124, cloud drivers under ``isolation.cloud_native_sandbox``): the argv gets
+    ``--permission-mode dontAsk`` and ``--settings`` (``with_native_sandbox``) and the environment gets
+    ``NATIVE_GIT_ENV`` after ``env_set``; the allow-listed variables (R6) are untouched, and the ``claude`` process
+    itself is never wrapped: only its shell is sandboxed, by Claude Code."""
     host_env = os.environ if host_env is None else host_env
     scratch.mkdir(parents=True, exist_ok=True)
     env = isolated_environment(driver, scratch, host_env)
@@ -1018,6 +1122,9 @@ def execute_driver(driver: Mapping[str, Any], values: Mapping[str, str], *, work
             raise RunnerError(f"{foundry_data} is not empty: a Foundry data dir is fresh for each execution")
         env["FOUNDRY_DATA"] = str(foundry_data)
     argv = [_substitute(a, values) for a in driver["argv"]]
+    if native_settings is not None:
+        argv = with_native_sandbox(argv, native_settings)
+        env.update(NATIVE_GIT_ENV)
     profile_dir = None
     if sandbox:
         writable = [workdir, scratch, *extra_write] if workdir_writable else [scratch, *extra_write]
@@ -1744,10 +1851,11 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
 # arm that is not trying to deceive the audit, under the assumptions H1 to H9 below (numbered: the launcher
 # document cites them), and for nothing else.
 #
-# COUPLING WITH THE BARRIER. A future protocol must enable revision 2 only together with that native sandbox.
-# No configuration key for the sandbox exists today (PAT-124 will add it), so the launcher cannot check it: under
-# revision 2 every record says so (``audit.barrier: "not_verified"``, ``AUDIT_BARRIER``). A record of revision 2
-# is a journal entry; it never says that the arm was confined.
+# COUPLING WITH THE BARRIER (PAT-124). Revision 2 is accepted only together with the native sandbox key
+# (``isolation.cloud_native_sandbox``, checked at load). A record that ran to completion under revision 2 carries
+# ``audit.barrier``: what the launcher verified (``BARRIERS``: settings transmitted, Claude Code version observed in
+# the stream), never "confined". A record cut by ``_tool_error`` carries no ``audit`` at all, so it is never
+# readable as verified. A record of revision 2 is a journal entry.
 #
 # KNOWN LIMITS: DELIBERATE EVASION, OUT OF SCOPE (PAT-123). Listed, not fixed one by one; the tests named
 # ``..._is_a_known_limit_...`` hold what the audit does today for the first two.
@@ -1765,8 +1873,18 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
 #     written then sourced by another program). The audit gives up the directory for the forms it reads
 #     (``UNKNOWN_CWD``); it does not see the others.
 #  L5 A ``cd`` hidden in a script or an interpreter (``python3 -c "os.chdir('..'); ..."``, ``make -C``, ``git
-#     -C``, a script file the arm wrote): the directory of that program is not followed (H8).
+#     -C``, a script file the arm wrote): the directory of that program is not followed (H8). L5 and L6 are blind
+#     spots INHERITED from revision 1 that ordinary work meets (``git -C <dir>``, ``make -C <dir>``, a script the
+#     arm wrote, a path assembled at run time), not deliberate evasion; the target of a ``-C`` is itself a path
+#     the audit reads and still flags when it is outside the zone.
 #  L6 A path built at run time, or kept in a file for a later call (H8, as in revision 1).
+#
+#  KNOWN COSTS: OVER-FLAGS OF ORDINARY WORK (PAT-124, to carry to the v5 ticket). Revision 2 flags, or gives up
+#  the directory on, work that stays in the zone: ``source .venv/bin/activate`` (a builtin outside the inert
+#  allow-list: ``UNKNOWN_CWD``), ``break`` and ``continue`` (same: they do not move the shell but end a loop early,
+#  so treating them as inert would let the audit believe a later ``cd`` that did not run: not changed), ``trap``,
+#  ``cd "$(git rev-parse --show-toplevel)"`` (a substitution: unreadable target), and a word ``cd`` in a commit
+#  message or a heredoc. Each can show as a flag on a record; none is a barrier decision (the barrier is the sandbox).
 #
 #  H1 host    The stream is a Claude Code stream whose ``system``/``init`` events all name a version of
 #             ``OBSERVED_CLAUDE_CODE``. Observed in the 30 cloud streams of the v4 campaign (2.1.285): a Bash call
@@ -2949,6 +3067,10 @@ class Runner:
         self.patch_excludes = _PATCH_EXCLUDES_V2 if self.audit_revision >= AUDIT_REVISION else _PATCH_EXCLUDES
         self.not_found: dict[str, list[str]] = {}  # paths an arm named that do not exist, by stream log
         self.host_models: dict[str, str] = {}  # audit revision 2: what the audit could assume of each stream's host
+        # PAT-124 (a protocol after v4 only): the cloud drivers run under Claude Code's native Bash sandbox
+        self.native_sandbox = bool((campaign.get("isolation") or {}).get(NATIVE_SANDBOX_KEY))
+        self.settings_sent: set[str] = set()  # stream logs of the executions that started with ``--settings``
+        self.barriers: dict[str, str] = {}  # what the launcher verified of the barrier, by audited stream log
         self.roles: dict[str, str] = {}  # role of each reserved cloud session
         self.fixed_candidate = (campaign.get("exploration") or {}).get("fixed_candidate")
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
@@ -3124,7 +3246,44 @@ class Runner:
         hits = self._audit_stream(stream_log, bundle, scratch, driver, session_id, exe, notes, models)
         self.not_found[str(stream_log)] = list(dict.fromkeys(notes))
         self.host_models[str(stream_log)] = models[0] if models else "unverified"
+        self.barriers[str(stream_log)] = self._stream_barrier(stream_log, driver)
         return hits
+
+    def _stream_barrier(self, stream_log: Path, driver: Mapping[str, Any]) -> str:
+        """What the launcher verified of the native sandbox for ONE audited stream (``BARRIERS``). It never
+        observes the operating system enforce the sandbox: ``--settings`` was passed to a process that started
+        (``BARRIER_SETTINGS``), and the stream names one Claude Code version, the permission mode asked for when
+        it names one, and ends on a ``result`` that is not an error (``BARRIER_OBSERVED``). A permission mode that
+        differs from the one asked for is a contradiction: ``not_verified``."""
+        if (not self.native_sandbox or driver["kind"] not in CLOUD_KINDS
+                or str(stream_log) not in self.settings_sent):
+            return AUDIT_BARRIER
+        versions: set[Any] = set()
+        modes: set[Any] = set()
+        results: list[Any] = []
+        try:
+            lines = Path(stream_log).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return BARRIER_SETTINGS
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "system" and event.get("subtype") == "init":
+                versions.add(event.get("claude_code_version"))
+                if "permissionMode" in event:
+                    modes.add(event["permissionMode"])
+            elif event.get("type") == "result":
+                results.append(event.get("is_error"))
+        if modes - {NATIVE_PERMISSION_MODE}:
+            return AUDIT_BARRIER
+        if (len(versions) == 1 and isinstance(next(iter(versions)), str) and next(iter(versions))
+                and results and all(r is False for r in results)):
+            return BARRIER_OBSERVED
+        return BARRIER_SETTINGS
 
     def _audit_stream(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
                       session_id: str | None, exe: Mapping[str, str] | None, notes: list[str],
@@ -3159,16 +3318,19 @@ class Runner:
                                 revision=self.audit_revision, not_found=notes, host_model=models)
 
     def _audit_note(self, stream_logs: Sequence[Path]) -> dict[str, Any]:
-        """The ``audit`` field of a record under audit revision 2: the revision, the paths named that do not
+        """The ``audit`` field of a record that ran to completion under audit revision 2 (a record cut by
+        ``_tool_error`` carries none: it is never readable as verified): the revision, the paths named that do not
         exist (apart from the hits, never a read) and, per audited stream in order, what the audit could assume of
         its host (``claude-code-<observed version>``, or ``unverified``: no directory carried, no ``cd`` believed).
-        ``barrier`` is always ``AUDIT_BARRIER`` (``not_verified``): the launcher does not check that the arm ran
-        under the native sandbox the audit is meant to be paired with (PAT-124), so the record cannot be read as
-        "confined". Absent under revision 1: the frozen records keep their shape."""
+        ``barrier`` is the weakest ``_stream_barrier`` of the streams (``not_verified`` without any): what the
+        launcher verified of the native sandbox, never "confined". Absent under revision 1: the frozen records keep
+        their shape."""
         if self.audit_revision < AUDIT_REVISION:
             return {}
         names = [p for log in stream_logs for p in self.not_found.get(str(log), [])]
-        return {"audit": {"revision": self.audit_revision, "barrier": AUDIT_BARRIER,
+        barrier = min((self.barriers.get(str(log), AUDIT_BARRIER) for log in stream_logs),
+                      key=BARRIERS.index, default=AUDIT_BARRIER)
+        return {"audit": {"revision": self.audit_revision, "barrier": barrier,
                           "not_found": list(dict.fromkeys(names)),
                           "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}}
 
@@ -3452,6 +3614,13 @@ class Runner:
         deny = self._deny_read(driver)
         if self._sandboxed(driver):  # a profile that cannot be generated must not burn a reservation
             sandbox_text(driver, [bundle, scratch, *extra], deny)
+        native = None
+        if self.native_sandbox:  # settings that cannot be built must not burn a reservation either
+            iso = self.campaign.get("isolation") or {}
+            native = native_sandbox_settings(
+                attempt_dir=attempt_dir, work_root=self.work_root, home=self._home(), deny_read=deny,
+                allow_read=[Path(self._home()) / rel for rel in iso.get("allow_read_home", [])],
+                allow_write=extra)
         budget = min(self.campaign["bounds"][seconds_key],
                      max(self.ledger.remaining_seconds(), 0))
         reserved = False
@@ -3468,7 +3637,9 @@ class Runner:
             execution = execute_driver(
                 driver, values, workdir=bundle, scratch=scratch, stream_log=stream_log,
                 max_seconds=budget, max_steps=None, sandbox=self._sandboxed(driver), deny_read=deny,
-                extra_write=extra, host_env=self.host_env)
+                extra_write=extra, host_env=self.host_env, native_settings=native)
+            if native is not None and not execution["start_error"]:
+                self.settings_sent.add(str(stream_log))
             fingerprint_after = registry_fingerprints(env)
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
             if reserved:
@@ -5360,6 +5531,18 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     ra.add_argument("--work-root-not-sensitive", action="store_true",
                     help="leave the work root out of the sensitive list (measures what that v4 change explains)")
     ra.add_argument("--out", default=None, help="write the result here instead of stdout (never overwrites)")
+    nt = sub.add_parser("native-sandbox-trial", help="PAT-124: the bounded REAL trial of the native Bash sandbox "
+                        "(two real cloud executions through the launcher: spend, run once by the maintainer)")
+    nt.add_argument("--campaign", required=True, help="a campaign config with cloud drivers (read, never edited; "
+                    "the native sandbox is switched on in memory for the trial)")
+    nt.add_argument("--envelope", required=True)
+    nt.add_argument("--state-dir", required=True)
+    nt.add_argument("--work-root", required=True)
+    nt.add_argument("--repo", default=".")
+    nt.add_argument("--snapshot", required=True)
+    nt.add_argument("--task-pr", type=int, required=True, help="the one corpus task (a PR of the snapshot)")
+    nt.add_argument("--no-reviewer", action="store_true")
+    nt.add_argument("--out", required=True, help="the result file (never overwritten)")
     r = sub.add_parser("report")
     r.add_argument("--campaign", required=True)
     r.add_argument("--results", required=True,
@@ -5370,6 +5553,13 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     except (RunnerError, OSError, ValueError) as exc:  # e.g. a frozen ground truth whose sha256 changed
         print(f"refused: {exc}", file=sys.stderr)
         return 2
+    if args.cmd == "native-sandbox-trial":
+        from foundry import local_first_native_trial as trial
+        try:
+            return trial.run(args, campaign, today=today)
+        except (RunnerError, OSError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
     if args.cmd == "replay-audit":
         try:
             results = Path(args.results)
