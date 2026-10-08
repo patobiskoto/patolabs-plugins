@@ -1,0 +1,319 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "Not played in v5 (the candidate is fixed, exploration.fixed_candidate; screen-exploration is refused). Kept so that the v2 schema is satisfied and the rule stays readable. MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates were the two frozen ones of v3 (in v4 the candidates list holds only qwen3.6-35b-a3b-mlx-4bit, fixed) and the v3 screening was complete only when both had their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Inherited from v2 and v3; kept readable, not applied in v5.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.6-35b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 12,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "Protocol v5 handling of undecided tasks (protocol section 2), replacing for v5 the v2 to v4 behaviour, where an undecided task made the ECONOMY unavailable, hence forbade 'retained'; quality stayed read by bounds (pass only in the worst case, fail only in the best case, else unavailable) and compatibility did not depend on it, so keep_cloud stayed possible (the comparison of acceptance and the 0.85 premium ratio are unchanged). Every case where, for a complete campaign, v2 to v4 and v5 give a different verdict label: (i) inconclusive in v2 to v4, retained in v5: with 1 to 3 undecided tasks when L is retained on D and robust (an interrupted, capped or unknown-token task included, which alone made v2 to v4 inconclusive), or when an interrupted record without a cloud execution was superseded by its replay (premium 0 in v5, unknown in v2 to v4); (ii) inconclusive in v2 to v4, keep_cloud in v5: in the same situations, when acceptance or economy fails on D, or when compatibility fails while an interruption or unknown spend on a task outside D made v2 to v4 inconclusive; (iii) keep_cloud in v2 to v4, inconclusive in v5: a quality failure in the best case or a compatibility failure with |D| < 9; a premium unknown on a record of D that the ledger knows, together with an acceptance or compatibility failure; A accepting no task of D together with a compatibility failure (compatibility is read last). No other case: a v2 to v4 'retained' stays retained, no v2 to v4 keep_cloud becomes retained, and L accepting no task while A accepts at least one (the shape of the v4 result) is keep_cloud in both. A task is decided for an arm when it is accepted or its records do not end in contaminated, review_unreadable, tool_error, a contaminated or twice-failed local exploration, a cap or an interruption (a refused or bound-cut local exploration is NOT undecided: L then plays without a report). Paired set D = tasks decided in both arms; |D| < paired_decided_min (9) -> inconclusive (keep the cloud for lack of evidence). An undecided task only leaves D, also when one of its cloud executions was cut and its tokens are unknown (printed unknown, never zero). On D, in this order: (1) a premium total unknown on a record of a task of D: inconclusive; (2) acceptance: accepted_L(D) < accepted_A(D) FAILS the acceptance criterion: keep the cloud, whatever the zeros (accepted_L(D) = 0 with accepted_A(D) >= 1 included); (3) otherwise, accepted_A(D) = 0 (both arms accepted nothing, or A nothing and L something): inconclusive, A's premium per accepted task is undefined and no ratio can be computed (never zero, never an infinite ratio read as a pass); (4) economy; (5) compatibility. The premium of a record is unknown (never zero) when its total is null, EXCEPT an interrupted record that names no cloud execution (a cut local exploration, a cloud round cut before its reservation): it counts 0, known, so an interruption that spent nothing and was replayed leaves its task in D. L is retained iff accepted_L(D) >= accepted_A(D), both >= 1, premium per accepted task of L <= 0.85 x A's (every record of the arm on D, reviewer included, local tokens excluded) and compatibility PASSES. Acceptance or economy failing, or compatibility FAILING (a local exploration ended by an external signal, extra swap at or over the limit): keep the cloud. Acceptance and economy passing with compatibility UNAVAILABLE (unmeasured swap, a local exploration lost without a successful replay): inconclusive, absent data is not a failure. Compatibility is read in this order, the first case met deciding: no recorded exploration: unavailable; an external signal: fail; a lost exploration: unavailable; an unmeasured swap: unavailable; extra swap at or over the limit: fail; so a swap over the limit together with another lost exploration or unmeasured swap is unavailable (inconclusive), not a failure. Robustness, for a retained L only: undecided L tasks counted not accepted and undecided A tasks counted accepted over all the tasks; a retained L below A in that worst case is inconclusive (the ratio is not recomputed: the acceptance of an undecided task is unknown); a decided keep-the-cloud has no robustness reading (it is the conservative outcome). Campaign-level reasons give inconclusive whatever D says: a cloud execution the ledger started and never settled, one no result record names, a cloud execution the ledger marks interrupted or unknown-token that belongs to a task of D or to no compared task, a start with neither record nor replay (once a cloud replay exists in the results the report holds every preflight without a start as replayed: lenient, no spend at stake). A premium the record lacks but the ledger knows (a cut after the execution was settled) is not a campaign-level reason: inconclusive by the rule on D alone. A cloud execution with tokens unknown to the ledger stops every later cloud execution (premium_tokens_unmeasurable): its round is never replayed, and after a round 0 cut during its cloud execution every relaunch stops at that arm of that task without writing a record (the campaign stays incomplete, unless it was L's round of the last task). The authoritative report keys are exploration_comparison.decision and campaign_conclusion; paired_rule.verdict always equals decision (the verdict on D before the campaign-level reasons is kept in verdict_before_campaign_level); the one cost ratio that counts is paired_rule.ratio. This handling is a change of the decision rule relative to v2 to v4, decided by the coordinator under the mandate of 2026-10-08: the handling and the threshold were fixed after the pilots 1 to 3 and the review round 1, before the pilot 4, adjusted in the handling of unavailable data and of campaign-level cases after the review rounds 2 and 3, and in the order of reading of the zero case after the review round 4 (acceptance read first; coordinator's decision, last adjustment of that case), with no campaign trial at any point; the threshold 9 of 12 (three quarters of the corpus) was chosen by judgement, with no statistical derivation; the maintainer's explicit agreement is to be recorded on the issue before the merge. The report prints D, the undecided tasks per arm with their cause, both readings and the tokens spent on undecided tasks.",
+      "paired_decided_min": 9
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "fbac092181d373602d94b58ec469b07ed81853520bac4f1dbac7ec7ddad660db",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "902df72aaad5ec0b8ff767ce7e628c131363ab4bdc21312ea63eaa753b58484b"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-44",
+        "pr": 42,
+        "set": "pat-19-v5"
+      },
+      "candidate": "qwen3.6-35b-a3b-mlx-4bit",
+      "segment": "explore",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py",
+        "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py"
+      ],
+      "commands": []
+    },
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-41",
+        "pr": 33,
+        "set": "pat-19-v5"
+      },
+      "candidate": "qwen3.6-35b-a3b-mlx-4bit",
+      "segment": "explore",
+      "attempt": 0,
+      "paths": [
+        "/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py",
+        "tool_result:/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py"
+      ],
+      "commands": []
+    }
+  ],
+  "replays": [],
+  "audit_journal": {
+    "policy": "journal_under_observed_barrier",
+    "journal_paths_by_arm": {
+      "A": 8,
+      "L": 13
+    },
+    "journal_paths_by_role": {
+      "arm": 13,
+      "reviewer": 9
+    },
+    "records_with_journal": 13,
+    "host_refused_calls": {
+      "Bash": 48,
+      "Write": 1
+    },
+    "host_refused_calls_total": 49,
+    "note": "findings kept apart from `contaminated`/`review_contaminated`: they decide nothing"
+  },
+  "exploration_screening": {
+    "state": "no_screening",
+    "selected": "qwen3.6-35b-a3b-mlx-4bit",
+    "reason": "no screening: candidate fixed by the protocol"
+  },
+  "exploration_comparison": {
+    "arms": {
+      "L": {
+        "tasks_compared": 12,
+        "informative": false,
+        "awaiting_implementer": [],
+        "compatibility": "pass",
+        "quality": "pass",
+        "economy": "fail",
+        "economy_detail": {
+          "premium_billing_tokens": 7874314,
+          "reference_premium_billing_tokens": 11433953,
+          "accepted": 5,
+          "reference_accepted": 6,
+          "premium_per_accepted": null,
+          "reference_premium_per_accepted": null,
+          "ratio_max": 0.85,
+          "ratio": null,
+          "premium_pass": null,
+          "premium_definition": "unweighted sum of the four billing token classes over all models, explorer included (an economy model counts as premium; local tokens do not)",
+          "premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 470,
+              "cached_input_tokens": 4458594,
+              "cache_write_input_tokens": 611203,
+              "output_tokens": 102516,
+              "reasoning_output_tokens": 22908
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 172,
+              "cached_input_tokens": 2319191,
+              "cache_write_input_tokens": 300516,
+              "output_tokens": 81652,
+              "reasoning_output_tokens": 27479
+            }
+          },
+          "reference_premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 650,
+              "cached_input_tokens": 7160250,
+              "cache_write_input_tokens": 752338,
+              "output_tokens": 137282,
+              "reasoning_output_tokens": 23951
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 190,
+              "cached_input_tokens": 2918177,
+              "cache_write_input_tokens": 374072,
+              "output_tokens": 90994,
+              "reasoning_output_tokens": 33789
+            }
+          },
+          "wall_seconds": 5546.764,
+          "reference_wall_seconds": 4112.018,
+          "local_explorer_wall_seconds": 2507.628,
+          "superseded_by": "paired_rule: under protocol v5 the ratio and the premium per accepted task are those of exploration_comparison.paired_rule (paired decided set; absent while the campaign is incomplete); the totals here cover every compared task"
+        },
+        "accepted": 5,
+        "reference_accepted": 6,
+        "explorer_localization": [
+          {
+            "pr": 26,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 38,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 25,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 42,
+            "outcome": "contaminated",
+            "verdict": "CONTAMINATED",
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "function_recall": 0.0
+          },
+          {
+            "pr": 33,
+            "outcome": "contaminated",
+            "verdict": "CONTAMINATED",
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "function_recall": 0.0
+          },
+          {
+            "pr": 37,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 0.666667,
+            "function_recall": 0.5
+          },
+          {
+            "pr": 30,
+            "outcome": null,
+            "verdict": "REFUSED",
+            "file_recall": 0.0,
+            "file_precision": 0.0,
+            "function_recall": 0.0
+          },
+          {
+            "pr": 83,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 0.5,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 27,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 24,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 0.0
+          },
+          {
+            "pr": 48,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          },
+          {
+            "pr": 19,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 0.5
+          }
+        ]
+      }
+    },
+    "decision": "keep_cloud",
+    "recommendation": "A",
+    "warnings": [],
+    "informative_arms": [],
+    "complete": true,
+    "paired_rule": {
+      "paired_decided_min": 9,
+      "paired_decided": [
+        19,
+        24,
+        25,
+        26,
+        27,
+        30,
+        37,
+        38,
+        48,
+        83
+      ],
+      "paired_decided_count": 10,
+      "undecided": {
+        "A": {},
+        "L": {
+          "33": [
+            "explore:contaminated"
+          ],
+          "42": [
+            "explore:contaminated"
+          ]
+        }
+      },
+      "premium_tokens_on_undecided_tasks": {
+        "A": 0,
+        "L": 0
+      },
+      "accepted_on_paired": {
+        "A": 5,
+        "L": 5
+      },
+      "premium_on_paired": {
+        "A": 9178695,
+        "L": 7874314
+      },
+      "premium_per_accepted": {
+        "A": 1835739.0,
+        "L": 1574862.8
+      },
+      "ratio_max": 0.85,
+      "ratio": 0.8579,
+      "compatibility": "pass",
+      "failed_criteria": [
+        "economy"
+      ],
+      "worst_case": {
+        "A_undecided_counted_accepted": 6,
+        "L_undecided_counted_not_accepted": 5,
+        "robust": null,
+        "ratio_recomputed": false,
+        "why_no_ratio": "the acceptance of an undecided task is unknown (its cost is known unless one of its cloud executions was cut)"
+      },
+      "verdict_before_campaign_level": "keep_cloud",
+      "reason_before_campaign_level": "not_retained_on_paired_set",
+      "campaign_level_reasons": [],
+      "verdict": "keep_cloud",
+      "reason": "not_retained_on_paired_set"
+    },
+    "campaign_conclusion": "keep_cloud",
+    "screening_selected": "fixed_by_protocol:qwen3.6-35b-a3b-mlx-4bit"
+  }
+}
