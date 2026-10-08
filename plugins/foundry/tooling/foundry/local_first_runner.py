@@ -59,6 +59,9 @@ FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol
 # PAT-123: ``isolation.audit_revision`` 2 (a protocol after v4 only) follows the working directory of a command
 # line, attributes a flag of the reviewer's session to the review, and records a path that does not exist apart
 AUDIT_REVISION = 2
+# PAT-123: what a record of audit revision 2 says of the barrier (Claude Code's native Bash sandbox, PAT-124). The
+# launcher has no key for it and checks nothing: the audit is a journal, never a proof that an arm was confined.
+AUDIT_BARRIER = "not_verified"
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
@@ -1733,8 +1736,37 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
 # it keeps a SET of candidate directories and flags a path as soon as ONE candidate takes it out of the allowed
 # zone. The whole rule is one invariant: the candidate set contains the real directory. A ``cd`` REPLACES the set
 # (the only step that can make the audit flag less than revision 1) under the conditions of ``_walk_simple`` and
-# nowhere else; every other step only ADDS candidates. The invariant holds under the assumptions below and is
-# claimed under them only (numbered: the launcher document cites them as H1 to H9).
+# nowhere else; every other step only ADDS candidates.
+#
+# THREAT MODEL (maintainer's decision, 2026-10-08). This lexical audit is a JOURNAL of the accidental excursions
+# of an arm that is doing its job. It is NOT a barrier against an arm that tries to deceive it. The barrier is
+# Claude Code's native Bash sandbox, enforced by the operating system (PAT-124). The invariant is claimed for an
+# arm that is not trying to deceive the audit, under the assumptions H1 to H9 below (numbered: the launcher
+# document cites them), and for nothing else.
+#
+# COUPLING WITH THE BARRIER. A future protocol must enable revision 2 only together with that native sandbox.
+# No configuration key for the sandbox exists today (PAT-124 will add it), so the launcher cannot check it: under
+# revision 2 every record says so (``audit.barrier: "not_verified"``, ``AUDIT_BARRIER``). A record of revision 2
+# is a journal entry; it never says that the arm was confined.
+#
+# KNOWN LIMITS: DELIBERATE EVASION, OUT OF SCOPE (PAT-123). Listed, not fixed one by one; the tests named
+# ``..._is_a_known_limit_...`` hold what the audit does today for the first two.
+#  L1 A directory or a symbolic link on the path of a candidate is renamed, moved, replaced or removed after
+#     the shell entered it (``mkdir d; cd d; mv ../d ../../d2``; ``ln -s ../scratch l; cd l; rm ../bundle/l``):
+#     a program moves the place the shell stands in, and the audit, which reads names, still resolves from the
+#     old name.
+#  L2 ``CDPATH`` or other state ``cd`` reads is set through a name the script builds or through arithmetic
+#     evaluation (``print $O NAME`` with ``O=-v``, ``let E`` or ``typeset -i X=E`` with ``E='CDPATH=5'``, ``((
+#     ))``). Hardened only where it costs one line: ``print -v``, and ``integer``/``float`` with an expanded
+#     argument, taint; ``let`` with one gives up the directory.
+#  L3 Aliases, functions, hooks (``chpwd``, ``precmd``), modules and shell options (``autocd``, ``cdablevars``,
+#     ``chaselinks``) of the host profile: H4 assumes there are none; nothing in the stream shows it.
+#  L4 A command built at run time (a name or a script the shell expands or reads from a file, ``$X ..``, a file
+#     written then sourced by another program). The audit gives up the directory for the forms it reads
+#     (``UNKNOWN_CWD``); it does not see the others.
+#  L5 A ``cd`` hidden in a script or an interpreter (``python3 -c "os.chdir('..'); ..."``, ``make -C``, ``git
+#     -C``, a script file the arm wrote): the directory of that program is not followed (H8).
+#  L6 A path built at run time, or kept in a file for a later call (H8, as in revision 1).
 #
 #  H1 host    The stream is a Claude Code stream whose ``system``/``init`` events all name a version of
 #             ``OBSERVED_CLAUDE_CODE``. Observed in the 30 cloud streams of the v4 campaign (2.1.285): a Bash call
@@ -1756,10 +1788,12 @@ def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bo
 #             are the host's as known, not observed.
 #  H4 shell   The host shell is bash or zsh with its default options for ``cd`` (no ``autocd``, ``cdablevars``,
 #             ``chaselinks``, ``cdspell``), no ``CDPATH``, and no alias, function, hook (``chpwd``) or loaded
-#             module that changes the directory or ends the shell under a name outside ``_SHELL_NAMES``; a
-#             command name outside ``_SHELL_NAMES`` is a program, which cannot move the shell that runs it.
-#             Shell state other than the directory (variables, functions, options) does not pass from a call to
-#             the next. Nothing in the stream shows these: they are assumed.
+#             module that changes the directory or ends the shell under a name outside ``_SHELL_NAMES``. A
+#             command name outside ``_SHELL_NAMES`` is a program: it cannot make the shell run ``cd``, but it CAN
+#             move the shell without one, by renaming, moving or replacing a directory or a symbolic link of the
+#             path the shell stands in (limit L1). The audit assumes the arm does not do that; it does not check
+#             it. Shell state other than the directory (variables, functions, options) does not pass from a call
+#             to the next. Nothing in the stream shows these: they are assumed.
 #  H5 status  A script that stops before its end returns non-zero (an expansion error, a signal, a timeout),
 #             unless it runs ``exit``, ``return``, ``exec``, ``logout`` or ``bye`` (read by the audit, which then
 #             believes no later ``cd`` and no end directory). Observed for the generated forms under bash 3.2 and
@@ -1794,7 +1828,7 @@ _CD_VARS = frozenset({"CDPATH", "cdpath", "PWD", "OLDPWD"})
 _CD_VARS_TEXT = re.compile(r"cdpath|\$\{[!(]", re.I)  # ``CDPATH`` named, or a variable reached by another name
 _MOVERS = frozenset({"cd", "chdir", "pushd", "popd"})
 # Every builtin and reserved word of bash (3.2 and 5) and zsh 5.9 (a test compares it with the shells installed).
-# A command word outside this set is a program (H4).
+# A command word outside this set is a program (H4: it runs no ``cd`` in the shell; limit L1 is what it can do).
 _SHELL_NAMES = frozenset("""
 . : [ [[ ]] { } ! - alias autoload bg bind bindkey break builtin bye caller case cd chdir command compadd
 comparguments compcall compctl compdescribe compfiles compgen compgroups complete compopt compquote compset comptags
@@ -1804,7 +1838,8 @@ integer jobs kill let limit local log logout mapfile nocorrect noglob popd print
 readarray readonly rehash repeat return sched select set setopt shift shopt source suspend test then time times trap
 true ttyctl type typeset ulimit umask unalias unfunction unhash unlimit unset unsetopt until vared wait whence where
 which while zcompile zformat zle zmodload zparseopts zregexparse zstyle""".split())
-# The allow-list: builtins that neither move the shell, nor end it, nor define or run a command, nor set a variable.
+# The allow-list: builtins that neither move the shell, nor end it, nor define or run a command, nor set a variable
+# (``print -v NAME``, which sets one, is read apart in ``_classify``).
 _INERT = frozenset(": [ true false echo print pwd test type which whence where hash rehash jobs kill wait times "
                    "umask ulimit limit unlimit dirs help history shift".split())
 _NAMERS = frozenset("export declare typeset local readonly integer float private".split())  # NAME[=value] words
@@ -2042,6 +2077,8 @@ def _classify(texts: Sequence[str], static: Sequence[bool]) -> tuple[str, int | 
         return "unknown", None, 1
     if name in _ENDERS:
         return "end", None, 0
+    if name == "print" and any(p and re.fullmatch(r"-[A-Za-z]*v[A-Za-z]*", a) for a, p in zip(args, fixed)):
+        return "taint", None, 0  # zsh ``print -v NAME`` sets a variable, as ``printf -v`` does
     if name in _INERT:
         return "inert", None, 0
     if name in _NAMERS:
@@ -2053,6 +2090,8 @@ def _classify(texts: Sequence[str], static: Sequence[bool]) -> tuple[str, int | 
                 return "unknown", None, 0
             elif named.group(1) in _CD_VARS:
                 return "taint", None, 0
+        if name in ("integer", "float") and not all(fixed):  # the value is evaluated: it may set another variable
+            return "taint", None, 0
         return "inert", None, 0
     if name in _READERS:
         if not all(fixed):
@@ -2383,8 +2422,9 @@ def _shell_walk(script: str, start: Collection[Path], home: str, proof: Mapping[
     """Audit revision 2 reading of one script: ``(paths, end, seen, movers)``. ``start`` is the set of directories
     the shell may start in; ``end`` those it may be in when the script ends, IF it ran to its end; ``seen`` every
     directory it, or a child shell it starts, may have been in (the caller takes ``seen`` and not ``end`` when
-    nothing proves the script ran to its end). Under H3 to H8, ``start`` containing the real directory implies
-    that ``seen`` contains every real one and ``end`` the real last one. ``paths`` are the paths the script names,
+    nothing proves the script ran to its end). Under H3 to H8, for an arm that is not trying to deceive the audit
+    (the threat model and the known limits at the top of this block), ``start`` containing the real directory
+    implies that ``seen`` contains every real one and ``end`` the real last one. ``paths`` are the paths the script names,
     each relative one resolved against every candidate directory it may be used in. ``proof`` is what the result
     of the call shows (``_proof``; ``None``: a child shell, a heredoc body, a host the audit does not know):
     without it no ``cd`` replaces anything. ``movers`` counts the ``cd``/``pushd``/``popd`` read as commands: when
@@ -2605,8 +2645,9 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     ``revision`` 2 (PAT-123, ``isolation.audit_revision``; 1 keeps everything above as it was): a relative
     path of a command is resolved against every directory the shell MAY be in where the command runs, and is a
     hit as soon as one of them takes it out of the allowed places (``_shell_walk``; the assumptions H1 to H9
-    under which those candidates contain the real directory are listed above ``OBSERVED_CLAUDE_CODE``, and
-    nothing stronger is claimed). The raw token pass no longer resolves a relative token against the bundle:
+    under which those candidates contain the real directory are listed above ``OBSERVED_CLAUDE_CODE``, with the
+    threat model: a journal of the accidental excursions of an arm that is not trying to deceive the audit, not
+    a barrier; the known limits are listed there). The raw token pass no longer resolves a relative token against the bundle:
     ``_shell_walk`` does, against the candidates. A ``cd`` replaces the candidates only in a script of the
     allow-list grammar whose result proves it ran (``_walk_simple``); everywhere else it adds its target, or
     ``UNKNOWN_CWD`` (every relative path is then a hit). In a stream of an observed Claude Code version
@@ -3121,11 +3162,14 @@ class Runner:
         """The ``audit`` field of a record under audit revision 2: the revision, the paths named that do not
         exist (apart from the hits, never a read) and, per audited stream in order, what the audit could assume of
         its host (``claude-code-<observed version>``, or ``unverified``: no directory carried, no ``cd`` believed).
-        Absent under revision 1: the frozen records keep their shape."""
+        ``barrier`` is always ``AUDIT_BARRIER`` (``not_verified``): the launcher does not check that the arm ran
+        under the native sandbox the audit is meant to be paired with (PAT-124), so the record cannot be read as
+        "confined". Absent under revision 1: the frozen records keep their shape."""
         if self.audit_revision < AUDIT_REVISION:
             return {}
         names = [p for log in stream_logs for p in self.not_found.get(str(log), [])]
-        return {"audit": {"revision": self.audit_revision, "not_found": list(dict.fromkeys(names)),
+        return {"audit": {"revision": self.audit_revision, "barrier": AUDIT_BARRIER,
+                          "not_found": list(dict.fromkeys(names)),
                           "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}}
 
     def _home(self) -> str:

@@ -343,7 +343,9 @@ def test_revision_1_marks_the_arm_when_the_reviewer_is_flagged_revision_2_marks_
     assert new["review"]["verdicts"] == ["PASS"]  # so is the review's, which cannot accept on its own
     assert new["review"]["contamination"]["paths"] and new["review"]["contamination"]["commands"] == []
     assert new["unknown"]["review.contaminated"].startswith("the reviewer's")
-    assert new["audit"] == {"revision": R2, "not_found": [], "host_models": ["unverified", "unverified"]}
+    # the barrier (the native sandbox, PAT-124) is not checked by the launcher: the record never reads "confined"
+    assert new["audit"] == {"revision": R2, "barrier": "not_verified", "not_found": [],
+                            "host_models": ["unverified", "unverified"]}
 
 
 def test_the_arms_own_flag_still_marks_the_attempt_under_revision_2(tmp_path):
@@ -569,7 +571,12 @@ def test_the_tool_result_decides_the_directory_when_it_says_so_and_a_spoofed_lin
 
 # ------------------------------- B1: a real shell as the oracle (property: the candidates hold the real directory)
 
-SHELLS = [x for x in ("/bin/bash", shutil.which("zsh")) if x and os.path.exists(x)]  # the host shell is zsh
+# The host shell is zsh. A machine without it (a CI image may only have bash) SKIPS the zsh half of the two tests
+# below, visibly in the test report: the half is then not covered there, never silently dropped.
+SHELLS = ["/bin/bash", shutil.which("zsh") or "zsh"]
+SHELL_PARAMS = [pytest.param(x, id=Path(x).name, marks=pytest.mark.skipif(
+    not os.path.exists(x), reason=f"{Path(x).name} is not installed: this half of the shell oracle is not run here"))
+    for x in SHELLS]
 _DIRS = ("plugins", "plugins/foundry", "d", "..", "../..", "nope", "plugins/..", ".", "link", "link/..", "up", "/",
          "{B}/plugins", "{W}")
 _ARGS = ("../x", "../../x", "../../../x", "../../../../x", "./y", "plugins/../../x", "../../../private-b/x",
@@ -685,7 +692,7 @@ def shell_layout(tmp_path_factory):
 
 
 @pytest.mark.parametrize("host", HOSTS, ids=[f"{w}-{'kept' if k else 'not-kept'}-after-failure" for w, k in HOSTS])
-@pytest.mark.parametrize("shell", SHELLS, ids=[Path(x).name for x in SHELLS])
+@pytest.mark.parametrize("shell", SHELL_PARAMS)
 def test_the_candidates_hold_the_real_directory_and_every_real_excursion_is_flagged(shell_layout, shell, host):
     """The invariant of revision 2, against a real bash and a real zsh: the directories the audit starts a call
     from contain the directory the shell really was in, and a path a command really resolved outside the zone is
@@ -980,10 +987,10 @@ def test_the_grammar_is_an_allow_list(tmp_path):
         [[("", ["a"]), ("&&", ["b", "c"]), ("||", ["d"])], [("", ["e"])]]
 
 
-@pytest.mark.parametrize("shell", SHELLS, ids=[Path(x).name for x in SHELLS])
+@pytest.mark.parametrize("shell", SHELL_PARAMS)
 def test_every_builtin_and_reserved_word_of_the_installed_shells_is_known(shell):
     """H4: a command name outside ``_SHELL_NAMES`` is taken for a program. Observed, not encoded: the list is read
-    from the shell itself."""
+    from the shell itself (skipped, visibly, for a shell that is not installed)."""
     script = "print -l ${(k)builtins} ${(k)reswords}" if shell.endswith("zsh") else "compgen -b; compgen -k"
     out = subprocess.run([shell, "-f", "-c", script] if shell.endswith("zsh") else [shell, "--norc", "-c", script],
                          capture_output=True, text=True, check=True, env={"PATH": "/usr/bin:/bin"}).stdout.split()
@@ -1100,7 +1107,99 @@ def test_a_symbolic_link_keeps_the_logical_and_the_physical_directory(tmp_path):
     assert "W/x" in _shown(lay.claude("cat up/x").audit(R2), lay)
 
 
+# ------------------------- the threat model (maintainer, 2026-10-08): a journal, not a barrier; known limits
+
+def test_print_v_sets_a_variable_by_a_built_name_and_taints_the_cd_that_follows(tmp_path):
+    """Round-3 finding B2, hardened because it costs one line: zsh ``print -v NAME`` sets a variable as ``printf
+    -v`` does, here ``CDPATH`` under a name the script builds, so the ``cd`` that follows is not believed."""
+    lay = Layout(tmp_path)
+    evasion = "A=CDP; B=ATH; print -v $A$B ..; cd scratch; cat ../../../tests/test_hidden.py"  # really a/scratch
+    assert "W/tests/test_hidden.py" in _shown(lay.claude(evasion).audit(R2), lay)
+    for first in ("print -v X y; cd scratch", "print -rv X -- y; cd scratch", "builtin print -v X y; cd scratch"):
+        after = _starts(lay, first, "ls")[1]
+        assert lfr.UNKNOWN_CWD in after and lay.bundle.resolve() in after, first
+    for first in ("print done; cd scratch", "print -r -- \"$X\"; cd scratch", "print -l a b; cd scratch"):
+        assert _starts(lay, first, "ls")[1] == {lay.bundle.resolve() / "scratch"}, first  # ordinary work: believed
+
+
+def test_let_integer_and_float_with_an_expanded_argument_taint_the_cd_that_follows(tmp_path):
+    """Round-3 finding B2: an arithmetic evaluation assigns the variables its expression names (``integer X=$E``
+    with ``E='CDPATH=5'`` sets ``CDPATH``), so with a ``$`` argument the ``cd`` that follows is not believed."""
+    lay = Layout(tmp_path)
+    for name in ("let", "integer", "float"):
+        evasion = f"E=CDPATH=5; {name} X=$E; cd scratch; cat ../../../tests/test_hidden.py"
+        assert "W/tests/test_hidden.py" in _shown(lay.claude(evasion).audit(R2), lay), name
+        after = _starts(lay, f"{name} X=$E; cd scratch", "ls")[1]
+        assert lfr.UNKNOWN_CWD in after and lay.bundle.resolve() in after, name
+    for first in ("integer n=3; cd scratch", "float f=1.5; cd scratch", "let n=1+2; cd scratch"):
+        assert _starts(lay, first, "ls")[1] == {lay.bundle.resolve() / "scratch"}, first  # no ``$``: believed
+
+
+def test_a_directory_moved_under_the_shell_is_a_known_limit_the_audit_does_not_see(tmp_path):
+    """KNOWN LIMIT L1 (round-3 finding B1, deliberate evasion, out of scope of PAT-123): NOT a guarantee, the
+    behaviour of the audit today, kept here so that a change shows. ``mv`` moves the directory the shell stands
+    in: the shell is really in ``<attempt>/d2`` and the climb really reads the hidden tests of the work root (seen
+    with zsh 5.9 and bash 3.2), while the audit still resolves from ``bundle/d`` and flags nothing. The barrier
+    against this is the native sandbox (PAT-124), not this audit."""
+    lay = Layout(tmp_path)
+    evasion = "mkdir d; cd d; mv ../d ../../d2; cat ../../../tests/test_hidden.py"
+    assert lay.claude(evasion).audit(R2) == []  # the limit: not seen
+    assert _starts(lay, evasion, "ls")[1] == {lay.bundle.resolve() / "d"}  # where the audit believes the shell is
+    assert not _climb(lay, "mkdir d; cd d; mv ../d ../../d2", "cat ../../../tests/test_hidden.py")  # nor in two calls
+
+
+def test_a_symbolic_link_removed_after_the_cd_is_a_known_limit_the_audit_does_not_see(tmp_path):
+    """KNOWN LIMIT L1 (round-3 finding B1, deliberate evasion, out of scope of PAT-123): NOT a guarantee, the
+    behaviour of the audit today, kept here so that a change shows. The audit resolves a link when it reads the
+    stream, after the arm ended: a link the arm removed is no longer there, the physical directory (``scratch``,
+    one level higher than ``bundle/l``) is not a candidate and the climb, which really reads the hidden tests of
+    the work root (seen with zsh 5.9 and bash 3.2), is not flagged. The barrier is the native sandbox (PAT-124)."""
+    lay = Layout(tmp_path)
+    evasion = "ln -s ../scratch l; cd l; rm ../bundle/l; cat ../../../tests/test_hidden.py"
+    assert lay.claude(evasion).audit(R2) == []  # the limit: the link is gone when the audit reads the stream
+    (lay.bundle / "l").symlink_to(lay.scratch)
+    assert _climb(lay, evasion)  # the same script with the link still there: the physical directory is a candidate
+
+
 # ----------------------------------- the reviewer's flag on a cut attempt, the report and its listing
+
+@pytest.mark.parametrize("cut", ["refused", "interrupted"])
+def test_a_cut_during_a_flagged_implementer_marks_the_arm_once_under_both_revisions(tmp_path, cut):
+    """The exception path of ``_tool_error`` when the IMPLEMENTER is cut after its audit: revision 1 reads the
+    flags of the sessions (and those the exception carries), revision 2 reads them by role. Both mark the arm's
+    attempt ``contaminated`` with the same paths, named once; nothing goes to ``review.contamination``."""
+    def run(name, **iso):
+        (tmp_path / name).mkdir()
+        runner, _, _, tasks = make_runner(tmp_path / name, "compare_exploration",
+                                          {**PLAN, "implementer": ["cmd:ls ../../.."], "reviewer": ["PASS"]},
+                                          campaign_over={"isolation": {"private_attempt_root": True, **iso}})
+        real, carried = runner.cloud_execution, []
+
+        def execution(*args, **kw):  # the implementer ran and was audited (flagged), then the launcher is cut
+            got = real(*args, **kw)
+            carried.extend(got[0]["contamination"])
+            if cut == "refused":  # an exception that carries the audit of the same session (``exc.contamination``)
+                raise lfr.ToolsetRefused("refused after the audit", got[0]["contamination"])
+            raise KeyboardInterrupt
+        runner.cloud_execution = execution
+        with pytest.raises(lfr.ToolsetRefused if cut == "refused" else KeyboardInterrupt):
+            runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+        records = [r for r in results(runner) if r.get("path") == "A" and r.get("segment") == "cloud"]
+        assert len(records) == 1 and carried
+        # the directories of the two runs differ: compare what is under the work root
+        return records[0], [c.split("/work", 1)[-1] for c in carried]
+
+    old, old_carried = run("r1")
+    new, new_carried = run("r2", audit_revision=R2)
+    for rec, carried in ((old, old_carried), (new, new_carried)):
+        assert rec["contaminated"] is True and rec["outcome"] == "contaminated" and rec["accepted"] is None
+        named = rec["contamination"]["paths"] + rec["contamination"]["commands"]
+        assert named and len(named) == len(set(named)) == len(carried)  # the exception's flags are not added twice
+        assert "contamination" not in rec["review"] and "review.contaminated" not in rec["unknown"]
+        assert rec["status"] == ("tool_error" if cut == "refused" else "interrupted") and rec["judge"] is None
+    assert old_carried == new_carried
+
+
 
 def test_a_cut_after_a_flagged_review_keeps_the_flag_on_the_review_under_revision_2(tmp_path):
     def cut(name, **iso):

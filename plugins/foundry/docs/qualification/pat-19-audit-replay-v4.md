@@ -55,6 +55,14 @@ cru ; cela ne change la classe d'aucun enregistrement local ici). Le répertoire
 raison dans le lanceur : un lien symbolique posé dans ce répertoire ne serait pas vu) ; c'est le prix des deux relecteurs
 relevés.
 
+**Après l'alignement sur le modèle de menace (2026-10-08)** : le résultat du rejeu est inchangé par ce commit (modèle de
+menace écrit, `print -v` et `integer`/`float` durcis, champ `audit.barrier`) ; régénérés sur les 36 flux, les deux JSON sont
+de contenu identique (JSON comparé égal) aux fichiers versés (mêmes classes, fidélité de la révision 1 : 32 sur 32). **Écart à
+accepter explicitement par le mainteneur** : le critère d'acceptation « les 5 faux signalements disparaissent » est tenu
+pour **4 sur 5** ; le cinquième (le 4) revient comme drapeau du relecteur, et **1 drapeau de relecteur est ajouté** (A PR 27).
+Ce rejeu décrit un journal d'excursions accidentelles, pas un confinement : la barrière est le bac à sable natif (PAT-124),
+voir « Modèle de menace » dans le lanceur.
+
 Mesure de ce que le changement de la v4 explique ([`pat-19-audit-replay-v4-scope.json`](pat-19-audit-replay-v4-scope.json),
 même rejeu avec `--work-root-not-sensitive`, révision 1 inchangée) : sans la racine de travail dans la liste sensible, la
 révision 1 ne relève plus A PR 83, L PR 83, L PR 27 ni L PR 48 (4 enregistrements), relève encore `<racine>` seule pour A PR 48
@@ -84,7 +92,8 @@ par les tests sur bras factices (PASS et BLOCK), non par la campagne.
   l'hôte, complétude d'un résultat long) : elles sont supposées, et dites.
 - Le contexte d'un flux (bundle, dossier d'essai) est le `cwd` qu'il annonce ; un flux absent laisse l'enregistrement
   `unavailable`, jamais propre.
-- L'audit reste « au mieux » : un chemin construit à l'exécution ou lu par un script n'est pas vu, avant comme après.
+- L'audit reste « au mieux » : un chemin construit à l'exécution ou lu par un script n'est pas vu, avant comme après ;
+  un contournement délibéré (limites connues L1 à L6 du lanceur) n'est pas cherché par ce rejeu.
 - Le rejeu dit ce que l'audit réparé aurait relevé ; il ne dit pas ce que la campagne aurait donné avec lui (verdict du juge,
   revue, tâches indécidées restent inconnus).
 - Aucun contenu de flux, aucune sortie de `find /` et aucun nom du répertoire personnel n'est dans le résultat : tout chemin
