@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PAT-19 protocol v5 operator loop (PAT-126, frozen with the protocol v5 on 2026-10-08): the model is unloaded and reloaded (pinned
+# PAT-19 protocol v5 operator loop (PAT-126, DRAFT: frozen with the protocol v5 after pilot 4): the model is unloaded and reloaded (pinned
 # command) before EACH launch, and every launch plays at most one task (exploration.one_task_per_launch). The launcher
 # loads no model. The v5 candidate is fixed by the protocol (no screening) and the arms are A and L (no Haiku arm).
 #   pat-19-v5-operator.sh compare <candidate> <checkout> <runs-dir> <work-root> <repo>   the 12-task campaign
@@ -8,7 +8,7 @@
 # <runs-dir>  holds envelope.json (read) and state/ (results and ledger); the operator log is written there.
 #             The pilot and the campaign NEVER share a runs-dir, nor a campaign id (checked below and by the launcher).
 # <work-root> disposable area outside every checkout; <repo> the full clone the corpus tasks are built from
-# Refusals before any model is loaded: 64 usage, 65 pinned precondition (campaign id, state directory, python3 with pytest, Claude Code), 66 file.
+# Refusals before any model is loaded: 64 usage, 65 pinned precondition (campaign id, state directory, python3 with pytest, a bundle copy in the temp directory, Claude Code), 66 file.
 set -euo pipefail
 
 usage() { echo "usage: $0 compare|pilot <candidate> <checkout> <runs-dir> <work-root> <repo>" >&2; exit 64; }
@@ -52,6 +52,16 @@ if [ -z "$PY3" ] || ! "$PY3" -c "import pytest" 2>/dev/null; then
   exit 65
 fi
 echo "python3: $PY3 (pytest $("$PY3" -c 'import pytest; print(pytest.__version__)'))"
+
+# The shared per-user temp directory must hold no copy of the bundle left by an earlier run (a reviewer's ``$TMPDIR/rv``
+# for instance): refuse, before any model, a top-level directory that contains plugins/foundry.
+TMP_ROOT=${TMPDIR:-/tmp}
+for d in "$TMP_ROOT"/*/; do
+  if [ -d "${d}plugins/foundry" ]; then
+    echo "leftover bundle copy in the shared temp directory: ${d} (contains plugins/foundry): remove it first" >&2
+    exit 65
+  fi
+done
 
 # Claude Code is pinned by the config (binary_version): refused here too, before a model is loaded for nothing.
 PIN=$(python3 -c 'import json,sys

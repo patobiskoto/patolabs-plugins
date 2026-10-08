@@ -5,6 +5,14 @@
     "untouched": "REFUSED with at least one failing or erroring hidden test (never 0/0/0)"
   },
   "protocol": "pat-19-protocol-v5",
+  "provenance": {
+    "campaign_sha256": "dd0119346d697850eda57a319400dfa4216998c0385bc6f00abf770994df368e",
+    "date": "2026-10-08",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "snapshot_sha256": "c948cf13178f7ee48467a1888974e84123abd6d0ca316a0fab7f0a7e9baf012a",
+    "tooling_commit": "b699ed978c4a4fb2f4a21ffad3cfc094620f9ee5",
+    "tooling_dirty": true
+  },
   "schema": "foundry.local-first-golden-check.v1",
   "tasks": [
     {

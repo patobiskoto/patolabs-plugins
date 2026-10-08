@@ -37,6 +37,7 @@ import tempfile
 import threading
 import time
 import uuid
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable, Collection, Mapping, NamedTuple, Sequence
 
@@ -55,16 +56,17 @@ V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_ch
 V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
 V4_KEYS = "correction_feedback, isolation.private_attempt_root, exploration.fixed_candidate and " \
           "exploration.comparison_task_group"
-# PAT-126: protocol v5 (frozen 2026-10-08, before any trial of its campaign) and its pilot. The pilot is the same instrument on one task, under a
+# PAT-126: protocol v5 (DRAFT: frozen only after pilot 4) and its pilot. The pilot is the same instrument on one task, under a
 # protocol name and a campaign id of its own, so that its records can never be read as, or mixed with, the campaign's.
 PROTOCOL_V5 = "pat-19-protocol-v5"
 PROTOCOL_V5_PILOT = "pat-19-protocol-v5-pilot"
 V5_PROTOCOLS = (PROTOCOL_V5, PROTOCOL_V5_PILOT)
-FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4, PROTOCOL_V5)
+FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4)  # v5 joins at its freeze, after pilot 4
 V5_TASKS = (26, 38, 25, 42, 33, 37, 30, 83, 27, 24, 48, 19)  # the six v3 comparison tasks, then the six v3 screening ones
 V5_PILOT_TASKS = (27,)
 V5_TASK_SET = {PROTOCOL_V5: "pat-19-v5", PROTOCOL_V5_PILOT: "pat-19-v5-pilot"}  # label of ``task.set`` in the records
 V5_CLAUDE_CODE = "2.1.285"  # the only Claude Code version observed for the audit's assumptions and the sandbox trials
+V5_PAIRED_DECIDED_MIN = 9  # rules.exploration_comparison.paired_decided_min: tasks decided in both arms (of 12)
 V5_ALLOW_READ_HOME = (".config/git/ignore",)  # the one home file a v5 cloud shell may read (git's default excludes)
 COMPARISON_SET = "comparison"  # ``task.set`` of the comparison records of v1 to v4
 # PAT-126 (pilot 2): ``isolation.audit_policy``, a protocol v5+ key. Where the native sandbox is observed to be in force
@@ -73,10 +75,17 @@ COMPARISON_SET = "comparison"  # ``task.set`` of the comparison records of v1 to
 # audit cannot name, is journaled (``audit.journal``), not a contamination.
 AUDIT_POLICY_KEY = "audit_policy"
 AUDIT_POLICY = "journal_under_observed_barrier"
-# whole-call refusals of the host, the shapes the trial tool knows (a result that is an error and says it, nothing else)
-_REFUSED_CALL = (re.compile(r"\APermission to use \w+ has been denied because Claude Code is running in don't ask mode", re.I),
-                 re.compile(r"denied by your permission settings|blocks reads outside the working directories|"
-                            r"blockReadsOutsideWorkingDirectories", re.I))
+# Whole-call refusals of the host, the shapes the trial tool knows, each anchored as the WHOLE error of the call: the
+# permission-mode denial for any tool; the two permission-rule messages for the FILE tools only (a Bash command that ran,
+# failed and printed such a sentence was not refused).
+_DONT_ASK = re.compile(r"\APermission to use \w+ has been denied because Claude Code is running in don't ask mode", re.I)
+_RULE_DENIED = re.compile(r"\A(?:File is in a directory that is denied by your permission settings\.?"
+                          r"|[^\n]{0,500}setting blocks reads outside the working directories\.?)\s*\Z")
+_FILE_TOOLS = frozenset({"Read", "Edit", "Write", "Glob", "Grep"})
+
+
+def _refused_call(tool: str, text: str) -> bool:
+    return bool(_DONT_ASK.search(text) or (tool in _FILE_TOOLS and _RULE_DENIED.match(text)))
 # PAT-123: ``isolation.audit_revision`` 2 (a protocol after v4 only) follows the working directory of a command
 # line, attributes a flag of the reviewer's session to the review, and records a path that does not exist apart
 AUDIT_REVISION = 2
@@ -320,6 +329,9 @@ def load_campaign(path: Path) -> dict[str, Any]:
             or {"fixed_candidate", "comparison_task_group"} & set(data.get("exploration") or {})):
         raise RunnerError(f"{path}: {V4_KEYS} are accepted only under protocol {PROTOCOL_V4} "
                           "(isolation.private_attempt_root also under pat-19-protocol-v5 or later)")
+    if not later and "paired_decided_min" in ((data.get("rules") or {}).get("exploration_comparison") or {}):
+        raise RunnerError(f"{path}: rules.exploration_comparison.paired_decided_min is accepted only under a protocol "
+                          f"after v4 (pat-19-protocol-v5 or later), not under {data.get('protocol')!r}")
     if not later and {"comparison_tasks", "comparison_task_set"} & set(data.get("exploration") or {}):
         raise RunnerError(f"{path}: exploration.comparison_tasks and exploration.comparison_task_set are accepted "
                           f"only under a protocol after v4 (pat-19-protocol-v5 or later), not under "
@@ -506,6 +518,9 @@ def _check_v5_pins(path: Path, data: Mapping[str, Any], frozen: Sequence[str], f
         raise RunnerError(f"{path}: protocol v5 allows reading nothing of the home but {list(V5_ALLOW_READ_HOME)} "
                           "(isolation.allow_read_home)")
     rule = data["rules"]["exploration_comparison"]
+    if rule.get("paired_decided_min") != V5_PAIRED_DECIDED_MIN:
+        raise RunnerError(f"{path}: protocol v5 requires rules.exploration_comparison.paired_decided_min "
+                          f"{V5_PAIRED_DECIDED_MIN}")
     if rule["tasks"] != len(wanted) or rule["premium_per_accepted_ratio_max"] != 0.85:
         raise RunnerError(f"{path}: protocol v5 requires rules.exploration_comparison.tasks {len(wanted)} and "
                           "premium_per_accepted_ratio_max 0.85")
@@ -2906,7 +2921,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
 
     ``policy_denied`` (PAT-126, ``isolation.audit_policy``, revision 2 and an observed barrier only: ``(denyRead,
     allowRead)`` of the settings the execution received): (1) a tool call whose result is a whole-call refusal of the
-    host (``_REFUSED_CALL``, an error result) did not run: it contributes nothing and moves no directory; it is counted
+    host (``_refused_call``, an error result) did not run: it contributes nothing and moves no directory; it is counted
     per tool in ``refused`` (no text); (2) a finding of a SHELL command whose path lies under a ``denyRead`` root and
     outside every ``allowRead`` entry, or at ``UNKNOWN_CWD``, is appended to ``journal`` and left out of the result; a ``tool_result:`` path under such a root (or a truncated
     prefix of one) is journaled too; every other finding (a file-tool path, a path the OS does not deny, a result path
@@ -2963,8 +2978,11 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     missing = _missing_paths(lines) if follow else {}
     outcomes = _call_outcomes(lines) if follow else {}
     policy = follow and policy_denied is not None
-    refused_ids = {i for i, o in outcomes.items() if o.get("error") is True and any(
-        rx.search(o["text"]) for rx in _REFUSED_CALL)} if policy else set()
+    refused_ids: set[str] = set()
+    if policy:
+        names = {str(i): n for i, n, _, _ in _tool_events(lines) if i is not None}
+        refused_ids = {i for i, o in outcomes.items() if o.get("error") is True
+                       and _refused_call(names.get(i, ""), o["text"])}
     model = _host_model(lines) if follow else "unverified"
     if follow and host_model is not None:
         host_model.append(model)
@@ -3063,10 +3081,11 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
 
     def os_denied(path: Path, raw: str = "") -> bool:
         """Under a ``denyRead`` root and outside every ``allowRead`` entry; a truncated path (an output cut by the
-        arm's own ``sed`` or ``cut``) that merely STARTS with a denied root is under it too."""
+        arm's own ``sed`` or ``cut``) is under it when its text starts with the denied root followed by ``/``: a sibling
+        directory whose name merely begins like the root (``<root>-other``) is not."""
         if any(_within(path, a) for a in allowed_roots):
             return False
-        return any(_within(path, d) or (raw != "" and raw.startswith(str(d))) for d in denied_roots)
+        return any(_within(path, d) or (raw != "" and raw.startswith(str(d).rstrip("/") + "/")) for d in denied_roots)
 
     for text in _tool_results(lines):
         if follow and text.startswith(_NOT_FOUND) and text[len(_NOT_FOUND):] in missing.values():
@@ -3164,6 +3183,63 @@ def _merge_models(into: dict[str, dict[str, int | None]], more: Mapping[str, Map
         for name in TOKEN_CLASSES:
             value = classes.get(name)
             current[name] = None if (current[name] is None or value is None) else current[name] + value
+
+
+_TEMP_OWN = re.compile(r"foundry-|pytest-of-")  # the launcher's own temp dirs and pytest's own tree: never touched
+
+
+def _temp_entries(directory: Path) -> dict[str, tuple[int, int]]:
+    """Top-level entries of the shared per-user temp directory: name -> (inode, mtime_ns)."""
+    try:
+        return {e.name: (e.stat(follow_symlinks=False).st_ino, e.stat(follow_symlinks=False).st_mtime_ns)
+                for e in os.scandir(directory)}
+    except OSError:
+        return {}
+
+
+def _holds_bundle_material(entry: Path, files: Sequence[str]) -> bool:
+    """Does a new temp entry hold a copy of bundle material (bounded walk, symbolic links not followed)? A tree that
+    contains ``plugins/foundry``, a file whose path relative to the entry equals a changed file of the task, or a file
+    named like a changed product or test file (``__init__.py`` and ``conftest.py`` excepted)."""
+    rels = {f for f in files}
+    names = {Path(f).name for f in files} - {"__init__.py", "conftest.py"}
+    if not entry.is_dir() or entry.is_symlink():
+        return entry.name in names
+    seen = 0
+    for dirpath, dirs, fnames in os.walk(entry, followlinks=False):
+        rel = os.path.relpath(dirpath, entry).replace(os.sep, "/")
+        if f"/{rel}/".find("/plugins/foundry/") != -1 or rel.endswith("plugins/foundry"):
+            return True
+        for name in fnames:
+            seen += 1
+            if name in names or f"{rel}/{name}".removeprefix("./") in rels:
+                return True
+        seen += len(dirs)
+        if seen > 20000:
+            return False
+    return False
+
+
+def _move_temp_leftovers(directory: Path, before: Mapping[str, tuple[int, int]], dest: Path,
+                         files: Sequence[str]) -> list[str]:
+    """PAT-126: every NEW top-level entry of ``directory`` (created during the execution, owned by this user, not a
+    symbolic link, not the launcher's own or pytest's own tree) that holds bundle material is MOVED into ``dest`` (inside
+    the attempt directory, discarded with the attempt): never deleted in place, nothing that existed before or does not
+    match is touched. Returns the masked names (no content, no path)."""
+    moved: list[str] = []
+    for name, stamp in sorted(_temp_entries(directory).items()):
+        if before.get(name) == stamp or _TEMP_OWN.match(name):
+            continue
+        entry = directory / name
+        try:
+            if entry.is_symlink() or entry.lstat().st_uid != os.getuid() or not _holds_bundle_material(entry, files):
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(entry), str(dest / name))
+            moved.append(name)
+        except OSError:
+            continue
+    return moved
 
 
 def probe_interpreters(host_env: Mapping[str, str], driver: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -3305,6 +3381,8 @@ class Runner:
         self.strict_judge = bool(_PROTOCOL_AFTER_V4.fullmatch(str(campaign.get("protocol"))))
         self.interpreters: dict[str, Any] | None = None
         self.audit_policy = (campaign.get("isolation") or {}).get(AUDIT_POLICY_KEY) == AUDIT_POLICY
+        self.bundle_files: dict[Path, list[str]] = {}  # changed files of the task, by bundle (temp leftovers match)
+        self.leftovers: dict[str, list[str]] = {}  # temp directory entries moved out of the shared temp dir, by stream
         self.stream_roles: dict[str, str] = {}  # role of each audited cloud stream log
         self.journals: dict[str, list[str]] = {}  # audit policy: journaled findings by stream log
         self.refusals: dict[str, dict[str, int]] = {}  # audit policy: calls the host refused, per tool, by stream log
@@ -3582,6 +3660,9 @@ class Runner:
                       key=BARRIERS.index, default=AUDIT_BARRIER)
         note = {"revision": self.audit_revision, "barrier": barrier, "not_found": list(dict.fromkeys(names)),
                 "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}
+        if self.native_sandbox:  # PAT-126: bundle material found in the shared temp directory and moved out of it
+            left = [n for log in stream_logs for n in self.leftovers.get(str(log), [])]
+            note["temp_leftovers"] = {"count": len(left), "names": left}
         if self.audit_policy:  # PAT-126: absent without the key, so the record of every other campaign keeps its shape
             roles: dict[str, int] = {}
             refused: dict[str, int] = {}
@@ -3630,6 +3711,7 @@ class Runner:
             _git_in(bundle, "commit", "-q", "--amend", "--no-edit", "--no-verify")
             root = _git_in(bundle, "rev-parse", "HEAD").decode().strip()
             self.guards[bundle] = (root, _git_surface(bundle))
+            self.bundle_files[bundle] = [str(f["path"]) for f in task.get("files", []) if isinstance(f, Mapping)]
             self.literals[bundle] = base_literals(bundle, self._home())  # before any patch or arm
             if patch:
                 _apply_patch(bundle, patch)
@@ -3651,6 +3733,7 @@ class Runner:
 
     def _discard(self, bundle: Path, attempt_dir: Path) -> None:
         self.guards.pop(bundle, None)
+        self.bundle_files.pop(bundle, None)
         self.literals.pop(bundle, None)
         self.stripped.pop(bundle, None)
         lfc.remove_bundle(bundle)
@@ -3907,6 +3990,8 @@ class Runner:
             stream_log = self.state_dir / "streams" / f"{self.envelope['campaign_id']}-{session_id}.jsonl"
             env = os.environ if self.host_env is None else self.host_env
             fingerprint = registry_fingerprints(env)
+            temp_dir = Path(env["TMPDIR"]) if self.native_sandbox and env.get("TMPDIR") else None
+            temp_before = _temp_entries(temp_dir) if temp_dir else {}
             execution = execute_driver(
                 driver, values, workdir=bundle, scratch=scratch, stream_log=stream_log,
                 max_seconds=budget, max_steps=None, sandbox=self._sandboxed(driver), deny_read=deny,
@@ -3916,6 +4001,9 @@ class Runner:
             if native is not None and not execution["start_error"]:
                 self.settings_sent.add(str(stream_log))
             fingerprint_after = registry_fingerprints(env)
+            if temp_dir is not None:  # the shared per-user temp directory: what this execution left of the bundle
+                self.leftovers[str(stream_log)] = _move_temp_leftovers(
+                    temp_dir, temp_before, attempt_dir / "temp-leftovers", self.bundle_files.get(bundle, []))
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
             if reserved:
                 with self._critical():
@@ -5187,6 +5275,11 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                        for r in attempts if (r.get("review") or {}).get("contamination")]
     if flagged_reviews:  # audit revision 2 only (a frozen campaign has none: its report keeps its keys)
         out["review_contaminated"] = flagged_reviews
+    leftover = [{"path": r["path"], "task": r["task"], "segment": r.get("segment"), "attempt": r.get("attempt"),
+                 **r["audit"]["temp_leftovers"]} for r in attempts if (r.get("audit") or {}).get("temp_leftovers", {})
+                .get("count")]
+    if leftover:  # PAT-126: bundle material an arm left in the shared temp directory (moved out, decides nothing)
+        out["temp_leftovers"] = leftover
     journaled = [r for r in attempts if (r.get("audit") or {}).get("policy")]
     if journaled:  # PAT-126, isolation.audit_policy only (the key is absent otherwise): the journal, apart from the rule
         by_arm: dict[str, int] = {}
@@ -5663,7 +5756,9 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     out["complete"] = bool(mine) and mine["tasks_compared"] == rule["tasks"] and (
         arms["A"]["tasks"].keys() == arms["L"]["tasks"].keys() and len(arms["A"]["tasks"]) == rule["tasks"]
         and not mine["awaiting_implementer"])
-    if mine and out["complete"]:
+    if rule.get("paired_decided_min") is not None and mine and out["complete"]:
+        _apply_paired_rule(rule, out, arms, attempts, gone)  # protocol v5: undecided tasks leave the paired set
+    elif mine and out["complete"]:
         verdicts = (mine["compatibility"], mine["quality"], mine["economy"])
         if all(v == "pass" for v in verdicts):
             out["decision"], out["recommendation"] = "retained", "L"
@@ -5680,6 +5775,86 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
         "retain_local_explorer" if out["decision"] == "retained" else
         "keep_cloud" if out["decision"] == "keep_cloud" else "keep_cloud_insufficient_evidence")
     return out
+
+
+def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mapping[str, Any],
+                       attempts: Sequence[Mapping[str, Any]], gone: Collection[int]) -> None:
+    """Protocol v5 (PAT-126, ``rules.exploration_comparison.paired_decided_min``), replacing for v5 the v2 to v4
+    behaviour where one undecided task makes every verdict ``unavailable``. A task is DECIDED for an arm when it is
+    accepted or not unknown (``_arm_totals``); the paired set D holds the tasks decided in both arms. Fewer than
+    ``paired_decided_min`` tasks in D: inconclusive. On D: acceptance per arm, premium per accepted task (every record
+    of the arm on D's tasks, reviewer included, local tokens excluded). L is retained iff accepted_L >= accepted_A, both
+    >= 1, premium per accepted L <= ratio_max x A's and compatibility passes; a zero on either side is inconclusive (an
+    undefined ratio is never zero). The robustness reading counts every undecided task of L as not accepted and every
+    undecided task of A as accepted, over all the tasks: a retained L whose worst case falls below A's worst case is
+    inconclusive. The cost ratio is not recomputed in the worst case: an undecided task's cost is known, its acceptance
+    is not. Not retained with |D| >= the minimum: keep the cloud."""
+    a_tasks, l_tasks = arms["A"]["tasks"], arms["L"]["tasks"]
+    mine = out["arms"]["L"]
+    minimum = rule["paired_decided_min"]
+
+    def decided(task: Mapping[str, Any]) -> bool:
+        return bool(task["accepted"]) or not task["unknown"]
+
+    both = sorted(set(a_tasks) & set(l_tasks))
+    paired = [pr for pr in both if decided(a_tasks[pr]) and decided(l_tasks[pr])]
+
+    def causes(path: str) -> dict[str, list[str]]:
+        found: dict[str, list[str]] = {}
+        for r in attempts:
+            pr = r["task"]["pr"]
+            if r["path"] == path and id(r) not in gone and r.get("outcome") in UNKNOWN_OUTCOMES \
+                    and not (path == "A" and a_tasks.get(pr, {}).get("accepted")) \
+                    and not (path == "L" and l_tasks.get(pr, {}).get("accepted")):
+                found.setdefault(str(pr), []).append(f"{r.get('segment')}:{r['outcome']}")
+        return found
+
+    undecided = {"A": causes("A"), "L": causes("L")}
+    wasted = {"A": [t["premium_billing_tokens"] for pr, t in a_tasks.items() if not decided(t)],
+              "L": [t["premium_billing_tokens"] for pr, t in l_tasks.items() if not decided(t)]}
+    acc_a = sum(1 for pr in paired if a_tasks[pr]["accepted"])
+    acc_l = sum(1 for pr in paired if l_tasks[pr]["accepted"])
+    prem_a = _sum_known([a_tasks[pr]["premium_billing_tokens"] for pr in paired])
+    prem_l = _sum_known([l_tasks[pr]["premium_billing_tokens"] for pr in paired])
+    ratio_max = Fraction(str(rule["premium_per_accepted_ratio_max"]))
+    detail: dict[str, Any] = {
+        "paired_decided_min": minimum, "paired_decided": paired, "paired_decided_count": len(paired),
+        "undecided": undecided, "premium_tokens_on_undecided_tasks": {
+            k: (None if any(v is None for v in vals) else sum(vals)) for k, vals in wasted.items()},
+        "accepted_on_paired": {"A": acc_a, "L": acc_l}, "premium_on_paired": {"A": prem_a, "L": prem_l},
+        "premium_per_accepted": {"A": None if prem_a is None or not acc_a else round(prem_a / acc_a, 3),
+                                 "L": None if prem_l is None or not acc_l else round(prem_l / acc_l, 3)},
+        "ratio_max": float(ratio_max), "ratio": None}
+    worst_a = sum(1 for t in a_tasks.values() if t["accepted"] or not decided(t))
+    worst_l = sum(1 for t in l_tasks.values() if t["accepted"])
+    detail["worst_case"] = {"A_undecided_counted_accepted": worst_a, "L_undecided_counted_not_accepted": worst_l,
+                            "robust": None, "ratio_recomputed": False,
+                            "why_no_ratio": "the cost of an undecided task is known but its acceptance is not"}
+    verdict, reason = "inconclusive", None
+    if len(paired) < minimum:
+        reason = f"paired_decided_set_below_{minimum}"
+    elif prem_a is None or prem_l is None:
+        reason = "premium_total_unknown"
+    elif not acc_a or not acc_l:
+        reason = "no_accepted_task_in_one_arm_ratio_undefined"
+    else:
+        detail["ratio"] = round(float((prem_l * acc_a) / (prem_a * acc_l)), 4) if prem_a else None
+        economy = prem_l * acc_a <= ratio_max * prem_a * acc_l
+        retained = acc_l >= acc_a and economy and mine["compatibility"] == "pass"
+        mine["quality"] = "pass" if acc_l >= acc_a else "fail"
+        mine["economy"] = "pass" if economy else "fail"
+        if retained:
+            detail["worst_case"]["robust"] = worst_l >= worst_a
+            verdict, reason = ("retained", None) if worst_l >= worst_a else ("inconclusive", "not_robust_to_undecided_tasks")
+        else:
+            verdict = "keep_cloud"
+            reason = "compatibility_failed" if mine["compatibility"] != "pass" else "not_retained_on_paired_set"
+    if len(paired) < minimum or reason in ("premium_total_unknown", "no_accepted_task_in_one_arm_ratio_undefined"):
+        mine["quality"], mine["economy"] = "unavailable", "unavailable"
+    detail.update(verdict=verdict, reason=reason)
+    out["paired_rule"] = detail
+    out["decision"], out["recommendation"] = ({"retained": ("retained", "L"), "keep_cloud": ("keep_cloud", "A")}
+                                              .get(verdict, ("inconclusive", None)))
 
 
 # ------------------------------------------------------------------ offline audit replay (PAT-123)
@@ -5926,7 +6101,8 @@ GOLDEN_SCHEMA = "foundry.local-first-golden-check.v1"
 
 
 def golden_check(campaign: Mapping[str, Any], campaign_path: Path, tasks: Sequence[Mapping[str, Any]], *,
-                 repo: Path, work_root: Path, today: dt.date) -> dict[str, Any]:
+                 repo: Path, work_root: Path, today: dt.date, manifest_path: Path | None = None,
+                 snapshot_path: Path | None = None) -> dict[str, Any]:
     """PAT-126, offline (local git and pytest only: no model, no cloud, no ``claude``): for each task, a bundle built
     exactly as a cloud implementer's bundle is built under this config (``Runner._bundle``), judged untouched
     (expected: ``REFUSED`` with at least one failing or erroring hidden test, never 0/0/0), then a fresh bundle with the
@@ -5966,7 +6142,26 @@ def golden_check(campaign: Mapping[str, Any], campaign_path: Path, tasks: Sequen
             rows.append({"pr": task["pr"], "untouched": untouched, "solved": solved,
                          "untouched_as_expected": expect_u, "solved_as_expected": expect_s,
                          "ok": expect_u and expect_s})
-    return {"schema": GOLDEN_SCHEMA, "protocol": campaign.get("protocol"), "tasks": rows,
+    def digest(path: Path | None) -> str:
+        try:
+            return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else "unknown"
+        except OSError:
+            return "unknown"
+
+    try:  # the checkout this tooling runs from
+        commit = subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, check=False, timeout=30).stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        commit = "unknown"
+    try:  # uncommitted changes in the tooling: the commit alone then does not describe the code that ran
+        dirty = bool(subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "status", "--porcelain", "--", "."],
+                                    capture_output=True, text=True, check=False, timeout=30).stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        dirty = None
+    provenance = {"campaign_sha256": digest(campaign_path), "manifest_sha256": digest(manifest_path),
+                  "snapshot_sha256": digest(snapshot_path), "tooling_commit": commit, "tooling_dirty": dirty,
+                  "date": today.isoformat()}
+    return {"schema": GOLDEN_SCHEMA, "protocol": campaign.get("protocol"), "provenance": provenance, "tasks": rows,
             "all_ok": bool(rows) and all(r["ok"] for r in rows),
             "expectations": {"untouched": "REFUSED with at least one failing or erroring hidden test (never 0/0/0)",
                              "solved": "ACCEPTED"}}
@@ -6067,7 +6262,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             if out.exists():
                 raise RunnerError(f"{out} exists: a result is never overwritten")
             result = golden_check(campaign, Path(args.campaign), tasks, repo=Path(args.repo),
-                                  work_root=Path(args.work_root), today=today or dt.date.today())
+                                  work_root=Path(args.work_root), today=today or dt.date.today(),
+                                  manifest_path=Path(args.manifest), snapshot_path=Path(args.snapshot))
             with out.open("x", encoding="utf-8") as handle:
                 handle.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
         except (RunnerError, lfc.CorpusError, OSError, ValueError, KeyError) as exc:

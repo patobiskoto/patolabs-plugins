@@ -36,7 +36,6 @@ FROZEN_SHA256 = {  # the frozen v1 to v4 configurations are never edited (PAT-AD
     "pat-19-campaign-v2.json": "6830629ccd385847ca6b88c730b706407517ac009cb3715daf8c6e7a61ec8d16",
     "pat-19-campaign-v3.json": "95b7a0717ecfcc28b6595e4a88dee108d158ff7d85dddc84f7d1c56de8d5fd1d",
     "pat-19-campaign-v4.json": "3bc88cf496f9838779adae431e72754615576c276033cc7436c151d3a10b8605",
-    "pat-19-campaign-v5.json": "af2b257099b287314ba5fc3e7a8afff5380d293cfefd7c058ce5f09d44c3cbc4",  # frozen 2026-10-08 (PAT-126); the pilot config is NOT pinned
 }
 
 
@@ -60,7 +59,7 @@ def _broken(tmp_path, edit, source=V5_PATH):
 
 # ------------------------------------------------------------------------------------- the DRAFT configurations
 
-def test_the_frozen_configurations_are_byte_for_byte_untouched():  # v1 to v5; the pilot config is not pinned
+def test_the_frozen_configurations_are_byte_for_byte_untouched():  # v1 to v4 (v5 is pinned at its freeze)
     for name, digest in FROZEN_SHA256.items():
         assert hashlib.sha256((QUALIFICATION / name).read_bytes()).hexdigest() == digest, name
     v4 = lfr.load_campaign(V4_PATH)
@@ -69,12 +68,14 @@ def test_the_frozen_configurations_are_byte_for_byte_untouched():  # v1 to v5; t
     assert v4["isolation"]["allow_read_home"] == [] and "binary_version" not in v4["drivers"]["cloud_reviewer"]
 
 
-def test_the_v5_campaign_pins_the_decided_values_and_says_it_is_a_draft():
+def test_the_v5_campaign_pins_the_decided_values_and_is_still_a_draft():
     v4, v5 = _load(V4_PATH), lfr.load_campaign(V5_PATH)
     assert v5["schema"] == lfr.CAMPAIGN_SCHEMA_V2 and v5["protocol"] == lfr.PROTOCOL_V5
-    assert v5["note"].startswith("Frozen campaign config") and "2026-10-08" in v5["note"] and "mandate of 2026-10-08" in v5["note"]
-    assert "DRAFT" not in json.dumps(v5) and "DRAFT" not in json.dumps(_load(PILOT_PATH))
-    assert lfr.PROTOCOL_V5 in lfr.FROZEN_PROTOCOLS and lfr.PROTOCOL_V5_PILOT not in lfr.FROZEN_PROTOCOLS
+    assert v5["note"].startswith("DRAFT") and "NOT FROZEN" in v5["note"] and "mandate of 2026-10-08" in v5["note"]
+    # nothing is called frozen until pilot 4 has passed: at the freeze, pin the sha256 of this config in FROZEN_SHA256,
+    # add PROTOCOL_V5 to FROZEN_PROTOCOLS and flip this assertion
+    assert lfr.PROTOCOL_V5 not in lfr.FROZEN_PROTOCOLS and lfr.PROTOCOL_V5_PILOT not in lfr.FROZEN_PROTOCOLS
+    assert "pat-19-campaign-v5.json" not in FROZEN_SHA256
     one = "qwen3.6-35b-a3b-mlx-4bit"
     assert list(v5["candidates"]) == [one] and v5["candidates"] == v4["candidates"]
     assert v5["exploration"]["fixed_candidate"] == one and "comparison_task_group" not in v5["exploration"]
@@ -102,11 +103,13 @@ def test_the_v5_campaign_pins_the_decided_values_and_says_it_is_a_draft():
     # the decision rule, the ground truth, the machine and the explorer are those of v4
     for name in ("exploration_screening", "exploration_comparison"):
         a, b = v5["rules"][name], v4["rules"][name]
-        assert {k: v for k, v in a.items() if k not in ("note", "tasks")} == {
-            k: v for k, v in b.items() if k not in ("note", "tasks")}
+        assert {k: v for k, v in a.items() if k not in ("note", "tasks", "paired_decided_min")} == {
+            k: v for k, v in b.items() if k not in ("note", "tasks", "paired_decided_min")}
     assert v5["exploration"]["ground_truth"] == v4["exploration"]["ground_truth"]
     assert v5["drivers"]["local_explorer"] == v4["drivers"]["local_explorer"]
-    assert v5["frozen_machine"] == v4["frozen_machine"] and v5["dedicated_machine"] == v4["dedicated_machine"]
+    assert v5["frozen_machine"] == v4["frozen_machine"]
+    assert {k: v for k, v in v5["dedicated_machine"].items() if k != "note"} == {
+        k: v for k, v in v4["dedicated_machine"].items() if k != "note"}
     assert v5["prompts"] == v4["prompts"] and v5["statement_footer"] == v4["statement_footer"]
 
 
@@ -529,7 +532,9 @@ def _operator(tmp_path, mode, *, campaign_id, claude="2.1.285 (Claude Code)", st
     (bin_dir / "lms").write_text(f'#!/bin/sh\necho "$@" >> "{tmp_path}/lms.log"\nexit 7\n', encoding="utf-8")
     for tool in bin_dir.iterdir():
         tool.chmod(tool.stat().st_mode | stat.S_IEXEC)
-    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "HOME": str(tmp_path / "home")}
+    clean = tmp_path / "clean-tmp"
+    clean.mkdir()
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "HOME": str(tmp_path / "home"), "TMPDIR": str(clean)}
     done = subprocess.run([shutil.which("bash"), str(SCRIPT), mode, "qwen3.6-35b-a3b-mlx-4bit", str(checkout),
                            str(runs), str(tmp_path / "work"), str(tmp_path / "repo")],
                           capture_output=True, text=True, env=env)
@@ -757,7 +762,8 @@ def test_the_operator_script_refuses_a_python3_without_pytest_before_any_model(t
     done = subprocess.run([shutil.which("bash"), str(SCRIPT), "pilot", "qwen3.6-35b-a3b-mlx-4bit",
                            str(where / "checkout"), str(runs), str(where / "work"), str(where / "repo")],
                           capture_output=True, text=True,
-                          env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "HOME": str(where / "home")})
+                          env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "HOME": str(where / "home"),
+                               "TMPDIR": str(where)})
     assert done.returncode == 65 and "cannot import pytest" in done.stderr and "clean shell" in done.stderr
     assert not (where / "lms.log").exists() and not list(runs.glob("operator-*"))
 
@@ -812,7 +818,9 @@ def test_a_call_the_host_refused_did_not_run_and_contributes_nothing(tmp_path):
     out, journal, refused = zone.audit(tmp_path, call)
     assert out == [] and journal == [] and refused == {"Bash": 1}  # counted per tool, no text
     # the permission-rule shapes of a file tool are whole-call refusals too
-    for text in ("Read denied by your permission settings", "Path blocks reads outside the working directories"):
+    for text in ("File is in a directory that is denied by your permission settings.",
+                 f"{zone.work}/x is outside {zone.attempt}/bundle. The permissions.blockReadsOutsideWorkingDirectories "
+                 "setting blocks reads outside the working directories."):
         out, _, refused = zone.audit(tmp_path, [("Read", {"file_path": f"{zone.work}/private-b/x"}, text, True)])
         assert out == [] and refused == {"Read": 1}
     # a refused call moves no directory: the relative path that follows is read from the bundle, as before it
@@ -1004,3 +1012,317 @@ def test_a_path_echoed_in_an_output_under_an_os_denied_root_is_journaled_not_dec
     assert any(p.startswith("tool_result:") for p in out) and journal == []
     mine = [("Bash", {"command": "echo hi"}, f"see {zone.scratch}/x", False)]
     assert zone.audit(tmp_path, mine) == ([], [], {})
+
+
+# ------------------------------------------------------------------ review round 1: refusal shapes and boundaries
+
+def test_the_permission_rule_shapes_count_only_for_file_tools_and_only_as_the_whole_error(tmp_path):
+    zone = _Zone(tmp_path)
+    rule = "File is in a directory that is denied by your permission settings."
+    cmd = {"command": f"cat {zone.home}/.config/foundry/x"}
+    # a Bash command that ran, failed and PRINTED such a sentence was not refused
+    for text in (rule, f"x\n{rule}", "setting blocks reads outside the working directories."):
+        out, journal, refused = zone.audit(tmp_path, [("Bash", cmd, text, True)])
+        assert refused == {} and journal, text  # not a refused call: its finding is journaled, not discounted
+    # the same sentence as the WHOLE error of a file tool is a refusal; embedded in a longer text it is not
+    out, _, refused = zone.audit(tmp_path, [("Read", {"file_path": f"{zone.work}/private-b/x"}, rule, True)])
+    assert refused == {"Read": 1} and out == []
+    for text in (f"prefix\n{rule}", rule + " And then some other failure."):
+        _, _, refused = zone.audit(tmp_path, [("Read", {"file_path": f"{zone.work}/private-b/x"}, text, True)])
+        assert refused == {}, text
+    # the dontAsk shape counts for any tool, a file tool included
+    out, _, refused = zone.audit(tmp_path, [("Read", {"file_path": f"{zone.work}/private-b/x"}, REFUSAL, True)])
+    assert refused == {"Read": 1} and out == []
+    assert zone.audit(tmp_path, [("Bash", cmd, REFUSAL, True)])[2] == {"Bash": 1}
+
+
+def test_a_sibling_directory_that_merely_starts_like_a_denied_root_is_not_journaled(tmp_path):
+    zone = _Zone(tmp_path)
+    sibling = Path(str(zone.work) + "-other")  # shares the text of the denied root, is not under it
+    sibling.mkdir()
+    lines = [{"type": "system", "subtype": "init", "claude_code_version": "2.1.285", "tools": ["Bash"]},
+             {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t0", "name": "Bash",
+                                                            "input": {"command": "echo hi"}}]}},
+             {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t0", "is_error": False,
+                                                       "content": f"{sibling}/x.py and {zone.work}/priv"}]},
+              "tool_use_result": {"interrupted": False}}]
+    stream = tmp_path / "s.jsonl"
+    stream.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+    journal: list[str] = []
+    out = lfr.audit_transcript(stream, bundle=zone.bundle, scratch=zone.scratch,
+                               sensitive=[zone.work, sibling], home=str(zone.home), attempt_dir=zone.attempt,
+                               private_root=zone.attempt.parent, revision=lfr.AUDIT_REVISION,
+                               policy_denied=zone.denied, journal=journal)
+    assert [p for p in out if p.startswith("tool_result:") and str(sibling) in p]  # decisive: not under a denied root
+    assert [j for j in journal if j.endswith("/priv")] and not [j for j in journal if str(sibling) in j]
+
+
+# ------------------------------------------------------------------ review round 1: the strict judge, more precisely
+
+def _marker_python(tmp_path):
+    """The real interpreter, except that it dies (usage error, no report) in a tree that holds ``BROKEN_MARKER``."""
+    import sys
+    script = tmp_path / "marker-python"
+    script.write_text(f'#!/bin/sh\nif [ -e "$PWD/BROKEN_MARKER" ]; then echo "conftest import error" >&2; exit 4; fi\n'
+                      f'exec {sys.executable} "$@"\n', encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+def test_a_candidate_that_breaks_the_import_or_the_loading_of_the_tests_is_refused_not_an_instrument_error(
+        tmp_path, monkeypatch):
+    from foundry import local_first_corpus as lfc
+    from test_local_first_corpus import MOD, _make_repo
+    repo, snap, _, _ = _make_repo(tmp_path)
+    task = snap["prs"][0]
+    # (1) a product module that no longer imports: pytest still writes a report (collection errors), REFUSED
+    broken = lfc.build_bundle(repo, task, tmp_path / "broken-import")
+    (broken / MOD).write_text("def add(a, b:\n", encoding="utf-8")
+    verdict = lfc.judge(repo, task, broken, strict_report=True)
+    assert verdict["verdict"] == "REFUSED" and verdict["errors"] + verdict["failed"] >= 1
+    # (2) the candidate breaks the loading of the test setup so that pytest dies before it writes any report: the
+    # judge tells it from a dead instrument by judging a pristine bundle, which does report
+    monkeypatch.setattr(lfc.sys, "executable", _marker_python(tmp_path))
+    loading = lfc.build_bundle(repo, task, tmp_path / "broken-loading")
+    (loading / "plugins" / "foundry" / "BROKEN_MARKER").write_text("x", encoding="utf-8")
+    verdict = lfc.judge(repo, task, loading, strict_report=True)
+    assert verdict["verdict"] == "REFUSED" and verdict["note"] == "candidate_breaks_test_loading"
+    assert (verdict["passed"], verdict["failed"], verdict["errors"]) == (0, 0, 0) and verdict["pytest_exit_code"] == 4
+    # (3) a dead instrument (nothing reports, pristine bundle included) stays an instrument error
+    monkeypatch.setattr(lfc.sys, "executable", _broken_python(tmp_path))
+    with pytest.raises(lfc.JudgeInstrumentError):
+        lfc.judge(repo, task, lfc.build_bundle(repo, task, tmp_path / "dead"), strict_report=True)
+
+
+def test_the_golden_check_carries_its_provenance(tmp_path):
+    import datetime
+    from test_local_first_corpus import _make_repo
+    from test_local_first_exploration_runner import v2_campaign
+    repo, snap, _, _ = _make_repo(tmp_path)
+    campaign, _ = v2_campaign(tmp_path, PLAN)
+    for name in ("c.json", "m.json", "s.json"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    out = lfr.golden_check(campaign, tmp_path / "c.json", [snap["prs"][0]], repo=repo, work_root=tmp_path / "w",
+                           today=datetime.date(2026, 10, 8), manifest_path=tmp_path / "m.json",
+                           snapshot_path=tmp_path / "s.json")
+    prov = out["provenance"]
+    assert prov["campaign_sha256"] == hashlib.sha256(b"c.json").hexdigest()
+    assert prov["manifest_sha256"] == hashlib.sha256(b"m.json").hexdigest()
+    assert prov["snapshot_sha256"] == hashlib.sha256(b"s.json").hexdigest() and prov["date"] == "2026-10-08"
+    assert prov["tooling_commit"] == "unknown" or len(prov["tooling_commit"]) == 40
+    assert lfr.golden_check(campaign, tmp_path / "c.json", [], repo=repo, work_root=tmp_path / "w2",
+                            today=datetime.date(2026, 10, 8))["provenance"]["manifest_sha256"] == "unknown"
+
+
+# ------------------------------------------------- the v5 handling of undecided tasks (paired decided set)
+
+def _rule_campaign(tasks=12):
+    campaign = _load(PILOT_PATH)
+    campaign["rules"]["exploration_comparison"]["tasks"] = tasks
+    return campaign
+
+
+def _recs(plan, tasks=12):
+    """``plan[pr]`` = ``(A, L)`` with each ``(outcome, accepted, tokens)``; hand-written records of an A / L campaign
+    and the ledger a real run leaves for them."""
+    recs, n = [], 0
+    ledger = [{"kind": "session_started", "campaign_sha256": "x", "manifest_sha256": None, "envelope_sha256": "e"}]
+    base = {"record_type": "attempt", "dry_run": False, "wall_seconds": 10.0, "unknown": {},
+            "review": {"rounds": 1, "verdicts": []}}
+
+    def add(rec, tokens):
+        nonlocal n
+        n += 1
+        sessions = [f"s{n}"] if rec["cloud_executions"] else []
+        for sid in sessions:
+            ledger.extend([{"kind": "cloud_started", "session_id": sid},
+                           {"kind": "settled", "cloud": True, "session_id": sid, "premium_tokens": tokens}])
+        recs.append({**base, **rec, "cloud_sessions": sessions,
+                     "premium": {"billing_total": tokens if sessions else 0, "by_model": {}}})
+    for pr in range(1, tasks + 1):
+        (a_out, a_acc, a_tok), (l_out, l_acc, l_tok) = plan[pr]
+        task = {"pr": pr, "set": "pat-19-v5-pilot"}
+        add({"task": task, "path": "A", "segment": "cloud", "attempt": 0, "outcome": a_out, "accepted": a_acc,
+             "cloud_executions": 1}, a_tok)
+        add({"task": task, "path": "L", "segment": "explore", "attempt": 0, "outcome": None, "accepted": None,
+             "cloud_executions": 0, "judge": {"verdict": "SCORED"}, "exploration": {"report": None, "score": {}},
+             "local": {"candidate": "qwen3.6-35b-a3b-mlx-4bit", "ended_by_external_signal": False},
+             "machine": {"before": {"swap_used_mib": 0.0}, "after": {"swap_used_mib": 0.0}}}, 0)
+        add({"task": task, "path": "L", "segment": "cloud", "attempt": 0, "outcome": l_out, "accepted": l_acc,
+             "cloud_executions": 1}, l_tok)
+    for rec in recs:
+        rec.update(schema=lfr.RESULT_SCHEMA, campaign_id="pat-19-x5pilot-9", mode="compare_exploration",
+                   campaign_sha256="x", manifest_sha256=None, envelope_sha256="e")
+    return recs, ledger
+
+
+YES, NO, UNDECIDED = ("accepted", True), ("judge_refused", False), ("review_unreadable", None)
+
+
+def _paired(plan, tasks=12):
+    recs, ledger = _recs({pr: plan(pr) for pr in range(1, tasks + 1)}, tasks)
+    report = lfr.report(_rule_campaign(tasks), recs, ledger)["exploration_comparison"]
+    return report, report.get("paired_rule", {})
+
+
+def test_the_paired_rule_retains_l_on_the_decided_tasks_when_the_comparison_and_the_ratio_hold():
+    # 12 decided tasks: both accept 6, L is cheaper (50 vs 100 per execution): retained
+    report, rule = _paired(lambda pr: ((*(YES if pr <= 6 else NO), 100), (*(YES if pr <= 6 else NO), 50)))
+    assert report["decision"] == "retained" and report["recommendation"] == "L" and rule["paired_decided_count"] == 12
+    assert report["campaign_conclusion"] == "retain_local_explorer" and rule["ratio"] == 0.5
+    assert rule["worst_case"]["robust"] is True and rule["worst_case"]["ratio_recomputed"] is False
+    # same acceptance but L as dear as A: not retained with |D| >= 9: keep the cloud
+    report, rule = _paired(lambda pr: ((*(YES if pr <= 6 else NO), 100), (*(YES if pr <= 6 else NO), 100)))
+    assert (report["decision"], report["recommendation"], rule["reason"]) == ("keep_cloud", "A", "not_retained_on_paired_set")
+    assert report["arms"]["L"]["economy"] == "fail" and report["campaign_conclusion"] == "keep_cloud"
+    # L accepts fewer tasks than A on D: keep the cloud
+    report, _ = _paired(lambda pr: ((*YES, 100), (*(YES if pr <= 5 else NO), 50)))
+    assert report["decision"] == "keep_cloud" and report["arms"]["L"]["quality"] == "fail"
+
+
+def test_the_paired_rule_needs_nine_decided_tasks_and_one_acceptance_in_each_arm():
+    # 4 undecided tasks of L -> |D| = 8 < 9: inconclusive, whatever the numbers on D say
+    report, rule = _paired(lambda pr: ((*YES, 100), (*(UNDECIDED if pr <= 4 else YES), 10)))
+    assert report["decision"] == "inconclusive" and rule["reason"] == "paired_decided_set_below_9"
+    assert rule["paired_decided_count"] == 8 and report["campaign_conclusion"] == "keep_cloud_insufficient_evidence"
+    assert sorted(rule["undecided"]["L"], key=int) == ["1", "2", "3", "4"] and rule["undecided"]["A"] == {}
+    assert rule["undecided"]["L"]["1"] == ["cloud:review_unreadable"]
+    assert rule["premium_tokens_on_undecided_tasks"] == {"A": 0, "L": 40}
+    # exactly 9 decided: the rule applies
+    report, rule = _paired(lambda pr: ((*YES, 100), (*(UNDECIDED if pr <= 3 else YES), 10)))
+    assert rule["paired_decided_count"] == 9 and rule["reason"] != "paired_decided_set_below_9"
+    # nobody accepts anything on D: the ratio is undefined, never zero
+    report, rule = _paired(lambda pr: ((*NO, 100), (*NO, 50)))
+    assert report["decision"] == "inconclusive" and rule["reason"] == "no_accepted_task_in_one_arm_ratio_undefined"
+    assert report["arms"]["L"]["economy"] == "unavailable" and rule["ratio"] is None
+    report, rule = _paired(lambda pr: ((*YES, 100), (*NO, 50)))
+    assert rule["reason"] == "no_accepted_task_in_one_arm_ratio_undefined"
+
+
+def test_the_paired_rule_is_not_robust_to_undecided_tasks_that_could_have_gone_either_way():
+    # D = tasks 4..12 (9 tasks): both arms accept all of them and L is cheaper -> retained on D. The undecided tasks
+    # 1..3 are undecided for L only, A accepted them: worst case L = 9 < A = 12 -> inconclusive
+    report, rule = _paired(lambda pr: ((*YES, 100), (*(UNDECIDED if pr <= 3 else YES), 50)))
+    assert rule["verdict"] == "inconclusive" and rule["reason"] == "not_robust_to_undecided_tasks"
+    assert rule["worst_case"] == {"A_undecided_counted_accepted": 12, "L_undecided_counted_not_accepted": 9,
+                                  "robust": False, "ratio_recomputed": False,
+                                  "why_no_ratio": "the cost of an undecided task is known but its acceptance is not"}
+    assert report["decision"] == "inconclusive" and report["campaign_conclusion"] == "keep_cloud_insufficient_evidence"
+    # the worst case is NOT symmetric by design (undecided A counted accepted, undecided L not): the same three tasks
+    # undecided in both arms, both accepting every other task, is therefore not robust either
+    report, rule = _paired(lambda pr: ((*(UNDECIDED if pr <= 3 else YES), 100), (*(UNDECIDED if pr <= 3 else YES), 50)))
+    assert report["decision"] == "inconclusive" and rule["reason"] == "not_robust_to_undecided_tasks"
+    assert rule["premium_tokens_on_undecided_tasks"] == {"A": 300, "L": 150}
+    # robust: A accepted tasks 1-3 (decided there), L undecided there; on D (4-12) L accepts 9, A only 5, L cheaper:
+    # L_worst = 9 >= A_worst = 8 -> retained
+    def plan(pr):
+        if pr <= 3:
+            return (*YES, 100), (*UNDECIDED, 50)
+        return (*(YES if pr <= 8 else NO), 100), (*YES, 50)
+    report, rule = _paired(plan)
+    assert report["decision"] == "retained" and rule["worst_case"]["robust"] is True
+    assert rule["worst_case"]["A_undecided_counted_accepted"] == 8 and rule["worst_case"]["L_undecided_counted_not_accepted"] == 9
+
+
+def test_the_v2_to_v4_report_is_unchanged_by_the_paired_rule(tmp_path):
+    runner, campaign, _, tasks = make_runner(tmp_path, "compare_exploration", {**PLAN, "reviewer": ["PASS"]})
+    runner.compare_exploration(tasks, "cand-a", ("A", "L"))
+    comparison = lfr.report(campaign, results(runner), ledger_of(runner))["exploration_comparison"]
+    assert "paired_rule" not in comparison and "paired_decided_min" not in campaign["rules"]["exploration_comparison"]
+
+
+def test_the_paired_threshold_is_pinned_and_refused_before_v5(tmp_path):
+    with pytest.raises(lfr.RunnerError, match="paired_decided_min 9"):
+        lfr.load_campaign(_broken(tmp_path, lambda d: d["rules"]["exploration_comparison"].update(paired_decided_min=8)))
+    with pytest.raises(lfr.RunnerError, match="paired_decided_min 9"):
+        lfr.load_campaign(_broken(tmp_path, lambda d: d["rules"]["exploration_comparison"].pop("paired_decided_min"),
+                                  PILOT_PATH))
+    spec = _load(QUALIFICATION / "pat-19-campaign-v4.json")["exploration"]["ground_truth"]
+    (tmp_path / spec["file"]).write_bytes((QUALIFICATION / spec["file"]).read_bytes())
+    data = _load(V4_PATH)
+    data["rules"]["exploration_comparison"]["paired_decided_min"] = 9
+    (tmp_path / "x.json").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(lfr.RunnerError, match="paired_decided_min is accepted only under a protocol after v4"):
+        lfr.load_campaign(tmp_path / "x.json")
+
+
+# ------------------------------------------------------- the shared per-user temp directory (pilot limit)
+
+def _tree(root, *files):
+    for rel in files:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x", encoding="utf-8")
+
+
+def test_new_temp_entries_that_hold_bundle_material_are_moved_out_and_nothing_else_is_touched(tmp_path):
+    temp, dest = tmp_path / "tmp", tmp_path / "attempt" / "temp-leftovers"
+    temp.mkdir()
+    _tree(temp, "old/plugins/foundry/x.py", "keep.txt")  # present before the execution: never touched
+    before = lfr._temp_entries(temp)
+    files = ["plugins/foundry/tooling/foundry/trackers/linear.py", "plugins/foundry/tests/test_linear_tracker.py"]
+    _tree(temp, "rv/plugins/foundry/tooling/foundry/m.py",  # a copy of the bundle
+          "copy2/tests/test_linear_tracker.py",  # a file named like a changed test
+          "exact/plugins/foundry/tooling/foundry/trackers/linear.py",
+          "innocent/notes.txt", "pytest-of-u/pytest-1/a.txt", "foundry-judge-abc/plugins/foundry/y.py",
+          "lone_linear.py")
+    (temp / "link").symlink_to(tmp_path)  # a symbolic link is never followed nor moved
+    moved = lfr._move_temp_leftovers(temp, before, dest, files)
+    assert moved == ["copy2", "exact", "rv"]
+    assert sorted(p.name for p in dest.iterdir()) == ["copy2", "exact", "rv"]
+    left = sorted(p.name for p in temp.iterdir())
+    assert left == ["foundry-judge-abc", "innocent", "keep.txt", "link", "lone_linear.py", "old", "pytest-of-u"]
+    assert (dest / "rv" / "plugins" / "foundry" / "tooling" / "foundry" / "m.py").read_text() == "x"  # moved whole
+    # a name that matches a changed file's basename at the top level of the temp directory is a leftover too
+    before = lfr._temp_entries(temp)
+    _tree(temp, "linear.py")
+    assert lfr._move_temp_leftovers(temp, before, dest, files) == ["linear.py"]
+
+
+def test_a_run_moves_the_bundle_copy_an_execution_left_in_the_temp_directory_and_records_it(tmp_path, monkeypatch):
+    runner, tasks = _policy_runner(tmp_path, monkeypatch, {**PLAN, "implementer": ["fix"], "reviewer": ["PASS"]})
+    temp = tmp_path / "shared-tmp"
+    temp.mkdir()
+    runner.host_env = {**runner.host_env, "TMPDIR": str(temp)}
+    _tree(temp, "preexisting/plugins/foundry/a.py")
+    real = lfr.execute_driver
+    calls = []
+
+    def leaving(driver, values, **kw):
+        if "--role" in driver["argv"] and "implementer" in driver["argv"]:
+            calls.append(1)
+            _tree(temp, "rv/plugins/foundry/tooling/foundry/m.py")
+        return real(driver, values, **kw)
+
+    monkeypatch.setattr(lfr, "execute_driver", leaving)
+    runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+    rec = _cloud(runner)[0]
+    assert calls and rec["audit"]["temp_leftovers"] == {"count": 1, "names": ["rv"]}
+    assert sorted(p.name for p in temp.iterdir()) == ["preexisting"]  # moved out (and discarded with the attempt)
+    assert rec["outcome"] == "accepted"  # a leftover counts nothing in the decision
+    report = lfr.report(runner.campaign, results(runner), ledger_of(runner))
+    assert report["temp_leftovers"][0]["names"] == ["rv"] and report["temp_leftovers"][0]["path"] == "A"
+    # no leftover: the record says so (count 0) and the report lists none
+    other, tasks2 = _policy_runner(_sub(tmp_path, "clean"), monkeypatch, {**PLAN, "reviewer": ["PASS"]})
+    other.host_env = {**other.host_env, "TMPDIR": str(_sub(tmp_path, "clean-tmp"))}
+    other.compare_exploration(tasks2[:1], "cand-a", ("A",))
+    assert _cloud(other)[0]["audit"]["temp_leftovers"] == {"count": 0, "names": []}
+    assert "temp_leftovers" not in lfr.report(other.campaign, results(other), ledger_of(other))
+
+
+def test_the_operator_script_refuses_a_bundle_copy_in_the_temp_directory(tmp_path):
+    import shutil
+    import subprocess
+    where = _sub(tmp_path, "leftover")
+    done, lms = _operator(where, "pilot", campaign_id="pat-19-x5pilot-4")
+    assert done.returncode == 7 and lms.startswith("unload --all")  # a clean temp directory: past every check
+    # the same call with a copy of the bundle at the top level of the temp directory
+    where2 = _sub(tmp_path, "leftover2")
+    done, lms = _operator(where2, "pilot", campaign_id="pat-19-x5pilot-4")
+    assert done.returncode == 7
+    clean = where2 / "clean-tmp"
+    _tree(clean, "rv/plugins/foundry/x.py")
+    env = {"PATH": os.environ["PATH"], "HOME": str(where2 / "home"), "TMPDIR": str(clean)}
+    again = subprocess.run([shutil.which("bash"), str(SCRIPT), "pilot", "qwen3.6-35b-a3b-mlx-4bit",
+                            str(where2 / "checkout"), str(where2 / "runs"), str(where2 / "work"),
+                            str(where2 / "repo")], capture_output=True, text=True, env=env)
+    assert again.returncode == 65 and "leftover bundle copy in the shared temp directory" in again.stderr
