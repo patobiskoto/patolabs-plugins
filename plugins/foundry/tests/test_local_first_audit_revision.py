@@ -523,8 +523,8 @@ class Replay:
             rec.update(contaminated=True, contamination={"paths": recorded, "commands": []})
         self.records.append(rec)
 
-    def run(self, **kw):
-        return lfr.replay_audit(_campaign(self.tmp), self.records, self.ledger, streams_dir=self.streams,
+    def run(self, campaign=None, **kw):
+        return lfr.replay_audit(campaign or _campaign(self.tmp), self.records, self.ledger, streams_dir=self.streams,
                                 work_root=self.work, repo=self.repo, state_dir=self.state, home=str(self.home), **kw)
 
 
@@ -615,6 +615,26 @@ def test_the_replay_measures_the_quoted_form_without_changing_the_default_result
     assert m[1]["new"]["contaminated"] is False and m[1]["new"]["hits"] == [] and len(m[1]["new"]["not_found"]) == 1
     assert m[1]["classification"] == "flag_moved_to_not_found" and m[1]["recorded"] == d[1]["recorded"]
     assert m[2] == d[2]  # nothing else moves
+
+
+def test_a_campaign_with_an_audit_policy_gets_arm_findings_replayed(tmp_path):
+    """PAT-128: ``arm_findings_replayed`` exists only under ``isolation.audit_policy`` (v5) and says whether the arm's findings
+    under that campaign's rules are the recorded ones."""
+    rp = Replay(tmp_path)
+    work = str(rp.work.resolve())
+    rp.cloud(1, "s1", ["find / -name x"])  # a decisive finding, recorded
+    rp.cloud(2, "s2", ["ls"])  # clean, but a flag was recorded: not reproduced
+    rp.cloud(3, "s3", ["ls"])  # clean and recorded clean
+    rp.record("A", 1, ["s1"], ["/"])
+    rp.record("A", 2, ["s2"], [work])
+    rp.record("A", 3, ["s3"], [])
+    v5 = json.loads((QUALIFICATION / "pat-19-campaign-v5.json").read_text("utf-8"))
+    assert v5["isolation"][lfr.AUDIT_POLICY_KEY] == lfr.AUDIT_POLICY
+    by_pr = {r["pr"]: r for r in rp.run(campaign=v5)["records"]}
+    assert by_pr[1]["arm_findings_replayed"] == {"hits": ["/"], "same_as_recorded": True}
+    assert by_pr[2]["arm_findings_replayed"] == {"hits": [], "same_as_recorded": False}
+    assert by_pr[3]["arm_findings_replayed"] == {"hits": [], "same_as_recorded": True}
+    assert all("arm_findings_replayed" not in r for r in rp.run()["records"])  # policy off: no such field
 
 
 def test_the_cli_replays_a_finished_campaign_and_never_overwrites_a_result(tmp_path, monkeypatch, capsys):

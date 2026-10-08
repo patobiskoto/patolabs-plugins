@@ -107,6 +107,9 @@ ne fait que *regarder* le vrai fichier (`Path.exists()`) réussissait sans bruit
 un bac à sable qui refuse ce `stat`. `tests/conftest.py` enveloppe désormais `os.stat` et `os.lstat` (ce qu'appellent `pathlib` et
 `os.path.exists`) : tant que la garde est active, un chemin du vrai état Foundry (`~/.config/foundry`, `~/.config/orfeo-poc`) lève la
 même erreur « PAT-104 guard ». `assert_state_resolvers_isolated` teste `_is_real_state_path` avant `resolve()` (qui fait un `lstat`).
+Limites connues de la garde : `os.access`, `os.scandir` / `DirEntry.stat`, un chemin relatif donné avec `dir_fd` et les sous-processus
+ne sont pas couverts. Les enveloppes sont aussi membres des ensembles `os.supports_*` de l'original (sinon `shutil.copystat` /
+`copy2` sur des liens symboliques échouent), et la garde ne lève jamais d'elle-même (cwd supprimé : chemin non jugé).
 Tests : `tests/test_state_isolation.py` (`stat`, `lstat`, `exists`, `is_file` refusés ; un chemin ordinaire non touché ; les fichiers de
 configuration de développement se cherchent sous le home de test seulement).
 
@@ -114,10 +117,11 @@ configuration de développement se cherchent sous le home de test seulement).
 rendant le vrai `~/.config` illisible par une extension de test qui lève `EPERM` (sans rien changer au home réel) : **141 échecs**,
 2276 réussites (127 de `test_local_scout.py`, plus `test_doctor.py`, `test_agent_routing.py`, et quelques tests de contrat
 qui échouent aussi pour l'archive partielle, sans lien avec le home : le chiffre est donc un ordre de grandeur, non un décompte
-exact de la seule cause) ; (b) sur le dépôt actuel, avec la même extension : `test_doctor.py`, `test_agent_routing.py`, `test_local_scout.py`,
-`test_config.py` et `test_state_isolation.py` donnent **418 réussites et 1 échec**, qui est un artefact de l'extension (elle lève `EPERM`
-avant la garde que `test_real_state_directory_is_unreachable` attend) ; **zéro échec** dû à la configuration réelle (avant : 141 sur
-la suite entière de l'archive ; après : 0 sur ces fichiers, qui portaient les échecs de (a) hors tests de contrat). Avec `HOME`
-pointé sur un dossier vide, la suite du CI donne le même résultat qu'avec le home habituel (voir le résumé de PAT-128).
+exact de la seule cause) ; (b) observation distincte, sur le dépôt actuel et d'autres fichiers : `test_doctor.py`, `test_agent_routing.py`, `test_local_scout.py`,
+`test_config.py` et `test_state_isolation.py`, avec la même extension, donnent **418 réussites et 1 échec**, qui est un artefact de
+l'extension (elle lève `EPERM` avant la garde que `test_real_state_directory_is_unreachable` attend). Les deux nombres (a) et (b)
+viennent de bases et de périmètres différents (suite entière de l'archive de PR 42, dont des échecs sans lien avec le home, contre cinq
+fichiers du dépôt actuel) : ce ne sont **pas** un avant/après. Avec `HOME` pointé sur un dossier vide, la suite du CI donne le même
+résultat qu'avec le home habituel.
 Les « 156 échecs » cités par trois relecteurs de la v5 ne sont pas recomptés [inconnu] ; l'ordre de grandeur est cohérent avec (a).
 

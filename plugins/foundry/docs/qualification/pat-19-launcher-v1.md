@@ -1597,6 +1597,11 @@ n'est modifié.
   `Path '<chemin>' not found` (réponse d'erreur entière d'un appel omp, chemin identique à celui de l'appel : outil `read`) comme un
   chemin absent consigné à part, comme `Path not found: <chemin>`. Un enregistrement sous la clé porte `audit.absent_path_forms`
   (absent sinon). Sans la clé, rien ne change.
+- **Limite connue (même laxisme que la forme `Path not found:`)** : l'écho dans un résultat est ignoré pour tout résultat d'outil dont le
+  texte est exactement `Path '<m>' not found` avec `<m>` un chemin déclaré absent par un appel de la même transcription, sans lier
+  l'écho à l'appel d'origine ni à son statut d'erreur ; la forme historique `Path not found: <m>` a la même largeur. Choix : documenter
+  plutôt que lier (lier changerait le traitement de la forme historique, donc de v1 à v5). Le chemin de l'appel lui-même, lui, n'est
+  excusé que pour une réponse d'erreur entière de ce même appel.
 - **`replay-audit --quoted-not-found`** mesure la coordonnée sur une campagne qui ne la porte pas (le résultat porte
   `absent_path_forms` ; le défaut est inchangé). Un rejeu d'une campagne à politique d'audit (v5) ajoute par enregistrement
   `arm_findings_replayed` (`hits`, `same_as_recorded`) : les constats du bras selon les règles de la campagne, comparés à l'enregistré.

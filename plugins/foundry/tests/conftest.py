@@ -44,12 +44,17 @@ _GUARDED_AUDIT_EVENTS = frozenset({
 _guard_active = False
 
 
-def _is_real_state_path(candidate) -> bool:
+def _is_real_state_path(candidate, dir_fd=None) -> bool:
+    """True for a path under the real Foundry state. Never raises on its own: a relative path whose cwd was deleted
+    is not real state, and a relative path given with ``dir_fd`` is NOT judged against the cwd (that case is not covered)."""
     if isinstance(candidate, int) or candidate is None:
         return False
     try:
-        text = os.path.abspath(os.fsdecode(candidate))
-    except (TypeError, ValueError):
+        raw = os.fsdecode(candidate)
+        if not os.path.isabs(raw) and dir_fd is not None:
+            return False
+        text = os.path.abspath(raw)
+    except (TypeError, ValueError, OSError):
         return False
     return any(text == root or text.startswith(root + os.sep) for root in _REAL_STATE_ROOTS)
 
@@ -70,24 +75,40 @@ def _audit_real_state(event: str, args: tuple) -> None:
 sys.addaudithook(_audit_real_state)
 
 
-# PAT-128: the audit hook above has no event for ``stat``, so a test (or the code it runs) that only LOOKED at the real
-# config (``Path.exists()`` on ``~/.config/foundry/config.env``) passed silently on the maintainer's machine and failed
-# with ``PermissionError`` under a sandbox that denies that read (PAT-19 v5: 10 records). ``os.stat`` / ``os.lstat`` (what
-# ``pathlib`` and ``os.path.exists`` call) now refuse the same real-state paths while the guard is active.
+# PAT-128: the audit hook above has no event for ``stat``, so a test that only LOOKED at the real config
+# (``Path.exists()`` on ``~/.config/foundry/config.env``) passed silently on the maintainer's machine and failed with
+# ``PermissionError`` under a sandbox that denies that read. That was seen in the tests of the HISTORICAL task bundles of
+# the PAT-19 v5 campaign (base commits older than PAT-104), not in this suite. ``os.stat`` / ``os.lstat`` (what ``pathlib``
+# and ``os.path.exists`` call) now refuse the same real-state paths while the guard is active.
+# Known gaps: ``os.access``, ``os.scandir`` / ``DirEntry.stat``, a relative path given with ``dir_fd``, and subprocesses
+# are not covered.
 def _guard_stat(real_call):
     def guarded(path, *args, **kwargs):
-        if _guard_active and _is_real_state_path(path):
+        if _guard_active and _is_real_state_path(path, kwargs.get("dir_fd")):
             raise RuntimeError(
                 f"PAT-104 guard: test touched the REAL Foundry state ({real_call.__name__} "
                 f"{os.fsdecode(path)!r}); isolate it under tmp_path"
             )
         return real_call(path, *args, **kwargs)
 
+    guarded.__name__ = real_call.__name__
     return guarded
 
 
-os.stat = _guard_stat(os.stat)
-os.lstat = _guard_stat(os.lstat)
+def _install_stat_guard(name):
+    original = getattr(os, name)
+    wrapper = _guard_stat(original)
+    # shutil picks ``os.stat``-family functions through the ``os.supports_*`` sets: keep the wrapper in each set
+    # that held the original (a set of ``os`` is a plain ``set`` of functions)
+    for support in ("supports_dir_fd", "supports_fd", "supports_follow_symlinks", "supports_effective_ids"):
+        members = getattr(os, support)
+        if original in members:
+            members.add(wrapper)
+    setattr(os, name, wrapper)
+
+
+_install_stat_guard("stat")
+_install_stat_guard("lstat")
 
 
 def assert_state_resolvers_isolated(root: Path) -> None:

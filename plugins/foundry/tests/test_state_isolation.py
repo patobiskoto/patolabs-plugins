@@ -1,5 +1,6 @@
 """PAT-104: the suite cannot reach the maintainer's real Foundry state directory."""
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -66,3 +67,38 @@ def test_the_dev_config_files_are_looked_for_under_the_sandboxed_home_only(monke
     assert config._load_dev_files() == {}
     home = Path(os.environ["HOME"])
     assert all(Path(p).is_relative_to(home) for p in config._dev_files())
+
+
+def test_the_stat_guard_keeps_the_os_support_sets_so_shutil_copies_symlinks(tmp_path):
+    """PAT-128 review: the wrappers must be members of the ``os.supports_*`` sets that held the originals, or
+    ``shutil.copystat``/``copy2`` with ``follow_symlinks=False`` pick ``_nop`` and fail with AttributeError."""
+    (tmp_path / "t1").write_text("a", encoding="utf-8")
+    (tmp_path / "t2").write_text("b", encoding="utf-8")
+    os.symlink(tmp_path / "t1", tmp_path / "l1")
+    os.symlink(tmp_path / "t2", tmp_path / "l2")
+    shutil.copystat(tmp_path / "l1", tmp_path / "l2", follow_symlinks=False)
+    os.unlink(tmp_path / "l2")
+    shutil.copy2(tmp_path / "l1", tmp_path / "l2", follow_symlinks=False)
+    assert os.path.islink(tmp_path / "l2")
+    assert os.stat in os.supports_dir_fd and os.stat in os.supports_fd and os.stat in os.supports_follow_symlinks
+    assert os.lstat in os.supports_dir_fd and os.lstat not in os.supports_fd
+
+
+def test_the_stat_guard_never_raises_on_its_own(tmp_path, monkeypatch):
+    """A relative path with a deleted cwd, or with ``dir_fd``, is not judged against the cwd (dir_fd-relative paths
+    are not covered: documented in conftest)."""
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    monkeypatch.chdir(gone)
+    gone.rmdir()
+    assert conftest._is_real_state_path("config.env") is False
+    with pytest.raises(FileNotFoundError):  # the call's own error, not the guard's
+        os.stat("config.env")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "x").write_text("x", encoding="utf-8")
+    fd = os.open(tmp_path, os.O_RDONLY)
+    try:
+        assert os.stat("x", dir_fd=fd).st_size == 1
+        assert conftest._is_real_state_path("x", dir_fd=fd) is False
+    finally:
+        os.close(fd)
