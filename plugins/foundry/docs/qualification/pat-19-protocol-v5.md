@@ -1,0 +1,124 @@
+# PAT-19 — Protocole de qualification local-first, version 5 (BROUILLON, non gelé) : instrument réparé activé, comparaison A / L sur les 12 tâches du corpus
+
+PAT-126. Cadre : PAT-ADR-0015 (exploration évaluée seulement par son effet aval, règle écrite d'avance et jamais changée après les résultats, coût net par tâche acceptée, une donnée absente n'est jamais zéro, preuve insuffisante = conserver le cloud, aucune promotion, un protocole gelé n'est jamais édité : une nouvelle version s'écrit), FOUNDRY-ADR-0019 (comparaison bornée, règle fixée d'avance, pas de second cadre), FOUNDRY-ADR-0010 (enveloppe vérifiée avant tout appel cloud), FOUNDRY-ADR-0015 (coût lu dans les journaux de session), FOUNDRY-ADR-0007 (aucun rôle local dans le produit). AGENTS.md R5 (statut documentaire) et R6 (le processus `claude` garde `HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `TMPDIR`, `USER` intacts et n'est jamais enveloppé par `sandbox-exec`).
+
+**STATUT : BROUILLON (phase 1 de PAT-126). Ce protocole n'est PAS gelé.** Il est écrit avant le pilote réel de l'instrument (section 7) et ne sera gelé qu'après lui ; aucune de ses coordonnées n'est « gelée » avant ce gel. Le pilote peut obliger à corriger l'instrument : tout ce qu'il change sera listé en section 7.4 **avant** le gel, et la règle de décision (section 2) n'est réglée par aucun résultat du pilote. Une fois gelé, ce fichier ne sera plus édité (PAT-ADR-0015) ; un changement de coordonnée ouvrira une v6. Ce brouillon **ne modifie pas** les protocoles v1 à v4, leurs configurations (`pat-19-campaign-v1.json` à `-v4.json`) ni leurs résultats ([`pat-19-exploration-results-v2.md`](pat-19-exploration-results-v2.md), [`-v3.md`](pat-19-exploration-results-v3.md), [`-v4.md`](pat-19-exploration-results-v4.md), `pat-19-runs/`).
+
+**Qui a fixé quoi.** Toutes les valeurs de ce protocole ont été **fixées par le coordinateur sous le mandat du mainteneur du 2026-10-09** (« v5, jusqu'à l'exécution et au bilan ; la machine est à toi toute la journée, tu peux démarrer et arrêter ce qu'il faut »). **Le mainteneur n'a validé aucune valeur une à une.** Le mandat couvre le cadrage, le pilote, la campagne et son bilan, chargements de modèle et arrêts de services compris ; il n'est pas une validation des valeurs ci-dessous.
+
+## 1. Origine
+
+Les comparaisons v3 et v4 se sont conclues `inconclusive` / `keep_cloud_insufficient_evidence`. Ce que les résultats disent de la v4 ([`pat-19-exploration-results-v4.md`](pat-19-exploration-results-v4.md)) : A 1 tâche acceptée sur 6, L 0 sur 6, 8 des 32 enregistrements `contaminated`, dont 5 sont, selon un diagnostic indépendant en lecture seule, des erreurs de l'audit (3 sont des drapeaux corrects) ; qualité et économie `unavailable`. La comparaison n'a donc pas pu mesurer l'effet aval de l'exploration, à cause de l'instrument. PAT-123 (révision 2 de l'audit, rejeu hors ligne, capture du correctif sans caches) et PAT-124 (bac à sable natif de Claude Code pour les bras cloud, mode `dontAsk`, bundles sans `.claude`, `audit.barrier`) ont réparé l'instrument, mais **rien ne s'active avant un protocole v5** : les clés sont refusées au chargement sous v1 à v4. Ce protocole les active, vérifie l'instrument par un pilote réel, puis rejoue la mesure aval sans rien présumer de son issue.
+
+## 2. Hérité de la v4 par référence (inchangé)
+
+Tout ce que [`pat-19-protocol-v4.md`](pat-19-protocol-v4.md) gèle, et par elle les v3 et v2, sauf les points de la section 3 : deux bras **A** (Sonnet seul) et **L** (Sonnet avec le rapport de l'explorateur local), **pas de bras Haiku** ; candidat local fixé `qwen3.6-35b-a3b-mlx-4bit` (mêmes clé, empreintes et commande de chargement épinglées), **pas de tamis** (`screen-exploration` est refusé) ; bornes d'exploration 60 étapes / 900 s et rechargement du modèle avant chaque tâche (`exploration.one_task_per_launch`, une tâche par lancement) ; consigne d'exploration, explorateur local en lecture seule, juge de localisation et vérité terrain versée (**même fichier, même sha256**), plafond de 10 fonctions ; retour au correcteur après un refus du juge (**20 noms de tests au plus, message coupé à 300 caractères, nom coupé à 200**) et **2 corrections au plus** par tentative ; racine privée par tentative (`isolation.private_attempt_root`, masquage des chemins de la racine de travail dans le rapport rendu à L) ; « refusé ou contaminé compte 0 » ; machine dédiée (2 Gio / 35 %) ; revue ; registre, reprise, enveloppe.
+
+**Règle de décision, inchangée** : L est retenu si et seulement si **acceptation(L) ≥ acceptation(A)** et **prime par tâche acceptée de L ≤ 0,85 × celle de A**, la compatibilité (le critère machine de la v1) étant requise. **Une donnée absente n'est jamais zéro** ; **preuve insuffisante = conserver le cloud** ; **aucune promotion**. Une tâche dont l'enregistrement d'un bras est indécis (contaminé, `review_unreadable`, erreur d'outil, plafond) est **indécidée, pas échouée** : la qualité compare les décomptes avec les tâches indécidées comme bornes, l'économie est `unavailable`.
+
+## 3. Ce qui change
+
+| Élément | v4 | v5 (brouillon) |
+| --- | --- | --- |
+| Bras cloud | `bypassPermissions`, home réel, réseau ouvert, pas de barrière | **bac à sable natif de Claude Code** (`isolation.cloud_native_sandbox`), mode `dontAsk`, bundles sans dossier `.claude` (3.1) |
+| Audit | révision 1 | **révision 2** (`isolation.audit_revision` 2) : suit le répertoire de travail, impute le drapeau d'un relecteur à la revue (`review_unreadable`), capture du correctif sans caches (3.2) |
+| Fichier d'exclusions de `git` | lisible (pas de bac à sable) | **lecture du seul `~/.config/git/ignore` autorisée au shell** (`isolation.allow_read_home`, 3.3) |
+| Tâches de la comparaison | les 6 tâches du tamis v3 (groupe `screening`) | **les 12 tâches du corpus**, liste explicite ordonnée (`exploration.comparison_tasks`, 3.4) |
+| Étiquette des enregistrements | `task.set` = `comparison` | **`task.set` = `pat-19-v5`** (`exploration.comparison_task_set`) |
+| Claude Code | non épinglé | **épinglé à 2.1.285**, vérifié avant la première exécution cloud d'un lancement (3.5) |
+| Plafond d'exécutions cloud | 80 | **150** (2 bras × 12 tâches × au plus 6 exécutions = 144) ; 75 000 000 jetons premium ; 100 000 s |
+
+Inchangés et rappelés : candidat, bornes, rechargement, retour au correcteur, racine privée, règle.
+
+### 3.1 Bac à sable natif, mode `dontAsk`
+
+Documenté en détail dans [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md) (section « Bac à sable natif des bras cloud (PAT-124) »). Chaque exécution cloud reçoit `--permission-mode dontAsk` et `--settings <json>` ; l'environnement du fils garde l'allow-list R6 intacte (le lanceur ajoute `GIT_CONFIG_GLOBAL=/dev/null` et `GIT_CONFIG_NOSYSTEM=1`) ; le processus `claude` n'est jamais enveloppé. **Le lanceur n'observe jamais le système d'exploitation appliquer le bac à sable** : `audit.barrier` dit seulement ce qu'il a vérifié (`settings_transmitted` : `--settings` passé à un processus démarré ; `settings_transmitted_version_observed` : le flux nomme une version de Claude Code, le mode demandé et finit sur un `result` sans erreur) ; **rien ne se lit « confiné »**. Le comportement des bras sous `dontAsk` diffère de celui de la v4 (voir 6.4).
+
+### 3.2 Révision 2 de l'audit
+
+Voir « Révision 2 de l'audit et rejeu hors ligne (PAT-123) » dans le document du lanceur. Un relecteur dont la session est signalée donne **`review_unreadable`** (indécidé, jamais un verdict, jamais rejoué), son signalement reste sur la revue (`review.contamination`, liste `review_contaminated` du rapport) ; un chemin nommé qui n'existe pas est consigné à part (`audit.not_found`) ; le correctif est capturé sans caches (exclusions V2).
+
+### 3.3 Avertissement `git` sur le fichier d'exclusions global
+
+**Constat des essais T2, T3 et T4 du 2026-10-08** ([`pat-19-launcher-v1.md`](pat-19-launcher-v1.md)) : avec le bac à sable, chaque appel `git` d'un bras imprimait « unable to access '~/.config/git/ignore': Operation not permitted » (le fichier d'exclusions par défaut sous le home est refusé, malgré `GIT_CONFIG_GLOBAL=/dev/null`), et l'audit signalait l'écho de ce chemin du home : **1 drapeau du relecteur dans chacun des essais T2 à T4**. En v4 (pas de bac à sable), `git` pouvait lire ce fichier. **Mesure** : `isolation.allow_read_home` vaut `[".config/git/ignore"]` ; le lanceur ajoute ce **seul fichier** (chemin résolu) à `sandbox.filesystem.allowRead` des réglages passés au bras (le home et la racine de travail restent refusés au shell, les règles de refus `Read`/`Edit` sur le home sont inchangées : **l'outil Read reste refusé sur le home**, y compris sur ce fichier). Le chargeur n'accepte aucune autre entrée (`allow_read_home` ne peut être que `[]` ou ce fichier). Cette clé alimente aussi le profil du bras local, où la liste de refus explicite (`.config`, appliquée en dernier) l'emporte : sans effet. **L'effet attendu — plus de message, donc plus de drapeau, sans que `git` voie autre chose qu'en v4 — n'est pas vérifié : le lanceur ne peut pas lancer `claude`. Le pilote le vérifie** (7.3). Écart déjà présent dans PAT-124 et non modifié ici : `GIT_CONFIG_GLOBAL=/dev/null` et `GIT_CONFIG_NOSYSTEM=1` font que `git` ne lit plus la configuration globale ni système, qu'il lisait en v4.
+
+### 3.4 Comparaison sur 12 tâches, liste explicite
+
+`exploration.comparison_tasks` est la liste ordonnée des PR du corpus jouées, dans cet ordre : **26, 38, 25, 42, 33, 37** (les six tâches « comparaison » de la v3) puis **30, 83, 27, 24, 48, 19** (les six tâches du tamis v3, jouées en aval en v4). Chaque PR doit figurer dans le manifeste du corpus (groupes `comparison` ou `screening`) et dans l'instantané, sinon le lancement est refusé avant toute réservation. Elle remplace `exploration.comparison_task_group` (les deux sont exclusifs). `exploration.comparison_task_set` donne l'étiquette `task.set` des enregistrements (`pat-19-v5`), distincte des étiquettes `comparison` (v1 à v4) et `screening`. La règle (`rules.exploration_comparison.tasks`) vaut 12.
+
+### 3.5 Version de Claude Code épinglée
+
+`drivers.cloud_implementer_current.binary_version` et `drivers.cloud_reviewer.binary_version` : commande `claude --version`, motif `^(\d+\.\d+\.\d+) \(Claude Code\)$`, version **2.1.285**, la seule observée pour les hypothèses de l'audit (hôte supposé) et pour les essais du bac à sable. Le lanceur la vérifie **avant toute réservation ni exécution** de `compare-exploration` (une fois par commande distincte, comme `check_binary_version` pour `omp`) : autre version, sortie illisible ou exécutable absent sont refusés (code 2). Le script opérateur la vérifie aussi avant de charger le moindre modèle. Haiku 5.5 demande Claude Code ≥ 2.1.293 d'après la documentation ; la version stable de la machine est la 2.1.285 : **pas de bras Haiku**, Haiku 4.5 n'est pas rejoué.
+
+## 4. Préalables
+
+PAT-120 est fusionné (état Foundry isolé des bras cloud, arrêt si le `registry.json` réel change). **Avant tout lancement** (pilote compris), l'opérateur sauvegarde, hors du dépôt, l'état Foundry aux **deux** emplacements du registre (`~/.config/foundry` et `$FOUNDRY_DATA` quand il l'exporte) : [`pat-19-v5-operator.md`](pat-19-v5-operator.md). **Machine dédiée** : le préflight existant (2 Gio / 35 %). Le lanceur ne charge aucun modèle ; il ne lance rien sans enveloppe valide : **plafond recommandé 150 exécutions cloud, 75 000 000 jetons premium, 100 000 s** (`envelope_recommended` ; **non appliqué mécaniquement : le chargeur ne le vérifie pas**, l'enveloppe de l'opérateur doit être réglée à ces valeurs, le lanceur n'applique que l'enveloppe qu'on lui donne).
+
+## 5. Limites
+
+- **Douze tâches déjà jouées en aval** : les six tâches de la comparaison v3 l'ont été dans `pat-19-x3compare-1`, les six du tamis v3 dans `pat-19-x4compare-1` (v4), et toutes ont **déjà été vues par l'explorateur local** (tamis v3, comparaison v3, comparaison v4) : le candidat et le budget ont été retenus sur le score de localisation de six d'entre elles. Le rapport de L leur est **probablement favorable** ; ce ne sont pas des tâches vierges.
+- **Tâches non indépendantes** (chiffres du manifeste et de l'instantané, section 5 du [protocole v4](pat-19-protocol-v4.md)) : 9 des 12 tâches modifient `tests/test_linear_tracker.py` ; la branche empilée des PR 24, 25, 26 et 27 met **quatre** des 12 tâches l'une sur l'autre (la base de la PR 27 contient le changement fusionné de la PR 24). Douze observations, pas douze mesures indépendantes ; une réussite ou un échec sur l'une renseigne sur les autres.
+- **Pas de bras Haiku** : ni explorateur cloud économique, ni exploration cloud en général (Haiku 5.5 demande Claude Code ≥ 2.1.293, non installé ; Haiku 4.5 n'est pas rejoué).
+- **Comparabilité avec la v4 non assurée** : bac à sable natif et mode `dontAsk` (6.4), audit révision 2, 12 tâches au lieu de 6, bundles sans `.claude`, version de Claude Code épinglée : la v5 ne se compare pas tâche à tâche à la v4, et l'effet de chaque changement, pris seul, n'est pas mesuré. L'économie et la qualité ne se comparent qu'**à l'intérieur** de la v5 (les deux bras tournent dans les mêmes conditions).
+- **Contexte observé** : 262144 pour qwen3.6 malgré `-c 65536` (résultats v3), une variable non contrôlée de plus.
+- **Retour de test** : limites de la section 3.1 du protocole v4 (valeurs attendues possibles dans le message, erreur de collecte sans information).
+- Aucune promotion, aucun modèle ou profil local activé : la campagne v5 conclut seulement sur l'usage 2 (exploration).
+
+## 6. Défauts connus avant la campagne : traités ou limites acceptées
+
+### 6.1 Traité (effet à vérifier par le pilote) : avertissement `git`
+
+Section 3.3. Statut : **traité, non vérifié**.
+
+### 6.2 Limite acceptée : dossier temporaire partagé entre essais
+
+`TMPDIR` ne peut pas être changé : une valeur modifiée a cassé le rafraîchissement OAuth de Claude Code (PAT-111 ; AGENTS.md R6 laisse `TMPDIR` intact). Le dossier temporaire par utilisateur est donc lisible et écrivable par le shell de **tous** les essais et processus du compte, et partagé entre eux (le bac à sable natif l'autorise en écriture par défaut). **Ce que l'audit voit et ne voit pas** : il relève un chemin ou une commande **nommés** dans un appel d'outil qui désignent une racine sensible (une autre tentative, la racine de travail, les tests cachés, le fichier de vérité, `~/.config`, un autre checkout) ; il ne voit **pas** un échange passant par un fichier du dossier temporaire dont le chemin est construit à l'exécution ou lu par un moyen que l'audit ne suit pas, ni le contenu qu'un essai y laisse pour un autre. Un essai peut donc, en principe, lire dans le dossier temporaire ce qu'un essai précédent y a déposé, **sans que l'audit le relève**. Fréquence : inconnue ; non établi qu'un bras l'ait fait. Cette limite vaut pour les deux bras.
+
+### 6.3 Limite acceptée : relecteur travaillant dans une copie `mktemp`
+
+Le modèle de relecteur (gabarit gelé, **non modifié**) peut se copier dans un dossier `mktemp` ; les relecteurs des essais T2 à T4 ne l'ont pas fait (non exercée), celui de la v4 l'avait fait. Sous la révision 2, un `cd` vers un dossier `mktemp` est signalé, donc l'enregistrement est **`review_unreadable`** (indécidé, jamais rejoué). **Accepté** ; le décompte des `review_unreadable` est **à rapporter par la campagne**, avec la lecture du transcript de chacun avant de les qualifier. Un taux élevé rendrait la mesure indécidable sans la rendre fausse.
+
+### 6.4 Limite acceptée : comportement des bras sous `dontAsk`
+
+Le mode `dontAsk` refuse ce qui demanderait une confirmation : une **commande composée avec redirection** est refusée (le relecteur de T2 a dû écrire `review.json` avec l'outil Write après un tel refus ; un refus pourrait empêcher un bras d'écrire `review.json` ou de lancer ses tests). **v5 n'est pas comparable à v4 sur le comportement**. À l'intérieur de la v5, les deux bras sont soumis aux mêmes conditions. Fréquence des refus sur une tâche longue : **inconnue**, c'est ce que le pilote regarde (7.2, critère b).
+
+### 6.5 Limite acceptée : sur-signalements de gestes ordinaires par la révision 2
+
+La révision 2 signale des gestes ordinaires : `source .venv/bin/activate`, `break` / `continue`, `trap`, `cd "$(…)"`, un mot `cd` dans un message de commit ou un heredoc. **Coût accepté.** Le rapport de la campagne lit **chaque drapeau sur le transcript** avant de le qualifier (vrai accès, sur-signalement, écho), et ne recalcule aucun verdict « sans les faux drapeaux » (la règle compte les drapeaux tels quels).
+
+### 6.6 Reste non établi (porté de PAT-124)
+
+Repris de la section « Bac à sable natif des bras cloud (PAT-124) » du document du lanceur et **non levé** par ce brouillon : comportement sur une tâche réelle longue (caches, `ruff`, fichiers temporaires) ; la **suite de tests du bundle** sous le bac à sable (un seul fichier de 6 tests a été exécuté) ; toute version de Claude Code autre que la 2.1.285 ; Glob et Grep (absents du pilote cloud) ; la règle de permission d'`Edit` hors de l'essai ; une racine de travail sous le home ; le rechargement à chaud d'un réglage de projet écrit pendant que le bras tourne ; des réglages de projet dans un dossier au-dessus du dossier de travail ; que le système refuse une écriture **du shell** dans le `.claude` du bundle (`denyWrite`) ; la fréquence des commandes refusées par `dontAsk` ; que le mode de permission n'est vérifié que si l'événement `init` le nomme ; autres lectures ouvertes (`/Volumes`, `/private/tmp`, `/Users/Shared`, `/Users`, le système).
+
+## 7. Pilote de l'instrument (avant le gel)
+
+### 7.1 Ce qu'est le pilote
+
+Un pilote **réel** (modèle local chargé, appels cloud réels) de l'instrument, **hors décision**, sous un **identifiant de campagne distinct** (`pat-19-x5pilot-1`, la campagne réelle étant `pat-19-x5compare-1`), un dossier d'état distinct, un nom de protocole distinct (`pat-19-protocol-v5-pilot`) et une étiquette de tâches distincte (`pat-19-v5-pilot`) : le lanceur refuse un identifiant de campagne sans `pilot` pour la configuration pilote et un identifiant avec `pilot` pour la configuration de la campagne ; le script opérateur refuse un dossier d'exécution qui contient des fichiers de l'autre. Une tâche (**PR 27**), les bras **A et L complets** (explorateur local, implémenteur, corrections, juge, relecteur). Configuration : `pat-19-campaign-v5-pilot.json` (identique à celle de la campagne, hors protocole, notes, liste de tâches, règle à 1 tâche et enveloppe de 16 exécutions). Le pilote **ne règle aucune valeur de la règle de décision** et ne compte pas dans le bilan.
+
+### 7.2 Critère d'arrêt, écrit avant le pilote
+
+L'instrument **n'est PAS utilisable** si l'une au moins de ces conditions est constatée ; le coordinateur en décide **en lisant les transcripts** (versés hors dépôt) et le journal :
+
+- **(a)** un enregistrement est écarté par l'instrument et non par la conduite du bras : un drapeau (`contaminated`, `review_unreadable` par drapeau du relecteur) dont le transcript montre que le bras est resté dans son essai ;
+- **(b)** un bras est empêché de travailler : commandes refusées par le mode de permission ou le bac à sable au point de ne pas pouvoir lancer les tests de son bundle ni produire de correctif ;
+- **(c)** le verdict du relecteur est illisible, ou le relecteur est signalé pour un geste que le bac à sable lui impose lui-même ;
+- **(d)** `audit.barrier` n'est pas `settings_transmitted_version_observed` pour un enregistrement mené à son terme ;
+- **(e)** le registre Foundry réel du mainteneur change (arrêt `foundry_state_changed`, code 4) ;
+- **(f)** l'exploration locale ne peut pas s'exécuter, ou son rapport est refusé pour une raison d'instrument.
+
+### 7.3 Ce que le pilote doit aussi regarder (sans que ce soit un critère d'arrêt)
+
+Si l'avertissement `git` a disparu des résultats d'outil et si le relecteur n'est plus signalé pour lui (3.3) ; si la suite de tests du bundle de la PR 27 s'exécute sous le bac à sable ; le nombre de commandes refusées par `dontAsk` ; que le script opérateur et la vérification de version de Claude Code passent ; que les chemins du home restent refusés à l'outil Read. Rien de cela n'est une valeur de la règle.
+
+### 7.4 Changements apportés à l'instrument par le pilote
+
+*Aucun à ce stade (brouillon, avant pilote).* Cette section listera, **avant le gel**, tout ce que le pilote a obligé à changer dans l'instrument, avec sa raison ; elle est vide tant que le pilote n'a pas été joué.
+
+### 7.5 Où va le résultat du pilote
+
+Comme `pat-19-runs/x4compare-1/` et **sans transcript brut** : `pat-19-runs/x5pilot-1/` avec `envelope.json`, `ledger-pat-19-x5pilot-1.jsonl`, `operator-pilot-*.log`, `report-pat-19-x5pilot-1.json`, `results-pat-19-x5pilot-1.jsonl`, `streams-manifest.json` (les flux bruts restent hors dépôt). Commande : [`pat-19-v5-operator.md`](pat-19-v5-operator.md).
+
+## 8. Statut documentaire (AGENTS.md R5)
+
+Mis à jour (brouillon) : ce fichier, [`pat-19-v5-operator.md`](pat-19-v5-operator.md) et `pat-19-v5-operator.sh`, la section « Protocole v5 (PAT-126, brouillon) » de [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md) (clés `exploration.comparison_tasks`, `exploration.comparison_task_set`, `drivers.*.binary_version` vérifiée pour les pilotes cloud, `isolation.allow_read_home`, protocoles `pat-19-protocol-v5` et `pat-19-protocol-v5-pilot`, constantes `PROTOCOL_V5*`, `V5_*`, fonction `_listed_tasks`), `pat-19-campaign-v5.json` et `pat-19-campaign-v5-pilot.json` (marqués BROUILLON), le CHANGELOG. Les clés `correction_feedback`, `exploration.fixed_candidate` et `isolation.private_attempt_root` sont désormais acceptées aussi sous un protocole postérieur à la v4 (elles restent refusées sous v1 à v3). **Non appliqué mécaniquement, dit explicitement** : le rechargement du modèle (attesté par l'opérateur), la sauvegarde de l'état Foundry (faite par l'opérateur), **le plafond de 150 exécutions cloud** (recommandation de `envelope_recommended`, que le chargeur ne vérifie pas), l'effet de `allow_read_home` sur `git` (non vérifié avant le pilote) et le fait que le système d'exploitation applique le bac à sable (jamais observé par le lanceur). Le détecteur d'artefacts de FOUNDRY-123 n'est pas livré : statut affirmé ici, vérifié en revue. **Reste à faire au gel** (phase 2) : corriger l'instrument selon le pilote, lister les changements en 7.4, geler ce protocole et sa configuration, l'ajouter à `FROZEN_PROTOCOLS`.

@@ -264,19 +264,19 @@ def test_the_revision_is_gated_by_an_allow_list_of_later_protocols(tmp_path):
         path.write_text(json.dumps(data), encoding="utf-8")
         with pytest.raises(lfr.RunnerError, match="after v4"):
             lfr.load_campaign(path)
-    for protocol in ("pat-19-protocol-v5", "pat-19-protocol-v12"):
+    for protocol in ("pat-19-protocol-v6", "pat-19-protocol-v12"):
         assert lfr.load_campaign(_config(tmp_path, 2, protocol=protocol, audit_revision=R2,
                                           cloud_native_sandbox=True))  # PAT-124: revision 2 needs the native sandbox
 
 
 def test_a_later_protocol_enables_the_revision_and_only_1_or_2_are_valid(tmp_path):
-    loaded = lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v5", audit_revision=R2,
+    loaded = lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v6", audit_revision=R2,
                                          cloud_native_sandbox=True))
     assert loaded["isolation"]["audit_revision"] == R2
-    assert lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v5", audit_revision=1))
+    assert lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v6", audit_revision=1))
     for bad in (0, 3, True, "2"):
         with pytest.raises(lfr.RunnerError, match="audit_revision must be"):
-            lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v5", audit_revision=bad))
+            lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v6", audit_revision=bad))
 
 
 def test_without_the_key_a_runner_keeps_revision_1_and_the_old_patch_capture(tmp_path):

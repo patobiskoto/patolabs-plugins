@@ -56,6 +56,17 @@ V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
 V4_KEYS = "correction_feedback, isolation.private_attempt_root, exploration.fixed_candidate and " \
           "exploration.comparison_task_group"
 FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4)
+# PAT-126: protocol v5 (DRAFT until its freeze) and its pilot. The pilot is the same instrument on one task, under a
+# protocol name and a campaign id of its own, so that its records can never be read as, or mixed with, the campaign's.
+PROTOCOL_V5 = "pat-19-protocol-v5"
+PROTOCOL_V5_PILOT = "pat-19-protocol-v5-pilot"
+V5_PROTOCOLS = (PROTOCOL_V5, PROTOCOL_V5_PILOT)
+V5_TASKS = (26, 38, 25, 42, 33, 37, 30, 83, 27, 24, 48, 19)  # the six v3 comparison tasks, then the six v3 screening ones
+V5_PILOT_TASKS = (27,)
+V5_TASK_SET = {PROTOCOL_V5: "pat-19-v5", PROTOCOL_V5_PILOT: "pat-19-v5-pilot"}  # label of ``task.set`` in the records
+V5_CLAUDE_CODE = "2.1.285"  # the only Claude Code version observed for the audit's assumptions and the sandbox trials
+V5_ALLOW_READ_HOME = (".config/git/ignore",)  # the one home file a v5 cloud shell may read (git's default excludes)
+COMPARISON_SET = "comparison"  # ``task.set`` of the comparison records of v1 to v4
 # PAT-123: ``isolation.audit_revision`` 2 (a protocol after v4 only) follows the working directory of a command
 # line, attributes a flag of the reviewer's session to the review, and records a path that does not exist apart
 AUDIT_REVISION = 2
@@ -82,7 +93,7 @@ NATIVE_GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}  
 NATIVE_REFUSED_FLAGS = ("--settings", "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions",
                         "--add-dir", "--allowedTools", "--allowed-tools", "--mcp-config", "--plugin-dir")
 NATIVE_TRIAL_KEY = "_native_trial"  # set in memory by the trial verb only; refused in a config file
-_PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)")
+_PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)|pat-19-protocol-v5-pilot")
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
@@ -290,12 +301,19 @@ def load_campaign(path: Path) -> dict[str, Any]:
         raise RunnerError(f"{path}: isolation.allow_read_home needs a list of relative home entries")
     if data.get("protocol") == PROTOCOL_V4 and data["schema"] != CAMPAIGN_SCHEMA_V2:
         raise RunnerError(f"{path}: protocol v4 requires the exploration schema {CAMPAIGN_SCHEMA_V2}")
+    if data.get("protocol") in V5_PROTOCOLS and data["schema"] != CAMPAIGN_SCHEMA_V2:
+        raise RunnerError(f"{path}: protocol v5 requires the exploration schema {CAMPAIGN_SCHEMA_V2}")
     later = bool(_PROTOCOL_AFTER_V4.fullmatch(str(data.get("protocol"))))
-    if data.get("protocol") != PROTOCOL_V4 and (
-            "correction_feedback" in data or ("private_attempt_root" in iso and not later)
+    # PAT-126: the v4 keys are also accepted by a protocol after v4 (v5); the two comparison-list keys only by it
+    if not later and data.get("protocol") != PROTOCOL_V4 and (
+            "correction_feedback" in data or "private_attempt_root" in iso
             or {"fixed_candidate", "comparison_task_group"} & set(data.get("exploration") or {})):
         raise RunnerError(f"{path}: {V4_KEYS} are accepted only under protocol {PROTOCOL_V4} "
                           "(isolation.private_attempt_root also under pat-19-protocol-v5 or later)")
+    if not later and {"comparison_tasks", "comparison_task_set"} & set(data.get("exploration") or {}):
+        raise RunnerError(f"{path}: exploration.comparison_tasks and exploration.comparison_task_set are accepted "
+                          f"only under a protocol after v4 (pat-19-protocol-v5 or later), not under "
+                          f"{data.get('protocol')!r}")
     if type(iso.get("private_attempt_root", False)) is not bool:
         raise RunnerError(f"{path}: isolation.private_attempt_root must be a boolean")
     if iso.get("audit_revision", 1) not in (1, AUDIT_REVISION) or type(iso.get("audit_revision", 1)) is not int:
@@ -392,6 +410,19 @@ def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
     if group not in (None, "screening", "comparison") or (fixed is not None and fixed not in data["candidates"]):
         raise RunnerError(f"{path}: exploration.comparison_task_group is screening or comparison and "
                           "exploration.fixed_candidate a declared candidate")
+    listed, label = ((data.get("exploration") or {}).get(k) for k in ("comparison_tasks", "comparison_task_set"))
+    if (listed is None) != (label is None):
+        raise RunnerError(f"{path}: exploration.comparison_tasks and exploration.comparison_task_set go together")
+    if listed is not None:  # PAT-126: an explicit, ordered list of corpus PRs and the label of its records
+        if group is not None or not isinstance(listed, list) or not listed or len(set(listed)) != len(listed) \
+                or not all(type(n) is int and n > 0 for n in listed):
+            raise RunnerError(f"{path}: exploration.comparison_tasks is a non-empty list of distinct PR numbers, "
+                              "and replaces exploration.comparison_task_group")
+        if not isinstance(label, str) or not _ID.match(label) or label in (COMPARISON_SET, "screening"):
+            raise RunnerError(f"{path}: exploration.comparison_task_set is a plain identifier of its own "
+                              "(not 'comparison' nor 'screening': the labels of the earlier protocols)")
+    if data.get("protocol") in V5_PROTOCOLS:  # the v5 coordinates are pinned (a drift would be a v6)
+        _check_v5_pins(path, data, frozen, fixed, listed, label)
     if data.get("protocol") == PROTOCOL_V4:  # the v4 coordinates are pinned (a drift would be a v5)
         if tuple(frozen) != V4_CANDIDATES or tuple(data["candidates"]) != V4_CANDIDATES or fixed != V4_CANDIDATES[0]:
             raise RunnerError(f"{path}: protocol v4 freezes exactly the candidate {list(V4_CANDIDATES)}")
@@ -425,6 +456,46 @@ def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
             denied = argv[argv.index("--disallowedTools") + 1:] if "--disallowedTools" in argv else []
             if not {"Edit", "Write"} <= set(denied):
                 raise RunnerError(f"{path}: driver {name}: a cloud explorer must deny Edit and Write")
+
+
+def _check_v5_pins(path: Path, data: Mapping[str, Any], frozen: Sequence[str], fixed: Any,
+                   tasks: Any, label: Any) -> None:
+    """The coordinates protocol v5 (and its one-task pilot) pins at load (PAT-126): everything v4 pinned, the
+    instrument keys of PAT-121/123/124, the explicit task list, the version of Claude Code and the one home file the
+    cloud shell may read. The pilot differs from the campaign by its protocol name, its task list and its label."""
+    protocol, expl, iso = data["protocol"], data.get("exploration") or {}, data.get("isolation") or {}
+    wanted = V5_TASKS if protocol == PROTOCOL_V5 else V5_PILOT_TASKS
+    if tuple(frozen) != V4_CANDIDATES or tuple(data["candidates"]) != V4_CANDIDATES or fixed != V4_CANDIDATES[0]:
+        raise RunnerError(f"{path}: protocol v5 freezes exactly the candidate {list(V4_CANDIDATES)}")
+    if any(data["bounds"][k] != v for k, v in V3_BOUNDS.items()) or data["bounds"]["max_correction_rounds"] != 2:
+        raise RunnerError(f"{path}: protocol v5 freezes the explorer bounds at {V3_BOUNDS} and 2 corrections")
+    if expl.get("one_task_per_launch") is not True:
+        raise RunnerError(f"{path}: protocol v5 requires exploration.one_task_per_launch true")
+    if tasks is None or tuple(tasks) != wanted or label != V5_TASK_SET[protocol]:
+        raise RunnerError(f"{path}: protocol {protocol} requires exploration.comparison_tasks {list(wanted)} (in "
+                          f"this order) and exploration.comparison_task_set {V5_TASK_SET[protocol]!r}")
+    feedback = data.get("correction_feedback") or {}
+    if {k: feedback.get(k) for k in V4_FEEDBACK} != V4_FEEDBACK:
+        raise RunnerError(f"{path}: protocol v5 requires correction_feedback {V4_FEEDBACK}")
+    if iso.get("private_attempt_root") is not True or iso.get(NATIVE_SANDBOX_KEY) is not True \
+            or iso.get("audit_revision") != AUDIT_REVISION:
+        raise RunnerError(f"{path}: protocol v5 requires isolation.private_attempt_root true, "
+                          f"isolation.{NATIVE_SANDBOX_KEY} true and isolation.audit_revision {AUDIT_REVISION}")
+    if not set(iso.get("allow_read_home", [])) <= set(V5_ALLOW_READ_HOME):
+        raise RunnerError(f"{path}: protocol v5 allows reading nothing of the home but {list(V5_ALLOW_READ_HOME)} "
+                          "(isolation.allow_read_home)")
+    rule = data["rules"]["exploration_comparison"]
+    if rule["tasks"] != len(wanted) or rule["premium_per_accepted_ratio_max"] != 0.85:
+        raise RunnerError(f"{path}: protocol v5 requires rules.exploration_comparison.tasks {len(wanted)} and "
+                          "premium_per_accepted_ratio_max 0.85")
+    for name, driver in data["drivers"].items():
+        if driver["kind"] == "cloud_explorer":
+            raise RunnerError(f"{path}: protocol v5 has no cloud explorer (no arm E): driver {name}")
+        pin = driver.get("binary_version") or {}
+        if driver["kind"] in CLOUD_KINDS and (pin.get("version") != V5_CLAUDE_CODE
+                                              or list(pin.get("command") or ()) != ["claude", "--version"]):
+            raise RunnerError(f"{path}: protocol v5 pins Claude Code {V5_CLAUDE_CODE} on every cloud driver "
+                              f"(binary_version, command ['claude', '--version']): driver {name}")
 
 
 def _check_driver_pins(path: Path, name: str, driver: Mapping[str, Any]) -> None:
@@ -3060,6 +3131,12 @@ class Runner:
         if (self.state_dir / NATIVE_TRIAL_MARKER).exists() and campaign.get(NATIVE_TRIAL_KEY) is not True:
             raise RunnerError(f"{self.state_dir} holds a native-sandbox trial (marker {NATIVE_TRIAL_MARKER}): "
                               "a campaign never shares a state directory with a trial")
+        # PAT-126: the pilot of protocol v5 and its campaign never share a campaign id (results and ledger files)
+        pilot = campaign.get("protocol") == PROTOCOL_V5_PILOT
+        if campaign.get("protocol") in V5_PROTOCOLS and pilot != ("pilot" in envelope["campaign_id"]):
+            raise RunnerError(f"protocol {campaign['protocol']} needs a campaign id "
+                              f"{'containing' if pilot else 'NOT containing'} 'pilot' (the pilot is never mixed with "
+                              f"the campaign): got {envelope['campaign_id']!r}")
         self.results_path = self.state_dir / f"results-{envelope['campaign_id']}.jsonl"
         self.seen = self._scan_results()  # refuses a mixed or foreign state before anything starts
         self.prior_ledger: list[dict[str, Any]] = []
@@ -3106,6 +3183,8 @@ class Runner:
         self.barriers: dict[str, str] = {}  # what the launcher verified of the barrier, by audited stream log
         self.roles: dict[str, str] = {}  # role of each reserved cloud session
         self.fixed_candidate = (campaign.get("exploration") or {}).get("fixed_candidate")
+        # PAT-126 (a protocol after v4 only): the ``task.set`` label of the comparison records ("comparison" before)
+        self.compare_set = _compare_set(campaign)
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
         self.dedicated: dict[str, Any] | None = None  # observed values of the last dedicated-machine check
         self.truths: dict[Any, dict[str, Any]] = {}  # localization ground truth of each task, by PR
@@ -4154,13 +4233,13 @@ class Runner:
                             ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, bool]:
         """Exploration of arm L: ``(records, report, skip)``; ``skip`` leaves the arm undecided (a
         contaminated explorer, or an exploration cut twice): no implementation is spent on it."""
-        state, info = self._local_state("L", task, "comparison", candidate_id, "explore", 0)
+        state, info = self._local_state("L", task, self.compare_set, candidate_id, "explore", 0)
         if state == "undecided":
             return [], None, True
         if state == "decided":  # resume: the report was kept on the record
             skip = bool(info.get("contaminated")) or info.get("outcome") in LOST_OUTCOMES
             return [], (None if skip else (info.get("exploration") or {}).get("report")), skip
-        record = self._emit(self.explore_local(task, candidate_id, driver_id, "L", "comparison",
+        record = self._emit(self.explore_local(task, candidate_id, driver_id, "L", self.compare_set,
                                                segment="explore", replay_of=info))
         return [record], record["exploration"]["report"], bool(record.get("contaminated"))
 
@@ -4171,7 +4250,7 @@ class Runner:
         replayed once (it passes the caps again); a recorded one is never replayed."""
         prior = [r for r in self.prior_records if r.get("record_type") == "attempt"
                  and (r["path"], r["task"]["pr"], r["task"].get("set"), r.get("segment")) ==
-                 ("E", task["pr"], "comparison", "explore")]
+                 ("E", task["pr"], self.compare_set, "explore")]
         replay = None
         if prior:
             kept = [r for r in prior if r.get("outcome") not in LOST_OUTCOMES]
@@ -4186,7 +4265,7 @@ class Runner:
                       "reason": prior[0].get("reason"), "cloud_sessions": list(prior[0]["cloud_sessions"])}
         truth = self._truth(task)
         self._full_budget_left()
-        self._claim("E", task, "comparison", None, "explore", 0, 1 if replay else 0)
+        self._claim("E", task, self.compare_set, None, "explore", 0, 1 if replay else 0)
         mark = len(self.sessions)
         by_role: dict[str, Any] = {}
         models: dict[str, dict[str, int | None]] = {}
@@ -4225,7 +4304,7 @@ class Runner:
             if contamination:
                 unknown["contaminated"] = _CONTAMINATED
             record = self._emit({
-                "record_type": "attempt", "task": _task_ref(task, "comparison"), "path": "E",
+                "record_type": "attempt", "task": _task_ref(task, self.compare_set), "path": "E",
                 "segment": "explore", "attempt": 0, "outcome": "contaminated" if contamination else "explored",
                 "judge": None, "accepted": None, "review": {"rounds": 0, "verdicts": []},
                 "wall_seconds": round(seconds, 3), "cloud_executions": len(spent), "cloud_sessions": spent,
@@ -4241,7 +4320,7 @@ class Runner:
                 **({"replay_of": replay} if replay else {})})
         except CapReached:  # the cut execution is recorded: the task is not decided, never a refusal
             spent = self.sessions[mark:]
-            self._emit({"record_type": "attempt", "task": _task_ref(task, "comparison"), "path": "E",
+            self._emit({"record_type": "attempt", "task": _task_ref(task, self.compare_set), "path": "E",
                         "segment": "explore", "attempt": 0, "outcome": "stopped_by_cap", "judge": None,
                         "accepted": None, "review": {"rounds": 0, "verdicts": []}, "wall_seconds": 0.0,
                         "cloud_executions": len(spent), "cloud_sessions": spent,
@@ -4249,11 +4328,25 @@ class Runner:
                         "local": None, "machine": None, "unknown": {"stopped_by_cap": "cap reached"}})
             raise
         except BaseException as exc:  # tool failure, Ctrl-C, SIGTERM, anything: never silent
-            self._tool_error(task, "E", "explore", 0, "comparison", exc, wall=seconds,
+            self._tool_error(task, "E", "explore", 0, self.compare_set, exc, wall=seconds,
                              sessions=self.sessions[mark:], by_role=by_role, by_model=models, replay_of=replay,
                              contamination=self._audited_since(mark))
             raise
         return [record], None if contamination else report, bool(contamination)
+
+    def _check_cloud_binaries(self, arms: Sequence[str]) -> None:
+        """PAT-126: a cloud driver that declares ``binary_version`` (protocol v5 pins Claude Code) is checked with its
+        read-only version command before the first claim or reservation of the launch, once per distinct command; any
+        other version, or an unreadable one, is refused. No-op for a driver that declares nothing (v1 to v4)."""
+        env = os.environ if self.host_env is None else self.host_env
+        done: set[tuple[str, ...]] = set()
+        for driver_id in dict.fromkeys([IMPLEMENTER_DRIVER[a] for a in arms if a in IMPLEMENTER_DRIVER]
+                                       + [REVIEWER_DRIVER] + ([CLOUD_EXPLORER_DRIVER] if "E" in arms else [])):
+            driver = self.campaign["drivers"].get(driver_id)
+            command = tuple(((driver or {}).get("binary_version") or {}).get("command") or ())
+            if driver and command and command not in done:
+                done.add(command)
+                check_binary_version(self._driver(driver_id), env)
 
     def compare_exploration(self, tasks: Sequence[Mapping[str, Any]], candidate_id: str,
                             arms: Sequence[str] = EXPLORE_ARMS, driver_id: str = LOCAL_EXPLORER_DRIVER
@@ -4269,16 +4362,18 @@ class Runner:
         start-of-run preflight is ledgered ``phase: "start"``; the one right before a local exploration is
         not run again when this launcher wrote nothing to the ledger since (it would be the same check twice
         in a row, and two preflights with nothing between them read as a launcher killed in between)."""
-        if self.campaign.get("protocol") == PROTOCOL_V4 and not set(arms) <= set(V4_ARMS):
-            raise RunnerError(f"protocol v4 has arms {list(V4_ARMS)} only (no Haiku arm): refused before any "
-                              f"claim or spend, got {list(arms)}")
+        protocol = self.campaign.get("protocol")
+        if protocol in (PROTOCOL_V4, *V5_PROTOCOLS) and not set(arms) <= set(V4_ARMS):
+            raise RunnerError(f"protocol {'v4' if protocol == PROTOCOL_V4 else 'v5'} has arms {list(V4_ARMS)} only "
+                              f"(no Haiku arm): refused before any claim or spend, got {list(arms)}")
+        self._check_cloud_binaries(arms)  # PAT-126: the pinned Claude Code version, before any claim or spend
         out: list[dict[str, Any]] = []
         limits = self.campaign["exploration"]["report_render_limits"]
         checked: int | None = None  # ledger position right after the start-of-run preflight
         if "L" in arms:  # refused before any claim or reservation
             self._check_selected(candidate_id)
             self._check_harness(driver_id)
-            if any(self._local_state("L", t, "comparison", candidate_id, "explore", 0)[0] in ("fresh", "replay")
+            if any(self._local_state("L", t, self.compare_set, candidate_id, "explore", 0)[0] in ("fresh", "replay")
                    for t in tasks):
                 self.preflight(candidate_id, phase="start")  # a busy machine is refused before any cloud spend
                 checked = self.ledger.appended
@@ -4287,24 +4382,24 @@ class Runner:
                 played = len(out)
                 for arm in arms:
                     if arm == "A":
-                        out += self.cloud_path(task, "A", "comparison")
+                        out += self.cloud_path(task, "A", self.compare_set)
                         continue
                     if (arm == "L" and self.ledger.appended != checked
-                            and self._local_state("L", task, "comparison", candidate_id, "explore",
+                            and self._local_state("L", task, self.compare_set, candidate_id, "explore",
                                                   0)[0] in ("fresh", "replay")):
                         self.preflight(candidate_id)  # right before each local exploration, after the cloud work
                     explored, report, skip = (self._explore_step_local(task, candidate_id, driver_id)
                                               if arm == "L" else self._explore_step_cloud(task))
                     out += explored
                     if not skip:
-                        out += self.cloud_path(task, arm, "comparison", statement_extra=(
+                        out += self.cloud_path(task, arm, self.compare_set, statement_extra=(
                             lfe.render_report_section(self._report_for_arm(report), limits) if report else ""))
                 if self.one_task and len(out) > played:  # v3: one task per launch (reload between launches)
                     # conservative: a later task with an arm that has no record yet may still have work; a
                     # launch that then plays nothing says "no", so the operator loop always ends
                     self.work_remains = any(
                         not all(any(r.get("record_type") == "attempt" and r["path"] == arm
-                                    and r["task"]["pr"] == t["pr"] and r["task"].get("set") == "comparison"
+                                    and r["task"]["pr"] == t["pr"] and r["task"].get("set") == self.compare_set
                                     for r in self.prior_records) for arm in arms)
                         for t in tasks[index + 1:])
                     break
@@ -4707,6 +4802,11 @@ def _classes(tokens: Mapping[str, int | None] | None) -> dict[str, int | None] |
     return None if tokens is None else dict(tokens)
 
 
+def _compare_set(campaign: Mapping[str, Any]) -> str:
+    """``task.set`` of the comparison records: ``exploration.comparison_task_set`` (protocol v5), else ``comparison``."""
+    return (campaign.get("exploration") or {}).get("comparison_task_set") or COMPARISON_SET
+
+
 def _task_ref(task: Mapping[str, Any], task_set: str) -> dict[str, Any]:
     return {"pr": task["pr"], "issue": task.get("issue"), "set": task_set}
 
@@ -4926,7 +5026,8 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                   for h in open_holes if h["kind"] == "attempt_started" and h["path"] == screen_path
                   and (h["path"], h["pr"], h["set"], h["candidate"], h["segment"],
                        h["attempt"]) not in counted})
-    comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
+    comparison = [r for r in attempts if r["task"]["set"] == (
+        _compare_set(campaign) if exploring else COMPARISON_SET)]
     if exploring:
         fixed = (campaign.get("exploration") or {}).get("fixed_candidate")
         if fixed is not None:  # protocol v4: no screening, the candidate is fixed by the protocol
@@ -5568,6 +5669,19 @@ def _tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], group: str)
     return [by_pr[t["pr"]] for t in manifest[group]]
 
 
+def _listed_tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], prs: Sequence[int]
+                  ) -> list[dict[str, Any]]:
+    """PAT-126: the tasks of ``exploration.comparison_tasks``, in the listed order. Each PR must belong to the
+    corpus manifest (its ``comparison`` or ``screening`` group) and to the snapshot; otherwise the launch is refused
+    before any claim."""
+    corpus = {t["pr"] for g in ("comparison", "screening") for t in manifest.get(g, [])}
+    by_pr = {t["pr"]: t for t in snapshot["prs"]}
+    missing = [n for n in prs if n not in corpus or n not in by_pr]
+    if missing:
+        raise RunnerError(f"comparison task(s) {missing} are not in the corpus manifest and the snapshot")
+    return [by_pr[n] for n in prs]
+
+
 def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> int:
     parser = argparse.ArgumentParser(prog="foundry.local_first_runner", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -5714,7 +5828,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         for cid in candidates:
             if cid not in campaign["candidates"]:
                 raise RunnerError(f"unknown candidate {cid}")
-        default = ",".join(V4_ARMS) if campaign.get("protocol") == PROTOCOL_V4 else (
+        default = ",".join(V4_ARMS) if campaign.get("protocol") in (PROTOCOL_V4, *V5_PROTOCOLS) else (
             "A,L,E" if mode == "compare_exploration" else "A,B,C")
         paths = (default if args.paths is None else args.paths).split(",") if mode in CLOUD_MODES else []
         if not set(paths) <= set(EXPLORE_ARMS if mode == "compare_exploration" else PATHS):
@@ -5742,8 +5856,10 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         elif mode == "screen_exploration":
             runner.screen_exploration(_tasks(manifest, snapshot, "screening"), candidates)
         elif mode == "compare_exploration":
+            listed = campaign["exploration"].get("comparison_tasks")  # v5: an explicit, ordered list of PRs
             group = campaign["exploration"].get("comparison_task_group", "comparison")  # v4: "screening"
-            runner.compare_exploration(_tasks(manifest, snapshot, group), candidates[0], paths)
+            runner.compare_exploration(_listed_tasks(manifest, snapshot, listed) if listed
+                                       else _tasks(manifest, snapshot, group), candidates[0], paths)
         else:
             runner.compare(_tasks(manifest, snapshot, "comparison"), candidates[0], paths, args.harness)
         if runner.stopped and runner.stopped.startswith("cap_reached"):
