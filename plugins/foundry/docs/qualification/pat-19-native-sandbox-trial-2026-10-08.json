@@ -14,18 +14,24 @@
   "campaign_config": "pat-19-campaign-v4.json",
   "claude_code_version": "2.1.285",
   "date": "2026-10-08",
+  "masked_rules_note": "rules such as Read(/<attempt>/**) stand for absolute rules Read(//<absolute path>/**) (the first slash of a rule is the gitignore-style anchor, the second the filesystem root)",
   "not_established_by_this_trial": [
     "behaviour on a long real task (caches, ruff, temporary files)",
     "the minimum Claude Code version (one version observed)",
     "Glob and Grep: absent from a driver whose tools are Bash, Edit, Read, Write; a driver that enabled them would need its own trial",
     "the Edit permission rule outside the attempt (the Edit tool requires a prior Read, which is refused)",
-    "the operating system enforcing the sandbox for a command the probe did not run"
+    "the operating system enforcing the sandbox for a command the probe did not run, in particular a shell write outside the attempt refused by the OS rather than by dontAsk (P9 was refused by dontAsk first)",
+    "a work root under the home (the trial's was outside it): there the home rule is omitted and file tools hold only by blockReadsOutsideWorkingDirectories (Read) and dontAsk (Write, Edit)",
+    "project settings written into the bundle's .claude by the Write tool or the shell (P14, P15 added to the tool after this run, not played)",
+    "a compound command with a redirection is refused by dontAsk (seen for the reviewer): frequency on a long task unknown"
   ],
   "observations": {
     "P10": {
       "as_expected": true,
       "expected": "refused",
+      "judged_on": "tool_result, and the disk in the original run (same verdict)",
       "observed": "refused",
+      "refused_by": "dontAsk_mode",
       "what": "Write tool writes outside the attempt"
     },
     "P11": {
@@ -38,6 +44,7 @@
     "P12": {
       "as_expected": true,
       "expected": "allowed",
+      "judged_on": "tool_result, and the disk in the original run (same verdict)",
       "observed": "allowed",
       "what": "Write tool inside the attempt's own scratch"
     },
@@ -63,12 +70,14 @@
       "as_expected": true,
       "expected": "refused",
       "observed": "refused",
+      "refused_by": "os_sandbox",
       "what": "shell reads another attempt"
     },
     "P4": {
       "as_expected": true,
       "expected": "refused",
       "observed": "refused",
+      "refused_by": "permission_rule",
       "what": "Read tool reads another attempt"
     },
     "P5": {
@@ -89,18 +98,23 @@
       "as_expected": true,
       "expected": "refused",
       "observed": "refused",
+      "refused_by": "os_sandbox",
       "what": "shell reads a file of the home"
     },
     "P8": {
       "as_expected": true,
       "expected": "refused",
       "observed": "refused",
+      "refused_by": "permission_rule",
       "what": "Read tool reads a file of the home"
     },
     "P9": {
       "as_expected": true,
       "expected": "refused",
+      "judged_on": "tool_result, and the disk in the original run (same verdict)",
+      "note": "refused by the dontAsk permission mode before the command ran: the operating system sandbox on a write outside the attempt was not observed by this probe (P16 is meant to)",
       "observed": "refused",
+      "refused_by": "dontAsk_mode",
       "what": "shell writes outside the attempt"
     },
     "session_authenticated": "yes"

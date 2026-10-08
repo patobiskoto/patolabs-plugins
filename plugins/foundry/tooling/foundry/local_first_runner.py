@@ -73,6 +73,7 @@ BARRIERS = (AUDIT_BARRIER, BARRIER_SETTINGS, BARRIER_OBSERVED)
 # attempt directory would prompt, so it is denied (``bypassPermissions`` let the Write tool create a file next door).
 NATIVE_SANDBOX_KEY = "cloud_native_sandbox"
 NATIVE_PERMISSION_MODE = "dontAsk"
+NATIVE_TRIAL_MARKER = ".pat19-native-sandbox-trial"  # in the state directory of a trial, never of a campaign
 NATIVE_GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}  # added to the child's environment
 _PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)")
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
@@ -219,6 +220,12 @@ def _check_native_sandbox(path: Any, data: Mapping[str, Any], later: bool) -> No
                           f"isolation.{NATIVE_SANDBOX_KEY} true (the lexical audit is a journal, not a barrier)")
     if native:
         for name, driver in data["drivers"].items():
+            clash = [a for a in driver["argv"] if driver["kind"] in CLOUD_KINDS and (
+                a.startswith(("--permission-mode=", "--settings", "--dangerously-skip-permissions",
+                              "--allow-dangerously-skip-permissions")))]
+            if clash:
+                raise RunnerError(f"{path}: isolation.{NATIVE_SANDBOX_KEY}: cloud driver {name} may not carry "
+                                  f"{clash[0].split('=')[0]} (the launcher sets the mode and the settings itself)")
             if driver["kind"] in CLOUD_KINDS and (driver.get("sandbox", True) is not False
                                                   or (driver.get("stream") or {}).get("format")
                                                   != "claude-stream-json"):
@@ -898,7 +905,7 @@ def isolated_environment(driver: Mapping[str, Any], scratch: Path,
 
 def native_sandbox_settings(*, attempt_dir: Path, work_root: Path, home: str | Path,
                             deny_read: Sequence[Path] = (), allow_read: Sequence[Path] = (),
-                            allow_write: Sequence[Path] = ()) -> dict[str, Any]:
+                            allow_write: Sequence[Path] = (), protect: Sequence[Path] = ()) -> dict[str, Any]:
     """The ``--settings`` object of one cloud execution under ``isolation.cloud_native_sandbox`` (PAT-124). Pure.
     Every path is absolute and resolved (``"."`` does not designate the working directory in ``--settings``).
 
@@ -911,7 +918,11 @@ def native_sandbox_settings(*, attempt_dir: Path, work_root: Path, home: str | P
     scratch is a sibling of the bundle), ``Edit``/``Read`` allow rules cover the attempt directory only (an ``Edit``
     rule governs Write too; a ``Read`` rule governs Glob and Grep), and ``Read``/``Edit`` deny rules cover the
     sensitive paths that do not contain the attempt directory. ``allowUnsandboxedCommands`` false and
-    ``failIfUnavailable`` true: no command runs outside the sandbox, and none if it cannot start."""
+    ``failIfUnavailable`` true: no command runs outside the sandbox, and none if it cannot start. ``protect`` (the
+    bundle's ``.claude`` directory): denied to shell writes (``denyWrite``) and to the Edit/Write tools, so the arm
+    cannot widen its own settings through the project scope that the drivers still load (``--setting-sources
+    project,local``; arrays merge across scopes). A deny rule on a FILE entry (``.netrc``, ``*_history``) is emitted
+    both bare and with ``/**`` (in gitignore semantics ``p/**`` covers only the content of a directory)."""
     real = os.path.realpath
     attempt, work, hm = real(attempt_dir), real(work_root), real(home)
 
@@ -925,22 +936,28 @@ def native_sandbox_settings(*, attempt_dir: Path, work_root: Path, home: str | P
     deny_sandbox = list(dict.fromkeys([hm, work, *extra]))
     deny_rules = [p for p in dict.fromkeys([hm, *(real(p) for p in deny_read), *extra]) if not covers(p, attempt)
                   and p != "/"]
+    guarded = [real(p) for p in protect]
 
     def rule(tool: str, path: str) -> str:
         return f"{tool}(//{path.lstrip('/')}/**)"
+
+    def rules(tool: str, path: str) -> list[str]:
+        return [f"{tool}(//{path.lstrip('/')})", rule(tool, path)]
 
     return {
         "permissions": {
             "blockReadsOutsideWorkingDirectories": True,
             "additionalDirectories": [attempt],
             "allow": [rule("Read", attempt), rule("Edit", attempt)],
-            "deny": [rule(tool, p) for p in deny_rules for tool in ("Read", "Edit")]},
+            "deny": [r for p in deny_rules for tool in ("Read", "Edit") for r in rules(tool, p)]
+            + [r for p in guarded for r in rules("Edit", p)]},
         "sandbox": {
             "enabled": True, "allowUnsandboxedCommands": False, "failIfUnavailable": True,
             "autoAllowBashIfSandboxed": True,
             "filesystem": {"denyRead": deny_sandbox,
                            "allowRead": list(dict.fromkeys([attempt, *(real(p) for p in allow_read)])),
-                           "allowWrite": list(dict.fromkeys([attempt, *(real(p) for p in allow_write)]))}}}
+                           "allowWrite": list(dict.fromkeys([attempt, *(real(p) for p in allow_write)])),
+                           **({"denyWrite": guarded} if guarded else {})}}}
 
 
 def with_native_sandbox(argv: Sequence[str], settings: Mapping[str, Any]) -> list[str]:
@@ -3029,6 +3046,9 @@ class Runner:
         self.provenance = {"campaign_sha256": given.get("campaign_sha256") or config_digest(campaign),
                            "manifest_sha256": given.get("manifest_sha256"),
                            "envelope_sha256": envelope["sha256"]}
+        if (self.state_dir / NATIVE_TRIAL_MARKER).exists() and campaign.get("_native_trial") is not True:
+            raise RunnerError(f"{self.state_dir} holds a native-sandbox trial (marker {NATIVE_TRIAL_MARKER}): "
+                              "a campaign never shares a state directory with a trial")
         self.results_path = self.state_dir / f"results-{envelope['campaign_id']}.jsonl"
         self.seen = self._scan_results()  # refuses a mixed or foreign state before anything starts
         self.prior_ledger: list[dict[str, Any]] = []
@@ -3357,6 +3377,9 @@ class Runner:
         attempt_dir = self.work_root / (f"private-{name}" if self.private_root else ".") / name
         bundle = lfc.build_bundle(self.repo, task, attempt_dir / "bundle")
         try:
+            if self.native_sandbox:  # PAT-124: no project settings of the corpus, of an arm or of a patch in a cloud session
+                _strip_claude_dirs(bundle)
+                patch = _without_claude_dirs(patch)[0] if patch else patch
             statement = bundle / "TASK.md"
             statement.write_text(statement.read_text(encoding="utf-8")
                                  + self.campaign["statement_footer"] + statement_extra, encoding="utf-8")
@@ -3620,7 +3643,7 @@ class Runner:
             native = native_sandbox_settings(
                 attempt_dir=attempt_dir, work_root=self.work_root, home=self._home(), deny_read=deny,
                 allow_read=[Path(self._home()) / rel for rel in iso.get("allow_read_home", [])],
-                allow_write=extra)
+                allow_write=extra, protect=[bundle / ".claude"])
         budget = min(self.campaign["bounds"][seconds_key],
                      max(self.ledger.remaining_seconds(), 0))
         reserved = False
@@ -4618,6 +4641,19 @@ def _without_claude_dirs(patch: bytes) -> tuple[bytes, list[str]]:
         else:
             kept.append(section)
     return b"".join(kept), dropped
+
+
+def _strip_claude_dirs(bundle: Path) -> None:
+    """Remove every ``.claude`` directory of a fresh bundle from the tree and the index (the caller amends the base
+    commit, so the base holds none and a later diff shows no deletion). PAT-124, under the native sandbox key only:
+    Claude Code loads ``<cwd>/.claude/settings*.json`` (``--setting-sources project,local``) and merges arrays."""
+    for root, dirs, _files in os.walk(bundle):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for d in [d for d in dirs if d == ".claude"]:
+            path = Path(root) / d
+            _git_in(bundle, "rm", "-rq", "--cached", "--ignore-unmatch", "--", str(path.relative_to(bundle)))
+            shutil.rmtree(path, ignore_errors=True)
+        dirs[:] = [d for d in dirs if d != ".claude"]
 
 
 def _apply_patch(bundle: Path, patch: bytes) -> None:

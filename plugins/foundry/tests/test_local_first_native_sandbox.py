@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -95,7 +96,8 @@ def _zone(tmp_path, in_home=False):
     for d in (home / ".ssh", home / ".config" / "foundry", attempt / "bundle", attempt / "scratch",
               tmp_path / "state", tmp_path / "repo"):
         d.mkdir(parents=True, exist_ok=True)
-    deny = [home / ".ssh", home / ".config" / "foundry", tmp_path / "state", tmp_path / "repo"]
+    (home / ".netrc").write_text("x")  # a FILE entry of the sensitive list
+    deny = [home / ".ssh", home / ".netrc", home / ".config" / "foundry", tmp_path / "state", tmp_path / "repo"]
     return home, work, attempt, deny
 
 
@@ -116,6 +118,8 @@ def test_the_settings_use_absolute_paths_and_deny_home_and_work_root(tmp_path):
         for path in (home, home / ".ssh", tmp_path / "state", tmp_path / "repo"):
             assert f"{tool}(//{real(path).lstrip('/')}/**)" in p["deny"]
         assert f"{tool}(//{real(work).lstrip('/')}/**)" not in p["deny"]  # it holds the attempt: deny beats allow
+        for rule in (f"{tool}(//{real(home / '.netrc').lstrip('/')})", f"{tool}(//{real(home / '.netrc').lstrip('/')}/**)"):
+            assert rule in p["deny"]  # N1: a FILE entry is denied bare and with /** (p/** covers only a directory's content)
     flat = json.dumps(s)
     assert '"."' not in flat and '"./' not in flat and "~" not in flat
     for key in ("denyRead", "allowRead", "allowWrite"):
@@ -131,6 +135,8 @@ def test_an_attempt_inside_the_home_gets_no_home_permission_rule_but_keeps_the_n
     deny_rules = s["permissions"]["deny"]
     assert f"Read(//{real(home).lstrip('/')}/**)" not in deny_rules  # it would deny the attempt too
     assert f"Read(//{real(home / '.ssh').lstrip('/')}/**)" in deny_rules  # the sensitive entries stay denied
+    assert f"Read(//{real(home / '.netrc').lstrip('/')})" in deny_rules  # a file entry too, in both forms
+    assert f"Edit(//{real(home / '.netrc').lstrip('/')}/**)" in deny_rules
     assert not any(rule.startswith(("Read(//", "Edit(//")) and real(attempt).lstrip("/") in rule
                    for rule in deny_rules)
 
@@ -284,6 +290,7 @@ def _init(version=HOST, **kw):
     return {"type": "system", "subtype": "init", **({"claude_code_version": version} if version else {}), **kw}
 
 
+DONT = "Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: x"
 OK = {"type": "result", "subtype": "success", "is_error": False}
 
 
@@ -374,7 +381,7 @@ def test_the_trial_reads_refusals_from_the_stream_and_the_disk_and_leaves_the_re
               _call(1, "Bash", command=f"cat {by['P3'].path} # PROBE-P3"), _result(1, "cat: x: " + denied, True),
               _call(2, "Read", file_path=str(by["P4"].path)), _result(2, by["P4"].token),  # a hole
               _call(3, "Bash", command="echo x > " + str(by["P9"].path) + " # PROBE-P9"), _result(3, "ok"),
-              _call(4, "Write", file_path=str(by["P10"].path), content="x"), _result(4, "Permission denied", True),
+              _call(4, "Write", file_path=str(by["P10"].path), content="x"), _result(4, DONT.replace("Bash", "Write"), True),
               _call(5, "Edit", file_path=str(by["P11"].path)), _result(5, "boom: typo in the call", True),
               _call(6, "Bash", command="ls / # PROBE-P13"), _result(6, "Applications\nUsers\nSystem\nvar"),
               _call(7, "Bash", command="x # PROBE-P2"), _result(7, "3 tests collected"),
@@ -387,7 +394,8 @@ def test_the_trial_reads_refusals_from_the_stream_and_the_disk_and_leaves_the_re
     assert "P11" not in obs and "typo" not in unknown["P11"] and "refusal" in unknown["P11"]  # a failure is not a refusal
     assert "P6" not in obs and "P6" in unknown  # no match is no proof of a refusal
     assert unknown["P5"] == "no such tool call in the stream" and unknown["P12"] == unknown["P5"]
-    assert host == {"version": HOST, "permission_mode": None, "authenticated": "yes"}
+    assert {k: host[k] for k in ("version", "permission_mode", "authenticated")} == \
+        {"version": HOST, "permission_mode": None, "authenticated": "yes"}
     assert trial.root_listing(lines, by["P13"]) == ["Applications", "System", "Users", "var"]
     assert trial.observe([], items)[2]["authenticated"] == "unknown"
     assert trial.observe([json.dumps(_init()), json.dumps({**OK, "is_error": True})], items)[2]["authenticated"] == "no"
@@ -546,7 +554,7 @@ def test_a_finished_trial_is_re_evaluated_offline_and_a_result_is_never_rewritte
             _call(3, "Edit", file_path=str(by["P11"].path)), _result(3, "File has not been read yet.", True),
             _call(4, "Bash", command="ls / # PROBE-P13"), _result(4, "Users\nvar"), OK]
     (d / "state" / "streams" / f"c-{ia}.jsonl").write_text("\n".join(json.dumps(e) for e in impl) + "\n", "utf-8")
-    review = [_init(), _call(1, "Bash", command="x"), _result(1, "Permission to use Bash has been denied", True),
+    review = [_init(), _call(1, "Bash", command="x"), _result(1, DONT, True),
               _call(2, "Write", file_path="r.json"), _result(2, "ok"), OK]
     (d / "state" / "streams" / f"c-{rv}.jsonl").write_text("\n".join(json.dumps(e) for e in review) + "\n", "utf-8")
     nonce = "ab12cd34"
@@ -557,7 +565,8 @@ def test_a_finished_trial_is_re_evaluated_offline_and_a_result_is_never_rewritte
     (d / "result.json").write_text(json.dumps({
         "date": "2026-10-08", "campaign_config": "c.json", "settings_passed_paths_masked": {"k": "<home>/<attempt>"},
         "barrier_in_records": {"implementer": lfr.BARRIER_OBSERVED}, "audit_flags_count": {"implementer": 13},
-        "billing_total": {"implementer": 5}, "reviewer": {"ran": True, "verdict_read": True}}), encoding="utf-8")
+        "billing_total": {"implementer": 5}, "reviewer": {"ran": True, "verdict_read": True},
+        "observations": {k: {} for k in ("P4", "P11", "P12", "P13")}}), encoding="utf-8")
     out = tmp_path / "new.json"
     body = json.loads(trial.reevaluate(d, out, None))
     assert out.exists() and body["reevaluated_offline_from_the_trial_streams"] is True
@@ -566,8 +575,148 @@ def test_a_finished_trial_is_re_evaluated_offline_and_a_result_is_never_rewritte
     assert obs["P11"]["observed"] == "not_exercised" and obs["P13"]["observed"] == "listed"
     assert body["reviewer"]["calls_refused"] == ["Bash"] and body["audit_flags_count"] == {"implementer": 13}
     assert body["root_of_disk_names_listed"] == ["Users", "var"]
+    assert "P14" not in obs and "P3" not in obs  # only the probes of the original run
     with pytest.raises(lfr.RunnerError, match="never rewritten"):
         trial.reevaluate(d, out)
     assert lfr.main(["native-sandbox-trial-reeval", "--from-dir", str(d), "--out", str(out)]) == 2
     assert "never rewritten" in capsys.readouterr().err
     assert lfr.main(["native-sandbox-trial-reeval", "--from-dir", str(d), "--out", str(tmp_path / "other.json")]) == 0
+
+
+# ------------------------------------------------------ PAT-124 review round 1: hardening, limits, new probes
+
+def test_the_bundles_claude_directory_is_denied_to_shell_writes_and_to_the_edit_and_write_tools(tmp_path):
+    home, work, attempt, deny = _zone(tmp_path)
+    real = os.path.realpath
+    s = lfr.native_sandbox_settings(attempt_dir=attempt, work_root=work, home=home, deny_read=deny,
+                                    protect=[attempt / "bundle" / ".claude"])
+    guarded = real(attempt / "bundle" / ".claude")
+    assert s["sandbox"]["filesystem"]["denyWrite"] == [guarded]
+    assert f"Edit(//{guarded.lstrip('/')}/**)" in s["permissions"]["deny"]
+    assert f"Edit(//{guarded.lstrip('/')})" in s["permissions"]["deny"]
+    plain = lfr.native_sandbox_settings(attempt_dir=attempt, work_root=work, home=home, deny_read=deny)
+    assert "denyWrite" not in plain["sandbox"]["filesystem"]  # nothing is added without a protected path
+
+
+def test_the_runner_protects_the_bundles_claude_in_every_cloud_execution(tmp_path, monkeypatch):
+    runner, plan_path, tasks = _fake_runner(tmp_path, monkeypatch)
+    runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+    for g in _native_records(plan_path):
+        attempt = g["settings"]["permissions"]["additionalDirectories"][0]
+        assert g["settings"]["sandbox"]["filesystem"]["denyWrite"] == [attempt + "/bundle/.claude"]
+
+
+def _seeded(monkeypatch):
+    """``build_bundle`` that leaves a committed ``.claude`` settings file (and a nested one) in the bundle, as a
+    corpus repository could."""
+    real = lfr.lfc.build_bundle
+
+    def build(repo, task, dest):
+        bundle = real(repo, task, dest)
+        for rel in (".claude/settings.json", "sub/.claude/settings.local.json"):
+            (bundle / rel).parent.mkdir(parents=True, exist_ok=True)
+            (bundle / rel).write_text("{}", encoding="utf-8")
+        _git(bundle, "add", "-A")
+        _git(bundle, "commit", "-qm", "corpus claude settings")
+        return bundle
+    monkeypatch.setattr(lfr.lfc, "build_bundle", build)
+
+
+def _git(repo, *args):
+    return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                           "-c", "commit.gpgsign=false", *args], check=True, capture_output=True, text=True).stdout
+
+
+def test_under_the_key_every_cloud_bundle_is_built_without_claude_directories(tmp_path, monkeypatch):
+    _seeded(monkeypatch)
+    runner, _, tasks = _fake_runner(tmp_path, monkeypatch)
+    bundle, attempt = runner._bundle(tasks[0], "a")
+    assert not list(bundle.rglob(".claude")) and ".claude" not in _git(bundle, "ls-files")
+    assert _git(bundle, "status", "--short").strip() == ""  # the base has none: a later diff shows no deletion
+    root = runner.guards[bundle][0]
+    assert ".claude" not in _git(bundle, "ls-tree", "-r", "--name-only", root)
+    # a patch (a corrector's bundle) never brings one back
+    patch = (b"diff --git a/.claude/settings.local.json b/.claude/settings.local.json\nnew file mode 100644\n"
+             b"--- /dev/null\n+++ b/.claude/settings.local.json\n@@ -0,0 +1 @@\n+{}\n"
+             b"diff --git a/ok.txt b/ok.txt\nnew file mode 100644\n--- /dev/null\n+++ b/ok.txt\n@@ -0,0 +1 @@\n+x\n")
+    second, _ = runner._bundle(tasks[0], "b", patch)
+    assert (second / "ok.txt").exists() and not list(second.rglob(".claude"))
+
+
+def test_without_the_key_the_bundle_is_built_as_before(tmp_path, monkeypatch):
+    _seeded(monkeypatch)
+    (tmp_path / "x").mkdir()
+    runner, _, _, tasks = make_runner(tmp_path / "x", "compare_exploration", PLAN)
+    bundle, _ = runner._bundle(tasks[0], "a")
+    assert (bundle / ".claude" / "settings.json").exists()
+
+
+@pytest.mark.parametrize("flag", ["--permission-mode=bypassPermissions", "--dangerously-skip-permissions",
+                                  "--allow-dangerously-skip-permissions", "--settings", "--settings={}"])
+def test_the_key_refuses_a_cloud_driver_that_carries_its_own_mode_or_settings(tmp_path, flag):
+    path = _v5(tmp_path, **{KEY: True})
+    data = json.loads(path.read_text("utf-8"))
+    data["drivers"]["cloud_reviewer"]["argv"].append(flag)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(lfr.RunnerError, match="may not carry"):
+        lfr.load_campaign(path)
+    data["drivers"]["cloud_reviewer"]["argv"].remove(flag)  # the separate form of the mode is replaced, not refused
+    data["drivers"]["cloud_reviewer"]["argv"] += ["--setting-sources", "project,local"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert lfr.load_campaign(path)
+
+
+def test_only_the_known_refusal_shapes_count_as_refusals(tmp_path):
+    _, _, _, items = _items(tmp_path)
+    by = {p.pid: p for p in items}
+    for text in ("Permission denied", "blocked by the firewall", "sandbox crashed", "denied", "ENOENT"):
+        lines = [json.dumps(e) for e in (_call(1, "Read", file_path=str(by["P4"].path)), _result(1, text, True))]
+        obs, unknown, _ = trial.observe(lines, items)
+        assert "P4" not in obs and "P4" in unknown, text
+    shapes = {"Operation not permitted": "os_sandbox", DONT: "dontAsk_mode", P4_MESSAGE: "permission_rule",
+              "File is in a directory that is denied by your permission settings.": "permission_rule"}
+    for text, layer in shapes.items():
+        lines = [json.dumps(e) for e in (_call(1, "Read", file_path=str(by["P4"].path)), _result(1, text, True))]
+        obs, _, host = trial.observe(lines, items)
+        assert obs["P4"] == "refused" and host["layers"]["P4"] == layer
+
+
+def test_each_write_probe_says_what_it_was_judged_on_and_which_layer_refused(tmp_path):
+    _, _, _, items = _items(tmp_path)
+    lines = [json.dumps(e) for e in (_call(1, "Bash", command="echo x > p9-shell-write.txt # PROBE-P9"),
+                                     _result(1, DONT, True))]
+    obs, _, host = trial.observe(lines, items, disk=False)
+    assert obs["P9"] == "refused" and host["judged_on"]["P9"] == "tool_result"
+    assert trial.observe(lines, items)[2]["judged_on"]["P9"] == "disk"
+    body = json.loads(trial.render(
+        settings={}, replacements=[], observations=obs, unknown={}, host=host, items=items, barrier={}, listing=None,
+        flags={}, reviewer={}, billing={}, today=__import__("datetime").date(2026, 10, 8), campaign_name="c"))
+    p9 = body["observations"]["P9"]
+    assert p9["refused_by"] == "dontAsk_mode" and p9["judged_on"] == "tool_result" and "P16" in p9["note"]
+    assert "masked_rules_note" in body and any("os" in x.lower() and "P9" in x for x in body["not_established_by_this_trial"])
+    assert any("work root under the home" in x for x in body["not_established_by_this_trial"])
+
+
+def test_the_trial_has_probes_for_project_settings_and_for_an_os_refused_shell_write(tmp_path):
+    a, b, home, items = _items(tmp_path)
+    by = {p.pid: p for p in items}
+    assert by["P14"].tool == "Write" and by["P14"].path == a / "bundle" / ".claude" / "settings.local.json"
+    assert by["P15"].tool == "Bash" and by["P15"].path.parent == a / "bundle" / ".claude"
+    assert by["P16"].tool == "Bash" and "python3 -c" in trial.prompt(items, a, b, home, "n0nce")
+    assert all(by[k].expected == "refused" for k in ("P14", "P15", "P16"))
+
+
+def test_a_trial_state_directory_is_never_shared_with_a_campaign(tmp_path, monkeypatch):
+    (tmp_path / "x").mkdir()
+    runner, campaign, _, tasks = make_runner(tmp_path / "x", "compare_exploration", PLAN)
+    state = runner.state_dir
+    (state / lfr.NATIVE_TRIAL_MARKER).write_text("m")
+    with pytest.raises(lfr.RunnerError, match="never shares a state directory with a trial"):
+        make_runner(tmp_path / "x", "compare_exploration", PLAN, repo_bundle=(runner.repo, {"prs": tasks}, None, None))
+    # and a trial refuses a state directory that holds campaign records
+    (state / lfr.NATIVE_TRIAL_MARKER).unlink()
+    (state / "results-x.jsonl").write_text("{}\n")
+    args = argparse.Namespace(campaign=str(QUALIFICATION / "pat-19-campaign-v2.json"), envelope="e", state_dir=str(state),
+                              work_root=str(tmp_path / "w"), repo=".", snapshot="s", task_pr=1, no_reviewer=True, out=None)
+    with pytest.raises(lfr.RunnerError, match="holds campaign records"):
+        trial.run(args, {})
