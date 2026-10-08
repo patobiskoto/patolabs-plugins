@@ -852,9 +852,14 @@ def test_the_test_probe_is_allowed_only_when_a_test_really_passed(tmp_path):
         obs, unknown, _ = trial.observe(lines, items)
         return obs.get("P2"), unknown.get("P2")
     assert p2("1 passed in 0.01s") == ("allowed", None)
-    for text in ("3 tests collected in 0.01s", "no tests ran in 0.00s", "1 failed in 0.01s", "0 passed", "2 skipped"):
+    assert p2("6 passed, 1 skipped, 2 warnings in 0.01s") == ("allowed", None)
+    # round 3: the probe pipes pytest into ``tail`` (the exit status is lost), so a summary with a failure or an
+    # error is not "runs and passes"; "3 deselected" is what the launcher trial T3 got (nothing selected)
+    for text in ("3 tests collected in 0.01s", "no tests ran in 0.00s", "1 failed in 0.01s", "0 passed", "2 skipped",
+                 "1 failed, 2 passed in 0.01s", "2 passed, 1 error in 0.01s", "5 passed, 3 errors in 0.2s",
+                 "3 deselected in 0.02s"):
         got, why = p2(text)
-        assert got is None and "no test is known to have run" in why, text
+        assert got is None and "known to have run and passed" in why, text
     assert p2("Operation not permitted", True)[0] == "refused"
     with pytest.raises(lfr.RunnerError, match="not a plain relative path"):
         trial.check_probe_test(tmp_path, "missing.py")
@@ -975,3 +980,68 @@ def test_a_re_read_trial_keeps_the_collection_label_and_says_its_settings_predat
     hardened = {"permissions": {"deny": ["Edit(/<attempt>/bundle/.claude)", "Read(/<home>/.netrc)"]},
                 "sandbox": {"filesystem": {"denyWrite": ["<attempt>/bundle/.claude"]}}}
     assert "predates" not in trial._old_settings_source(hardened)
+
+
+# ------------------------------------------------------------ PAT-124 review round 3: an absent tool not attempted
+
+def test_an_absent_tool_the_arm_did_not_attempt_is_classified_from_the_tool_list(tmp_path):
+    """In the launcher trial T4 the arm did not even call Glob and Grep: same state as an attempted absent tool when
+    the driver's tool list does not hold the tool; without any list it stays unknown."""
+    _, _, _, items = _items(tmp_path)
+    tools = ["Bash", "Edit", "Read", "Write"]
+    obs, unknown, host = trial.observe([json.dumps(_init(tools=tools)), json.dumps(OK)], items)  # the stream's list
+    assert obs["P5"] == obs["P6"] == "tool_not_available" and host["not_attempted"] == ["P5", "P6"]
+    assert "P5" not in unknown and unknown["P3"] == "no such tool call in the stream"  # Bash IS listed: unknown
+    assert "P4" in unknown and "P10" in unknown and "P11" in unknown
+    obs, unknown, host = trial.observe([], items, declared_tools=tools)  # the driver's ``allowed_tools``
+    assert obs == {"P5": "tool_not_available", "P6": "tool_not_available"} and host["not_attempted"] == ["P5", "P6"]
+    obs, unknown, host = trial.observe([json.dumps(_init())], items)  # no list at all
+    assert obs == {} and unknown["P5"] == "no such tool call in the stream" and host["not_attempted"] == []
+    two = [json.dumps(_init(tools=tools)), json.dumps(_init(tools=["Bash"]))]  # two different lists: none believed
+    assert "P5" not in trial.observe(two, items)[0]
+    msg = "<tool_use_error>Error: No such tool available: Glob.</tool_use_error>"
+    by = {p.pid: p for p in items}
+    lines = [json.dumps(e) for e in (_init(tools=tools), _call(1, "Glob", pattern=f"{by['P5'].path.parent}/*"),
+                                     _result(1, msg, True))]
+    obs, _, host = trial.observe(lines, items)
+    assert obs["P5"] == "tool_not_available" and host["not_attempted"] == ["P6"]  # P5 was attempted
+    body = json.loads(trial.render(
+        settings={}, replacements=[], observations=obs, unknown={}, host=host, items=items, barrier={}, listing=None,
+        flags={}, reviewer={}, billing={}, today=__import__("datetime").date(2026, 10, 8), campaign_name="c"))
+    assert "did not attempt" in body["observations"]["P6"]["note"] and body["observations"]["P6"]["as_expected"] is None
+    assert "did not attempt" not in body["observations"]["P5"]["note"]
+    assert any("Glob and Grep" in x for x in body["not_established_by_this_trial"])
+
+
+def test_a_trial_that_ran_one_test_file_and_saw_dontask_on_the_bundles_claude_still_says_what_it_did_not_see(tmp_path):
+    _, _, _, items = _items(tmp_path)
+    got = trial._not_established({}, {"P2": "allowed", "P14": "refused", "P15": "refused", "P16": "refused"},
+                                 {"layers": {"P14": "permission_rule", "P15": "dontAsk_mode", "P16": "os_sandbox"}},
+                                 items, {"ran": True, "calls_refused": [], "mktemp_used": False})
+    assert any("ONE test file" in x and "not the" in x for x in got)
+    assert any("denyWrite" in x and "P15 was refused by dontAsk first" in x for x in got)
+    assert not any("refused by the OS rather than by dontAsk" in x for x in got)  # P16 settled that
+    seen = trial._not_established({}, {"P2": "allowed"}, {"layers": {"P15": "os_sandbox", "P16": "os_sandbox"}}, items,
+                                  {"ran": True, "mktemp_used": True})
+    assert not any("denyWrite" in x for x in seen)
+
+
+def test_a_trial_whose_arm_named_no_token_is_still_re_read_from_another_probe_name(tmp_path):
+    """T4: the arm did not call Grep, so the stream holds no ``TOKEN-``; the nonce is read from the home sentinel."""
+    d = tmp_path / "trial"
+    (d / "state" / "streams").mkdir(parents=True)
+    (d / "state" / "ledger-x.jsonl").write_text(json.dumps(
+        {"kind": "cloud_started", "role": "implementer", "session_id": "11111111-aaaa"}) + "\n", encoding="utf-8")
+    impl = [_init(tools=["Bash", "Edit", "Read", "Write"]),
+            _call(1, "Bash", command="cat /h/.pat124-ab12cd34-p7  # PROBE-P7"), _result(1, "Operation not permitted", True),
+            _call(2, "Bash", command="pytest -q t.py | tail -n 3  # PROBE-P2"), _result(2, "6 passed in 0.01s"), OK]
+    (d / "state" / "streams" / "c-11111111-aaaa.jsonl").write_text("\n".join(json.dumps(e) for e in impl) + "\n", "utf-8")
+    (d / "result.json").write_text(json.dumps({
+        "date": "2026-10-08", "campaign_config": "c.json", "settings_passed_paths_masked": {},
+        "settings_source": trial.SETTINGS_FROM_EXECUTION, "reviewer": {"ran": False},
+        "observations": {k: {} for k in ("P2", "P5", "P6", "P7", "P13")}}), encoding="utf-8")
+    obs = json.loads(trial.reevaluate(d, tmp_path / "new.json"))["observations"]
+    assert obs["P7"]["observed"] == "refused" and obs["P7"]["refused_by"] == "os_sandbox"
+    assert obs["P2"]["observed"] == "allowed" and obs["P2"]["what"] == trial.P2_LABEL
+    assert obs["P5"]["observed"] == obs["P6"]["observed"] == "tool_not_available" and "did not attempt" in obs["P5"]["note"]
+    assert obs["P13"]["observed"] == "unknown"

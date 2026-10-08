@@ -46,6 +46,8 @@ def _layer(text: str) -> str | None:
 _NO_TOOL = re.compile(r"No such tool available", re.I)
 _NOT_READ = re.compile(r"has not been read yet", re.I)
 _PASSED = re.compile(r"\b[1-9]\d* passed\b")  # pytest's summary line: at least one test really ran and passed
+# ... and none failed or errored: the probe pipes pytest into ``tail``, so the exit status is not the tests'
+_NOT_PASSED = re.compile(r"\b[1-9]\d* (?:failed|errors?)\b")
 _SAFE_REL = re.compile(r"[\w./-]+")
 # P2 of the launcher trial of 2026-10-08 ran ``pytest --collect-only``: it collected, it executed no test. The probe
 # now runs one test file; the offline re-evaluation of that trial keeps the label of what it really did.
@@ -57,6 +59,9 @@ NOTES = {
                           "arise for it; a driver that enabled it would need its own trial",
     "P9_permission_mode": "refused by the dontAsk permission mode before the command ran: the operating system "
                           "sandbox on a write outside the attempt was not observed by this probe (P16 is meant to)",
+    "tool_not_attempted": "the tool is not in this driver's tool list and the arm did not attempt the call (no such "
+                          "tool call in the stream): classified from the declared tool list, not from a host answer; "
+                          "a driver that enabled it would need its own trial",
     "not_exercised": "the Edit tool requires a prior Read of the file, which the permissions refuse outside the attempt: "
                      "the Edit permission rule itself was not exercised (never counted as refused)",
 }
@@ -163,7 +168,7 @@ def _tool_calls(lines: Sequence[str]) -> tuple[list[dict[str, Any]], dict[str, d
     (init version and permission mode, number of results and whether all were non-errors)."""
     calls: list[dict[str, Any]] = []
     results: dict[str, dict[str, Any]] = {}
-    facts: dict[str, Any] = {"versions": set(), "modes": set(), "init": False, "results": []}
+    facts: dict[str, Any] = {"versions": set(), "modes": set(), "init": False, "results": [], "tools": []}
     for line in lines:
         try:
             event = json.loads(line)
@@ -173,6 +178,8 @@ def _tool_calls(lines: Sequence[str]) -> tuple[list[dict[str, Any]], dict[str, d
             continue
         if event.get("type") == "system" and event.get("subtype") == "init":
             facts["init"] = True
+            if isinstance(event.get("tools"), list):
+                facts["tools"].append(sorted(str(t) for t in event["tools"]))
             facts["versions"].add(event.get("claude_code_version"))
             if "permissionMode" in event:
                 facts["modes"].add(event["permissionMode"])
@@ -193,15 +200,24 @@ def _tool_calls(lines: Sequence[str]) -> tuple[list[dict[str, Any]], dict[str, d
     return calls, results, facts
 
 
-def observe(lines: Sequence[str], items: Sequence[Probe], *, disk: bool = True
-            ) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
+def observe(lines: Sequence[str], items: Sequence[Probe], *, disk: bool = True,
+            declared_tools: Sequence[str] | None = None) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
     """``(observations, unknown, host)``. A ``test`` probe is ``allowed`` only when the result shows pytest's
     ``N passed`` (N >= 1): a command that merely ran is not a test that ran. An observation is ``allowed``, ``refused``, ``listed``,
     ``tool_not_available`` (the host has no such tool in this session) or ``not_exercised`` (the Edit tool wants a
     prior Read, so its permission rule was not reached: ``NOTES``); whatever the stream and the disk do not settle is
     ``unknown`` with its reason. A write is judged on the DISK first; ``disk=False`` (offline re-evaluation, the
-    attempt directories are gone) judges it on the tool result alone."""
+    attempt directories are gone) judges it on the tool result alone.
+
+    A probe whose tool call is absent from the stream is ``tool_not_available`` too when the tool is not in the
+    driver's tool list: ``declared_tools`` (the driver's ``allowed_tools``), or, without it (offline re-evaluation:
+    the configuration is not in the trial directory), the ONE tool list the ``init`` event(s) of the stream name.
+    ``host["not_attempted"]`` names those probes. With no list known the probe stays ``unknown``."""
     calls, results, facts = _tool_calls(lines)
+    listed = {tuple(t) for t in facts["tools"]}
+    available = (set(declared_tools) if declared_tools is not None
+                 else set(next(iter(listed))) if len(listed) == 1 else None)
+    not_attempted: list[str] = []
     out: dict[str, str] = {}
     unknown: dict[str, str] = {}
     layers: dict[str, str] = {}
@@ -214,7 +230,10 @@ def observe(lines: Sequence[str], items: Sequence[Probe], *, disk: bool = True
         denied = layer is not None
         verdict = None
         failed = bool(result and result["error"])
-        if call is None:
+        if call is None and available is not None and p.tool not in available:
+            verdict = "tool_not_available"
+            not_attempted.append(p.pid)
+        elif call is None:
             unknown[p.pid] = "no such tool call in the stream"
         elif failed and _NO_TOOL.search(text):
             verdict = "tool_not_available"
@@ -236,9 +255,11 @@ def observe(lines: Sequence[str], items: Sequence[Probe], *, disk: bool = True
         elif p.kind == "run":
             verdict = "refused" if denied else "allowed" if not result["error"] else None
         elif p.kind == "test":
-            verdict = "refused" if denied else "allowed" if not result["error"] and _PASSED.search(text) else None
+            passed = not result["error"] and _PASSED.search(text) and not _NOT_PASSED.search(text)
+            verdict = "refused" if denied else "allowed" if passed else None
             if verdict is None:
-                unknown[p.pid] = "no 'N passed' line in the result: no test is known to have run"
+                unknown[p.pid] = ("no 'N passed' line in the result, or one with failures or errors: no test file is "
+                                  "known to have run and passed")
         elif p.kind == "list":
             verdict = "listed" if not result["error"] else "refused" if denied else None
         if call is not None and verdict is None and p.pid not in unknown:
@@ -253,7 +274,7 @@ def observe(lines: Sequence[str], items: Sequence[Probe], *, disk: bool = True
             "permission_mode": next(iter(facts["modes"])) if len(facts["modes"]) == 1 else None,
             "authenticated": ("yes" if facts["init"] and results_ok else
                               "no" if facts["results"] and not results_ok else "unknown"),
-            "layers": layers, "judged_on": judged}
+            "layers": layers, "judged_on": judged, "not_attempted": not_attempted}
     return out, unknown, host
 
 
@@ -316,6 +337,9 @@ def _not_established(settings: Any, observations: Mapping[str, str], host: Mappi
         out.append("no test actually executed under the sandbox (P2 ran pytest --collect-only: collection only)")
     elif observations.get("P2") != "allowed":
         out.append("no test actually executed under the sandbox (P2 shows no passed test)")
+    else:
+        out.append("the bundle's test suite under the sandbox (P2 ran ONE test file, the operator's choice, not the "
+                   "suite)")
     if "tool_not_available" in (observations.get("P5"), observations.get("P6")):
         out.append("Glob and Grep: absent from a driver whose tools are Bash, Edit, Read, Write; a driver that enabled "
                    "them would need its own trial")
@@ -335,6 +359,9 @@ def _not_established(settings: Any, observations: Mapping[str, str], host: Mappi
     if not {"P14", "P15"} <= set(played):
         out.append("project settings written into the bundle's .claude by the Write tool or the shell (P14, P15 added "
                    "to the tool after this run, not played)")
+    if "P15" in played and layers.get("P15") != "os_sandbox":
+        out.append("the operating system refusing a shell write into the bundle's .claude (sandbox.filesystem."
+                   "denyWrite)" + (": P15 was refused by dontAsk first" if layers.get("P15") == "dontAsk_mode" else ""))
     out.append("a project settings file written while the arm runs and merged by the host (hot reload of settings): "
                "no probe")
     out.append("project settings in a directory above the working directory (ancestors are protected according to the "
@@ -381,6 +408,7 @@ def render(*, settings: Mapping[str, Any], replacements: Sequence[tuple[str, str
                        **({"refused_by": host["layers"][p.pid]} if p.pid in (host.get("layers") or {}) else {}),
                        **({"judged_on": host["judged_on"][p.pid]} if p.pid in (host.get("judged_on") or {}) else {}),
                        **({"note": NOTES[observations[p.pid]]} if observations.get(p.pid) in NOTES else {}),
+                       **({"note": NOTES["tool_not_attempted"]} if p.pid in (host.get("not_attempted") or ()) else {}),
                        **({"note": NOTES["P9_permission_mode"]} if p.pid == "P9"
                           and (host.get("layers") or {}).get(p.pid) == "dontAsk_mode" else {})}
                for p in items}},
@@ -446,7 +474,7 @@ def run(args: Any, campaign: dict[str, Any], *, today: dt.date | None = None) ->
         settings = execution["native_settings"]  # what THIS execution received, never a rebuild
         reviewer_settings = None
         lines = Path(execution["stream_log"]).read_text("utf-8", "replace").splitlines()
-        observations, unknown, host = observe(lines, items)
+        observations, unknown, host = observe(lines, items, declared_tools=driver.get("allowed_tools"))
         listing = root_listing(lines, next(p for p in items if p.pid == "P13"))
         barrier = {"implementer": runner.barriers.get(str(execution["stream_log"]), lfr.AUDIT_BARRIER)}
         flags = {"implementer": len(execution.get("contamination") or [])}
@@ -543,7 +571,9 @@ def reevaluate(trial_dir: Path, out: Path, today: dt.date | None = None) -> str:
         streams[role] = found[0].read_text("utf-8", "replace").splitlines()
     if "implementer" not in streams:
         raise lfr.RunnerError("no implementer stream in the trial state")
-    nonce = next(iter(re.findall(r"TOKEN-([0-9a-f]+)-\d", "\n".join(streams["implementer"]))), None)
+    # the nonce of the run, from any probe that names it (an arm that did not call Grep shows no ``TOKEN-`` at all)
+    nonce = next((m.group(1) or m.group(2) or m.group(3) for m in re.finditer(
+        r"TOKEN-([0-9a-f]+)-\d|\.pat124-([0-9a-f]+)-p\d|ORIGINAL-([0-9a-f]+)", "\n".join(streams["implementer"]))), None)
     if nonce is None:
         raise lfr.RunnerError("no probe token in the implementer stream")
     dummy = Path("/nonexistent-trial")

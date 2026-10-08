@@ -5635,7 +5635,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         from foundry import local_first_native_trial as trial
         try:
             trial.reevaluate(Path(args.from_dir), Path(args.out))
-        except (RunnerError, OSError, ValueError, KeyError) as exc:
+        except (RunnerError, trial.lfr.RunnerError, OSError, ValueError, KeyError) as exc:  # ``-m``: two module objects
             print(f"refused: {exc}", file=sys.stderr)
             return 2
         return 0
@@ -5648,7 +5648,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         from foundry import local_first_native_trial as trial
         try:
             return trial.run(args, campaign, today=today)
-        except (RunnerError, OSError) as exc:
+        except (RunnerError, trial.lfr.RunnerError, OSError) as exc:
             print(f"refused: {exc}", file=sys.stderr)
             return 2
     if args.cmd == "replay-audit":
