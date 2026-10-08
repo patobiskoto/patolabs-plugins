@@ -5543,11 +5543,23 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     nt.add_argument("--task-pr", type=int, required=True, help="the one corpus task (a PR of the snapshot)")
     nt.add_argument("--no-reviewer", action="store_true")
     nt.add_argument("--out", required=True, help="the result file (never overwritten)")
+    nr = sub.add_parser("native-sandbox-trial-reeval", help="PAT-124: rebuild the result of a finished trial from "
+                        "its own streams with the current classification (offline, no cloud call)")
+    nr.add_argument("--from-dir", required=True, help="the trial directory (result.json and state/), read only")
+    nr.add_argument("--out", required=True, help="the new result file (never overwritten)")
     r = sub.add_parser("report")
     r.add_argument("--campaign", required=True)
     r.add_argument("--results", required=True,
                    help="results-<campaign>.jsonl; ledger-<campaign>.jsonl is read beside it (mandatory)")
     args = parser.parse_args(argv)
+    if args.cmd == "native-sandbox-trial-reeval":
+        from foundry import local_first_native_trial as trial
+        try:
+            trial.reevaluate(Path(args.from_dir), Path(args.out))
+        except (RunnerError, OSError, ValueError, KeyError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        return 0
     try:
         campaign = load_campaign(Path(args.campaign))
     except (RunnerError, OSError, ValueError) as exc:  # e.g. a frozen ground truth whose sha256 changed

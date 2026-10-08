@@ -26,7 +26,17 @@ PROMPT_KEY = "native_trial"
 # what a refusal by the sandbox or by a permission rule looks like in a tool result; anything else that fails
 # (a typo, a missing file) is NOT counted as a refusal
 _DENIAL = re.compile(r"operation not permitted|permission denied|not permitted|denied|not allowed|"
-                     r"requires approval|don't have permission|haven't been granted|blocked|sandbox", re.I)
+                     r"requires approval|don't have permission|haven't been granted|blocked|sandbox|"
+                     r"blocks reads outside|blockReadsOutsideWorkingDirectories", re.I)
+# states that are neither a refusal nor unknown (seen in the real trial of 2026-10-08)
+_NO_TOOL = re.compile(r"No such tool available", re.I)
+_NOT_READ = re.compile(r"has not been read yet", re.I)
+NOTES = {
+    "tool_not_available": "the tool is not in this driver's tool list (Bash, Edit, Read, Write): the question does not "
+                          "arise for it; a driver that enabled it would need its own trial",
+    "not_exercised": "the Edit tool requires a prior Read of the file, which the permissions refuse outside the attempt: "
+                     "the Edit permission rule itself was not exercised (never counted as refused)",
+}
 _PERSONAL = re.compile(r"/Users/|/home/")
 
 
@@ -143,9 +153,13 @@ def _tool_calls(lines: Sequence[str]) -> tuple[list[dict[str, Any]], dict[str, d
     return calls, results, facts
 
 
-def observe(lines: Sequence[str], items: Sequence[Probe]) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
-    """``(observations, unknown, host)``. An observation is ``allowed`` or ``refused`` or ``listed``; whatever the
-    stream and the disk do not settle is ``unknown`` with its reason. A write is judged on the DISK first."""
+def observe(lines: Sequence[str], items: Sequence[Probe], *, disk: bool = True
+            ) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
+    """``(observations, unknown, host)``. An observation is ``allowed``, ``refused``, ``listed``,
+    ``tool_not_available`` (the host has no such tool in this session) or ``not_exercised`` (the Edit tool wants a
+    prior Read, so its permission rule was not reached: ``NOTES``); whatever the stream and the disk do not settle is
+    ``unknown`` with its reason. A write is judged on the DISK first; ``disk=False`` (offline re-evaluation, the
+    attempt directories are gone) judges it on the tool result alone."""
     calls, results, facts = _tool_calls(lines)
     out: dict[str, str] = {}
     unknown: dict[str, str] = {}
@@ -155,13 +169,19 @@ def observe(lines: Sequence[str], items: Sequence[Probe]) -> tuple[dict[str, str
         text = result["text"] if result else ""
         denied = bool(result and result["error"] and _DENIAL.search(text))
         verdict = None
+        failed = bool(result and result["error"])
         if call is None:
             unknown[p.pid] = "no such tool call in the stream"
+        elif failed and _NO_TOOL.search(text):
+            verdict = "tool_not_available"
+        elif failed and _NOT_READ.search(text) and not denied:
+            verdict = "not_exercised"
         elif p.kind == "write":
-            exists = p.path is not None and p.path.exists()
+            exists = (p.path is not None and p.path.exists()) if disk else bool(result and not failed)
             verdict = "allowed" if exists else "refused" if denied else None
         elif p.kind == "edit":
-            changed = p.path is not None and p.path.exists() and p.token in p.path.read_text("utf-8", "replace")
+            changed = (p.path is not None and p.path.exists() and p.token in p.path.read_text("utf-8", "replace")
+                       if disk else bool(result and not failed))
             verdict = "allowed" if changed else "refused" if denied else None
         elif result is None:
             unknown[p.pid] = "the call has no result in the stream"
@@ -196,6 +216,31 @@ def root_listing(lines: Sequence[str], item: Probe) -> list[str] | None:
 
 # ------------------------------------------------------------------------------------------- the result
 
+_HOME_KEEP = (".config/foundry", ".ssh", ".gnupg", ".aws", ".netrc", ".docker", ".kube", ".npmrc", ".pypirc",
+              ".git-credentials", ".zsh_history", ".bash_history", ".python_history", ".claude.json", ".codex",
+              "Library/Keychains")
+_UNDER_HOME = re.compile(r'<home>/([^*)"]*)')
+
+
+def _collapse(value: Any) -> Any:
+    """Under the masked home keep only the well-known sensitive entries (``.ssh``, ``.config/foundry``...); any other
+    path (a checkout, a work folder) becomes ``<home>/<dir>``. Lists lose the duplicates this creates."""
+    if isinstance(value, str):
+        def fix(m: re.Match[str]) -> str:
+            rest = m.group(1).rstrip("/")
+            if not rest:
+                return m.group(0)
+            top = next((k for k in _HOME_KEEP if rest == k or rest.startswith(k + "/")), None)
+            return f"<home>/{top}" + "/" * (len(m.group(1)) - len(rest)) if top else \
+                "<home>/<dir>" + "/" * (len(m.group(1)) - len(rest))
+        return _UNDER_HOME.sub(fix, value)
+    if isinstance(value, list):
+        return [json.loads(x) for x in dict.fromkeys(json.dumps(_collapse(v)) for v in value)]
+    if isinstance(value, dict):
+        return {k: _collapse(v) for k, v in value.items()}
+    return value
+
+
 def _mask(text: str, replacements: Sequence[tuple[str, str]]) -> str:
     for real, name in sorted(replacements, key=lambda r: -len(r[0])):
         if real:
@@ -206,17 +251,21 @@ def _mask(text: str, replacements: Sequence[tuple[str, str]]) -> str:
 def render(*, settings: Mapping[str, Any], replacements: Sequence[tuple[str, str]], observations: Mapping[str, str],
            unknown: Mapping[str, str], host: Mapping[str, Any], items: Sequence[Probe], barrier: Mapping[str, Any],
            listing: Sequence[str] | None, flags: Mapping[str, Any], reviewer: Mapping[str, Any],
-           billing: Mapping[str, Any], today: dt.date, campaign_name: str) -> str:
+           billing: Mapping[str, Any], today: dt.date, campaign_name: str,
+           extra: Mapping[str, Any] | None = None) -> str:
     """The committable file. Raises when the text still holds a personal path."""
     body = {
         "schema": TRIAL_SCHEMA, "date": today.isoformat(), "campaign_config": campaign_name,
         "claude_code_version": host.get("version"),
         "permission_mode_asked": lfr.NATIVE_PERMISSION_MODE, "permission_mode_in_init": host.get("permission_mode"),
-        "settings_passed_paths_masked": json.loads(_mask(json.dumps(settings, sort_keys=True), replacements)),
+        "settings_passed_paths_masked": _collapse(json.loads(_mask(json.dumps(settings, sort_keys=True),
+                                                                   replacements))),
         "observations": {
             "session_authenticated": host.get("authenticated", "unknown"),
             **{p.pid: {"what": p.label, "expected": p.expected, "observed": observations.get(p.pid, "unknown"),
-                       "as_expected": observations[p.pid] == p.expected if p.pid in observations else None}
+                       "as_expected": observations[p.pid] == p.expected
+                       if observations.get(p.pid) in ("allowed", "refused", "listed") else None,
+                       **({"note": NOTES[observations[p.pid]]} if observations.get(p.pid) in NOTES else {})}
                for p in items}},
         "reviewer": dict(reviewer),
         "barrier_in_records": dict(barrier),
@@ -228,10 +277,12 @@ def render(*, settings: Mapping[str, Any], replacements: Sequence[tuple[str, str
         "not_established_by_this_trial": [
             "behaviour on a long real task (caches, ruff, temporary files)",
             "the minimum Claude Code version (one version observed)",
-            "a Glob or Grep call with a path pattern other than the one probed",
+            "Glob and Grep: absent from a driver whose tools are Bash, Edit, Read, Write; a driver that enabled "
+            "them would need its own trial",
+            "the Edit permission rule outside the attempt (the Edit tool requires a prior Read, which is refused)",
             "the operating system enforcing the sandbox for a command the probe did not run",
         ],
-        "raw_transcript": "not committed (kept off the repository by the operator)"}
+        "raw_transcript": "not committed (kept off the repository by the operator)", **(extra or {})}
     text = json.dumps(body, indent=2, sort_keys=True) + "\n"
     if _PERSONAL.search(text):
         raise lfr.RunnerError("the result still names a personal path: refusing to write it")
@@ -315,3 +366,50 @@ def run(args: Any, campaign: dict[str, Any], *, today: dt.date | None = None) ->
         for bundle, attempt in ((bundle_a, attempt_a), (bundle_b, attempt_b)):
             if bundle is not None:
                 runner._discard(bundle, attempt)
+
+
+# ----------------------------------------------------------------------- offline re-evaluation (no cloud call)
+
+def _refused_calls(lines: Sequence[str]) -> list[str]:
+    """Names of the tools whose call came back refused (sandbox or permission text), in order."""
+    calls, results, _ = _tool_calls(lines)
+    return [c["name"] for c in calls if (r := results.get(c["id"])) and r["error"] and _DENIAL.search(r["text"])]
+
+
+def reevaluate(trial_dir: Path, out: Path, today: dt.date | None = None) -> str:
+    """Rebuild the result of a finished trial from its own ``result.json`` (settings, flags, billing, barrier),
+    its ledger (which stream is which role) and its two raw streams, with the current classification. No launcher,
+    no driver, no cloud call. ``trial_dir`` holds ``result.json`` and ``state/{ledger-*.jsonl,streams/}``; the
+    original is read only and ``out`` is never overwritten."""
+    trial_dir, out = Path(trial_dir), Path(out)
+    if out.exists():
+        raise lfr.RunnerError(f"{out} exists: a result is never rewritten")
+    old = json.loads((trial_dir / "result.json").read_text("utf-8"))
+    ledgers = sorted((trial_dir / "state").glob("ledger-*.jsonl"))
+    roles = {e["session_id"]: e["role"] for f in ledgers for e in lfr._read_jsonl(f) if e.get("kind") == "cloud_started"}
+    streams: dict[str, list[str]] = {}
+    for sid, role in roles.items():
+        found = list((trial_dir / "state" / "streams").glob(f"*{sid}*.jsonl"))
+        if len(found) != 1:
+            raise lfr.RunnerError(f"expected one stream for the {role} session, found {len(found)}")
+        streams[role] = found[0].read_text("utf-8", "replace").splitlines()
+    if "implementer" not in streams:
+        raise lfr.RunnerError("no implementer stream in the trial state")
+    nonce = next(iter(re.findall(r"TOKEN-([0-9a-f]+)-\d", "\n".join(streams["implementer"]))), None)
+    if nonce is None:
+        raise lfr.RunnerError("no probe token in the implementer stream")
+    dummy = Path("/nonexistent-trial")
+    items = probes(dummy / "a", dummy / "b", dummy / "home", nonce)
+    observations, unknown, host = observe(streams["implementer"], items, disk=False)
+    reviewer = dict(old.get("reviewer") or {})
+    if "reviewer" in streams:
+        reviewer["calls_refused"] = _refused_calls(streams["reviewer"])
+    text = render(settings=old["settings_passed_paths_masked"], replacements=[], observations=observations,
+                  unknown=unknown, host=host, items=items, barrier=old.get("barrier_in_records") or {},
+                  listing=root_listing(streams["implementer"], next(p for p in items if p.pid == "P13")),
+                  flags=old.get("audit_flags_count") or {}, reviewer=reviewer, billing=old.get("billing_total") or {},
+                  today=dt.date.fromisoformat(old["date"]), campaign_name=old.get("campaign_config", ""),
+                  extra={"reevaluated_offline_from_the_trial_streams": True})
+    with out.open("x", encoding="utf-8") as handle:
+        handle.write(text)
+    return text

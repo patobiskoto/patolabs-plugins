@@ -477,3 +477,97 @@ def test_the_trial_end_to_end_with_fake_arms_writes_a_result_without_spending_an
     assert str(tmp_path) not in text and str(home) not in text
     assert list(home.iterdir()) == []  # the home sentinels are removed
     assert not list((tmp_path / "work").glob("**/bundle"))  # both bundles are discarded
+
+
+# ------------------------------------- the real trial of 2026-10-08: three states the first classifier missed
+
+P4_MESSAGE = ("<attempt-b>/scratch/p4-read-tool.txt is outside <attempt-a>/bundle, <attempt-a>/scratch. The "
+              "permissions.blockReadsOutsideWorkingDirectories setting blocks reads outside the working directories.")
+
+
+def test_the_read_tool_message_of_the_working_directories_block_is_a_refusal(tmp_path):
+    _, _, _, items = _items(tmp_path)
+    by = {p.pid: p for p in items}
+    lines = [json.dumps(e) for e in (_call(1, "Read", file_path=str(by["P4"].path)), _result(1, P4_MESSAGE, True))]
+    assert trial.observe(lines, items)[0]["P4"] == "refused"
+    other = [json.dumps(e) for e in (_call(1, "Read", file_path=str(by["P4"].path)), _result(1, "ENOENT no file", True))]
+    assert "P4" not in trial.observe(other, items)[0]  # a plain failure is still unknown
+
+
+def test_a_tool_the_driver_does_not_have_is_neither_refused_nor_unknown(tmp_path):
+    _, _, _, items = _items(tmp_path)
+    by = {p.pid: p for p in items}
+    msg = "<tool_use_error>Error: No such tool available: Glob. Glob is not available in this session</tool_use_error>"
+    lines = [json.dumps(e) for e in (_call(1, "Glob", pattern=f"{by['P5'].path.parent}/*"), _result(1, msg, True))]
+    obs, unknown, _ = trial.observe(lines, items)
+    assert obs["P5"] == "tool_not_available" and "P5" not in unknown
+    assert "does not arise" in trial.NOTES["tool_not_available"]
+
+
+def test_an_edit_that_wants_a_prior_read_did_not_exercise_the_permission_rule(tmp_path):
+    _, _, _, items = _items(tmp_path)
+    by = {p.pid: p for p in items}
+    msg = "<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>"
+    lines = [json.dumps(e) for e in (_call(1, "Edit", file_path=str(by["P11"].path)), _result(1, msg, True))]
+    obs, unknown, _ = trial.observe(lines, items)
+    assert obs["P11"] == "not_exercised" and "P11" not in unknown and obs["P11"] != "refused"
+
+
+def test_the_result_never_counts_the_new_states_as_expected_or_unexpected(tmp_path):
+    _, _, _, items = _items(tmp_path)
+    out = json.loads(trial.render(
+        settings={}, replacements=[], observations={"P5": "tool_not_available", "P11": "not_exercised"}, unknown={},
+        host={}, items=items, barrier={}, listing=None, flags={}, reviewer={}, billing={},
+        today=__import__("datetime").date(2026, 10, 8), campaign_name="c.json"))["observations"]
+    for pid in ("P5", "P11"):
+        assert out[pid]["as_expected"] is None and out[pid]["note"] and out[pid]["observed"] != "refused"
+
+
+def test_the_masked_home_keeps_only_the_well_known_sensitive_entries():
+    got = trial._collapse(["Read(/<home>/**)", "Read(/<home>/workspace/repo/**)", "Edit(/<home>/other/**)",
+                           "Read(/<home>/.config/foundry/**)", "Read(/<home>/.codex/worktrees/x/**)"])
+    assert got == ["Read(/<home>/**)", "Read(/<home>/<dir>/**)", "Edit(/<home>/<dir>/**)",
+                   "Read(/<home>/.config/foundry/**)", "Read(/<home>/.codex/**)"]
+
+
+def test_a_finished_trial_is_re_evaluated_offline_and_a_result_is_never_rewritten(tmp_path, capsys):
+    """Rebuild from a trial directory (result.json, ledger, two streams) with no launcher and no cloud call."""
+    d = tmp_path / "trial"
+    (d / "state" / "streams").mkdir(parents=True)
+    a, b, home, items = _items(tmp_path)
+    by = {p.pid: p for p in items}
+    ia, rv = "11111111-aaaa", "22222222-bbbb"
+    (d / "state" / "ledger-x.jsonl").write_text("\n".join(json.dumps(e) for e in (
+        {"kind": "cloud_started", "role": "implementer", "session_id": ia},
+        {"kind": "cloud_started", "role": "reviewer", "session_id": rv})) + "\n", encoding="utf-8")
+    impl = [_init(permissionMode="dontAsk"),
+            _call(1, "Read", file_path=str(by["P4"].path)), _result(1, P4_MESSAGE, True),
+            _call(2, "Write", file_path=str(by["P12"].path), content="inside"), _result(2, "File created successfully"),
+            _call(3, "Edit", file_path=str(by["P11"].path)), _result(3, "File has not been read yet.", True),
+            _call(4, "Bash", command="ls / # PROBE-P13"), _result(4, "Users\nvar"), OK]
+    (d / "state" / "streams" / f"c-{ia}.jsonl").write_text("\n".join(json.dumps(e) for e in impl) + "\n", "utf-8")
+    review = [_init(), _call(1, "Bash", command="x"), _result(1, "Permission to use Bash has been denied", True),
+              _call(2, "Write", file_path="r.json"), _result(2, "ok"), OK]
+    (d / "state" / "streams" / f"c-{rv}.jsonl").write_text("\n".join(json.dumps(e) for e in review) + "\n", "utf-8")
+    nonce = "ab12cd34"
+    impl_text = (d / "state" / "streams" / f"c-{ia}.jsonl").read_text()
+    assert nonce not in impl_text
+    (d / "state" / "streams" / f"c-{ia}.jsonl").write_text(
+        impl_text + json.dumps(_call(5, "Grep", pattern=f"TOKEN-{nonce}-6", path="x")) + "\n", "utf-8")
+    (d / "result.json").write_text(json.dumps({
+        "date": "2026-10-08", "campaign_config": "c.json", "settings_passed_paths_masked": {"k": "<home>/<attempt>"},
+        "barrier_in_records": {"implementer": lfr.BARRIER_OBSERVED}, "audit_flags_count": {"implementer": 13},
+        "billing_total": {"implementer": 5}, "reviewer": {"ran": True, "verdict_read": True}}), encoding="utf-8")
+    out = tmp_path / "new.json"
+    body = json.loads(trial.reevaluate(d, out, None))
+    assert out.exists() and body["reevaluated_offline_from_the_trial_streams"] is True
+    obs = body["observations"]
+    assert obs["P4"]["observed"] == "refused" and obs["P12"]["observed"] == "allowed"  # judged without the disk
+    assert obs["P11"]["observed"] == "not_exercised" and obs["P13"]["observed"] == "listed"
+    assert body["reviewer"]["calls_refused"] == ["Bash"] and body["audit_flags_count"] == {"implementer": 13}
+    assert body["root_of_disk_names_listed"] == ["Users", "var"]
+    with pytest.raises(lfr.RunnerError, match="never rewritten"):
+        trial.reevaluate(d, out)
+    assert lfr.main(["native-sandbox-trial-reeval", "--from-dir", str(d), "--out", str(out)]) == 2
+    assert "never rewritten" in capsys.readouterr().err
+    assert lfr.main(["native-sandbox-trial-reeval", "--from-dir", str(d), "--out", str(tmp_path / "other.json")]) == 0
