@@ -1,0 +1,151 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "Not played in v5 (the candidate is fixed, exploration.fixed_candidate; screen-exploration is refused). Kept so that the v2 schema is satisfied and the rule stays readable. MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates were the two frozen ones of v3 (in v4 the candidates list holds only qwen3.6-35b-a3b-mlx-4bit, fixed) and the v3 screening was complete only when both had their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Inherited from v2 and v3; kept readable, not applied in v5.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.6-35b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 1,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "arm L is retained only if compatibility AND quality AND economy all pass on the 1 task: its acceptance rate >= A's AND its premium tokens per accepted task (explorer included; local tokens do not count) <= 0.85 x A's, and compatibility (the v1 machine criterion: no external signal, extra swap under extra_swap_gib_max) passes. v5 has no arm E. A task whose arm record is undecided (contaminated, review_unreadable, tool error, cap) is undecided, not failed; quality compares acceptance counts with undecided tasks as bounds. Rule unchanged from v2, v3 and v4; the pilot decides nothing."
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "a77551d780fce39621e2f8aee0cb0741e010b9f60f2836fe44391e84ef32fa34",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "6a41b4b0aa9f6649e2b68cd63dba3b3dcbf36b24c063b1f6f70df22cdd7fbb4c"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [],
+  "replays": [],
+  "review_contaminated": [
+    {
+      "path": "L",
+      "task": {
+        "issue": "PAT-36",
+        "pr": 27,
+        "set": "pat-19-v5-pilot"
+      },
+      "segment": "cloud",
+      "attempt": 2,
+      "outcome": "review_unreadable",
+      "paths": [
+        "tool_result:/private/tmp/pat19-work5p3/priv"
+      ],
+      "commands": []
+    }
+  ],
+  "audit_journal": {
+    "policy": "journal_under_observed_barrier",
+    "journal_paths_by_arm": {
+      "A": 0,
+      "L": 0
+    },
+    "journal_paths_by_role": {
+      "arm": 0,
+      "reviewer": 0
+    },
+    "records_with_journal": 0,
+    "host_refused_calls": {
+      "Bash": 4
+    },
+    "host_refused_calls_total": 4,
+    "note": "findings kept apart from `contaminated`/`review_contaminated`: they decide nothing"
+  },
+  "exploration_screening": {
+    "state": "no_screening",
+    "selected": "qwen3.6-35b-a3b-mlx-4bit",
+    "reason": "no screening: candidate fixed by the protocol"
+  },
+  "exploration_comparison": {
+    "arms": {
+      "L": {
+        "tasks_compared": 1,
+        "informative": false,
+        "awaiting_implementer": [],
+        "compatibility": "pass",
+        "quality": "unavailable",
+        "economy": "unavailable",
+        "economy_detail": {
+          "premium_billing_tokens": 1019765,
+          "reference_premium_billing_tokens": 637362,
+          "accepted": 0,
+          "reference_accepted": 1,
+          "premium_per_accepted": null,
+          "reference_premium_per_accepted": 637362.0,
+          "ratio_max": 0.85,
+          "ratio": null,
+          "premium_pass": null,
+          "premium_definition": "unweighted sum of the four billing token classes over all models, explorer included (an economy model counts as premium; local tokens do not)",
+          "premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 46,
+              "cached_input_tokens": 399194,
+              "cache_write_input_tokens": 67762,
+              "output_tokens": 9926,
+              "reasoning_output_tokens": 1386
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 36,
+              "cached_input_tokens": 452349,
+              "cache_write_input_tokens": 73935,
+              "output_tokens": 16517,
+              "reasoning_output_tokens": 4177
+            }
+          },
+          "reference_premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 34,
+              "cached_input_tokens": 287763,
+              "cache_write_input_tokens": 49413,
+              "output_tokens": 5991,
+              "reasoning_output_tokens": 1288
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 20,
+              "cached_input_tokens": 251043,
+              "cache_write_input_tokens": 34273,
+              "output_tokens": 8825,
+              "reasoning_output_tokens": 2878
+            }
+          },
+          "wall_seconds": 605.407,
+          "reference_wall_seconds": 260.025,
+          "local_explorer_wall_seconds": 225.615
+        },
+        "accepted": 0,
+        "reference_accepted": 1,
+        "explorer_localization": [
+          {
+            "pr": 27,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          }
+        ]
+      }
+    },
+    "decision": "inconclusive",
+    "recommendation": null,
+    "warnings": [],
+    "informative_arms": [],
+    "complete": true,
+    "campaign_conclusion": "keep_cloud_insufficient_evidence",
+    "screening_selected": "fixed_by_protocol:qwen3.6-35b-a3b-mlx-4bit"
+  }
+}

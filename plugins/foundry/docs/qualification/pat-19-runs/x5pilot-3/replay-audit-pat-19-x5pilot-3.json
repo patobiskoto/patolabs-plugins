@@ -1,0 +1,470 @@
+{
+  "campaign_id": "pat-19-x5pilot-3",
+  "records": [
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "ea772376f9c127667b637604d81cd7cb7542f2916412ed8310b5be390610e3cd",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5p3",
+          "/private/tmp/pat19-work5p3/tests/test_linear_tracker.py",
+          "/private/tmp/pat19-work5p3/tooling/foundry/trackers/linear.py"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "refused_calls_only",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>"
+            ]
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5p3",
+            "/private/tmp/pat19-work5p3/tests/test_linear_tracker.py",
+            "/private/tmp/pat19-work5p3/tooling/foundry/trackers/linear.py"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "1369acfeb4dea61e5155451c1f750659389f0dcf35e7da84f93fd47e9d067c1b",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "2d4492e2ebe303f8f2a5ab8fd500d1c1aa16ebdd2c4fc3ee658703976a371dd6",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "11966595d7bfc4530febf877d942c9cd3b06d416aff7da65297e9aacac2c231b",
+          "stream": "local:attempt-l01-0004-pr27-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5p3",
+          "/private/tmp/pat19-work5p3/docs/*.md",
+          "/private/tmp/pat19-work5p3/tests/test_linear_tracker.py"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5p3",
+            "/private/tmp/pat19-work5p3/docs/*.md",
+            "/private/tmp/pat19-work5p3/tests/test_linear_tracker.py"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "90cf522e941daee086b51f205a816d2d9bf05915d4ec0889544711c9dcd81da5",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "review_block",
+        "outcome_recorded": "review_block",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 2
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_block"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "cecb1a390b23599ca5daecd7e6192a4ccacc1e9c5e528e1e41b8a44bd4744623",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 2
+            }
+          },
+          "role": "reviewer",
+          "sha256": "a7366edfefb72116e3fcf696b07e072bf5fdff3a3331966b564e960266acce39",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "tool_result:/private/tmp/pat19-work5p3/priv"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:/private/tmp/pat19-work5p3/priv"
+        ],
+        "session": "reviewer"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "review_unreadable",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:/private/tmp/pat19-work5p3/priv"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "tool_result:/private/tmp/pat19-work5p3/priv"
+            ]
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_unreadable"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "4207ee9a2405649ed93ef40ffab62209717d022db521e5d62a6545e86702f22e",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "tool_result:/private/tmp/pat19-work5p3/priv"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:/private/tmp/pat19-work5p3/priv"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:/private/tmp/pat19-work5p3/priv"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "0b5ce3ef66401b2930a0c6dbc57296d422edbe4f0ddad64f76bb174af01130d8",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    }
+  ],
+  "replay_limits": [
+    "offline: no model, no cloud call; nothing is recomputed (verdicts, outcomes, report)",
+    "sensitive roots rebuilt from the repository, state directory and home of the replay",
+    "base literals come from the checkout of the replay, not from each bundle; the local sandbox denial is not reconstructed",
+    "roles: the first cloud session of a record is taken as the arm's and the others as the reviewer's (true for paths A and L; wrong for path C or a resumed record)",
+    "work root sensitive in the rebuilt list: yes"
+  ],
+  "results_sha256": "637fe1338c698ae021c2286c89473e396b5b75d3906e3a2e2c44c7bfab441a9a",
+  "revisions": {
+    "new": 2,
+    "old": 1
+  },
+  "schema": "foundry.local-first-audit-replay.v1",
+  "summary": {
+    "classification": {
+      "clean": 3,
+      "not_comparable": 3
+    },
+    "fidelity_mismatch": 3,
+    "flagged_now": 0,
+    "flagged_recorded": 0,
+    "host_models": {
+      "claude-code-2.1.285": 8,
+      "unverified": 1
+    },
+    "policy_classes": {
+      "clean": 6,
+      "journal_only": 1,
+      "refused_calls_only": 1
+    },
+    "records": 6,
+    "reviewer_flagged_now": 2
+  }
+}

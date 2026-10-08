@@ -37,6 +37,7 @@ import tempfile
 import threading
 import time
 import uuid
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable, Collection, Mapping, NamedTuple, Sequence
 
@@ -55,7 +56,36 @@ V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_ch
 V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
 V4_KEYS = "correction_feedback, isolation.private_attempt_root, exploration.fixed_candidate and " \
           "exploration.comparison_task_group"
-FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4)
+# PAT-126: protocol v5 (frozen 2026-10-08, before any trial of its campaign, after four pilots) and its pilot. The pilot is the same instrument on one task, under a
+# protocol name and a campaign id of its own, so that its records can never be read as, or mixed with, the campaign's.
+PROTOCOL_V5 = "pat-19-protocol-v5"
+PROTOCOL_V5_PILOT = "pat-19-protocol-v5-pilot"
+V5_PROTOCOLS = (PROTOCOL_V5, PROTOCOL_V5_PILOT)
+FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4, PROTOCOL_V5)
+V5_TASKS = (26, 38, 25, 42, 33, 37, 30, 83, 27, 24, 48, 19)  # the six v3 comparison tasks, then the six v3 screening ones
+V5_PILOT_TASKS = (27,)
+V5_TASK_SET = {PROTOCOL_V5: "pat-19-v5", PROTOCOL_V5_PILOT: "pat-19-v5-pilot"}  # label of ``task.set`` in the records
+V5_CLAUDE_CODE = "2.1.285"  # the only Claude Code version observed for the audit's assumptions and the sandbox trials
+V5_PAIRED_DECIDED_MIN = 9  # rules.exploration_comparison.paired_decided_min: tasks decided in both arms (of 12)
+V5_ALLOW_READ_HOME = (".config/git/ignore",)  # the one home file a v5 cloud shell may read (git's default excludes)
+COMPARISON_SET = "comparison"  # ``task.set`` of the comparison records of v1 to v4
+# PAT-126 (pilot 2): ``isolation.audit_policy``, a protocol v5+ key. Where the native sandbox is observed to be in force
+# (``BARRIER_OBSERVED``) the operating system is the barrier and the lexical audit a journal: a call the host refused did
+# not run (it counts for nothing), and a SHELL finding under a root the OS denies to that execution, or at a directory the
+# audit cannot name, is journaled (``audit.journal``), not a contamination.
+AUDIT_POLICY_KEY = "audit_policy"
+AUDIT_POLICY = "journal_under_observed_barrier"
+# Whole-call refusals of the host, the shapes the trial tool knows, each anchored as the WHOLE error of the call: the
+# permission-mode denial for any tool; the two permission-rule messages for the FILE tools only (a Bash command that ran,
+# failed and printed such a sentence was not refused).
+_DONT_ASK = re.compile(r"\APermission to use \w+ has been denied because Claude Code is running in don't ask mode", re.I)
+_RULE_DENIED = re.compile(r"\A(?:File is in a directory that is denied by your permission settings\.?"
+                          r"|[^\n]{0,500}setting blocks reads outside the working directories\.?)\s*\Z")
+_FILE_TOOLS = frozenset({"Read", "Edit", "Write", "Glob", "Grep"})
+
+
+def _refused_call(tool: str, text: str) -> bool:
+    return bool(_DONT_ASK.search(text) or (tool in _FILE_TOOLS and _RULE_DENIED.match(text)))
 # PAT-123: ``isolation.audit_revision`` 2 (a protocol after v4 only) follows the working directory of a command
 # line, attributes a flag of the reviewer's session to the review, and records a path that does not exist apart
 AUDIT_REVISION = 2
@@ -82,7 +112,7 @@ NATIVE_GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}  
 NATIVE_REFUSED_FLAGS = ("--settings", "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions",
                         "--add-dir", "--allowedTools", "--allowed-tools", "--mcp-config", "--plugin-dir")
 NATIVE_TRIAL_KEY = "_native_trial"  # set in memory by the trial verb only; refused in a config file
-_PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)")
+_PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)|pat-19-protocol-v5-pilot")
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
@@ -290,12 +320,22 @@ def load_campaign(path: Path) -> dict[str, Any]:
         raise RunnerError(f"{path}: isolation.allow_read_home needs a list of relative home entries")
     if data.get("protocol") == PROTOCOL_V4 and data["schema"] != CAMPAIGN_SCHEMA_V2:
         raise RunnerError(f"{path}: protocol v4 requires the exploration schema {CAMPAIGN_SCHEMA_V2}")
+    if data.get("protocol") in V5_PROTOCOLS and data["schema"] != CAMPAIGN_SCHEMA_V2:
+        raise RunnerError(f"{path}: protocol v5 requires the exploration schema {CAMPAIGN_SCHEMA_V2}")
     later = bool(_PROTOCOL_AFTER_V4.fullmatch(str(data.get("protocol"))))
-    if data.get("protocol") != PROTOCOL_V4 and (
-            "correction_feedback" in data or ("private_attempt_root" in iso and not later)
+    # PAT-126: the v4 keys are also accepted by a protocol after v4 (v5); the two comparison-list keys only by it
+    if not later and data.get("protocol") != PROTOCOL_V4 and (
+            "correction_feedback" in data or "private_attempt_root" in iso
             or {"fixed_candidate", "comparison_task_group"} & set(data.get("exploration") or {})):
         raise RunnerError(f"{path}: {V4_KEYS} are accepted only under protocol {PROTOCOL_V4} "
                           "(isolation.private_attempt_root also under pat-19-protocol-v5 or later)")
+    if not later and "paired_decided_min" in ((data.get("rules") or {}).get("exploration_comparison") or {}):
+        raise RunnerError(f"{path}: rules.exploration_comparison.paired_decided_min is accepted only under a protocol "
+                          f"after v4 (pat-19-protocol-v5 or later), not under {data.get('protocol')!r}")
+    if not later and {"comparison_tasks", "comparison_task_set"} & set(data.get("exploration") or {}):
+        raise RunnerError(f"{path}: exploration.comparison_tasks and exploration.comparison_task_set are accepted "
+                          f"only under a protocol after v4 (pat-19-protocol-v5 or later), not under "
+                          f"{data.get('protocol')!r}")
     if type(iso.get("private_attempt_root", False)) is not bool:
         raise RunnerError(f"{path}: isolation.private_attempt_root must be a boolean")
     if iso.get("audit_revision", 1) not in (1, AUDIT_REVISION) or type(iso.get("audit_revision", 1)) is not int:
@@ -305,6 +345,15 @@ def load_campaign(path: Path) -> dict[str, Any]:
                           f"after v4 (pat-19-protocol-v5 or later), not under the frozen protocol "
                           f"{data.get('protocol')!r}")
     _check_native_sandbox(path, data, later)
+    if AUDIT_POLICY_KEY in iso:  # PAT-126: after v4 only, one value, and only with the barrier it relies on
+        if not later:
+            raise RunnerError(f"{path}: isolation.{AUDIT_POLICY_KEY} is accepted only under a protocol after v4 "
+                              f"(pat-19-protocol-v5 or later), not under {data.get('protocol')!r}")
+        if iso[AUDIT_POLICY_KEY] != AUDIT_POLICY:
+            raise RunnerError(f"{path}: isolation.{AUDIT_POLICY_KEY} is {AUDIT_POLICY!r} or absent")
+        if iso.get(NATIVE_SANDBOX_KEY) is not True or iso.get("audit_revision") != AUDIT_REVISION:
+            raise RunnerError(f"{path}: isolation.{AUDIT_POLICY_KEY} needs isolation.{NATIVE_SANDBOX_KEY} true and "
+                              f"isolation.audit_revision {AUDIT_REVISION} (the operating system is the barrier it relies on)")
     _check_correction_feedback(path, data)
     _check_cloud_bash_deny(path, data)
     for cid, cand in data["candidates"].items():
@@ -392,6 +441,19 @@ def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
     if group not in (None, "screening", "comparison") or (fixed is not None and fixed not in data["candidates"]):
         raise RunnerError(f"{path}: exploration.comparison_task_group is screening or comparison and "
                           "exploration.fixed_candidate a declared candidate")
+    listed, label = ((data.get("exploration") or {}).get(k) for k in ("comparison_tasks", "comparison_task_set"))
+    if (listed is None) != (label is None):
+        raise RunnerError(f"{path}: exploration.comparison_tasks and exploration.comparison_task_set go together")
+    if listed is not None:  # PAT-126: an explicit, ordered list of corpus PRs and the label of its records
+        if group is not None or not isinstance(listed, list) or not listed or len(set(listed)) != len(listed) \
+                or not all(type(n) is int and n > 0 for n in listed):
+            raise RunnerError(f"{path}: exploration.comparison_tasks is a non-empty list of distinct PR numbers, "
+                              "and replaces exploration.comparison_task_group")
+        if not isinstance(label, str) or not _ID.match(label) or label in (COMPARISON_SET, "screening"):
+            raise RunnerError(f"{path}: exploration.comparison_task_set is a plain identifier of its own "
+                              "(not 'comparison' nor 'screening': the labels of the earlier protocols)")
+    if data.get("protocol") in V5_PROTOCOLS:  # the v5 coordinates are pinned (a drift would be a v6)
+        _check_v5_pins(path, data, frozen, fixed, listed, label)
     if data.get("protocol") == PROTOCOL_V4:  # the v4 coordinates are pinned (a drift would be a v5)
         if tuple(frozen) != V4_CANDIDATES or tuple(data["candidates"]) != V4_CANDIDATES or fixed != V4_CANDIDATES[0]:
             raise RunnerError(f"{path}: protocol v4 freezes exactly the candidate {list(V4_CANDIDATES)}")
@@ -425,6 +487,51 @@ def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
             denied = argv[argv.index("--disallowedTools") + 1:] if "--disallowedTools" in argv else []
             if not {"Edit", "Write"} <= set(denied):
                 raise RunnerError(f"{path}: driver {name}: a cloud explorer must deny Edit and Write")
+
+
+def _check_v5_pins(path: Path, data: Mapping[str, Any], frozen: Sequence[str], fixed: Any,
+                   tasks: Any, label: Any) -> None:
+    """The coordinates protocol v5 (and its one-task pilot) pins at load (PAT-126): everything v4 pinned, the
+    instrument keys of PAT-121/123/124, the explicit task list, the version of Claude Code and the one home file the
+    cloud shell may read. The pilot differs from the campaign by its protocol name, its task list and its label."""
+    protocol, expl, iso = data["protocol"], data.get("exploration") or {}, data.get("isolation") or {}
+    wanted = V5_TASKS if protocol == PROTOCOL_V5 else V5_PILOT_TASKS
+    if tuple(frozen) != V4_CANDIDATES or tuple(data["candidates"]) != V4_CANDIDATES or fixed != V4_CANDIDATES[0]:
+        raise RunnerError(f"{path}: protocol v5 freezes exactly the candidate {list(V4_CANDIDATES)}")
+    if any(data["bounds"][k] != v for k, v in V3_BOUNDS.items()) or data["bounds"]["max_correction_rounds"] != 2:
+        raise RunnerError(f"{path}: protocol v5 freezes the explorer bounds at {V3_BOUNDS} and 2 corrections")
+    if expl.get("one_task_per_launch") is not True:
+        raise RunnerError(f"{path}: protocol v5 requires exploration.one_task_per_launch true")
+    if tasks is None or tuple(tasks) != wanted or label != V5_TASK_SET[protocol]:
+        raise RunnerError(f"{path}: protocol {protocol} requires exploration.comparison_tasks {list(wanted)} (in "
+                          f"this order) and exploration.comparison_task_set {V5_TASK_SET[protocol]!r}")
+    feedback = data.get("correction_feedback") or {}
+    if {k: feedback.get(k) for k in V4_FEEDBACK} != V4_FEEDBACK:
+        raise RunnerError(f"{path}: protocol v5 requires correction_feedback {V4_FEEDBACK}")
+    if iso.get(AUDIT_POLICY_KEY) != AUDIT_POLICY:
+        raise RunnerError(f"{path}: protocol v5 requires isolation.{AUDIT_POLICY_KEY} {AUDIT_POLICY!r}")
+    if iso.get("private_attempt_root") is not True or iso.get(NATIVE_SANDBOX_KEY) is not True \
+            or iso.get("audit_revision") != AUDIT_REVISION:
+        raise RunnerError(f"{path}: protocol v5 requires isolation.private_attempt_root true, "
+                          f"isolation.{NATIVE_SANDBOX_KEY} true and isolation.audit_revision {AUDIT_REVISION}")
+    if not set(iso.get("allow_read_home", [])) <= set(V5_ALLOW_READ_HOME):
+        raise RunnerError(f"{path}: protocol v5 allows reading nothing of the home but {list(V5_ALLOW_READ_HOME)} "
+                          "(isolation.allow_read_home)")
+    rule = data["rules"]["exploration_comparison"]
+    if rule.get("paired_decided_min") != V5_PAIRED_DECIDED_MIN:
+        raise RunnerError(f"{path}: protocol v5 requires rules.exploration_comparison.paired_decided_min "
+                          f"{V5_PAIRED_DECIDED_MIN}")
+    if rule["tasks"] != len(wanted) or rule["premium_per_accepted_ratio_max"] != 0.85:
+        raise RunnerError(f"{path}: protocol v5 requires rules.exploration_comparison.tasks {len(wanted)} and "
+                          "premium_per_accepted_ratio_max 0.85")
+    for name, driver in data["drivers"].items():
+        if driver["kind"] == "cloud_explorer":
+            raise RunnerError(f"{path}: protocol v5 has no cloud explorer (no arm E): driver {name}")
+        pin = driver.get("binary_version") or {}
+        if driver["kind"] in CLOUD_KINDS and (pin.get("version") != V5_CLAUDE_CODE
+                                              or list(pin.get("command") or ()) != ["claude", "--version"]):
+            raise RunnerError(f"{path}: protocol v5 pins Claude Code {V5_CLAUDE_CODE} on every cloud driver "
+                              f"(binary_version, command ['claude', '--version']): driver {name}")
 
 
 def _check_driver_pins(path: Path, name: str, driver: Mapping[str, Any]) -> None:
@@ -2746,7 +2853,10 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                      attempt_dir: Path | None = None, private_root: Path | None = None,
                      revision: int = 1, not_found: list[str] | None = None,
                      host_model: list[str] | None = None,
-                     trace: list[frozenset[Path]] | None = None) -> list[str]:
+                     trace: list[frozenset[Path]] | None = None,
+                     policy_denied: tuple[Sequence[Path], Sequence[Path]] | None = None,
+                     journal: list[str] | None = None,
+                     refused: dict[str, int] | None = None) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -2807,7 +2917,16 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     ``cat x``, is read there). As in revision 1, a path built at run time is not seen. A path an omp tool call gave and the tool answered ``Path not found: <that path>`` was not
     read: it is not a hit, nor is the echo of it in the error result; it is appended to ``not_found`` (apart,
     never counted as a read). A path that exists, a command and every other failure text stay audited as
-    before."""
+    before.
+
+    ``policy_denied`` (PAT-126, ``isolation.audit_policy``, revision 2 and an observed barrier only: ``(denyRead,
+    allowRead)`` of the settings the execution received): (1) a tool call whose result is a whole-call refusal of the
+    host (``_refused_call``, an error result) did not run: it contributes nothing and moves no directory; it is counted
+    per tool in ``refused`` (no text); (2) a finding of a SHELL command whose path lies under a ``denyRead`` root and
+    outside every ``allowRead`` entry, or at ``UNKNOWN_CWD``, is appended to ``journal`` and left out of the result; a ``tool_result:`` path under such a root (or a truncated
+    prefix of one) is journaled too; every other finding (a file-tool path, a path the OS does not deny, a result path
+    outside them, a forbidden command) stays in the result.
+    Without it the result is exactly what it was."""
     try:
         lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
     except FileNotFoundError:
@@ -2852,31 +2971,46 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
         return str(path).replace(str(home_real), "~", 1)
 
     hits: dict[str, None] = {}
+    hit_paths: dict[str, Path] = {}
+    file_tool: set[str] = set()  # hits some FILE-TOOL call (not only a shell command) produced
     commands: dict[str, None] = {}
     follow = revision >= AUDIT_REVISION
     missing = _missing_paths(lines) if follow else {}
     outcomes = _call_outcomes(lines) if follow else {}
+    policy = follow and policy_denied is not None
+    refused_ids: set[str] = set()
+    if policy:
+        names = {str(i): n for i, n, _, _ in _tool_events(lines) if i is not None}
+        refused_ids = {i for i, o in outcomes.items() if o.get("error") is True
+                       and _refused_call(names.get(i, ""), o["text"])}
     model = _host_model(lines) if follow else "unverified"
     if follow and host_model is not None:
         host_model.append(model)
     carried = model != "unverified"  # H1; otherwise H9: no directory is carried, no ``cd`` is believed
     session = frozenset({bundle_real})  # H1: where the shell may start the next call
     anywhere = {bundle_real}  # H9: every directory a call may have been in so far
-    unordered = _overlapping(lines, outcomes) if follow else set()  # calls whose order of execution is not known
+    unordered = (_overlapping(lines, outcomes) - refused_ids) if follow else set()  # order of execution not known
     unordered_moves = any(
         set(_shell_walk(_without_heredocs(text)[0], {bundle_real}, tilde, None)[2]) != {bundle_real}
         for call_id, _, args, _ in _tool_events(lines) if call_id is not None and str(call_id) in unordered
         for key, text in _strings(args) if key in _COMMAND_KEYS)
 
-    def consider(path: Path, broad: bool, relative: bool = False) -> None:
+    def consider(path: Path, broad: bool, relative: bool = False, shell: bool = False) -> None:
         if permitted(path):
             return
         if any(_within(path, r) for r in roots) or relative or (broad and (
                 _within(path, home_real) or _within(bundle_real, path)
                 or any(_within(r, path) for r in roots))):
             hits[shown(path)] = None
+            hit_paths[shown(path)] = path
+            if not shell:
+                file_tool.add(shown(path))
 
     for call_id, name, args, host in _tool_events(lines):
+        if call_id is not None and str(call_id) in refused_ids:  # the host refused the whole call: it did not run
+            if refused is not None:
+                refused[name] = refused.get(name, 0) + 1
+            continue
         path_keys = _PATH_KEYS | ({"pattern"} if name.lower() in _GLOB_TOOLS else frozenset())
         kept = follow and carried and host == "claude"
         ordered = call_id is not None and str(call_id) not in unordered
@@ -2911,7 +3045,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                     continue  # read by ``_shell_walk``, against the directories the shell may be in there
                 if token is not None:
                     consider(Path(os.path.realpath(token if os.path.isabs(token) else bundle / token)),
-                             key in path_keys, key in path_keys and not os.path.isabs(token))
+                             key in path_keys, key in path_keys and not os.path.isabs(token),
+                             shell=key in _COMMAND_KEYS)
             if key in _COMMAND_KEYS:
                 for n, script in enumerate(scripts):
                     if not follow:
@@ -2928,7 +3063,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                     else:
                         walked = _shell_walk(script, call_seen, tilde, None)[0]
                     for path, relative in walked:
-                        consider(path, True, relative)
+                        consider(path, True, relative, shell=True)
                     for found in _forbidden_commands(script):
                         commands[f"command:{found}"] = None
         if follow and call_end is not None:
@@ -2939,6 +3074,19 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
             else:
                 anywhere |= call_seen
     seen: dict[str, None] = {}
+    echoed: dict[str, None] = {}  # policy: result paths under a root the OS denies to the shell (journal)
+    if policy:
+        denied_roots = [Path(os.path.realpath(p)) for p in policy_denied[0]]
+        allowed_roots = [Path(os.path.realpath(p)) for p in policy_denied[1]]
+
+    def os_denied(path: Path, raw: str = "") -> bool:
+        """Under a ``denyRead`` root and outside every ``allowRead`` entry; a truncated path (an output cut by the
+        arm's own ``sed`` or ``cut``) is under it when its text starts with the denied root followed by ``/``: a sibling
+        directory whose name merely begins like the root (``<root>-other``) is not."""
+        if any(_within(path, a) for a in allowed_roots):
+            return False
+        return any(_within(path, d) or (raw != "" and raw.startswith(str(d).rstrip("/") + "/")) for d in denied_roots)
+
     for text in _tool_results(lines):
         if follow and text.startswith(_NOT_FOUND) and text[len(_NOT_FOUND):] in missing.values():
             continue  # the error of a path that does not exist: it names the path, it shows nothing
@@ -2949,7 +3097,23 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
             if os.path.isabs(token):  # a literal path only: ``~``/``$HOME`` in text are not expanded
                 path = Path(os.path.realpath(token))
                 if any(_within(path, r) for r in roots) and not permitted(path):
-                    seen[f"tool_result:{shown(path)}"] = None
+                    # policy: text shown in an output is not an access, and the shell that printed it could not read there
+                    (echoed if policy and os_denied(path, token) else seen)[f"tool_result:{shown(path)}"] = None
+    if policy:  # journal what the operating system denies to the shell anyway, and the directory nobody can name
+        def journaled(name: str) -> bool:
+            path = hit_paths[name]
+            if name in file_tool:
+                return False
+            if path == UNKNOWN_CWD or UNKNOWN_CWD in path.parents:
+                return True
+            return (any(_within(path, d) for d in denied_roots)
+                    and not any(_within(path, a) for a in allowed_roots))
+
+        moved = [h for h in hits if journaled(h)]
+        if journal is not None:
+            journal.extend(sorted(moved))
+            journal.extend(sorted(echoed))
+        hits = {h: None for h in hits if h not in moved}
     return [*sorted(hits), *sorted(seen), *sorted(commands)]
 
 
@@ -3021,6 +3185,164 @@ def _merge_models(into: dict[str, dict[str, int | None]], more: Mapping[str, Map
             current[name] = None if (current[name] is None or value is None) else current[name] + value
 
 
+_TEMP_OWN = re.compile(r"foundry-|pytest-of-")  # the launcher's own temp dirs and pytest's own tree: never touched
+
+
+TEMP_WALK_BOUND = 20000  # entries read under one new temp entry before the inspection gives up (recorded, never "no")
+
+
+def _temp_names(directory: Path) -> set[str] | None:
+    """Top-level NAMES of the shared per-user temp directory (nothing is stat-ed: an entry vanishing meanwhile cannot
+    fail the listing). ``None`` when the directory cannot be listed: unknown, never "empty"."""
+    try:
+        return set(os.listdir(directory))
+    except OSError:
+        return None
+
+
+def _holds_bundle_material(entry: Path, files: Sequence[str]) -> bool | None:
+    """Does a new temp entry hold a copy of bundle material (bounded walk, symbolic links not followed)? A tree that
+    contains ``plugins/foundry``, a file whose path relative to the entry equals a changed file of the task, or a file
+    named like a changed product or test file (``__init__.py`` and ``conftest.py`` excepted). ``None`` (not known,
+    never "no") when the walk gave up after ``TEMP_WALK_BOUND`` entries or could not read a directory."""
+    rels = {f for f in files}
+    names = {Path(f).name for f in files} - {"__init__.py", "conftest.py"}
+    if not entry.is_dir() or entry.is_symlink():
+        return entry.name in names
+    seen = 0
+    unread: list[OSError] = []
+    for dirpath, dirs, fnames in os.walk(entry, followlinks=False, onerror=unread.append):
+        rel = os.path.relpath(dirpath, entry).replace(os.sep, "/")
+        if f"/{rel}/".find("/plugins/foundry/") != -1 or rel.endswith("plugins/foundry"):
+            return True
+        for name in fnames:
+            seen += 1
+            if name in names or f"{rel}/{name}".removeprefix("./") in rels:
+                return True
+        seen += len(dirs)
+        if seen > TEMP_WALK_BOUND:
+            return None
+    return None if unread else False
+
+
+TEMP_QUARANTINE = "temp-quarantine"  # under the state directory (denied to the arms): moved leftovers, never deleted
+# Why one cloud execution was not watched at all (``audit.temp_leftovers.unwatched``): nothing was moved for it and
+# what it left in the temp directory is unknown.
+TEMP_UNWATCHED = ("no_tmpdir", "listing_before_failed", "listing_after_failed")
+
+
+def _move_temp_leftovers(directory: Path, before: Collection[str] | None, dest: Path,
+                         files: Sequence[str]) -> dict[str, Any]:
+    """PAT-126: every top-level entry of ``directory`` whose NAME was absent from ``before`` (the names listed right
+    before the execution), owned by this user, not a symbolic link, not the launcher's own or pytest's own tree, that
+    holds bundle material is MOVED into ``dest``, a quarantine directory of the launcher under its state directory.
+    Nothing is ever deleted, here or later: the launcher keeps the quarantine. An entry that existed before is never
+    touched, even when it changed during the execution. The launcher cannot tell who created a new entry: one created
+    by ANOTHER process of the same account during the execution, and matching, is moved to the quarantine too (kept
+    whole, to be put back by hand).
+
+    Absent data is never a zero. ``before`` ``None`` (the listing made before the execution failed): NOTHING is
+    moved - without it no entry can be told new, and a pre-existing one must never be touched - and the result says
+    ``unwatched: listing_before_failed``; the listing made after failing gives ``listing_after_failed``. Otherwise
+    the result holds ``moved`` (entry names, no content, no path; a name already taken in ``dest`` gets a numeric
+    suffix there, the recorded name stays the original one), ``not_moved`` (a new entry that could not be examined or
+    moved: it is still in the temp directory) and ``not_inspected`` (a new entry whose walk gave up at
+    ``TEMP_WALK_BOUND`` entries or could not read a directory: left in place, not known to hold bundle material or
+    not). An entry that vanished meanwhile is not a leftover. No ``OSError`` leaves this function: a paid execution
+    is never aborted by its temp watch."""
+    if before is None:
+        return {"unwatched": "listing_before_failed"}
+    after = _temp_names(directory)
+    if after is None:
+        return {"unwatched": "listing_after_failed"}
+    out: dict[str, Any] = {"moved": [], "not_moved": [], "not_inspected": []}
+    for name in sorted(after):
+        if name in before or _TEMP_OWN.match(name):
+            continue
+        entry = directory / name
+        try:
+            if entry.is_symlink() or entry.lstat().st_uid != os.getuid():
+                continue
+            holds = _holds_bundle_material(entry, files)
+            if holds is None and os.path.lexists(entry):
+                out["not_inspected"].append(name)
+            if not holds:
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            target, n = dest / name, 0
+            while os.path.lexists(target):  # never overwrite what an earlier execution left here
+                n += 1
+                target = dest / f"{name}.{n}"
+            shutil.move(str(entry), str(target))
+            out["moved"].append(name)
+        except OSError:
+            if os.path.lexists(entry):  # still there: examined or moved in vain, said so (a vanished entry is none)
+                out["not_moved"].append(name)
+    return out
+
+
+def _temp_note(watches: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """``audit.temp_leftovers`` of one record, from the watch of each of its cloud executions. ``watch``:
+    ``complete`` (every execution listed before and after, every matching entry moved, every new entry inspected),
+    ``unavailable`` (no execution was watched), ``partial`` (anything in between), ``not_applicable`` (the record
+    holds no cloud execution: a local exploration is not watched). ``count`` is the number of entries moved, and is
+    ``None`` - never 0 - as soon as one execution of the record was not watched."""
+    if not watches:
+        return {"watch": "not_applicable", "count": None, "names": [], "not_moved": [], "not_inspected": [],
+                "unwatched": []}
+    unwatched = [w["unwatched"] for w in watches if w.get("unwatched")]
+    names = [n for w in watches for n in w.get("moved", [])]
+    not_moved = [n for w in watches for n in w.get("not_moved", [])]
+    not_inspected = [n for w in watches for n in w.get("not_inspected", [])]
+    watch = ("unavailable" if len(unwatched) == len(watches) else
+             "partial" if unwatched or not_moved or not_inspected else "complete")
+    return {"watch": watch, "count": None if unwatched else len(names), "names": names, "not_moved": not_moved,
+            "not_inspected": not_inspected, "unwatched": unwatched}
+
+
+def probe_interpreters(host_env: Mapping[str, str], driver: Mapping[str, Any] | None) -> dict[str, Any]:
+    """PAT-126: can the interpreters that matter import pytest? ``launcher``: ``sys.executable -P`` with the judge's
+    environment (the judge runs pytest with it); ``arm_python3`` and ``arm_python``: what ``python3`` and ``python``
+    resolve to on the PATH the launcher gives a cloud arm (``isolated_environment``, the R6 allow-list). Paths are
+    reported with the home masked as ``~``; ``refusals`` names each failure. Read-only: runs ``-c`` one-liners only."""
+    home = str(host_env.get("HOME") or os.path.expanduser("~"))
+
+    def mask(text: str) -> str:
+        return text.replace(home, "~") if home and home != "/" else text
+
+    def import_pytest(exe: str, args: Sequence[str], env: Mapping[str, str], cwd: str) -> tuple[str | None, str]:
+        try:
+            done = subprocess.run([exe, *args, "-c", "import pytest; print(pytest.__version__)"], env=dict(env),
+                                  cwd=cwd, capture_output=True, text=True, timeout=60, check=False,
+                                  stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return None, type(exc).__name__
+        lines = done.stdout.strip().splitlines()
+        return (lines[-1] if done.returncode == 0 and lines else None), ""
+
+    out: dict[str, Any] = {"refusals": []}
+    with tempfile.TemporaryDirectory(prefix="foundry-probe-") as tmp:
+        judge_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(Path(tmp) / "home"),
+                     "TMPDIR": tmp, "PYTHONNOUSERSITE": "1"}
+        version, why = import_pytest(sys.executable, ["-P"], judge_env, tmp)
+        out["launcher"] = {"path": mask(sys.executable), "pytest": version}
+        if version is None:
+            out["refusals"].append(f"launcher_python_cannot_import_pytest:{mask(sys.executable)}{why and ':' + why}")
+        if driver is not None:
+            env = isolated_environment(driver, Path(tmp) / "arm", host_env)
+            for name in ("python3", "python"):
+                found = shutil.which(name, path=env.get("PATH") or os.defpath)
+                if found is None:
+                    out[f"arm_{name}"] = {"path": None, "pytest": None}
+                    out["refusals"].append(f"arm_{name}_not_found_on_the_arm_path")
+                    continue
+                version, why = import_pytest(found, [], env, tmp)
+                out[f"arm_{name}"] = {"path": mask(found), "pytest": version}
+                if version is None:
+                    out["refusals"].append(f"arm_{name}_cannot_import_pytest:{mask(found)}{why and ':' + why}")
+    return out
+
+
 class Runner:
     """Plays tasks through the paths. Every argument is injected so a test (or a dry run) never
     needs a real machine, model or cloud."""
@@ -3060,6 +3382,12 @@ class Runner:
         if (self.state_dir / NATIVE_TRIAL_MARKER).exists() and campaign.get(NATIVE_TRIAL_KEY) is not True:
             raise RunnerError(f"{self.state_dir} holds a native-sandbox trial (marker {NATIVE_TRIAL_MARKER}): "
                               "a campaign never shares a state directory with a trial")
+        # PAT-126: the pilot of protocol v5 and its campaign never share a campaign id (results and ledger files)
+        pilot = campaign.get("protocol") == PROTOCOL_V5_PILOT
+        if campaign.get("protocol") in V5_PROTOCOLS and pilot != ("pilot" in envelope["campaign_id"]):
+            raise RunnerError(f"protocol {campaign['protocol']} needs a campaign id "
+                              f"{'containing' if pilot else 'NOT containing'} 'pilot' (the pilot is never mixed with "
+                              f"the campaign): got {envelope['campaign_id']!r}")
         self.results_path = self.state_dir / f"results-{envelope['campaign_id']}.jsonl"
         self.seen = self._scan_results()  # refuses a mixed or foreign state before anything starts
         self.prior_ledger: list[dict[str, Any]] = []
@@ -3106,6 +3434,18 @@ class Runner:
         self.barriers: dict[str, str] = {}  # what the launcher verified of the barrier, by audited stream log
         self.roles: dict[str, str] = {}  # role of each reserved cloud session
         self.fixed_candidate = (campaign.get("exploration") or {}).get("fixed_candidate")
+        # PAT-126 (a protocol after v4 only): a judge that cannot run is an instrument error, never a 0/0/0 refusal,
+        # and the interpreters the judge and the arms will use are probed before anything is claimed
+        self.strict_judge = bool(_PROTOCOL_AFTER_V4.fullmatch(str(campaign.get("protocol"))))
+        self.interpreters: dict[str, Any] | None = None
+        self.audit_policy = (campaign.get("isolation") or {}).get(AUDIT_POLICY_KEY) == AUDIT_POLICY
+        self.bundle_files: dict[Path, list[str]] = {}  # changed files of the task, by bundle (temp leftovers match)
+        self.leftovers: dict[str, dict[str, Any]] = {}  # the temp watch of each cloud execution, by stream
+        self.stream_roles: dict[str, str] = {}  # role of each audited cloud stream log
+        self.journals: dict[str, list[str]] = {}  # audit policy: journaled findings by stream log
+        self.refusals: dict[str, dict[str, int]] = {}  # audit policy: calls the host refused, per tool, by stream log
+        # PAT-126 (a protocol after v4 only): the ``task.set`` label of the comparison records ("comparison" before)
+        self.compare_set = _compare_set(campaign)
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
         self.dedicated: dict[str, Any] | None = None  # observed values of the last dedicated-machine check
         self.truths: dict[Any, dict[str, Any]] = {}  # localization ground truth of each task, by PR
@@ -3271,15 +3611,28 @@ class Runner:
         self._executable(self._driver(driver_id))
 
     def _audit(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
-               session_id: str | None = None, exe: Mapping[str, str] | None = None) -> list[str]:
+               session_id: str | None = None, exe: Mapping[str, str] | None = None,
+               native: Mapping[str, Any] | None = None) -> list[str]:
         """``_audit_stream`` that keeps the paths the arm named without their existing (audit revision 2)
-        in ``self.not_found``, to be recorded apart."""
+        in ``self.not_found``, to be recorded apart. Under ``isolation.audit_policy`` and an observed barrier
+        (``native``: the settings this execution received) the returned list is the DECISIVE findings only; the
+        journaled ones and the calls the host refused are kept apart (``self.journals``, ``self.refusals``)."""
         notes: list[str] = []
         models: list[str] = []
-        hits = self._audit_stream(stream_log, bundle, scratch, driver, session_id, exe, notes, models)
+        barrier = self._stream_barrier(stream_log, driver)
+        denied = None
+        if self.audit_policy and barrier == BARRIER_OBSERVED and native is not None:
+            fs = (native.get("sandbox") or {}).get("filesystem") or {}
+            denied = (fs.get("denyRead") or [], fs.get("allowRead") or [])
+        journal: list[str] = []
+        refused: dict[str, int] = {}
+        hits = self._audit_stream(stream_log, bundle, scratch, driver, session_id, exe, notes, models,
+                                  policy_denied=denied, journal=journal, refused=refused)
         self.not_found[str(stream_log)] = list(dict.fromkeys(notes))
         self.host_models[str(stream_log)] = models[0] if models else "unverified"
-        self.barriers[str(stream_log)] = self._stream_barrier(stream_log, driver)
+        self.barriers[str(stream_log)] = barrier
+        self.journals[str(stream_log)] = journal
+        self.refusals[str(stream_log)] = refused
         return hits
 
     def _stream_barrier(self, stream_log: Path, driver: Mapping[str, Any]) -> str:
@@ -3320,7 +3673,7 @@ class Runner:
 
     def _audit_stream(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
                       session_id: str | None, exe: Mapping[str, str] | None, notes: list[str],
-                      models: list[str] | None = None) -> list[str]:
+                      models: list[str] | None = None, **policy: Any) -> list[str]:
         """Contamination audit of one arm's tool calls, on the stream the launcher kept. Always against
         the strictest list (the one of a local arm): a cloud arm keeps ``~/.claude`` for its identity,
         but reading anything there (the plugin cache holds the merged tests) is a contamination, except
@@ -3348,7 +3701,7 @@ class Runner:
                                 literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled,
                                 attempt_dir=bundle.parent,  # ``_bundle`` builds <attempt dir>/bundle
                                 private_root=bundle.parent.parent if self.private_root else None,
-                                revision=self.audit_revision, not_found=notes, host_model=models)
+                                revision=self.audit_revision, not_found=notes, host_model=models, **policy)
 
     def _audit_note(self, stream_logs: Sequence[Path]) -> dict[str, Any]:
         """The ``audit`` field of a record that ran to completion under audit revision 2 (a record cut by
@@ -3363,9 +3716,23 @@ class Runner:
         names = [p for log in stream_logs for p in self.not_found.get(str(log), [])]
         barrier = min((self.barriers.get(str(log), AUDIT_BARRIER) for log in stream_logs),
                       key=BARRIERS.index, default=AUDIT_BARRIER)
-        return {"audit": {"revision": self.audit_revision, "barrier": barrier,
-                          "not_found": list(dict.fromkeys(names)),
-                          "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}}
+        note = {"revision": self.audit_revision, "barrier": barrier, "not_found": list(dict.fromkeys(names)),
+                "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}
+        if self.native_sandbox:  # PAT-126: bundle material found in the shared temp directory and moved out of it
+            note["temp_leftovers"] = _temp_note([self.leftovers[str(log)] for log in stream_logs
+                                                 if str(log) in self.leftovers])
+        if self.audit_policy:  # PAT-126: absent without the key, so the record of every other campaign keeps its shape
+            roles: dict[str, int] = {}
+            refused: dict[str, int] = {}
+            for log in stream_logs:
+                role = "reviewer" if self.stream_roles.get(str(log)) == "reviewer" else "arm"
+                roles[role] = roles.get(role, 0) + len(self.journals.get(str(log), []))
+                for tool, n in self.refusals.get(str(log), {}).items():
+                    refused[tool] = refused.get(tool, 0) + n
+            note.update(policy=AUDIT_POLICY,
+                        journal=list(dict.fromkeys(p for log in stream_logs for p in self.journals.get(str(log), []))),
+                        journal_by_role=roles, refused_calls=refused)
+        return {"audit": note}
 
     def _home(self) -> str:
         """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""
@@ -3402,6 +3769,7 @@ class Runner:
             _git_in(bundle, "commit", "-q", "--amend", "--no-edit", "--no-verify")
             root = _git_in(bundle, "rev-parse", "HEAD").decode().strip()
             self.guards[bundle] = (root, _git_surface(bundle))
+            self.bundle_files[bundle] = [str(f["path"]) for f in task.get("files", []) if isinstance(f, Mapping)]
             self.literals[bundle] = base_literals(bundle, self._home())  # before any patch or arm
             if patch:
                 _apply_patch(bundle, patch)
@@ -3423,6 +3791,7 @@ class Runner:
 
     def _discard(self, bundle: Path, attempt_dir: Path) -> None:
         self.guards.pop(bundle, None)
+        self.bundle_files.pop(bundle, None)
         self.literals.pop(bundle, None)
         self.stripped.pop(bundle, None)
         lfc.remove_bundle(bundle)
@@ -3456,7 +3825,8 @@ class Runner:
         (``candidate_fault``), never a void attempt. Any other ``OSError`` (the launcher's environment)
         propagates and leaves the attempt void."""
         try:
-            return lfc.judge(self.repo, task, bundle, **({"failures": True} if self.feedback_spec else {}))
+            return lfc.judge(self.repo, task, bundle, **({"failures": True} if self.feedback_spec else {}),
+                             **({"strict_report": True} if self.strict_judge else {}))
         except OSError as exc:
             real = Path(os.path.realpath(bundle))
             name = Path(os.path.realpath(exc.filename)) if isinstance(exc.filename, str) else None
@@ -3678,6 +4048,8 @@ class Runner:
             stream_log = self.state_dir / "streams" / f"{self.envelope['campaign_id']}-{session_id}.jsonl"
             env = os.environ if self.host_env is None else self.host_env
             fingerprint = registry_fingerprints(env)
+            temp_dir = Path(env["TMPDIR"]) if self.native_sandbox and env.get("TMPDIR") else None
+            temp_before = _temp_names(temp_dir) if temp_dir else None  # None: not listed (unknown, never empty)
             execution = execute_driver(
                 driver, values, workdir=bundle, scratch=scratch, stream_log=stream_log,
                 max_seconds=budget, max_steps=None, sandbox=self._sandboxed(driver), deny_read=deny,
@@ -3687,6 +4059,10 @@ class Runner:
             if native is not None and not execution["start_error"]:
                 self.settings_sent.add(str(stream_log))
             fingerprint_after = registry_fingerprints(env)
+            if self.native_sandbox:  # the shared per-user temp directory: what this execution left of the bundle
+                self.leftovers[str(stream_log)] = {"unwatched": "no_tmpdir"} if temp_dir is None else (
+                    _move_temp_leftovers(temp_dir, temp_before, self.state_dir / TEMP_QUARANTINE / stream_log.stem,
+                                         self.bundle_files.get(bundle, [])))
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
             if reserved:
                 with self._critical():
@@ -3702,7 +4078,8 @@ class Runner:
         execution["by_model"] = by_model if tokens is not None else {}
         refusal = tool_allowlist_refusal(driver, execution["stream"])
         with self._critical():  # refused or not; a signal right after the audit never loses its result
-            execution["contamination"] = self._audit(stream_log, bundle, scratch, driver, session_id)
+            self.stream_roles[str(stream_log)] = role
+            execution["contamination"] = self._audit(stream_log, bundle, scratch, driver, session_id, native=native)
             self.audited[session_id] = execution["contamination"]
         if fingerprint_after != fingerprint:  # PAT-120: settled and audited above, then the campaign stops
             raise FoundryStateChanged(fingerprint, fingerprint_after, execution["contamination"])
@@ -4154,13 +4531,13 @@ class Runner:
                             ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, bool]:
         """Exploration of arm L: ``(records, report, skip)``; ``skip`` leaves the arm undecided (a
         contaminated explorer, or an exploration cut twice): no implementation is spent on it."""
-        state, info = self._local_state("L", task, "comparison", candidate_id, "explore", 0)
+        state, info = self._local_state("L", task, self.compare_set, candidate_id, "explore", 0)
         if state == "undecided":
             return [], None, True
         if state == "decided":  # resume: the report was kept on the record
             skip = bool(info.get("contaminated")) or info.get("outcome") in LOST_OUTCOMES
             return [], (None if skip else (info.get("exploration") or {}).get("report")), skip
-        record = self._emit(self.explore_local(task, candidate_id, driver_id, "L", "comparison",
+        record = self._emit(self.explore_local(task, candidate_id, driver_id, "L", self.compare_set,
                                                segment="explore", replay_of=info))
         return [record], record["exploration"]["report"], bool(record.get("contaminated"))
 
@@ -4171,7 +4548,7 @@ class Runner:
         replayed once (it passes the caps again); a recorded one is never replayed."""
         prior = [r for r in self.prior_records if r.get("record_type") == "attempt"
                  and (r["path"], r["task"]["pr"], r["task"].get("set"), r.get("segment")) ==
-                 ("E", task["pr"], "comparison", "explore")]
+                 ("E", task["pr"], self.compare_set, "explore")]
         replay = None
         if prior:
             kept = [r for r in prior if r.get("outcome") not in LOST_OUTCOMES]
@@ -4186,7 +4563,7 @@ class Runner:
                       "reason": prior[0].get("reason"), "cloud_sessions": list(prior[0]["cloud_sessions"])}
         truth = self._truth(task)
         self._full_budget_left()
-        self._claim("E", task, "comparison", None, "explore", 0, 1 if replay else 0)
+        self._claim("E", task, self.compare_set, None, "explore", 0, 1 if replay else 0)
         mark = len(self.sessions)
         by_role: dict[str, Any] = {}
         models: dict[str, dict[str, int | None]] = {}
@@ -4225,7 +4602,7 @@ class Runner:
             if contamination:
                 unknown["contaminated"] = _CONTAMINATED
             record = self._emit({
-                "record_type": "attempt", "task": _task_ref(task, "comparison"), "path": "E",
+                "record_type": "attempt", "task": _task_ref(task, self.compare_set), "path": "E",
                 "segment": "explore", "attempt": 0, "outcome": "contaminated" if contamination else "explored",
                 "judge": None, "accepted": None, "review": {"rounds": 0, "verdicts": []},
                 "wall_seconds": round(seconds, 3), "cloud_executions": len(spent), "cloud_sessions": spent,
@@ -4241,7 +4618,7 @@ class Runner:
                 **({"replay_of": replay} if replay else {})})
         except CapReached:  # the cut execution is recorded: the task is not decided, never a refusal
             spent = self.sessions[mark:]
-            self._emit({"record_type": "attempt", "task": _task_ref(task, "comparison"), "path": "E",
+            self._emit({"record_type": "attempt", "task": _task_ref(task, self.compare_set), "path": "E",
                         "segment": "explore", "attempt": 0, "outcome": "stopped_by_cap", "judge": None,
                         "accepted": None, "review": {"rounds": 0, "verdicts": []}, "wall_seconds": 0.0,
                         "cloud_executions": len(spent), "cloud_sessions": spent,
@@ -4249,11 +4626,39 @@ class Runner:
                         "local": None, "machine": None, "unknown": {"stopped_by_cap": "cap reached"}})
             raise
         except BaseException as exc:  # tool failure, Ctrl-C, SIGTERM, anything: never silent
-            self._tool_error(task, "E", "explore", 0, "comparison", exc, wall=seconds,
+            self._tool_error(task, "E", "explore", 0, self.compare_set, exc, wall=seconds,
                              sessions=self.sessions[mark:], by_role=by_role, by_model=models, replay_of=replay,
                              contamination=self._audited_since(mark))
             raise
         return [record], None if contamination else report, bool(contamination)
+
+    def _check_interpreters(self) -> None:
+        """PAT-126 (a protocol after v4 only): refuse, before any claim, model use or cloud reservation, when the
+        launcher's interpreter or the ``python3`` / ``python`` of a cloud arm cannot import pytest (the pilot of
+        2026-10-08 was void because they could not). The probe is kept for the ledger's preflight entries."""
+        if not self.strict_judge:
+            return
+        driver = self.campaign["drivers"].get(IMPLEMENTER_DRIVER["A"])
+        self.interpreters = probe_interpreters(os.environ if self.host_env is None else self.host_env,
+                                               driver if driver and driver["kind"] in CLOUD_KINDS else None)
+        if self.interpreters["refusals"]:
+            self.ledger.append("preflight", candidate=None, ok=False, refusals=self.interpreters["refusals"],
+                               interpreters=self.interpreters, phase="start")
+            raise PreflightRefused(self.interpreters["refusals"])
+
+    def _check_cloud_binaries(self, arms: Sequence[str]) -> None:
+        """PAT-126: a cloud driver that declares ``binary_version`` (protocol v5 pins Claude Code) is checked with its
+        read-only version command before the first claim or reservation of the launch, once per distinct command; any
+        other version, or an unreadable one, is refused. No-op for a driver that declares nothing (v1 to v4)."""
+        env = os.environ if self.host_env is None else self.host_env
+        done: set[tuple[str, ...]] = set()
+        for driver_id in dict.fromkeys([IMPLEMENTER_DRIVER[a] for a in arms if a in IMPLEMENTER_DRIVER]
+                                       + [REVIEWER_DRIVER] + ([CLOUD_EXPLORER_DRIVER] if "E" in arms else [])):
+            driver = self.campaign["drivers"].get(driver_id)
+            command = tuple(((driver or {}).get("binary_version") or {}).get("command") or ())
+            if driver and command and command not in done:
+                done.add(command)
+                check_binary_version(self._driver(driver_id), env)
 
     def compare_exploration(self, tasks: Sequence[Mapping[str, Any]], candidate_id: str,
                             arms: Sequence[str] = EXPLORE_ARMS, driver_id: str = LOCAL_EXPLORER_DRIVER
@@ -4269,16 +4674,19 @@ class Runner:
         start-of-run preflight is ledgered ``phase: "start"``; the one right before a local exploration is
         not run again when this launcher wrote nothing to the ledger since (it would be the same check twice
         in a row, and two preflights with nothing between them read as a launcher killed in between)."""
-        if self.campaign.get("protocol") == PROTOCOL_V4 and not set(arms) <= set(V4_ARMS):
-            raise RunnerError(f"protocol v4 has arms {list(V4_ARMS)} only (no Haiku arm): refused before any "
-                              f"claim or spend, got {list(arms)}")
+        protocol = self.campaign.get("protocol")
+        if protocol in (PROTOCOL_V4, *V5_PROTOCOLS) and not set(arms) <= set(V4_ARMS):
+            raise RunnerError(f"protocol {'v4' if protocol == PROTOCOL_V4 else 'v5'} has arms {list(V4_ARMS)} only "
+                              f"(no Haiku arm): refused before any claim or spend, got {list(arms)}")
+        self._check_cloud_binaries(arms)  # PAT-126: the pinned Claude Code version, before any claim or spend
+        self._check_interpreters()  # PAT-126: pytest importable by the judge and by the arms, before any claim
         out: list[dict[str, Any]] = []
         limits = self.campaign["exploration"]["report_render_limits"]
         checked: int | None = None  # ledger position right after the start-of-run preflight
         if "L" in arms:  # refused before any claim or reservation
             self._check_selected(candidate_id)
             self._check_harness(driver_id)
-            if any(self._local_state("L", t, "comparison", candidate_id, "explore", 0)[0] in ("fresh", "replay")
+            if any(self._local_state("L", t, self.compare_set, candidate_id, "explore", 0)[0] in ("fresh", "replay")
                    for t in tasks):
                 self.preflight(candidate_id, phase="start")  # a busy machine is refused before any cloud spend
                 checked = self.ledger.appended
@@ -4287,24 +4695,24 @@ class Runner:
                 played = len(out)
                 for arm in arms:
                     if arm == "A":
-                        out += self.cloud_path(task, "A", "comparison")
+                        out += self.cloud_path(task, "A", self.compare_set)
                         continue
                     if (arm == "L" and self.ledger.appended != checked
-                            and self._local_state("L", task, "comparison", candidate_id, "explore",
+                            and self._local_state("L", task, self.compare_set, candidate_id, "explore",
                                                   0)[0] in ("fresh", "replay")):
                         self.preflight(candidate_id)  # right before each local exploration, after the cloud work
                     explored, report, skip = (self._explore_step_local(task, candidate_id, driver_id)
                                               if arm == "L" else self._explore_step_cloud(task))
                     out += explored
                     if not skip:
-                        out += self.cloud_path(task, arm, "comparison", statement_extra=(
+                        out += self.cloud_path(task, arm, self.compare_set, statement_extra=(
                             lfe.render_report_section(self._report_for_arm(report), limits) if report else ""))
                 if self.one_task and len(out) > played:  # v3: one task per launch (reload between launches)
                     # conservative: a later task with an arm that has no record yet may still have work; a
                     # launch that then plays nothing says "no", so the operator loop always ends
                     self.work_remains = any(
                         not all(any(r.get("record_type") == "attempt" and r["path"] == arm
-                                    and r["task"]["pr"] == t["pr"] and r["task"].get("set") == "comparison"
+                                    and r["task"]["pr"] == t["pr"] and r["task"].get("set") == self.compare_set
                                     for r in self.prior_records) for arm in arms)
                         for t in tasks[index + 1:])
                     break
@@ -4321,6 +4729,7 @@ class Runner:
         self.ledger.append("preflight", candidate=candidate_id, ok=result["ok"],
                            refusals=result["refusals"],
                            **({"dedicated_machine": self.dedicated} if self.exploring else {}),
+                           **({"interpreters": self.interpreters} if self.interpreters else {}),
                            **({"phase": phase} if phase else {}))
         if not result["ok"]:
             raise PreflightRefused(result["refusals"])
@@ -4707,6 +5116,11 @@ def _classes(tokens: Mapping[str, int | None] | None) -> dict[str, int | None] |
     return None if tokens is None else dict(tokens)
 
 
+def _compare_set(campaign: Mapping[str, Any]) -> str:
+    """``task.set`` of the comparison records: ``exploration.comparison_task_set`` (protocol v5), else ``comparison``."""
+    return (campaign.get("exploration") or {}).get("comparison_task_set") or COMPARISON_SET
+
+
 def _task_ref(task: Mapping[str, Any], task_set: str) -> dict[str, Any]:
     return {"pr": task["pr"], "issue": task.get("issue"), "set": task_set}
 
@@ -4920,13 +5334,38 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                        for r in attempts if (r.get("review") or {}).get("contamination")]
     if flagged_reviews:  # audit revision 2 only (a frozen campaign has none: its report keeps its keys)
         out["review_contaminated"] = flagged_reviews
+    watched = [(r, (r.get("audit") or {}).get("temp_leftovers") or {}) for r in attempts]
+    leftover = [{"path": r["path"], "task": r["task"], "segment": r.get("segment"), "attempt": r.get("attempt"), **t}
+                for r, t in watched if t.get("count") or t.get("watch") in ("partial", "unavailable")]
+    if leftover:  # PAT-126: bundle material found new in the shared temp directory (quarantined), or a watch that
+        # did not fully happen (``watch`` partial or unavailable: unknown, never "nothing left"); decides nothing
+        out["temp_leftovers"] = leftover
+    journaled = [r for r in attempts if (r.get("audit") or {}).get("policy")]
+    if journaled:  # PAT-126, isolation.audit_policy only (the key is absent otherwise): the journal, apart from the rule
+        by_arm: dict[str, int] = {}
+        by_role: dict[str, int] = {}
+        refused_calls: dict[str, int] = {}
+        for r in journaled:
+            a = r["audit"]
+            by_arm[r["path"]] = by_arm.get(r["path"], 0) + len(a.get("journal") or [])
+            for role, n in (a.get("journal_by_role") or {}).items():
+                by_role[role] = by_role.get(role, 0) + n
+            for tool, n in (a.get("refused_calls") or {}).items():
+                refused_calls[tool] = refused_calls.get(tool, 0) + n
+        out["audit_journal"] = {"policy": AUDIT_POLICY, "journal_paths_by_arm": dict(sorted(by_arm.items())),
+                                "journal_paths_by_role": dict(sorted(by_role.items())),
+                                "records_with_journal": sum(1 for r in journaled if r["audit"].get("journal")),
+                                "host_refused_calls": dict(sorted(refused_calls.items())),
+                                "host_refused_calls_total": sum(refused_calls.values()),
+                                "note": "findings kept apart from `contaminated`/`review_contaminated`: they decide nothing"}
     exploring = campaign.get("schema") == CAMPAIGN_SCHEMA_V2  # protocol v2: other paths, other rules
     screen_path = "XS" if exploring else "S"
     killed = len({(h["path"], h["pr"], h["candidate"], h["segment"], h["attempt"])
                   for h in open_holes if h["kind"] == "attempt_started" and h["path"] == screen_path
                   and (h["path"], h["pr"], h["set"], h["candidate"], h["segment"],
                        h["attempt"]) not in counted})
-    comparison = [r for r in attempts if r["task"]["set"] == "comparison"]
+    comparison = [r for r in attempts if r["task"]["set"] == (
+        _compare_set(campaign) if exploring else COMPARISON_SET)]
     if exploring:
         fixed = (campaign.get("exploration") or {}).get("fixed_candidate")
         if fixed is not None:  # protocol v4: no screening, the candidate is fixed by the protocol
@@ -4939,7 +5378,7 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                                                         if h["mode"] == "screen_exploration"]
         out["exploration_comparison"] = _report_exploration_comparison(
             rules["exploration_comparison"], comparison, stops, bool(unknown_work),
-            [h["warning"] for h in open_holes if h["mode"] == "compare_exploration"])
+            [h["warning"] for h in open_holes if h["mode"] == "compare_exploration"], unknown_work)
         if fixed is not None:
             compared = {(r.get("local") or {}).get("candidate") for r in comparison if r["path"] == "L"}
             compared.discard(None)
@@ -5311,10 +5750,13 @@ def _check_compared_explorer(screening: Mapping[str, Any], attempts: Sequence[Ma
 
 def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
                                    stops: Sequence[str], unknown_work: bool = False,
-                                   warnings: Sequence[str] = ()) -> dict[str, Any]:
+                                   warnings: Sequence[str] = (), unknown_detail: Sequence[str] = ()
+                                   ) -> dict[str, Any]:
     """Arms ``L`` (retained local explorer) and ``E`` (cloud economy explorer) against ``A`` with the three
     verdicts kept separate. The decision concerns ``L`` only (``retained`` = the local exploration is
-    worth it for this use); ``E`` is informative, never recommended. Nothing is promoted."""
+    worth it for this use); ``E`` is informative, never recommended. Nothing is promoted. ``decision`` and
+    ``campaign_conclusion`` are the authoritative keys; under protocol v5 ``paired_rule.verdict`` always equals
+    ``decision`` (``_apply_paired_rule``). ``unknown_detail``: the reasons of ``_check_ledger`` (v5 only reads them)."""
     arms = {p: _arm_totals([r for r in attempts if r["path"] == p]) for p in EXPLORE_ARMS
             if any(r["path"] == p for r in attempts)}
     out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None,
@@ -5377,14 +5819,30 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     out["complete"] = bool(mine) and mine["tasks_compared"] == rule["tasks"] and (
         arms["A"]["tasks"].keys() == arms["L"]["tasks"].keys() and len(arms["A"]["tasks"]) == rule["tasks"]
         and not mine["awaiting_implementer"])
-    if mine and out["complete"]:
+    v5 = rule.get("paired_decided_min") is not None and bool(mine)
+    if v5:
+        # The ratio that counts under v5 is ``paired_rule.ratio`` (on D). The v2 to v4 figures of ``economy_detail``
+        # are computed over every compared task, undecided ones included, and the v2 to v4 readings of quality and
+        # economy are not the v5 rule: never printed under v5, complete campaign or not; the totals stay.
+        mine["quality"], mine["economy"] = "unavailable", "unavailable"
+        mine["economy_detail"].update(
+            ratio=None, premium_pass=None, premium_per_accepted=None, reference_premium_per_accepted=None,
+            superseded_by="paired_rule: under protocol v5 the ratio and the premium per accepted task are those of "
+                          "exploration_comparison.paired_rule (paired decided set; absent while the campaign is "
+                          "incomplete); the totals here cover every compared task")
+    paired = v5 and out["complete"]
+    if paired:
+        # protocol v5: undecided tasks leave the paired set; the campaign-level reasons are applied inside, so that
+        # ``paired_rule.verdict`` and ``decision`` cannot disagree
+        _apply_paired_rule(rule, out, arms, attempts, gone, unknown_detail, warnings)
+    elif mine and out["complete"]:
         verdicts = (mine["compatibility"], mine["quality"], mine["economy"])
         if all(v == "pass" for v in verdicts):
             out["decision"], out["recommendation"] = "retained", "L"
         elif "fail" in verdicts:
             out["decision"], out["recommendation"] = "keep_cloud", "A"
-    if unknown_work or warnings or any(r.get("outcome") == "interrupted" and id(r) not in gone
-                                       for r in attempts):
+    if not paired and (unknown_work or warnings or any(r.get("outcome") == "interrupted" and id(r) not in gone
+                                                       for r in attempts)):
         out["decision"], out["recommendation"] = "inconclusive", None
     # PAT-ADR-0015: insufficient proof keeps the cloud. A COMPLETE comparison that is neither retained nor
     # failed (an ``unavailable`` verdict) concludes the campaign on keeping the cloud; no replay, no extra
@@ -5394,6 +5852,168 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
         "retain_local_explorer" if out["decision"] == "retained" else
         "keep_cloud" if out["decision"] == "keep_cloud" else "keep_cloud_insufficient_evidence")
     return out
+
+
+def _cut_without_cloud(rec: Mapping[str, Any]) -> bool:
+    """Protocol v5 report only: an ``interrupted`` record that names NO cloud execution. ``_tool_error`` and
+    ``_flush_unrecorded`` give every interrupted record a null ``billing_total`` (v1 to v4 read it so, unchanged),
+    also when no cloud execution was reserved for it: a local exploration cut, a cloud round cut before its
+    reservation. Such a record spent no premium token: a session id is appended to the record's sessions in the same
+    signal-deferred block that reserves it in the ledger (``cloud_execution``), so an empty ``cloud_sessions`` means
+    no reservation; and a cloud execution the ledger started that NO record names is a campaign-level reason of its
+    own (``no_result_record``), whatever this function says."""
+    return (rec.get("status") == "interrupted" and rec["premium"]["billing_total"] is None
+            and not rec.get("cloud_sessions") and not rec.get("cloud_executions"))
+
+
+def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mapping[str, Any],
+                       attempts: Sequence[Mapping[str, Any]], gone: Collection[int],
+                       unknown_detail: Sequence[str] = (), warnings: Sequence[str] = ()) -> None:
+    """Protocol v5 (PAT-126, ``rules.exploration_comparison.paired_decided_min``, protocol section 2), replacing for
+    v5 the v2 to v4 behaviour, where one undecided task made the ECONOMY verdict ``unavailable`` (so ``retained`` was
+    impossible) while quality stayed read by bounds (``lfe.quality_verdict``: pass, fail or unavailable) and the
+    compatibility did not depend on it (``keep_cloud`` stayed possible).
+
+    (i) UNDECIDED TASK. A task is DECIDED for an arm when it is accepted or not unknown (``_arm_totals``: no record
+    left with an outcome of ``UNKNOWN_OUTCOMES`` - contaminated, unreadable review, tool error, cap, interruption -
+    that a replay did not supersede); the paired set D holds the tasks decided in both arms. An undecided task only
+    leaves D, also when one of its cloud executions was interrupted or has unknown tokens (its cost is then printed
+    as unknown, ``premium_tokens_on_undecided_tasks``).
+
+    The rule on D, in this order: fewer than ``paired_decided_min`` tasks in D: inconclusive. A premium total unknown
+    on a record of a task of D (iii): inconclusive. ACCEPTANCE: accepted_L < accepted_A: the criterion fails, keep
+    the cloud (``not_retained_on_paired_set``, ``failed_criteria`` names ``acceptance``), whatever the zeros -
+    accepted_L = 0 with accepted_A >= 1 included (review round 4: it was read ``inconclusive``, an undefined ratio,
+    before the comparison; v2 to v4 gave ``keep_cloud`` there). Else (accepted_L >= accepted_A) accepted_A = 0 - both
+    arms accepted nothing, or A nothing and L something: inconclusive, A's premium per accepted task is undefined and
+    no ratio can be computed (never zero, never an infinite ratio read as a pass). Else ECONOMY (premium per accepted
+    task of L <= ratio_max x A's; every record of the arm on D's tasks, superseded ones and the reviewer included,
+    local tokens excluded): failing, keep the cloud (``failed_criteria`` names ``economy``). Then the compatibility
+    criterion: FAILING, keep the cloud. Acceptance and economy passing and
+    compatibility ``unavailable`` (unmeasured swap, a local exploration lost without a successful replay):
+    inconclusive, ``compatibility_unavailable`` - absent data is not a failure. All three passing: L is retained,
+    subject to the robustness reading (every undecided task of L counted not accepted, every undecided task of A
+    counted accepted, over all the tasks): below A's worst case, inconclusive. Only ``retained`` has a robustness
+    reading: ``keep_cloud`` is the conservative outcome, the reading cannot make it more conservative. The cost ratio
+    is not recomputed in the worst case (the acceptance of an undecided task is unknown).
+
+    (ii) CAMPAIGN-LEVEL reasons, which give ``inconclusive`` whatever D says (money or integrity of the ledger): a
+    cloud execution the ledger started and never settled, one no result record names, an interrupted or
+    unknown-token cloud execution that belongs to a task of D or to no task of the comparison, and a start the ledger
+    holds with neither record nor replay (``warnings``). The verdict of the rule on D is kept in
+    ``verdict_before_campaign_level``; ``verdict`` is the final one and always equals the report's ``decision``.
+
+    (iii) PREMIUM OF A RECORD. Unknown (never zero) when the record's ``billing_total`` is null: an interrupted
+    record that names a cloud execution, a record one of whose cloud executions has unreadable tokens, a tool-error
+    record whose cloud executions were not all read back into it. EXCEPT an interrupted record that names no cloud
+    execution (``_cut_without_cloud``): it counts 0, known - no cloud execution was reserved for it, so an
+    interruption that spent nothing, replayed as the resume prescribes, does not make the campaign inconclusive.
+    ``premium_total_unknown`` is the reason of the rule on D; it comes WITH a campaign-level reason when the ledger
+    marks the execution interrupted or its tokens unknown (a cloud execution cut while it ran, a session log without
+    tokens), and WITHOUT one when the ledger knows the tokens the record does not carry (a tool error or an
+    interruption that came after the execution was settled and before any verdict: toolset refusal, audit, patch
+    capture, judge): inconclusive either way. ``arms.L.quality`` and ``arms.L.economy`` are the readings on D,
+    ``unavailable`` when not read."""
+    a_tasks, l_tasks = arms["A"]["tasks"], arms["L"]["tasks"]
+    mine = out["arms"]["L"]
+    minimum = rule["paired_decided_min"]
+
+    def decided(task: Mapping[str, Any]) -> bool:
+        return bool(task["accepted"]) or not task["unknown"]
+
+    both = sorted(set(a_tasks) & set(l_tasks))
+    paired = [pr for pr in both if decided(a_tasks[pr]) and decided(l_tasks[pr])]
+
+    def causes(path: str, tasks: Mapping[Any, Mapping[str, Any]]) -> dict[str, list[str]]:
+        """Exactly the tasks ``decided`` holds undecided, each with the records that leave it so."""
+        found: dict[str, list[str]] = {str(pr): [] for pr, task in sorted(tasks.items()) if not decided(task)}
+        for r in attempts:
+            key = str(r["task"]["pr"])
+            if r["path"] == path and key in found and id(r) not in gone and r.get("outcome") in UNKNOWN_OUTCOMES:
+                found[key].append(f"{r.get('segment')}:{r['outcome']}")
+        return {key: why or ["unknown"] for key, why in found.items()}
+
+    def premium(path: str, pr: Any) -> int | None:
+        """Premium tokens of an arm on a task under v5: every record of the arm, superseded ones included. A record
+        whose total is unknown keeps the task's premium unknown, EXCEPT a cloud-less interrupted record (iii)."""
+        return _sum_known([0 if _cut_without_cloud(r) else r["premium"]["billing_total"]
+                           for r in attempts if r["path"] == path and r["task"]["pr"] == pr])
+
+    undecided = {"A": causes("A", a_tasks), "L": causes("L", l_tasks)}
+    wasted = {"A": [premium("A", pr) for pr, t in a_tasks.items() if not decided(t)],
+              "L": [premium("L", pr) for pr, t in l_tasks.items() if not decided(t)]}
+    acc_a = sum(1 for pr in paired if a_tasks[pr]["accepted"])
+    acc_l = sum(1 for pr in paired if l_tasks[pr]["accepted"])
+    prem_a = _sum_known([premium("A", pr) for pr in paired])
+    prem_l = _sum_known([premium("L", pr) for pr in paired])
+    ratio_max = Fraction(str(rule["premium_per_accepted_ratio_max"]))
+    detail: dict[str, Any] = {
+        "paired_decided_min": minimum, "paired_decided": paired, "paired_decided_count": len(paired),
+        "undecided": undecided, "premium_tokens_on_undecided_tasks": {
+            k: (None if any(v is None for v in vals) else sum(vals)) for k, vals in wasted.items()},
+        "accepted_on_paired": {"A": acc_a, "L": acc_l}, "premium_on_paired": {"A": prem_a, "L": prem_l},
+        "premium_per_accepted": {"A": None if prem_a is None or not acc_a else round(prem_a / acc_a, 3),
+                                 "L": None if prem_l is None or not acc_l else round(prem_l / acc_l, 3)},
+        "ratio_max": float(ratio_max), "ratio": None, "compatibility": mine["compatibility"],
+        "failed_criteria": []}  # of ``not_retained_on_paired_set``: "acceptance", "economy" (when it was read)
+    worst_a = sum(1 for t in a_tasks.values() if t["accepted"] or not decided(t))
+    worst_l = sum(1 for t in l_tasks.values() if t["accepted"])
+    detail["worst_case"] = {"A_undecided_counted_accepted": worst_a, "L_undecided_counted_not_accepted": worst_l,
+                            "robust": None, "ratio_recomputed": False,
+                            "why_no_ratio": "the acceptance of an undecided task is unknown (its cost is known "
+                                            "unless one of its cloud executions was cut)"}
+    verdict, reason = "inconclusive", None
+    if len(paired) < minimum:
+        reason = f"paired_decided_set_below_{minimum}"
+    elif prem_a is None or prem_l is None:
+        reason = "premium_total_unknown"
+    elif acc_l < acc_a:
+        # The acceptance criterion FAILS on D, whatever the zeros (accepted_L = 0 with accepted_A >= 1 included: it
+        # is a real failure, as under v2 to v4, never an "undefined ratio"). The economy is still printed when it can
+        # be computed (accepted_L >= 1; accepted_A >= 1 holds here); it does not change this verdict.
+        mine["quality"] = "fail"
+        detail["failed_criteria"] = ["acceptance"]
+        if acc_l:
+            detail["ratio"] = round(float((prem_l * acc_a) / (prem_a * acc_l)), 4) if prem_a else None
+            economy = prem_l * acc_a <= ratio_max * prem_a * acc_l
+            mine["economy"] = "pass" if economy else "fail"
+            detail["failed_criteria"] += [] if economy else ["economy"]
+        verdict, reason = "keep_cloud", "not_retained_on_paired_set"
+    elif not acc_a:
+        # accepted_L >= accepted_A = 0: both arms accepted nothing, or A accepted nothing and L something. A's premium
+        # per accepted task is undefined, no ratio can be computed: never zero, never an infinite ratio read as a pass
+        mine["quality"] = "pass"
+        reason = "no_accepted_task_in_one_arm_ratio_undefined"
+    else:
+        detail["ratio"] = round(float((prem_l * acc_a) / (prem_a * acc_l)), 4) if prem_a else None
+        economy = prem_l * acc_a <= ratio_max * prem_a * acc_l
+        mine["quality"] = "pass"
+        mine["economy"] = "pass" if economy else "fail"
+        if not economy:
+            detail["failed_criteria"] = ["economy"]
+            verdict, reason = "keep_cloud", "not_retained_on_paired_set"
+        elif mine["compatibility"] == "fail":
+            verdict, reason = "keep_cloud", "compatibility_failed"
+        elif mine["compatibility"] != "pass":  # unavailable: absent data, never read as a failure
+            reason = "compatibility_unavailable"
+        else:
+            detail["worst_case"]["robust"] = worst_l >= worst_a
+            verdict, reason = ("retained", None) if worst_l >= worst_a else ("inconclusive", "not_robust_to_undecided_tasks")
+    # Campaign-level reasons (ii). An interrupted or unknown-token cloud execution named by a record of a task
+    # OUTSIDE D is task-level: that task is undecided and its tokens enter no ratio.
+    outside = {sid for r in attempts if r["task"]["pr"] not in paired for sid in r.get("cloud_sessions") or []}
+    campaign_level = sorted(
+        entry for entry in unknown_detail
+        if not (entry.partition(":")[0] in ("interrupted", "tokens_unknown") and entry.partition(":")[2] in outside))
+    campaign_level += [f"start_without_record_nor_replay:{w}" for w in warnings]
+    detail.update(verdict_before_campaign_level=verdict, reason_before_campaign_level=reason,
+                  campaign_level_reasons=campaign_level)
+    if campaign_level:
+        verdict, reason = "inconclusive", "campaign_level_unknown_work"
+    detail.update(verdict=verdict, reason=reason)
+    out["paired_rule"] = detail
+    out["decision"], out["recommendation"] = ({"retained": ("retained", "L"), "keep_cloud": ("keep_cloud", "A")}
+                                              .get(verdict, ("inconclusive", None)))
 
 
 # ------------------------------------------------------------------ offline audit replay (PAT-123)
@@ -5424,6 +6044,36 @@ def _hidden_home(hit: str, home: str) -> str:
     if path == "~" or path.startswith("~/") or path.startswith(home.rstrip("/") + "/"):
         path = "~/<hidden>"
     return prefix + path
+
+
+def _policy_reading(rec: Mapping[str, Any], streams: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Per stream, the revision 2 findings (``strict``) and what ``isolation.audit_policy`` makes of them
+    (``decisive`` / ``journal``), and a NON-DECISIONAL reading of what the record's outcome would have been: nothing is
+    recomputed, the recorded outcome and verdicts stay what they are."""
+    rows = []
+    for st in streams:
+        pol = st.get("policy")
+        if pol is None:
+            continue
+        strict = st["new"]
+        rows.append({"role": st["role"], "stream": st["stream"], "strict": strict, "decisive": pol["decisive"],
+                     "journal": pol["journal"], "refused_calls": pol["refused_calls"],
+                     "class": ("clean" if not strict else
+                               "decisive_kept" if set(pol["decisive"]) == set(strict) else
+                               "decisive_reduced" if pol["decisive"] else
+                               "journal_only" if pol["journal"] else "refused_calls_only")})
+    arm_decisive = any(r["decisive"] for r in rows if r["role"] == "arm")
+    review_decisive = any(r["decisive"] for r in rows if r["role"] == "reviewer")
+    verdicts = (rec.get("review") or {}).get("verdicts") or []
+    recorded = rec.get("outcome")
+    reading = None
+    if recorded == "review_unreadable" and not arm_decisive and not review_decisive and any(
+            r["role"] == "reviewer" and r["class"] in ("journal_only", "refused_calls_only") for r in rows):
+        last = verdicts[-1] if verdicts else None
+        reading = {"PASS": "accepted", "BLOCK": "review_block"}.get(last, "undetermined (verdict not on the record)")
+    return {"streams": rows, "outcome_recorded": recorded, "outcome_reading_non_decisional": reading
+            if reading is not None else recorded,
+            "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged"}
 
 
 def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
@@ -5459,8 +6109,19 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
     home_real = os.path.realpath(home)
     literals = base_literals(Path(repo), home)  # the checkout of now stands for the bundles of then
 
+    cloud_deny = read_deny_list(repo=Path(repo), home=home, state_dir=Path(state_dir), input_paths=[],
+                                kind="cloud_implementer", isolation=iso.get("deny_read_home"))
+    policy_on = iso.get(AUDIT_POLICY_KEY) == AUDIT_POLICY
+
+    def os_roots(attempt: Path) -> tuple[Sequence[Path], Sequence[Path]]:
+        """denyRead and allowRead of the settings an execution of that attempt received (rebuilt, not read)."""
+        fs = native_sandbox_settings(attempt_dir=attempt, work_root=work, home=home, deny_read=cloud_deny,
+                                     allow_read=[Path(home) / rel for rel in iso.get("allow_read_home", [])]
+                                     )["sandbox"]["filesystem"]
+        return [Path(x) for x in fs["denyRead"]], [Path(x) for x in fs["allowRead"]]
+
     def audit(stream: Path, bundle: Path, role: str, path: str, session: str | None, revision: int,
-              notes: list[str], models: list[str]) -> list[str]:
+              notes: list[str], models: list[str], policy: Mapping[str, Any] | None = None) -> list[str]:
         attempt = bundle.parent
         driver = (campaign.get("drivers") or {}).get(
             REVIEWER_DRIVER if role == "reviewer" else IMPLEMENTER_DRIVER.get(path, ""), {})
@@ -5470,7 +6131,7 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
                                 home=home, arm_home=None if session else str(attempt / "scratch" / "home"),
                                 own_session=own, attempt_dir=attempt, literals=literals,
                                 private_root=attempt.parent if private else None,
-                                revision=revision, not_found=notes, host_model=models)
+                                revision=revision, not_found=notes, host_model=models, **(policy or {}))
 
     rows = []
     for rec in records:
@@ -5503,11 +6164,19 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
             models: list[str] = []
             old = audit(stream, bundle, role, key[0], session, 1, [], [])
             new = audit(stream, bundle, role, key[0], session, AUDIT_REVISION, notes, models)
-            streams.append({"role": role, "stream": label, "host_model": models[0],
-                            "sha256": hashlib.sha256(stream.read_bytes()).hexdigest(),
-                            "old": [_hidden_home(h, home_real) for h in old],
-                            "new": [_hidden_home(h, home_real) for h in new],
-                            "not_found": list(dict.fromkeys(_hidden_home(n, home_real) for n in notes))})
+            entry = {"role": role, "stream": label, "host_model": models[0],
+                     "sha256": hashlib.sha256(stream.read_bytes()).hexdigest(),
+                     "old": [_hidden_home(h, home_real) for h in old],
+                     "new": [_hidden_home(h, home_real) for h in new],
+                     "not_found": list(dict.fromkeys(_hidden_home(n, home_real) for n in notes))}
+            if policy_on and (rec.get("audit") or {}).get("barrier") == BARRIER_OBSERVED:
+                journal, refused = [], {}
+                decisive = audit(stream, bundle, role, key[0], session, AUDIT_REVISION, [], [], {
+                    "policy_denied": os_roots(bundle.parent), "journal": journal, "refused": refused})
+                entry["policy"] = {"decisive": [_hidden_home(h, home_real) for h in decisive],
+                                   "journal": [_hidden_home(h, home_real) for h in journal],
+                                   "refused_calls": refused}
+            streams.append(entry)
         if unavailable:
             row.update(classification="unavailable", unavailable=unavailable)
             rows.append(row)
@@ -5532,6 +6201,8 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
             "flag_removed" if was else
             "flag_added" if now or new_review else "clean")
         row["streams"] = streams
+        if any("policy" in st for st in streams):
+            row["policy"] = _policy_reading(rec, streams)
         rows.append(row)
     classes: dict[str, int] = {}
     for row in rows:
@@ -5541,6 +6212,10 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
            "summary": {"records": len(rows), "classification": dict(sorted(classes.items())),
                        "fidelity_mismatch": sum(1 for r in rows if r.get("fidelity") == "mismatch"),
                        "flagged_recorded": sum(1 for r in rows if r["recorded"]["contaminated"]),
+                       **({"policy_classes": {c: sum(1 for r in rows if "policy" in r for x in r["policy"]["streams"] if x["class"] == c)
+                                              for c in sorted({x["class"] for r in rows if "policy" in r
+                                                               for x in r["policy"]["streams"]})}}
+                          if any("policy" in r for r in rows) else {}),
                        "flagged_now": sum(1 for r in rows if r.get("new", {}).get("contaminated")),
                        "reviewer_flagged_now": sum(1 for r in rows if r.get("new", {}).get("reviewer_hits")),
                        "host_models": {m: sum(1 for r in rows for st in r.get("streams", [])
@@ -5566,6 +6241,89 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
 def _tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], group: str) -> list[dict[str, Any]]:
     by_pr = {t["pr"]: t for t in snapshot["prs"]}
     return [by_pr[t["pr"]] for t in manifest[group]]
+
+
+def _listed_tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], prs: Sequence[int]
+                  ) -> list[dict[str, Any]]:
+    """PAT-126: the tasks of ``exploration.comparison_tasks``, in the listed order. Each PR must belong to the
+    corpus manifest (its ``comparison`` or ``screening`` group) and to the snapshot; otherwise the launch is refused
+    before any claim."""
+    corpus = {t["pr"] for g in ("comparison", "screening") for t in manifest.get(g, [])}
+    by_pr = {t["pr"]: t for t in snapshot["prs"]}
+    missing = [n for n in prs if n not in corpus or n not in by_pr]
+    if missing:
+        raise RunnerError(f"comparison task(s) {missing} are not in the corpus manifest and the snapshot")
+    return [by_pr[n] for n in prs]
+
+
+GOLDEN_SCHEMA = "foundry.local-first-golden-check.v1"
+
+
+def golden_check(campaign: Mapping[str, Any], campaign_path: Path, tasks: Sequence[Mapping[str, Any]], *,
+                 repo: Path, work_root: Path, today: dt.date, manifest_path: Path | None = None,
+                 snapshot_path: Path | None = None) -> dict[str, Any]:
+    """PAT-126, offline (local git and pytest only: no model, no cloud, no ``claude``): for each task, a bundle built
+    exactly as a cloud implementer's bundle is built under this config (``Runner._bundle``), judged untouched
+    (expected: ``REFUSED`` with at least one failing or erroring hidden test, never 0/0/0), then a fresh bundle with the
+    merged product change applied and judged (expected: ``ACCEPTED``). A judge that cannot run shows as a failed
+    expectation here, before any campaign money is spent. Pure function of its inputs: it writes nothing but the
+    throwaway bundles under ``work_root``."""
+    rows: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="foundry-golden-") as scratch:
+        envelope_path = Path(scratch) / "envelope.json"
+        envelope_path.write_text(json.dumps({
+            "schema": ENVELOPE_SCHEMA, "expires_on": (today + dt.timedelta(days=1)).isoformat(),
+            "campaign_id": "golden-check-pilot" if campaign.get("protocol") == PROTOCOL_V5_PILOT else "golden-check",
+            "allowed_modes": ["compare_exploration"],
+            "caps": {"cloud_executions": 0, "premium_tokens": 1, "wall_clock_seconds": 1}}), encoding="utf-8")
+        runner = Runner(
+            repo=repo, campaign=campaign, envelope=load_envelope(envelope_path, "compare_exploration", today),
+            state_dir=Path(scratch) / "state", work_root=work_root, mode="compare_exploration", dry_run=True,
+            sandbox=False, today=lambda: today, input_paths=[campaign_path])
+
+        def judged(task: Mapping[str, Any], label: str, solved: bool) -> dict[str, Any]:
+            bundle, attempt_dir = runner._bundle(task, f"golden-{label}")
+            try:
+                if solved:
+                    lfc.apply_solution(runner.repo, task, bundle)
+                verdict = runner._judge(task, bundle)
+            except lfc.CorpusError as exc:  # includes a judge that cannot run (JudgeInstrumentError)
+                return {"verdict": None, "instrument_error": str(exc)[:300]}
+            finally:
+                runner._discard(bundle, attempt_dir)
+            return {k: verdict.get(k) for k in ("verdict", "passed", "failed", "errors", "skipped", "pytest_exit_code",
+                                                "note")}
+
+        for task in tasks:
+            untouched, solved = judged(task, "untouched", False), judged(task, "solved", True)
+            expect_u = untouched["verdict"] == "REFUSED" and (untouched.get("failed", 0) + untouched.get("errors", 0)) >= 1
+            expect_s = solved["verdict"] == "ACCEPTED"
+            rows.append({"pr": task["pr"], "untouched": untouched, "solved": solved,
+                         "untouched_as_expected": expect_u, "solved_as_expected": expect_s,
+                         "ok": expect_u and expect_s})
+    def digest(path: Path | None) -> str:
+        try:
+            return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else "unknown"
+        except OSError:
+            return "unknown"
+
+    try:  # the checkout this tooling runs from
+        commit = subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, check=False, timeout=30).stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        commit = "unknown"
+    try:  # uncommitted changes in the tooling: the commit alone then does not describe the code that ran
+        dirty = bool(subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "status", "--porcelain", "--", "."],
+                                    capture_output=True, text=True, check=False, timeout=30).stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        dirty = None
+    provenance = {"campaign_sha256": digest(campaign_path), "manifest_sha256": digest(manifest_path),
+                  "snapshot_sha256": digest(snapshot_path), "tooling_commit": commit, "tooling_dirty": dirty,
+                  "date": today.isoformat()}
+    return {"schema": GOLDEN_SCHEMA, "protocol": campaign.get("protocol"), "provenance": provenance, "tasks": rows,
+            "all_ok": bool(rows) and all(r["ok"] for r in rows),
+            "expectations": {"untouched": "REFUSED with at least one failing or erroring hidden test (never 0/0/0)",
+                             "solved": "ACCEPTED"}}
 
 
 def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> int:
@@ -5597,6 +6355,14 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             p.add_argument("--screening-campaign", default=None,
                            help="campaign id of a completed screening (results read-only in --state-dir) "
                                 "when this campaign id holds none; C and N need one or the other")
+    gc = sub.add_parser("golden-check", help="PAT-126: offline self-check of the judge on the config's tasks "
+                        "(untouched bundle refused with failing tests, merged change accepted); no model, no cloud")
+    gc.add_argument("--campaign", required=True)
+    gc.add_argument("--repo", required=True, help="the full clone the corpus tasks are built from")
+    gc.add_argument("--work-root", required=True, help="a throwaway area outside every checkout")
+    gc.add_argument("--snapshot", required=True)
+    gc.add_argument("--manifest", required=True)
+    gc.add_argument("--out", required=True, help="the result file (never overwritten)")
     ra = sub.add_parser("replay-audit", help="apply audit revisions 1 and 2 to the raw streams of a finished "
                                              "campaign, offline (no model, no cloud call)")
     ra.add_argument("--campaign", required=True)
@@ -5644,6 +6410,29 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     except (RunnerError, OSError, ValueError) as exc:  # e.g. a frozen ground truth whose sha256 changed
         print(f"refused: {exc}", file=sys.stderr)
         return 2
+    if args.cmd == "golden-check":
+        try:
+            manifest = json.loads(Path(args.manifest).read_text("utf-8"))
+            snapshot = json.loads(Path(args.snapshot).read_text("utf-8"))
+            listed = (campaign.get("exploration") or {}).get("comparison_tasks")
+            group = (campaign.get("exploration") or {}).get("comparison_task_group", "comparison")
+            tasks = _listed_tasks(manifest, snapshot, listed) if listed else _tasks(manifest, snapshot, group)
+            out = Path(args.out)
+            if out.exists():
+                raise RunnerError(f"{out} exists: a result is never overwritten")
+            result = golden_check(campaign, Path(args.campaign), tasks, repo=Path(args.repo),
+                                  work_root=Path(args.work_root), today=today or dt.date.today(),
+                                  manifest_path=Path(args.manifest), snapshot_path=Path(args.snapshot))
+            with out.open("x", encoding="utf-8") as handle:
+                handle.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        except (RunnerError, lfc.CorpusError, OSError, ValueError, KeyError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        for row in result["tasks"]:
+            print(f"PR {row['pr']}: untouched {row['untouched'].get('verdict')} "
+                  f"({row['untouched'].get('passed')}/{row['untouched'].get('failed')}/{row['untouched'].get('errors')}) "
+                  f"solved {row['solved'].get('verdict')} -> {'ok' if row['ok'] else 'FAIL'}")
+        return 0 if result["all_ok"] else 1
     if args.cmd == "native-sandbox-trial":
         from foundry import local_first_native_trial as trial
         try:
@@ -5714,7 +6503,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         for cid in candidates:
             if cid not in campaign["candidates"]:
                 raise RunnerError(f"unknown candidate {cid}")
-        default = ",".join(V4_ARMS) if campaign.get("protocol") == PROTOCOL_V4 else (
+        default = ",".join(V4_ARMS) if campaign.get("protocol") in (PROTOCOL_V4, *V5_PROTOCOLS) else (
             "A,L,E" if mode == "compare_exploration" else "A,B,C")
         paths = (default if args.paths is None else args.paths).split(",") if mode in CLOUD_MODES else []
         if not set(paths) <= set(EXPLORE_ARMS if mode == "compare_exploration" else PATHS):
@@ -5742,8 +6531,10 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         elif mode == "screen_exploration":
             runner.screen_exploration(_tasks(manifest, snapshot, "screening"), candidates)
         elif mode == "compare_exploration":
+            listed = campaign["exploration"].get("comparison_tasks")  # v5: an explicit, ordered list of PRs
             group = campaign["exploration"].get("comparison_task_group", "comparison")  # v4: "screening"
-            runner.compare_exploration(_tasks(manifest, snapshot, group), candidates[0], paths)
+            runner.compare_exploration(_listed_tasks(manifest, snapshot, listed) if listed
+                                       else _tasks(manifest, snapshot, group), candidates[0], paths)
         else:
             runner.compare(_tasks(manifest, snapshot, "comparison"), candidates[0], paths, args.harness)
         if runner.stopped and runner.stopped.startswith("cap_reached"):

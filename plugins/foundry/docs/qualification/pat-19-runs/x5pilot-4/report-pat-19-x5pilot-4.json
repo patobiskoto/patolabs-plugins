@@ -1,0 +1,173 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "Not played in v5 (the candidate is fixed, exploration.fixed_candidate; screen-exploration is refused). Kept so that the v2 schema is satisfied and the rule stays readable. MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates were the two frozen ones of v3 (in v4 the candidates list holds only qwen3.6-35b-a3b-mlx-4bit, fixed) and the v3 screening was complete only when both had their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Inherited from v2 and v3; kept readable, not applied in v5.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.6-35b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 1,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "Protocol v5 handling of undecided tasks (protocol section 2), replacing for v5 the v2 to v4 behaviour where any undecided task makes every verdict unavailable (the comparison of acceptance and the 0.85 premium ratio are unchanged). A task is decided for an arm when it is accepted or its records do not end in contaminated, review_unreadable, tool_error, a contaminated or twice-failed local exploration, a cap or an interruption (a refused or bound-cut local exploration is NOT undecided: L then plays without a report). Paired set D = tasks decided in both arms; |D| < paired_decided_min (9) -> inconclusive (keep the cloud for lack of evidence). On D: L is retained iff accepted_L(D) >= accepted_A(D), both >= 1, premium per accepted task of L <= 0.85 x A's (every record of the arm on D, reviewer included, local tokens excluded) and compatibility passes; a zero on either side is inconclusive. Robustness: undecided L tasks counted not accepted and undecided A tasks counted accepted over all the tasks; a retained L below A in that worst case is inconclusive (the ratio is not recomputed: an undecided task's cost is known, its acceptance is not). Not retained with |D| >= 9: keep the cloud. The report prints D, the undecided tasks per arm with their cause, both readings and the tokens spent on undecided tasks. The pilot has one task: |D| < 9, so the report says inconclusive, which is expected; it decides nothing.",
+      "paired_decided_min": 9
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "f28687b8d42a6222feaa8c5a34c7acd4f05185f9240d35c416ce85d784bab231",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "37cc69a2c2a42ba77f259605ea039a59ef630b55099542bf1e5d8a1749114790"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [],
+  "replays": [],
+  "audit_journal": {
+    "policy": "journal_under_observed_barrier",
+    "journal_paths_by_arm": {
+      "A": 1,
+      "L": 1
+    },
+    "journal_paths_by_role": {
+      "arm": 0,
+      "reviewer": 2
+    },
+    "records_with_journal": 2,
+    "host_refused_calls": {
+      "Bash": 5
+    },
+    "host_refused_calls_total": 5,
+    "note": "findings kept apart from `contaminated`/`review_contaminated`: they decide nothing"
+  },
+  "exploration_screening": {
+    "state": "no_screening",
+    "selected": "qwen3.6-35b-a3b-mlx-4bit",
+    "reason": "no screening: candidate fixed by the protocol"
+  },
+  "exploration_comparison": {
+    "arms": {
+      "L": {
+        "tasks_compared": 1,
+        "informative": false,
+        "awaiting_implementer": [],
+        "compatibility": "pass",
+        "quality": "unavailable",
+        "economy": "unavailable",
+        "economy_detail": {
+          "premium_billing_tokens": 974870,
+          "reference_premium_billing_tokens": 620855,
+          "accepted": 1,
+          "reference_accepted": 1,
+          "premium_per_accepted": 974870.0,
+          "reference_premium_per_accepted": 620855.0,
+          "ratio_max": 0.85,
+          "ratio": 1.5702,
+          "premium_pass": false,
+          "premium_definition": "unweighted sum of the four billing token classes over all models, explorer included (an economy model counts as premium; local tokens do not)",
+          "premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 38,
+              "cached_input_tokens": 304476,
+              "cache_write_input_tokens": 67683,
+              "output_tokens": 9782,
+              "reasoning_output_tokens": 898
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 40,
+              "cached_input_tokens": 505773,
+              "cache_write_input_tokens": 69033,
+              "output_tokens": 18045,
+              "reasoning_output_tokens": 5504
+            }
+          },
+          "reference_premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 36,
+              "cached_input_tokens": 319844,
+              "cache_write_input_tokens": 55281,
+              "output_tokens": 6312,
+              "reasoning_output_tokens": 1248
+            },
+            "claude-opus-5-5": {
+              "input_tokens": 18,
+              "cached_input_tokens": 200700,
+              "cache_write_input_tokens": 32651,
+              "output_tokens": 6013,
+              "reasoning_output_tokens": 1886
+            }
+          },
+          "wall_seconds": 646.104,
+          "reference_wall_seconds": 294.081,
+          "local_explorer_wall_seconds": 194.561
+        },
+        "accepted": 1,
+        "reference_accepted": 1,
+        "explorer_localization": [
+          {
+            "pr": 27,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          }
+        ]
+      }
+    },
+    "decision": "inconclusive",
+    "recommendation": null,
+    "warnings": [],
+    "informative_arms": [],
+    "complete": true,
+    "paired_rule": {
+      "paired_decided_min": 9,
+      "paired_decided": [
+        27
+      ],
+      "paired_decided_count": 1,
+      "undecided": {
+        "A": {},
+        "L": {}
+      },
+      "premium_tokens_on_undecided_tasks": {
+        "A": 0,
+        "L": 0
+      },
+      "accepted_on_paired": {
+        "A": 1,
+        "L": 1
+      },
+      "premium_on_paired": {
+        "A": 620855,
+        "L": 974870
+      },
+      "premium_per_accepted": {
+        "A": 620855.0,
+        "L": 974870.0
+      },
+      "ratio_max": 0.85,
+      "ratio": null,
+      "worst_case": {
+        "A_undecided_counted_accepted": 1,
+        "L_undecided_counted_not_accepted": 1,
+        "robust": null,
+        "ratio_recomputed": false,
+        "why_no_ratio": "the cost of an undecided task is known but its acceptance is not"
+      },
+      "verdict": "inconclusive",
+      "reason": "paired_decided_set_below_9"
+    },
+    "campaign_conclusion": "keep_cloud_insufficient_evidence",
+    "screening_selected": "fixed_by_protocol:qwen3.6-35b-a3b-mlx-4bit"
+  }
+}

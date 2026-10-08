@@ -22,12 +22,12 @@ from test_local_first_runner import results
 
 QUALIFICATION = Path(__file__).resolve().parents[1] / "docs" / "qualification"
 KEY = lfr.NATIVE_SANDBOX_KEY
-V5 = "pat-19-protocol-v5"
+LATER = "pat-19-protocol-v6"  # an unpinned protocol after v4 (v5 has its own pins since PAT-126)
 FAST = "plugins/foundry/tests/test_fast.py"  # a test file of the fake repository, for probe P2
 
 
 def _v5(tmp_path, **iso):
-    return _config(tmp_path, 2, protocol=V5, **iso)
+    return _config(tmp_path, 2, protocol=LATER, **iso)
 
 
 # ------------------------------------------------------------------------------- the key and the loader
@@ -45,7 +45,7 @@ def test_the_key_is_refused_before_v5_and_by_a_missing_or_unknown_protocol(tmp_p
         path.write_text(json.dumps(data), encoding="utf-8")
         with pytest.raises(lfr.RunnerError, match="after v4"):
             lfr.load_campaign(path)
-    for protocol in (V5, "pat-19-protocol-v12"):
+    for protocol in (LATER, "pat-19-protocol-v12"):
         assert lfr.load_campaign(_config(tmp_path, 2, protocol=protocol, **{KEY: True}))["isolation"][KEY] is True
     for bad in (1, "true", None):
         with pytest.raises(lfr.RunnerError, match="must be a boolean"):
@@ -80,9 +80,13 @@ def test_the_private_attempt_root_is_accepted_under_v5_and_still_refused_before_
     for protocol in ("pat-19-protocol-v3", "pat-19-protocol-v4x", "other"):
         with pytest.raises(lfr.RunnerError, match="accepted only under protocol pat-19-protocol-v4"):
             lfr.load_campaign(_config(tmp_path, 2, protocol=protocol, private_attempt_root=True))
-    # the other v4 keys stay v4-only: a v5 that wants them needs a loader change (not part of PAT-124)
+    # PAT-126: the other v4 keys are accepted by a protocol after v4 too (they stay refused before v4, see the v5 tests)
     data = json.loads(_v5(tmp_path).read_text("utf-8"))
     data["correction_feedback"] = {"hidden_test_failures": True}
+    (tmp_path / "c.json").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(lfr.RunnerError, match="must be positive integers"):  # validated, no longer refused outright
+        lfr.load_campaign(tmp_path / "c.json")
+    data["protocol"] = "pat-19-protocol-v3"
     (tmp_path / "c.json").write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(lfr.RunnerError, match="accepted only under protocol pat-19-protocol-v4"):
         lfr.load_campaign(tmp_path / "c.json")
@@ -224,7 +228,9 @@ def _fake_runner(tmp_path, monkeypatch, *, version=HOST, native=True, rev2=True,
     (tmp_path / "x").mkdir()
     runner, _, plan_path, tasks = make_runner(tmp_path / "x", "compare_exploration", plan,
                                               campaign_over={"isolation": iso})
-    runner.host_env = {**os.environ, "HOME": str(tmp_path / "home")}
+    (tmp_path / "shared-tmp").mkdir(exist_ok=True)  # never the user's real temp directory: the launcher watches it and
+    runner.host_env = {**os.environ, "HOME": str(tmp_path / "home"),  # moves out what appears there (PAT-126)
+                       "TMPDIR": str(tmp_path / "shared-tmp")}
     return runner, plan_path, tasks
 
 

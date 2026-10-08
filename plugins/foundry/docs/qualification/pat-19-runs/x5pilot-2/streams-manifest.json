@@ -1,0 +1,41 @@
+{
+  "note": "Raw event streams kept on the maintainer machine (they embed repository file contents). sha256 and size per file.",
+  "files": {
+    "pat-19-x5pilot-2-3448512f-a5d0-4700-8eec-6362ed465648.jsonl": {
+      "sha256": "3035b3e8fea235024c2b084a344caa8eb4059b0c7bc83c30c1dfc7745c67192c",
+      "bytes": 90871
+    },
+    "pat-19-x5pilot-2-48b1f80d-e84e-43c8-8599-0a3b2c8aa54d.jsonl": {
+      "sha256": "1e63f341d69848746b3ffd067b55db021edb188998237310553f66a2119b50e0",
+      "bytes": 918576
+    },
+    "pat-19-x5pilot-2-6af7e0e6-a0bb-4fc7-805c-d04905ce02f4.jsonl": {
+      "sha256": "3e6113ad620bc53947707d84c5d23cd74977966c51b2238890ee43c45662a054",
+      "bytes": 419245
+    },
+    "pat-19-x5pilot-2-76ab57e6-caa7-423b-8460-aa5418ba2191.jsonl": {
+      "sha256": "3bd0305df94a63c8b7736dc89c15723f44bc2781b5bffe919da2565f46917f15",
+      "bytes": 166278
+    },
+    "pat-19-x5pilot-2-78b81d9f-9b00-4038-ab35-160f0acc49b3.jsonl": {
+      "sha256": "16c366c59439672deccce4b0d2776e21645e2a29fde0f774f832fb702829f0d7",
+      "bytes": 158871
+    },
+    "pat-19-x5pilot-2-attempt-l01-0006-pr27-L-explore-qwen3.6-35b-a3b-mlx-4bit.jsonl": {
+      "sha256": "409a63d1bb328d66cf8ba9f2ff85373626362313c14733cd2df840ad316f2e08",
+      "bytes": 3722552
+    },
+    "pat-19-x5pilot-2-bca59a1c-9f03-4a63-bf3d-ade329e750e4.jsonl": {
+      "sha256": "ebcb935105d7b1436db6932d0a49ae5fdb3b9bc7bf0ccce50d25d7da3162c42d",
+      "bytes": 286035
+    },
+    "pat-19-x5pilot-2-de623957-0c34-44e1-ad5b-bb05d3079abb.jsonl": {
+      "sha256": "3662fee7dada7dc9d12c0ea9d3a4d5ec39630d8ebb89b5539d58fc63c7dd8e71",
+      "bytes": 242802
+    },
+    "pat-19-x5pilot-2-f16f244c-a7fd-4de5-acc7-b7e70a574ccc.jsonl": {
+      "sha256": "3ed887ffd51dcfc965b2f8f668e3f096210d18309ad667e62e95c0777a353168",
+      "bytes": 92238
+    }
+  }
+}

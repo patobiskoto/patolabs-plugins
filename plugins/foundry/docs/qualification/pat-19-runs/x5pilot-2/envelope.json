@@ -1,0 +1,3 @@
+{"schema": "foundry.local-first-envelope.v1", "campaign_id": "pat-19-x5pilot-2", "expires_on": "2026-10-31",
+ "allowed_modes": ["compare_exploration"],
+ "caps": {"cloud_executions": 16, "premium_tokens": 8000000, "wall_clock_seconds": 30000}}

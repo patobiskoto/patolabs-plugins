@@ -665,7 +665,13 @@ def is_judged(candidate: Path) -> bool:
     return candidate.resolve() in _JUDGED
 
 
-def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: bool = False) -> dict[str, Any]:
+class JudgeInstrumentError(CorpusError):
+    """PAT-126: pytest produced no report (or collected nothing after a usage error): the judge could not run. This is
+    a fault of the instrument, never a verdict about the candidate."""
+
+
+def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: bool = False,
+          strict_report: bool = False) -> dict[str, Any]:
     """Restore the protected tests from the merged SHA over the candidate bundle, run only
     them and return a mechanical verdict. Tests the candidate wrote never count: the protected
     paths are overwritten and only their node ids are run.
@@ -680,7 +686,11 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: boo
     or erroring test of the junit report (``name`` is the junit ``classname::name``, ``message`` the junit
     ``message`` attribute with the candidate path replaced by ``<bundle>`` and the judge's temporary
     directory by ``<tmp>``): never the test source code (the module and test name are visible).
-    Off by default: the verdict is then exactly what it was."""
+    Off by default: the verdict is then exactly what it was.
+
+    ``strict_report=True`` (PAT-126, protocol v5 and later only): when pytest wrote no junit report, or exited with
+    a usage error (4) or "nothing collected" (5) and reports no test at all, the judge raises ``JudgeInstrumentError``
+    instead of returning ``REFUSED`` with 0/0/0 (v1 to v4 return that verdict, and keep doing so: their records exist)."""
     candidate = candidate.resolve()
     if inside_developer_checkout(repo, candidate):  # PAT-108 N-B: the judge rewrites the tree
         raise CorpusError(f"candidate is inside the developer checkout: {candidate}")
@@ -755,10 +765,39 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: boo
         except subprocess.TimeoutExpired:
             return _verdict("timeout", selected, 0, 0, 0, 0, None, extra)
         counts = _junit_counts(junit)
-        if failures:
+        no_report = None
+        if strict_report and (not junit.exists() or (sum(counts) == 0 and code in (4, 5))):
+            tail = " ".join(proc.stderr.strip().splitlines()[-1:])[:200] or "no stderr"
+            message = (f"pytest produced no usable report (exit code {code}, report "
+                       f"{'present' if junit.exists() else 'absent'}, {sum(counts)} test(s)): the judge cannot run; {tail}")
+            no_report = (code, message)
+            counts = None
+        if counts is not None and failures:
             extra = {**extra, "failures": _junit_failures(junit, candidate, tmp_dir)}
+    if no_report is not None:
+        # The report is missing. Is it the instrument or the candidate (a product module imported by the test setup
+        # that no longer imports: pytest stops before it writes any report)? A pristine bundle of the same task judged
+        # the same way tells: if it yields a report the instrument works and the candidate broke the loading (REFUSED,
+        # with its own note); if it does not either, the judge cannot run.
+        if _pristine_reports(repo, task):
+            return _verdict("candidate_breaks_test_loading", selected, 0, 0, 0, 0, no_report[0], extra)
+        raise JudgeInstrumentError(no_report[1])
     passed, failed, errors, skipped = counts
     return _verdict(None, selected, passed, failed, errors, skipped, code, extra)
+
+
+def _pristine_reports(repo: Path, task: Mapping[str, Any]) -> bool:
+    """Does the judge, run on a fresh untouched bundle of ``task``, report at least one test? (Used only to tell an
+    instrument that cannot run pytest from a candidate that broke the loading of the tests.)"""
+    with tempfile.TemporaryDirectory(prefix="foundry-probe-") as tmp:
+        built = build_bundle(repo, task, Path(tmp) / "pristine")
+        try:
+            verdict = judge(repo, task, built)
+        except CorpusError:
+            return False
+        finally:
+            remove_bundle(built)
+    return verdict["passed"] + verdict["failed"] + verdict["errors"] + verdict["skipped"] > 0
 
 
 def _junit_counts(path: Path) -> tuple[int, int, int, int]:

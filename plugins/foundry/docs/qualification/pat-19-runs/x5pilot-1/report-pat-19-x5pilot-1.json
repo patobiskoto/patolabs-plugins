@@ -1,0 +1,119 @@
+{
+  "promotion": false,
+  "stops": [],
+  "rules_applied": {
+    "exploration_screening": {
+      "tasks": 6,
+      "file_precision_min": 0.5,
+      "note": "Not played in v5 (the candidate is fixed, exploration.fixed_candidate; screen-exploration is refused). Kept so that the v2 schema is satisfied and the rule stays readable. MAIN metric = mean FUNCTION recall over the 6 tasks (maintainer decision 2026-10-06, before the freeze: each task's truth is a single product file and 5 of the 6 screening tasks share linear.py, so file recall is near-trivial). Candidates were the two frozen ones of v3 (in v4 the candidates list holds only qwen3.6-35b-a3b-mlx-4bit, fixed) and the v3 screening was complete only when both had their 6 tasks decided. Eligible = mean file precision >= 0.5; the best mean function recall is compared to retained_function_recall_min BEFORE any tie (below 0.5: STOP 'conserver le cloud', also for a tie; exactly 0.5 is retained); then a tie goes to the shortest total duration, and a tie still unresolved to the candidate listed first in candidates. STOP also when no candidate has mean file precision >= 0.5. File recall is measured and reported but does not decide. A task whose truth has no function (none today) is excluded from the function-recall mean. A refused or contaminated attempt counts 0 on every metric and never blocks the screening: an assumed departure from 'absent data is never zero', limited to this filter (the comparison keeps unknown as unknown). Inherited from v2 and v3; kept readable, not applied in v5.",
+      "retained_function_recall_min": 0.5,
+      "candidates": [
+        "qwen3.6-35b-a3b-mlx-4bit"
+      ]
+    },
+    "exploration_comparison": {
+      "tasks": 1,
+      "premium_per_accepted_ratio_max": 0.85,
+      "extra_swap_gib_max": 10,
+      "note": "arm L is retained only if compatibility AND quality AND economy all pass on the 1 task: its acceptance rate >= A's AND its premium tokens per accepted task (explorer included; local tokens do not count) <= 0.85 x A's, and compatibility (the v1 machine criterion: no external signal, extra swap under extra_swap_gib_max) passes. v5 has no arm E. A task whose arm record is undecided (contaminated, review_unreadable, tool error, cap) is undecided, not failed; quality compares acceptance counts with undecided tasks as bounds. Rule unchanged from v2, v3 and v4; the pilot decides nothing."
+    }
+  },
+  "provenance": {
+    "campaign_sha256": "64ea58a6956eac277c033cf39b9a103635c2630c9983368d41cf2eb4d102a31f",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "envelope_sha256": "fa23159e786664463ef05eef0989fb5614a203b4f81371e0a232aa440c6ef0bd"
+  },
+  "ledger": {
+    "unknown_spent_work": [],
+    "unsettled_starts": []
+  },
+  "dry_run": false,
+  "void_attempts": [],
+  "contaminated": [
+    {
+      "path": "A",
+      "task": {
+        "issue": "PAT-36",
+        "pr": 27,
+        "set": "pat-19-v5-pilot"
+      },
+      "candidate": null,
+      "segment": "cloud",
+      "attempt": 1,
+      "paths": [
+        "/<unknown-working-directory>"
+      ],
+      "commands": []
+    }
+  ],
+  "replays": [],
+  "exploration_screening": {
+    "state": "no_screening",
+    "selected": "qwen3.6-35b-a3b-mlx-4bit",
+    "reason": "no screening: candidate fixed by the protocol"
+  },
+  "exploration_comparison": {
+    "arms": {
+      "L": {
+        "tasks_compared": 1,
+        "informative": false,
+        "awaiting_implementer": [],
+        "compatibility": "pass",
+        "quality": "unavailable",
+        "economy": "unavailable",
+        "economy_detail": {
+          "premium_billing_tokens": 340419,
+          "reference_premium_billing_tokens": 418580,
+          "accepted": 0,
+          "reference_accepted": 0,
+          "premium_per_accepted": null,
+          "reference_premium_per_accepted": null,
+          "ratio_max": 0.85,
+          "ratio": null,
+          "premium_pass": null,
+          "premium_definition": "unweighted sum of the four billing token classes over all models, explorer included (an economy model counts as premium; local tokens do not)",
+          "premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 36,
+              "cached_input_tokens": 280340,
+              "cache_write_input_tokens": 54327,
+              "output_tokens": 5716,
+              "reasoning_output_tokens": 560
+            }
+          },
+          "reference_premium_by_model": {
+            "claude-sonnet-5-5": {
+              "input_tokens": 40,
+              "cached_input_tokens": 371509,
+              "cache_write_input_tokens": 42329,
+              "output_tokens": 4702,
+              "reasoning_output_tokens": 210
+            }
+          },
+          "wall_seconds": 399.326,
+          "reference_wall_seconds": 149.241,
+          "local_explorer_wall_seconds": 170.438
+        },
+        "accepted": 0,
+        "reference_accepted": 0,
+        "explorer_localization": [
+          {
+            "pr": 27,
+            "outcome": null,
+            "verdict": "SCORED",
+            "file_recall": 1.0,
+            "file_precision": 1.0,
+            "function_recall": 1.0
+          }
+        ]
+      }
+    },
+    "decision": "inconclusive",
+    "recommendation": null,
+    "warnings": [],
+    "informative_arms": [],
+    "complete": true,
+    "campaign_conclusion": "keep_cloud_insufficient_evidence",
+    "screening_selected": "fixed_by_protocol:qwen3.6-35b-a3b-mlx-4bit"
+  }
+}
