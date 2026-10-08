@@ -3220,22 +3220,33 @@ def _holds_bundle_material(entry: Path, files: Sequence[str]) -> bool:
     return False
 
 
-def _move_temp_leftovers(directory: Path, before: Mapping[str, tuple[int, int]], dest: Path,
+TEMP_QUARANTINE = "temp-quarantine"  # under the state directory (denied to the arms): moved leftovers, never deleted
+
+
+def _move_temp_leftovers(directory: Path, before: Collection[str], dest: Path,
                          files: Sequence[str]) -> list[str]:
-    """PAT-126: every NEW top-level entry of ``directory`` (created during the execution, owned by this user, not a
-    symbolic link, not the launcher's own or pytest's own tree) that holds bundle material is MOVED into ``dest`` (inside
-    the attempt directory, discarded with the attempt): never deleted in place, nothing that existed before or does not
-    match is touched. Returns the masked names (no content, no path)."""
+    """PAT-126: every top-level entry of ``directory`` whose NAME was absent from ``before`` (the names listed right
+    before the execution), owned by this user, not a symbolic link, not the launcher's own or pytest's own tree, that
+    holds bundle material is MOVED into ``dest``, a quarantine directory of the launcher under its state directory.
+    Nothing is ever deleted, here or later: the launcher keeps the quarantine. An entry that existed before is never
+    touched, even when it changed during the execution. The launcher cannot tell who created a new entry: one created
+    by ANOTHER process of the same account during the execution, and matching, is moved to the quarantine too (kept
+    whole, to be put back by hand). Returns the entry names (no content, no path); a name already taken in ``dest``
+    gets a numeric suffix there, the recorded name stays the original one."""
     moved: list[str] = []
-    for name, stamp in sorted(_temp_entries(directory).items()):
-        if before.get(name) == stamp or _TEMP_OWN.match(name):
+    for name in sorted(_temp_entries(directory)):
+        if name in before or _TEMP_OWN.match(name):
             continue
         entry = directory / name
         try:
             if entry.is_symlink() or entry.lstat().st_uid != os.getuid() or not _holds_bundle_material(entry, files):
                 continue
             dest.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(entry), str(dest / name))
+            target, n = dest / name, 0
+            while os.path.lexists(target):  # never overwrite what an earlier execution left here
+                n += 1
+                target = dest / f"{name}.{n}"
+            shutil.move(str(entry), str(target))
             moved.append(name)
         except OSError:
             continue
@@ -4003,7 +4014,8 @@ class Runner:
             fingerprint_after = registry_fingerprints(env)
             if temp_dir is not None:  # the shared per-user temp directory: what this execution left of the bundle
                 self.leftovers[str(stream_log)] = _move_temp_leftovers(
-                    temp_dir, temp_before, attempt_dir / "temp-leftovers", self.bundle_files.get(bundle, []))
+                    temp_dir, temp_before, self.state_dir / TEMP_QUARANTINE / stream_log.stem,
+                    self.bundle_files.get(bundle, []))
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
             if reserved:
                 with self._critical():
@@ -5278,7 +5290,7 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
     leftover = [{"path": r["path"], "task": r["task"], "segment": r.get("segment"), "attempt": r.get("attempt"),
                  **r["audit"]["temp_leftovers"]} for r in attempts if (r.get("audit") or {}).get("temp_leftovers", {})
                 .get("count")]
-    if leftover:  # PAT-126: bundle material an arm left in the shared temp directory (moved out, decides nothing)
+    if leftover:  # PAT-126: bundle material found new in the shared temp directory (quarantined, decides nothing)
         out["temp_leftovers"] = leftover
     journaled = [r for r in attempts if (r.get("audit") or {}).get("policy")]
     if journaled:  # PAT-126, isolation.audit_policy only (the key is absent otherwise): the journal, apart from the rule
@@ -5318,7 +5330,7 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                                                         if h["mode"] == "screen_exploration"]
         out["exploration_comparison"] = _report_exploration_comparison(
             rules["exploration_comparison"], comparison, stops, bool(unknown_work),
-            [h["warning"] for h in open_holes if h["mode"] == "compare_exploration"])
+            [h["warning"] for h in open_holes if h["mode"] == "compare_exploration"], unknown_work)
         if fixed is not None:
             compared = {(r.get("local") or {}).get("candidate") for r in comparison if r["path"] == "L"}
             compared.discard(None)
@@ -5690,10 +5702,13 @@ def _check_compared_explorer(screening: Mapping[str, Any], attempts: Sequence[Ma
 
 def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[Mapping[str, Any]],
                                    stops: Sequence[str], unknown_work: bool = False,
-                                   warnings: Sequence[str] = ()) -> dict[str, Any]:
+                                   warnings: Sequence[str] = (), unknown_detail: Sequence[str] = ()
+                                   ) -> dict[str, Any]:
     """Arms ``L`` (retained local explorer) and ``E`` (cloud economy explorer) against ``A`` with the three
     verdicts kept separate. The decision concerns ``L`` only (``retained`` = the local exploration is
-    worth it for this use); ``E`` is informative, never recommended. Nothing is promoted."""
+    worth it for this use); ``E`` is informative, never recommended. Nothing is promoted. ``decision`` and
+    ``campaign_conclusion`` are the authoritative keys; under protocol v5 ``paired_rule.verdict`` always equals
+    ``decision`` (``_apply_paired_rule``). ``unknown_detail``: the reasons of ``_check_ledger`` (v5 only reads them)."""
     arms = {p: _arm_totals([r for r in attempts if r["path"] == p]) for p in EXPLORE_ARMS
             if any(r["path"] == p for r in attempts)}
     out: dict[str, Any] = {"arms": {}, "decision": "inconclusive", "recommendation": None,
@@ -5756,16 +5771,19 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     out["complete"] = bool(mine) and mine["tasks_compared"] == rule["tasks"] and (
         arms["A"]["tasks"].keys() == arms["L"]["tasks"].keys() and len(arms["A"]["tasks"]) == rule["tasks"]
         and not mine["awaiting_implementer"])
-    if rule.get("paired_decided_min") is not None and mine and out["complete"]:
-        _apply_paired_rule(rule, out, arms, attempts, gone)  # protocol v5: undecided tasks leave the paired set
+    paired = rule.get("paired_decided_min") is not None and bool(mine) and out["complete"]
+    if paired:
+        # protocol v5: undecided tasks leave the paired set; the campaign-level reasons are applied inside, so that
+        # ``paired_rule.verdict`` and ``decision`` cannot disagree
+        _apply_paired_rule(rule, out, arms, attempts, gone, unknown_detail, warnings)
     elif mine and out["complete"]:
         verdicts = (mine["compatibility"], mine["quality"], mine["economy"])
         if all(v == "pass" for v in verdicts):
             out["decision"], out["recommendation"] = "retained", "L"
         elif "fail" in verdicts:
             out["decision"], out["recommendation"] = "keep_cloud", "A"
-    if unknown_work or warnings or any(r.get("outcome") == "interrupted" and id(r) not in gone
-                                       for r in attempts):
+    if not paired and (unknown_work or warnings or any(r.get("outcome") == "interrupted" and id(r) not in gone
+                                                       for r in attempts)):
         out["decision"], out["recommendation"] = "inconclusive", None
     # PAT-ADR-0015: insufficient proof keeps the cloud. A COMPLETE comparison that is neither retained nor
     # failed (an ``unavailable`` verdict) concludes the campaign on keeping the cloud; no replay, no extra
@@ -5778,17 +5796,34 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
 
 
 def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mapping[str, Any],
-                       attempts: Sequence[Mapping[str, Any]], gone: Collection[int]) -> None:
-    """Protocol v5 (PAT-126, ``rules.exploration_comparison.paired_decided_min``), replacing for v5 the v2 to v4
-    behaviour where one undecided task makes every verdict ``unavailable``. A task is DECIDED for an arm when it is
-    accepted or not unknown (``_arm_totals``); the paired set D holds the tasks decided in both arms. Fewer than
-    ``paired_decided_min`` tasks in D: inconclusive. On D: acceptance per arm, premium per accepted task (every record
-    of the arm on D's tasks, reviewer included, local tokens excluded). L is retained iff accepted_L >= accepted_A, both
-    >= 1, premium per accepted L <= ratio_max x A's and compatibility passes; a zero on either side is inconclusive (an
-    undefined ratio is never zero). The robustness reading counts every undecided task of L as not accepted and every
-    undecided task of A as accepted, over all the tasks: a retained L whose worst case falls below A's worst case is
-    inconclusive. The cost ratio is not recomputed in the worst case: an undecided task's cost is known, its acceptance
-    is not. Not retained with |D| >= the minimum: keep the cloud."""
+                       attempts: Sequence[Mapping[str, Any]], gone: Collection[int],
+                       unknown_detail: Sequence[str] = (), warnings: Sequence[str] = ()) -> None:
+    """Protocol v5 (PAT-126, ``rules.exploration_comparison.paired_decided_min``, protocol section 2), replacing for
+    v5 the v2 to v4 behaviour where one undecided task makes every verdict ``unavailable``.
+
+    (i) UNDECIDED TASK. A task is DECIDED for an arm when it is accepted or not unknown (``_arm_totals``: no record
+    left with an outcome of ``UNKNOWN_OUTCOMES`` - contaminated, unreadable review, tool error, cap, interruption -
+    that a replay did not supersede); the paired set D holds the tasks decided in both arms. An undecided task only
+    leaves D, also when one of its cloud executions was interrupted or has unknown tokens (its cost is then printed
+    as unknown, ``premium_tokens_on_undecided_tasks``).
+
+    The rule on D, in this order: fewer than ``paired_decided_min`` tasks in D: inconclusive. A premium total unknown
+    on a task of D: inconclusive. No accepted task in one arm on D: inconclusive (an undefined ratio is never zero).
+    Else acceptance (accepted_L >= accepted_A) and economy (premium per accepted task of L <= ratio_max x A's; every
+    record of the arm on D's tasks, reviewer included, local tokens excluded) are read: one of them failing, or the
+    compatibility criterion FAILING: keep the cloud. Both passing and compatibility ``unavailable`` (unmeasured swap,
+    a local exploration lost without a successful replay): inconclusive, ``compatibility_unavailable`` - absent data
+    is not a failure. All three passing: L is retained, subject to the robustness reading (every undecided task of L
+    counted not accepted, every undecided task of A counted accepted, over all the tasks): below A's worst case,
+    inconclusive. Only ``retained`` has a robustness reading: ``keep_cloud`` is the conservative outcome, the reading
+    cannot make it more conservative. The cost ratio is not recomputed in the worst case (the acceptance of an
+    undecided task is unknown).
+
+    (ii) CAMPAIGN-LEVEL reasons, which give ``inconclusive`` whatever D says (money or integrity of the ledger): a
+    cloud execution the ledger started and never settled, one no result record names, an interrupted or
+    unknown-token cloud execution that belongs to a task of D or to no task of the comparison, and a start the ledger
+    holds with neither record nor replay (``warnings``). The verdict of the rule on D is kept in
+    ``verdict_before_campaign_level``; ``verdict`` is the final one and always equals the report's ``decision``."""
     a_tasks, l_tasks = arms["A"]["tasks"], arms["L"]["tasks"]
     mine = out["arms"]["L"]
     minimum = rule["paired_decided_min"]
@@ -5799,17 +5834,16 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
     both = sorted(set(a_tasks) & set(l_tasks))
     paired = [pr for pr in both if decided(a_tasks[pr]) and decided(l_tasks[pr])]
 
-    def causes(path: str) -> dict[str, list[str]]:
-        found: dict[str, list[str]] = {}
+    def causes(path: str, tasks: Mapping[Any, Mapping[str, Any]]) -> dict[str, list[str]]:
+        """Exactly the tasks ``decided`` holds undecided, each with the records that leave it so."""
+        found: dict[str, list[str]] = {str(pr): [] for pr, task in sorted(tasks.items()) if not decided(task)}
         for r in attempts:
-            pr = r["task"]["pr"]
-            if r["path"] == path and id(r) not in gone and r.get("outcome") in UNKNOWN_OUTCOMES \
-                    and not (path == "A" and a_tasks.get(pr, {}).get("accepted")) \
-                    and not (path == "L" and l_tasks.get(pr, {}).get("accepted")):
-                found.setdefault(str(pr), []).append(f"{r.get('segment')}:{r['outcome']}")
-        return found
+            key = str(r["task"]["pr"])
+            if r["path"] == path and key in found and id(r) not in gone and r.get("outcome") in UNKNOWN_OUTCOMES:
+                found[key].append(f"{r.get('segment')}:{r['outcome']}")
+        return {key: why or ["unknown"] for key, why in found.items()}
 
-    undecided = {"A": causes("A"), "L": causes("L")}
+    undecided = {"A": causes("A", a_tasks), "L": causes("L", l_tasks)}
     wasted = {"A": [t["premium_billing_tokens"] for pr, t in a_tasks.items() if not decided(t)],
               "L": [t["premium_billing_tokens"] for pr, t in l_tasks.items() if not decided(t)]}
     acc_a = sum(1 for pr in paired if a_tasks[pr]["accepted"])
@@ -5824,12 +5858,13 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
         "accepted_on_paired": {"A": acc_a, "L": acc_l}, "premium_on_paired": {"A": prem_a, "L": prem_l},
         "premium_per_accepted": {"A": None if prem_a is None or not acc_a else round(prem_a / acc_a, 3),
                                  "L": None if prem_l is None or not acc_l else round(prem_l / acc_l, 3)},
-        "ratio_max": float(ratio_max), "ratio": None}
+        "ratio_max": float(ratio_max), "ratio": None, "compatibility": mine["compatibility"]}
     worst_a = sum(1 for t in a_tasks.values() if t["accepted"] or not decided(t))
     worst_l = sum(1 for t in l_tasks.values() if t["accepted"])
     detail["worst_case"] = {"A_undecided_counted_accepted": worst_a, "L_undecided_counted_not_accepted": worst_l,
                             "robust": None, "ratio_recomputed": False,
-                            "why_no_ratio": "the cost of an undecided task is known but its acceptance is not"}
+                            "why_no_ratio": "the acceptance of an undecided task is unknown (its cost is known "
+                                            "unless one of its cloud executions was cut)"}
     verdict, reason = "inconclusive", None
     if len(paired) < minimum:
         reason = f"paired_decided_set_below_{minimum}"
@@ -5840,18 +5875,38 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
     else:
         detail["ratio"] = round(float((prem_l * acc_a) / (prem_a * acc_l)), 4) if prem_a else None
         economy = prem_l * acc_a <= ratio_max * prem_a * acc_l
-        retained = acc_l >= acc_a and economy and mine["compatibility"] == "pass"
         mine["quality"] = "pass" if acc_l >= acc_a else "fail"
         mine["economy"] = "pass" if economy else "fail"
-        if retained:
+        if acc_l < acc_a or not economy:
+            verdict, reason = "keep_cloud", "not_retained_on_paired_set"
+        elif mine["compatibility"] == "fail":
+            verdict, reason = "keep_cloud", "compatibility_failed"
+        elif mine["compatibility"] != "pass":  # unavailable: absent data, never read as a failure
+            reason = "compatibility_unavailable"
+        else:
             detail["worst_case"]["robust"] = worst_l >= worst_a
             verdict, reason = ("retained", None) if worst_l >= worst_a else ("inconclusive", "not_robust_to_undecided_tasks")
-        else:
-            verdict = "keep_cloud"
-            reason = "compatibility_failed" if mine["compatibility"] != "pass" else "not_retained_on_paired_set"
     if len(paired) < minimum or reason in ("premium_total_unknown", "no_accepted_task_in_one_arm_ratio_undefined"):
         mine["quality"], mine["economy"] = "unavailable", "unavailable"
+    # Campaign-level reasons (ii). An interrupted or unknown-token cloud execution named by a record of a task
+    # OUTSIDE D is task-level: that task is undecided and its tokens enter no ratio.
+    outside = {sid for r in attempts if r["task"]["pr"] not in paired for sid in r.get("cloud_sessions") or []}
+    campaign_level = sorted(
+        entry for entry in unknown_detail
+        if not (entry.partition(":")[0] in ("interrupted", "tokens_unknown") and entry.partition(":")[2] in outside))
+    campaign_level += [f"start_without_record_nor_replay:{w}" for w in warnings]
+    detail.update(verdict_before_campaign_level=verdict, reason_before_campaign_level=reason,
+                  campaign_level_reasons=campaign_level)
+    if campaign_level:
+        verdict, reason = "inconclusive", "campaign_level_unknown_work"
     detail.update(verdict=verdict, reason=reason)
+    # The ratio that counts under v5 is ``paired_rule.ratio`` (on D). The v2 to v4 figures of ``economy_detail`` are
+    # computed over every compared task, undecided ones included: not printed here, the totals stay.
+    mine["economy_detail"].update(
+        ratio=None, premium_pass=None, premium_per_accepted=None, reference_premium_per_accepted=None,
+        superseded_by="paired_rule: under protocol v5 the ratio and the premium per accepted task are those of "
+                      "exploration_comparison.paired_rule (paired decided set); the totals here cover every "
+                      "compared task")
     out["paired_rule"] = detail
     out["decision"], out["recommendation"] = ({"retained": ("retained", "L"), "keep_cloud": ("keep_cloud", "A")}
                                               .get(verdict, ("inconclusive", None)))

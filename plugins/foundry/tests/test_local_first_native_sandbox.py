@@ -228,7 +228,9 @@ def _fake_runner(tmp_path, monkeypatch, *, version=HOST, native=True, rev2=True,
     (tmp_path / "x").mkdir()
     runner, _, plan_path, tasks = make_runner(tmp_path / "x", "compare_exploration", plan,
                                               campaign_over={"isolation": iso})
-    runner.host_env = {**os.environ, "HOME": str(tmp_path / "home")}
+    (tmp_path / "shared-tmp").mkdir(exist_ok=True)  # never the user's real temp directory: the launcher watches it and
+    runner.host_env = {**os.environ, "HOME": str(tmp_path / "home"),  # moves out what appears there (PAT-126)
+                       "TMPDIR": str(tmp_path / "shared-tmp")}
     return runner, plan_path, tasks
 
 

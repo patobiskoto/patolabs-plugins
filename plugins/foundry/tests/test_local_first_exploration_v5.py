@@ -36,7 +36,7 @@ FROZEN_SHA256 = {  # the frozen v1 to v5 configurations are never edited (PAT-AD
     "pat-19-campaign-v2.json": "6830629ccd385847ca6b88c730b706407517ac009cb3715daf8c6e7a61ec8d16",
     "pat-19-campaign-v3.json": "95b7a0717ecfcc28b6595e4a88dee108d158ff7d85dddc84f7d1c56de8d5fd1d",
     "pat-19-campaign-v4.json": "3bc88cf496f9838779adae431e72754615576c276033cc7436c151d3a10b8605",
-    "pat-19-campaign-v5.json": "b8bc2733a67959c3ccbb33756761ac6c15e9f3bb227c558b5de8cbb093651e58",  # frozen 2026-10-08 (PAT-126), after pilot 4; the pilot config is NOT pinned
+    "pat-19-campaign-v5.json": "9fe6da84c3739302cdaede9a71ab6713bb5c2b27d0b78994c9fdc2a00d5fb366",  # frozen 2026-10-08 (PAT-126), after pilot 4 and the review round 2; the pilot config is NOT pinned
 }
 
 
@@ -360,7 +360,7 @@ def _pinned_runner(tmp_path, bin_dir, pin=PIN):
         runner.campaign["drivers"][name]["binary_version"] = dict(pin) if pin else None
         if pin is None:
             runner.campaign["drivers"][name].pop("binary_version")
-    runner.host_env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    runner.host_env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "TMPDIR": str(tmp_path)}
     return runner, plan, tasks
 
 
@@ -388,7 +388,7 @@ def test_another_or_an_unreadable_claude_code_version_is_refused_before_any_clai
 
 def test_a_missing_claude_executable_is_refused_and_a_driver_without_the_pin_never_asks(tmp_path):
     runner, plan, tasks = _pinned_runner(tmp_path, tmp_path / "empty-bin")
-    runner.host_env = {**os.environ, "PATH": str(tmp_path / "empty-bin")}
+    runner.host_env = {**os.environ, "PATH": str(tmp_path / "empty-bin"), "TMPDIR": str(tmp_path)}
     with pytest.raises(lfr.RunnerError, match="claude not found on PATH"):
         runner.compare_exploration(tasks[:1], "cand-a", ("A", "L"))
     assert counts(plan) == {}
@@ -631,7 +631,7 @@ def _fake_python(directory, name, *, works, version="8.3.0"):
 def _strict_runner(tmp_path, bin_dir):
     runner, campaign, plan, tasks = make_runner(tmp_path, "compare_exploration", PLAN)
     runner.strict_judge = True
-    runner.host_env = {**os.environ, "HOME": str(tmp_path / "home"), "PATH": f"{bin_dir}"}
+    runner.host_env = {**os.environ, "HOME": str(tmp_path / "home"), "PATH": f"{bin_dir}", "TMPDIR": str(tmp_path)}
     return runner, plan, tasks
 
 
@@ -1159,10 +1159,29 @@ def _recs(plan, tasks=12):
 YES, NO, UNDECIDED = ("accepted", True), ("judge_refused", False), ("review_unreadable", None)
 
 
-def _paired(plan, tasks=12):
+def _paired(plan, tasks=12, edit=None):
     recs, ledger = _recs({pr: plan(pr) for pr in range(1, tasks + 1)}, tasks)
+    if edit is not None:
+        edit(recs, ledger)
     report = lfr.report(_rule_campaign(tasks), recs, ledger)["exploration_comparison"]
-    return report, report.get("paired_rule", {})
+    rule = report.get("paired_rule", {})
+    if rule:  # the authoritative keys and the verdict of the rule never disagree
+        assert rule["verdict"] == report["decision"], (rule["verdict"], report["decision"])
+        assert report["campaign_conclusion"] == {"retained": "retain_local_explorer", "keep_cloud": "keep_cloud"}.get(
+            report["decision"], "keep_cloud_insufficient_evidence")
+    return report, rule
+
+
+def _retained(pr):  # 12 decided tasks, both arms accept 6, L at half the price: retained
+    return (*(YES if pr <= 6 else NO), 100), (*(YES if pr <= 6 else NO), 50)
+
+
+def _explore(recs, pr):
+    return next(r for r in recs if r["path"] == "L" and r["segment"] == "explore" and r["task"]["pr"] == pr)
+
+
+def _cloud_of(recs, path, pr):
+    return next(r for r in recs if r["path"] == path and r["segment"] == "cloud" and r["task"]["pr"] == pr)
 
 
 def test_the_paired_rule_retains_l_on_the_decided_tasks_when_the_comparison_and_the_ratio_hold():
@@ -1206,7 +1225,8 @@ def test_the_paired_rule_is_not_robust_to_undecided_tasks_that_could_have_gone_e
     assert rule["verdict"] == "inconclusive" and rule["reason"] == "not_robust_to_undecided_tasks"
     assert rule["worst_case"] == {"A_undecided_counted_accepted": 12, "L_undecided_counted_not_accepted": 9,
                                   "robust": False, "ratio_recomputed": False,
-                                  "why_no_ratio": "the cost of an undecided task is known but its acceptance is not"}
+                                  "why_no_ratio": "the acceptance of an undecided task is unknown (its cost is known "
+                                                  "unless one of its cloud executions was cut)"}
     assert report["decision"] == "inconclusive" and report["campaign_conclusion"] == "keep_cloud_insufficient_evidence"
     # the worst case is NOT symmetric by design (undecided A counted accepted, undecided L not): the same three tasks
     # undecided in both arms, both accepting every other task, is therefore not robust either
@@ -1222,6 +1242,126 @@ def test_the_paired_rule_is_not_robust_to_undecided_tasks_that_could_have_gone_e
     report, rule = _paired(plan)
     assert report["decision"] == "retained" and rule["worst_case"]["robust"] is True
     assert rule["worst_case"]["A_undecided_counted_accepted"] == 8 and rule["worst_case"]["L_undecided_counted_not_accepted"] == 9
+
+
+def test_an_unavailable_compatibility_is_inconclusive_and_only_a_failed_one_keeps_the_cloud():
+    report, rule = _paired(_retained)
+    assert report["decision"] == "retained" and rule["compatibility"] == "pass"
+
+    def unmeasured(recs, ledger):  # the swap of one exploration was not measured: absent data, not a failure
+        _explore(recs, 3)["machine"]["after"]["swap_used_mib"] = None
+    report, rule = _paired(_retained, edit=unmeasured)
+    assert report["arms"]["L"]["compatibility"] == "unavailable" and rule["compatibility"] == "unavailable"
+    assert (report["decision"], report["recommendation"], rule["reason"]) == (
+        "inconclusive", None, "compatibility_unavailable")
+    assert report["campaign_conclusion"] == "keep_cloud_insufficient_evidence"
+    assert report["arms"]["L"]["quality"] == "pass" and report["arms"]["L"]["economy"] == "pass"
+    assert rule["worst_case"]["robust"] is None  # only a retained L has a robustness reading
+
+    def killed(recs, ledger):  # an exploration ended by an external signal: the machine criterion FAILS
+        _explore(recs, 3)["local"]["ended_by_external_signal"] = True
+    report, rule = _paired(_retained, edit=killed)
+    assert (report["decision"], report["recommendation"], rule["reason"]) == ("keep_cloud", "A", "compatibility_failed")
+    # an actual failure on D keeps the cloud whatever the unavailable compatibility would have said
+    report, rule = _paired(lambda pr: ((*(YES if pr <= 6 else NO), 100), (*(YES if pr <= 6 else NO), 100)),
+                           edit=unmeasured)
+    assert (report["decision"], rule["reason"]) == ("keep_cloud", "not_retained_on_paired_set")
+    assert rule["worst_case"]["robust"] is None  # a decided keep_cloud has no robustness reading
+
+
+def _robust_without_task_1(pr):  # task 1: A refused (decided), L to be made undecided; D = 2..12, L robustly ahead
+    if pr == 1:
+        return (*NO, 100), (*YES, 50)
+    return (*(YES if pr <= 8 else NO), 100), (*YES, 50)
+
+
+def test_an_interrupted_task_is_an_undecided_task_that_leaves_the_paired_set_not_a_campaign_reason():
+    def cut(recs, ledger):  # the cloud execution of L on task 1 was interrupted: no verdict, tokens unknown
+        rec = _cloud_of(recs, "L", 1)
+        rec.update(outcome="interrupted", accepted=None)
+        rec["premium"]["billing_total"] = None
+        entry = next(e for e in ledger if e.get("kind") == "settled" and e["session_id"] == rec["cloud_sessions"][0])
+        entry.update(premium_tokens=None, interrupted=True)
+    report, rule = _paired(_robust_without_task_1, edit=cut)
+    assert rule["paired_decided"] == list(range(2, 13)) and rule["undecided"] == {"A": {}, "L": {"1": ["cloud:interrupted"]}}
+    assert rule["campaign_level_reasons"] == [] and rule["verdict_before_campaign_level"] == "retained"
+    assert (report["decision"], report["recommendation"]) == ("retained", "L")
+    assert rule["premium_tokens_on_undecided_tasks"] == {"A": 0, "L": None}  # unknown, never zero
+    assert rule["worst_case"]["A_undecided_counted_accepted"] == 7
+    assert rule["worst_case"]["L_undecided_counted_not_accepted"] == 11
+
+    def capped(recs, ledger):  # a cap stop is an undecided task too
+        _cloud_of(recs, "L", 1).update(outcome="stopped_by_cap", accepted=None)
+    report, rule = _paired(_robust_without_task_1, edit=capped)
+    assert report["decision"] == "retained" and rule["undecided"]["L"] == {"1": ["cloud:stopped_by_cap"]}
+    assert rule["premium_tokens_on_undecided_tasks"] == {"A": 0, "L": 50}
+
+    def lost(recs, ledger):  # a local exploration lost and not replayed (no implementer then): the task leaves D
+        _explore(recs, 1).update(outcome="interrupted")  # AND the machine criterion is unavailable (protocol 2.3)
+        gone = _cloud_of(recs, "L", 1)
+        recs.remove(gone)
+        ledger[:] = [e for e in ledger if e.get("session_id") not in gone["cloud_sessions"]]
+    report, rule = _paired(_robust_without_task_1, edit=lost)
+    assert rule["paired_decided"] == list(range(2, 13)) and rule["undecided"]["L"] == {"1": ["explore:interrupted"]}
+    assert (report["decision"], rule["reason"]) == ("inconclusive", "compatibility_unavailable")
+    assert rule["campaign_level_reasons"] == []
+
+
+def test_money_or_ledger_integrity_makes_the_campaign_inconclusive_whatever_the_paired_set_says():
+    def unknown_tokens_in_d(recs, ledger):  # an accepted task of D whose tokens the session log did not give
+        rec = _cloud_of(recs, "A", 2)
+        rec["premium"]["billing_total"] = None
+        next(e for e in ledger if e.get("kind") == "settled"
+             and e["session_id"] == rec["cloud_sessions"][0])["premium_tokens"] = None
+    report, rule = _paired(_retained, edit=unknown_tokens_in_d)
+    assert report["decision"] == "inconclusive" and rule["reason_before_campaign_level"] == "premium_total_unknown"
+    assert rule["reason"] == "campaign_level_unknown_work"
+    assert [r.partition(":")[0] for r in rule["campaign_level_reasons"]] == ["tokens_unknown"]
+    assert report["arms"]["L"]["economy"] == "unavailable"
+
+    def never_settled(recs, ledger):  # a cloud execution the ledger started, never settled, named by no record
+        ledger.append({"kind": "cloud_started", "session_id": "ghost"})
+    report, rule = _paired(_retained, edit=never_settled)
+    assert (rule["verdict_before_campaign_level"], rule["verdict"], report["decision"]) == (
+        "retained", "inconclusive", "inconclusive")
+    assert report["recommendation"] is None and rule["reason"] == "campaign_level_unknown_work"
+    assert rule["campaign_level_reasons"] == ["cloud_started_without_settled:ghost", "no_result_record:ghost"]
+
+    def settled_without_record(recs, ledger):  # settled, tokens known, but no result record names it
+        ledger.extend([{"kind": "cloud_started", "session_id": "orphan"},
+                       {"kind": "settled", "cloud": True, "session_id": "orphan", "premium_tokens": 7}])
+    report, rule = _paired(_retained, edit=settled_without_record)
+    assert report["decision"] == "inconclusive" and rule["campaign_level_reasons"] == ["no_result_record:orphan"]
+
+    def killed_start(recs, ledger):  # a start with neither settlement, record nor replay (hard kill)
+        ledger.extend([{"kind": "session_started", "mode": "compare_exploration", "campaign_sha256": "x",
+                        "manifest_sha256": None, "envelope_sha256": "e"},
+                       {"kind": "attempt_started", "attempt_dir": "gone", "path": "L", "pr": 5, "set": "pat-19-v5-pilot",
+                        "candidate": "qwen3.6-35b-a3b-mlx-4bit", "segment": "explore", "attempt": 0}])
+    report, rule = _paired(_retained, edit=killed_start)
+    assert report["decision"] == "inconclusive" and rule["verdict_before_campaign_level"] == "retained"
+    assert len(rule["campaign_level_reasons"]) == 1
+    assert rule["campaign_level_reasons"][0].startswith("start_without_record_nor_replay:")
+    # a decided keep_cloud is overridden too: the money is not known, nothing is concluded
+    report, rule = _paired(lambda pr: ((*YES, 100), (*(YES if pr <= 5 else NO), 50)), edit=never_settled)
+    assert (rule["verdict_before_campaign_level"], report["decision"]) == ("keep_cloud", "inconclusive")
+
+
+def test_the_report_prints_one_ratio_under_v5_and_lists_as_undecided_exactly_the_tasks_left_out():
+    # L undecided on 1..3 after A refused them; an ACCEPTED task that also holds an unreadable-review record stays
+    # decided and is not listed
+    def plan(pr):
+        if pr <= 3:
+            return (*NO, 100), (*UNDECIDED, 50)
+        return (*(YES if pr <= 8 else NO), 100), (*YES, 50)
+    report, rule = _paired(plan)
+    detail = report["arms"]["L"]["economy_detail"]
+    assert rule["ratio"] is not None and detail["ratio"] is None and detail["premium_pass"] is None
+    assert detail["premium_per_accepted"] is None and "paired_rule" in detail["superseded_by"]
+    assert detail["premium_billing_tokens"] == 12 * 50  # the totals over every compared task stay
+    left_out = sorted(set(range(1, 13)) - set(rule["paired_decided"]))
+    assert sorted({int(k) for arm in rule["undecided"].values() for k in arm}) == left_out == [1, 2, 3]
+    assert report["decision"] == "retained"
 
 
 def test_the_v2_to_v4_report_is_unchanged_by_the_paired_rule(tmp_path):
@@ -1257,30 +1397,45 @@ def _tree(root, *files):
 def test_new_temp_entries_that_hold_bundle_material_are_moved_out_and_nothing_else_is_touched(tmp_path):
     temp, dest = tmp_path / "tmp", tmp_path / "attempt" / "temp-leftovers"
     temp.mkdir()
-    _tree(temp, "old/plugins/foundry/x.py", "keep.txt")  # present before the execution: never touched
+    _tree(temp, "old/plugins/foundry/x.py", "keep.txt")  # present before the execution
     before = lfr._temp_entries(temp)
+    stamp = os.stat(temp / "old").st_mtime_ns
     files = ["plugins/foundry/tooling/foundry/trackers/linear.py", "plugins/foundry/tests/test_linear_tracker.py"]
     _tree(temp, "rv/plugins/foundry/tooling/foundry/m.py",  # a copy of the bundle
           "copy2/tests/test_linear_tracker.py",  # a file named like a changed test
           "exact/plugins/foundry/tooling/foundry/trackers/linear.py",
           "innocent/notes.txt", "pytest-of-u/pytest-1/a.txt", "foundry-judge-abc/plugins/foundry/y.py",
-          "lone_linear.py")
+          "lone_linear.py",
+          "old/plugins/foundry/tests/test_linear_tracker.py")  # an entry that EXISTED before, changed during the run
+    os.utime(temp / "old", ns=(stamp + 10**9, stamp + 10**9))
+    assert lfr._temp_entries(temp)["old"] != before["old"]  # its stamp differs: it is still never touched
     (temp / "link").symlink_to(tmp_path)  # a symbolic link is never followed nor moved
     moved = lfr._move_temp_leftovers(temp, before, dest, files)
     assert moved == ["copy2", "exact", "rv"]
     assert sorted(p.name for p in dest.iterdir()) == ["copy2", "exact", "rv"]
     left = sorted(p.name for p in temp.iterdir())
     assert left == ["foundry-judge-abc", "innocent", "keep.txt", "link", "lone_linear.py", "old", "pytest-of-u"]
+    assert (temp / "old" / "plugins" / "foundry" / "tests" / "test_linear_tracker.py").read_text() == "x"
     assert (dest / "rv" / "plugins" / "foundry" / "tooling" / "foundry" / "m.py").read_text() == "x"  # moved whole
     # a name that matches a changed file's basename at the top level of the temp directory is a leftover too
     before = lfr._temp_entries(temp)
     _tree(temp, "linear.py")
     assert lfr._move_temp_leftovers(temp, before, dest, files) == ["linear.py"]
+    # the same name again (another execution, or another process of the account): quarantined beside the first,
+    # which is never overwritten nor deleted
+    (dest / "linear.py").write_text("first", encoding="utf-8")
+    _tree(temp, "linear.py")
+    assert lfr._move_temp_leftovers(temp, before, dest, files) == ["linear.py"]
+    assert (dest / "linear.py").read_text() == "first" and (dest / "linear.py.1").read_text() == "x"
+    # the listing taken before may be a plain collection of names
+    _tree(temp, "rv/plugins/foundry/a.py")
+    names = set(lfr._temp_entries(temp))
+    assert lfr._move_temp_leftovers(temp, names, dest, files) == [] and (temp / "rv").is_dir()
 
 
 def test_a_run_moves_the_bundle_copy_an_execution_left_in_the_temp_directory_and_records_it(tmp_path, monkeypatch):
     runner, tasks = _policy_runner(tmp_path, monkeypatch, {**PLAN, "implementer": ["fix"], "reviewer": ["PASS"]})
-    temp = tmp_path / "shared-tmp"
+    temp = tmp_path / "watched-tmp"
     temp.mkdir()
     runner.host_env = {**runner.host_env, "TMPDIR": str(temp)}
     _tree(temp, "preexisting/plugins/foundry/a.py")
@@ -1297,7 +1452,13 @@ def test_a_run_moves_the_bundle_copy_an_execution_left_in_the_temp_directory_and
     runner.compare_exploration(tasks[:1], "cand-a", ("A",))
     rec = _cloud(runner)[0]
     assert calls and rec["audit"]["temp_leftovers"] == {"count": 1, "names": ["rv"]}
-    assert sorted(p.name for p in temp.iterdir()) == ["preexisting"]  # moved out (and discarded with the attempt)
+    assert sorted(p.name for p in temp.iterdir()) == ["preexisting"]  # moved out, kept: never deleted
+    kept = sorted((runner.state_dir / lfr.TEMP_QUARANTINE).glob("*/rv/plugins/foundry/tooling/foundry/m.py"))
+    assert len(kept) == 1 and kept[0].read_text() == "x"  # in the launcher's quarantine, under the state directory
+    assert kept[0].parents[5].name.startswith(runner.envelope["campaign_id"])  # one directory per cloud execution
+    assert not list(runner.work_root.rglob("temp-leftovers"))  # nothing goes into an attempt directory any more
+    deny = runner._deny_read({"kind": "claude"})
+    assert any(Path(d).resolve() == runner.state_dir for d in deny)  # the sandbox denies the state directory to the arms
     assert rec["outcome"] == "accepted"  # a leftover counts nothing in the decision
     report = lfr.report(runner.campaign, results(runner), ledger_of(runner))
     assert report["temp_leftovers"][0]["names"] == ["rv"] and report["temp_leftovers"][0]["path"] == "A"
