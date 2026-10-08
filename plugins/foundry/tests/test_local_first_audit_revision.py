@@ -6,6 +6,9 @@ not change: every test that shows a false flag removed also shows revision 1 unc
 from __future__ import annotations
 
 import json
+import os
+import random
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -17,6 +20,8 @@ from test_local_first_runner import results
 
 QUALIFICATION = Path(__file__).resolve().parents[1] / "docs" / "qualification"
 R2 = lfr.AUDIT_REVISION
+HOST = lfr.OBSERVED_CLAUDE_CODE[0]
+CASES = 150  # generated sequences of calls per shell and per host behaviour of the property test
 
 
 # ------------------------------------------------------------------------------------ the v4 layout
@@ -39,14 +44,27 @@ class Layout:
         self.sensitive = [self.home / ".config" / "foundry", self.work]
         self.stream = tmp_path / "stream.jsonl"
 
-    def claude(self, *commands, results=None):
-        """A Claude Code stream: each command, then its result (default ``ok``: the command printed no error)."""
-        lines = []
+    def claude(self, *commands, results=None, version=HOST, inputs=None):
+        """A Claude Code stream as 2.1.285 writes it: the ``init`` event, each command, then its result. A result
+        is the text of a call that returned 0 (default ``ok``), or a mapping: ``text``, ``error`` (the call returned
+        non-zero: ``is_error`` and the ``Exit code`` line), ``soft`` (a non-zero status the host accepts),
+        ``interrupted``, ``detail`` (False: no detail object)."""
+        lines = [{"type": "system", "subtype": "init", "cwd": str(self.bundle),
+                  **({"claude_code_version": version} if version else {})}]
         for i, c in enumerate(commands):
+            got = (results or {}).get(i, "ok")
+            got = {"text": got} if isinstance(got, str) else got
+            text = (f"Exit code {got['error']}\n" if got.get("error") else "") + got.get("text", "")
+            detail = {"stdout": text, "stderr": "", "interrupted": bool(got.get("interrupted")), "isImage": False,
+                      "noOutputExpected": False,
+                      **({"returnCodeInterpretation": got["soft"]} if got.get("soft") else {})}
             lines.append({"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": c}}]}})
+                {"type": "tool_use", "id": f"t{i}", "name": "Bash",
+                 "input": {"command": c, **((inputs or {}).get(i) or {})}}]}})
             lines.append({"type": "user", "message": {"content": [
-                {"type": "tool_result", "tool_use_id": f"t{i}", "content": (results or {}).get(i, "ok")}]}})
+                {"type": "tool_result", "tool_use_id": f"t{i}", "content": text, "is_error": bool(got.get("error"))}]},
+                **({"tool_use_result": f"Error: {text}" if got.get("error") else detail}
+                   if got.get("detail", True) else {})})
         self.stream.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
         return self
 
@@ -98,8 +116,8 @@ def test_the_directory_of_a_call_is_kept_for_the_next_one_and_reset_when_it_ends
     assert _shown(lay.claude("cd ..", "cat ../../../x").audit(R2), lay) == [str(lay.tmp.resolve()) + "/x", "W/x"]
 
 
-def test_an_omp_stream_starts_every_call_in_the_bundle(tmp_path):
-    lay = Layout(tmp_path)  # nothing is known of the shell of a local harness: no carry-over
+def test_an_omp_stream_starts_every_call_from_every_directory_an_earlier_call_may_have_left(tmp_path):
+    lay = Layout(tmp_path)  # nothing is known of the shell of a local harness: the root and where a call may have gone
     calls = ("cd plugins/foundry", "cat ../../../x")
     assert lay.claude(*calls).audit(R2) == []  # carried: bundle/plugins/foundry/../../.. is the attempt directory
     assert _shown(lay.omp(*calls).audit(R2), lay) == ["W/x"]
@@ -325,7 +343,7 @@ def test_revision_1_marks_the_arm_when_the_reviewer_is_flagged_revision_2_marks_
     assert new["review"]["verdicts"] == ["PASS"]  # so is the review's, which cannot accept on its own
     assert new["review"]["contamination"]["paths"] and new["review"]["contamination"]["commands"] == []
     assert new["unknown"]["review.contaminated"].startswith("the reviewer's")
-    assert new["audit"] == {"revision": R2, "not_found": []}
+    assert new["audit"] == {"revision": R2, "not_found": [], "host_models": ["unverified", "unverified"]}
 
 
 def test_the_arms_own_flag_still_marks_the_attempt_under_revision_2(tmp_path):
@@ -387,12 +405,14 @@ class Replay:
         stream = self.streams / f"cid-{session}.jsonl"
         bundle = self.attempt_dir(name) / "bundle"
         bundle.mkdir(parents=True, exist_ok=True)
-        events = [{"type": "system", "subtype": "init", "cwd": str(bundle)}]
+        events = [{"type": "system", "subtype": "init", "cwd": str(bundle), "claude_code_version": HOST}]
         for i, command in enumerate(commands):
+            text = (results or {}).get(i, "ok")
             events.append({"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "id": f"{session}{i}", "name": "Bash", "input": {"command": command}}]}})
             events.append({"type": "user", "message": {"content": [
-                {"type": "tool_result", "tool_use_id": f"{session}{i}", "content": (results or {}).get(i, "ok")}]}})
+                {"type": "tool_result", "tool_use_id": f"{session}{i}", "content": text, "is_error": False}]},
+                "tool_use_result": {"stdout": text, "stderr": "", "interrupted": False}})
         stream.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
         return session, recorded
 
@@ -452,6 +472,9 @@ def test_a_flag_in_the_reviewers_session_is_told_apart_and_a_replay_difference_i
     assert result[7]["old"]["session"] == "reviewer" and result[7]["new"]["hits"] == []
     assert result[7]["classification"] == "flag_moved_to_review" and result[7]["new"]["reviewer_hits"] == [work]
     assert result[7]["new"]["contaminated"] is False
+    summary = rp.run()["summary"]  # a record flagged by its reviewer only is counted, apart from the arm's flags
+    assert summary["flagged_now"] == 0 and summary["reviewer_flagged_now"] == 1
+    assert summary["host_models"] == {f"claude-code-{HOST}": 3}
     assert result[8]["fidelity"] == "mismatch" and result[8]["classification"] == "not_comparable"
 
 
@@ -544,63 +567,158 @@ def test_the_tool_result_decides_the_directory_when_it_says_so_and_a_spoofed_lin
     assert lay.claude("cd plugins/foundry", "cat ../../../x").audit(R2) == []
 
 
-# ------------------------------- B1: a real shell as the oracle (property: revision 2 flags a superset)
+# ------------------------------- B1: a real shell as the oracle (property: the candidates hold the real directory)
 
-PROBE = 'probe() { printf "%s\\n" "$PWD/$1" >> "$PROBE_OUT"; }; trap \'pwd -P > "$PWD_OUT"\' EXIT\n'
-_DIRS = ("plugins", "plugins/foundry", "d", "..", "../..", "nope", "plugins/..", ".")
-_ARGS = ("../x", "../../x", "../../../x", "../../../../x", "./y", "plugins/../../x", "../../../private-b/x")
+SHELLS = [x for x in ("/bin/bash", shutil.which("zsh")) if x and os.path.exists(x)]  # the host shell is zsh
+_DIRS = ("plugins", "plugins/foundry", "d", "..", "../..", "nope", "plugins/..", ".", "link", "link/..", "up", "/",
+         "{B}/plugins", "{W}")
+_ARGS = ("../x", "../../x", "../../../x", "../../../../x", "./y", "plugins/../../x", "../../../private-b/x",
+         "link/../../../x", "up/x")
+WRAPPERS = {  # two ways a host may read the directory a call ended in: whenever its shell ends, or after the script
+    "at-exit": 'trap \'pwd -P > "$PWD_OUT"\' EXIT\neval "$PAT_SCRIPT"\n',
+    "after-eval": 'eval "$PAT_SCRIPT"\nPAT_STATUS=$?\npwd -P > "$PWD_OUT"\nexit $PAT_STATUS\n'}
+HOSTS = [(w, k) for w in WRAPPERS for k in (True, False)]
 
 
 def _statement(rng):
-    d, a = rng.choice(_DIRS), rng.choice(_ARGS)
+    d, e, a, b = rng.choice(_DIRS), rng.choice(_DIRS), rng.choice(_ARGS), rng.choice(_ARGS)
+    if rng.random() < 0.35:  # the plain forms, where the audit believes a cd: the only place it can flag less
+        return rng.choice([f"cd {d}", f"probe {a}", f"cd {d} && probe {a}", f"cd {d}; probe {a}", f"probe {a} | cat",
+                           f"cd {d} && probe {a} | cat; probe {b}", "true", "false", f"X={a}; cd {d}; probe $X"]
+                          ).replace("{B}", "$B_ROOT_LITERAL").replace("{W}", "$W_ROOT_LITERAL")
     return rng.choice([
+        # the forms of the first property test
         f"cd {d}", f"probe {a}", f"cd {d} && probe {a}", f"cd {d} || probe {a}", f"false && cd {d}", f"true && cd {d}",
-        f"(cd {d}; probe {a})", f"(cd {d})", f"cd {d} | cat", f"cd {d} &", f"if true; then cd {d}; fi",
+        f"(cd {d}; probe {a})", f"(cd {d})", f"cd {d} | cat", f"cd {d} & wait", f"if true; then cd {d}; fi",
         f"X=$(cd {d} && pwd)", f"bash -c 'cd {d}'", f"{{ cd {d}; }}", f"cd {d} 2>/dev/null", f"cd {d}\nprobe {a}",
-        f"probe {a}; cd {d}; probe {a}", "true"])
+        f"probe {a}; cd {d}; probe {b}", "true",
+        # loops and functions: a cd that runs more than once
+        f"for i in 1 2; do cd {d}; done", f"for i in 1 2 3; do cd {d}; probe {a}; done",
+        f"n=0; while [ $n -lt 2 ]; do cd {d}; n=$((n+1)); done", f"f() {{ cd {d}; }}; f", f"f() {{ cd {d}; }}; f; f",
+        f"f() {{ cd {d}; probe \"$1\"; }}; f {a}; f {b}", f"function g {{ cd {d}; }}\ng\ng",
+        # a script that stops before its cd, or ends with status 0 before it
+        f"set -e; false; cd {d}", f"set -e; cd {d}; false; probe {a}", f"set -e; true; cd {d}", f"exit 0; cd {d}",
+        f"exit 1; cd {d}", f"cd {d}; exit 0; cd {e}", f"true || exit; cd {d}", f"false || exit 0; cd {d}",
+        f"return 0 2>/dev/null; cd {d}", f"cd {d}; exec true; cd {e}",
+        f"echo ${{NOPE?}}; cd {d}", f"echo $((1/0)); cd {d}", f"ls *.nomatch; cd {d}", f"echo =nosuch; cd {d}",
+        # child shells and their positional arguments
+        f"sh -c 'probe \"$1\"' _ {a}", f"bash -c 'cd {d}; probe \"$1\"' _ {a}", f"sh -c 'cd {d} && probe {a}'",
+        f"echo {a} | xargs probe", f"echo {a} | xargs sh -c 'cd {d}; probe \"$1\"' _",
+        f"bash <<'E'\ncd {d}\nprobe {a}\nE", f"cat <<E\ncd {d}\nE",
+        # options, chains, pipes
+        f"cd -P {d}", f"cd -L {d}", f"cd -- {d}", f"cd -P -- {d}", f"cd {d} {e}", "cd -", "cd", "cd ''",
+        f"cd {d} && cd {e} || probe {a}", f"false || cd {d}", f"true || cd {d}", f"cd {d} && false || cd {e}",
+        f"[ -d {d} ] && cd {d}", f"test -d {d} && cd {d}; probe {a}", f"! cd {d}", f"echo x | cd {d}",
+        f"cd {d} | cd {e}", f"true | probe {a}", f"cd {d} && probe {a} | cat; probe {b}",
+        # quotes that hide an operator, line continuations, comments
+        f"echo \"a; cd {d}\"", f"echo 'x && cd {d}'; probe {a}", f"cd \"{d}\"", f"cd '{d}' ; probe \"{a}\"",
+        f"echo \"(\" ; cd {d}", f"echo \\; cd {d}", f"echo \"#\"; cd {d}", f"cd \\\n{d}", f"cd {d} &&\\\n probe {a}",
+        f"cd {d} \\\n&& probe {a}", f"cd {d} # cd {e}", f"# cd {d}\nprobe {a}", f"echo $'it\\'s'; cd {d}; echo 'x'",
+        # variables, a deferred path, hidden movers
+        f"X={a}; cd {d}; probe $X", f"D={d}; cd $D", "cd $NOPE", f"pushd {d}; popd", f"pushd {d}",
+        f"eval \"cd {d}\"", f"eval 'cd {d}; probe {a}'", f"x=cd; $x {d}", f"command cd {d}", f"builtin cd {d}",
+        f"export V=1; cd {d}", "CDPATH=..; cd plugins", f"export CDPATH=plugins; cd foundry; probe {a}",
+        f"alias k=cd\nk {d}", "set -o physical 2>/dev/null; cd link; cd ..",
+        # a fresh temporary directory
+        f"T=$(mktemp -d); cd $T; probe {a}", "T=$(mktemp -d) && cd \"$T\" && probe y", f"T=/; cd $T; probe {a}",
+        f"T=$(mktemp -d); T={d}; cd $T", "T=$(mktemp -d); mkdir -p $T/s; cd $T/s; probe ../../../x",
+    ]).replace("{B}", "$B_ROOT_LITERAL").replace("{W}", "$W_ROOT_LITERAL")
 
 
-def _oracle(lay, calls):
-    """Run the calls in a real bash from the bundle, the directory kept between calls as Claude Code keeps it, and
-    return (the paths ``probe`` was given, resolved, the result text of each call)."""
-    import os
-    import subprocess as sp
-    cwd, paths, texts = lay.bundle, set(), {}
+def _oracle(lay, calls, shell, host, rng):
+    """Run the calls in a real shell and return ``(paths probe was given, results, real start of each call)``.
+
+    OBSERVED from the shell: what runs, in which directory, with which status and messages. ENCODED, since no host
+    is run (H1, H2): the command goes through ``eval``; the next call starts in the physical directory the host
+    read at the end of the call, when that is inside the project, and at the root with ``Shell cwd was reset to
+    ...`` otherwise; ``host`` picks one of four behaviours the audit must hold under: the directory is read
+    whenever the shell ends or only when the script comes back to the wrapper (``WRAPPERS``), and it is kept, or
+    not, after a non-zero status; a non-zero status is an error result or, sometimes for status 1, an accepted
+    one (``returnCodeInterpretation``)."""
+    wrapper, keep_after_failure = WRAPPERS[host[0]], host[1]
+    cwd, paths, results, starts = lay.bundle.resolve(), set(), {}, []
+    probe, final = lay.tmp / "probe.out", lay.tmp / "pwd.out"
+    env = {"PATH": f"{lay.tmp / 'bin'}:/usr/bin:/bin", "HOME": str(lay.home), "TMPDIR": str(lay.tmp / "fresh"),
+           "PROBE_OUT": str(probe), "PWD_OUT": str(final)}
+    argv = [shell, "-f", "-c", wrapper] if shell.endswith("zsh") else [shell, "--noprofile", "--norc", "-c", wrapper]
     for i, line in enumerate(calls):
-        probe, final = lay.tmp / "probe.out", lay.tmp / "pwd.out"
+        starts.append(cwd)
         probe.write_text("", encoding="utf-8")
-        final.write_text(str(cwd), encoding="utf-8")
-        run = sp.run(["/bin/bash", "-c", PROBE + line + "\nwait"], cwd=cwd, stdin=sp.DEVNULL, capture_output=True,
-                     text=True, env={"PATH": "/usr/bin:/bin", "PROBE_OUT": str(probe), "PWD_OUT": str(final)})
+        final.write_text("", encoding="utf-8")
+        run = subprocess.run(argv, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+                             env={**env, "PAT_SCRIPT": line})
         paths |= {os.path.realpath(x) for x in probe.read_text("utf-8").splitlines()}
-        end = Path(os.path.realpath(final.read_text("utf-8").strip()))
-        text = run.stdout + run.stderr
-        if end == lay.bundle.resolve() or lay.bundle.resolve() in end.parents:
-            cwd = end
+        text = (run.stdout + run.stderr) or "ok"
+        ended = final.read_text("utf-8").strip()
+        if ended and (run.returncode == 0 or keep_after_failure):
+            end = Path(os.path.realpath(ended))
+            if end == lay.bundle.resolve() or lay.bundle.resolve() in end.parents:
+                cwd = end
+            else:
+                cwd = lay.bundle.resolve()
+                text += f"\nShell cwd was reset to {lay.bundle}"
+        if run.returncode == 0:
+            results[i] = text
+        elif run.returncode == 1 and rng.random() < 0.3:
+            results[i] = {"text": text, "soft": "No matches found"}
         else:
-            cwd = lay.bundle
-            text += f"\nShell cwd was reset to {lay.bundle}"
-        texts[i] = text or "ok"
-    return paths, texts
+            results[i] = {"text": text, "error": run.returncode}
+    return paths, results, starts
 
 
-def test_revision_2_flags_a_superset_of_what_a_real_shell_does_outside_the_zone(tmp_path):
-    import os
-    import random
-    lay = Layout(tmp_path)
+@pytest.fixture(scope="module")
+def shell_layout(tmp_path_factory):
+    lay = Layout(tmp_path_factory.mktemp("oracle"))
     for d in ("plugins/foundry", "d"):
         (lay.bundle / d).mkdir(parents=True, exist_ok=True)
+    (lay.bundle / "link").symlink_to(lay.bundle / "plugins" / "foundry")  # a symbolic link inside the project
+    (lay.bundle / "up").symlink_to(lay.work)  # and one that leaves the zone
+    (lay.tmp / "fresh").mkdir()
+    (lay.tmp / "bin").mkdir()
+    (lay.tmp / "bin" / "probe").write_text(  # a program, as any command of an arm: it resolves from where it runs
+        '#!/bin/sh\nfor a in "$@"; do printf \'%s\\n\' "$(pwd -P)/$a" >> "$PROBE_OUT"; done\n', encoding="utf-8")
+    (lay.tmp / "bin" / "probe").chmod(0o755)
+    (lay.tmp / "bin" / "mktemp").write_text(  # keeps the directories of the generated scripts inside the test tree
+        '#!/bin/sh\nexec /usr/bin/mktemp -d "$TMPDIR/tmp.XXXXXX"\n', encoding="utf-8")
+    (lay.tmp / "bin" / "mktemp").chmod(0o755)
+    return lay
+
+
+@pytest.mark.parametrize("host", HOSTS, ids=[f"{w}-{'kept' if k else 'not-kept'}-after-failure" for w, k in HOSTS])
+@pytest.mark.parametrize("shell", SHELLS, ids=[Path(x).name for x in SHELLS])
+def test_the_candidates_hold_the_real_directory_and_every_real_excursion_is_flagged(shell_layout, shell, host):
+    """The invariant of revision 2, against a real bash and a real zsh: the directories the audit starts a call
+    from contain the directory the shell really was in, and a path a command really resolved outside the zone is
+    flagged (by its name, or by ``UNKNOWN_CWD`` when the audit gave up naming the directory)."""
+    lay = shell_layout
     zone = [Path(os.path.realpath(p)) for p in (lay.bundle, lay.scratch, lay.attempt, lay.private)]
-    rng, checked, outside_total = random.Random(123), 0, 0
-    for _ in range(250):
-        calls = ["\n".join(_statement(rng) for _ in range(rng.randint(1, 3))) for _ in range(rng.randint(1, 3))]
-        paths, texts = _oracle(lay, calls)
+    unknown = str(lfr.UNKNOWN_CWD)
+    rng = random.Random(123 + 10 * SHELLS.index(shell) + HOSTS.index(host))  # other sequences for each pairing
+    stats = {"outside": 0, "named": 0, "clean": 0, "moved": 0, "sure": 0}
+    for _ in range(CASES):
+        calls = [rng.choice(["\n", "; ", " && "]).join(_statement(rng) for _ in range(rng.randint(1, 3)))
+                 .replace("$B_ROOT_LITERAL", str(lay.bundle)).replace("$W_ROOT_LITERAL", str(lay.work))
+                 for _ in range(rng.randint(1, 3))]
+        paths, results, starts = _oracle(lay, calls, shell, host, rng)
         outside = {p for p in paths if not any(Path(p) == z or z in Path(p).parents for z in zone)}
-        hits = set(lay.claude(*calls, results=texts).audit(R2))
-        assert {str(p) for p in outside} <= hits, (calls, sorted(outside), sorted(hits))
-        checked += 1
-        outside_total += bool(outside)
-    assert checked == 250 and outside_total > 20  # the generator does reach outside the zone
+        trace: list = []
+        hits = set(lay.claude(*calls, results=results).audit(R2, trace=trace))
+        context = (shell, calls, results)
+        assert len(trace) == len(starts), context
+        for real, candidates in zip(starts, trace):
+            assert unknown in map(str, candidates) or real in {Path(os.path.realpath(c)) for c in candidates}, \
+                (context, str(real), sorted(map(str, candidates)))
+        shown = {p.replace(str(lay.home.resolve()), "~", 1) for p in outside}
+        assert unknown in hits or shown <= hits, (context, sorted(shown), sorted(hits))
+        stats["outside"] += bool(outside)
+        stats["named"] += bool(outside) and unknown not in hits
+        stats["clean"] += not hits
+        stats["moved"] += any(s != lay.bundle.resolve() for s in starts)
+        stats["sure"] += any(len(c) == 1 and next(iter(c)) != lay.bundle.resolve() for c in trace)
+    # the generator reaches outside the zone, the audit does not flag everything nor give up everywhere, the shell
+    # does move between calls and the audit does believe some of those moves
+    assert stats["outside"] > CASES // 10 and stats["named"] > CASES // 40, stats
+    assert stats["clean"] > CASES // 20 and stats["moved"] > CASES // 10 and stats["sure"] > CASES // 50, stats
 
 
 # --------------------------------------------- B2: a flagged reviewer decides nothing, whatever it said
@@ -684,3 +802,344 @@ def test_the_scope_measurement_leaves_the_work_root_out_of_the_sensitive_list(tm
     without = rp.run(work_root_sensitive=False)["records"][0]
     assert with_root["old"]["hits"] == [work + "/tests/t.py"] and without["old"]["hits"] == []
     assert without["fidelity"] == "mismatch"  # the recorded flag is no longer reproduced: the measurement says so
+
+
+# ------------------- B1bis: the three under-flags of the second review of PAT-123, and their variants
+
+HIDDEN = "cat ../../../tests/test_hidden.py"  # from the bundle: the hidden tests; from plugins/foundry: the bundle's own
+
+
+def _climb(lay, *calls, **kw):
+    """Whether revision 2 names the hidden tests of the work root for these calls."""
+    return "W/tests/test_hidden.py" in _shown(lay.claude(*calls, **kw).audit(R2), lay)
+
+
+STOPPED_BEFORE_THE_CD = {  # first call -> its result: nothing shows that the cd ran
+    "set -e, then a failing command": ("set -e; false; cd plugins/foundry", {"error": 1}),
+    "exit": ("exit 0; cd plugins/foundry", "ok"),
+    "exit in a chain": ("true && exit; cd plugins/foundry", "ok"),
+    "return": ("return 0; cd plugins/foundry", "ok"),
+    "exec": ("exec true; cd plugins/foundry", "ok"),
+    "logout": ("logout; cd plugins/foundry", "ok"),
+    "an expansion error": ("echo ${NOPE?}; cd plugins/foundry", {"error": 1, "text": "NOPE: parameter not set"}),
+    "a non-zero status": ("cd plugins/foundry; false", {"error": 1}),
+    "a non-zero status the host accepts": ("cd plugins/foundry; grep -q x f", {"soft": "No matches found"}),
+    "a call cut by the timeout": ("sleep 600; cd plugins/foundry", {"interrupted": True, "text": "Command timed out"}),
+    "a result without the host's detail": ("cd plugins/foundry", {"detail": False}),
+    "a result too long to be whole": ("cd plugins/foundry", "x" * (lfr._RESULT_WHOLE + 1)),
+    "a truncated result": ("cd plugins/foundry", "a\n... [12 lines truncated] ...\nb"),
+    "a persisted result": ("cd plugins/foundry", "<persisted-output>\nOutput too large (48KB)"),
+    "an Exit code line without the error flag": ("cd plugins/foundry", "Exit code 2\nboom"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(STOPPED_BEFORE_THE_CD))
+def test_under_flag_1_a_cd_the_script_may_not_have_reached_is_not_believed(tmp_path, name):
+    lay = Layout(tmp_path)
+    first, result = STOPPED_BEFORE_THE_CD[name]
+    assert _climb(lay, first, HIDDEN, results={0: result}), name
+
+
+def test_under_flag_1_a_call_in_the_background_or_without_a_result_is_not_believed(tmp_path):
+    lay = Layout(tmp_path)
+    assert _climb(lay, "cd plugins/foundry", HIDDEN, inputs={0: {"run_in_background": True}})
+    lay.claude("cd plugins/foundry", HIDDEN)
+    lines = lay.stream.read_text("utf-8").splitlines()
+    lay.stream.write_text("\n".join(x for x in lines if '"tool_use_id": "t0"' not in x) + "\n", encoding="utf-8")
+    assert "W/tests/test_hidden.py" in _shown(lay.audit(R2), lay)  # the result of the first call is missing
+    assert not _climb(lay, "cd plugins/foundry", HIDDEN)  # and the same two calls, the first one proven: the repair
+
+
+REPEATED_CD = ("for i in 1 2; do cd ..; done", "while [ ! -d .git ]; do cd ..; done",
+               "until [ -d .git ]; do cd ..; done", "up() { cd ..; }; up; up", "function up { cd ..; }\nup\nup",
+               "a() { cd ..; b; }; b() { cd ..; }; a", "for d in .. ..; do cd $d; done", "repeat 2 cd ..",
+               "for i in 1 2; do (true); cd ..; done", "up() { cd ..; }\nup && up")
+
+
+@pytest.mark.parametrize("second", REPEATED_CD)
+def test_under_flag_2_a_cd_that_may_run_more_than_once_is_applied_to_a_fixed_point(tmp_path, second):
+    lay = Layout(tmp_path)  # plugins/foundry, then two levels up: the bundle again, so the climb is the hidden tests
+    hits = _shown(lay.claude("cd plugins/foundry", second, HIDDEN).audit(R2), lay)
+    assert "W/tests/test_hidden.py" in hits or str(lfr.UNKNOWN_CWD) in hits, hits
+    if "$" not in second and "repeat" not in second:  # a target the audit can read: the directory is named
+        trace: list = []
+        lay.audit(R2, trace=trace)
+        assert {lay.bundle.resolve(), lay.bundle.resolve() / "plugins"} <= set(trace[2]), second
+
+
+def test_under_flag_2_a_loop_that_goes_down_without_end_gives_up_naming_the_directory(tmp_path):
+    lay = Layout(tmp_path)
+    trace: list = []
+    lay.claude("for d in a b c; do cd sub; done", "cat ./x").audit(R2, trace=trace)
+    assert lfr.UNKNOWN_CWD in trace[1]  # sub, sub/sub, ...: past the cap, any directory
+    assert lay.audit(R2) == [str(lfr.UNKNOWN_CWD)]
+
+
+POSITIONAL = ("bash -c 'cat \"$1\"' _ ../../../tests/test_hidden.py",
+              "sh -c 'cat $0' ../../../tests/test_hidden.py",
+              "env X=1 bash -c 'cat \"$@\"' _ ../../../tests/test_hidden.py",
+              "echo ../../../tests/test_hidden.py | xargs cat",
+              "find . -name x -exec sh -c 'cat \"$1\"' _ ../../../tests/test_hidden.py \\;",
+              "f() { cat \"$1\"; }; f ../../../tests/test_hidden.py",
+              "for f in ../../../tests/test_hidden.py; do cat $f; done",
+              "set -- ../../../tests/test_hidden.py; cat \"$1\"",
+              "X=../../../tests/test_hidden.py; cat $X", "X=../../../tests/test_hidden.py cat",
+              "case x in *) cat ../../../tests/test_hidden.py;; esac",
+              "[[ -f ../../../tests/test_hidden.py ]] && echo yes")
+
+
+@pytest.mark.parametrize("command", POSITIONAL)
+def test_under_flag_3_a_relative_path_the_walk_does_not_place_is_still_resolved(tmp_path, command):
+    lay = Layout(tmp_path)
+    assert _climb(lay, command), command
+    assert "W/tests/test_hidden.py" in _shown(lay.omp(command).audit(R2), lay), command
+
+
+def test_under_flag_3_a_path_is_resolved_wherever_the_call_may_use_it_after_naming_it(tmp_path):
+    lay = Layout(tmp_path)
+    # named in the bundle (the private root: allowed), used one level up (the work root)
+    for command in ("X=../../x; cd ..; cat $X", "bash -c 'cd ..; cat \"$1\"' _ ../../x",
+                    "f() { cd ..; cat \"$1\"; }; f ../../x", "for f in ../../x; do cd ..; cat $f; done"):
+        assert "W/x" in _shown(lay.claude(command).audit(R2), lay), command
+    assert lay.claude("X=../../x; cat $X").audit(R2) == []  # the same path, used where it is named
+    # the target of a certain cd is used by that cd, where it stands, and nowhere else
+    assert lay.claude("cd ../..; ls").audit(R2) == []
+
+
+# --------------------------------------------- what a cd must be for the audit to believe it (allow-list)
+
+D = "plugins/foundry"
+BELIEVED = (f"cd {D}", f"cd {D} && ls", f"cd {D}; ls | head -3", f"cd -P {D}", f"cd -L -- {D}", f"cd '{D}'",
+            f"cd \"{D}\"", "cd plugins; cd foundry", f"ls; cd {D}", f"ls -la && true; cd {D}; ls",
+            f"set -e; cd {D}; true", f"set -euo pipefail\ncd {D}", f"export X=1; cd {D}", f"X=$HOME; cd {D}",
+            f"cd {D} && python3 - <<'E'\nprint(1)\nE", f"cd \\\n{D}", f"cd {D} # then look", f"echo 'a; b' \"c | d\"; cd {D}",
+            f"grep -c x f 2>/dev/null >out.txt; cd {D}", f"find . -name '*.py' -exec ls {{}} \\; ; cd {D}",
+            f"printf '%s\\n' \"$X\"; cd {D}", f"command -v python3; cd {D}", f"[ -d {D} ]; cd {D}")
+NOT_BELIEVED = (f"true && cd {D}", f"cd {D} || true", f"cd {D} | cat", f"cat x | cd {D}", f"cd {D} 2>/dev/null",
+                f"X=1 cd {D}", f"cd {D}; exit 0", f"exit 0; cd {D}", f"exec 2>/dev/null; cd {D}", f"({D}; cd {D})",
+                f"(cd {D})", f"{{ cd {D}; }}", "cd $D", "cd plugins/*", "cd ~/x", "cd -", "cd", "cd ''", f"cd {D} extra",
+                f"command cd {D}", f"builtin cd {D}", f"CDPATH=..; cd {D}", f"export CDPATH=..; cd {D}",
+                f"read CDPATH; cd {D}", f"eval true; cd {D}", f"source x.sh; cd {D}", f". ./x.sh; cd {D}",
+                f"trap '' INT; cd {D}", f"alias k=ls; cd {D}", f"setopt autocd; cd {D}", f"set -o physical; cd {D}",
+                f"shopt -s cdable_vars; cd {D}", f"cd {D} &", f"if true; then cd {D}; fi", f"cd {D}; echo $(date)",
+                f"cd {D}; echo `date`", f"$X; cd {D}", f"*; cd {D}", f"pushd {D}", f"cd {D}; popd", f"chdir {D}",
+                "cd +1", "cd -- -x", f"disable cd; cd {D}", f"enable -n cd; cd {D}", f"declare -n r=CDPATH; cd {D}",
+                f"export \"$N=..\"; cd {D}", f"printf -v CDPATH ..; cd {D}", f"echo \"cd {D}\"; cd {D}",
+                f"echo $'a\\'b'; cd {D}; echo 'c'", f"time cd {D}", f"! cd {D}", f"cd {D};; ls", f"cd {D} <<E\nx")
+
+
+def _starts(lay, *calls, **kw):
+    trace: list = []
+    lay.claude(*calls, **kw).audit(R2, trace=trace)
+    return trace
+
+
+@pytest.mark.parametrize("first", BELIEVED)
+def test_a_cd_of_the_allow_list_with_a_clean_result_replaces_the_candidates(tmp_path, first):
+    lay = Layout(tmp_path)
+    assert _starts(lay, first, "ls")[1] == {lay.bundle.resolve() / "plugins" / "foundry"}, first
+
+
+@pytest.mark.parametrize("first", NOT_BELIEVED)
+def test_a_cd_outside_the_allow_list_only_adds_candidates(tmp_path, first):
+    lay = Layout(tmp_path)
+    after = _starts(lay, first, "ls")[1]
+    assert lay.bundle.resolve() in after or lfr.UNKNOWN_CWD in after, (first, after)  # never fewer than before
+
+
+@pytest.mark.parametrize("line", ["(eval):cd:1: no such file or directory: plugins/foundry",
+                                  "bash: line 0: cd: plugins/foundry: No such file or directory",
+                                  "/bin/sh: 1: cd: can't cd to plugins/foundry", "cd: Aucun fichier ou dossier de ce type",
+                                  "cd:cd:1: too many arguments", "x\n  cd: string not in pwd: a\ny"])
+def test_any_cd_line_of_the_result_is_a_failed_cd(tmp_path, line):
+    lay = Layout(tmp_path)
+    assert _climb(lay, f"cd {D}", HIDDEN, results={0: line}), line
+
+
+def test_a_line_that_only_ends_in_cd_is_not_a_failed_cd(tmp_path):
+    lay = Layout(tmp_path)
+    for text in ("abcd: x", "src/cd: x", "my-cd: y", "cd.py:12: z"):
+        assert not _climb(lay, f"cd {D}", HIDDEN, results={0: text}), text
+
+
+def test_the_grammar_is_an_allow_list(tmp_path):
+    simple = ("ls", "ls -la | head -3; pwd", "a && b || c\nd", "X=1 Y=\"$Z\" cmd arg >out 2>&1", "cat <<'E' | wc -l",
+              "echo 'a;b' \"c|d\" e\\;f", "cmd \\\n arg", "a &&\n b", "a |\n b", "echo ${HOME} $1 $? \"$@\"", "> f",
+              "find . -exec ls {} \\;", "[ -d x ] && ls", "ls *.py ~/x")
+    for script in simple:
+        assert lfr._simple_script(script) is not None, script
+    not_simple = ("(ls)", "{ ls; }", "ls &", "ls & pwd", "a; ; b", "; a", "a &&", "a | ", "a ;; b", "if x; then y; fi",
+                  "for x in a; do y; done", "while x; do y; done", "f() { x; }", "function f { x; }", "! x", "time x",
+                  "[[ -d x ]]", "echo $(x)", "echo `x`", "echo ${x:-y}", "echo ${x?}", "echo $((1+1))", "echo $'x'",
+                  "echo \"a", "echo 'a", "cat <(x)", "x=(a b)", "T=$(mktemp -d)", "T=\"$(mktemp -d)\" && ls", "echo \"`x`\"", "echo \"$(x)\"", "case x in a) y;; esac", "coproc x", "a |& b &")
+    for script in not_simple:
+        with pytest.raises(lfr._NotSimple):
+            lfr._simple_script(script)
+    chains = lfr._simple_script("a && b | c || d; e")
+    assert [[(link, [cmd.words[0].text for cmd in pipe]) for link, pipe in chain] for chain in chains] == \
+        [[("", ["a"]), ("&&", ["b", "c"]), ("||", ["d"])], [("", ["e"])]]
+
+
+@pytest.mark.parametrize("shell", SHELLS, ids=[Path(x).name for x in SHELLS])
+def test_every_builtin_and_reserved_word_of_the_installed_shells_is_known(shell):
+    """H4: a command name outside ``_SHELL_NAMES`` is taken for a program. Observed, not encoded: the list is read
+    from the shell itself."""
+    script = "print -l ${(k)builtins} ${(k)reswords}" if shell.endswith("zsh") else "compgen -b; compgen -k"
+    out = subprocess.run([shell, "-f", "-c", script] if shell.endswith("zsh") else [shell, "--norc", "-c", script],
+                         capture_output=True, text=True, check=True, env={"PATH": "/usr/bin:/bin"}).stdout.split()
+    assert len(out) > 50 and set(out) <= lfr._SHELL_NAMES, sorted(set(out) - lfr._SHELL_NAMES)
+    assert {"cd", "chdir", "pushd", "popd", "eval", "source", ".", "exec", "exit", "return", "trap", "alias", "set",
+            "setopt", "shopt", "enable", "disable"}.isdisjoint(lfr._INERT)
+
+
+# --------------------------------------------------------------- the host the audit can assume (H1, H9)
+
+def test_an_unobserved_host_version_carries_no_directory_and_believes_no_cd(tmp_path):
+    lay = Layout(tmp_path)
+    calls = (f"cd {D}", HIDDEN)
+    for version in (None, "2.1.286", "3.0.0", ""):
+        models: list = []
+        hits = lay.claude(*calls, version=version).audit(R2, host_model=models)
+        assert "W/tests/test_hidden.py" in _shown(hits, lay) and models == ["unverified"], version
+        assert lay.claude(f"cd {D}; {HIDDEN}", version=version).audit(R2), version  # not even inside one line
+        trace: list = []
+        lay.claude(*calls, "ls", version=version).audit(R2, trace=trace)
+        assert trace[2] == {lay.bundle.resolve(), lay.bundle.resolve() / "plugins" / "foundry"}  # the union
+    models = []
+    assert lay.claude(*calls).audit(R2, host_model=models) == [] and models == [f"claude-code-{HOST}"]
+    models = []
+    assert lay.omp(*calls).audit(R2, host_model=models) and models == ["unverified"]
+    # two init events that disagree: unverified
+    lines = lay.claude(*calls).stream.read_text("utf-8").splitlines()
+    other = json.dumps({"type": "system", "subtype": "init", "claude_code_version": "9.9.9"})
+    lay.stream.write_text("\n".join([lines[0], other, *lines[1:]]) + "\n", encoding="utf-8")
+    assert lay.audit(R2)
+    assert lay.audit(1) == lay.claude(*calls, version=None).audit(1)  # revision 1 reads no version
+
+
+def test_calls_whose_order_of_execution_is_unknown_prove_nothing(tmp_path):
+    lay = Layout(tmp_path)
+    use = [{"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": c}}]}}
+        for i, c in enumerate((f"cd {D}", HIDDEN, "ls"))]
+    got = [{"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": f"t{i}", "content": "ok", "is_error": False}]},
+        "tool_use_result": {"interrupted": False}} for i in range(3)]
+    init = {"type": "system", "subtype": "init", "claude_code_version": HOST}
+
+    def audit(events):
+        lay.stream.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+        return _shown(lay.audit(R2), lay)
+
+    assert audit([init, use[0], got[0], use[1], got[1]]) == []  # one after the other: the cd is believed
+    assert audit([init, use[0], use[1], got[0], got[1]])  # sent together: it is not
+    assert audit([init, use[1], use[0], got[1], got[0]])  # whichever came first in the stream
+    assert audit([init, use[2], use[1], got[2], got[1]]) == ["W/tests/test_hidden.py"]  # no cd among them: the root
+
+
+# ------------------------------------------- a fresh mktemp directory is NOT modelled (decision of PAT-123)
+
+def test_a_cd_into_a_mktemp_directory_is_a_cd_the_audit_cannot_read(tmp_path):
+    """``T=$(mktemp -d); cd $T/...``: the directory is fresh, but the audit could not see a symbolic link the arm
+    puts in it (``ln -s / $T/r; cd $T/r``), so it is not a known place: every relative path after it is a hit."""
+    lay = Layout(tmp_path)
+    reset = f"ok\nShell cwd was reset to {lay.bundle}"
+    for command in (f"B=$(mktemp -d); git archive HEAD | tar -x -C $B; cd $B/{D} && python3 -m pytest -q tests/x.py",
+                    f"cd {lay.bundle} && T=$(mktemp -d) && cd $T && cat ./x", "T=$(mktemp -d); ln -s / $T/r; cd $T/r; cat ./etc/x",
+                    "T=/Users/x; cd $T; cat ./y", "T=$(mktemp -d -p /Users/x); cd \"$T\"; cat ./y"):
+        assert lay.claude(command, results={0: reset}).audit(R2) == [str(lfr.UNKNOWN_CWD)], command
+    assert lay.claude("T=$(mktemp -d); cp -R . $T/; ls $T").audit(R2) == []  # used, never entered: nothing to place
+    assert lay.claude("cd $T/x", "cat ../scratch/x", results={0: reset}).audit(R2) == []  # the reset line decides
+
+
+def test_a_command_that_may_run_outside_the_zone_is_flagged_by_itself(tmp_path):
+    """A bare name (``cat y``, ``ls``) is not a path token, so the command is flagged by the directory it may run
+    in: the role the flagged ``cd`` target plays in revision 1, kept when the target cannot be read."""
+    lay = Layout(tmp_path)
+    unknown = [str(lfr.UNKNOWN_CWD)]
+    assert lay.claude("cd $X; cat y").audit(R2) == unknown and lay.audit(1) == []  # a hole of revision 1
+    assert lay.claude("cd $X").audit(R2) == []  # nothing ran there
+    assert lay.claude("cd $X", "ls").audit(R2) == unknown  # the next call may still be there
+    assert lay.claude("cd $X", "ls", results={0: f"Shell cwd was reset to {lay.bundle}"}).audit(R2) == []
+    assert lay.claude("eval \"$Y\"; ls").audit(R2) == unknown and lay.claude("(cd $X; make)").audit(R2) == unknown
+    assert lay.claude("cd ..; ls; cat x").audit(R2) == []  # the attempt directory is allowed
+    assert _shown(lay.claude("cd ../../..; ls").audit(R2), lay) == ["W"] == _shown(lay.audit(1), lay)
+    assert _shown(lay.claude("cd ..", "cd ..", "cd ..", "ls").audit(R2), lay) == ["W"]  # no reset line: kept
+
+
+def test_a_cd_word_the_audit_did_not_read_as_a_command_gives_up_the_directory(tmp_path):
+    lay = Layout(tmp_path)  # H7: the word may be run out of sight (x=cd; $x .., a string given to eval or a tool)
+    for first in ("x=cd; $x plugins", f"git commit -m 'cd elsewhere'; cd {D}", f"echo cd; cd {D}",
+                  "printf 'cd ..\\n' | sh", "for w in cd pushd; do :; done"):
+        assert lfr.UNKNOWN_CWD in _starts(lay, first, "ls")[1], first
+    assert _starts(lay, f"cd {D}; ls abcd cd.py ./cd src/cd", "ls")[1] == {lay.bundle.resolve() / "plugins" / "foundry"}
+
+
+def test_a_heredoc_that_is_never_closed_proves_nothing(tmp_path):
+    lay = Layout(tmp_path)  # the shell takes the rest for text and runs none of it; the audit reads it as commands
+    after = _starts(lay, "cat <<E\ncd /\nE; cd plugins", "ls")[1]
+    assert lay.bundle.resolve() in after or lfr.UNKNOWN_CWD in after
+
+
+def test_a_cd_word_in_a_comment_or_a_heredoc_body_is_not_trusted_to_be_text(tmp_path):
+    lay = Layout(tmp_path)  # H7: ``echo \\ #; cd ..`` is a cd for the shell and a comment for the reader
+    for first in (f"cd {D} # then cd back", f"cd {D}; cat > notes.txt <<'E'\nrun: cd plugins\nE",
+                  "echo \\ #; cd ..", f"cd {D}\n# cd .."):
+        assert lfr.UNKNOWN_CWD in _starts(lay, first, "ls")[1], first
+    assert _starts(lay, f"cd {D}; cat > n.txt <<'E'\nno such word here\nE", "ls")[1] == \
+        {lay.bundle.resolve() / "plugins" / "foundry"}
+
+
+def test_a_symbolic_link_keeps_the_logical_and_the_physical_directory(tmp_path):
+    lay = Layout(tmp_path)
+    (lay.bundle / "link").symlink_to(lay.bundle / "plugins" / "foundry")
+    (lay.bundle / "up").symlink_to(lay.work)
+    after = _starts(lay, "cd link; cd ..", "ls")[1]  # the bundle (logical, the default) or plugins (physical, -P)
+    assert {lay.bundle.resolve(), lay.bundle.resolve() / "plugins"} <= {Path(os.path.realpath(c)) for c in after}
+    assert "W/x" in _shown(lay.claude("cd up; cat ./x").audit(R2), lay)  # a link that leaves the zone
+    assert "W/x" in _shown(lay.claude("cat up/x").audit(R2), lay)
+
+
+# ----------------------------------- the reviewer's flag on a cut attempt, the report and its listing
+
+def test_a_cut_after_a_flagged_review_keeps_the_flag_on_the_review_under_revision_2(tmp_path):
+    def cut(name, **iso):
+        (tmp_path / name).mkdir()
+        runner, campaign, _, tasks = make_runner(tmp_path / name, "compare_exploration", REVIEWER_PEEKS,
+                                                 campaign_over={"isolation": {"private_attempt_root": True, **iso}})
+        real = runner._review
+
+        def review(task, patch, label):  # the reviewer ran, was audited (flagged), then the launcher is cut
+            real(task, patch, label)
+            raise RuntimeError("cut after the review")
+
+        runner._review = review
+        with pytest.raises(RuntimeError):
+            runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+        ledger = [json.loads(x) for x in runner.ledger.path.read_text("utf-8").splitlines()]
+        return [r for r in results(runner) if r.get("path") == "A" and r["segment"] == "cloud"][0], \
+            lfr.report(campaign, results(runner), ledger)
+
+    old, old_report = cut("r1")
+    assert old["contaminated"] is True and old["outcome"] == "contaminated" and "contamination" not in old["review"]
+    assert "review_contaminated" not in old_report  # the report of a frozen campaign keeps its keys
+    new, new_report = cut("r2", audit_revision=R2)
+    assert "contaminated" not in new and new["outcome"] == "interrupted" and new["accepted"] is None
+    assert new["review"]["contamination"]["paths"] and new["unknown"]["review.contaminated"].startswith("the reviewer's")
+    assert new["judge"]["verdict"] == "ACCEPTED"  # decided: never replayed
+    assert new_report["contaminated"] == []
+    assert [(r["path"], r["attempt"], r["outcome"], bool(r["paths"])) for r in new_report["review_contaminated"]] == \
+        [("A", 0, "interrupted", True)]
+
+
+def test_the_report_lists_the_records_whose_reviewer_was_flagged(tmp_path):
+    (tmp_path / "x").mkdir()
+    runner, campaign, _, tasks = make_runner(tmp_path / "x", "compare_exploration", REVIEWER_PEEKS,
+                                             campaign_over={"isolation": {"private_attempt_root": True,
+                                                                          "audit_revision": R2}})
+    runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+    ledger = [json.loads(x) for x in runner.ledger.path.read_text("utf-8").splitlines()]
+    report = lfr.report(campaign, results(runner), ledger)
+    assert report["contaminated"] == [] and len(report["review_contaminated"]) == 1
+    listed = report["review_contaminated"][0]
+    assert listed["outcome"] == "review_unreadable" and listed["paths"] and listed["commands"] == []

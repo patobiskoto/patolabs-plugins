@@ -26,6 +26,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -66,6 +67,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [
             "/"
           ],
@@ -104,6 +106,7 @@
       "segment": "explore",
       "streams": [
         {
+          "host_model": "unverified",
           "new": [],
           "not_found": [],
           "old": [],
@@ -144,6 +147,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [
             "/private/tmp/pat19-work4"
           ],
@@ -186,6 +190,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [
@@ -226,6 +231,7 @@
       "segment": "explore",
       "streams": [
         {
+          "host_model": "unverified",
           "new": [],
           "not_found": [
             "/private/tmp/pat19-work4/private-attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/plugins",
@@ -264,6 +270,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -304,6 +311,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -312,6 +320,7 @@
           "stream": "cloud_sessions[0]"
         },
         {
+          "host_model": "claude-code-2.1.285",
           "new": [
             "/<unknown-working-directory>"
           ],
@@ -350,6 +359,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -386,6 +396,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -394,6 +405,7 @@
           "stream": "cloud_sessions[0]"
         },
         {
+          "host_model": "claude-code-2.1.285",
           "new": [
             "/<unknown-working-directory>"
           ],
@@ -430,6 +442,7 @@
       "segment": "explore",
       "streams": [
         {
+          "host_model": "unverified",
           "new": [],
           "not_found": [],
           "old": [],
@@ -464,6 +477,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -498,6 +512,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -536,6 +551,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [
@@ -572,6 +588,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -606,6 +623,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -648,6 +666,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -656,6 +675,7 @@
           "stream": "cloud_sessions[0]"
         },
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [
@@ -694,6 +714,7 @@
       "segment": "explore",
       "streams": [
         {
+          "host_model": "unverified",
           "new": [],
           "not_found": [],
           "old": [],
@@ -728,6 +749,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -762,6 +784,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -770,6 +793,7 @@
           "stream": "cloud_sessions[0]"
         },
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -804,6 +828,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -838,6 +863,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -872,6 +898,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -912,6 +939,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [
@@ -962,6 +990,7 @@
       "segment": "explore",
       "streams": [
         {
+          "host_model": "unverified",
           "new": [],
           "not_found": [
             "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
@@ -1004,6 +1033,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -1038,6 +1068,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -1072,6 +1103,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -1106,6 +1138,7 @@
       "segment": "explore",
       "streams": [
         {
+          "host_model": "unverified",
           "new": [],
           "not_found": [],
           "old": [],
@@ -1140,6 +1173,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -1174,6 +1208,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -1208,6 +1243,7 @@
       "segment": "cloud",
       "streams": [
         {
+          "host_model": "claude-code-2.1.285",
           "new": [],
           "not_found": [],
           "old": [],
@@ -1243,6 +1279,11 @@
     "fidelity_mismatch": 0,
     "flagged_now": 2,
     "flagged_recorded": 8,
-    "records": 32
+    "host_models": {
+      "claude-code-2.1.285": 30,
+      "unverified": 6
+    },
+    "records": 32,
+    "reviewer_flagged_now": 2
   }
 }

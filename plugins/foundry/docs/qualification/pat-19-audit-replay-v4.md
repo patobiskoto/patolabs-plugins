@@ -17,29 +17,43 @@ Il ne lance aucun pilote, aucun modèle, aucun appel cloud ; il lit des fichiers
 ## Ce que montre le rejeu
 
 Fidélité : pour les 32 enregistrements, la révision 1 rejouée retrouve exactement la liste de chemins enregistrée (0 écart).
-La révision 2 est celle de la fin de la revue de PAT-123 : elle ne croit un `cd` que s'il est certain et garde sinon plusieurs
-répertoires candidats (voir le lanceur). Elle est donc **plus prudente** que sa première version, et le rejeu le paie.
+La révision 2 est celle de la fin de la seconde revue de PAT-123 : un ensemble de répertoires candidats, un `cd` cru seulement
+dans une grammaire de confiance et sur preuve du résultat (voir « Révision 2 » du lanceur, hypothèses H1 à H9). La règle n'a pas
+été ajustée pour obtenir ce tableau : il a été produit une fois la règle fixée par ses tests.
 
-| # | Enregistrement | Enregistré | Révision 2 |
-| --- | --- | --- | --- |
-| 1 | A PR 30, correcteur (tour 1) | `/` (`find /`) | **gardé** : excursion réelle |
-| 2 | L PR 30, implémenteur (tour 0) | racine de travail (`find <racine>`) | **gardé** : excursion réelle |
-| 3 | A PR 83, implémenteur (tour 0) | `<racine>/tests/…` | retiré : le `cd` relatif d'un appel précédent a échoué dans le flux, le dossier gardé est connu |
-| 4 | L PR 83 (tour 1), session du relecteur | `<racine>/scratch/stderr.log` | **ne disparaît pas tel quel** : le chemin d'origine n'est plus relevé, mais la session du relecteur est relevée pour `cd $T/…` (`T=$(mktemp -d)`), cible non résoluble ; classé `flag_moved_to_review` |
-| 5 | L PR 27, correcteur (tour 2) | `<racine>/tests/…` | retiré : `cd` certain d'un appel à l'autre |
-| 6 | A PR 24 (tour 2), session du relecteur | `<racine>/scratch…` (3 chemins) | retiré |
-| 7 | A PR 48, correcteur (tour 2) | `<racine>` et `<racine>/scratch` | retiré : un `cd` raté du flux (visible dans son résultat) laisse le dossier tel qu'il était |
-| 8 | L PR 48, exploration locale | 2 chemins et leur écho dans 2 résultats | plus de lecture ; **2 chemins inexistants** consignés à part ; classé `flag_moved_to_not_found` |
+| # | Enregistrement | Enregistré | Révision 2 | Classe |
+| --- | --- | --- | --- | --- |
+| 1 | A PR 30, correcteur (tour 1) | `/` (`find /`) | **gardé** : excursion réelle | `flag_kept` |
+| 2 | L PR 30, implémenteur (tour 0) | racine de travail (`find <racine>`) | **gardé** : excursion réelle | `flag_kept` |
+| 3 | A PR 83, implémenteur (tour 0) | `<racine>/tests/…` | retiré : le `cd` d'un appel précédent, au résultat propre, est cru ; les `cd` relatifs refaits ensuite et ratés (ligne `cd:`) ne font qu'ajouter des candidats plus profonds ; depuis chacun le chemin reste dans le bundle | `flag_removed` |
+| 4 | L PR 83 (tour 1), session du relecteur | `<racine>/scratch/stderr.log` | **ne disparaît pas tel quel** : le chemin d'origine n'est plus relevé, mais la session du relecteur est relevée (`/<unknown-working-directory>`) pour `cd $T/…` après `T=$(mktemp -d)`, cible que l'audit ne sait pas placer | `flag_moved_to_review` |
+| 5 | L PR 27, correcteur (tour 2) | `<racine>/tests/…` | retiré : le dossier repris de l'appel précédent est cru ; le `cd` de l'appel lui-même ne l'est pas (statut non nul accepté par l'hôte) et le chemin reste dans la zone depuis les deux candidats | `flag_removed` |
+| 6 | A PR 24 (tour 2), session du relecteur | `<racine>/scratch…` (3 chemins) | retiré | `flag_removed` |
+| 7 | A PR 48, correcteur (tour 2) | `<racine>` et `<racine>/scratch` | retiré : après un `cd` raté (ligne `cd:`) deux candidats sont gardés ; `cd ../..` puis `..` et `../scratch` restent dans la zone depuis chacun | `flag_removed` |
+| 8 | L PR 48, exploration locale | 2 chemins et leur écho dans 2 résultats | plus de lecture ; **2 chemins inexistants** consignés à part | `flag_moved_to_not_found` |
 
-Bilan honnête : 8 drapeaux enregistrés → **2 gardés** (1 et 2, `flag_kept`), **4 retirés** (3, 5, 6, 7), 1 **déplacé vers une
-autre cause** (4 : plus le chemin d'origine mais un `cd` non résoluble du relecteur) et 1 **déplacé à part** (8, chemins
-inexistants). Des 5 faux drapeaux du diagnostic (3, 4, 5, 6, 7), **4 disparaissent** et 1 (le 4) revient sous une autre forme,
-parce que le flux est ambigu (le relecteur se place dans un répertoire temporaire dont le nom est calculé à l'exécution :
-l'audit ne peut pas savoir où il est). **Un drapeau est ajouté** : A PR 27 (session du relecteur du tour 1), enregistré propre,
-relevé maintenant pour la même raison (`cd $T/…`). Les 23 autres enregistrements restent propres. Sous la règle B2, ces deux
-relecteurs relevés seraient *indécidés* dans une campagne future ; rien n'est recalculé ici. Le coût d'une révision qui ne
-devine pas est là : un relecteur qui travaille dans un répertoire temporaire est relevé tant qu'on ne sait pas modéliser
-`mktemp` (suite possible, à passer par `foundry:intake`).
+**Un drapeau est ajouté** : A PR 27 tour 1 (`flag_added`), enregistré propre (`accepted`), dont la session du **relecteur** fait
+le même geste (`cd $B/…` après `B=$(mktemp -d)`) et est relevée (`/<unknown-working-directory>`) ; la session du bras reste propre.
+
+Les **23 autres** enregistrements, propres à l'enregistrement, le restent (`clean`) : A PR 30 tour 0 ; L PR 30 exploration ;
+L PR 83 exploration et tour 0 ; A PR 27 tour 0 ; L PR 27 exploration, tours 0 et 1 ; A PR 24 tours 0 et 1 ; L PR 24
+exploration, tours 0, 1 et 2 ; A PR 48 tours 0 et 1 ; A PR 19 tours 0, 1 et 2 ; L PR 19 exploration, tours 0, 1 et 2 (la liste
+clé par clé est dans le JSON).
+
+Bilan honnête : 8 drapeaux enregistrés → **2 gardés** (1 et 2), **4 retirés** (3, 5, 6, 7), 1 **déplacé vers une autre cause**
+(4 : plus le chemin d'origine mais un `cd` que l'audit ne sait pas placer, dans la session du relecteur) et 1 **déplacé à part**
+(8, chemins inexistants) ; plus **1 ajouté** (A PR 27, relecteur). Des 5 faux drapeaux du diagnostic (3, 4, 5, 6, 7), **4
+disparaissent** et 1 (le 4) revient sous une autre forme. Le résumé du rejeu compte `flagged_now: 2` (sessions des bras) et, à
+part, `reviewer_flagged_now: 2` (le 4 et A PR 27) : sous la règle B2, ces deux relecteurs relevés laisseraient l'essai
+*indécidé* dans une campagne future ; rien n'est recalculé ici.
+
+Ce tableau a les **mêmes classes** que celui de la révision 2 d'avant la seconde revue : la règle a été refaite (liste
+blanche, hypothèses écrites, repli pour un hôte non observé, commande exécutée hors zone relevée) sans changer le classement
+d'aucun des 32 enregistrements. Ce qui est nouveau dans le JSON : `reviewer_flagged_now`, et `host_models` (30 flux
+`claude-code-2.1.285`, 6 flux du harnais local `unverified`, audités sous le repli strict : aucun dossier repris, aucun `cd`
+cru ; cela ne change la classe d'aucun enregistrement local ici). Le répertoire `mktemp -d` n'est **pas** modélisé (décision et
+raison dans le lanceur : un lien symbolique posé dans ce répertoire ne serait pas vu) ; c'est le prix des deux relecteurs
+relevés.
 
 Mesure de ce que le changement de la v4 explique ([`pat-19-audit-replay-v4-scope.json`](pat-19-audit-replay-v4-scope.json),
 même rejeu avec `--work-root-not-sensitive`, révision 1 inchangée) : sans la racine de travail dans la liste sensible, la
@@ -65,8 +79,9 @@ par les tests sur bras factices (PASS et BLOCK), non par la campagne.
   une autre.
 - Les rôles sont déduits de l'ordre : la première session cloud d'un enregistrement est prise pour celle du bras, les suivantes
   pour celles du relecteur (vrai pour les chemins A et L, faux pour le chemin C ou un enregistrement repris).
-- La révision 2 suppose le comportement observé de Claude Code (version 2.1.285 dans cette campagne) : dossier gardé d'un appel à
-  l'autre tant qu'il reste dans le bundle, remis à la racine sinon avec « Shell cwd was reset to … ».
+- La révision 2 suppose le comportement observé de Claude Code (version 2.1.285 dans cette campagne) et huit autres
+  hypothèses écrites (H1 à H9 du lanceur) ; plusieurs ne sont **pas** montrées par les flux (options et alias du shell de
+  l'hôte, complétude d'un résultat long) : elles sont supposées, et dites.
 - Le contexte d'un flux (bundle, dossier d'essai) est le `cwd` qu'il annonce ; un flux absent laisse l'enregistrement
   `unavailable`, jamais propre.
 - L'audit reste « au mieux » : un chemin construit à l'exécution ou lu par un script n'est pas vu, avant comme après.

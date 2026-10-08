@@ -38,7 +38,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Collection, Mapping, Sequence
+from typing import Any, Callable, Collection, Mapping, NamedTuple, Sequence
 
 from foundry import cost_attribution as ca
 from foundry import local_first_corpus as lfc
@@ -1519,14 +1519,15 @@ def _runs_heredoc(line: str) -> bool:
     return False
 
 
-def _without_heredocs(command: str) -> tuple[str, list[str]]:
+def _without_heredocs(command: str, unclosed: list[bool] | None = None) -> tuple[str, list[str]]:
     """The command line without its heredoc bodies and ``#`` comments, and the bodies a shell RUNS.
     The shell never runs nor expands a heredoc body given to ``cat``, ``python3 -`` or ``tee`` (a test
     file that lists ``"gh pr merge 12"``, a doc that names ``~/.config/foundry``): it is text. A body
     fed to a shell (see ``_runs_heredoc``) is returned to be audited as a command line. A ``<<`` inside
     quotes or arithmetic (``$((1 << 2))``) is not a heredoc; a heredoc whose delimiter line never comes
     is kept as it is (audited). With an UNQUOTED delimiter (``<<EOF``) the shell expands the body: its
-    ``$(...)`` and backquoted commands are returned too (``_substitutions``)."""
+    ``$(...)`` and backquoted commands are returned too (``_substitutions``). ``unclosed`` (audit revision 2)
+    receives ``True`` when a heredoc is never closed: what follows is then text for the shell, commands here."""
     out: list[str] = []
     executed: list[str] = []
     stack: list[str] = []  # open contexts: ' " $( ( ` ((
@@ -1599,6 +1600,8 @@ def _without_heredocs(command: str) -> tuple[str, list[str]]:
             for delimiter, tabs, quoted in pending:
                 found = _heredoc_end(command, start, delimiter, tabs)
                 if found is None:  # never closed: what follows stays audited as commands
+                    if unclosed is not None:
+                        unclosed.append(True)
                     break
                 bodies.append(command[start:found[0]])
                 if not quoted:  # ``<<EOF``: the shell runs the body's ``$(...)`` and backquotes
@@ -1676,162 +1679,26 @@ def _expand(token: str, home: str) -> str | None:
 
 
 def _command_paths(command: str, bundle: Path, home: str) -> list[tuple[Path, bool]]:
-    """``_walk_command`` from the bundle, ``cd`` followed inside the line only (audit revision 1)."""
-    return _walk_command(command, bundle, home, bundle, False)[0]
-
-
-# PAT-123 (audit revision 2). A directory the audit cannot name: a relative path from it is always a hit.
-UNKNOWN_CWD = Path("/<unknown-working-directory>")
-_UNRESOLVED = re.compile(r"[$`*?\[]")
-_CD_WORD = re.compile(r"(?<![\w./$-])cd(?![\w.-])")
-# What a shell and Claude Code print: a failed ``cd``, and the reset of the shell directory to the project root.
-_CD_FAILED = re.compile(r"\bcd\b[^\n]*(no such file|not a directory|permission denied|too many arguments|"
-                        r"string not in pwd)", re.I)
-_CWD_RESET = re.compile(r"Shell cwd was reset to ")
-_UNSEEN_MOVERS = frozenset({"pushd", "popd", "eval", "source", "."})  # change the directory out of sight
-
-
-def _cd_scan(command: str) -> tuple[bool, int]:
-    """``(plain, count)``: whether every ``cd`` of the line is a top-level, unconditional command, and how many
-    ``cd`` commands the scan found. Plain means: the line has no subshell, group, substitution, backquote,
-    heredoc or ``exec``, and each ``cd`` stands first after ``;`` or a newline (or at the start), with no
-    wrapper or keyword before it, no redirection, and no ``|`` or ``&`` after it. ``a && cd x``,
-    ``cd x || y``-preceded forms, ``if ...; then cd x``, ``cd x | y``, ``cd x &``, ``(cd x)`` and
-    ``$(cd x)`` are not plain. The scan is conservative: a ``(`` inside quotes also makes a line with a ``cd``
-    not plain (more candidate directories, never fewer)."""
-    if not _CD_WORD.search(command):
-        return True, 0
-    if re.search(r"[(){}`]|<<|\bexec\b", command):
-        return False, -1
-    commands: list[tuple[str, list[str], str, bool]] = []
-    words: list[str] = []
-    cur: list[str] = []
-    state = {"started": False, "redirect": False, "prev": "start"}
-    quote: str | None = None
-
-    def flush() -> None:
-        if state["started"]:
-            words.append("".join(cur))
-        cur.clear()
-        state["started"] = False
-
-    def end(sep: str) -> None:
-        nonlocal words
-        flush()
-        if words:
-            commands.append((state["prev"], words, sep, state["redirect"]))
-        words = []
-        state["redirect"], state["prev"] = False, sep
-
-    i, n = 0, len(command)
-    while i < n:
-        ch = command[i]
-        nxt = command[i + 1] if i + 1 < n else ""
-        if quote:
-            if ch == "\\" and quote == '"' and nxt:
-                cur.append(nxt)
-                i += 2
-                continue
-            if ch == quote:
-                quote = None
-            else:
-                cur.append(ch)
-        elif ch in "'\"":
-            quote, state["started"] = ch, True
-        elif ch == "\\" and nxt:
-            cur.append(nxt)
-            state["started"] = True
-            i += 1
-        elif ch in " \t":
-            flush()
-        elif ch in "\n;":
-            end(";")
-        elif ch == "#" and not state["started"]:
-            while i < n and command[i] != "\n":
-                i += 1
-            continue
-        elif ch == "&" and nxt == "&":
-            end("&&")
-            i += 1
-        elif ch == "|" and nxt == "|":
-            end("||")
-            i += 1
-        elif ch == "|":
-            end("|")
-        elif ch == "&" and (nxt == ">" or (cur and cur[-1] in "<>")):
-            state["redirect"], state["started"] = True, True
-            cur.append(ch)
-        elif ch == "&":
-            end("&")
-        elif ch in "<>":
-            state["redirect"], state["started"] = True, True
-            cur.append(ch)
-        else:
-            cur.append(ch)
-            state["started"] = True
-        i += 1
-    end("end")
-    count, plain = 0, True
-    if any(after == "||" for _, _, after, _ in commands):  # the right side of ``||`` runs when a ``cd`` FAILED
-        plain = False
-    for prev, ws, after, redirect in commands:
-        rest, stripped = list(ws), False
-        while rest and (_ASSIGNMENT.match(rest[0]) or rest[0] in _KEYWORDS
-                        or os.path.basename(rest[0]) in _WRAPPERS):
-            rest.pop(0)
-            stripped = True
-        if rest and os.path.basename(rest[0]) == "cd":
-            count += 1
-            if stripped or redirect or prev in ("&&", "||", "|", "&") or after in ("|", "&"):
-                plain = False
-    return plain, count
-
-
-def _walk_command(command: str, bundle: Path, home: str, start: Path | Collection[Path], follow: bool,
-                  trusted: bool = False) -> tuple[list[tuple[Path, bool]], frozenset[Path], frozenset[Path], int]:
     """Every path a command line names, resolved against the working directory the line has at that
     point (``cd`` is followed): ``find ~``, ``cd ~ && cat .claude/x``, ``src/../../..`` included; a bare
     ``/`` only as an argument of a filesystem reader (``find / -name x``, see ``_reads_root``); the
     script of a ``sh -c`` is read the same way. The flag says the path was RELATIVE to the bundle (an
     honest arm never climbs out of it). ``home`` is what ``~`` and ``$HOME`` mean for the arm. Expects
-    the command without its heredoc bodies (``_without_heredocs``). Returns the paths, the set of
-    directories the line may end in, every directory it may have been in, and the number of top-level ``cd``.
+    the command without its heredoc bodies (``_without_heredocs``). Audit revision 1 only: revision 2 reads a
+    command line with ``_shell_walk``."""
+    cwd, out = bundle, []
 
-    Revision 1 (``follow`` false): one directory, ``start``, every ``cd`` obeyed. Revision 2 (``follow``): a SET of
-    candidate directories, never fewer than reality. Each relative path is resolved against every candidate. A
-    ``cd`` replaces the set only when ``trusted`` (the caller checked ``_cd_scan``: top-level, unconditional,
-    and the call's result shows no failed ``cd``); in every other case (subshell, ``&&``, ``if``, a pipe,
-    ``sh -c``, a failing target) the candidates before AND after are kept, as are the targets that cannot be
-    resolved (``cd $X``, ``cd -``, a glob: ``UNKNOWN_CWD``, from which every relative path is a hit) and the
-    commands that move the shell out of sight (``pushd``, ``eval``, ``source``). A path-like piece inside a
-    word (``X=../x``) is read too, since the raw token pass no longer resolves relative tokens."""
-    cwds = frozenset(start) if isinstance(start, (set, frozenset, list, tuple)) else frozenset([start])
-    seen, out, top_cd = set(cwds), [], 0
-
-    def resolve(token: str) -> list[tuple[Path, bool]]:
+    def resolve(token: str) -> tuple[Path, bool] | None:
         expanded = _expand(token, home)
         if expanded is None:
-            return []
-        found: list[tuple[Path, bool]] = []
-        for cwd in sorted(cwds):
-            if os.path.isabs(expanded):
-                item = (Path(os.path.realpath(expanded)), False)
-            elif cwd == UNKNOWN_CWD:
-                item = (UNKNOWN_CWD, True)
-            else:
-                item = (Path(os.path.realpath(cwd / expanded)), follow or cwd == bundle)
-            if item not in found:
-                found.append(item)
-        return found
+            return None
+        relative = not os.path.isabs(expanded) and cwd == bundle
+        return Path(os.path.realpath(expanded if os.path.isabs(expanded) else cwd / expanded)), relative
 
     def walk(text: str, depth: int = 0) -> None:
-        nonlocal cwds, top_cd
+        nonlocal cwd
         for segment in _segments(text):
             words = _unwrapped(segment)
-            if follow:  # what the wrappers hid (``X=../x cat $X``, ``env F=../x cmd``) is read as text, here
-                for neutral, _ in segment[:len(segment) - len(words)]:
-                    for token in _path_tokens(neutral):
-                        out.extend(resolve(token))
             tokens = [w for w, _ in words]
             script = _shell_script([r for _, r in words])
             if script is not None and depth < 8:
@@ -1839,54 +1706,714 @@ def _walk_command(command: str, bundle: Path, home: str, start: Path | Collectio
                 for text in (stripped, *executed):
                     walk(text, depth + 1)
                 continue
-            if follow and tokens and os.path.basename(tokens[0]) in _UNSEEN_MOVERS:
-                cwds = cwds | {UNKNOWN_CWD}
-                seen.update(cwds)
             if tokens and os.path.basename(tokens[0]) == "cd":
                 target = next((t for t in tokens[1:] if not t.startswith("-")), "~")
-                top_cd += depth == 0
-                expanded = _expand(target, home)
-                unresolved = follow and (expanded is None or tokens[1:] == ["-"] or bool(_UNRESOLVED.search(expanded)))
-                found = [] if unresolved else resolve(target)
-                out.extend(found)
-                if found or unresolved:
-                    new = {UNKNOWN_CWD} if unresolved else {p for p, _ in found}
-                    sure = not follow or (trusted and depth == 0 and not unresolved
-                                          and len([t for t in tokens[1:] if not t.startswith("-")]) <= 1)
-                    cwds = frozenset(new) if sure else cwds | new
-                    seen.update(cwds)
+                found = resolve(target)
+                if found is not None:
+                    out.append(found)
+                    cwd = found[0]
                 continue
             root_reader = _reads_root(tokens)
             for word in tokens:  # a quoted word is also read piece by piece (``python3 -c "open('../x')"``)
-                for token in dict.fromkeys([word, *_QUOTED_PIECES.split(word), *(_path_tokens(word) if follow else ())]):
+                for token in dict.fromkeys([word, *_QUOTED_PIECES.split(word)]):
                     token = _REDIRECTION.sub("", token)
                     if token.startswith("-"):
                         token = token.partition("=")[2]
-                    if token and (_pathlike(token) or (root_reader and not token.strip("/"))):
-                        out.extend(resolve(token))
+                    if token and (_pathlike(token) or (root_reader and not token.strip("/"))) \
+                            and (found := resolve(token)) is not None:
+                        out.append(found)
 
     walk(command)
-    return out, cwds, frozenset(seen), top_cd
+    return out
 
 
-def _walk_line(command: str, bundle: Path, home: str, start: Collection[Path], trusted: bool
-               ) -> tuple[list[tuple[Path, bool]], frozenset[Path], frozenset[Path], bool]:
-    """Revision 2 walk of one line: ``(paths, end set, every directory seen, sure)``. ``sure`` says the ``cd``
-    of the line (if any) were all obeyed as certain: the scan found them plain, the walk found the same number."""
-    plain, count = _cd_scan(command) if trusted else (False, -1)
-    sure = trusted and plain
-    result = _walk_command(command, bundle, home, start, True, sure)
-    if sure and result[3] != count:
-        sure = False
-        result = _walk_command(command, bundle, home, start, True, False)
-    return result[0], result[1], result[2], sure
+# ------------------------------------------- audit revision 2 (PAT-123): where the shell of a call may be
+#
+# Revision 2 resolves a relative path against the directory the command runs in. It never knows that directory;
+# it keeps a SET of candidate directories and flags a path as soon as ONE candidate takes it out of the allowed
+# zone. The whole rule is one invariant: the candidate set contains the real directory. A ``cd`` REPLACES the set
+# (the only step that can make the audit flag less than revision 1) under the conditions of ``_walk_simple`` and
+# nowhere else; every other step only ADDS candidates. The invariant holds under the assumptions below and is
+# claimed under them only (numbered: the launcher document cites them as H1 to H9).
+#
+#  H1 host    The stream is a Claude Code stream whose ``system``/``init`` events all name a version of
+#             ``OBSERVED_CLAUDE_CODE``. Observed in the 30 cloud streams of the v4 campaign (2.1.285): a Bash call
+#             is a new shell that runs the command with ``eval`` (zsh error lines read ``(eval):cd:1: ...``); the
+#             directory the previous call ended in is kept when that call returned 0 and the directory is inside
+#             the project (the bundle); a call that ends outside is put back at the project root and its result
+#             says ``Shell cwd was reset to ...``. NOT established: whether the directory is kept after a call
+#             that returned non-zero (in one v4 stream a call of status 1 that began with a ``cd`` left the next
+#             call at the root; whether that ``cd`` had run is not known), so the audit keeps both. The launcher
+#             refuses a cloud stream whose ``init`` lists a tool outside Bash, Edit, Read, Write: no sub-agent, whose
+#             shell may behave otherwise. Any other stream (omp, another or an unnamed Claude Code version): nothing
+#             is assumed, see H9.
+#  H2 result  A result that is not an error (``is_error`` false), carries the host's detail object without
+#             ``interrupted``, ``returnCodeInterpretation`` (the host's name for an accepted non-zero status, e.g.
+#             ``grep`` 1) or a background task id, for a call not sent to the background, means the script
+#             returned 0. Such a result is "clean". Every other result, and a missing one, proves nothing.
+#  H3 output  A result of at most ``_RESULT_WHOLE`` characters without a truncation marker (``_TRUNCATED``) holds
+#             all of stdout and stderr of the call. No truncated result was seen in the v4 streams; the markers
+#             are the host's as known, not observed.
+#  H4 shell   The host shell is bash or zsh with its default options for ``cd`` (no ``autocd``, ``cdablevars``,
+#             ``chaselinks``, ``cdspell``), no ``CDPATH``, and no alias, function, hook (``chpwd``) or loaded
+#             module that changes the directory or ends the shell under a name outside ``_SHELL_NAMES``; a
+#             command name outside ``_SHELL_NAMES`` is a program, which cannot move the shell that runs it.
+#             Shell state other than the directory (variables, functions, options) does not pass from a call to
+#             the next. Nothing in the stream shows these: they are assumed.
+#  H5 status  A script that stops before its end returns non-zero (an expansion error, a signal, a timeout),
+#             unless it runs ``exit``, ``return``, ``exec``, ``logout`` or ``bye`` (read by the audit, which then
+#             believes no later ``cd`` and no end directory). Observed for the generated forms under bash 3.2 and
+#             zsh 5.9 by the property test, and once on the host (a zsh ``no matches found`` gave ``Exit code 1``);
+#             not proven for every shell error.
+#  H6 cd      A failed ``cd`` writes a line holding ``cd:`` on the stderr of the shell (bash ``cd: x: No such
+#             file``, zsh ``(eval):cd:1: no such file``), so with H3 a result without such a line shows that a
+#             ``cd`` whose stderr is not redirected, when it ran, succeeded.
+#  H7 lexing  The audit's readers (``_without_heredocs``, ``_segments``, ``_simple_script``) split a script as the
+#             shell does. Guards: a ``cd``/``chdir``/``pushd``/``popd`` word of the call (its comments and heredoc
+#             bodies included) that was not read as a command, and ``$'...'`` quoting, add ``UNKNOWN_CWD``; a
+#             heredoc that is never closed removes the proof.
+#  H8 use     A relative path named in a call is used, if at all, by the command that names it or a later one of
+#             the SAME call, by a program that resolves it against the directory of the shell that ran it (not
+#             ``git -C``, ``make -C``, ``os.chdir``). A path built at run time or kept in a file for a later call
+#             is not seen (as in revision 1). A bare name (``cat x``) is not a path, in either revision: revision 2
+#             flags instead any command that may RUN in a directory outside the allowed places.
+#  H9 else    When H1 does not hold the audit does not carry a directory: every call starts from the UNION of the
+#             project root and every directory an earlier call may have been in, and no ``cd`` replaces
+#             anything. When H2, H3 or H6 does not hold for a call, no ``cd`` of that call replaces anything and
+#             the next call starts from every directory the call may have been in, its start included.
+
+OBSERVED_CLAUDE_CODE = ("2.1.285",)
+UNKNOWN_CWD = Path("/<unknown-working-directory>")  # a directory the audit cannot name: a relative path is a hit
+_CWD_CAP = 32  # more candidate directories than this collapse to ``UNKNOWN_CWD``
+_RESULT_WHOLE = 20000
+_TRUNCATED = re.compile(r"\[\d+ lines truncated\]|<persisted-output>|Output too large", re.I)
+_CD_WORD = re.compile(r"(?<![\w./$-])(?:cd|chdir|pushd|popd)(?![\w.-])")
+_CD_LINE = re.compile(r"(?<![\w./-])cd:")  # a failed ``cd``, whatever the shell says after it
+_CWD_RESET = re.compile(r"Shell cwd was reset to ")
+_CD_VARS = frozenset({"CDPATH", "cdpath", "PWD", "OLDPWD"})
+_CD_VARS_TEXT = re.compile(r"cdpath|\$\{[!(]", re.I)  # ``CDPATH`` named, or a variable reached by another name
+_MOVERS = frozenset({"cd", "chdir", "pushd", "popd"})
+# Every builtin and reserved word of bash (3.2 and 5) and zsh 5.9 (a test compares it with the shells installed).
+# A command word outside this set is a program (H4).
+_SHELL_NAMES = frozenset("""
+. : [ [[ ]] { } ! - alias autoload bg bind bindkey break builtin bye caller case cd chdir command compadd
+comparguments compcall compctl compdescribe compfiles compgen compgroups complete compopt compquote compset comptags
+comptry compvalues continue coproc declare dirs disable disown do done echo echotc echoti elif else emulate enable end
+esac eval exec exit export false fc fg fi float for foreach function functions getln getopts hash help history if in
+integer jobs kill let limit local log logout mapfile nocorrect noglob popd print printf private pushd pushln pwd r read
+readarray readonly rehash repeat return sched select set setopt shift shopt source suspend test then time times trap
+true ttyctl type typeset ulimit umask unalias unfunction unhash unlimit unset unsetopt until vared wait whence where
+which while zcompile zformat zle zmodload zparseopts zregexparse zstyle""".split())
+# The allow-list: builtins that neither move the shell, nor end it, nor define or run a command, nor set a variable.
+_INERT = frozenset(": [ true false echo print pwd test type which whence where hash rehash jobs kill wait times "
+                   "umask ulimit limit unlimit dirs help history shift".split())
+_NAMERS = frozenset("export declare typeset local readonly integer float private".split())  # NAME[=value] words
+_READERS = frozenset("read getopts let unset mapfile readarray".split())  # set variables named by static words
+_ENDERS = frozenset("exit return logout bye exec".split())  # end the script, possibly with status 0
+_MODIFIERS = frozenset({"command", "builtin", "noglob", "nocorrect", "-"})
+_SET_OPTIONS = frozenset({"errexit", "nounset", "pipefail", "xtrace", "verbose", "noglob", "noclobber"})
+_RESERVED = frozenset("if then else elif fi case esac for select while until do done in function time coproc repeat "
+                      "foreach end { } ! [[ ]]".split())
+_EXPANDED = re.compile(r"[$`*?\[\]{}~!]")  # in a word of the loose reader: the shell may expand it
+_WORD_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:,@%+=^-")
+_WORD_END = frozenset(" \t\n;&|<>()")
+_REDIRECT_OP = re.compile(r"&>>|&>|<<<|<<-|<<|<&|<>|<|>>|>&|>\||>")
+_PARAMETER = re.compile(r"[A-Za-z_]\w*|[?$#!@*\-0-9]")
+_NAME_SET = re.compile(r"([A-Za-z_]\w*)\+?=")
 
 
-def _call_results(lines: Sequence[str]) -> dict[str, str]:
-    """Text of the result of each tool call, by call id (Claude ``tool_result`` of a user message, omp
-    ``tool_execution_end``)."""
-    out: dict[str, str] = {}
-    for line in lines:
+class _NotSimple(Exception):
+    """The script is outside the grammar of ``_simple_script``."""
+
+
+class _Word(NamedTuple):
+    text: str  # quotes removed; an expansion kept as written (``$X``)
+    static: bool  # no shell expands it: no ``$``, glob, brace, ``~``, leading ``=``
+    start: int
+    end: int
+
+
+class _Command(NamedTuple):
+    words: list[_Word]
+    assigns: list[str]  # the names it sets
+    redirected: bool
+    start: int
+    end: int
+
+
+def _read_word(text: str, start: int) -> _Word:
+    """The shell word that starts at ``start`` (``end == start``: none). Only what the grammar names is read: a
+    backquote, ``$(``, ``${x:-y}``, ``$'..'``, ``$[`` or an unclosed quote raises ``_NotSimple``."""
+    out: list[str] = []
+    state = {"static": True}
+    i, n = start, len(text)
+
+    def parameter(at: int, quoted: bool) -> int:
+        nxt = text[at + 1:at + 2]
+        if nxt == "{":
+            close = text.find("}", at)
+            if close < 0 or not _PARAMETER.fullmatch(text, at + 2, close):
+                raise _NotSimple
+            end = close + 1
+        elif (match := _PARAMETER.match(text, at + 1)) is not None:
+            end = match.end()
+        elif nxt in ("(", "[", "`") or (nxt in ("'", '"') and not quoted):
+            raise _NotSimple
+        else:  # a lone ``$``
+            out.append("$")
+            return at + 1
+        state["static"] = False
+        out.append(text[at:end])
+        return end
+
+    while i < n:
+        ch = text[i]
+        if ch in _WORD_END:
+            break
+        if ch == "\\":
+            if i + 1 >= n:
+                raise _NotSimple
+            if text[i + 1] != "\n":
+                out.append(text[i + 1])
+            i += 2
+        elif ch == "'":
+            close = text.find("'", i + 1)
+            if close < 0:
+                raise _NotSimple
+            out.append(text[i + 1:close])
+            i = close + 1
+        elif ch == '"':
+            i += 1
+            while True:
+                if i >= n:
+                    raise _NotSimple
+                ch = text[i]
+                if ch == '"':
+                    i += 1
+                    break
+                if ch == "\\" and i + 1 < n:
+                    if text[i + 1] in '$`"\\':
+                        out.append(text[i + 1])
+                    elif text[i + 1] != "\n":
+                        out.append(ch + text[i + 1])
+                    i += 2
+                elif ch == "`":
+                    raise _NotSimple
+                elif ch == "$":
+                    i = parameter(i, True)
+                else:
+                    out.append(ch)
+                    i += 1
+        elif ch == "$":
+            i = parameter(i, False)
+        elif ch == "`":
+            raise _NotSimple
+        elif ch in _WORD_CHARS or ch.isalnum():
+            if ch == "=" and i == start:  # zsh expands ``=name`` to the path of a command
+                state["static"] = False
+            out.append(ch)
+            i += 1
+        elif ch in "*?[]~{}!#":  # a glob, a brace, a tilde: expanded, never a command name or a ``cd`` target
+            state["static"] = False
+            out.append(ch)
+            i += 1
+        else:
+            raise _NotSimple
+    value = "".join(out)
+    if text[start:i] in ("[", "]"):  # the ``[`` command and its closing word
+        state["static"] = True
+    return _Word(value, state["static"], start, i)
+
+
+def _simple_script(text: str) -> list[list[tuple[str, list[_Command]]]]:
+    """The allow-list grammar of audit revision 2, or ``_NotSimple``. A simple script is a sequence of chains
+    separated by ``;`` or a newline; a chain is pipelines joined by ``&&`` or ``||`` (returned as ``(link,
+    pipeline)``, the first link empty); a pipeline is simple commands joined by ``|``; a simple command is
+    assignments, words and redirections. A word is plain characters, quotes and ``$NAME``/``${NAME}``. Nothing
+    else: no subshell, group, substitution, backquote, ``&``,
+    reserved word (``if``, ``for``, ``while``, ``{``, ``!``, ``[[``, ``time``...), function definition or empty
+    command. Expects the script without its heredoc bodies and comments (``_without_heredocs``)."""
+    chains: list[list[tuple[str, list[_Command]]]] = []
+    chain: list[tuple[str, list[_Command]]] = []
+    pipeline: list[_Command] = []
+    link, need, i, n = "", False, 0, len(text)
+
+    def blanks(at: int) -> int:
+        while at < n and (text[at] in " \t" or text.startswith("\\\n", at)):
+            at += 2 if text[at] == "\\" else 1
+        return at
+
+    def command(at: int) -> tuple[_Command | None, int]:
+        words: list[_Word] = []
+        assigns: list[str] = []
+        redirected, first = False, None
+        while True:
+            at = blanks(at)
+            if at >= n or text[at] in "\n;|" or text.startswith("&&", at):
+                break
+            if text[at] in "()" or (text[at] == "&" and not text.startswith("&>", at)):
+                raise _NotSimple
+            if text[at] == "#":  # a comment, at the start of a word
+                while at < n and text[at] != "\n":
+                    at += 1
+                continue
+            first = at if first is None else first
+            if (op := _REDIRECT_OP.match(text, at)) is not None:
+                target = _read_word(text, blanks(op.end()))
+                if target.end == target.start:
+                    raise _NotSimple
+                redirected, at = True, target.end
+                continue
+            word = _read_word(text, at)
+            if word.end == at:
+                raise _NotSimple
+            at = word.end
+            if text[word.start:word.end].isdigit() and text[at:at + 1] in ("<", ">"):
+                continue  # the file descriptor of a redirection (``2>&1``)
+            if not words and (named := _NAME_SET.match(text, word.start, word.end)) is not None:
+                assigns.append(named.group(1))
+            else:
+                words.append(word)
+        if first is None:
+            return None, at
+        if words and text[words[0].start:words[0].end] in _RESERVED:
+            raise _NotSimple
+        return _Command(words, assigns, redirected, first, at), at
+
+    while i < n:
+        made, i = command(i)
+        op = next((o for o in ("&&", "||", "|&", "|", ";", "\n") if text.startswith(o, i)), "")
+        if made is None:
+            if op == "\n" and need:  # a newline after ``&&``, ``||`` or ``|``
+                i += 1
+                continue
+            if need or op not in ("", "\n"):
+                raise _NotSimple
+        else:
+            pipeline.append(made)
+        if op in ("|", "|&"):
+            need = True
+        elif op in ("&&", "||"):
+            chain.append((link, pipeline))
+            pipeline, link, need = [], op, True
+        else:
+            if pipeline:
+                chain.append((link, pipeline))
+            if chain:
+                chains.append(chain)
+            chain, pipeline, link, need = [], [], "", False
+        i += len(op)
+        if op == ";" and text.startswith(";", i):
+            raise _NotSimple
+    if need:
+        raise _NotSimple
+    return chains
+
+
+def _classify(texts: Sequence[str], static: Sequence[bool]) -> tuple[str, int | None, int]:
+    """What a simple command (its words, assignments and redirections removed) does to the shell that runs it:
+    ``(kind, index of the cd target, movers read)``. ``inert``: nothing (a program, or a builtin of the
+    allow-list used in an allowed way); ``end``: may end the script with status 0; ``taint``: may set a variable
+    that changes what a later ``cd`` does; ``cd``: a ``cd`` with one target word (index) or one the audit cannot
+    read (``None``); ``unknown``: anything else (another builtin or reserved word, a command name the shell
+    builds), after which the shell may be anywhere."""
+    at = 0
+    while at < len(texts) and static[at] and texts[at] in _MODIFIERS:  # ``command -v x``, ``builtin cd``
+        at += 1
+        while at < len(texts) and static[at] and texts[at].startswith("-"):
+            at += 1
+        if at < len(texts) and static[at] and texts[at] in _SHELL_NAMES and texts[at] not in _INERT:
+            return "unknown", None, int(texts[at] in _MOVERS)
+    if at >= len(texts):
+        return "inert", None, 0
+    name, args, fixed = texts[at], list(texts[at + 1:]), list(static[at + 1:])
+    if not static[at] or not name:
+        return "unknown", None, 0
+    if "/" in name or name not in _SHELL_NAMES:
+        return "inert", None, 0
+    if name == "cd":
+        operands = list(range(len(args)))
+        while operands and fixed[operands[0]] and args[operands[0]] in ("-L", "-P", "-e", "-q", "-s"):
+            operands.pop(0)
+        if operands and fixed[operands[0]] and args[operands[0]] == "--":
+            operands.pop(0)
+        return "cd", (at + 1 + operands[0] if len(operands) == 1 else None), 1
+    if name in _MOVERS:
+        return "unknown", None, 1
+    if name in _ENDERS:
+        return "end", None, 0
+    if name in _INERT:
+        return "inert", None, 0
+    if name in _NAMERS:
+        for arg, plain in zip(args, fixed):
+            if plain and re.fullmatch(r"[-+][A-Za-z]*", arg):
+                if set(arg[1:]) - set("aAgilrtuxUpE"):  # ``-n`` (a name reference), ``-f``, ``-T``...
+                    return "unknown", None, 0
+            elif (named := _NAME_SET.match(arg) or re.fullmatch(r"([A-Za-z_]\w*)", arg)) is None:
+                return "unknown", None, 0
+            elif named.group(1) in _CD_VARS:
+                return "taint", None, 0
+        return "inert", None, 0
+    if name in _READERS:
+        if not all(fixed):
+            return "unknown", None, 0
+        return ("taint" if set(args) & _CD_VARS else "inert"), None, 0
+    if name == "printf":  # ``printf -v NAME`` sets a variable
+        if (args and not fixed[0]) or any(a == "-v" and p for a, p in zip(args, fixed)):
+            return "taint", None, 0
+        return "inert", None, 0
+    if name == "set":
+        at = 0
+        while at < len(args):
+            if not fixed[at]:
+                return "unknown", None, 0
+            if args[at] == "--":
+                break
+            if re.fullmatch(r"[-+][efuvxC]*o", args[at]) and at + 1 < len(args) and fixed[at + 1] \
+                    and args[at + 1] in _SET_OPTIONS:  # ``-o pipefail``, ``-euo pipefail``
+                at += 2
+            elif re.fullmatch(r"[-+][efuvxC]+", args[at]):
+                at += 1
+            else:
+                return "unknown", None, 0
+        return "inert", None, 0
+    return "unknown", None, 0
+
+
+def _child_scripts(words: Sequence[str]) -> list[str]:
+    """The scripts a command hands to a child shell, wherever the shell stands in it (``bash -c S``, ``env sh -c
+    S``, ``xargs sh -c S``, ``find . -exec sh -c S``)."""
+    found = []
+    for at, word in enumerate(words):
+        if os.path.basename(word.lstrip("\\({")) in _SHELLS:
+            for n in range(at + 1, len(words)):
+                if words[n].startswith("-") and not words[n].startswith("--") and "c" in words[n][1:]:
+                    if n + 1 < len(words):
+                        found.append(words[n + 1])
+                    break
+                if not words[n].startswith("-"):
+                    break
+    return found
+
+
+def _fixed(word: str) -> bool:
+    """A word of the loose reader (quotes already removed) that no shell expands. A ``$`` or a glob that stood
+    inside quotes is refused too: the reader cannot tell, and refusing only adds candidates."""
+    return bool(word) and not _EXPANDED.search(word) and not word.startswith("=")
+
+
+def _capped(dirs: Collection[Path]) -> frozenset[Path]:
+    return frozenset(dirs) if len(dirs) <= _CWD_CAP else frozenset({UNKNOWN_CWD})
+
+
+def _cd_into(dirs: Collection[Path], target: str) -> set[Path]:
+    """Where ``cd <target>`` may leave a shell that is in one of ``dirs``. The logical path (what bash and zsh
+    compute by default) and the physical one (``cd -P``, ``set -P``, a symbolic link crossed) are both kept."""
+    out: set[Path] = set()
+    for cwd in dirs:
+        if os.path.isabs(target):
+            out |= {Path(os.path.normpath(target)), Path(os.path.realpath(target))}
+        elif cwd == UNKNOWN_CWD:
+            out.add(UNKNOWN_CWD)
+        else:
+            out |= {Path(os.path.normpath(cwd / target)), Path(os.path.realpath(cwd / target))}
+    return out
+
+
+def _resolved(token: str, dirs: Collection[Path], home: str) -> list[tuple[Path, bool]]:
+    """``token`` as a path from each candidate directory: ``(path, it was relative)``."""
+    expanded = _expand(token, home)
+    if expanded is None:
+        return []
+    if os.path.isabs(expanded):
+        return [(Path(os.path.realpath(expanded)), False)]
+    found: list[tuple[Path, bool]] = []
+    for cwd in sorted(dirs):
+        if cwd == UNKNOWN_CWD:
+            item = (UNKNOWN_CWD, True)
+        else:
+            item = (Path(os.path.realpath(cwd / expanded)), True)
+        if item not in found:
+            found.append(item)
+    return found
+
+
+def _segment_tokens(segment: Sequence[tuple[str, str]]) -> list[str]:
+    """The path-like tokens of one command segment: every word of it (the wrappers and assignments too), whole,
+    piece by piece (``python3 -c "open('../x')"``) and as path tokens inside a word (``X=../x``); a superset of
+    what revision 1 reads in the segment."""
+    words = [w for w, _ in _unwrapped(segment)]
+    root_reader = _reads_root(words)
+    found: list[str] = []
+    if words and os.path.basename(words[0]) == "cd" and not any(not w.startswith("-") for w in words[1:]):
+        found.append("~")  # ``cd`` alone goes home
+    for word, _ in segment:
+        value = [word.partition("=")[2]] if _ASSIGNMENT.match(word) else []  # ``X=sub/../../x``
+        for token in dict.fromkeys([word, *value, *_QUOTED_PIECES.split(word), *_path_tokens(word)]):
+            token = _REDIRECTION.sub("", token)
+            if token.startswith("-"):
+                token = token.partition("=")[2]
+            if token and (_pathlike(token) or (root_reader and not token.strip("/"))):
+                found.append(token)
+    return found
+
+
+def _raw_relative(script: str, home: str) -> list[tuple[int, str]]:
+    """``(offset, token)`` of the relative path tokens of the raw text (the token pass of ``audit_transcript``)."""
+    found = []
+    for match in _PATH_TOKEN.finditer(_unquoted_expansions(script)):
+        expanded = _expand(match.group(0), home) if match.group(0).strip("/") else None
+        if expanded is not None and not os.path.isabs(expanded):
+            found.append((match.start(), match.group(0)))
+    return found
+
+
+def _walk_simple(chains: Sequence[Sequence[tuple[str, Sequence[_Command]]]], script: str, start: frozenset[Path],
+                 home: str, proof: Mapping[str, bool] | None, depth: int
+                 ) -> tuple[list[tuple[Path, bool]], frozenset[Path], frozenset[Path], int]:
+    """A script of the allow-list grammar, command by command (``_shell_walk`` gives the contract).
+
+    A ``cd`` REPLACES the candidate set when ALL of this holds, and only then:
+     1. the script is in the grammar of ``_simple_script`` (so each command is known to run at most once, in order);
+     2. the result of the call is clean (H2) and whole (H3): the script returned 0, so by H5 it ran to its end and
+        reached every chain;
+     3. no command before the ``cd`` may have ended the script with status 0 (``exit``, ``return``, ``exec``),
+        moved the shell out of sight or set a variable ``cd`` reads (any builtin outside the allow-list, a command
+        name the shell builds, ``CDPATH``);
+     4. the ``cd`` is the first pipeline of its chain (nothing decides whether it runs), alone in its pipeline (a
+        pipeline may run its commands in subshells), with no assignment and no redirection of its own, and no
+        ``||`` follows it in the chain (what follows a ``||`` runs when the ``cd`` FAILED);
+     5. it has exactly one target, a word no shell expands (no ``$``, glob, brace, ``~``), not starting with ``-``
+        or ``+`` (``cd -``, the directory stack), after the options ``-L``, ``-P``, ``-e``, ``-q``, ``-s``, ``--``;
+     6. the result holds no ``cd:`` line (H6).
+    Otherwise the ``cd`` ADDS its target to the candidates (it may or may not have run), or ``UNKNOWN_CWD`` when
+    the target cannot be read. The target is resolved logically and physically (``_cd_into``).
+
+    A relative path is resolved against every directory the shell may be in FROM the command that names it TO the
+    end of the script (H8: ``X=../x; cd ..; cat $X``, the arguments after ``sh -c``), the child shells it starts
+    included; the words of a ``cd`` against the directories before it only (it uses them where it stands). Every
+    other command also names ``.``, the directory it runs in (a bare name such as ``cat x`` is read there): a
+    command that may run outside the allowed places is a hit by itself, as the target of the ``cd`` that led
+    there is in revision 1, also when that target could not be read (``cd $X; cat y``)."""
+    dirs, seen, movers, out = frozenset(start), set(start), 0, []
+    ended = False
+    tainted = bool(_CD_VARS_TEXT.search(script))
+    steps: list[tuple[_Command, frozenset[Path], set[Path], bool, str | None]] = []  # (.., is a cd, its target)
+    for chain in chains:
+        for rank, (_, pipeline) in enumerate(chain):
+            for cmd in pipeline:
+                before, extra = dirs, set()
+                target: str | None = None
+                kind, index, found = _classify([w.text for w in cmd.words], [w.static for w in cmd.words])
+                movers += found
+                tainted = tainted or bool(_CD_VARS.intersection(cmd.assigns))
+                if kind == "end":
+                    ended = True
+                elif kind == "taint":
+                    tainted = True
+                elif kind == "unknown":
+                    dirs = dirs | {UNKNOWN_CWD}
+                    ended = tainted = True
+                elif kind == "cd":
+                    word = cmd.words[index] if index is not None else None
+                    if word is not None and not cmd.assigns and not tainted and word.static and word.text \
+                            and word.text[0] not in "-+":
+                        target = word.text
+                    if target is None:
+                        dirs = dirs | {UNKNOWN_CWD}
+                    else:
+                        certain = (proof is not None and proof["clean"] and proof["cd"] and not ended
+                                   and rank == 0 and len(pipeline) == 1 and not cmd.redirected
+                                   and not any(lk == "||" for lk, _ in chain[rank + 1:]))
+                        after = _cd_into(dirs, target)
+                        dirs = frozenset(after) if certain else dirs | after
+                for child in _child_scripts([w.text for w in cmd.words]) if depth < 8 else ():
+                    stripped, executed = _without_heredocs(child)
+                    for text in (stripped, *executed):
+                        paths, _, child_seen, found = _shell_walk(text, before | dirs, home, None, depth + 1)
+                        out += paths
+                        extra |= child_seen
+                        movers += found
+                dirs = _capped(dirs)
+                seen |= dirs | extra
+                steps.append((cmd, before, extra, kind == "cd", target))
+    reach: list[frozenset[Path]] = []
+    later = frozenset(dirs)
+    for _, before, extra, _, _ in reversed(steps):
+        later = later | before | extra
+        reach.append(later)
+    reach.reverse()
+    raw = _raw_relative(script, home)
+    for (cmd, before, _, is_cd, target), dirs_from_here in zip(steps, reach):
+        if is_cd:  # a ``cd`` uses its words where it stands, before it moves
+            dirs_from_here = before
+        elif cmd.words:  # a command reads bare names (``cat x``, ``ls``) in the directory it runs in
+            out += _resolved(".", before, home)
+        if target is not None:
+            out += _resolved(target, before, home)
+        for segment in _segments(script[cmd.start:cmd.end]):
+            for token in _segment_tokens(segment):
+                out += _resolved(token, dirs_from_here, home)
+        for offset, token in raw:
+            if cmd.start <= offset < cmd.end:
+                out += _resolved(token, dirs_from_here, home)
+    spans = [(cmd.start, cmd.end) for cmd, *_ in steps]
+    for offset, token in raw:  # a token no command holds: every directory of the call
+        if not any(a <= offset < b for a, b in spans):
+            out += _resolved(token, seen, home)
+    # after ``exit``, ``return`` or ``exec`` the shell may have ended anywhere, with status 0, before the host
+    # could read its directory: the end is then any directory of the script, its start included
+    return out, frozenset(seen if ended else dirs), frozenset(seen), movers
+
+
+def _outside_quotes(script: str, pattern: re.Pattern) -> bool:
+    """Whether ``pattern`` matches at a ``$`` that stands outside quotes."""
+    quote, escaped = None, False
+    for at, ch in enumerate(script):
+        if escaped:
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            escaped = True
+        elif quote is None and ch in "'\"":
+            quote = ch
+        elif ch == quote:
+            quote = None
+        elif ch == "$" and quote is None and pattern.match(script, at):
+            return True
+    return False
+
+
+_ANSI_QUOTE = re.compile(r"\$['\"]")
+_HEADS = frozenset({"if", "then", "else", "elif", "do", "{", "!", "time"})  # a command follows in the segment
+_LOOPS = frozenset({"while", "until"})
+_LISTS = frozenset({"for", "select", "case", "fi", "done", "esac", "}", "in", "[[", "]]"})  # no command follows
+
+
+def _walk_loose(script: str, start: frozenset[Path], home: str, depth: int
+                ) -> tuple[list[tuple[Path, bool]], frozenset[Path], frozenset[Path], int]:
+    """A script outside the allow-list grammar (``_shell_walk`` gives the contract): no order is trusted. The
+    commands are those of ``_segments`` (each simple command at any depth, its leading reserved words and
+    redirections dropped). Every ``cd`` with a target no shell expands MAY have run: once each, in the order of
+    the text, when the script has no loop and no function (a shell without them runs a command at most once);
+    any number of times in any order otherwise (fixed point, ``UNKNOWN_CWD`` past ``_CWD_CAP`` candidates). Any
+    other ``cd``, any builtin outside the allow-list, a command name the shell builds, ``CDPATH`` and ``$'...'``
+    quoting (which ``_segments`` does not read) add ``UNKNOWN_CWD``. Every relative path of the script is resolved
+    against EVERY candidate directory of the script (no order), the child shells' included, and so is ``.``, the
+    directory its commands run in."""
+    unknown = _outside_quotes(script, _ANSI_QUOTE)
+    tainted = bool(_CD_VARS_TEXT.search(script))
+    repeated = bool(re.search(r"\(\s*\)", script))  # a function definition: its body may run any number of times
+    targets: list[str] = []
+    movers, children = 0, []
+    segments = _segments(script)
+    for segment in segments:
+        raw, assigned, words = [r for _, r in segment], False, []
+        skip = False
+        for word in raw:  # redirections are not words of the command
+            if skip:
+                skip = False
+            elif (op := _REDIRECTION.match(word)) is not None and op.group(0):
+                skip = op.end() == len(word)
+            else:
+                words.append(word)
+        while words:
+            head = words[0]
+            if (named := _NAME_SET.match(head)) is not None:
+                assigned = True
+                tainted = tainted or named.group(1) in _CD_VARS
+            elif head in _LOOPS:
+                repeated = True
+            elif head == "function":
+                repeated = True
+                words.pop(0)
+            elif head in ("for", "select"):
+                repeated = True
+                words = []
+            elif head in _LISTS:
+                words = []
+            elif head not in _HEADS:
+                break
+            if words:
+                words.pop(0)
+        children += _child_scripts(words)
+        kind, index, found = _classify(words, [_fixed(w) for w in words])
+        movers += found
+        if kind == "taint":
+            tainted = True
+        elif kind == "unknown":
+            unknown = True
+        elif kind == "cd":
+            word = words[index] if index is not None else None
+            if word is None or assigned or not _fixed(word) or word[0] in "-+":
+                unknown = True
+            else:
+                targets.append(word)
+    dirs = set(start)
+    if unknown or (tainted and targets):
+        dirs.add(UNKNOWN_CWD)
+    if repeated:
+        grown = True
+        while grown and len(dirs) <= _CWD_CAP:
+            more = dirs | {d for target in targets for d in _cd_into(dirs, target)}
+            grown, dirs = more != dirs, more
+    else:
+        for target in targets:
+            dirs |= _cd_into(dirs, target)
+    end = _capped(dirs)
+    seen, out = set(end), []
+    for child in children if depth < 8 else ():
+        stripped, executed = _without_heredocs(child)
+        for text in (stripped, *executed):
+            paths, _, child_seen, found = _shell_walk(text, end, home, None, depth + 1)
+            out += paths
+            seen |= child_seen
+            movers += found
+    if any(segments):  # a command reads bare names in the directory it runs in: any directory of the script
+        out += _resolved(".", seen, home)
+    for segment in segments:
+        for token in _segment_tokens(segment):
+            out += _resolved(token, seen, home)
+    for _, token in _raw_relative(script, home):
+        out += _resolved(token, seen, home)
+    return out, end, frozenset(seen), movers
+
+
+def _shell_walk(script: str, start: Collection[Path], home: str, proof: Mapping[str, bool] | None, depth: int = 0
+                ) -> tuple[list[tuple[Path, bool]], frozenset[Path], frozenset[Path], int]:
+    """Audit revision 2 reading of one script: ``(paths, end, seen, movers)``. ``start`` is the set of directories
+    the shell may start in; ``end`` those it may be in when the script ends, IF it ran to its end; ``seen`` every
+    directory it, or a child shell it starts, may have been in (the caller takes ``seen`` and not ``end`` when
+    nothing proves the script ran to its end). Under H3 to H8, ``start`` containing the real directory implies
+    that ``seen`` contains every real one and ``end`` the real last one. ``paths`` are the paths the script names,
+    each relative one resolved against every candidate directory it may be used in. ``proof`` is what the result
+    of the call shows (``_proof``; ``None``: a child shell, a heredoc body, a host the audit does not know):
+    without it no ``cd`` replaces anything. ``movers`` counts the ``cd``/``pushd``/``popd`` read as commands: when
+    the text holds more such words than that (one inside quotes that ``eval`` may run, ``x=cd; $x ..``), the
+    script is read again from ``start`` plus ``UNKNOWN_CWD`` with no proof. Expects the script without its heredoc
+    bodies (``_without_heredocs``)."""
+    start = frozenset(start)
+    try:
+        chains = _simple_script(script)
+    except _NotSimple:
+        chains = None
+    for attempt in (0, 1):
+        if chains is not None:
+            result = _walk_simple(chains, script, start, home, proof, depth)
+        else:
+            result = _walk_loose(script, start, home, depth)
+        if attempt or result[3] >= len(_CD_WORD.findall(script)):
+            break
+        start, proof = start | {UNKNOWN_CWD}, None
+    return result
+
+
+def _call_outcomes(lines: Sequence[str]) -> dict[str, dict[str, Any]]:
+    """What the stream shows of the result of each tool call, by call id: ``text``; ``error`` (Claude
+    ``is_error``, ``None`` when the stream does not say); ``plain`` (the Claude Code detail object is there and
+    names neither an interruption, nor an accepted non-zero status, nor a background task); ``line`` (its rank in
+    the stream). omp ``tool_execution_end``: the text only."""
+    out: dict[str, dict[str, Any]] = {}
+    for rank, line in enumerate(lines):
         try:
             event = json.loads(line)
         except ValueError:
@@ -1895,31 +2422,90 @@ def _call_results(lines: Sequence[str]) -> dict[str, str]:
             continue
         if event.get("type") == "user" and isinstance(event.get("message"), dict):
             content = event["message"].get("content")
+            detail = event.get("tool_use_result")
+            plain = (isinstance(detail, dict) and detail.get("interrupted") is False
+                     and not detail.get("returnCodeInterpretation") and not detail.get("backgroundTaskId"))
             for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id"):
-                    out[str(block["tool_use_id"])] = "\n".join(t for k, t in _strings(block.get("content"))
-                                                              if k in (None, "text"))
+                    text = "\n".join(t for k, t in _strings(block.get("content")) if k in (None, "text"))
+                    out[str(block["tool_use_id"])] = {"text": text, "error": block.get("is_error"),
+                                                      "plain": plain, "line": rank}
         elif event.get("type") == "tool_execution_end" and event.get("toolCallId"):
-            out[str(event["toolCallId"])] = "\n".join(t for k, t in _strings(event.get("result")) if k == "text")
+            text = "\n".join(t for k, t in _strings(event.get("result")) if k == "text")
+            out[str(event["toolCallId"])] = {"text": text, "error": None, "plain": False, "line": rank}
     return out
 
 
-def _next_session(end: Collection[Path], result: str, bundle: Path) -> frozenset[Path]:
-    """The directories a Claude Code shell may start the next call in. Observed behaviour: the directory is kept
-    while it stays inside the project (the bundle) and reset to the project root otherwise, and the result then
-    says ``Shell cwd was reset to ...``. That line, when present, decides (the root is the shallowest inside
-    directory, so a spoofed line can only make the audit stricter). A directory outside the project WITHOUT that
-    line is not the observed behaviour: it is kept, with the root. After an uncertain ``cd`` the candidates are
-    those before and after it (the real directory is one of them, whatever happened); the root is not added, since
-    the carry-over is the observed behaviour this audit relies on. More than 32 candidates collapse to the root and
-    ``UNKNOWN_CWD``."""
+def _proof(outcome: Mapping[str, Any] | None, args: Any) -> dict[str, bool] | None:
+    """What the result of a call proves (H2, H3, H6): ``clean`` (the script returned 0) and ``cd`` (no failed
+    ``cd``). ``None`` without a result."""
+    if outcome is None:
+        return None
+    text = outcome["text"]
+    whole = len(text) <= _RESULT_WHOLE and not _TRUNCATED.search(text)
+    background = isinstance(args, Mapping) and bool(args.get("run_in_background"))
+    clean = (outcome["error"] is False and outcome["plain"] and whole and not background
+             and not text.startswith("Exit code"))
+    return {"clean": clean, "cd": whole and not _CD_LINE.search(text)}
+
+
+def _host_model(lines: Sequence[str]) -> str:
+    """``claude-code-<version>`` when every ``system``/``init`` event of the stream names the same version of
+    ``OBSERVED_CLAUDE_CODE`` (H1), else ``unverified`` (H9: no directory is carried, no ``cd`` is believed)."""
+    versions = set()
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "system" and event.get("subtype") == "init":
+            versions.add(event.get("claude_code_version"))
+    if len(versions) == 1 and next(iter(versions)) in OBSERVED_CLAUDE_CODE:
+        return f"claude-code-{next(iter(versions))}"
+    return "unverified"
+
+
+def _overlapping(lines: Sequence[str], outcomes: Mapping[str, Mapping[str, Any]]) -> set[str]:
+    """Ids of the shell calls sent before the result of an earlier shell call came back (their order of
+    execution is not known; none in the v4 streams)."""
+    found: set[str] = set()
+    pending: list[tuple[str, float]] = []
+    for rank, line in enumerate(lines):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "assistant" \
+                or not isinstance(event.get("message"), dict):
+            continue
+        for block in event["message"].get("content") or []:
+            if not (isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id")
+                    and any(k in _COMMAND_KEYS for k, _ in _strings(block.get("input")))):
+                continue
+            pending = [(i, end) for i, end in pending if end > rank]
+            if pending:
+                found |= {str(block["id"]), *(i for i, _ in pending)}
+            end = (outcomes.get(str(block["id"])) or {}).get("line", float("inf"))
+            pending.append((str(block["id"]), end))
+    return found
+
+
+def _next_session(start: Collection[Path], end: Collection[Path], seen: Collection[Path], clean: bool, result: str,
+                  bundle: Path) -> frozenset[Path]:
+    """The directories a Claude Code shell (H1) may start the next call in. A result that says ``Shell cwd was
+    reset to ...`` decides: the project root (the shallowest directory of the project, so a spoofed line can only
+    make the audit stricter). Otherwise: ``end`` after a clean result; after any other result every directory the
+    call may have been in, its start included (the script may have stopped anywhere, and whether the host keeps
+    the directory of a call that failed is not established). A candidate outside the project WITHOUT that line is
+    not the observed behaviour: it is kept, with the root."""
     if _CWD_RESET.search(result):
         return frozenset({bundle})
-    inside = {c for c in end if c != UNKNOWN_CWD and _within(c, bundle)}
+    dirs = set(end) if clean else {*start, *seen}
+    inside = {c for c in dirs if c != UNKNOWN_CWD and _within(Path(os.path.realpath(c)), bundle)}
     nxt = set(inside)
-    if len(inside) != len(end):
-        nxt |= set(end) | {bundle}
-    return frozenset(nxt) if len(nxt) <= 32 else frozenset({bundle, UNKNOWN_CWD})
+    if len(inside) != len(dirs):
+        nxt |= dirs | {bundle}
+    return _capped(nxt)
 
 
 def _result_token(token: str) -> str:
@@ -1972,7 +2558,9 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                      literals: Collection[str] = frozenset(),
                      sandbox_denied: tuple[str, Sequence[str], Sequence[str]] | None = None,
                      attempt_dir: Path | None = None, private_root: Path | None = None,
-                     revision: int = 1, not_found: list[str] | None = None) -> list[str]:
+                     revision: int = 1, not_found: list[str] | None = None,
+                     host_model: list[str] | None = None,
+                     trace: list[frozenset[Path]] | None = None) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -2015,15 +2603,24 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     the shell any other way (``echo / | xargs ls``, a script) is not seen.
 
     ``revision`` 2 (PAT-123, ``isolation.audit_revision``; 1 keeps everything above as it was): a relative
-    path of a command is resolved against the directory the command really runs in. ``cd`` is followed in
-    the line, in the raw token pass too (a relative token is read in the walk of the line, where the
-    directory is known, and no longer against the bundle), and, in a Claude Code session, from one Bash
-    call to the next: Claude Code keeps the working directory between calls while it stays inside the
-    project (the bundle) and resets it to the project root when a command ends outside (``Shell cwd was
-    reset to ...``). An omp stream starts every call in the bundle (nothing is known of its shell). A path
-    an omp tool call gave and the tool answered ``Path not found: <that path>`` was not read: it is not a
-    hit, nor is the echo of it in the error result; it is appended to ``not_found`` (apart, never counted
-    as a read). A path that exists, a command and every other failure text stay audited as before."""
+    path of a command is resolved against every directory the shell MAY be in where the command runs, and is a
+    hit as soon as one of them takes it out of the allowed places (``_shell_walk``; the assumptions H1 to H9
+    under which those candidates contain the real directory are listed above ``OBSERVED_CLAUDE_CODE``, and
+    nothing stronger is claimed). The raw token pass no longer resolves a relative token against the bundle:
+    ``_shell_walk`` does, against the candidates. A ``cd`` replaces the candidates only in a script of the
+    allow-list grammar whose result proves it ran (``_walk_simple``); everywhere else it adds its target, or
+    ``UNKNOWN_CWD`` (every relative path is then a hit). In a stream of an observed Claude Code version
+    (``OBSERVED_CLAUDE_CODE``) the candidates pass from one shell call to the next (``_next_session``); in any
+    other stream (omp, another or an unnamed version) every call starts from the union of the bundle and of
+    every directory an earlier call may have been in, and no ``cd`` replaces anything. ``host_model`` receives
+    which of the two applied (``claude-code-<version>`` or ``unverified``) and ``trace`` the candidates each
+    shell call started from. ``cd $T`` after ``T=$(mktemp -d)`` is a ``cd`` the audit cannot read
+    (``UNKNOWN_CWD``): a fresh temporary directory is NOT modelled (the audit could not see a symbolic link the arm
+    puts in it). A command that may run in a directory outside the allowed places is a hit by itself (a bare name,
+    ``cat x``, is read there). As in revision 1, a path built at run time is not seen. A path an omp tool call gave and the tool answered ``Path not found: <that path>`` was not
+    read: it is not a hit, nor is the echo of it in the error result; it is appended to ``not_found`` (apart,
+    never counted as a read). A path that exists, a command and every other failure text stay audited as
+    before."""
     try:
         lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
     except FileNotFoundError:
@@ -2071,9 +2668,18 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     commands: dict[str, None] = {}
     follow = revision >= AUDIT_REVISION
     missing = _missing_paths(lines) if follow else {}
-    results = _call_results(lines) if follow else {}
-    session = frozenset({bundle_real})  # Claude Code: where the shell may start the next call (kept between calls)
-    omp_dirs = {bundle_real}  # omp: nothing is known of its shell, every directory a call may have left it in
+    outcomes = _call_outcomes(lines) if follow else {}
+    model = _host_model(lines) if follow else "unverified"
+    if follow and host_model is not None:
+        host_model.append(model)
+    carried = model != "unverified"  # H1; otherwise H9: no directory is carried, no ``cd`` is believed
+    session = frozenset({bundle_real})  # H1: where the shell may start the next call
+    anywhere = {bundle_real}  # H9: every directory a call may have been in so far
+    unordered = _overlapping(lines, outcomes) if follow else set()  # calls whose order of execution is not known
+    unordered_moves = any(
+        set(_shell_walk(_without_heredocs(text)[0], {bundle_real}, tilde, None)[2]) != {bundle_real}
+        for call_id, _, args, _ in _tool_events(lines) if call_id is not None and str(call_id) in unordered
+        for key, text in _strings(args) if key in _COMMAND_KEYS)
 
     def consider(path: Path, broad: bool, relative: bool = False) -> None:
         if permitted(path):
@@ -2085,17 +2691,29 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
 
     for call_id, name, args, host in _tool_events(lines):
         path_keys = _PATH_KEYS | ({"pattern"} if name.lower() in _GLOB_TOOLS else frozenset())
-        call_start = (session if host == "claude" else frozenset(omp_dirs)) if follow else bundle_real
-        call_end, call_seen = None, frozenset(call_start) if follow else frozenset()
+        kept = follow and carried and host == "claude"
+        ordered = call_id is not None and str(call_id) not in unordered
+        call_start = frozenset(session if kept else anywhere)
+        if kept and not ordered and unordered_moves:
+            call_start = call_start | {UNKNOWN_CWD}
+        call_end: frozenset[Path] | None = None
+        call_seen, call_clean, scripts_run = call_start, True, 0
+        if follow and trace is not None and any(k in _COMMAND_KEYS for k, _ in _strings(args)):
+            trace.append(call_start)
         for key, text in _strings(args):
             if call_id in missing and key == "path" and text == missing[call_id]:
                 if not_found is not None:
                     not_found.append(shown(Path(os.path.realpath(text))))
                 continue
             if key in _COMMAND_KEYS:
-                stripped, executed = _without_heredocs(text)
+                unclosed: list[bool] = []
+                stripped, executed = _without_heredocs(text, unclosed)
                 scripts = [stripped, *executed]  # a body a shell runs is a command line too
                 tokens = [t for script in scripts for t in _path_tokens(_unquoted_expansions(script))]
+                # H7: a heredoc never closed, or a ``cd`` word of the WHOLE text (comments and heredoc bodies
+                # included) that no script read as a command: the readers may not have split as the shell does
+                unread = follow and (bool(unclosed) or len(_CD_WORD.findall(text)) > sum(
+                    _shell_walk(script, {bundle_real}, tilde, None)[3] for script in scripts))
             elif key in path_keys:
                 tokens = _path_tokens(text) + [text.strip()]
             else:  # text the arm writes or searches (Edit, Write, Grep pattern...): not an access
@@ -2103,29 +2721,36 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
             for token in tokens:
                 token = _expand(token, tilde)
                 if token is not None and follow and key in _COMMAND_KEYS and not os.path.isabs(token):
-                    continue  # read in the walk of the line, in the directory it has there
+                    continue  # read by ``_shell_walk``, against the directories the shell may be in there
                 if token is not None:
                     consider(Path(os.path.realpath(token if os.path.isabs(token) else bundle / token)),
                              key in path_keys, key in path_keys and not os.path.isabs(token))
             if key in _COMMAND_KEYS:
                 for n, script in enumerate(scripts):
                     if not follow:
-                        walked = _walk_command(script, bundle_real, tilde, bundle_real, False)[0]
+                        walked = _command_paths(script, bundle_real, tilde)
                     elif n == 0:  # the line itself; a heredoc body a shell runs may start wherever the line was
-                        got = results.get(call_id)
-                        walked, call_end, call_seen, _ = _walk_line(
-                            script, bundle_real, tilde, call_start, got is not None and not _CD_FAILED.search(got))
+                        scripts_run += 1
+                        proof = _proof(outcomes.get(str(call_id)), args) \
+                            if kept and ordered and scripts_run == 1 and not unread else None
+                        call_clean = proof is not None and proof["clean"]
+                        walked, end, seen_now, _ = _shell_walk(
+                            script, call_seen | ({UNKNOWN_CWD} if unread else set()), tilde, proof)
+                        call_end = end if call_end is None else call_end | end
+                        call_seen = call_seen | seen_now
                     else:
-                        walked = _walk_line(script, bundle_real, tilde, call_seen, False)[0]
+                        walked = _shell_walk(script, call_seen, tilde, None)[0]
                     for path, relative in walked:
                         consider(path, True, relative)
                     for found in _forbidden_commands(script):
                         commands[f"command:{found}"] = None
         if follow and call_end is not None:
-            if host == "claude":
-                session = _next_session(call_end, results.get(call_id) or "", bundle_real)
+            if kept:  # an unordered call proves nothing, not even by its ``Shell cwd was reset`` line
+                said = (outcomes.get(str(call_id)) or {}).get("text", "") if ordered else ""
+                session = _next_session(call_start, call_end, call_seen, call_clean and scripts_run == 1, said,
+                                        bundle_real)
             else:
-                omp_dirs |= set(call_end)
+                anywhere |= call_seen
     seen: dict[str, None] = {}
     for text in _tool_results(lines):
         if follow and text.startswith(_NOT_FOUND) and text[len(_NOT_FOUND):] in missing.values():
@@ -2282,6 +2907,8 @@ class Runner:
         self.audit_revision = (campaign.get("isolation") or {}).get("audit_revision", 1)
         self.patch_excludes = _PATCH_EXCLUDES_V2 if self.audit_revision >= AUDIT_REVISION else _PATCH_EXCLUDES
         self.not_found: dict[str, list[str]] = {}  # paths an arm named that do not exist, by stream log
+        self.host_models: dict[str, str] = {}  # audit revision 2: what the audit could assume of each stream's host
+        self.roles: dict[str, str] = {}  # role of each reserved cloud session
         self.fixed_candidate = (campaign.get("exploration") or {}).get("fixed_candidate")
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
         self.dedicated: dict[str, Any] | None = None  # observed values of the last dedicated-machine check
@@ -2349,6 +2976,13 @@ class Runner:
     def _audited_since(self, mark: int) -> list[str]:
         """Contamination found by the audits of the cloud executions reserved since ``mark``."""
         return list(dict.fromkeys(c for sid in self.sessions[mark:] for c in self.audited.get(sid, [])))
+
+    def _flags_by_role(self, mark: int) -> dict[str, list[str]]:
+        """``_audited_since`` with the reviewer's flags apart (audit revision 2: they stay on the review)."""
+        arm, reviewer = [], []
+        for sid in self.sessions[mark:]:
+            (reviewer if self.roles.get(sid) == "reviewer" else arm).extend(self.audited.get(sid, []))
+        return {"contamination": list(dict.fromkeys(arm)), "review_contamination": list(dict.fromkeys(reviewer))}
 
     def _emit(self, record: dict[str, Any]) -> dict[str, Any]:
         record = {"schema": RESULT_SCHEMA, "campaign_id": self.envelope["campaign_id"],
@@ -2445,12 +3079,15 @@ class Runner:
         """``_audit_stream`` that keeps the paths the arm named without their existing (audit revision 2)
         in ``self.not_found``, to be recorded apart."""
         notes: list[str] = []
-        hits = self._audit_stream(stream_log, bundle, scratch, driver, session_id, exe, notes)
+        models: list[str] = []
+        hits = self._audit_stream(stream_log, bundle, scratch, driver, session_id, exe, notes, models)
         self.not_found[str(stream_log)] = list(dict.fromkeys(notes))
+        self.host_models[str(stream_log)] = models[0] if models else "unverified"
         return hits
 
     def _audit_stream(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
-                      session_id: str | None, exe: Mapping[str, str] | None, notes: list[str]) -> list[str]:
+                      session_id: str | None, exe: Mapping[str, str] | None, notes: list[str],
+                      models: list[str] | None = None) -> list[str]:
         """Contamination audit of one arm's tool calls, on the stream the launcher kept. Always against
         the strictest list (the one of a local arm): a cloud arm keeps ``~/.claude`` for its identity,
         but reading anything there (the plugin cache holds the merged tests) is a contamination, except
@@ -2478,15 +3115,18 @@ class Runner:
                                 literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled,
                                 attempt_dir=bundle.parent,  # ``_bundle`` builds <attempt dir>/bundle
                                 private_root=bundle.parent.parent if self.private_root else None,
-                                revision=self.audit_revision, not_found=notes)
+                                revision=self.audit_revision, not_found=notes, host_model=models)
 
     def _audit_note(self, stream_logs: Sequence[Path]) -> dict[str, Any]:
-        """The ``audit`` field of a record under audit revision 2: the revision and the paths named that do not
-        exist (apart from the hits, never a read). Absent under revision 1: the frozen records keep their shape."""
+        """The ``audit`` field of a record under audit revision 2: the revision, the paths named that do not
+        exist (apart from the hits, never a read) and, per audited stream in order, what the audit could assume of
+        its host (``claude-code-<observed version>``, or ``unverified``: no directory carried, no ``cd`` believed).
+        Absent under revision 1: the frozen records keep their shape."""
         if self.audit_revision < AUDIT_REVISION:
             return {}
         names = [p for log in stream_logs for p in self.not_found.get(str(log), [])]
-        return {"audit": {"revision": self.audit_revision, "not_found": list(dict.fromkeys(names))}}
+        return {"audit": {"revision": self.audit_revision, "not_found": list(dict.fromkeys(names)),
+                          "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}}
 
     def _home(self) -> str:
         """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""
@@ -2595,15 +3235,19 @@ class Runner:
                     by_role: Mapping[str, Any] | None = None, by_model: Mapping[str, Any] | None = None,
                     local: Mapping[str, Any] | None = None,
                     replay_of: Mapping[str, Any] | None = None, judge: Mapping[str, Any] | None = None,
-                    review: Mapping[str, Any] | None = None, contamination: Sequence[str] = ()
-                    ) -> dict[str, Any] | None:
+                    review: Mapping[str, Any] | None = None, contamination: Sequence[str] = (),
+                    review_contamination: Sequence[str] | None = None) -> dict[str, Any] | None:
         """A tool failure or an interruption (Ctrl-C, SIGTERM, any other exception) is recorded as
         such, never as a new verdict, before the campaign stops. An interrupted attempt has an unknown
         cost (``billing_total`` null), like any record whose cloud executions were not all read. A cut
         that comes AFTER a verdict (``judge``) or a review keeps them on the record: the attempt is then
         decided and a relaunch never replays it (no second chance after a verdict). ``contamination``
         already found by an audit of the attempt (a cut right after it) makes the record ``contaminated``,
-        never replayed, like a refusal that carries one."""
+        never replayed, like a refusal that carries one. ``review_contamination`` (audit revision 2, cloud path:
+        the caller then gives the arm's flags and the reviewer's apart) is recorded on the review as on an
+        uncut attempt (``review.contamination``, ``unknown["review.contaminated"]``) and does not make the arm's
+        attempt ``contaminated``; the exception's own ``contamination`` is the audit of one of those sessions and
+        is not added again."""
         status = _cut(exc)
         reason = (str(exc) or type(exc).__name__)[:200] if status == "tool_error" \
             else f"{type(exc).__name__}: {exc}"[:200]
@@ -2623,7 +3267,11 @@ class Runner:
             "local": ({"ended_by_external_signal": False, **local} if local else None),
             "machine": None, "unknown": {status: reason},
             **({"replay_of": dict(replay_of)} if replay_of else {})}
-        found = list(dict.fromkeys([*contamination, *(getattr(exc, "contamination", None) or [])]))
+        found = list(dict.fromkeys([*contamination, *(
+            [] if review_contamination is not None else getattr(exc, "contamination", None) or [])]))
+        if review_contamination:
+            record["review"]["contamination"] = _contamination(review_contamination)
+            record["unknown"]["review.contaminated"] = _REVIEW_CONTAMINATED
         if found:  # refused or cut AND contaminated: never replayed either
             record.update(contaminated=True, outcome="contaminated", contamination=_contamination(found))
             record["unknown"]["contaminated"] = _CONTAMINATED
@@ -2769,6 +3417,7 @@ class Runner:
                 self.ledger.reserve_cloud(role, session_id)  # cap checked, then recorded, then run
                 reserved = True
                 self.sessions.append(session_id)  # every reserved execution is named by a record
+                self.roles[session_id] = role
             stream_log = self.state_dir / "streams" / f"{self.envelope['campaign_id']}-{session_id}.jsonl"
             env = os.environ if self.host_env is None else self.host_env
             fingerprint = registry_fingerprints(env)
@@ -2923,9 +3572,7 @@ class Runner:
                         # nothing, whatever it said: the attempt is undecided (``review_unreadable``, never replayed),
                         # the loop stops and its findings reach no corrector (a possible leak flows nowhere)
                         state["review_contamination"] = rev_exec["contamination"]
-                        unknown["review.contaminated"] = (
-                            "the reviewer's " + _CONTAMINATED[len("the arm's "):] + "; its verdict is kept on the "
-                            "record but decides nothing")
+                        unknown["review.contaminated"] = _REVIEW_CONTAMINATED
                         state.update(outcome="review_unreadable", accepted=None)
                     elif rev_exec["contamination"]:  # the review itself touched sensitive paths
                         state.update(contamination=rev_exec["contamination"], outcome="contaminated",
@@ -2942,7 +3589,9 @@ class Runner:
                     sessions=self.sessions[mark:], by_role=by_role, by_model=models, replay_of=again,
                     judge=_judge_summary(verdict) if verdict else None,
                     review={"rounds": len(state["rounds"]), "verdicts": state["rounds"]}
-                    if state["rounds"] else None, contamination=self._audited_since(mark))
+                    if state["rounds"] else None,
+                    **(self._flags_by_role(mark) if self.audit_revision >= AUDIT_REVISION
+                       else {"contamination": self._audited_since(mark)}))
                 raise
             outcome = state["outcome"]
             if outcome in ("accepted", "review_unreadable", "contaminated"):
@@ -3771,6 +4420,8 @@ def _task_ref(task: Mapping[str, Any], task_set: str) -> dict[str, Any]:
 
 
 _CONTAMINATED = "the arm's tool calls touched sensitive paths or ran a forbidden command"
+_REVIEW_CONTAMINATED = ("the reviewer's " + _CONTAMINATED[len("the arm's "):] + "; its verdict is kept on the record "
+                        "but decides nothing")
 
 
 def _contamination(items: Sequence[str]) -> dict[str, list[str]]:
@@ -3940,7 +4591,9 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
     (compatibility, quality, economy) stay separate; nothing is promoted. The rules applied are
     printed with the digests the results were produced under. ``ledger`` (the entries of the
     campaign's ledger) is mandatory: whenever it knows of spent work the results cannot measure,
-    no economy verdict is given and the decision is ``inconclusive``."""
+    no economy verdict is given and the decision is ``inconclusive``. ``contaminated`` lists the records whose arm
+    was flagged; ``review_contaminated`` (audit revision 2; the key is absent when empty, so the report of a frozen
+    campaign keeps its keys) those whose REVIEWER was flagged, which decide nothing."""
     shas = _check_records(records, campaign_sha256)
     unknown_work = _check_ledger(records, ledger, shas)
     attempts = [r for r in records if r.get("record_type") == "attempt"]
@@ -3968,6 +4621,13 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                                         "segment": r.get("segment"), "attempt": r.get("attempt"),
                                         "outcome": r.get("outcome"), "replay_of": r["replay_of"]}
                                        for r in attempts if r.get("replay_of")]}
+    flagged_reviews = [{"path": r["path"], "task": r["task"], "segment": r.get("segment"),
+                        "attempt": r.get("attempt"), "outcome": r.get("outcome"),
+                        "paths": r["review"]["contamination"].get("paths", []),
+                        "commands": r["review"]["contamination"].get("commands", [])}
+                       for r in attempts if (r.get("review") or {}).get("contamination")]
+    if flagged_reviews:  # audit revision 2 only (a frozen campaign has none: its report keeps its keys)
+        out["review_contaminated"] = flagged_reviews
     exploring = campaign.get("schema") == CAMPAIGN_SCHEMA_V2  # protocol v2: other paths, other rules
     screen_path = "XS" if exploring else "S"
     killed = len({(h["path"], h["pr"], h["candidate"], h["segment"], h["attempt"])
@@ -4488,7 +5148,9 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
     ``state_dir``, ``home``), the base literals come from ``repo`` and the local sandbox is not
     reconstructed: the approximations are in ``replay_limits``. A record whose revision-1 replay differs from
     what was recorded is ``not_comparable``. A stream that is missing leaves its record ``unavailable``,
-    never clean. Nothing under ``home`` is copied to the result."""
+    never clean. Nothing under ``home`` is copied to the result. The summary counts apart the records whose arm
+    session is flagged now (``flagged_now``) and those whose reviewer session is (``reviewer_flagged_now``), and
+    the streams by what revision 2 could assume of their host (``host_models``, see ``_host_model``)."""
     campaign_id = next((r.get("campaign_id") for r in records if r.get("campaign_id")), None)
     started = {}
     for entry in ledger:
@@ -4506,7 +5168,7 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
     literals = base_literals(Path(repo), home)  # the checkout of now stands for the bundles of then
 
     def audit(stream: Path, bundle: Path, role: str, path: str, session: str | None, revision: int,
-              notes: list[str]) -> list[str]:
+              notes: list[str], models: list[str]) -> list[str]:
         attempt = bundle.parent
         driver = (campaign.get("drivers") or {}).get(
             REVIEWER_DRIVER if role == "reviewer" else IMPLEMENTER_DRIVER.get(path, ""), {})
@@ -4516,7 +5178,7 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
                                 home=home, arm_home=None if session else str(attempt / "scratch" / "home"),
                                 own_session=own, attempt_dir=attempt, literals=literals,
                                 private_root=attempt.parent if private else None,
-                                revision=revision, not_found=notes)
+                                revision=revision, not_found=notes, host_model=models)
 
     rows = []
     for rec in records:
@@ -4546,9 +5208,10 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
                                                     "no usable cwd inside the work root")
                 break
             notes: list[str] = []
-            old = audit(stream, bundle, role, key[0], session, 1, [])
-            new = audit(stream, bundle, role, key[0], session, AUDIT_REVISION, notes)
-            streams.append({"role": role, "stream": label,
+            models: list[str] = []
+            old = audit(stream, bundle, role, key[0], session, 1, [], [])
+            new = audit(stream, bundle, role, key[0], session, AUDIT_REVISION, notes, models)
+            streams.append({"role": role, "stream": label, "host_model": models[0],
                             "sha256": hashlib.sha256(stream.read_bytes()).hexdigest(),
                             "old": [_hidden_home(h, home_real) for h in old],
                             "new": [_hidden_home(h, home_real) for h in new],
@@ -4586,7 +5249,12 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
            "summary": {"records": len(rows), "classification": dict(sorted(classes.items())),
                        "fidelity_mismatch": sum(1 for r in rows if r.get("fidelity") == "mismatch"),
                        "flagged_recorded": sum(1 for r in rows if r["recorded"]["contaminated"]),
-                       "flagged_now": sum(1 for r in rows if r.get("new", {}).get("contaminated"))},
+                       "flagged_now": sum(1 for r in rows if r.get("new", {}).get("contaminated")),
+                       "reviewer_flagged_now": sum(1 for r in rows if r.get("new", {}).get("reviewer_hits")),
+                       "host_models": {m: sum(1 for r in rows for st in r.get("streams", [])
+                                              if st["host_model"] == m)
+                                       for m in sorted({st["host_model"] for r in rows
+                                                        for st in r.get("streams", [])})}},
            "replay_limits": ["offline: no model, no cloud call; nothing is recomputed (verdicts, outcomes, report)",
                              "sensitive roots rebuilt from the repository, state directory and home of the replay",
                              "base literals come from the checkout of the replay, not from each bundle; the local "
