@@ -1168,7 +1168,7 @@ au-delà.
   décision ni aucun verdict ; les rapports versés ne sont pas recalculés.
 - **Rejeu hors ligne** : `python3 -m foundry.local_first_runner replay-audit --campaign <config> --results
   results-<id>.jsonl --streams-dir <flux bruts> --work-root <racine de travail> [--repo .] [--home <HOME>]
-  [--work-root-not-sensitive] [--out <fichier>]` (le registre `ledger-<id>.jsonl` est lu à côté des résultats ; `--out`
+  [--work-root-not-sensitive] [--quoted-not-found] [--out <fichier>]` (le registre `ledger-<id>.jsonl` est lu à côté des résultats ; `--out`
   n'écrase jamais un fichier existant). Il applique à chaque flux les révisions 1 et 2, sans pilote, sans modèle, sans appel
   cloud, et rend par enregistrement ce qui a été enregistré, l'ancien classement, le nouveau, les chemins inexistants à part, le
   `sha256` du flux et une classification : `clean`, `flag_kept` (mêmes chemins), `flag_kept_changed` (gardé, chemins différents),
@@ -1585,3 +1585,22 @@ Protocole **gelé le 2026-10-08, avant tout essai de la campagne** : [`pat-19-pr
 - **Juge strict (round 1)** : un rapport pytest absent est une erreur d'instrument sauf si un bundle intact de la même tâche produit un rapport (`candidate_breaks_test_loading`, `REFUSED`). `golden-check` : champ `provenance` (empreintes de la configuration, du manifeste, de l'instantané, commit et état de l'outillage, date).
 - **Dossier temporaire partagé (round 1, politique de déplacement refaite au round 2, relevé et échecs consignés au round 3)** : sous `isolation.cloud_native_sandbox`, le lanceur relève les noms de premier niveau de `TMPDIR` (`_temp_names` : `os.listdir`, aucune entrée n'est lue ; `None` si le dossier ne se liste pas) avant chaque exécution cloud et, après, **déplace** dans sa quarantaine `<dossier d'état>/temp-quarantine/<campagne>-<session>/` (`TEMP_QUARANTINE` ; le dossier d'état est refusé aux bras ; **rien n'est jamais supprimé**, un nom déjà pris reçoit un suffixe) chaque entrée dont le **nom était absent avant** (une entrée préexistante, même modifiée pendant l'exécution, n'est jamais touchée ; une entrée créée dans la fenêtre par un autre processus du même compte et correspondant à la signature serait déplacée aussi), du compte, hors lien symbolique, hors `foundry-*` et `pytest-of-*`, qui contient une copie du bundle (arbre contenant `plugins/foundry`, fichier de même chemin relatif qu'un fichier modifié de la tâche, ou de même nom) ; consigné `audit.temp_leftovers`, listé par `report.temp_leftovers`, sans effet sur la décision. **Forme de `audit.temp_leftovers` (round 3)** : `watch` (`complete`, `partial`, `unavailable`, ou `not_applicable` pour un enregistrement sans exécution cloud), `count` (entrées déplacées ; `null`, jamais 0, dès qu'une exécution de l'enregistrement n'a pas été surveillée), `names`, `not_moved` (entrée nouvelle qu'une erreur du système a empêché d'examiner ou de déplacer : elle reste en place), `not_inspected` (parcours abandonné à `TEMP_WALK_BOUND` = 20 000 entrées lues, ou sous-dossier illisible : `_holds_bundle_material` rend alors `None`, l'entrée reste en place), `unwatched` (une raison par exécution non surveillée, vocabulaire `TEMP_UNWATCHED` : `no_tmpdir`, `listing_before_failed`, `listing_after_failed`). Un relevé d'avant en échec ne déplace **rien** ; aucune `OSError` de la surveillance n'interrompt une exécution. `report.temp_leftovers` liste les enregistrements qui ont déplacé quelque chose **et** ceux dont `watch` vaut `partial` ou `unavailable`. Les enregistrements des pilotes gardent l'ancienne forme (`count`, `names`). Le script opérateur refuse un dossier contenant `plugins/foundry` au premier niveau de `TMPDIR`.
 - **Résultats réels (PAT-127)** : comparaison `pat-19-x5compare-1`, exécutée le 2026-10-08 : [`pat-19-exploration-results-v5.md`](pat-19-exploration-results-v5.md) (pièces brutes dans `pat-19-runs/x5compare-1/`) ; décision `keep_cloud` (économie en échec de justesse, acceptation 5 contre 5 sur 10 tâches appariées) ; bilan de l'ensemble v1 à v5 : [`pat-19-local-first-bilan.md`](pat-19-local-first-bilan.md).
+
+## Forme citée du chemin absent (PAT-128)
+
+Rejeu hors ligne de la v5 et sa cause : [`pat-19-audit-replay-v5.md`](pat-19-audit-replay-v5.md). Aucune règle ni aucun protocole v1 à v5
+n'est modifié.
+
+- **Clé `isolation.audit_absent_path_forms`** = `"quoted_path"` (constantes `ABSENT_FORMS_KEY` et `ABSENT_FORMS`). Acceptée seulement sous
+  un protocole postérieur à la v5 (`pat-19-protocol-vN`, N >= 6), avec `isolation.audit_revision` 2 ; refusée sous v1 à v5 et sous le
+  pilote v5, une autre valeur est refusée. Avec elle, l'audit (`audit_transcript(..., absent_forms=True)`) reconnaît aussi
+  `Path '<chemin>' not found` (réponse d'erreur entière d'un appel omp, chemin identique à celui de l'appel : outil `read`) comme un
+  chemin absent consigné à part, comme `Path not found: <chemin>`. Un enregistrement sous la clé porte `audit.absent_path_forms`
+  (absent sinon). Sans la clé, rien ne change.
+- **`replay-audit --quoted-not-found`** mesure la coordonnée sur une campagne qui ne la porte pas (le résultat porte
+  `absent_path_forms` ; le défaut est inchangé). Un rejeu d'une campagne à politique d'audit (v5) ajoute par enregistrement
+  `arm_findings_replayed` (`hits`, `same_as_recorded`) : les constats du bras selon les règles de la campagne, comparés à l'enregistré.
+- **Statut documentaire (R5)** : clé de configuration `isolation.audit_absent_path_forms`, constantes `ABSENT_FORMS_KEY` et
+  `ABSENT_FORMS`, paramètre `absent_forms` de `audit_transcript` et de `replay_audit`, option `--quoted-not-found` de `replay-audit`,
+  champs `audit.absent_path_forms` et `arm_findings_replayed` : documentés ici. Aucune option de `foundry_cli.py`, aucune table de routage
+  et aucune constante de routage ne change. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.

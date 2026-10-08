@@ -89,6 +89,11 @@ def _refused_call(tool: str, text: str) -> bool:
 # PAT-123: ``isolation.audit_revision`` 2 (a protocol after v4 only) follows the working directory of a command
 # line, attributes a flag of the reviewer's session to the review, and records a path that does not exist apart
 AUDIT_REVISION = 2
+# PAT-128: ``isolation.audit_absent_path_forms``, accepted only under a protocol after v5 (never v1 to v5, whose verdicts
+# stay as they were counted). With it the audit also recognises the answer ``Path '<given path>' not found`` (the form the
+# omp ``read`` tool uses; v5 observed it on two explorations) as an absent path, apart from the hits, like ``Path not found:``.
+ABSENT_FORMS_KEY = "audit_absent_path_forms"
+ABSENT_FORMS = "quoted_path"
 # PAT-123/PAT-124: what a record of audit revision 2 that ran to completion says of the barrier (Claude Code's
 # native Bash sandbox). The launcher never observes the operating system enforce it: the value says only what it
 # verified, from weakest to strongest; no value reads "confined" (a record cut by an error carries no ``audit``).
@@ -354,6 +359,14 @@ def load_campaign(path: Path) -> dict[str, Any]:
         if iso.get(NATIVE_SANDBOX_KEY) is not True or iso.get("audit_revision") != AUDIT_REVISION:
             raise RunnerError(f"{path}: isolation.{AUDIT_POLICY_KEY} needs isolation.{NATIVE_SANDBOX_KEY} true and "
                               f"isolation.audit_revision {AUDIT_REVISION} (the operating system is the barrier it relies on)")
+    if ABSENT_FORMS_KEY in iso:  # PAT-128: after v5 only (v5 and its pilot are pinned without it), one value
+        if not later or data.get("protocol") in V5_PROTOCOLS:
+            raise RunnerError(f"{path}: isolation.{ABSENT_FORMS_KEY} is accepted only under a protocol after v5 "
+                              f"(pat-19-protocol-v6 or later), not under {data.get('protocol')!r}")
+        if iso[ABSENT_FORMS_KEY] != ABSENT_FORMS:
+            raise RunnerError(f"{path}: isolation.{ABSENT_FORMS_KEY} is {ABSENT_FORMS!r} or absent")
+        if iso.get("audit_revision") != AUDIT_REVISION:
+            raise RunnerError(f"{path}: isolation.{ABSENT_FORMS_KEY} needs isolation.audit_revision {AUDIT_REVISION}")
     _check_correction_feedback(path, data)
     _check_cloud_bash_deny(path, data)
     for cid, cand in data["candidates"].items():
@@ -1455,10 +1468,11 @@ def _tool_events(lines: Sequence[str]) -> list[tuple[str | None, str, Any, str]]
 _NOT_FOUND = "Path not found: "
 
 
-def _missing_paths(lines: Sequence[str]) -> dict[str, str]:
+def _missing_paths(lines: Sequence[str], quoted: bool = False) -> dict[str, str]:
     """omp tool calls that failed with ``Path not found: <path>`` (an error result of that call, naming the
     path it was given): ``{call id: path}``. Nothing was read. Another failure text, a result without an id,
-    or a path the result does not name exactly as the call gave it, is not recognised (the audit keeps it)."""
+    or a path the result does not name exactly as the call gave it, is not recognised (the audit keeps it).
+    ``quoted`` (PAT-128, ``isolation.audit_absent_path_forms``): ``Path '<path>' not found`` is recognised the same way."""
     given = {i: args.get("path") for i, _, args, host in _tool_events(lines)
              if i and host == "omp" and isinstance(args, Mapping)}
     missing: dict[str, str] = {}
@@ -1472,10 +1486,15 @@ def _missing_paths(lines: Sequence[str]) -> dict[str, str]:
             continue
         texts = [t for k, t in _strings(event.get("result")) if k == "text"]
         call = event.get("toolCallId")
-        if len(texts) == 1 and texts[0].startswith(_NOT_FOUND) and call in given \
-                and texts[0][len(_NOT_FOUND):] == given[call]:
+        if len(texts) == 1 and call in given and (
+                (texts[0].startswith(_NOT_FOUND) and texts[0][len(_NOT_FOUND):] == given[call])
+                or (quoted and isinstance(given[call], str) and texts[0] == _quoted_not_found(given[call]))):
             missing[call] = given[call]
     return missing
+
+
+def _quoted_not_found(path: str) -> str:
+    return f"Path '{path}' not found"
 
 
 def _strings(value: Any, key: str | None = None) -> list[tuple[str | None, str]]:
@@ -2856,7 +2875,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                      trace: list[frozenset[Path]] | None = None,
                      policy_denied: tuple[Sequence[Path], Sequence[Path]] | None = None,
                      journal: list[str] | None = None,
-                     refused: dict[str, int] | None = None) -> list[str]:
+                     refused: dict[str, int] | None = None, absent_forms: bool = False) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -2917,7 +2936,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     ``cat x``, is read there). As in revision 1, a path built at run time is not seen. A path an omp tool call gave and the tool answered ``Path not found: <that path>`` was not
     read: it is not a hit, nor is the echo of it in the error result; it is appended to ``not_found`` (apart,
     never counted as a read). A path that exists, a command and every other failure text stay audited as
-    before.
+    before. ``absent_forms`` (PAT-128, ``isolation.audit_absent_path_forms``, revision 2; off keeps everything above
+    as it was): the answer ``Path '<that path>' not found`` is the same absent path (omp ``read``).
 
     ``policy_denied`` (PAT-126, ``isolation.audit_policy``, revision 2 and an observed barrier only: ``(denyRead,
     allowRead)`` of the settings the execution received): (1) a tool call whose result is a whole-call refusal of the
@@ -2975,7 +2995,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     file_tool: set[str] = set()  # hits some FILE-TOOL call (not only a shell command) produced
     commands: dict[str, None] = {}
     follow = revision >= AUDIT_REVISION
-    missing = _missing_paths(lines) if follow else {}
+    missing = _missing_paths(lines, absent_forms) if follow else {}
     outcomes = _call_outcomes(lines) if follow else {}
     policy = follow and policy_denied is not None
     refused_ids: set[str] = set()
@@ -3088,7 +3108,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
         return any(_within(path, d) or (raw != "" and raw.startswith(str(d).rstrip("/") + "/")) for d in denied_roots)
 
     for text in _tool_results(lines):
-        if follow and text.startswith(_NOT_FOUND) and text[len(_NOT_FOUND):] in missing.values():
+        if follow and ((text.startswith(_NOT_FOUND) and text[len(_NOT_FOUND):] in missing.values())
+                       or (absent_forms and any(text == _quoted_not_found(m) for m in missing.values()))):
             continue  # the error of a path that does not exist: it names the path, it shows nothing
         for token in _path_tokens(text):
             token = _result_token(token)  # ``file.py:12:`` locations
@@ -3439,6 +3460,7 @@ class Runner:
         self.strict_judge = bool(_PROTOCOL_AFTER_V4.fullmatch(str(campaign.get("protocol"))))
         self.interpreters: dict[str, Any] | None = None
         self.audit_policy = (campaign.get("isolation") or {}).get(AUDIT_POLICY_KEY) == AUDIT_POLICY
+        self.absent_forms = (campaign.get("isolation") or {}).get(ABSENT_FORMS_KEY) == ABSENT_FORMS  # PAT-128
         self.bundle_files: dict[Path, list[str]] = {}  # changed files of the task, by bundle (temp leftovers match)
         self.leftovers: dict[str, dict[str, Any]] = {}  # the temp watch of each cloud execution, by stream
         self.stream_roles: dict[str, str] = {}  # role of each audited cloud stream log
@@ -3701,7 +3723,8 @@ class Runner:
                                 literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled,
                                 attempt_dir=bundle.parent,  # ``_bundle`` builds <attempt dir>/bundle
                                 private_root=bundle.parent.parent if self.private_root else None,
-                                revision=self.audit_revision, not_found=notes, host_model=models, **policy)
+                                revision=self.audit_revision, not_found=notes, host_model=models,
+                                absent_forms=self.absent_forms, **policy)
 
     def _audit_note(self, stream_logs: Sequence[Path]) -> dict[str, Any]:
         """The ``audit`` field of a record that ran to completion under audit revision 2 (a record cut by
@@ -3732,6 +3755,8 @@ class Runner:
             note.update(policy=AUDIT_POLICY,
                         journal=list(dict.fromkeys(p for log in stream_logs for p in self.journals.get(str(log), []))),
                         journal_by_role=roles, refused_calls=refused)
+        if self.absent_forms:  # PAT-128: absent without the key, so every earlier record keeps its shape
+            note["absent_path_forms"] = ABSENT_FORMS
         return {"audit": note}
 
     def _home(self) -> str:
@@ -6079,7 +6104,7 @@ def _policy_reading(rec: Mapping[str, Any], streams: Sequence[Mapping[str, Any]]
 def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                  ledger: Sequence[Mapping[str, Any]], *, streams_dir: Path, work_root: Path, repo: Path,
                  state_dir: Path, home: str, results_sha256: str | None = None,
-                 work_root_sensitive: bool = True) -> dict[str, Any]:
+                 work_root_sensitive: bool = True, absent_forms: bool = False) -> dict[str, Any]:
     """Audit revision 1 (what ran) and revision 2 (PAT-123) applied to the RAW transcripts of a finished
     campaign, record by record. Offline: it reads the streams, the results and the ledger and runs no
     driver, no model and no cloud call; it writes and recomputes nothing (no verdict, no outcome, no
@@ -6092,7 +6117,10 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
     what was recorded is ``not_comparable``. A stream that is missing leaves its record ``unavailable``,
     never clean. Nothing under ``home`` is copied to the result. The summary counts apart the records whose arm
     session is flagged now (``flagged_now``) and those whose reviewer session is (``reviewer_flagged_now``), and
-    the streams by what revision 2 could assume of their host (``host_models``, see ``_host_model``)."""
+    the streams by what revision 2 could assume of their host (``host_models``, see ``_host_model``).
+    ``absent_forms`` (PAT-128; off by default, and then the result is exactly what it was): revision 2 is applied with
+    ``isolation.audit_absent_path_forms``, a MEASUREMENT of the new coordinate on a campaign that does not carry it; the
+    result then says so (``absent_path_forms``)."""
     campaign_id = next((r.get("campaign_id") for r in records if r.get("campaign_id")), None)
     started = {}
     for entry in ledger:
@@ -6131,7 +6159,8 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
                                 home=home, arm_home=None if session else str(attempt / "scratch" / "home"),
                                 own_session=own, attempt_dir=attempt, literals=literals,
                                 private_root=attempt.parent if private else None,
-                                revision=revision, not_found=notes, host_model=models, **(policy or {}))
+                                revision=revision, not_found=notes, host_model=models,
+                                absent_forms=absent_forms and revision >= AUDIT_REVISION, **(policy or {}))
 
     rows = []
     for rec in records:
@@ -6203,11 +6232,15 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
         row["streams"] = streams
         if any("policy" in st for st in streams):
             row["policy"] = _policy_reading(rec, streams)
+        if policy_on:  # PAT-128: the arm findings the rules of that campaign (revision 2 and policy) give, against the record
+            kept = sorted({h for st in streams if st["role"] == "arm" for h in st.get("policy", {}).get("decisive", st["new"])})
+            row["arm_findings_replayed"] = {"hits": kept, "same_as_recorded": kept == row["recorded"]["hits"]}
         rows.append(row)
     classes: dict[str, int] = {}
     for row in rows:
         classes[row["classification"]] = classes.get(row["classification"], 0) + 1
     out = {"schema": REPLAY_SCHEMA, "campaign_id": campaign_id, "revisions": {"old": 1, "new": AUDIT_REVISION},
+           **({"absent_path_forms": ABSENT_FORMS} if absent_forms else {}),
            "results_sha256": results_sha256, "records": rows,
            "summary": {"records": len(rows), "classification": dict(sorted(classes.items())),
                        "fidelity_mismatch": sum(1 for r in rows if r.get("fidelity") == "mismatch"),
@@ -6373,6 +6406,8 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     ra.add_argument("--home", default=None, help="the home to rebuild the sensitive list from (default $HOME)")
     ra.add_argument("--work-root-not-sensitive", action="store_true",
                     help="leave the work root out of the sensitive list (measures what that v4 change explains)")
+    ra.add_argument("--quoted-not-found", action="store_true",
+                    help="PAT-128: apply revision 2 with isolation.audit_absent_path_forms (measures the new coordinate)")
     ra.add_argument("--out", default=None, help="write the result here instead of stdout (never overwrites)")
     nt = sub.add_parser("native-sandbox-trial", help="PAT-124: the bounded REAL trial of the native Bash sandbox "
                         "(two real cloud executions through the launcher: spend, run once by the maintainer)")
@@ -6453,7 +6488,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                 work_root=Path(args.work_root), repo=Path(args.repo), state_dir=streams.parent,
                 home=args.home or os.environ.get("HOME") or str(Path.home()),
                 results_sha256=hashlib.sha256(results.read_bytes()).hexdigest(),
-                work_root_sensitive=not args.work_root_not_sensitive)
+                work_root_sensitive=not args.work_root_not_sensitive, absent_forms=args.quoted_not_found)
             text = json.dumps(result, indent=2, sort_keys=True) + "\n"
             if args.out:
                 with Path(args.out).open("x", encoding="utf-8") as handle:  # never rewrites a result

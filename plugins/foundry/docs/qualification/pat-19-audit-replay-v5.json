@@ -1,0 +1,4835 @@
+{
+  "campaign_id": "pat-19-x5compare-1",
+  "records": [
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 26,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "409dd10752419502455d03b2ff9c75d16221304d9311c4a82bd2d17561d1b66e",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "flag_added",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "refused_calls_only",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>"
+            ]
+          }
+        ]
+      },
+      "pr": 26,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "6b026880fb54acd8fe0e19297970814053197565f2766b66b27469b1cbbc07e6",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "683728d6601037d82f8d137ae5b9301e0125ee9b2f57d869a244b14caf28e10f",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [
+          "/private/tmp/pat19-work5/private-attempt-l01-0004/pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l01-0004-pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/trackers/linear.py"
+        ],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l01-0004/pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l01-0004-pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/trackers/linear.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l01-0004/pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l01-0004-pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/trackers/linear.py"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "pr": 26,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [
+            "/private/tmp/pat19-work5/private-attempt-l01-0004/pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l01-0004-pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/trackers/linear.py"
+          ],
+          "old": [
+            "/private/tmp/pat19-work5/private-attempt-l01-0004/pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l01-0004-pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/trackers/linear.py",
+            "tool_result:/private/tmp/pat19-work5/private-attempt-l01-0004/pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l01-0004-pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/trackers/linear.py"
+          ],
+          "role": "arm",
+          "sha256": "5b364f08fd0a617b2717322215c321feace2a2d502d46827473ca4c956c8bb84",
+          "stream": "local:attempt-l01-0004-pr26-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/docs/linear-tracker.md"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 26,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5/docs/linear-tracker.md"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "bc1da7a8e487bb68c9793bceccbd82cfa3c4e26a9e9ce284f0a133d7a1620eef",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>",
+          "tool_result:~/<hidden>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "reviewer"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "/<unknown-working-directory>",
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>",
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 26,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "fe3cd70fbc30a5f9ff3e36e28e34db59d97153fe8ddd0bfa0c519f5b0589edf5",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>",
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "/<unknown-working-directory>",
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "27169d3ee32dc3fdb257c1999c511b6c99ab95c8ff46a0e78ab407c62f1635b8",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 38,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "ed72919e933e87091e90076365bf7349ce4ac8e48fff6190de1e23c3eb954084",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": [
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 38,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "2c05a63d1c260e509a5051763f3fef29bea593d68d8cd78d0f4c4645f699849a",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "/<unknown-working-directory>",
+          "tool_result:~/<hidden>"
+        ],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": [
+              "/<unknown-working-directory>",
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 38,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>",
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "91bbc00b0d7d41c26afab8d90a409a330d3476868c443ca5712bc006dfafee02",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 38,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "d5e0c7e59e92a4df8549231bdf82cc7cb7f6ad2d35eee204c751704797872440",
+          "stream": "local:attempt-l02-0004-pr38-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": [
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 38,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "ac3d0ee77efb28f446f2e6bd6d95e405ce6b14f6925e9e802302ed11e564dbf2",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": [
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 38,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "518aa2733905a57793c2654f2db966a823631236066df96c5057cd8b56357480",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "not_found": [],
+        "reviewer_hits": [
+          "tool_result:~/<hidden>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": [
+              "tool_result:~/<hidden>"
+            ]
+          },
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 38,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "b1971d4652f469c51d26540709e2c6dbd4c624446bb2ac6998fe1c3c9d7780c6",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "b78f6287f3822c7af271e8b8293e389074997d97530fe89071e7019f6839309f",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 25,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "150100985f87f0a71d554794911a45d0fb421f9a3dda44f1affc68a17ccdc161",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "review_block",
+        "outcome_recorded": "review_block",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 25,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_block"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "3e3cdac0d47fe8b233f9ee27fd214d57c4daa8eddfb03468a08507472a67fced",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "1436666be8079c22fe585d333df05fba91e46d492f8be5f1c601fae2274026d2",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 3
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 25,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "b53adeddf8c5523d7f7267518eb1a63c26ee93402833c17e18cd021080c138ee",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 3
+            }
+          },
+          "role": "reviewer",
+          "sha256": "bc8c2027991dc3b045fe75b342af447dc4fc42172ffa6fcc5df58efe8921eb28",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 25,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "76a35d3a96261668e0f45d8fd10aa1ccf32fc7dcaf59c280890dedbf955b0cd3",
+          "stream": "local:attempt-l03-0006-pr25-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 25,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "0a66c5761c23050e60c3710c787bffc335129da3d5511e2f958144a99ceccfb1",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "flag_added",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "review_block",
+        "outcome_recorded": "review_block",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "refused_calls_only",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 2
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>"
+            ]
+          }
+        ]
+      },
+      "pr": 25,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_block"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "9f28c5334815ba8cedefefe06baac1d1b5e590f5ce52e0a4de10e291d8aef4c1",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 2
+            }
+          },
+          "role": "reviewer",
+          "sha256": "8471f3971eb850b9ae086551a8713594d0f7a37348a79174bb68ac1534a2724a",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "flag_added",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "review_block",
+        "outcome_recorded": "review_block",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "refused_calls_only",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 2
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>"
+            ]
+          }
+        ]
+      },
+      "pr": 25,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_block"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "a47c7d79ec08555d8e47efe2158ee14db4601877d5a83fbae592712f08c4ca32",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 2
+            }
+          },
+          "role": "reviewer",
+          "sha256": "afd3f8fb40c9d10ddbf85c93136cf4639c7a9cbba91da688b56ec2808d5986ae",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 42,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "25e82047fb437c35180ac6bf4c960b6d827ff83dbeb81cb5f29eb300bec91b8b",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>",
+          "tool_result:~/<hidden>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "reviewer"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "review_block",
+        "outcome_recorded": "review_block",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>",
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 42,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_block"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "85cc7e11e383fc20e539f6a51d3f9f78b75f50561c076a3cbaefbb39d677401e",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>",
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "7929f21569ead0770d719b2afc7121cf838761ce7aeda41ff59bb4f63dfa813e",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 42,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "d7968a31636b3212137005a9cbf2760cb06e6f320ad74758e9a1e2e011705b14",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py"
+        ],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py"
+        ],
+        "not_found": [
+          "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/docs"
+        ],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/docs",
+          "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/docs",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "pr": 42,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [
+            "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py",
+            "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py"
+          ],
+          "not_found": [
+            "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/docs"
+          ],
+          "old": [
+            "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/docs",
+            "/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py",
+            "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/docs",
+            "tool_result:/private/tmp/pat19-work5/private-attempt-l04-0005/pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/registry.py"
+          ],
+          "role": "arm",
+          "sha256": "ade45d2d647141065f631c64a26890c812706554c0b616d394fd19f0f96c1def",
+          "stream": "local:attempt-l04-0005-pr42-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 33,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "a89483defdea9d9c8ba4f451a10273f7835ce4d32a827f5dee8a05140d5eff16",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "368daa9ff813fd30fb98ade3567656f8b2516f3f7e11275fa8f1e22343d2e51e",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py"
+        ],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "flag_kept",
+      "fidelity": "match",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py"
+        ],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "pr": 33,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [
+            "/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py",
+            "tool_result:/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py"
+          ],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py",
+            "tool_result:/private/tmp/pat19-work5/private-attempt-l05-0003-pr33-L-explore-qwen3.6-33-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tooling/foundry/frame.py"
+          ],
+          "role": "arm",
+          "sha256": "599d69be0691fa5c26bdaf67b752693e17274f302508ce67653a29cac48a6b5e",
+          "stream": "local:attempt-l05-0003-pr33-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 37,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "ed6459cc2556cf2098479df4e97506e820d96e478918276707237e22ef7df7ed",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "review_block",
+        "outcome_recorded": "review_block",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 37,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_block"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "8e811cd17a82baeaf2088fdc3cbd7309ba2f0f682333dbbf1653d785b4f80715",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "659c3e5598afafdc94e8db065ac5af9b1c27260b3231f159570745a2fd6bd994",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "/<unknown-working-directory>"
+        ],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>",
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l06-0005",
+          "tool_result:~/<hidden>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:/private/tmp/pat19-work5/private-attempt-l06-0005",
+          "tool_result:~/<hidden>"
+        ],
+        "session": "reviewer"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "/<unknown-working-directory>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": [
+              "/<unknown-working-directory>"
+            ]
+          },
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:/private/tmp/pat19-work5/private-attempt-l06-0005",
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>",
+              "tool_result:/private/tmp/pat19-work5/private-attempt-l06-0005",
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 37,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "/<unknown-working-directory>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "9a02b239182ce1c6aa1e77e74fe3edd8759a08282895f6a8579d7ba41f813013",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>",
+            "tool_result:/private/tmp/pat19-work5/private-attempt-l06-0005",
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:/private/tmp/pat19-work5/private-attempt-l06-0005",
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:/private/tmp/pat19-work5/private-attempt-l06-0005",
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "492fe9c3633e373f9752b5903a91407662d83a3cc65edecf4de38330169d8628",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 37,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "ffc21ea0366e6afab607d042c8b9462e6742b224823be1e4f54e44bc8ce7db7e",
+          "stream": "local:attempt-l06-0006-pr37-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 37,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "86a04e0b201b66902a597c4a661b4ee88481ead6fc6821a57fa15d0159c1aa05",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "flag_added",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "/<unknown-working-directory>"
+            ],
+            "refused_calls": {},
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>"
+            ]
+          }
+        ]
+      },
+      "pr": 37,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "a45afb8c723b8a95a196db7d020a0613c7b91aa2f60171e2f74991b35abdaa2a",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "/<unknown-working-directory>"
+            ],
+            "refused_calls": {}
+          },
+          "role": "reviewer",
+          "sha256": "2b3be926fe4f5a9e332a9803b1fa139e2837c0d5e558d4dcb4605cff5e89ebad",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "08c4fbb362aae55daa1b605b61545cd1f461cc2e1ed374ec26315c49dd783976",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "14455dbbe9d4b2ea34f21bc7250f2d8e781af2dfd5bc985c1ad7d5b23c756fa4",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "99446af90c7dd2cb96f7a48ec9767a396222b7aa3adbf630eee65d0870cb0c5d",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "b98af903867b21a22ace52ba9d039c0d8924af4f73ce021ae9a8f0758e41a06d",
+          "stream": "local:attempt-l07-0004-pr30-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5",
+          "/private/tmp/pat19-work5/plugins/foundry",
+          "/private/tmp/pat19-work5/plugins/foundry/docs",
+          "/private/tmp/pat19-work5/plugins/foundry/docs/adr",
+          "/private/tmp/pat19-work5/plugins/foundry/docs/adr/*0012*",
+          "/private/tmp/pat19-work5/plugins/foundry/tests/test_linear_tracker.py"
+        ],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5",
+          "/private/tmp/pat19-work5/plugins/foundry/docs",
+          "/private/tmp/pat19-work5/plugins/foundry/tests/test_linear_tracker.py"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "/private/tmp/pat19-work5",
+              "/private/tmp/pat19-work5/plugins/foundry",
+              "/private/tmp/pat19-work5/plugins/foundry/docs",
+              "/private/tmp/pat19-work5/plugins/foundry/docs/adr",
+              "/private/tmp/pat19-work5/plugins/foundry/docs/adr/*0012*",
+              "/private/tmp/pat19-work5/plugins/foundry/tests/test_linear_tracker.py"
+            ],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": [
+              "/private/tmp/pat19-work5",
+              "/private/tmp/pat19-work5/plugins/foundry",
+              "/private/tmp/pat19-work5/plugins/foundry/docs",
+              "/private/tmp/pat19-work5/plugins/foundry/docs/adr",
+              "/private/tmp/pat19-work5/plugins/foundry/docs/adr/*0012*",
+              "/private/tmp/pat19-work5/plugins/foundry/tests/test_linear_tracker.py"
+            ]
+          }
+        ]
+      },
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/private/tmp/pat19-work5",
+            "/private/tmp/pat19-work5/plugins/foundry",
+            "/private/tmp/pat19-work5/plugins/foundry/docs",
+            "/private/tmp/pat19-work5/plugins/foundry/docs/adr",
+            "/private/tmp/pat19-work5/plugins/foundry/docs/adr/*0012*",
+            "/private/tmp/pat19-work5/plugins/foundry/tests/test_linear_tracker.py"
+          ],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5",
+            "/private/tmp/pat19-work5/plugins/foundry/docs",
+            "/private/tmp/pat19-work5/plugins/foundry/tests/test_linear_tracker.py"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "/private/tmp/pat19-work5",
+              "/private/tmp/pat19-work5/plugins/foundry",
+              "/private/tmp/pat19-work5/plugins/foundry/docs",
+              "/private/tmp/pat19-work5/plugins/foundry/docs/adr",
+              "/private/tmp/pat19-work5/plugins/foundry/docs/adr/*0012*",
+              "/private/tmp/pat19-work5/plugins/foundry/tests/test_linear_tracker.py"
+            ],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "684f0e41cbb5a7e06808419a61be15aeb1372ec9d2e9b1664e1ebb9f7600f0ac",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "17a05f73df64fd4ce89ed13eee4ba6d68ec1471d9ff2d326c92623428dfe7baa",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "7c1187eb1bda77b5c28a63bf1bd8e85c0a3cbd72e860560df72bed257ec8959d",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+        ],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+            ],
+            "refused_calls": {
+              "Bash": 2
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": [
+              "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+            ]
+          },
+          {
+            "class": "refused_calls_only",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 3,
+              "Write": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>"
+            ]
+          }
+        ]
+      },
+      "pr": 83,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+          ],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+            ],
+            "refused_calls": {
+              "Bash": 2
+            }
+          },
+          "role": "arm",
+          "sha256": "45a9f7e9b88391f6d49c26489f79a6696a47dcfe44ac1619b00c2e4b120cc5f1",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 3,
+              "Write": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "a8135979770a7b4660435023b0a68457404865b5749c9a66f7ea14a520dc3de5",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 83,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "8d9568c28528d024bfc2f3b82342e5e5da359b6eb0c0ecd3b0f94d53c2bf8fb2",
+          "stream": "local:attempt-l08-0003-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 83,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "fbd7f77a5735e2b6af8c35b38685a9812f63d4ff660c9d879d9f61f47d93f729",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 83,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "412ef1b8a620b90478a732874581048a6a781aec77c305a3247efa56ffc32989",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 83,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "9194f354c364ad6b332e14efb409909a558838a59e1f8132a5c4094bec404e6a",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "92c0dfd9db6b6f8fbf79d57e9fa72917fe493d0f6c61bae1d2e84a47e04724d3",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>",
+          "tool_result:~/<hidden>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "reviewer"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>",
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "c064f76687c09bf69a322d1e9b201405883d0a7a61560ba4d1c41f3bec52dea7",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>",
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "a3a935c737d5b73e3e5a75af89a9dbccf9ef2f4250ac0c99e29299f4cfd2a326",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "e76629973d4d8f48d3118ca173aba9fe6cb2e7c6075499abc5cc2359aceada24",
+          "stream": "local:attempt-l09-0004-pr27-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/tests"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5/tests"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "ad1fd396b5e43b5e7658eb388bb5b9e0c6c05071ee7332c11a908ac298758ac2",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 2
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "4b33ff0837ef3ee53edd1a4245c9518a91b8aa85d6aad81e129a173d0a0b3c77",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 2
+            }
+          },
+          "role": "reviewer",
+          "sha256": "b5f4550a8f66a203e8568969d07dfa96177254a224c0c5558634f1dbb36080d2",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "a76024ca5a3c4151e6e452d60631cfdf3e2a6ac8f035c1ff526eac063795beed",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "2c0969aa664bf2ecc5e6d4369533ffd7882ea1c440ca158a58e77a26607903d4",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "0f6a09636a34407f80249b9572d4f5c8fc37fdf2a01371eac09b6f0dbc0f517c",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "f74c26d04bd3f8f5a74320b2be5a7a589c1d63ad4b6afc2459ba03640ff69df2",
+          "stream": "local:attempt-l10-0004-pr24-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "3330bbd721dee364dccb9b13f26b2da6fd746f2ddebdb15463304f18e1b214c1",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "flag_added",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "review_block",
+        "outcome_recorded": "review_block",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "refused_calls_only",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 3
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>"
+            ]
+          }
+        ]
+      },
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_block"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "c4e48ce4ab620a63fbb2c06bed40537ab73a2818c8f7f6d5f204c9c55470acd3",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 3
+            }
+          },
+          "role": "reviewer",
+          "sha256": "2c30809e35545b2a69e497680761d36644a83ce3c60c2cba04aed9104199d6a9",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>",
+          "tool_result:~/<hidden>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "tool_result:~/<hidden>"
+        ],
+        "session": "reviewer"
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "accepted",
+        "outcome_recorded": "accepted",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          },
+          {
+            "class": "journal_only",
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "reviewer",
+            "stream": "cloud_sessions[1]",
+            "strict": [
+              "/<unknown-working-directory>",
+              "tool_result:~/<hidden>"
+            ]
+          }
+        ]
+      },
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "662bcffbf12a8a73a1eddc7fc567e72b632ceee513bde2073452992e252c04f9",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>",
+            "tool_result:~/<hidden>"
+          ],
+          "not_found": [],
+          "old": [
+            "tool_result:~/<hidden>"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [
+              "tool_result:~/<hidden>"
+            ],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "reviewer",
+          "sha256": "c101ae770c51bd88f085cb6f6aa15277396f2885651fedb4aec5e6961890ea90",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5",
+          "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5",
+            "/private/tmp/pat19-work5/tests/test_linear_tracker.py"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "1c5a0a6a9bb6c6325af21af7a3e4c7541323195b8133d15c0dba1d1114910bb4",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "not_comparable",
+      "fidelity": "mismatch",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work5/scratch"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work5/scratch"
+          ],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "346c2ba00dbcec630ab955dd4f222f82e460f93cb204726ec19ce76bc82af89c",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "927a5bb9ecb8358c44213fd7527df08cc5081da611b37aa5e7162f9b41262c2d",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "34166d7bc4c6b6ca23bc91eef0564994b3a54c5916639653a06520fe8623040d",
+          "stream": "local:attempt-l11-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "7fea954fc87824599a6aaaf5987a2f6a91fda2a890b85256bd149f8ee12e0681",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "4aaadf687f025f516138de9bf81bfe86a4f8de6d0efa3df4116339db07ce4ea6",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "296d38114623a50bcca897b8e035fb1143a640324181fda2eb43a8fb635518e6",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "e679ae4164ae647fa7b224869990612f3c721acf27a388a48ab206b864b9dcaa",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "3c3cd2a6968b78373d00395e5811e1b87f2680230508e78c4e4e7c047f2e186e",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "ac089404910c6f512b01fb38f2cc93fcfd2b95693ab533c741b63ed414725811",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "20c4138d9b9dfb05bf7cbb9f0c0f1b3600b78f0f74266c63cc13d28fdcc6020e",
+          "stream": "local:attempt-l12-0004-pr19-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "a202af72828baacf1311142150992ded4c189eddec317634ca7f2b10837a5233",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {},
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {}
+          },
+          "role": "arm",
+          "sha256": "a5c87d64fc7dda9838c67f1bb4bd55a2cb995c6870dd40b012c6eb5d22571531",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "arm_findings_replayed": {
+        "hits": [],
+        "same_as_recorded": true
+      },
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "policy": {
+        "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged",
+        "outcome_reading_non_decisional": "judge_refused",
+        "outcome_recorded": "judge_refused",
+        "streams": [
+          {
+            "class": "clean",
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            },
+            "role": "arm",
+            "stream": "cloud_sessions[0]",
+            "strict": []
+          }
+        ]
+      },
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "policy": {
+            "decisive": [],
+            "journal": [],
+            "refused_calls": {
+              "Bash": 1
+            }
+          },
+          "role": "arm",
+          "sha256": "64faeab25ab671c4f9f61565bcb8dcb4b9d67a78a8ba98075c64bc2dae65310e",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    }
+  ],
+  "replay_limits": [
+    "offline: no model, no cloud call; nothing is recomputed (verdicts, outcomes, report)",
+    "sensitive roots rebuilt from the repository, state directory and home of the replay",
+    "base literals come from the checkout of the replay, not from each bundle; the local sandbox denial is not reconstructed",
+    "roles: the first cloud session of a record is taken as the arm's and the others as the reviewer's (true for paths A and L; wrong for path C or a resumed record)",
+    "work root sensitive in the rebuilt list: yes"
+  ],
+  "results_sha256": "e0bb354e8c972293a7d1479683d59a20c4b04621f50eaf7f9ad0e264617b82ec",
+  "revisions": {
+    "new": 2,
+    "old": 1
+  },
+  "schema": "foundry.local-first-audit-replay.v1",
+  "summary": {
+    "classification": {
+      "clean": 44,
+      "flag_added": 5,
+      "flag_kept": 1,
+      "not_comparable": 19
+    },
+    "fidelity_mismatch": 19,
+    "flagged_now": 10,
+    "flagged_recorded": 2,
+    "host_models": {
+      "claude-code-2.1.285": 74,
+      "unverified": 12
+    },
+    "policy_classes": {
+      "clean": 54,
+      "journal_only": 15,
+      "refused_calls_only": 5
+    },
+    "records": 69,
+    "reviewer_flagged_now": 12
+  }
+}

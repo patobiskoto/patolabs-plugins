@@ -227,6 +227,101 @@ def test_a_missing_path_does_not_hide_a_second_access_to_the_same_path(tmp_path)
     assert lay.audit(R2), "the second call found the file: it is a read"
 
 
+# ------------------------------------------- PAT-128: the quoted form of the absent-path answer (omp ``read``)
+
+def _omp_read_missing(lay, given, text, *, tool="read", error=True):
+    events = [{"type": "tool_execution_start", "toolCallId": "c1", "toolName": tool, "args": {"path": given}},
+              {"type": "tool_execution_end", "toolCallId": "c1", "toolName": tool,
+               "result": {"content": [{"type": "text", "text": text}], "details": {}}, **({"isError": True} if error else {})}]
+    lay.stream.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    return lay
+
+
+def test_the_quoted_answer_is_an_absent_path_only_with_the_new_coordinate(tmp_path):
+    lay = Layout(tmp_path)
+    typo = str(lay.work / "private-a-typo/a/bundle/plugins/foundry/tooling/foundry/frame.py")  # the v5 PR 33 / PR 42 form
+    _omp_read_missing(lay, typo, f"Path '{typo}' not found")
+    flagged = lay.audit(R2)  # as the frozen protocols count it, byte for byte: the quoted answer is not recognised
+    assert any(h.endswith("frame.py") for h in flagged) and any(h.startswith("tool_result:") for h in flagged)
+    assert lay.audit(R2, absent_forms=False) == flagged and lay.audit(1) == lay.audit(1, absent_forms=True)
+    notes: list[str] = []
+    assert lay.audit(R2, absent_forms=True, not_found=notes) == []
+    assert [n.replace(str(lay.work.resolve()), "W") for n in notes] == [
+        "W/private-a-typo/a/bundle/plugins/foundry/tooling/foundry/frame.py"]
+
+
+def test_the_quoted_answer_stays_exact_and_the_unquoted_one_is_unchanged(tmp_path):
+    lay = Layout(tmp_path)
+    given = str(lay.work / "private-b" / "b" / "bundle" / "f.md")
+    other = str(lay.work / "private-b")
+    for text, error in ((f"Path '{given}' not found", False),  # not an error result
+                        (f"Path '{other}' not found", True),  # names another path than the call gave
+                        (f"Path '{given}' not found\n{lay.work}/private-b/b/bundle/other.md", True),
+                        (f"Path '{given}' not found.", True), (f"path '{given}' not found", True),
+                        (f"Path \"{given}\" not found", True), (f"No such file: {given}", True)):
+        notes: list[str] = []
+        assert _omp_read_missing(lay, given, text, error=error).audit(R2, absent_forms=True, not_found=notes), text
+        assert notes == [], text
+    # the answer of another call, and a command that names the path, are still audited
+    assert lay.omp(f"cat {given}").audit(R2, absent_forms=True)
+    # the form ``Path not found: <path>`` is recognised with or without the coordinate
+    for forms in (False, True):
+        notes = []
+        assert _omp_missing(lay, given).audit(R2, absent_forms=forms, not_found=notes) == [] and len(notes) == 1
+
+
+def test_a_second_access_to_a_path_the_quoted_answer_called_absent_is_still_a_read(tmp_path):
+    lay = Layout(tmp_path)
+    given = str(lay.work / "private-b" / "b" / "bundle" / "f.md")
+    events = [{"type": "tool_execution_start", "toolCallId": "c1", "toolName": "read", "args": {"path": given}},
+              {"type": "tool_execution_end", "toolCallId": "c1", "isError": True, "toolName": "read",
+               "result": {"content": [{"type": "text", "text": f"Path '{given}' not found"}]}},
+              {"type": "tool_execution_start", "toolCallId": "c2", "toolName": "read", "args": {"path": given}},
+              {"type": "tool_execution_end", "toolCallId": "c2", "toolName": "read",
+               "result": {"content": [{"type": "text", "text": "contents"}]}}]
+    lay.stream.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    assert lay.audit(R2, absent_forms=True)
+
+
+def test_the_coordinate_is_accepted_only_after_v5_and_only_with_revision_2(tmp_path):
+    key, value = lfr.ABSENT_FORMS_KEY, lfr.ABSENT_FORMS
+    assert (key, value) == ("audit_absent_path_forms", "quoted_path")
+    for v in (1, 2, 3, 4):  # the frozen configurations do not carry it and refuse it
+        config = json.loads((QUALIFICATION / f"pat-19-campaign-v{v}.json").read_text("utf-8"))
+        assert key not in (config.get("isolation") or {}), v
+        with pytest.raises(lfr.RunnerError, match="audit_absent_path_forms .* after v5"):
+            lfr.load_campaign(_config(tmp_path, v, **{key: value}))
+    for name in ("v5", "v5-pilot"):  # v5 and its pilot are pinned without it
+        data = json.loads((QUALIFICATION / f"pat-19-campaign-{name}.json").read_text("utf-8"))
+        assert key not in data["isolation"], name
+        path = tmp_path / f"{name}.json"
+        data["isolation"][key] = value
+        path.write_text(json.dumps(data), encoding="utf-8")
+        (tmp_path / data["exploration"]["ground_truth"]["file"]).write_bytes(
+            (QUALIFICATION / data["exploration"]["ground_truth"]["file"]).read_bytes())
+        with pytest.raises(lfr.RunnerError, match="after v5"):
+            lfr.load_campaign(path)
+    good = dict(audit_revision=R2, cloud_native_sandbox=True)
+    loaded = lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v6", **good, **{key: value}))
+    assert loaded["isolation"][key] == value
+    with pytest.raises(lfr.RunnerError, match="audit_absent_path_forms is 'quoted_path'"):
+        lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v6", **good, **{key: "other"}))
+    with pytest.raises(lfr.RunnerError, match="needs isolation.audit_revision"):
+        lfr.load_campaign(_config(tmp_path, 2, protocol="pat-19-protocol-v6", **{key: value}))
+    assert lfr.FROZEN_PROTOCOLS == tuple(f"pat-19-protocol-v{v}" for v in (1, 2, 3, 4, 5))
+
+
+def test_a_runner_applies_the_quoted_form_only_under_the_key_and_says_so_on_the_record(tmp_path):
+    plain, _, _, _ = make_runner(tmp_path, "compare_exploration", PLAN,
+                                 campaign_over={"isolation": {"audit_revision": R2}})
+    (tmp_path / "k").mkdir()
+    keyed, _, _, _ = make_runner(tmp_path / "k","compare_exploration", PLAN,
+                                 campaign_over={"isolation": {"audit_revision": R2, lfr.ABSENT_FORMS_KEY: lfr.ABSENT_FORMS}})
+    assert plain.absent_forms is False and keyed.absent_forms is True
+    assert "absent_path_forms" not in plain._audit_note([])["audit"]
+    assert keyed._audit_note([])["audit"]["absent_path_forms"] == lfr.ABSENT_FORMS
+
+
 # ------------------------------------------------------- the configuration key and the frozen configs
 
 def _config(tmp_path, version, protocol=None, **iso):
@@ -491,6 +586,35 @@ def test_the_replay_does_not_copy_a_name_from_the_home(tmp_path):
     text = json.dumps(result)
     assert "registry-private-name" not in text and str(rp.home) not in text
     assert result["records"][0]["new"]["hits"] == ["~/<hidden>"] and result["records"][0]["classification"] == "flag_kept"
+
+
+def test_the_replay_measures_the_quoted_form_without_changing_the_default_result(tmp_path):
+    """PAT-128: a local exploration whose omp ``read`` got the quoted answer is a flag as recorded (and as replayed by default);
+    with the measurement on it is an absent path apart; every other record and every field of the default result is the same."""
+    rp = Replay(tmp_path)
+    name = "attempt-l01-0001-pr1-L-explore-cand"
+    bundle = rp.attempt_dir(name) / "bundle"
+    bundle.mkdir(parents=True)
+    typo = str(rp.work.resolve() / "private-attempt-l01-0001-pr1-L-explore-typo" / "x" / "bundle" / "frame.py")
+    events = [{"type": "session", "cwd": str(bundle)},
+              {"type": "tool_execution_start", "toolCallId": "c1", "toolName": "read", "args": {"path": typo}},
+              {"type": "tool_execution_end", "toolCallId": "c1", "toolName": "read", "isError": True,
+               "result": {"content": [{"type": "text", "text": f"Path '{typo}' not found"}]}}]
+    (rp.streams / f"cid-{name}.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    rp.ledger.append({"kind": "attempt_started", "attempt_dir": name, "path": "L", "pr": 1, "segment": "explore", "attempt": 0})
+    rp.records.append({"record_type": "attempt", "campaign_id": "cid", "path": "L", "task": {"pr": 1}, "segment": "explore",
+                       "attempt": 0, "outcome": "contaminated", "contaminated": True,
+                       "contamination": {"paths": [typo, f"tool_result:{typo}"], "commands": []}})
+    rp.cloud(2, "s2", ["ls"])
+    rp.record("A", 2, ["s2"], [])
+    default, measured = rp.run(), rp.run(absent_forms=True)
+    assert "absent_path_forms" not in default and measured["absent_path_forms"] == lfr.ABSENT_FORMS
+    assert default == rp.run(absent_forms=False)
+    d, m = ({r["pr"]: r for r in out["records"]} for out in (default, measured))
+    assert d[1]["new"]["contaminated"] is True and d[1]["new"]["not_found"] == []
+    assert m[1]["new"]["contaminated"] is False and m[1]["new"]["hits"] == [] and len(m[1]["new"]["not_found"]) == 1
+    assert m[1]["classification"] == "flag_moved_to_not_found" and m[1]["recorded"] == d[1]["recorded"]
+    assert m[2] == d[2]  # nothing else moves
 
 
 def test_the_cli_replays_a_finished_campaign_and_never_overwrites_a_result(tmp_path, monkeypatch, capsys):

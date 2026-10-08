@@ -70,6 +70,26 @@ def _audit_real_state(event: str, args: tuple) -> None:
 sys.addaudithook(_audit_real_state)
 
 
+# PAT-128: the audit hook above has no event for ``stat``, so a test (or the code it runs) that only LOOKED at the real
+# config (``Path.exists()`` on ``~/.config/foundry/config.env``) passed silently on the maintainer's machine and failed
+# with ``PermissionError`` under a sandbox that denies that read (PAT-19 v5: 10 records). ``os.stat`` / ``os.lstat`` (what
+# ``pathlib`` and ``os.path.exists`` call) now refuse the same real-state paths while the guard is active.
+def _guard_stat(real_call):
+    def guarded(path, *args, **kwargs):
+        if _guard_active and _is_real_state_path(path):
+            raise RuntimeError(
+                f"PAT-104 guard: test touched the REAL Foundry state ({real_call.__name__} "
+                f"{os.fsdecode(path)!r}); isolate it under tmp_path"
+            )
+        return real_call(path, *args, **kwargs)
+
+    return guarded
+
+
+os.stat = _guard_stat(os.stat)
+os.lstat = _guard_stat(os.lstat)
+
+
 def assert_state_resolvers_isolated(root: Path) -> None:
     """Fail loudly unless every state/config resolver lands under ``root``."""
     from foundry import config, registry
@@ -83,7 +103,7 @@ def assert_state_resolvers_isolated(root: Path) -> None:
     }
     root = root.resolve()
     for name, value in resolved.items():
-        if not value.resolve().is_relative_to(root) or _is_real_state_path(value):
+        if _is_real_state_path(value) or not value.resolve().is_relative_to(root):
             raise AssertionError(f"PAT-104: {name} resolves outside the test sandbox: {value}")
 
 
