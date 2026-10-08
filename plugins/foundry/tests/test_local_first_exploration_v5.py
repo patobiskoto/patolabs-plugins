@@ -1,4 +1,4 @@
-"""PAT-126: protocol v5 (DRAFT until its freeze) and its one-task pilot: the PAT-121 instrument (feedback, private root,
+"""PAT-126: protocol v5 (frozen on 2026-10-08) and its one-task pilot: the PAT-121 instrument (feedback, private root,
 fixed candidate, arms A and L) with the PAT-123 audit revision 2 and the PAT-124 native sandbox switched on, a
 comparison on an explicit ordered list of the 12 corpus tasks recorded under a label of its own, the git-excludes
 read, and Claude Code pinned.
@@ -36,7 +36,7 @@ FROZEN_SHA256 = {  # the frozen v1 to v5 configurations are never edited (PAT-AD
     "pat-19-campaign-v2.json": "6830629ccd385847ca6b88c730b706407517ac009cb3715daf8c6e7a61ec8d16",
     "pat-19-campaign-v3.json": "95b7a0717ecfcc28b6595e4a88dee108d158ff7d85dddc84f7d1c56de8d5fd1d",
     "pat-19-campaign-v4.json": "3bc88cf496f9838779adae431e72754615576c276033cc7436c151d3a10b8605",
-    "pat-19-campaign-v5.json": "093b89022edced18f57237b6cdce62a835fdba52a62a4997e21d0d364693860a",  # frozen 2026-10-08 (PAT-126), after pilot 4 and the review rounds 1 to 3; the pilot config is NOT pinned
+    "pat-19-campaign-v5.json": "fbac092181d373602d94b58ec469b07ed81853520bac4f1dbac7ec7ddad660db",  # frozen 2026-10-08 (PAT-126), after pilot 4 and the review rounds 1 to 4; the pilot config is NOT pinned
 }
 
 
@@ -58,7 +58,7 @@ def _broken(tmp_path, edit, source=V5_PATH):
     return path
 
 
-# ------------------------------------------------------------------------------------- the DRAFT configurations
+# ------------------------------------------------------------------------------------- the frozen configurations
 
 def test_the_frozen_configurations_are_byte_for_byte_untouched():  # v1 to v5; the pilot config is not pinned
     for name, digest in FROZEN_SHA256.items():
@@ -1220,8 +1220,50 @@ def test_the_paired_rule_needs_nine_decided_tasks_and_one_acceptance_in_each_arm
     report, rule = _paired(lambda pr: ((*NO, 100), (*NO, 50)))
     assert report["decision"] == "inconclusive" and rule["reason"] == "no_accepted_task_in_one_arm_ratio_undefined"
     assert report["arms"]["L"]["economy"] == "unavailable" and rule["ratio"] is None
+    assert report["arms"]["L"]["quality"] == "pass" and rule["failed_criteria"] == []  # 0 >= 0: no acceptance failure
+    # A accepts nothing, L something: A's premium per accepted task is undefined: never zero, never a pass
+    report, rule = _paired(lambda pr: ((*NO, 100), (*YES, 50)))
+    assert (report["decision"], rule["reason"]) == ("inconclusive", "no_accepted_task_in_one_arm_ratio_undefined")
+    assert rule["ratio"] is None and rule["premium_per_accepted"]["A"] is None
+    assert report["arms"]["L"]["quality"] == "pass" and report["arms"]["L"]["economy"] == "unavailable"
+
+
+def test_the_acceptance_criterion_is_read_before_the_zero_case_and_its_failure_keeps_the_cloud():
+    # PAT-126 review round 4 (F2). L accepts NO task of D while A accepts some: the shape of the v4 result (A 1, L 0).
+    # It is a failure of the acceptance criterion (keep the cloud, as under v2 to v4), not an undefined ratio.
     report, rule = _paired(lambda pr: ((*YES, 100), (*NO, 50)))
-    assert rule["reason"] == "no_accepted_task_in_one_arm_ratio_undefined"
+    assert (report["decision"], report["recommendation"], rule["reason"]) == (
+        "keep_cloud", "A", "not_retained_on_paired_set")
+    assert rule["failed_criteria"] == ["acceptance"] and rule["ratio"] is None
+    assert report["arms"]["L"]["quality"] == "fail" and report["arms"]["L"]["economy"] == "unavailable"
+    assert report["campaign_conclusion"] == "keep_cloud" and rule["worst_case"]["robust"] is None
+    report, rule = _paired(lambda pr: ((*(YES if pr == 1 else NO), 100), (*NO, 50)))  # A 1, L 0
+    assert (report["decision"], rule["failed_criteria"]) == ("keep_cloud", ["acceptance"])
+    # L accepts fewer, but some: the economy is still printed, and named only when it fails too
+    report, rule = _paired(lambda pr: ((*YES, 100), (*(YES if pr <= 5 else NO), 10)))
+    assert (report["decision"], rule["failed_criteria"]) == ("keep_cloud", ["acceptance"])
+    assert report["arms"]["L"]["economy"] == "pass" and rule["ratio"] is not None
+    report, rule = _paired(lambda pr: ((*YES, 100), (*(YES if pr <= 5 else NO), 100)))
+    assert (report["decision"], rule["failed_criteria"]) == ("keep_cloud", ["acceptance", "economy"])
+    # acceptance holds, the economy fails: named alone
+    report, rule = _paired(lambda pr: ((*(YES if pr <= 6 else NO), 100), (*(YES if pr <= 6 else NO), 100)))
+    assert (report["decision"], rule["failed_criteria"]) == ("keep_cloud", ["economy"])
+    assert _paired(_retained)[1]["failed_criteria"] == []
+
+    # the order before it is unchanged: a premium unknown on D, or fewer than 9 tasks in D, is read first
+    def unknown_in_d(recs, ledger):
+        _cloud_of(recs, "A", 2)["premium"]["billing_total"] = None  # the ledger still knows these tokens
+    report, rule = _paired(lambda pr: ((*YES, 100), (*NO, 50)), edit=unknown_in_d)
+    assert (report["decision"], rule["reason"], rule["failed_criteria"]) == ("inconclusive", "premium_total_unknown", [])
+    report, rule = _paired(lambda pr: ((*YES, 100), (*(UNDECIDED if pr <= 4 else NO), 50)))
+    assert (report["decision"], rule["reason"]) == ("inconclusive", "paired_decided_set_below_9")
+
+    def killed(recs, ledger):  # a failed compatibility is read last: it does not turn the zero case into keep_cloud
+        _explore(recs, 3)["local"]["ended_by_external_signal"] = True
+    report, rule = _paired(lambda pr: ((*NO, 100), (*NO, 50)), edit=killed)
+    assert (report["decision"], rule["reason"]) == ("inconclusive", "no_accepted_task_in_one_arm_ratio_undefined")
+    report, rule = _paired(lambda pr: ((*YES, 100), (*NO, 50)), edit=killed)  # acceptance failed first
+    assert (report["decision"], rule["reason"]) == ("keep_cloud", "not_retained_on_paired_set")
 
 
 def test_the_paired_rule_is_not_robust_to_undecided_tasks_that_could_have_gone_either_way():
@@ -1525,6 +1567,49 @@ def test_a_real_interruption_replayed_by_the_resume_is_read_from_the_records_the
         assert rule["campaign_level_reasons"] == [] and rule["reason"] != "premium_total_unknown"
         assert None not in rule["premium_on_paired"].values()  # known: the cut spent no premium token
         assert rule["verdict_before_campaign_level"] in ("retained", "keep_cloud")  # a verdict is computed
+
+
+@pytest.mark.parametrize("arm", ["A", "L"])
+def test_a_round_0_cut_during_its_cloud_execution_blocks_every_relaunch_at_that_arm_without_a_record(tmp_path,
+                                                                                                    monkeypatch, arm):
+    # PAT-126 review round 4 (F1). The relaunch reaches ``_cloud_resume``, whose cap check sees tokens unknown to the
+    # ledger and raises before any claim: no record at all, the launch stops (``main`` exits 3 on ``cap_reached``),
+    # and the arms and tasks after that point are never attempted.
+    from test_local_first_exploration_runner import _resumed
+    plan = {**PLAN, "reviewer": ["PASS"]}
+    runner, campaign, tasks = _v5_like(tmp_path, plan)
+    real = lfr.execute_driver
+    seen = []
+
+    def cut(driver, values, **kw):
+        if driver["kind"] in lfr.CLOUD_KINDS and "implementer" in driver["argv"]:
+            seen.append(1)
+            if len(seen) == (1 if arm == "A" else 2):  # A's implementer comes first, L's second
+                raise KeyboardInterrupt
+        return real(driver, values, **kw)
+
+    monkeypatch.setattr(lfr, "execute_driver", cut)
+    with pytest.raises(KeyboardInterrupt):
+        runner.compare_exploration(tasks[:1], "cand-a", ("A", "L"))
+    monkeypatch.setattr(lfr, "execute_driver", real)
+    before = results(runner)
+    assert [(r["path"], r["outcome"]) for r in before if r.get("outcome") == "interrupted"] == [(arm, "interrupted")]
+    last = runner
+    for _ in range(2):  # every relaunch, in the same arm order, stops at the same place
+        last, _, _, rtasks = _resumed(tmp_path, last, tasks, "compare_exploration", plan)
+        last.campaign["rules"]["exploration_comparison"].update(tasks=1, paired_decided_min=1)
+        assert last.compare_exploration(rtasks[:1], "cand-a", ("A", "L")) == []
+        assert last.stopped == "cap_reached:premium_tokens_unmeasurable"
+        attempts = [r for r in results(last) if r.get("record_type") == "attempt"]
+        assert attempts == [r for r in before if r.get("record_type") == "attempt"]  # no new record, no stopped_by_cap
+    comparison = lfr.report(last.campaign, results(last), ledger_of(last))["exploration_comparison"]
+    if arm == "A":  # L never plays the task: the campaign stays incomplete whatever is relaunched
+        assert not any(r.get("path") == "L" for r in results(last))
+        assert comparison["campaign_conclusion"] == "incomplete_campaign" and "paired_rule" not in comparison
+    else:  # the last arm of the last task: the campaign is complete, the cut task is undecided and outside D
+        assert comparison["complete"] is True and comparison["paired_rule"]["undecided"]["L"] == {
+            "1": ["cloud:interrupted"]}
+        assert comparison["decision"] == "inconclusive"
 
 
 def test_an_incomplete_v5_campaign_prints_no_v2_to_v4_figure(tmp_path):

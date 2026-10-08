@@ -5881,10 +5881,15 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
     as unknown, ``premium_tokens_on_undecided_tasks``).
 
     The rule on D, in this order: fewer than ``paired_decided_min`` tasks in D: inconclusive. A premium total unknown
-    on a record of a task of D (iii): inconclusive. No accepted task in one arm on D: inconclusive (an undefined
-    ratio is never zero). Else acceptance (accepted_L >= accepted_A) and economy (premium per accepted task of L <=
-    ratio_max x A's; every record of the arm on D's tasks, superseded ones and the reviewer included, local tokens
-    excluded) are read: one of them failing, or the compatibility criterion FAILING: keep the cloud. Both passing and
+    on a record of a task of D (iii): inconclusive. ACCEPTANCE: accepted_L < accepted_A: the criterion fails, keep
+    the cloud (``not_retained_on_paired_set``, ``failed_criteria`` names ``acceptance``), whatever the zeros -
+    accepted_L = 0 with accepted_A >= 1 included (review round 4: it was read ``inconclusive``, an undefined ratio,
+    before the comparison; v2 to v4 gave ``keep_cloud`` there). Else (accepted_L >= accepted_A) accepted_A = 0 - both
+    arms accepted nothing, or A nothing and L something: inconclusive, A's premium per accepted task is undefined and
+    no ratio can be computed (never zero, never an infinite ratio read as a pass). Else ECONOMY (premium per accepted
+    task of L <= ratio_max x A's; every record of the arm on D's tasks, superseded ones and the reviewer included,
+    local tokens excluded): failing, keep the cloud (``failed_criteria`` names ``economy``). Then the compatibility
+    criterion: FAILING, keep the cloud. Acceptance and economy passing and
     compatibility ``unavailable`` (unmeasured swap, a local exploration lost without a successful replay):
     inconclusive, ``compatibility_unavailable`` - absent data is not a failure. All three passing: L is retained,
     subject to the robustness reading (every undecided task of L counted not accepted, every undecided task of A
@@ -5949,7 +5954,8 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
         "accepted_on_paired": {"A": acc_a, "L": acc_l}, "premium_on_paired": {"A": prem_a, "L": prem_l},
         "premium_per_accepted": {"A": None if prem_a is None or not acc_a else round(prem_a / acc_a, 3),
                                  "L": None if prem_l is None or not acc_l else round(prem_l / acc_l, 3)},
-        "ratio_max": float(ratio_max), "ratio": None, "compatibility": mine["compatibility"]}
+        "ratio_max": float(ratio_max), "ratio": None, "compatibility": mine["compatibility"],
+        "failed_criteria": []}  # of ``not_retained_on_paired_set``: "acceptance", "economy" (when it was read)
     worst_a = sum(1 for t in a_tasks.values() if t["accepted"] or not decided(t))
     worst_l = sum(1 for t in l_tasks.values() if t["accepted"])
     detail["worst_case"] = {"A_undecided_counted_accepted": worst_a, "L_undecided_counted_not_accepted": worst_l,
@@ -5961,14 +5967,30 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
         reason = f"paired_decided_set_below_{minimum}"
     elif prem_a is None or prem_l is None:
         reason = "premium_total_unknown"
-    elif not acc_a or not acc_l:
+    elif acc_l < acc_a:
+        # The acceptance criterion FAILS on D, whatever the zeros (accepted_L = 0 with accepted_A >= 1 included: it
+        # is a real failure, as under v2 to v4, never an "undefined ratio"). The economy is still printed when it can
+        # be computed (accepted_L >= 1; accepted_A >= 1 holds here); it does not change this verdict.
+        mine["quality"] = "fail"
+        detail["failed_criteria"] = ["acceptance"]
+        if acc_l:
+            detail["ratio"] = round(float((prem_l * acc_a) / (prem_a * acc_l)), 4) if prem_a else None
+            economy = prem_l * acc_a <= ratio_max * prem_a * acc_l
+            mine["economy"] = "pass" if economy else "fail"
+            detail["failed_criteria"] += [] if economy else ["economy"]
+        verdict, reason = "keep_cloud", "not_retained_on_paired_set"
+    elif not acc_a:
+        # accepted_L >= accepted_A = 0: both arms accepted nothing, or A accepted nothing and L something. A's premium
+        # per accepted task is undefined, no ratio can be computed: never zero, never an infinite ratio read as a pass
+        mine["quality"] = "pass"
         reason = "no_accepted_task_in_one_arm_ratio_undefined"
     else:
         detail["ratio"] = round(float((prem_l * acc_a) / (prem_a * acc_l)), 4) if prem_a else None
         economy = prem_l * acc_a <= ratio_max * prem_a * acc_l
-        mine["quality"] = "pass" if acc_l >= acc_a else "fail"
+        mine["quality"] = "pass"
         mine["economy"] = "pass" if economy else "fail"
-        if acc_l < acc_a or not economy:
+        if not economy:
+            detail["failed_criteria"] = ["economy"]
             verdict, reason = "keep_cloud", "not_retained_on_paired_set"
         elif mine["compatibility"] == "fail":
             verdict, reason = "keep_cloud", "compatibility_failed"
