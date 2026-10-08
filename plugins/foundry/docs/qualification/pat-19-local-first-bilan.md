@@ -54,16 +54,17 @@ comptes. L'audit est réparé ensuite hors campagne (PAT-123), un bac à sable n
 
 **v5 — comparaison A / L sur les 12 tâches, audit en journal sous bac à sable natif (PAT-126, PAT-127).** 10 tâches décidées dans les
 deux bras, 5 acceptées par bras, rapport de prime 0,8579 pour un seuil de 0,85 : **`keep_cloud`**, l'économie échoue de 14 485 tokens par
-tâche acceptée. Les deux explorations perdues (chemin inexistant tapé par le modèle) ont retiré 2 tâches sur 12 de la comparaison sans coûter
-de token. Détails, tables et limites : [résultats v5](pat-19-exploration-results-v5.md).
+tâche acceptée. Les deux explorations comptées contaminées par l'audit (PR 42 et PR 33 ; le modèle y a tapé un chemin inexistant, lien avec le
+drapeau non rejoué) ont retiré 2 tâches sur 12 de la comparaison sans coûter de token premium. Détails, tables et limites : [résultats v5](pat-19-exploration-results-v5.md).
 
 ## Ce que l'ensemble permet de dire, et de ne pas dire
 
 Permet de dire :
 
 - Sur ces tâches, l'explorateur local localise bien les **fichiers** (rappel 1,0 sur 13 explorations scorées des v4 et v5) et moyennement les
-  **fonctions** (0,778 sur 9 scorées en v5) ; il lui arrive d'échouer pour des raisons sans rapport avec la localisation (coupure à 900 s sur PR 30,
-  chemin mal tapé sur PR 42 et PR 33, les deux explorations comptées contaminées par l'audit).
+  **fonctions** (0,778 sur 9 scorées en v5) ; il lui arrive aussi de ne rendre aucun rapport noté (v5 : coupure à 900 s et 60 étapes sur PR 30,
+  sans cause établie ; PR 42 et PR 33 comptées contaminées par l'audit après un chemin mal tapé par le modèle, cause du drapeau non rejouée) ;
+  ce que ces trois explorations auraient valu est inconnu.
 - Sur D (10 tâches), L a dépensé 1 304 381 tokens de moins que A (7 874 314 contre 9 178 695, tokens de facturation non pondérés), avec 5
   tâches acceptées de chaque côté ; l'écart par tâche acceptée ne franchit **pas le seuil pré-enregistré**, et les tâches acceptées
   diffèrent sur 4 des 10. Aucune cause n'en est établie. La différence de prime sur D se trouve surtout
@@ -112,8 +113,8 @@ Chaque option se lit contre une lacune ci-dessus ; aucune n'est recommandée ici
 5. **Cibler les rôles où le cloud dépense en exploration** plutôt que mesurer l'exploration seule : en v5, la prime de A se répartit en
    implémenteur 39 %, correcteur 31 %, relecteur 30 % (12 tâches) ; l'exploration n'est pas isolée dans ces classes ; une mesure du poids de la
    lecture de dépôt dans l'implémenteur cloud est possible sur les flux existants (hors dépôt) sans nouvelle campagne.
-6. **Réduire le bruit d'instrument** avant de remesurer : l'audit (chemin inexistant tapé par le modèle et lu, probablement [hypothèse, non rejouée], comme un accès par l'outil
-   `read`), les tests du dépôt qui touchent le home sous le bac à sable, la veille du dossier temporaire partagé. Chaque point passe par `foundry:intake`.
+6. **Réduire le bruit d'instrument** avant de remesurer : l'audit (chemin inexistant passé par le modèle à l'outil `read`, interprété par
+   l'audit, probablement [hypothèse, non rejouée], comme un accès ; aucun fichier n'a été lu, le chemin n'existe pas), les tests du dépôt qui touchent le home sous le bac à sable, la veille du dossier temporaire partagé. Chaque point passe par `foundry:intake`.
 7. **Ne pas mesurer davantage** et en rester à « conserver le cloud » pour l'exploration, faute de preuve : la règle (PAT-ADR-0015) le permet et
    n'engage rien.
 

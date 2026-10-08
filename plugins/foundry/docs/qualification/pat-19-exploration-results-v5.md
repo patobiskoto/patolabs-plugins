@@ -55,7 +55,9 @@ sur 12 de la comparaison.
   n'est pas exercé par cet essai, on ne sait pas ce qu'il aurait fait.
 - **Mandat** [coord.] : le 2026-10-08, le mainteneur a écrit « Ok v5 et on va jusqu'au run et bilan. La machine est à toi toute la
   journée, tu peux lancer et arrêter ce qui doit l'être », puis « Ok fait comme tu dis » (candidat local unique qwen3.6-35b) et
-  « Ok c'est bon » (règle de décision v5). Le chargement du modèle pour la campagne est couvert par ce mandat **de bloc** : un
+  « Ok c'est bon » (règle de décision v5) ; ces trois citations sont le texte littéral des messages du mainteneur dans la conversation
+  [coord., non vérifiable depuis le dépôt], le texte entre guillemets du protocole v5 (paragraphe « Qui a fixé quoi ») en est une
+  paraphrase, non une citation. Le chargement du modèle pour la campagne est couvert par ce mandat **de bloc** : un
   rechargement avant chaque tâche, **non confirmé un par un** ; la boucle opérateur charge avec `-y`. Ces accords sont dans la
   conversation, pas dans le dépôt ; l'accord explicite du mainteneur sur la règle v5 a été consigné en commentaire sur PAT-126 avant la
   fusion [coord.] (le texte gelé du protocole et `rules_applied` du rapport disent encore « à consigner » : ils précèdent l'accord).
@@ -185,8 +187,8 @@ Aucun échec de collecte enregistré (`collection_failure` faux partout). « Tok
 | 19 | L | 2 | REFUSED (5 / 4) | 4 / 4 | — | `judge_refused` | 432 451 |
 
 Un « ACCEPTED » du juge avec un BLOCK du relecteur est enregistré `review_block` (la revue décide) ; les six BLOCK de la
-campagne sont à la section « Blocages de la revue ». Sur PR 25 (A, tour 1) et PR 37 (A, tour 1), un BLOCK a été suivi d'un tour
-accepté ; sur PR 42 (A, tour 1), un BLOCK a été suivi d'un tour qui régresse (4 / 0 puis 2 / 2) et la tâche finit refusée.
+campagne sont à la section « Blocages de la revue ». Sur PR 25 (A, tour 1), PR 37 (A, tour 1) et PR 24 (L, tour 1), un BLOCK a été suivi
+d'un tour accepté ; sur PR 42 (A, tour 1), un BLOCK a été suivi d'un tour qui régresse (4 / 0 puis 2 / 2) et la tâche finit refusée.
 
 ### Verdict, tel que la règle gelée le rend
 
@@ -250,8 +252,9 @@ Fait recalculé sur les tours de correction (30 tours suivent un refus du juge :
 
 Un tour suivant un BLOCK de revue (sans retour de tests) : 5 (A 3, L 2) ; un seul change les comptes, en régression (PR 42 A,
 4 / 0 puis 2 / 2). Les 11 tours qui arrivent à 0 échoué sont, pour A, PR 26, 25, 42, 37 et 27, et pour L, PR 26 (0 / 1 puis 1 / 0), 25, 38 (35 / 1
-puis 36 / 0), 37 (1 / 1 puis 2 / 0), 27 (2 / 1 puis 3 / 0) et 24 (1 / 9 puis 10 / 0) ; un tel tour n'est pas toujours accepté
-(PR 25 L, PR 24 L tour 1 et PR 42 A finissent en BLOCK ou régressent). Les tâches dont les comptes ne bougent jamais malgré le retour : PR 30 (161 / 2, 4 tours
+puis 36 / 0), 37 (1 / 1 puis 2 / 0), 27 (2 / 1 puis 3 / 0) et 24 (1 / 9 puis 10 / 0) ; 5 de ces 11 tours sont
+bloqués par la revue (A PR 25, A PR 37, A PR 42, L PR 25 et L PR 24, au tour 1 chacun), et le tour suivant est accepté pour A PR 25, A PR 37
+et L PR 24, de nouveau bloqué pour L PR 25 (5 / 0, BLOCK) et en régression pour A PR 42 (4 / 0 puis 2 / 2, refusé par le juge). Les tâches dont les comptes ne bougent jamais malgré le retour : PR 30 (161 / 2, 4 tours
 sur 4), PR 48 (223 / 122, 4 sur 4, 20 noms montrés sur 122), PR 83 L (16 / 2, 2 sur 2), PR 19 L (5 / 4, 2 sur 2). PR 30 et PR 48
 présentent **les mêmes comptes que dans la v4** (161 / 2 ; 223 / 122) : aucun bras de l'une ni de l'autre campagne n'a bougé ces
 deux tâches ; on ne sait pas pourquoi [inconnu].
@@ -433,7 +436,7 @@ Le critère d'arrêt (a) à (f) de la section 7.2 du protocole est celui des pil
 **aucun arrêt n'a été déclenché pendant la campagne** : pas de tâche vide, pas de relecteur illisible, `audit.barrier` = `settings_transmitted_version_observed` pour
 chaque enregistrement cloud (réglages transmis et version observée ; le lanceur n'observe pas l'application du bac à sable par le système, protocole §3.1), registre réel inchangé [coord.], exploration locale exécutée (12 lancées, 1 coupée par
 la borne). C'est une lecture du rapport, pas un nouveau verdict. Une question reste ouverte pour le coordinateur : les deux
-explorations contaminées, où le drapeau tient à un chemin inexistant tapé par le modèle, ressemblent au critère (a) (drapeau
+explorations contaminées, où le modèle a tapé un chemin inexistant et où le drapeau en vient probablement [hypothèse, non rejouée], ressemblent au critère (a) (drapeau
 écartant un enregistrement sans que le bras ait quitté son essai) ; le critère était écrit pour les pilotes et je ne rends pas de verdict dessus.
 
 ## Erratum du protocole v5, section 2, cas (ii)
@@ -481,7 +484,7 @@ Le protocole v5 est gelé ; la correction est donc portée ici. La section 2 éc
   copie 2.1.293 [coord.], fait à consigner pour PAT-125, **sans décision**) ; **dossier temporaire partagé** par utilisateur (AGENTS.md R6
   interdit de changer `TMPDIR`) ; **le mode `dontAsk` rend la v5 non comparable à la v4** ; une interruption après règlement à la manche
   0 donnerait un verdict inconclusif (limite dite du protocole, non exercée ici).
-- À ces limites s'ajoutent celles de ce résultat : **deux explorations perdues pour un chemin mal tapé**, un seul passage par couple
+- À ces limites s'ajoutent celles de ce résultat : **deux explorations perdues, comptées contaminées après un chemin mal tapé** (lien avec le drapeau non rejoué), un seul passage par couple
   tâche / bras, **un test du dépôt qui touche la configuration du home et échoue sous le bac à sable** (effet d'instrument, 10 enregistrements), un
   seul modèle de relecteur, un seul candidat local, une seule machine, un seul moteur local (MLX).
 - Douze tâches ne sont **pas** une preuve générale ; ce résultat ne dit rien d'autres familles de tâches ni d'un explorateur cloud
