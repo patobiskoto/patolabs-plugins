@@ -56,12 +56,12 @@ V4_FEEDBACK = {"hidden_test_failures": True, "max_failures": 20, "max_message_ch
 V4_ARMS = ("A", "L")  # no Haiku arm E in protocol v4
 V4_KEYS = "correction_feedback, isolation.private_attempt_root, exploration.fixed_candidate and " \
           "exploration.comparison_task_group"
-# PAT-126: protocol v5 (DRAFT: frozen only after pilot 4) and its pilot. The pilot is the same instrument on one task, under a
+# PAT-126: protocol v5 (frozen 2026-10-08, before any trial of its campaign, after four pilots) and its pilot. The pilot is the same instrument on one task, under a
 # protocol name and a campaign id of its own, so that its records can never be read as, or mixed with, the campaign's.
 PROTOCOL_V5 = "pat-19-protocol-v5"
 PROTOCOL_V5_PILOT = "pat-19-protocol-v5-pilot"
 V5_PROTOCOLS = (PROTOCOL_V5, PROTOCOL_V5_PILOT)
-FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4)  # v5 joins at its freeze, after pilot 4
+FROZEN_PROTOCOLS = ("pat-19-protocol-v1", "pat-19-protocol-v2", "pat-19-protocol-v3", PROTOCOL_V4, PROTOCOL_V5)
 V5_TASKS = (26, 38, 25, 42, 33, 37, 30, 83, 27, 24, 48, 19)  # the six v3 comparison tasks, then the six v3 screening ones
 V5_PILOT_TASKS = (27,)
 V5_TASK_SET = {PROTOCOL_V5: "pat-19-v5", PROTOCOL_V5_PILOT: "pat-19-v5-pilot"}  # label of ``task.set`` in the records

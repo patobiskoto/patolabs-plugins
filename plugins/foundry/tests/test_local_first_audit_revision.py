@@ -250,7 +250,7 @@ def test_the_frozen_configurations_do_not_carry_the_key_and_refuse_it(tmp_path):
         assert lfr.load_campaign(QUALIFICATION / f"pat-19-campaign-v{v}.json")  # as they load today
         with pytest.raises(lfr.RunnerError, match="audit_revision .* after v4"):
             lfr.load_campaign(_config(tmp_path, v, audit_revision=R2))
-    assert lfr.FROZEN_PROTOCOLS == tuple(f"pat-19-protocol-v{v}" for v in (1, 2, 3, 4))
+    assert lfr.FROZEN_PROTOCOLS == tuple(f"pat-19-protocol-v{v}" for v in (1, 2, 3, 4, 5))
 
 
 def test_the_revision_is_gated_by_an_allow_list_of_later_protocols(tmp_path):

@@ -31,11 +31,12 @@ PILOT_PATH = QUALIFICATION / "pat-19-campaign-v5-pilot.json"
 TWELVE = [26, 38, 25, 42, 33, 37, 30, 83, 27, 24, 48, 19]
 LABEL = "pat-19-v5"
 GIT_IGNORE = ".config/git/ignore"
-FROZEN_SHA256 = {  # the frozen v1 to v4 configurations are never edited (PAT-ADR-0015)
+FROZEN_SHA256 = {  # the frozen v1 to v5 configurations are never edited (PAT-ADR-0015)
     "pat-19-campaign-v1.json": "a678dc6781b84058c20727a9002b55c84319bf43d90a3f6e70eb1a079d962ffc",
     "pat-19-campaign-v2.json": "6830629ccd385847ca6b88c730b706407517ac009cb3715daf8c6e7a61ec8d16",
     "pat-19-campaign-v3.json": "95b7a0717ecfcc28b6595e4a88dee108d158ff7d85dddc84f7d1c56de8d5fd1d",
     "pat-19-campaign-v4.json": "3bc88cf496f9838779adae431e72754615576c276033cc7436c151d3a10b8605",
+    "pat-19-campaign-v5.json": "b8bc2733a67959c3ccbb33756761ac6c15e9f3bb227c558b5de8cbb093651e58",  # frozen 2026-10-08 (PAT-126), after pilot 4; the pilot config is NOT pinned
 }
 
 
@@ -59,7 +60,7 @@ def _broken(tmp_path, edit, source=V5_PATH):
 
 # ------------------------------------------------------------------------------------- the DRAFT configurations
 
-def test_the_frozen_configurations_are_byte_for_byte_untouched():  # v1 to v4 (v5 is pinned at its freeze)
+def test_the_frozen_configurations_are_byte_for_byte_untouched():  # v1 to v5; the pilot config is not pinned
     for name, digest in FROZEN_SHA256.items():
         assert hashlib.sha256((QUALIFICATION / name).read_bytes()).hexdigest() == digest, name
     v4 = lfr.load_campaign(V4_PATH)
@@ -68,14 +69,13 @@ def test_the_frozen_configurations_are_byte_for_byte_untouched():  # v1 to v4 (v
     assert v4["isolation"]["allow_read_home"] == [] and "binary_version" not in v4["drivers"]["cloud_reviewer"]
 
 
-def test_the_v5_campaign_pins_the_decided_values_and_is_still_a_draft():
+def test_the_v5_campaign_pins_the_decided_values_and_is_frozen():
     v4, v5 = _load(V4_PATH), lfr.load_campaign(V5_PATH)
     assert v5["schema"] == lfr.CAMPAIGN_SCHEMA_V2 and v5["protocol"] == lfr.PROTOCOL_V5
-    assert v5["note"].startswith("DRAFT") and "NOT FROZEN" in v5["note"] and "mandate of 2026-10-08" in v5["note"]
-    # nothing is called frozen until pilot 4 has passed: at the freeze, pin the sha256 of this config in FROZEN_SHA256,
-    # add PROTOCOL_V5 to FROZEN_PROTOCOLS and flip this assertion
-    assert lfr.PROTOCOL_V5 not in lfr.FROZEN_PROTOCOLS and lfr.PROTOCOL_V5_PILOT not in lfr.FROZEN_PROTOCOLS
-    assert "pat-19-campaign-v5.json" not in FROZEN_SHA256
+    assert v5["note"].startswith("Frozen campaign config") and "2026-10-08" in v5["note"] and "mandate of 2026-10-08" in v5["note"]
+    assert "DRAFT" not in json.dumps(v5) and "DRAFT" not in json.dumps(_load(PILOT_PATH))
+    assert lfr.PROTOCOL_V5 in lfr.FROZEN_PROTOCOLS and lfr.PROTOCOL_V5_PILOT not in lfr.FROZEN_PROTOCOLS
+    assert "pat-19-campaign-v5.json" in FROZEN_SHA256 and "pat-19-campaign-v5-pilot.json" not in FROZEN_SHA256
     one = "qwen3.6-35b-a3b-mlx-4bit"
     assert list(v5["candidates"]) == [one] and v5["candidates"] == v4["candidates"]
     assert v5["exploration"]["fixed_candidate"] == one and "comparison_task_group" not in v5["exploration"]
