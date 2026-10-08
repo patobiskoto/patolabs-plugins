@@ -1,0 +1,1289 @@
+{
+  "campaign_id": "pat-19-x4compare-1",
+  "records": [
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "eb727968ae4734f3134b0d5954fdfa330095d03ccb68791c0f6e97fc0f661fd1",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "flag_kept",
+      "fidelity": "match",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "/"
+        ],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "pr": 30,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/"
+          ],
+          "not_found": [],
+          "old": [
+            "/"
+          ],
+          "role": "arm",
+          "sha256": "9025262f97322a2a86e69b3582457de88ed9d948268b9c66486a63c5b68440a0",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 30,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "57666c9336a4f678ff5656d84d03691fb9e68a52eed071d630d9f9bd76d0015d",
+          "stream": "local:attempt-l02-0003-pr30-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "flag_kept",
+      "fidelity": "match",
+      "new": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4"
+        ],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "pr": 30,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/private/tmp/pat19-work4"
+          ],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work4"
+          ],
+          "role": "arm",
+          "sha256": "5cce1e728f4014d99506b17ab04f9f273b1d40f637e159d5887468434948a97d",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "flag_removed",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/tests/test_agent_routing.py"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "pr": 83,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/tests/test_agent_routing.py"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work4/tests/test_agent_routing.py"
+          ],
+          "role": "arm",
+          "sha256": "8a0e532aef440aa6073ab70e973a54c5fb834491263069570cb23739a0cffc68",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [
+          "/private/tmp/pat19-work4/private-attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/plugins",
+          "/private/tmp/pat19-work4/private-attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/plugins/foundry",
+          "/private/tmp/pat19-work4/private-attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/plugins/foundry/tests/test_linear_tracker.py"
+        ],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 83,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [
+            "/private/tmp/pat19-work4/private-attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/plugins",
+            "/private/tmp/pat19-work4/private-attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/plugins/foundry",
+            "/private/tmp/pat19-work4/private-attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit/plugins/foundry/tests/test_linear_tracker.py"
+          ],
+          "old": [],
+          "role": "arm",
+          "sha256": "5c0f4984f061c3dfe86e7d7d4084c788c8f8eb99d08e9315edf06186602e5cb5",
+          "stream": "local:attempt-l03-0002-pr83-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 83,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "085e51b73d9e2a0b7c14222423eed18c7ab97a7f2255e619d7073f098426e860",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "flag_moved_to_review",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/scratch/stderr.log"
+        ],
+        "session": "reviewer"
+      },
+      "path": "L",
+      "pr": 83,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/scratch/stderr.log"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "746ed950ab5a8ea13b8682fe16e76bd96ed4574e9584ad6ec34747ae06c3b94e",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work4/scratch/stderr.log"
+          ],
+          "role": "reviewer",
+          "sha256": "461316f73b40d7d9f6a5e2051cf58c865a68de18b88d98107f79ae968a4b4138",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "49b77a67c094ace1c26240c9827dd69f1e68c81cb17c1123f8215a0b16e79c7b",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "flag_added",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": [
+          "/<unknown-working-directory>"
+        ]
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "accepted"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "a649db7571a840c372021e3b389de8c86b5c4912950514c83c5e6030c8bf4414",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [
+            "/<unknown-working-directory>"
+          ],
+          "not_found": [],
+          "old": [],
+          "role": "reviewer",
+          "sha256": "4b545348318c0e6b3d5d9967f7f357ccc660ec0e1855fc7734db8ec5d0f7ed6b",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "21eeaf6ab1f7be03efe1592521374586723faee587c3dc8ac3c6f26e85c70250",
+          "stream": "local:attempt-l04-0004-pr27-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "74da7323474a8defb31fa4332bd7aa33bf181e700b78ac5d59075c1fd486f041",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 27,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "09cc652f7f9c6aae741a314ef38c4eb4c2a09d9913cfc3ce4dbd27acf3d5d2c1",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "classification": "flag_removed",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/tests/test_linear_tracker.py"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "pr": 27,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/tests/test_linear_tracker.py"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work4/tests/test_linear_tracker.py"
+          ],
+          "role": "arm",
+          "sha256": "c243afe6d9b828eff5aec8e3363719099bb2d0febe17599776883de9442ee3ef",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "31373db129120b78a68b197cf69ac39a9665b65b841f2b34c069b1c612733b41",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "10723dafda99bc9597072f4783b1cc70c4c35a1fdbde4ef564e24d74a2b35770",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "classification": "flag_removed",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/scratch",
+          "/private/tmp/pat19-work4/scratch/foundry-data",
+          "/private/tmp/pat19-work4/scratch/stderr.log"
+        ],
+        "session": "reviewer"
+      },
+      "path": "A",
+      "pr": 24,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/scratch",
+          "/private/tmp/pat19-work4/scratch/foundry-data",
+          "/private/tmp/pat19-work4/scratch/stderr.log"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "653be276f1b25d20edcedce84c9e5fd8f80e3fa625b60cb409e40f842a9dee64",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work4/scratch",
+            "/private/tmp/pat19-work4/scratch/foundry-data",
+            "/private/tmp/pat19-work4/scratch/stderr.log"
+          ],
+          "role": "reviewer",
+          "sha256": "6fea83f5e413914019c9c3415b83efd03d453dcbc3b85e1805ce3493af8bdb2e",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "d858a4f3008bc41ff343622b5378698a3632f8bcde14c5352f2c3ca821b6709f",
+          "stream": "local:attempt-l05-0005-pr24-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "454f9b896871b1ea5c41444a3da1621e8c1e7852f755a19923012ed7f0f37bea",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "review_block"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "df006b2aaf62e4122b9f294223a262e7eb4a6b03a029b2552f58fe8e5877030e",
+          "stream": "cloud_sessions[0]"
+        },
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "reviewer",
+          "sha256": "e88f602211a1f0af34d86960c52096f5939e51a52770d8a26b71ebce5a15f45d",
+          "stream": "cloud_sessions[1]"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 24,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "dc09c8d81a919a4a260e998203088bf8db87531d07edc923f2b63ab8c0de1252",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "0438a29b76d2abb031507ddb92afba12baf87b5f1bc184efb92ffdf034cbb125",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 48,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "91ef4b5d432531944613c506fe227df248e4a9a455a5272629a85f0ccbfd8483",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "classification": "flag_removed",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4",
+          "/private/tmp/pat19-work4/scratch"
+        ],
+        "session": "arm"
+      },
+      "path": "A",
+      "pr": 48,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4",
+          "/private/tmp/pat19-work4/scratch"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [
+            "/private/tmp/pat19-work4",
+            "/private/tmp/pat19-work4/scratch"
+          ],
+          "role": "arm",
+          "sha256": "3bc95652b581d99c12d8342ecf7a76209495798b340207bf11482a3ef597f718",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "flag_moved_to_not_found",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [
+          "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
+          "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md"
+        ],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
+          "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
+          "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
+          "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md"
+        ],
+        "session": "arm"
+      },
+      "path": "L",
+      "pr": 48,
+      "recorded": {
+        "contaminated": true,
+        "hits": [
+          "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
+          "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
+          "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
+          "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md"
+        ],
+        "outcome": "contaminated"
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [
+            "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
+            "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md"
+          ],
+          "old": [
+            "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
+            "/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md",
+            "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-observed-readback.md",
+            "tool_result:/private/tmp/pat19-work4/private-attempt-l06-0004/pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit/bundle/plugins/foundry/tests/fixtures/pat71-source-body.md"
+          ],
+          "role": "arm",
+          "sha256": "ec40849eab422fe4c591e4c9d7767f44f69d1e85fdf2848f83f1b1b34abd860f",
+          "stream": "local:attempt-l06-0004-pr48-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "64301b7322050f2fc2cbf823a9a3be3bb69bea40edc33016ffd8d0a27f951488",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "d6c842d2cf17dd1531d02be9233a8241b23cba23615d2ee3f1dfa95725d95103",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "A",
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "5275e6de698d93242a8ae2cf81f163642c6391d790174deb11ff7de666168388",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": null
+      },
+      "segment": "explore",
+      "streams": [
+        {
+          "host_model": "unverified",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "af3e1a7da4c16a22eee51ffa592c582ad9401d21b7834d7dd1a7949e811a60af",
+          "stream": "local:attempt-l07-0004-pr19-L-explore-qwen3.6-35b-a3b-mlx-4bit"
+        }
+      ]
+    },
+    {
+      "attempt": 0,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "748944990deb0729ce050cd6c4096e79e67b98ca2531f866eaecaec220f7de41",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 1,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "e531a5cb62bc875aaf018ec7bda527cfbb87a5645a695ebe7bd47aff7f09d3b8",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "classification": "clean",
+      "fidelity": "match",
+      "new": {
+        "contaminated": false,
+        "hits": [],
+        "not_found": [],
+        "reviewer_hits": []
+      },
+      "old": {
+        "contaminated": false,
+        "hits": [],
+        "session": null
+      },
+      "path": "L",
+      "pr": 19,
+      "recorded": {
+        "contaminated": false,
+        "hits": [],
+        "outcome": "judge_refused"
+      },
+      "segment": "cloud",
+      "streams": [
+        {
+          "host_model": "claude-code-2.1.285",
+          "new": [],
+          "not_found": [],
+          "old": [],
+          "role": "arm",
+          "sha256": "9fef655c665f8d251a9c943f82d675a47bb2b784101e1786c12c3eb0a39eafe2",
+          "stream": "cloud_sessions[0]"
+        }
+      ]
+    }
+  ],
+  "replay_limits": [
+    "offline: no model, no cloud call; nothing is recomputed (verdicts, outcomes, report)",
+    "sensitive roots rebuilt from the repository, state directory and home of the replay",
+    "base literals come from the checkout of the replay, not from each bundle; the local sandbox denial is not reconstructed",
+    "roles: the first cloud session of a record is taken as the arm's and the others as the reviewer's (true for paths A and L; wrong for path C or a resumed record)",
+    "work root sensitive in the rebuilt list: yes"
+  ],
+  "results_sha256": "47c01eda6d340435ae0cd8a533b341675a0606b95f732b3d5cc12cdb1a827fd0",
+  "revisions": {
+    "new": 2,
+    "old": 1
+  },
+  "schema": "foundry.local-first-audit-replay.v1",
+  "summary": {
+    "classification": {
+      "clean": 23,
+      "flag_added": 1,
+      "flag_kept": 2,
+      "flag_moved_to_not_found": 1,
+      "flag_moved_to_review": 1,
+      "flag_removed": 4
+    },
+    "fidelity_mismatch": 0,
+    "flagged_now": 2,
+    "flagged_recorded": 8,
+    "host_models": {
+      "claude-code-2.1.285": 30,
+      "unverified": 6
+    },
+    "records": 32,
+    "reviewer_flagged_now": 2
+  }
+}

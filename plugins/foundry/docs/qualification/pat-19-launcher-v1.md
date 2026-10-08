@@ -928,4 +928,227 @@ Protocole gelé : [`pat-19-protocol-v4.md`](pat-19-protocol-v4.md) ; configurati
 - **Bras** : sous ce protocole, `compare-exploration` refuse tout bras autre que `A` et `L` avant toute réservation (code 2), et `--paths` vaut `A,L` par défaut. `report` d'un candidat fixé affiche `exploration_screening.state: no_screening` et `screening_selected: fixed_by_protocol:<candidat>`, jamais `incomplete_screening`.
 - **Opérateur** : la ligne de fin de lancement reste `pat19-v3: work_remains=…`.
 - **Statut documentaire (R5)** : ce document, le protocole v4 (section 6) et le CHANGELOG. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.
-- **Résultats réels (PAT-122)** : comparaison `pat-19-x4compare-1`, exécutée le 2026-10-07 : [`pat-19-exploration-results-v4.md`](pat-19-exploration-results-v4.md) (pièces brutes dans `pat-19-runs/x4compare-1/`). Le diagnostic qui y figure nomme trois défauts de l'audit de contamination (jetons relatifs résolus contre le bundle sans suivre un `cd`, dossier de travail réinitialisé à chaque appel Bash, imputation à la tentative entière d'une contamination du relecteur) : documentés ici comme constats de ce diagnostic, **non corrigés** (réparation à passer par `foundry:intake`).
+- **Résultats réels (PAT-122)** : comparaison `pat-19-x4compare-1`, exécutée le 2026-10-07 : [`pat-19-exploration-results-v4.md`](pat-19-exploration-results-v4.md) (pièces brutes dans `pat-19-runs/x4compare-1/`). Le diagnostic qui y figure nomme trois défauts de l'audit de contamination (jetons relatifs résolus contre le bundle sans suivre un `cd`, dossier de travail réinitialisé à chaque appel Bash, imputation à la tentative entière d'une contamination du relecteur) : documentés ici comme constats de ce diagnostic. **Corrigés ensuite pour une campagne future** par PAT-123 (section « Révision 2 de l'audit et rejeu hors ligne » ci-dessous), jamais pour la v4.
+
+## Révision 2 de l'audit et rejeu hors ligne (PAT-123)
+
+Les protocoles v1 à v4, leurs configurations et leurs résultats sont gelés et **ne changent pas** : sans la clé ci-dessous, le
+lanceur se comporte exactement comme avant (audit de révision 1, capture du correctif inchangée, enregistrements de même forme).
+La réparation est une **révision 2** de l'audit, activée par une clé de configuration et donc par un protocole postérieur à la v4.
+
+**Modèle de menace (décision du mainteneur, 2026-10-08).** L'audit lexical est un **journal** des sorties accidentelles d'un
+bras qui fait son travail ; il n'est **pas une barrière** contre un bras qui chercherait à le tromper. La barrière est le bac
+à sable natif de l'outil Bash de Claude Code, appliqué par le système d'exploitation (PAT-124). Tout ce que cette section
+affirme de la révision 2 vaut **pour un bras qui ne cherche pas à tromper l'audit, sous les hypothèses H1 à H9**, et rien
+au-delà.
+
+- **Ce que l'essai réel du 2026-10-08 a montré de la barrière** (Claude Code 2.1.285, rapporté par PAT-124, pas rejoué ici) :
+  OAuth n'est pas affecté ; `pytest` et `git` fonctionnent dans le bundle avec un `allowRead` absolu du bundle et
+  `GIT_CONFIG_GLOBAL=/dev/null` ; les lectures par le shell d'un dossier voisin, du parent et du répertoire personnel, et les
+  écritures par le shell hors du bundle, sont refusées par le système ; l'outil Read hors du bundle est refusé par
+  `permissions.blockReadsOutsideWorkingDirectories`. **Trou restant** : l'outil Write peut encore créer un fichier dans un
+  dossier voisin.
+- **Couplage obligatoire.** Un protocole futur ne doit activer la révision 2 **qu'avec** ce bac à sable natif. Aucune clé de
+  configuration du bac à sable natif n'existe aujourd'hui (PAT-124 l'ajoutera) : le lanceur **ne peut donc pas le vérifier**
+  et ne le prétend pas. Sous la révision 2, chaque enregistrement porte `audit.barrier: "not_verified"` (constante
+  `AUDIT_BARRIER`) : un rapport v5 ne peut pas être lu comme « bras confiné » sur la foi de l'audit. Le jour où PAT-124 livre
+  la clé, c'est à ce ticket de lier les deux au chargement et de changer cette valeur.
+- **Limites connues : contournement délibéré, hors périmètre de PAT-123.** Listées, pas corrigées une à une (les mêmes, L1 à
+  L6, en tête du bloc « audit revision 2 » de `local_first_runner.py`) :
+  1. **L1, dossier ou lien déplacé sous le shell** : renommer, déplacer, remplacer ou supprimer un dossier ou un lien
+     symbolique du chemin d'un candidat après y être entré (`mkdir d; cd d; mv ../d ../../d2; cat ../../../tests/…` ;
+     `ln -s ../scratch l; cd l; rm ../bundle/l; cat ../../../tests/…`). Un programme déplace ainsi le shell sans `cd` ;
+     l'audit, qui lit des noms, résout encore depuis l'ancien nom et **ne relève rien**. Deux tests
+     (`…_is_a_known_limit_the_audit_does_not_see`) fixent ce comportement d'aujourd'hui pour qu'un changement se voie : ce
+     ne sont pas des garanties.
+  2. **L2, `CDPATH` ou autre état lu par `cd` réglé par un nom construit ou une évaluation arithmétique** (`print $O NOM …`
+     avec `O=-v`, `let E` ou `typeset -i X=E` avec `E='CDPATH=5'`, `(( ))`). Durci seulement là où cela coûte une ligne et
+     n'ajoute aucun faux drapeau sur un travail ordinaire : `print -v` (comme `printf -v`) et `integer`/`float` avec un
+     argument contenant `$` retirent la confiance dans le `cd` qui suit ; `let` avec un tel argument fait abandonner le
+     dossier (deux tests nommés). Le reste de la classe n'est pas traité.
+  3. **L3, profil de l'hôte** : alias, fonctions, crochets (`chpwd`, `precmd`), modules et options du shell (`autocd`,
+     `cdablevars`, `chaselinks`). H4 suppose qu'il n'y en a pas ; rien dans le flux ne le montre.
+  4. **L4, commande construite à l'exécution** (nom ou script que le shell développe ou lit dans un fichier). L'audit
+     abandonne le dossier pour les formes qu'il lit (`$X ..`, `eval`, `source`) ; il ne voit pas les autres.
+  5. **L5, `cd` caché dans un script ou un interpréteur** (`python3 -c "os.chdir('..'); …"`, `make -C`, `git -C`, un fichier
+     de script écrit par le bras) : le dossier de ce programme n'est pas suivi (H8).
+  6. **L6, chemin construit à l'exécution** ou gardé dans un fichier pour un appel suivant (H8, comme en révision 1).
+
+- **`isolation.audit_revision`** (entier, 1 par défaut ou 2). Liste blanche : le chargeur n'accepte 2 que sous un `protocol` de la
+  forme `pat-19-protocol-vN` avec N >= 5 ; une valeur autre que 1 ou 2, un protocole v1 à v4, absent ou inconnu est refusé.
+  **Limite à lever par un protocole v5 (à porter dans le ticket v5)** : les clés v4 (`correction_feedback`,
+  `isolation.private_attempt_root`, `exploration.fixed_candidate`, `exploration.comparison_task_group`) ne sont acceptées
+  que sous `pat-19-protocol-v4`, où la révision 2 est refusée : **aujourd'hui aucune configuration ne peut charger à la fois
+  les clés v4 et la révision 2**. Un v5 qui veut les deux demande un changement du chargeur ; les tests de la révision 2 sur
+  bras factices construisent leur campagne sans passer par le chargeur.
+- **Dossier courant (le cœur de la révision 2).** Un chemin relatif d'une commande est résolu depuis le dossier où la
+  commande s'exécute. L'audit ne connaît jamais ce dossier : il tient un **ensemble de répertoires candidats** et relève un chemin
+  dès qu'**un** candidat le fait sortir de la zone permise. Toute la règle tient en un invariant : **l'ensemble des candidats
+  contient le dossier réel**. Un `cd` **remplace** l'ensemble (seul geste par lequel la révision 2 peut relever moins que la
+  révision 1) dans le cas ci-dessous et nulle part ailleurs ; tout le reste ne fait qu'**ajouter** des candidats. La règle n'est
+  plus une liste de formes dangereuses : c'est une **liste blanche**.
+  - **Grammaire de confiance** (`_simple_script`) : le script de l'appel, corps de documents ici retirés, est une suite de
+    chaînes séparées par `;` ou un retour à la ligne ; une chaîne est faite de tubes reliés par `&&` ou `||` ; un tube, de
+    commandes simples reliées par `|` ; une commande simple, d'affectations, de mots et de redirections ; un mot, de caractères
+    ordinaires, de guillemets et de `$NOM`/`${NOM}`. Rien d'autre : ni
+    sous-shell, ni groupe, ni substitution, ni accent grave, ni `&`, ni mot réservé (`if`, `for`, `while`, `{`, `!`, `[[`,
+    `time`…), ni définition de fonction, ni commande vide.
+  - **Quand un `cd` remplace les candidats** (`_walk_simple`, les six conditions à la fois) : (1) le script est dans la
+    grammaire ; (2) le résultat de l'appel est **propre** et **entier** (H2, H3 : le script a rendu 0, donc il est allé au
+    bout) ; (3) aucune commande avant le `cd` n'a pu finir le script avec le statut 0 (`exit`, `return`, `exec`, `logout`,
+    `bye`), déplacer le shell hors de vue ou changer ce que lit `cd` (toute commande interne hors de la liste blanche des
+    commandes inertes, un nom de commande que le shell construit, `CDPATH`) ; (4) le `cd` est le premier tube de sa chaîne,
+    seul dans son tube, sans affectation ni redirection, et aucun `||` ne le suit dans la chaîne ; (5) il a une seule cible, un
+    mot que le shell ne développe pas (ni `$`, ni joker, ni accolade, ni `~`), qui ne commence ni par `-` ni par `+`, après
+    les options `-L`, `-P`, `-e`, `-q`, `-s`, `--` ; (6) le résultat ne contient
+    **aucune ligne `cd:`**, quel que soit le message (H6). La cible est résolue des deux façons, logique et physique (lien
+    symbolique traversé, `cd -P`) : les deux répertoires sont candidats.
+  - **Partout ailleurs le `cd` n'est pas cru** : il **ajoute** sa cible aux candidats, ou `UNKNOWN_CWD` si la cible n'est pas
+    lisible (`cd $X`, `cd -`, `cd` seul, joker, deux cibles, affectation devant) ; `UNKNOWN_CWD` fait de tout chemin relatif
+    un drapeau (`/<unknown-working-directory>`) et s'ajoute aussi pour toute commande interne hors liste blanche (`pushd`,
+    `popd`, `eval`, `source`, `.`, `trap`, `alias`, `setopt`, `builtin cd`…), pour un nom de commande construit (`$X ..`) et
+    pour `CDPATH`. Hors de la grammaire (`_walk_loose` : boucle, fonction, sous-shell, `if`, substitution…), **aucun ordre
+    n'est cru** : chaque `cd` lisible a pu s'exécuter, une fois et dans l'ordre du texte s'il n'y a ni boucle ni fonction,
+    **un nombre quelconque de fois dans un ordre quelconque sinon** (point fixe ; au-delà de 32 candidats, `UNKNOWN_CWD`), et
+    chaque chemin relatif du script est résolu contre **tous** les candidats du script.
+  - **Filet des jetons** : tout chemin relatif d'un appel est résolu contre tous les répertoires où le shell a pu être
+    **depuis la commande qui le nomme jusqu'à la fin de l'appel**, shells enfants compris (`X=../x; cd ..; cat $X`,
+    `bash -c 'cat "$1"' _ ../x`, arguments d'une fonction, liste d'un `for`) ; seuls les mots d'un `cd` sont résolus là où
+    il se trouve. **Toute autre commande nomme aussi `.`, le dossier où elle s'exécute** : un nom nu (`cat x`, `ls`) n'est pas
+    un jeton de chemin, donc une commande qui a pu s'exécuter hors de la zone permise est un drapeau par elle-même (rôle que
+    joue en révision 1 la cible relevée du `cd` qui y a mené), y compris quand cette cible n'était pas lisible
+    (`cd $X; cat y` : relevé ici, pas en révision 1). Un mot `cd`/`chdir`/`pushd`/`popd` du texte que l'audit n'a pas lu comme une commande (dans une chaîne,
+    `x=cd; $x ..`) ajoute `UNKNOWN_CWD` : il a pu être exécuté hors de vue.
+  - **D'un appel au suivant** (`_next_session`, hôte observé seulement) : après un résultat propre, les candidats de fin ;
+    après tout autre résultat (erreur, statut non nul accepté par l'hôte, interruption, arrière-plan, résultat absent, trop
+    long ou tronqué, script contenant `exit`/`return`/`exec`), **tous** les répertoires où l'appel a pu être, son départ compris.
+    `Shell cwd was reset to …` dans le résultat décide : la racine du bundle (le répertoire le moins profond, donc une ligne
+    contrefaite ne peut que durcir). Un candidat hors projet **sans** cette ligne est gardé, avec la racine. Deux appels
+    envoyés sans attendre le résultat du premier (ordre d'exécution inconnu ; aucun dans les flux v4) ne prouvent rien.
+  - **Hypothèses sous lesquelles « candidats ⊇ dossier réel » tient, pour un bras qui ne cherche pas à tromper l'audit**
+    (les mêmes, numérotées H1 à H9, en tête du bloc « audit revision 2 » de `local_first_runner.py` ; hors de ce cadre,
+    voir les limites connues L1 à L6 ci-dessus) :
+    1. **H1, hôte** : le flux est un flux Claude Code dont tous les événements `init` nomment une version observée
+       (`OBSERVED_CLAUDE_CODE` : `2.1.285`). Observé dans les 30 flux cloud de la v4 : chaque appel Bash est un nouveau shell
+       qui lance la commande par `eval` (les erreurs zsh s'écrivent `(eval):cd:1: …`) ; le dossier de fin d'un appel est repris
+       par le suivant quand l'appel a rendu 0 et que le dossier est dans le projet ; un appel qui finit hors projet est remis
+       à la racine avec « Shell cwd was reset to … ». **Non établi** : si le dossier est repris après un appel qui a rendu un
+       statut non nul (dans un flux v4, un appel de statut 1 qui commençait par un `cd` a laissé l'appel suivant à la racine,
+       sans qu'on sache si ce `cd` s'était exécuté) ; l'audit garde donc les deux. Pas de sous-agent : le lanceur refuse un
+       flux cloud dont l'`init` liste un autre outil que Bash, Edit, Read, Write.
+    2. **H2, résultat** : un résultat sans `is_error`, avec l'objet de détail de l'hôte sans `interrupted`,
+       `returnCodeInterpretation` (statut non nul que l'hôte accepte, `grep` 1 par exemple) ni tâche d'arrière-plan, signifie
+       que le script a rendu 0 (« propre »). Tout autre résultat, et un résultat absent, ne prouve rien.
+    3. **H3, sortie** : un résultat d'au plus 20 000 caractères sans marque de troncature contient toute la sortie standard
+       et d'erreur. Aucun résultat tronqué dans les flux v4 ; les marques sont celles de l'hôte telles que connues, non observées.
+    4. **H4, shell** : bash ou zsh avec ses options par défaut pour `cd` (ni `autocd`, ni `cdablevars`, ni `chaselinks`), sans
+       `CDPATH`, sans alias, fonction, crochet (`chpwd`) ni module qui déplace ou termine le shell sous un nom hors de
+       `_SHELL_NAMES`. Un nom de commande hors de `_SHELL_NAMES` est un programme : il ne peut pas faire exécuter un `cd`
+       au shell, mais il **peut** le déplacer sans `cd`, en renommant, déplaçant ou remplaçant un dossier ou un lien
+       symbolique du chemin où le shell se trouve (limite L1) ; l'audit suppose que le bras ne le fait pas et ne le
+       vérifie pas. Hors dossier courant, l'état du shell ne passe pas d'un appel au suivant. **Rien dans le flux ne le
+       montre : supposé.**
+    5. **H5, statut** : un script qui s'arrête avant sa fin rend un statut non nul, sauf `exit`, `return`, `exec`, `logout`,
+       `bye` (lus par l'audit, qui ne croit alors ni `cd` suivant ni dossier de fin). Observé sous bash 3.2 et zsh 5.9 pour les
+       formes engendrées par le test, et une fois sur l'hôte (un « no matches found » de zsh a donné « Exit code 1 ») ; non
+       prouvé pour toute erreur de shell.
+    6. **H6, `cd`** : un `cd` raté écrit une ligne contenant `cd:` sur la sortie d'erreur du shell.
+    7. **H7, lecture** : les lecteurs de l'audit découpent le script comme le shell. Gardes : le filet des mots `cd` ci-dessus,
+       `$'…'` et un document ici jamais fermé retirent toute confiance.
+    8. **H8, usage** : un chemin relatif nommé dans un appel est utilisé, s'il l'est, par la commande qui le nomme ou une
+       suivante du **même** appel, par un programme qui le résout depuis le dossier du shell (pas `git -C`, `make -C`,
+       `os.chdir`) ; un chemin construit à l'exécution n'est pas vu, comme en révision 1.
+    9. **H9, sinon** : si H1 ne tient pas (flux omp, autre version de Claude Code, version absente), **repli plus strict, pas
+       silence** : aucun dossier n'est repris, chaque appel part de l'**union** de la racine et de tout répertoire où un appel
+       précédent a pu être, et aucun `cd` ne remplace rien. L'enregistrement le dit (`audit.host_models` : `unverified` au
+       lieu de `claude-code-2.1.285`). À revérifier, et la liste `OBSERVED_CLAUDE_CODE` à compléter, à chaque version d'hôte.
+  - **Où la révision 2 relève moins que la révision 1** : seulement quand un `cd` est cru (conditions ci-dessus) et que le
+    chemin, résolu depuis ce dossier, reste dans la zone : c'est la correction voulue (les faux drapeaux de la v4). Cela
+    vaut sous H1 à H8 pour un bras qui ne cherche pas à tromper l'audit, et pas au-delà (limites L1 à L6) ; un chemin inexistant (ci-dessous) n'est pas une lecture. Le coût inverse est
+    un **sur-relevé** assumé dans les cas ambigus : un `cd` suivi d'une commande qui échoue, d'un `grep` sans résultat ou
+    d'un `||`, un `cd` dans une boucle ou un sous-shell, un mot `cd` dans un message, laissent plusieurs candidats.
+  - **Répertoire `mktemp -d` : non modélisé (décision, avec sa raison).** `T=$(mktemp -d); cd $T/…` reste un `cd` de cible
+    illisible : `UNKNOWN_CWD`, donc la commande suivante est relevée. Modéliser ce répertoire comme un lieu connu et permis
+    (il vient d'être créé : ni une autre tentative, ni les tests cachés, ni le répertoire personnel) a été écrit, testé, puis
+    **retiré**, parce qu'on ne peut pas le rendre sûr : l'audit ne connaît pas le chemin réel du répertoire et ne peut donc
+    pas, comme il le fait pour le bundle, y résoudre les liens symboliques ; un lien que le bras y pose
+    (`ln -s / $T/r; cd $T/r`, ou une arborescence copiée qui en contient) mènerait hors zone sans être vu. Les conditions sur
+    la liaison elle-même (affectation unique et inconditionnelle, pas de gabarit, de `-p`, de `TMPDIR`, de `PATH=`, pas de
+    `mktemp` raté) étaient tenables ; celle sur le contenu ne l'est pas. Coût : un relecteur qui travaille dans une copie
+    `mktemp` est relevé (deux sessions de la v4). Suite possible, à passer par `foundry:intake` : demander au relecteur de
+    travailler dans son dossier d'essai (`scratch/`, zone permise où les liens se résolvent) plutôt que dans `mktemp`.
+  - **Preuves** : un test nommé par cas de la seconde revue et ses variantes (arrêt avant le `cd` : `set -e`, `exit`,
+    `return`, `exec`, erreur d'expansion, statut non nul, délai, arrière-plan, résultat absent ou tronqué ; `cd` répété :
+    `for`, `while`, `until`, fonction appelée deux fois, fonctions imbriquées ; arguments positionnels : `sh -c`, `xargs`,
+    `find -exec`, fonction, `for`, `set --`, affectation) ; commande exécutée hors zone ; les tables « cru » / « pas cru » ;
+    la liste `_SHELL_NAMES`
+    comparée aux commandes internes des shells installés ; et un **test par propriété** contre un vrai `/bin/bash` et un vrai
+    `zsh` (le shell de l'hôte), 150 suites d'appels engendrées pour chacune des 8 combinaisons shell × comportement d'hôte :
+    le dossier réel de départ de chaque appel est dans les candidats et tout chemin réellement résolu hors zone est relevé.
+    **Observé** par l'oracle : ce que le shell exécute, où, avec quel statut et quels messages. **Encodé** (aucun hôte n'est
+    lancé) : `eval`, la lecture du dossier de fin (à la sortie du shell, ou après le script), la reprise ou non après un
+    statut non nul, la remise à la racine avec sa ligne, la forme du résultat. Non couvert par
+    l'oracle : `trap`, les alias et options du profil de l'hôte (H4), et tout contournement délibéré (L1 à L6 : l'oracle
+    engendre des formes de travail ordinaire, pas des manœuvres). **Shell couvert** : le shell de l'hôte est **zsh** ; sur
+    une machine sans zsh (une image de CI peut n'avoir que bash), la moitié zsh du test par propriété et du test de
+    `_SHELL_NAMES` est **sautée de façon visible** (`skipped` dans le rapport de tests, avec sa raison), donc non couverte
+    là : seule une exécution locale avec zsh la prouve. Aussi couverts par des tests nommés : les deux durcissements de L2,
+    les deux limites L1 (comportement d'aujourd'hui), et une coupure pendant l'implémenteur relevé (refus qui porte l'audit
+    de la session, interruption) : l'essai du bras est `contaminated`, chemins nommés une seule fois, sous les deux révisions.
+- **Chemin inexistant** : un appel d'outil omp qui a donné un `path` et dont le résultat est une erreur `Path not found: <ce
+  même chemin>` n'a rien lu : ni le chemin ni l'écho de l'erreur ne sont des drapeaux ; le chemin est consigné dans
+  `audit.not_found` de l'enregistrement. Un autre texte d'erreur, un résultat non erroné, un résultat d'un autre appel, un autre
+  chemin nommé, une commande Bash (clé `command`) ou un second accès réussi au même chemin restent audités comme avant. Ce
+  chemin peut être n'importe où (dans sa propre racine privée comme ailleurs) : `not_found` dit « le bras a nommé ce chemin »,
+  non « le bras a visé la zone interdite ».
+- **Session du relecteur** (chemin cloud) : un drapeau de la session du relecteur ne met plus `contaminated` sur l'essai du bras.
+  Il est enregistré dans `review.contamination` (`paths`, `commands`) et `unknown["review.contaminated"]`, et les verdicts du
+  juge et de la revue restent lisibles. **Un relecteur relevé ne décide rien, quel que soit son verdict** : l'issue est
+  `review_unreadable` (indécidé, jamais rejoué), `accepted` reste `None`, la boucle s'arrête et ses conclusions ne sont
+  transmises à aucun correcteur (un `BLOCK` d'un relecteur relevé n'alimente donc pas une correction). Le chemin C (v1) garde
+  son comportement. **Même règle si l'essai est coupé** (panne d'outil, interruption) après l'audit du relecteur : le drapeau
+  du relecteur va dans `review.contamination` de l'enregistrement coupé et ne le rend pas `contaminated` (sous la révision 1,
+  il le rend `contaminated` comme avant). `report` liste ces enregistrements dans `review_contaminated` (clé présente
+  seulement s'il y en a, donc jamais pour une campagne gelée), à côté de `contaminated`.
+- **Capture du correctif** : `_PATCH_EXCLUDES_V2` ajoute `.pytest_cache/` et `.ruff_cache/` aux exclusions de `_capture_patch`.
+  Origine établie : le bras lance `pytest` / `ruff` dans son bundle, ce qui crée ces dossiers avec leur propre `.gitignore` ; le
+  `.gitignore` du dépôt ignore déjà `.pytest_cache/` ; `git add -A -f` de la capture force l'ajout des fichiers ignorés et les
+  exclusions ne les couvraient pas : c'est l'**instrument** qui les a mis dans le correctif et dans le diff du relecteur. **Seuls
+  ces deux caches** sont traités (ce sont les deux que montrent les flux v4) ; `-f` est gardé parce que l'enlever changerait ce
+  que la capture garde au-delà de ces deux dossiers (tout autre fichier ignoré qu'un bras ajoute légitimement) et donc ce que
+  voit le juge ; un autre cache (`.mypy_cache`, `.hypothesis`, `.coverage`) serait encore capturé jusqu'à ce qu'une campagne le
+  montre. Les v1 à v4 gardent `_PATCH_EXCLUDES`.
+- **Enregistrement** : sous la révision 2 seulement, chaque enregistrement d'essai allé à son terme porte `audit: {revision,
+  barrier, not_found, host_models}` ; `barrier` vaut toujours `not_verified` (le lanceur ne vérifie pas le bac à sable natif,
+  voir « Couplage obligatoire ») ; `host_models` dit, par flux audité et dans l'ordre, ce que l'audit a pu supposer de l'hôte
+  (`claude-code-2.1.285`, ou `unverified` : repli H9). Un enregistrement coupé (panne d'outil, interruption) ne porte pas ce
+  champ, sous aucune révision.
+- **`informative_arms`** (rapport d'exploration) ne nomme plus qu'un bras informatif **joué** (`["E"]` si l'arme E a des
+  enregistrements, `[]` sinon). Ce correctif de sortie s'applique à tout rapport futur, v2 et v3 compris, et ne change aucune
+  décision ni aucun verdict ; les rapports versés ne sont pas recalculés.
+- **Rejeu hors ligne** : `python3 -m foundry.local_first_runner replay-audit --campaign <config> --results
+  results-<id>.jsonl --streams-dir <flux bruts> --work-root <racine de travail> [--repo .] [--home <HOME>]
+  [--work-root-not-sensitive] [--out <fichier>]` (le registre `ledger-<id>.jsonl` est lu à côté des résultats ; `--out`
+  n'écrase jamais un fichier existant). Il applique à chaque flux les révisions 1 et 2, sans pilote, sans modèle, sans appel
+  cloud, et rend par enregistrement ce qui a été enregistré, l'ancien classement, le nouveau, les chemins inexistants à part, le
+  `sha256` du flux et une classification : `clean`, `flag_kept` (mêmes chemins), `flag_kept_changed` (gardé, chemins différents),
+  `flag_removed`, `flag_moved_to_review` (le drapeau n'est plus dans la session du bras mais dans celle du relecteur),
+  `flag_moved_to_not_found` (plus de lecture, un chemin inexistant consigné à part), `flag_added` (rien d'enregistré, un
+  drapeau maintenant), `not_comparable` (la révision 1 rejouée ne retrouve pas ce qui a été enregistré), `unavailable` (un flux
+  manque : jamais « propre »). Le résumé compte à part `flagged_now` (session du bras) et `reviewer_flagged_now`
+  (enregistrements dont seule ou aussi la session du relecteur est relevée), et `host_models` (flux par modèle d'hôte) ;
+  chaque flux porte son `host_model`. `--work-root-not-sensitive` rejoue sans la racine de travail dans la liste sensible : c'est la
+  mesure de ce que le changement v4 explique (ses fidélités sont attendues « mismatch » : l'enregistré, lui, l'avait). Aucun
+  verdict, issue ni rapport n'est recalculé. Limites : racines sensibles reconstruites avec le dépôt, le dossier d'état et le
+  répertoire personnel du rejeu ; littéraux de base de l'extraction courante ; refus du bac à sable local non reconstruit ; **rôles** :
+  la première session cloud d'un enregistrement est prise pour celle du bras et les suivantes pour celles du relecteur (vrai pour
+  les chemins A et L ; faux pour le chemin C ou un enregistrement repris) ; un chemin sous le répertoire personnel est écrit
+  `~/<hidden>` et le rejeu refuse de produire un résultat qui en copie un. Résultat sur la v4 :
+  [`pat-19-audit-replay-v4.md`](pat-19-audit-replay-v4.md).
+- **Statut documentaire (R5)** : ce document, le rejeu v4, le CHANGELOG ; artefacts : verbe `replay-audit` (dont
+  `--work-root-not-sensitive`), clé `isolation.audit_revision`, constantes `AUDIT_REVISION`, `FROZEN_PROTOCOLS`,
+  `UNKNOWN_CWD`, `OBSERVED_CLAUDE_CODE`, `AUDIT_BARRIER`, `_PATCH_EXCLUDES_V2`, paramètres `revision`, `not_found`,
+  `host_model` et `trace` de `audit_transcript`, champs `audit` (dont `host_models` et `barrier`) et `review.contamination`, clé
+  `review_contaminated` du rapport, compteurs `reviewer_flagged_now` et `host_models` du rejeu, `informative_arms`. Aucun verbe de `foundry_cli.py`, clé de configuration produit, table de routage ni
+  constante de routage modifiés. Contrainte opérationnelle documentée ici : la révision 2 ne s'active qu'avec le bac à sable
+  natif (PAT-124), non vérifié par le lanceur. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.

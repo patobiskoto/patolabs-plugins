@@ -185,7 +185,7 @@ ne sont pas versés : ce document ne peut pas les faire vérifier depuis le dép
 
 | # | Tentative | Ce qui s'est passé | Jugement du diagnostic |
 | --- | --- | --- | --- |
-| 1 | A PR 30, correcteur (tour 1) | `find / -iname "*ADR-0012*"` : parcours de tout le système de fichiers ; **10 noms de fichiers** du dossier personnel du mainteneur (dépôts sans rapport) sont arrivés au bras ; aucun contenu lu | drapeau **correct** |
+| 1 | A PR 30, correcteur (tour 1) | `find / -iname "*ADR-0012*"` : parcours de tout le système de fichiers ; **10 noms de fichiers** du dossier personnel du mainteneur (dépôts sans rapport ; décompte du diagnostic, que je n'ai pas vérifié) sont arrivés au bras ; aucun contenu lu | drapeau **correct** |
 | 2 | L PR 30, implémenteur (tour 0) | `find <racine de travail> -iname "*adr*0012*"` : sortie de la zone permise, aucun résultat | drapeau **correct** |
 | 3 | A PR 83, implémenteur (tour 0) ; L PR 27, correcteur (tour 2) | `../../../tests/…` depuis un sous-dossier du bundle : un fichier du propre bundle du bras | **erreur de l'audit** |
 | 4 | L PR 83 (tour 1) ; A PR 24 (tour 2) | le drapeau vient de la session du **relecteur** (qui lit son propre `scratch/`) ; la session du bras est propre | **erreur de l'audit** |
@@ -207,15 +207,21 @@ dans les flux bruts locaux, des commandes `find / -iname "*ADR-0012*"` (session 
 - **(B)** `_command_paths` repart du bundle à chaque appel Bash (ligne 1643 : `cwd, out = bundle, []`), alors que Claude Code
   conserve le dossier de travail d'un appel au suivant ;
 - **(déclencheur)** la v4 a rendu la racine de travail sensible (ligne 2172 : `sensitive.append(self.work_root)`) : les deux
-  défauts existaient avant ; selon le diagnostic, les chemins mal résolus ne tombaient alors sous aucune racine sensible (lecture
-  non vérifiée pour tous les cas : pour les chemins issus de `_command_paths`, l'audit relève aussi les ancêtres du bundle par un
-  autre chemin de code, lignes 1823-1825, ce qui n'a pas été rejoué sur la v3) ;
+  défauts existaient avant. Portée **exacte**, mesurée par PAT-123 en rejouant l'audit de la v4, inchangé, sur les flux bruts
+  avec l'agencement v4 mais sans la racine de travail dans la liste sensible (mesure committée : [`pat-19-audit-replay-v4-scope.json`](pat-19-audit-replay-v4-scope.json), commande `replay-audit --work-root-not-sensitive`, résumée dans le [rejeu](pat-19-audit-replay-v4.md)) : ce changement
+  est la **seule** cause des drapeaux du cas 3 (les deux), du cas 4 de L PR 83, du cas 6 et du chemin `<racine>/scratch` du cas 5 ;
+  il n'est **pas** la cause du cas 4 de A PR 24 (trois chemins sous `<racine>/scratch`, relevés tels quels par la règle des
+  chemins relatifs qui sortent de la zone permise) ni de `<racine>` elle-même au cas 5 (ancêtre du bundle, relevée par le test
+  d'ancêtre, lignes 1823-1825 à `4adeb2f`, indépendamment de la liste sensible). La lecture « le changement de la v4 a transformé
+  les défauts en drapeaux » vaut donc en entier pour 4 des 8 enregistrements (A PR 83, L PR 83, L PR 27, L PR 48), en partie
+  pour A PR 48 (`<racine>/scratch`), et pas pour A PR 30, L PR 30 ni A PR 24, relevés sans lui. Non rejoué sur l'agencement de
+  la v3 (sans racine privée) ;
 - **(imputation)** une contamination de la session du relecteur marque toute la tentative (les deux cas du 4).
 
 Dit sans détour : le risque résiduel que le protocole v4 énonçait en section 5 (un geste `../../..` depuis un sous-dossier atteint
 encore la racine de travail, devenue sensible, et est encore relevé) **s'est réalisé**, et, selon le diagnostic, le changement de la v4 qui rend la racine de travail sensible (protocole
 §3.2, une mesure sur l'instrument et non une valeur de la règle) est ce qui a transformé deux défauts d'audit préexistants en
-drapeaux. **5 des 8 drapeaux sont des erreurs de l'audit** (cas 3, 4, 5) selon le diagnostic ; la règle gelée les
+drapeaux (portée précisée ci-dessus : pas pour tous). **5 des 8 drapeaux sont des erreurs de l'audit** (cas 3, 4, 5) selon le diagnostic ; la règle gelée les
 compte quand même, et le verdict reste celui qu'elle donne.
 
 **Aucun contenu d'une autre tentative, des tests cachés ou du fichier de vérité n'est arrivé à un bras** (constat du diagnostic ;
@@ -237,7 +243,13 @@ Trois tentatives : L PR 83 (tour 1), A PR 24 (tour 2), L PR 24 (tour 1). Les enr
 sa raison. Selon le diagnostic (lecture des flux, non versés) : les raisons de blocage sont des tests ou une mise à jour de
 documentation manquants (AGENTS.md R5) et, pour L PR 24, un changement hors périmètre ; **dans les trois, un dossier
 `.pytest_cache/` commité fait l'essentiel du diff**. Qui, du bras ou de la capture de correctif de l'instrument, est responsable
-de la présence de `.pytest_cache/` dans le diff **n'est pas établi**. Le seul enregistrement où le BLOCK s'applique sans autre
+de la présence de `.pytest_cache/` dans le diff **n'était pas établi** ; PAT-123 l'a établi (lecture du code et des flux bruts) : le
+bras lance `pytest` (et `ruff`) dans son bundle, ce qui crée `.pytest_cache/` et `.ruff_cache/` avec leur propre `.gitignore` ; le
+`.gitignore` du dépôt ignore déjà `.pytest_cache/` ; c'est la **capture du correctif par l'instrument** (`_capture_patch`,
+`git add -A -f`, qui force l'ajout des fichiers ignorés, et des exclusions qui ne couvraient ni `.pytest_cache/` ni `.ruff_cache/`)
+qui les a mis dans le correctif, donc dans le diff du relecteur (« pytest cache force-added to the change », écrit par un relecteur
+dans un flux). Corrigé par PAT-123 pour une campagne future seulement (révision d'audit 2) ; les correctifs de la v4 ne sont pas
+recapturés. Le seul enregistrement où le BLOCK s'applique sans autre
 drapeau est L PR 24 (tour 1) ; le tour suivant (tour 2), qui suit ce BLOCK, régresse à 4 / 6 (voir plus haut).
 
 ## Qualité de l'exploration sur les six tâches
@@ -294,8 +306,8 @@ absente n'est pas zéro) : le chiffre 2 870 126 < 4 134 697 ne dit rien d'une é
 
 Le rapport imprime `informative_arms: ["E"]` alors que la v4 n'a pas de bras E. Le code (`local_first_runner.py`, vers la ligne
 4044) écrit cette liste en dur, sans lire les bras joués. **Défaut de sortie du rapport**, non expliqué comme intentionnel ; la
-décision et la conclusion ne le lisent pas (le bras L est bien `informative: false` dans le même rapport). Non corrigé ici (aucun
-changement du lanceur dans cette PR). De même, `exploration_screening` est `no_screening` (candidat fixé), comme documenté.
+décision et la conclusion ne le lisent pas (le bras L est bien `informative: false` dans le même rapport). Non corrigé dans PAT-122 ;
+corrigé ensuite par PAT-123 (`informative_arms` ne nomme plus que les bras joués), sans recalculer le rapport versé ici. De même, `exploration_screening` est `no_screening` (candidat fixé), comme documenté.
 
 ## Les trois verdicts (PAT-ADR-0015), tels que la règle gelée les rend
 
@@ -310,9 +322,10 @@ changement du lanceur dans cette PR). De même, `exploration_screening` est `no_
 - Ce que le juge aurait rendu sur les 5 tentatives cloud contaminées et non jugées (liste ci-dessus), et la suite des tours que
   les tâches indécidées auraient connus.
 - Si le retour de tests est la cause des changements de comptes, ou s'il aurait suffi d'un tour de plus ; pas de bras témoin.
-- Si les erreurs de l'audit auraient disparu avec une version corrigée de l'audit : non testé.
+- Si les erreurs de l'audit auraient disparu avec une version corrigée de l'audit : testé hors ligne par PAT-123 sur les flux
+  bruts ([rejeu](pat-19-audit-replay-v4.md)) ; ce que la campagne aurait donné avec cet audit reste inconnu (rien n'est rejoué).
 - La fréquence, à l'avenir, d'un chemin absolu d'une exécution antérieure laissé dans un correctif (cas symétrique du protocole §5).
-- Pourquoi les comptes de PR 19 (7 / 2) et de PR 48 (223 / 122) ne bougent pas ; pourquoi `.pytest_cache/` figure dans le diff.
+- Pourquoi les comptes de PR 19 (7 / 2) et de PR 48 (223 / 122) ne bougent pas ; pourquoi `.pytest_cache/` figure dans le diff (établi depuis par PAT-123, voir « Blocages de la revue »).
 - La part du contexte observé (262 144 au lieu de 65 536) dans la variabilité de l'exploration.
 - Les versions exactes des outils (omp, LM Studio) pour cette campagne : héritées de la v3, non relevées dans les journaux versés.
 - Hors dépôt, non vérifiables d'ici : l'existence et le contenu de la sauvegarde, l'identité du sha256 du registre réel avant et
@@ -329,14 +342,16 @@ changement du lanceur dans cette PR). De même, `exploration_screening` est `no_
   relecteur), et un seul essai par couple tâche / bras.
 - Six tâches ne sont **pas** une preuve générale ; une seule machine, un seul moteur local (MLX), un seul candidat ; ce résultat
   ne dit rien d'autres familles de tâches ni d'un explorateur cloud économique.
-- **Incident de confinement, distinct de l'audit** : le `find /` du cas 1 a fait parvenir à une session cloud 10 noms de fichiers
-  du dossier personnel du mainteneur (aucun contenu lu, selon le diagnostic). L'audit l'a relevé après coup, il ne l'a pas
-  empêché : les bras cloud tournent sans bac à sable (AGENTS.md R6), risque résiduel connu et accepté par le mainteneur, qui s'est
+- **Incident de confinement, distinct de l'audit** : le `find /` du cas 1 a fait parvenir à une session cloud, selon le diagnostic, 10 noms de fichiers
+  du dossier personnel du mainteneur (décompte et absence de contenu lu : du diagnostic, non vérifiés par moi). L'audit l'a relevé après coup, il ne l'a pas
+  empêché : les bras cloud tournent sans bac à sable (Claude Code ne s'authentifie pas sous `sandbox-exec`, voir « Exposition des bras cloud » de `pat-19-launcher-v1.md` ; AGENTS.md R6 ne dit que l'identité OAuth liée à la machine, non l'absence de bac à sable), risque résiduel connu et accepté par le mainteneur, qui s'est
   réalisé ici. Le réduire (règle d'outil refusant un parcours hors du bundle, par exemple) demande un ticket propre passant par
   `foundry:intake`.
-- **Suite possible (non engagée ici)** : réparer l'audit (jetons relatifs qui ignorent un `cd`, dossier de travail réinitialisé
-  à chaque appel, imputation au relecteur) et le champ `informative_arms` demande un ticket propre passant par `foundry:intake` ;
-  cette PR ne change aucun code du lanceur et ne relance rien.
+- **Suite** : PAT-123 répare l'audit (jetons relatifs qui ignorent un `cd`, dossier de travail réinitialisé à chaque appel,
+  imputation au relecteur, chemin inexistant), la capture du correctif et le champ `informative_arms`, pour une campagne future
+  seulement (clé `isolation.audit_revision` 2, refusée sous les protocoles v1 à v4) et rejoue l'audit hors ligne sur les 36
+  flux de cette campagne : [`pat-19-audit-replay-v4.md`](pat-19-audit-replay-v4.md). Rien n'est recalculé ici ; PAT-122 ne change
+  aucun code du lanceur et ne relance rien.
 
 ## Pièces versionnées
 
