@@ -110,7 +110,8 @@ for m in json.load(sys.stdin):
   WR=$(printf '%s\n' "$OUT" | grep -E '^pat19-v3: work_remains=(yes|no)$' | tail -1 || true)
   log "launch $n: launcher exit code $CODE ${WR:-no work_remains line}"
   if [ "$CODE" -ne 0 ]; then
-    log "STOP: launcher exited $CODE (2 = refused/preflight, 3 = cap reached, 4 = real Foundry registry changed by a cloud arm: investigate first): re-run this script to resume"
+    log "STOP: launcher exited $CODE (2 = refused/preflight or a tool error recorded as tool_error; 3 = cap reached, also premium_tokens_unmeasurable after a cloud execution with unknown tokens; 4 = real Foundry registry changed by a cloud arm: investigate first; 130 = interrupted by Ctrl-C, 143 = SIGTERM, 129 = SIGHUP, 1 = unexpected launcher error: all four recorded as interrupted)"
+    log "STOP: before any relaunch, produce the report and read ledger.unknown_spent_work and exploration_comparison.paired_rule.campaign_level_reasons (operator notice, 'Après un arrêt'); re-running this script resumes"
     exit "$CODE"
   fi
   case "$WR" in

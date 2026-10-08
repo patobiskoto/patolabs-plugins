@@ -3188,25 +3188,30 @@ def _merge_models(into: dict[str, dict[str, int | None]], more: Mapping[str, Map
 _TEMP_OWN = re.compile(r"foundry-|pytest-of-")  # the launcher's own temp dirs and pytest's own tree: never touched
 
 
-def _temp_entries(directory: Path) -> dict[str, tuple[int, int]]:
-    """Top-level entries of the shared per-user temp directory: name -> (inode, mtime_ns)."""
+TEMP_WALK_BOUND = 20000  # entries read under one new temp entry before the inspection gives up (recorded, never "no")
+
+
+def _temp_names(directory: Path) -> set[str] | None:
+    """Top-level NAMES of the shared per-user temp directory (nothing is stat-ed: an entry vanishing meanwhile cannot
+    fail the listing). ``None`` when the directory cannot be listed: unknown, never "empty"."""
     try:
-        return {e.name: (e.stat(follow_symlinks=False).st_ino, e.stat(follow_symlinks=False).st_mtime_ns)
-                for e in os.scandir(directory)}
+        return set(os.listdir(directory))
     except OSError:
-        return {}
+        return None
 
 
-def _holds_bundle_material(entry: Path, files: Sequence[str]) -> bool:
+def _holds_bundle_material(entry: Path, files: Sequence[str]) -> bool | None:
     """Does a new temp entry hold a copy of bundle material (bounded walk, symbolic links not followed)? A tree that
     contains ``plugins/foundry``, a file whose path relative to the entry equals a changed file of the task, or a file
-    named like a changed product or test file (``__init__.py`` and ``conftest.py`` excepted)."""
+    named like a changed product or test file (``__init__.py`` and ``conftest.py`` excepted). ``None`` (not known,
+    never "no") when the walk gave up after ``TEMP_WALK_BOUND`` entries or could not read a directory."""
     rels = {f for f in files}
     names = {Path(f).name for f in files} - {"__init__.py", "conftest.py"}
     if not entry.is_dir() or entry.is_symlink():
         return entry.name in names
     seen = 0
-    for dirpath, dirs, fnames in os.walk(entry, followlinks=False):
+    unread: list[OSError] = []
+    for dirpath, dirs, fnames in os.walk(entry, followlinks=False, onerror=unread.append):
         rel = os.path.relpath(dirpath, entry).replace(os.sep, "/")
         if f"/{rel}/".find("/plugins/foundry/") != -1 or rel.endswith("plugins/foundry"):
             return True
@@ -3215,31 +3220,53 @@ def _holds_bundle_material(entry: Path, files: Sequence[str]) -> bool:
             if name in names or f"{rel}/{name}".removeprefix("./") in rels:
                 return True
         seen += len(dirs)
-        if seen > 20000:
-            return False
-    return False
+        if seen > TEMP_WALK_BOUND:
+            return None
+    return None if unread else False
 
 
 TEMP_QUARANTINE = "temp-quarantine"  # under the state directory (denied to the arms): moved leftovers, never deleted
+# Why one cloud execution was not watched at all (``audit.temp_leftovers.unwatched``): nothing was moved for it and
+# what it left in the temp directory is unknown.
+TEMP_UNWATCHED = ("no_tmpdir", "listing_before_failed", "listing_after_failed")
 
 
-def _move_temp_leftovers(directory: Path, before: Collection[str], dest: Path,
-                         files: Sequence[str]) -> list[str]:
+def _move_temp_leftovers(directory: Path, before: Collection[str] | None, dest: Path,
+                         files: Sequence[str]) -> dict[str, Any]:
     """PAT-126: every top-level entry of ``directory`` whose NAME was absent from ``before`` (the names listed right
     before the execution), owned by this user, not a symbolic link, not the launcher's own or pytest's own tree, that
     holds bundle material is MOVED into ``dest``, a quarantine directory of the launcher under its state directory.
     Nothing is ever deleted, here or later: the launcher keeps the quarantine. An entry that existed before is never
     touched, even when it changed during the execution. The launcher cannot tell who created a new entry: one created
     by ANOTHER process of the same account during the execution, and matching, is moved to the quarantine too (kept
-    whole, to be put back by hand). Returns the entry names (no content, no path); a name already taken in ``dest``
-    gets a numeric suffix there, the recorded name stays the original one."""
-    moved: list[str] = []
-    for name in sorted(_temp_entries(directory)):
+    whole, to be put back by hand).
+
+    Absent data is never a zero. ``before`` ``None`` (the listing made before the execution failed): NOTHING is
+    moved - without it no entry can be told new, and a pre-existing one must never be touched - and the result says
+    ``unwatched: listing_before_failed``; the listing made after failing gives ``listing_after_failed``. Otherwise
+    the result holds ``moved`` (entry names, no content, no path; a name already taken in ``dest`` gets a numeric
+    suffix there, the recorded name stays the original one), ``not_moved`` (a new entry that could not be examined or
+    moved: it is still in the temp directory) and ``not_inspected`` (a new entry whose walk gave up at
+    ``TEMP_WALK_BOUND`` entries or could not read a directory: left in place, not known to hold bundle material or
+    not). An entry that vanished meanwhile is not a leftover. No ``OSError`` leaves this function: a paid execution
+    is never aborted by its temp watch."""
+    if before is None:
+        return {"unwatched": "listing_before_failed"}
+    after = _temp_names(directory)
+    if after is None:
+        return {"unwatched": "listing_after_failed"}
+    out: dict[str, Any] = {"moved": [], "not_moved": [], "not_inspected": []}
+    for name in sorted(after):
         if name in before or _TEMP_OWN.match(name):
             continue
         entry = directory / name
         try:
-            if entry.is_symlink() or entry.lstat().st_uid != os.getuid() or not _holds_bundle_material(entry, files):
+            if entry.is_symlink() or entry.lstat().st_uid != os.getuid():
+                continue
+            holds = _holds_bundle_material(entry, files)
+            if holds is None and os.path.lexists(entry):
+                out["not_inspected"].append(name)
+            if not holds:
                 continue
             dest.mkdir(parents=True, exist_ok=True)
             target, n = dest / name, 0
@@ -3247,10 +3274,30 @@ def _move_temp_leftovers(directory: Path, before: Collection[str], dest: Path,
                 n += 1
                 target = dest / f"{name}.{n}"
             shutil.move(str(entry), str(target))
-            moved.append(name)
+            out["moved"].append(name)
         except OSError:
-            continue
-    return moved
+            if os.path.lexists(entry):  # still there: examined or moved in vain, said so (a vanished entry is none)
+                out["not_moved"].append(name)
+    return out
+
+
+def _temp_note(watches: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """``audit.temp_leftovers`` of one record, from the watch of each of its cloud executions. ``watch``:
+    ``complete`` (every execution listed before and after, every matching entry moved, every new entry inspected),
+    ``unavailable`` (no execution was watched), ``partial`` (anything in between), ``not_applicable`` (the record
+    holds no cloud execution: a local exploration is not watched). ``count`` is the number of entries moved, and is
+    ``None`` - never 0 - as soon as one execution of the record was not watched."""
+    if not watches:
+        return {"watch": "not_applicable", "count": None, "names": [], "not_moved": [], "not_inspected": [],
+                "unwatched": []}
+    unwatched = [w["unwatched"] for w in watches if w.get("unwatched")]
+    names = [n for w in watches for n in w.get("moved", [])]
+    not_moved = [n for w in watches for n in w.get("not_moved", [])]
+    not_inspected = [n for w in watches for n in w.get("not_inspected", [])]
+    watch = ("unavailable" if len(unwatched) == len(watches) else
+             "partial" if unwatched or not_moved or not_inspected else "complete")
+    return {"watch": watch, "count": None if unwatched else len(names), "names": names, "not_moved": not_moved,
+            "not_inspected": not_inspected, "unwatched": unwatched}
 
 
 def probe_interpreters(host_env: Mapping[str, str], driver: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -3393,7 +3440,7 @@ class Runner:
         self.interpreters: dict[str, Any] | None = None
         self.audit_policy = (campaign.get("isolation") or {}).get(AUDIT_POLICY_KEY) == AUDIT_POLICY
         self.bundle_files: dict[Path, list[str]] = {}  # changed files of the task, by bundle (temp leftovers match)
-        self.leftovers: dict[str, list[str]] = {}  # temp directory entries moved out of the shared temp dir, by stream
+        self.leftovers: dict[str, dict[str, Any]] = {}  # the temp watch of each cloud execution, by stream
         self.stream_roles: dict[str, str] = {}  # role of each audited cloud stream log
         self.journals: dict[str, list[str]] = {}  # audit policy: journaled findings by stream log
         self.refusals: dict[str, dict[str, int]] = {}  # audit policy: calls the host refused, per tool, by stream log
@@ -3672,8 +3719,8 @@ class Runner:
         note = {"revision": self.audit_revision, "barrier": barrier, "not_found": list(dict.fromkeys(names)),
                 "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}
         if self.native_sandbox:  # PAT-126: bundle material found in the shared temp directory and moved out of it
-            left = [n for log in stream_logs for n in self.leftovers.get(str(log), [])]
-            note["temp_leftovers"] = {"count": len(left), "names": left}
+            note["temp_leftovers"] = _temp_note([self.leftovers[str(log)] for log in stream_logs
+                                                 if str(log) in self.leftovers])
         if self.audit_policy:  # PAT-126: absent without the key, so the record of every other campaign keeps its shape
             roles: dict[str, int] = {}
             refused: dict[str, int] = {}
@@ -4002,7 +4049,7 @@ class Runner:
             env = os.environ if self.host_env is None else self.host_env
             fingerprint = registry_fingerprints(env)
             temp_dir = Path(env["TMPDIR"]) if self.native_sandbox and env.get("TMPDIR") else None
-            temp_before = _temp_entries(temp_dir) if temp_dir else {}
+            temp_before = _temp_names(temp_dir) if temp_dir else None  # None: not listed (unknown, never empty)
             execution = execute_driver(
                 driver, values, workdir=bundle, scratch=scratch, stream_log=stream_log,
                 max_seconds=budget, max_steps=None, sandbox=self._sandboxed(driver), deny_read=deny,
@@ -4012,10 +4059,10 @@ class Runner:
             if native is not None and not execution["start_error"]:
                 self.settings_sent.add(str(stream_log))
             fingerprint_after = registry_fingerprints(env)
-            if temp_dir is not None:  # the shared per-user temp directory: what this execution left of the bundle
-                self.leftovers[str(stream_log)] = _move_temp_leftovers(
-                    temp_dir, temp_before, self.state_dir / TEMP_QUARANTINE / stream_log.stem,
-                    self.bundle_files.get(bundle, []))
+            if self.native_sandbox:  # the shared per-user temp directory: what this execution left of the bundle
+                self.leftovers[str(stream_log)] = {"unwatched": "no_tmpdir"} if temp_dir is None else (
+                    _move_temp_leftovers(temp_dir, temp_before, self.state_dir / TEMP_QUARANTINE / stream_log.stem,
+                                         self.bundle_files.get(bundle, [])))
         except BaseException:  # interrupted: the arm is killed, its tokens are unknown (never 0)
             if reserved:
                 with self._critical():
@@ -5287,10 +5334,11 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                        for r in attempts if (r.get("review") or {}).get("contamination")]
     if flagged_reviews:  # audit revision 2 only (a frozen campaign has none: its report keeps its keys)
         out["review_contaminated"] = flagged_reviews
-    leftover = [{"path": r["path"], "task": r["task"], "segment": r.get("segment"), "attempt": r.get("attempt"),
-                 **r["audit"]["temp_leftovers"]} for r in attempts if (r.get("audit") or {}).get("temp_leftovers", {})
-                .get("count")]
-    if leftover:  # PAT-126: bundle material found new in the shared temp directory (quarantined, decides nothing)
+    watched = [(r, (r.get("audit") or {}).get("temp_leftovers") or {}) for r in attempts]
+    leftover = [{"path": r["path"], "task": r["task"], "segment": r.get("segment"), "attempt": r.get("attempt"), **t}
+                for r, t in watched if t.get("count") or t.get("watch") in ("partial", "unavailable")]
+    if leftover:  # PAT-126: bundle material found new in the shared temp directory (quarantined), or a watch that
+        # did not fully happen (``watch`` partial or unavailable: unknown, never "nothing left"); decides nothing
         out["temp_leftovers"] = leftover
     journaled = [r for r in attempts if (r.get("audit") or {}).get("policy")]
     if journaled:  # PAT-126, isolation.audit_policy only (the key is absent otherwise): the journal, apart from the rule
@@ -5771,7 +5819,18 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     out["complete"] = bool(mine) and mine["tasks_compared"] == rule["tasks"] and (
         arms["A"]["tasks"].keys() == arms["L"]["tasks"].keys() and len(arms["A"]["tasks"]) == rule["tasks"]
         and not mine["awaiting_implementer"])
-    paired = rule.get("paired_decided_min") is not None and bool(mine) and out["complete"]
+    v5 = rule.get("paired_decided_min") is not None and bool(mine)
+    if v5:
+        # The ratio that counts under v5 is ``paired_rule.ratio`` (on D). The v2 to v4 figures of ``economy_detail``
+        # are computed over every compared task, undecided ones included, and the v2 to v4 readings of quality and
+        # economy are not the v5 rule: never printed under v5, complete campaign or not; the totals stay.
+        mine["quality"], mine["economy"] = "unavailable", "unavailable"
+        mine["economy_detail"].update(
+            ratio=None, premium_pass=None, premium_per_accepted=None, reference_premium_per_accepted=None,
+            superseded_by="paired_rule: under protocol v5 the ratio and the premium per accepted task are those of "
+                          "exploration_comparison.paired_rule (paired decided set; absent while the campaign is "
+                          "incomplete); the totals here cover every compared task")
+    paired = v5 and out["complete"]
     if paired:
         # protocol v5: undecided tasks leave the paired set; the campaign-level reasons are applied inside, so that
         # ``paired_rule.verdict`` and ``decision`` cannot disagree
@@ -5795,11 +5854,25 @@ def _report_exploration_comparison(rule: Mapping[str, Any], attempts: Sequence[M
     return out
 
 
+def _cut_without_cloud(rec: Mapping[str, Any]) -> bool:
+    """Protocol v5 report only: an ``interrupted`` record that names NO cloud execution. ``_tool_error`` and
+    ``_flush_unrecorded`` give every interrupted record a null ``billing_total`` (v1 to v4 read it so, unchanged),
+    also when no cloud execution was reserved for it: a local exploration cut, a cloud round cut before its
+    reservation. Such a record spent no premium token: a session id is appended to the record's sessions in the same
+    signal-deferred block that reserves it in the ledger (``cloud_execution``), so an empty ``cloud_sessions`` means
+    no reservation; and a cloud execution the ledger started that NO record names is a campaign-level reason of its
+    own (``no_result_record``), whatever this function says."""
+    return (rec.get("status") == "interrupted" and rec["premium"]["billing_total"] is None
+            and not rec.get("cloud_sessions") and not rec.get("cloud_executions"))
+
+
 def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mapping[str, Any],
                        attempts: Sequence[Mapping[str, Any]], gone: Collection[int],
                        unknown_detail: Sequence[str] = (), warnings: Sequence[str] = ()) -> None:
     """Protocol v5 (PAT-126, ``rules.exploration_comparison.paired_decided_min``, protocol section 2), replacing for
-    v5 the v2 to v4 behaviour where one undecided task makes every verdict ``unavailable``.
+    v5 the v2 to v4 behaviour, where one undecided task made the ECONOMY verdict ``unavailable`` (so ``retained`` was
+    impossible) while quality stayed read by bounds (``lfe.quality_verdict``: pass, fail or unavailable) and the
+    compatibility did not depend on it (``keep_cloud`` stayed possible).
 
     (i) UNDECIDED TASK. A task is DECIDED for an arm when it is accepted or not unknown (``_arm_totals``: no record
     left with an outcome of ``UNKNOWN_OUTCOMES`` - contaminated, unreadable review, tool error, cap, interruption -
@@ -5808,22 +5881,34 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
     as unknown, ``premium_tokens_on_undecided_tasks``).
 
     The rule on D, in this order: fewer than ``paired_decided_min`` tasks in D: inconclusive. A premium total unknown
-    on a task of D: inconclusive. No accepted task in one arm on D: inconclusive (an undefined ratio is never zero).
-    Else acceptance (accepted_L >= accepted_A) and economy (premium per accepted task of L <= ratio_max x A's; every
-    record of the arm on D's tasks, reviewer included, local tokens excluded) are read: one of them failing, or the
-    compatibility criterion FAILING: keep the cloud. Both passing and compatibility ``unavailable`` (unmeasured swap,
-    a local exploration lost without a successful replay): inconclusive, ``compatibility_unavailable`` - absent data
-    is not a failure. All three passing: L is retained, subject to the robustness reading (every undecided task of L
-    counted not accepted, every undecided task of A counted accepted, over all the tasks): below A's worst case,
-    inconclusive. Only ``retained`` has a robustness reading: ``keep_cloud`` is the conservative outcome, the reading
-    cannot make it more conservative. The cost ratio is not recomputed in the worst case (the acceptance of an
-    undecided task is unknown).
+    on a record of a task of D (iii): inconclusive. No accepted task in one arm on D: inconclusive (an undefined
+    ratio is never zero). Else acceptance (accepted_L >= accepted_A) and economy (premium per accepted task of L <=
+    ratio_max x A's; every record of the arm on D's tasks, superseded ones and the reviewer included, local tokens
+    excluded) are read: one of them failing, or the compatibility criterion FAILING: keep the cloud. Both passing and
+    compatibility ``unavailable`` (unmeasured swap, a local exploration lost without a successful replay):
+    inconclusive, ``compatibility_unavailable`` - absent data is not a failure. All three passing: L is retained,
+    subject to the robustness reading (every undecided task of L counted not accepted, every undecided task of A
+    counted accepted, over all the tasks): below A's worst case, inconclusive. Only ``retained`` has a robustness
+    reading: ``keep_cloud`` is the conservative outcome, the reading cannot make it more conservative. The cost ratio
+    is not recomputed in the worst case (the acceptance of an undecided task is unknown).
 
     (ii) CAMPAIGN-LEVEL reasons, which give ``inconclusive`` whatever D says (money or integrity of the ledger): a
     cloud execution the ledger started and never settled, one no result record names, an interrupted or
     unknown-token cloud execution that belongs to a task of D or to no task of the comparison, and a start the ledger
     holds with neither record nor replay (``warnings``). The verdict of the rule on D is kept in
-    ``verdict_before_campaign_level``; ``verdict`` is the final one and always equals the report's ``decision``."""
+    ``verdict_before_campaign_level``; ``verdict`` is the final one and always equals the report's ``decision``.
+
+    (iii) PREMIUM OF A RECORD. Unknown (never zero) when the record's ``billing_total`` is null: an interrupted
+    record that names a cloud execution, a record one of whose cloud executions has unreadable tokens, a tool-error
+    record whose cloud executions were not all read back into it. EXCEPT an interrupted record that names no cloud
+    execution (``_cut_without_cloud``): it counts 0, known - no cloud execution was reserved for it, so an
+    interruption that spent nothing, replayed as the resume prescribes, does not make the campaign inconclusive.
+    ``premium_total_unknown`` is the reason of the rule on D; it comes WITH a campaign-level reason when the ledger
+    marks the execution interrupted or its tokens unknown (a cloud execution cut while it ran, a session log without
+    tokens), and WITHOUT one when the ledger knows the tokens the record does not carry (a tool error or an
+    interruption that came after the execution was settled and before any verdict: toolset refusal, audit, patch
+    capture, judge): inconclusive either way. ``arms.L.quality`` and ``arms.L.economy`` are the readings on D,
+    ``unavailable`` when not read."""
     a_tasks, l_tasks = arms["A"]["tasks"], arms["L"]["tasks"]
     mine = out["arms"]["L"]
     minimum = rule["paired_decided_min"]
@@ -5843,13 +5928,19 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
                 found[key].append(f"{r.get('segment')}:{r['outcome']}")
         return {key: why or ["unknown"] for key, why in found.items()}
 
+    def premium(path: str, pr: Any) -> int | None:
+        """Premium tokens of an arm on a task under v5: every record of the arm, superseded ones included. A record
+        whose total is unknown keeps the task's premium unknown, EXCEPT a cloud-less interrupted record (iii)."""
+        return _sum_known([0 if _cut_without_cloud(r) else r["premium"]["billing_total"]
+                           for r in attempts if r["path"] == path and r["task"]["pr"] == pr])
+
     undecided = {"A": causes("A", a_tasks), "L": causes("L", l_tasks)}
-    wasted = {"A": [t["premium_billing_tokens"] for pr, t in a_tasks.items() if not decided(t)],
-              "L": [t["premium_billing_tokens"] for pr, t in l_tasks.items() if not decided(t)]}
+    wasted = {"A": [premium("A", pr) for pr, t in a_tasks.items() if not decided(t)],
+              "L": [premium("L", pr) for pr, t in l_tasks.items() if not decided(t)]}
     acc_a = sum(1 for pr in paired if a_tasks[pr]["accepted"])
     acc_l = sum(1 for pr in paired if l_tasks[pr]["accepted"])
-    prem_a = _sum_known([a_tasks[pr]["premium_billing_tokens"] for pr in paired])
-    prem_l = _sum_known([l_tasks[pr]["premium_billing_tokens"] for pr in paired])
+    prem_a = _sum_known([premium("A", pr) for pr in paired])
+    prem_l = _sum_known([premium("L", pr) for pr in paired])
     ratio_max = Fraction(str(rule["premium_per_accepted_ratio_max"]))
     detail: dict[str, Any] = {
         "paired_decided_min": minimum, "paired_decided": paired, "paired_decided_count": len(paired),
@@ -5886,8 +5977,6 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
         else:
             detail["worst_case"]["robust"] = worst_l >= worst_a
             verdict, reason = ("retained", None) if worst_l >= worst_a else ("inconclusive", "not_robust_to_undecided_tasks")
-    if len(paired) < minimum or reason in ("premium_total_unknown", "no_accepted_task_in_one_arm_ratio_undefined"):
-        mine["quality"], mine["economy"] = "unavailable", "unavailable"
     # Campaign-level reasons (ii). An interrupted or unknown-token cloud execution named by a record of a task
     # OUTSIDE D is task-level: that task is undecided and its tokens enter no ratio.
     outside = {sid for r in attempts if r["task"]["pr"] not in paired for sid in r.get("cloud_sessions") or []}
@@ -5900,13 +5989,6 @@ def _apply_paired_rule(rule: Mapping[str, Any], out: dict[str, Any], arms: Mappi
     if campaign_level:
         verdict, reason = "inconclusive", "campaign_level_unknown_work"
     detail.update(verdict=verdict, reason=reason)
-    # The ratio that counts under v5 is ``paired_rule.ratio`` (on D). The v2 to v4 figures of ``economy_detail`` are
-    # computed over every compared task, undecided ones included: not printed here, the totals stay.
-    mine["economy_detail"].update(
-        ratio=None, premium_pass=None, premium_per_accepted=None, reference_premium_per_accepted=None,
-        superseded_by="paired_rule: under protocol v5 the ratio and the premium per accepted task are those of "
-                      "exploration_comparison.paired_rule (paired decided set); the totals here cover every "
-                      "compared task")
     out["paired_rule"] = detail
     out["decision"], out["recommendation"] = ({"retained": ("retained", "L"), "keep_cloud": ("keep_cloud", "A")}
                                               .get(verdict, ("inconclusive", None)))

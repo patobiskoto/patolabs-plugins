@@ -36,7 +36,7 @@ FROZEN_SHA256 = {  # the frozen v1 to v5 configurations are never edited (PAT-AD
     "pat-19-campaign-v2.json": "6830629ccd385847ca6b88c730b706407517ac009cb3715daf8c6e7a61ec8d16",
     "pat-19-campaign-v3.json": "95b7a0717ecfcc28b6595e4a88dee108d158ff7d85dddc84f7d1c56de8d5fd1d",
     "pat-19-campaign-v4.json": "3bc88cf496f9838779adae431e72754615576c276033cc7436c151d3a10b8605",
-    "pat-19-campaign-v5.json": "9fe6da84c3739302cdaede9a71ab6713bb5c2b27d0b78994c9fdc2a00d5fb366",  # frozen 2026-10-08 (PAT-126), after pilot 4 and the review round 2; the pilot config is NOT pinned
+    "pat-19-campaign-v5.json": "093b89022edced18f57237b6cdce62a835fdba52a62a4997e21d0d364693860a",  # frozen 2026-10-08 (PAT-126), after pilot 4 and the review rounds 1 to 3; the pilot config is NOT pinned
 }
 
 
@@ -74,6 +74,12 @@ def test_the_v5_campaign_pins_the_decided_values_and_is_frozen():
     assert v5["schema"] == lfr.CAMPAIGN_SCHEMA_V2 and v5["protocol"] == lfr.PROTOCOL_V5
     assert v5["note"].startswith("Frozen campaign config") and "2026-10-08" in v5["note"] and "mandate of 2026-10-08" in v5["note"]
     assert "DRAFT" not in json.dumps(v5) and "DRAFT" not in json.dumps(_load(PILOT_PATH))
+    for text in (json.dumps(v5), json.dumps(_load(PILOT_PATH)), (QUALIFICATION / "pat-19-protocol-v5.md").read_text("utf-8")):
+        # review round 3 (B2): under v2 to v4 an undecided task made the ECONOMY unavailable, not every verdict
+        assert "every verdict unavailable" not in text and "makes the verdicts unavailable" not in text
+        assert "tous les verdicts `unavailable`" not in text and "rend les verdicts `unavailable`" not in text
+    assert "made the ECONOMY unavailable" in v5["note"] and "made the ECONOMY unavailable" in v5["rules"][
+        "exploration_comparison"]["note"]
     assert lfr.PROTOCOL_V5 in lfr.FROZEN_PROTOCOLS and lfr.PROTOCOL_V5_PILOT not in lfr.FROZEN_PROTOCOLS
     assert "pat-19-campaign-v5.json" in FROZEN_SHA256 and "pat-19-campaign-v5-pilot.json" not in FROZEN_SHA256
     one = "qwen3.6-35b-a3b-mlx-4bit"
@@ -1364,6 +1370,176 @@ def test_the_report_prints_one_ratio_under_v5_and_lists_as_undecided_exactly_the
     assert report["decision"] == "retained"
 
 
+def _interrupted(rec, *, cloud):
+    """Make ``rec`` the record ``_tool_error`` writes for an interruption: null total, with or without a session."""
+    rec.update(outcome="interrupted", status="interrupted", accepted=None, judge=None)
+    rec["premium"]["billing_total"] = None
+    if not cloud:
+        rec.update(cloud_sessions=[], cloud_executions=0)
+
+
+def test_an_interruption_that_spent_no_premium_and_was_replayed_leaves_the_task_in_d_and_the_verdict_computed():
+    # PAT-126 review round 3 (B3). ``_tool_error`` gives every interrupted record a null total, also when no cloud
+    # execution was reserved for it; the resume replays it; the superseded record must not make D's premium unknown.
+    def explore_cut_then_replayed(recs, ledger):  # a local exploration cut, then replayed successfully
+        good = _explore(recs, 3)
+        cut = json.loads(json.dumps(good))
+        _interrupted(cut, cloud=False)
+        good["replay_of"] = {"attempt": 0, "attempt_dir": "x", "outcome": "interrupted", "reason": "KeyboardInterrupt: "}
+        recs.insert(recs.index(good), cut)
+    report, rule = _paired(_retained, edit=explore_cut_then_replayed)
+    assert rule["paired_decided_count"] == 12 and rule["undecided"] == {"A": {}, "L": {}}
+    assert rule["premium_on_paired"] == {"A": 1200, "L": 600} and rule["ratio"] == 0.5
+    assert rule["campaign_level_reasons"] == [] and rule["reason"] is None
+    assert (report["decision"], report["recommendation"], rule["compatibility"]) == ("retained", "L", "pass")
+
+    def round_cut_before_reservation(recs, ledger):  # a cloud round 0 cut before any reservation, then replayed
+        good = _cloud_of(recs, "A", 3)
+        cut = json.loads(json.dumps(good))
+        _interrupted(cut, cloud=False)
+        good["replay_of"] = {"attempt": 0, "attempt_dir": None, "outcome": "interrupted", "reason": "x",
+                             "cloud_sessions": []}
+        recs.insert(recs.index(good), cut)
+    report, rule = _paired(_retained, edit=round_cut_before_reservation)
+    assert rule["paired_decided_count"] == 12 and rule["premium_on_paired"] == {"A": 1200, "L": 600}
+    assert (report["decision"], rule["campaign_level_reasons"], rule["reason"]) == ("retained", [], None)
+
+    def cut_and_never_replayed(recs, ledger):  # the same cut at a correction round is never replayed: the task leaves D
+        rec = _cloud_of(recs, "L", 1)
+        cut = json.loads(json.dumps(rec))
+        _interrupted(cut, cloud=False)
+        cut["attempt"] = 1
+        rec.update(outcome="judge_refused", accepted=False)
+        recs.insert(recs.index(rec) + 1, cut)
+    report, rule = _paired(_robust_without_task_1, edit=cut_and_never_replayed)
+    assert rule["undecided"]["L"] == {"1": ["cloud:interrupted"]} and rule["paired_decided"] == list(range(2, 13))
+    assert rule["premium_tokens_on_undecided_tasks"] == {"A": 0, "L": 50}  # what was spent there is known
+    assert report["decision"] == "retained"
+
+
+def test_a_cloud_execution_really_cut_keeps_its_tokens_unknown_and_makes_the_campaign_inconclusive_when_in_d():
+    # The rule as the report applies it to such records. The launcher itself never replays a round whose execution
+    # was cut: unknown tokens in the ledger stop every later cloud execution (the next test, ``cloud_execution``).
+    def cloud_cut_then_replayed(recs, ledger):  # round 0 of A on task 3: the execution itself was cut, then replayed
+        good = _cloud_of(recs, "A", 3)
+        cut = json.loads(json.dumps(good))
+        _interrupted(cut, cloud=True)
+        cut["cloud_sessions"] = ["cut-1"]
+        ledger.extend([{"kind": "cloud_started", "session_id": "cut-1"},
+                       {"kind": "settled", "cloud": True, "session_id": "cut-1", "premium_tokens": None,
+                        "interrupted": True}])
+        good["replay_of"] = {"attempt": 0, "attempt_dir": None, "outcome": "interrupted", "reason": "x",
+                             "cloud_sessions": ["cut-1"]}
+        recs.insert(recs.index(good), cut)
+    report, rule = _paired(_retained, edit=cloud_cut_then_replayed)
+    assert rule["paired_decided_count"] == 12  # the replay decided the task: it is in D
+    assert rule["premium_on_paired"]["A"] is None  # the superseded record's tokens are unknown, never zero
+    assert rule["reason_before_campaign_level"] == "premium_total_unknown"
+    assert rule["campaign_level_reasons"] == ["interrupted:cut-1"]  # the campaign-level reason is LISTED
+    assert (report["decision"], rule["reason"]) == ("inconclusive", "campaign_level_unknown_work")
+    assert report["arms"]["L"]["economy"] == "unavailable" and report["arms"]["L"]["quality"] == "unavailable"
+
+    def judge_cut_after_a_settled_execution(recs, ledger):  # the ledger knows the tokens the null record lacks
+        good = _cloud_of(recs, "A", 3)
+        cut = json.loads(json.dumps(good))
+        _interrupted(cut, cloud=True)
+        cut["cloud_sessions"] = ["kept-1"]
+        ledger.extend([{"kind": "cloud_started", "session_id": "kept-1"},
+                       {"kind": "settled", "cloud": True, "session_id": "kept-1", "premium_tokens": 70}])
+        good["replay_of"] = {"attempt": 0, "attempt_dir": None, "outcome": "interrupted", "reason": "x",
+                             "cloud_sessions": ["kept-1"]}
+        recs.insert(recs.index(good), cut)
+    report, rule = _paired(_retained, edit=judge_cut_after_a_settled_execution)
+    # stated in the protocol (section 2, point 3): inconclusive by the rule on D alone, no campaign-level reason
+    assert (report["decision"], rule["reason"], rule["campaign_level_reasons"]) == (
+        "inconclusive", "premium_total_unknown", [])
+
+
+def _v5_like(tmp_path, plan):
+    """A fake-arm runner whose report applies the paired rule. The threshold is 1 HERE ONLY, to read the premium of a
+    one-task run: the loader pins 9 for v5 and its pilot (``test_the_paired_threshold_is_pinned_and_refused_before_v5``)."""
+    runner, campaign, plan_path, tasks = make_runner(tmp_path, "compare_exploration", plan)
+    campaign["rules"]["exploration_comparison"].update(tasks=1, paired_decided_min=1)
+    return runner, campaign, tasks
+
+
+@pytest.mark.parametrize("where", ["local_exploration", "before_reservation", "cloud_execution", "after_settlement"])
+def test_a_real_interruption_replayed_by_the_resume_is_read_from_the_records_the_launcher_writes(tmp_path, monkeypatch,
+                                                                                                where):
+    from test_local_first_exploration_runner import _resumed
+    plan = {**PLAN, "reviewer": ["PASS"]}
+    runner, campaign, tasks = _v5_like(tmp_path, plan)
+    real = lfr.execute_driver
+
+    def cut(driver, values, **kw):
+        hit = (driver["kind"] == "local_explorer" if where == "local_exploration"
+               else driver["kind"] in lfr.CLOUD_KINDS and "implementer" in driver["argv"])
+        if hit:
+            raise KeyboardInterrupt
+        return real(driver, values, **kw)
+
+    def unreserved(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    if where == "before_reservation":
+        runner.cloud_execution = unreserved  # cut before the ledger reserves anything
+    elif where == "after_settlement":
+        runner._judge = unreserved  # cut during the judge: the implementer's execution is settled, tokens known
+    else:
+        monkeypatch.setattr(lfr, "execute_driver", cut)
+    arms = ("A", "L") if where == "local_exploration" else ("L", "A")  # the cut comes last in the launch
+    with pytest.raises(KeyboardInterrupt):
+        runner.compare_exploration(tasks[:1], "cand-a", arms)
+    monkeypatch.setattr(lfr, "execute_driver", real)
+    lost = [r for r in results(runner) if r.get("outcome") == "interrupted"]
+    assert len(lost) == 1 and lost[0]["status"] == "interrupted" and lost[0]["premium"]["billing_total"] is None
+    spent = where in ("cloud_execution", "after_settlement")
+    assert lfr._cut_without_cloud(lost[0]) is (not spent) and bool(lost[0]["cloud_sessions"]) is spent
+    starts = [e for e in ledger_of(runner) if e.get("kind") == "cloud_started"]
+    named = {sid for r in results(runner) for sid in r.get("cloud_sessions") or []}
+    assert {e["session_id"] for e in starts} == named  # no cloud start the records do not name
+    resumed, _, _, rtasks = _resumed(tmp_path, runner, tasks, "compare_exploration", plan)
+    resumed.campaign["rules"]["exploration_comparison"].update(tasks=1, paired_decided_min=1)
+    resumed.compare_exploration(rtasks[:1], "cand-a", ("A", "L"))  # the resume the operator notice prescribes
+    whole = lfr.report(resumed.campaign, results(resumed), ledger_of(resumed))
+    comparison = whole["exploration_comparison"]
+    rule = comparison["paired_rule"]
+    assert comparison["complete"] is True and rule["verdict"] == comparison["decision"]
+    if where == "cloud_execution":
+        # the remaining asymmetry: tokens unknown to the ledger stop EVERY later cloud execution, so the cut round is
+        # never replayed and no other cloud round is played; the task stays undecided, outside D
+        assert resumed.stopped == "cap_reached:premium_tokens_unmeasurable"
+        assert len([e for e in ledger_of(resumed) if e.get("kind") == "cloud_started"]) == len(starts) == 1
+        assert [u.partition(":")[0] for u in whole["ledger"]["unknown_spent_work"]] == ["interrupted"]
+        assert rule["paired_decided"] == [] and rule["undecided"]["L"] == {"1": ["cloud:interrupted"]}
+        assert rule["premium_tokens_on_undecided_tasks"]["L"] is None  # unknown, never zero
+        assert comparison["decision"] == "inconclusive"
+    elif where == "after_settlement":
+        # the stated limit (protocol section 2, point 3): the round is replayed (the ledger knows the tokens, no cap
+        # stop), the task is in D, the superseded record's total is null: inconclusive, no campaign-level reason
+        assert whole["ledger"]["unknown_spent_work"] == [] and rule["paired_decided"] == [1]
+        assert (comparison["decision"], rule["reason"], rule["campaign_level_reasons"]) == (
+            "inconclusive", "premium_total_unknown", [])
+    else:
+        assert rule["paired_decided"] == [1]
+        assert rule["campaign_level_reasons"] == [] and rule["reason"] != "premium_total_unknown"
+        assert None not in rule["premium_on_paired"].values()  # known: the cut spent no premium token
+        assert rule["verdict_before_campaign_level"] in ("retained", "keep_cloud")  # a verdict is computed
+
+
+def test_an_incomplete_v5_campaign_prints_no_v2_to_v4_figure(tmp_path):
+    runner, campaign, tasks = _v5_like(tmp_path, {**PLAN, "reviewer": ["PASS"]})
+    campaign["rules"]["exploration_comparison"]["tasks"] = 2  # two tasks expected, one played: incomplete
+    runner.compare_exploration(tasks[:1], "cand-a", ("A", "L"))
+    comparison = lfr.report(campaign, results(runner), ledger_of(runner))["exploration_comparison"]
+    assert comparison["campaign_conclusion"] == "incomplete_campaign" and "paired_rule" not in comparison
+    arm, detail = comparison["arms"]["L"], comparison["arms"]["L"]["economy_detail"]
+    assert (arm["quality"], arm["economy"]) == ("unavailable", "unavailable")
+    assert [detail[k] for k in ("ratio", "premium_pass", "premium_per_accepted", "reference_premium_per_accepted")] == [
+        None, None, None, None]
+    assert "paired_rule" in detail["superseded_by"] and detail["premium_billing_tokens"] is not None  # totals stay
+
+
 def test_the_v2_to_v4_report_is_unchanged_by_the_paired_rule(tmp_path):
     runner, campaign, _, tasks = make_runner(tmp_path, "compare_exploration", {**PLAN, "reviewer": ["PASS"]})
     runner.compare_exploration(tasks, "cand-a", ("A", "L"))
@@ -1398,7 +1574,8 @@ def test_new_temp_entries_that_hold_bundle_material_are_moved_out_and_nothing_el
     temp, dest = tmp_path / "tmp", tmp_path / "attempt" / "temp-leftovers"
     temp.mkdir()
     _tree(temp, "old/plugins/foundry/x.py", "keep.txt")  # present before the execution
-    before = lfr._temp_entries(temp)
+    before = lfr._temp_names(temp)
+    assert before == {"old", "keep.txt"}  # names only: nothing is stat-ed, a vanishing entry cannot fail the listing
     stamp = os.stat(temp / "old").st_mtime_ns
     files = ["plugins/foundry/tooling/foundry/trackers/linear.py", "plugins/foundry/tests/test_linear_tracker.py"]
     _tree(temp, "rv/plugins/foundry/tooling/foundry/m.py",  # a copy of the bundle
@@ -1408,29 +1585,135 @@ def test_new_temp_entries_that_hold_bundle_material_are_moved_out_and_nothing_el
           "lone_linear.py",
           "old/plugins/foundry/tests/test_linear_tracker.py")  # an entry that EXISTED before, changed during the run
     os.utime(temp / "old", ns=(stamp + 10**9, stamp + 10**9))
-    assert lfr._temp_entries(temp)["old"] != before["old"]  # its stamp differs: it is still never touched
+    assert os.stat(temp / "old").st_mtime_ns != stamp  # its stamp differs: it is still never touched
     (temp / "link").symlink_to(tmp_path)  # a symbolic link is never followed nor moved
     moved = lfr._move_temp_leftovers(temp, before, dest, files)
-    assert moved == ["copy2", "exact", "rv"]
+    assert moved == {"moved": ["copy2", "exact", "rv"], "not_moved": [], "not_inspected": []}
     assert sorted(p.name for p in dest.iterdir()) == ["copy2", "exact", "rv"]
     left = sorted(p.name for p in temp.iterdir())
     assert left == ["foundry-judge-abc", "innocent", "keep.txt", "link", "lone_linear.py", "old", "pytest-of-u"]
     assert (temp / "old" / "plugins" / "foundry" / "tests" / "test_linear_tracker.py").read_text() == "x"
     assert (dest / "rv" / "plugins" / "foundry" / "tooling" / "foundry" / "m.py").read_text() == "x"  # moved whole
     # a name that matches a changed file's basename at the top level of the temp directory is a leftover too
-    before = lfr._temp_entries(temp)
+    before = lfr._temp_names(temp)
     _tree(temp, "linear.py")
-    assert lfr._move_temp_leftovers(temp, before, dest, files) == ["linear.py"]
+    assert lfr._move_temp_leftovers(temp, before, dest, files)["moved"] == ["linear.py"]
     # the same name again (another execution, or another process of the account): quarantined beside the first,
     # which is never overwritten nor deleted
     (dest / "linear.py").write_text("first", encoding="utf-8")
     _tree(temp, "linear.py")
-    assert lfr._move_temp_leftovers(temp, before, dest, files) == ["linear.py"]
+    assert lfr._move_temp_leftovers(temp, before, dest, files)["moved"] == ["linear.py"]
     assert (dest / "linear.py").read_text() == "first" and (dest / "linear.py.1").read_text() == "x"
-    # the listing taken before may be a plain collection of names
+    # an entry listed before is not new, whatever it holds
     _tree(temp, "rv/plugins/foundry/a.py")
-    names = set(lfr._temp_entries(temp))
-    assert lfr._move_temp_leftovers(temp, names, dest, files) == [] and (temp / "rv").is_dir()
+    assert lfr._move_temp_leftovers(temp, lfr._temp_names(temp), dest, files)["moved"] == [] and (temp / "rv").is_dir()
+
+
+FILES = ["plugins/foundry/tooling/foundry/trackers/linear.py", "plugins/foundry/tests/test_linear_tracker.py"]
+
+
+def test_a_failed_listing_before_the_execution_moves_nothing_and_is_recorded_as_unknown(tmp_path, monkeypatch):
+    # PAT-126 review round 3 (B1): without the listing made BEFORE, no entry can be told new. A pre-existing entry
+    # that matches the signature must never be moved, and the watch is recorded unavailable, never "0 leftovers".
+    temp, dest = _sub(tmp_path, "tmp"), tmp_path / "quarantine"
+    _tree(temp, "preexisting/plugins/foundry/a.py", "rv/plugins/foundry/b.py")
+    assert lfr._temp_names(tmp_path / "missing") is None  # an unlistable directory is unknown, not empty
+    out = lfr._move_temp_leftovers(temp, None, dest, FILES)
+    assert out == {"unwatched": "listing_before_failed"}
+    assert sorted(p.name for p in temp.iterdir()) == ["preexisting", "rv"] and not dest.exists()
+    note = lfr._temp_note([out])
+    assert note["watch"] == "unavailable" and note["count"] is None and note["unwatched"] == ["listing_before_failed"]
+    # the listing made AFTER fails: nothing moved either, and again never a count of 0
+    monkeypatch.setattr(lfr, "_temp_names", lambda directory: None)
+    out = lfr._move_temp_leftovers(temp, {"preexisting"}, dest, FILES)
+    assert out == {"unwatched": "listing_after_failed"} and (temp / "rv").is_dir() and not dest.exists()
+    assert lfr._temp_note([out])["count"] is None
+    # one execution of a record watched, the other not: partial, and the count stays unknown
+    clean = {"moved": [], "not_moved": [], "not_inspected": []}
+    note = lfr._temp_note([clean, out])
+    assert (note["watch"], note["count"], note["unwatched"]) == ("partial", None, ["listing_after_failed"])
+    assert lfr._temp_note([clean, clean]) == {"watch": "complete", "count": 0, "names": [], "not_moved": [],
+                                              "not_inspected": [], "unwatched": []}
+    assert lfr._temp_note([{"unwatched": "no_tmpdir"}])["watch"] == "unavailable"
+    assert lfr._temp_note([]) == {"watch": "not_applicable", "count": None, "names": [], "not_moved": [],
+                                  "not_inspected": [], "unwatched": []}  # no cloud execution: nothing is watched
+
+
+def test_a_move_that_fails_and_an_inspection_that_gives_up_are_recorded_and_never_abort(tmp_path, monkeypatch):
+    temp, dest = _sub(tmp_path, "tmp"), tmp_path / "quarantine"
+    before = lfr._temp_names(temp)
+    _tree(temp, "rv/plugins/foundry/b.py", "ok/plugins/foundry/c.py")
+    real = lfr.shutil.move
+
+    def failing(src, dst):
+        if Path(src).name == "rv":
+            raise OSError("cross-device move failed")
+        return real(src, dst)
+
+    monkeypatch.setattr(lfr.shutil, "move", failing)
+    out = lfr._move_temp_leftovers(temp, before, dest, FILES)  # no OSError leaves the function
+    assert out == {"moved": ["ok"], "not_moved": ["rv"], "not_inspected": []}
+    assert (temp / "rv").is_dir() and (dest / "ok").is_dir()  # the entry that could not be moved is still there
+    note = lfr._temp_note([out])
+    assert (note["watch"], note["count"], note["names"], note["not_moved"]) == ("partial", 1, ["ok"], ["rv"])
+    monkeypatch.setattr(lfr.shutil, "move", real)
+    # the bounded walk gives up: the entry is left in place and recorded as not inspected, never as "holds nothing"
+    monkeypatch.setattr(lfr, "TEMP_WALK_BOUND", 3)
+    before = lfr._temp_names(temp)
+    _tree(temp, *(f"big/n{i}.txt" for i in range(6)), "big/z/plugins/foundry/d.py")
+    assert lfr._holds_bundle_material(temp / "big", FILES) is None
+    out = lfr._move_temp_leftovers(temp, before, dest, FILES)
+    assert out == {"moved": [], "not_moved": [], "not_inspected": ["big"]} and (temp / "big").is_dir()
+    assert lfr._temp_note([out])["watch"] == "partial"
+    monkeypatch.setattr(lfr, "TEMP_WALK_BOUND", 20000)
+    assert lfr._holds_bundle_material(temp / "big", FILES) is True
+    # an entry that vanished between the listing and its examination is ordinary and is not a leftover
+    monkeypatch.setattr(lfr, "_temp_names", lambda directory: {"gone-meanwhile", "linear.py"})
+    assert lfr._move_temp_leftovers(temp, set(), dest, FILES) == {"moved": [], "not_moved": [], "not_inspected": []}
+
+
+def test_a_run_without_a_watch_says_so_on_the_record_and_in_the_report_and_is_never_aborted(tmp_path, monkeypatch):
+    plan = {**PLAN, "implementer": ["fix"], "reviewer": ["PASS"]}
+    # no TMPDIR in the arm's environment: no watch at all
+    runner, tasks = _policy_runner(_sub(tmp_path, "no-tmpdir"), monkeypatch, plan)
+    runner.host_env = {k: v for k, v in runner.host_env.items() if k != "TMPDIR"}
+    runner.compare_exploration(tasks[:1], "cand-a", ("A", "L"))
+    rec = _cloud(runner)[0]
+    left = rec["audit"]["temp_leftovers"]
+    assert rec["outcome"] == "accepted" and left["watch"] == "unavailable" and left["count"] is None
+    assert left["unwatched"] == ["no_tmpdir", "no_tmpdir"]  # the implementer's execution and the reviewer's
+    explore = next(r for r in results(runner) if r.get("segment") == "explore")
+    assert explore["audit"]["temp_leftovers"]["watch"] == "not_applicable"  # a local exploration is not watched
+    assert explore["audit"]["temp_leftovers"]["count"] is None
+    report = lfr.report(runner.campaign, results(runner), ledger_of(runner))
+    assert {(t["path"], t["segment"], t["watch"]) for t in report["temp_leftovers"]} == {
+        ("A", "cloud", "unavailable"), ("L", "cloud", "unavailable")}  # listed: unknown is never "nothing left"
+    # the listing made before the implementer's execution fails: the paid execution goes on, nothing is moved, even
+    # the matching entry the execution leaves, and the pre-existing matching entry is not touched
+    other, tasks2 = _policy_runner(_sub(tmp_path, "listing"), monkeypatch, plan)
+    temp = _sub(tmp_path, "listing-tmp")
+    other.host_env = {**other.host_env, "TMPDIR": str(temp)}
+    _tree(temp, "preexisting/plugins/foundry/a.py")
+    real_names, real_exec, calls = lfr._temp_names, lfr.execute_driver, []
+
+    def names(directory):
+        calls.append(1)
+        return None if len(calls) == 1 else real_names(directory)
+
+    def leaving(driver, values, **kw):
+        if "--role" in driver["argv"] and "implementer" in driver["argv"]:
+            _tree(temp, "rv/plugins/foundry/tooling/foundry/m.py")
+        return real_exec(driver, values, **kw)
+
+    monkeypatch.setattr(lfr, "_temp_names", names)
+    monkeypatch.setattr(lfr, "execute_driver", leaving)
+    other.compare_exploration(tasks2[:1], "cand-a", ("A",))
+    rec = _cloud(other)[0]
+    left = rec["audit"]["temp_leftovers"]
+    assert rec["outcome"] == "accepted" and (left["watch"], left["count"]) == ("partial", None)
+    assert left["unwatched"] == ["listing_before_failed"] and left["names"] == []
+    assert sorted(p.name for p in temp.iterdir()) == ["preexisting", "rv"]  # the reviewer's own listing saw "rv" before
+    assert not (other.state_dir / lfr.TEMP_QUARANTINE).exists()
 
 
 def test_a_run_moves_the_bundle_copy_an_execution_left_in_the_temp_directory_and_records_it(tmp_path, monkeypatch):
@@ -1451,7 +1734,8 @@ def test_a_run_moves_the_bundle_copy_an_execution_left_in_the_temp_directory_and
     monkeypatch.setattr(lfr, "execute_driver", leaving)
     runner.compare_exploration(tasks[:1], "cand-a", ("A",))
     rec = _cloud(runner)[0]
-    assert calls and rec["audit"]["temp_leftovers"] == {"count": 1, "names": ["rv"]}
+    assert calls and rec["audit"]["temp_leftovers"] == {"watch": "complete", "count": 1, "names": ["rv"],
+                                                         "not_moved": [], "not_inspected": [], "unwatched": []}
     assert sorted(p.name for p in temp.iterdir()) == ["preexisting"]  # moved out, kept: never deleted
     kept = sorted((runner.state_dir / lfr.TEMP_QUARANTINE).glob("*/rv/plugins/foundry/tooling/foundry/m.py"))
     assert len(kept) == 1 and kept[0].read_text() == "x"  # in the launcher's quarantine, under the state directory
@@ -1462,11 +1746,12 @@ def test_a_run_moves_the_bundle_copy_an_execution_left_in_the_temp_directory_and
     assert rec["outcome"] == "accepted"  # a leftover counts nothing in the decision
     report = lfr.report(runner.campaign, results(runner), ledger_of(runner))
     assert report["temp_leftovers"][0]["names"] == ["rv"] and report["temp_leftovers"][0]["path"] == "A"
-    # no leftover: the record says so (count 0) and the report lists none
+    # no leftover and a complete watch: the record says so (count 0, watch complete) and the report lists none
     other, tasks2 = _policy_runner(_sub(tmp_path, "clean"), monkeypatch, {**PLAN, "reviewer": ["PASS"]})
     other.host_env = {**other.host_env, "TMPDIR": str(_sub(tmp_path, "clean-tmp"))}
     other.compare_exploration(tasks2[:1], "cand-a", ("A",))
-    assert _cloud(other)[0]["audit"]["temp_leftovers"] == {"count": 0, "names": []}
+    assert _cloud(other)[0]["audit"]["temp_leftovers"] == {"watch": "complete", "count": 0, "names": [],
+                                                            "not_moved": [], "not_inspected": [], "unwatched": []}
     assert "temp_leftovers" not in lfr.report(other.campaign, results(other), ledger_of(other))
 
 
