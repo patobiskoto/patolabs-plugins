@@ -24,13 +24,13 @@ cd <checkout>/plugins/foundry/tooling && PYTHONPATH=. python3 -m foundry.local_f
 
 ## Pilote : préparation et commande exacte
 
-Le pilote 1 est nul (voir ci-dessus) ; le pilote 2 est joué **une fois, avant le gel**, hors décision (voir la section 7 du protocole : critère d'arrêt, ce qu'il regarde, où va son résultat). Écrire l'enveloppe du pilote (le lanceur n'en écrit jamais) dans un dossier d'exécution **propre au pilote**, hors du dépôt :
+Le pilote 1 est nul (voir ci-dessus) ; les pilotes 1 (nul) et 2 (critère (c), voir la section 7.3 ter du protocole) sont joués ; le pilote 3 (`pat-19-x5pilot-3`, son propre dossier d'exécution) est joué **une fois, avant le gel**, hors décision (voir la section 7 du protocole : critère d'arrêt, ce qu'il regarde, où va son résultat). Écrire l'enveloppe du pilote (le lanceur n'en écrit jamais) dans un dossier d'exécution **propre au pilote**, hors du dépôt :
 
 ```sh
-RUNS=$HOME/pat19-x5pilot-2-runs      # hors du dépôt, jamais celui de la campagne
+RUNS=$HOME/pat19-x5pilot-3-runs      # hors du dépôt, jamais celui de la campagne
 mkdir -p "$RUNS"
 cat > "$RUNS/envelope.json" <<'JSON'
-{"schema": "foundry.local-first-envelope.v1", "campaign_id": "pat-19-x5pilot-2", "expires_on": "2026-10-31",
+{"schema": "foundry.local-first-envelope.v1", "campaign_id": "pat-19-x5pilot-3", "expires_on": "2026-10-31",
  "allowed_modes": ["compare_exploration"],
  "caps": {"cloud_executions": 16, "premium_tokens": 8000000, "wall_clock_seconds": 30000}}
 JSON
@@ -38,7 +38,7 @@ JSON
     <checkout> "$RUNS" <work-root-pilote> <repo>
 ```
 
-Un seul lancement joue la tâche (PR 27, bras A et L complets) et le script s'arrête à `work_remains=no`. Le résultat se verse sous `pat-19-runs/x5pilot-2/` : `envelope.json`, `ledger-pat-19-x5pilot-2.jsonl`, `operator-pilot-*.log`, `results-pat-19-x5pilot-2.jsonl`, `streams-manifest.json` et le rapport (`cd <checkout>/plugins/foundry/tooling && PYTHONPATH=. python3 -m foundry.local_first_runner report --campaign ../docs/qualification/pat-19-campaign-v5-pilot.json --results "$RUNS/state/results-pat-19-x5pilot-2.jsonl" > "$RUNS/report-pat-19-x5pilot-2.json"`), **sans transcript brut** (les flux de `"$RUNS/state/streams/"` restent hors dépôt).
+Un seul lancement joue la tâche (PR 27, bras A et L complets) et le script s'arrête à `work_remains=no`. Le résultat se verse sous `pat-19-runs/x5pilot-3/` : `envelope.json`, `ledger-pat-19-x5pilot-3.jsonl`, `operator-pilot-*.log`, `results-pat-19-x5pilot-3.jsonl`, `streams-manifest.json` et le rapport (`cd <checkout>/plugins/foundry/tooling && PYTHONPATH=. python3 -m foundry.local_first_runner report --campaign ../docs/qualification/pat-19-campaign-v5-pilot.json --results "$RUNS/state/results-pat-19-x5pilot-3.jsonl" > "$RUNS/report-pat-19-x5pilot-3.json"`), **sans transcript brut** (les flux de `"$RUNS/state/streams/"` restent hors dépôt).
 
 ## Campagne : enveloppe recommandée
 

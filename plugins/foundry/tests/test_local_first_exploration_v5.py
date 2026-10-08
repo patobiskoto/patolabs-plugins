@@ -150,8 +150,8 @@ def test_the_loader_pins_the_v5_coordinates(tmp_path):
             (lambda d: d["isolation"].update(private_attempt_root=False), "private_attempt_root true"),
             (lambda d: d["isolation"].update({KEY: False}), "audit_revision 2 is accepted only together|requires"),
             (lambda d: d["isolation"].pop(KEY), "only together with isolation.cloud_native_sandbox"),
-            (lambda d: d["isolation"].update(audit_revision=1), "requires isolation.private_attempt_root true"),
-            (lambda d: d["isolation"].pop("audit_revision"), "requires isolation.private_attempt_root true"),
+            (lambda d: d["isolation"].update(audit_revision=1), "needs isolation.cloud_native_sandbox true and"),
+            (lambda d: d["isolation"].pop("audit_revision"), "needs isolation.cloud_native_sandbox true and"),
             (lambda d: d["isolation"].update(allow_read_home=[".config"]), "allows reading nothing of the home"),
             (lambda d: d["isolation"].update(allow_read_home=[GIT_IGNORE, ".ssh"]), "allows reading nothing"),
             (lambda d: d["isolation"].update(allow_read_home=["/etc/hosts"]), "relative home entries"),
@@ -757,3 +757,229 @@ def test_the_operator_script_refuses_a_python3_without_pytest_before_any_model(t
                           env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "HOME": str(where / "home")})
     assert done.returncode == 65 and "cannot import pytest" in done.stderr and "clean shell" in done.stderr
     assert not (where / "lms.log").exists() and not list(runs.glob("operator-*"))
+
+
+# ------------------------------------------------------- audit policy: the OS is the barrier, the audit a journal
+
+POLICY = lfr.AUDIT_POLICY
+REFUSAL = ("Permission to use Bash has been denied because Claude Code is running in don't ask mode. IMPORTANT: "
+           "You *may* attempt to accomplish this action using other tools.")
+
+
+class _Zone:
+    """work/private-a/a/{bundle,scratch}; the OS denies the home and the work root to the shell, re-allows the attempt;
+    ``other`` is a sensitive place the OS does NOT deny."""
+
+    def __init__(self, tmp_path):
+        self.work = tmp_path / "work"
+        self.attempt = self.work / "private-a" / "a"
+        self.bundle, self.scratch = self.attempt / "bundle", self.attempt / "scratch"
+        self.home, self.other = tmp_path / "home", tmp_path / "other"
+        for d in (self.bundle, self.scratch, self.home / ".config" / "foundry", self.other, self.work / "private-b"):
+            d.mkdir(parents=True, exist_ok=True)
+        self.tmp = tmp_path
+        self.denied = ([self.home, self.work], [self.attempt])
+
+    def audit(self, tmp_path, calls, *, policy=True, version="2.1.285"):
+        """``calls``: ``(tool, input, result_text_or_None, is_error)`` -> (decisive, journal, refused)."""
+        lines = [{"type": "system", "subtype": "init", "claude_code_version": version, "tools": ["Bash"]}]
+        for n, (tool, args, text, is_error) in enumerate(calls):
+            lines.append({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": f"t{n}", "name": tool, "input": args}]}})
+            if text is not None:
+                lines.append({"type": "user", "message": {"content": [
+                    {"type": "tool_result", "tool_use_id": f"t{n}", "content": text, "is_error": is_error}]},
+                    "tool_use_result": {"interrupted": False}})
+        stream = tmp_path / "s.jsonl"
+        stream.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+        journal, refused = [], {}
+        extra = {"policy_denied": self.denied, "journal": journal, "refused": refused} if policy else {}
+        out = lfr.audit_transcript(
+            stream, bundle=self.bundle, scratch=self.scratch,
+            sensitive=[self.home / ".config" / "foundry", self.work, self.other], home=str(self.home),
+            attempt_dir=self.attempt, private_root=self.attempt.parent, revision=lfr.AUDIT_REVISION, **extra)
+        return out, journal, refused
+
+
+def test_a_call_the_host_refused_did_not_run_and_contributes_nothing(tmp_path):
+    zone = _Zone(tmp_path)
+    call = [("Bash", {"command": f"cat {zone.home}/.config/foundry/registry.json"}, REFUSAL, True)]
+    strict, _, _ = zone.audit(tmp_path, call, policy=False)
+    assert strict  # revision 2 alone counts it as if it had run
+    out, journal, refused = zone.audit(tmp_path, call)
+    assert out == [] and journal == [] and refused == {"Bash": 1}  # counted per tool, no text
+    # the permission-rule shapes of a file tool are whole-call refusals too
+    for text in ("Read denied by your permission settings", "Path blocks reads outside the working directories"):
+        out, _, refused = zone.audit(tmp_path, [("Read", {"file_path": f"{zone.work}/private-b/x"}, text, True)])
+        assert out == [] and refused == {"Read": 1}
+    # a refused call moves no directory: the relative path that follows is read from the bundle, as before it
+    moved = [("Bash", {"command": f"cd {zone.other}"}, REFUSAL, True), ("Bash", {"command": "ls src"}, "ok", False)]
+    assert zone.audit(tmp_path, moved, policy=False)[0] and zone.audit(tmp_path, moved)[0] == []
+
+
+def test_only_whole_call_refusals_are_recognised(tmp_path):
+    zone = _Zone(tmp_path)
+    cmd = {"command": f"cat {zone.home}/.config/foundry/x"}
+    for text, is_error in (("cat: x: Operation not permitted", True),  # the OS inside a command that ran
+                           (REFUSAL, False),  # the words in a successful result are not a refusal
+                           ("Exit code 1\n" + REFUSAL, True), ("anything else failed", True), (None, None)):
+        out, journal, refused = zone.audit(tmp_path, [("Bash", cmd, text, is_error)])
+        assert refused == {}, text  # nothing is called refused: the call may have run
+        assert out == [] and journal, text  # ... and its finding is under a root the OS denies: journaled
+
+
+def test_a_shell_finding_under_an_os_denied_root_and_the_unknown_directory_are_journaled(tmp_path):
+    zone = _Zone(tmp_path)
+    calls = [("Bash", {"command": f"ls {zone.work}/private-b; cat ~/.config/foundry/x"}, "ok", False),
+             ("Bash", {"command": 'T=$(mktemp -d); cd $T; cat notes'}, "ok", False)]
+    strict, _, _ = zone.audit(tmp_path, calls, policy=False)
+    out, journal, _ = zone.audit(tmp_path, calls)
+    assert out == [] and set(journal) == set(strict) and "/<unknown-working-directory>" in journal
+    assert any(j.endswith("private-b") for j in journal) and any(".config/foundry" in j for j in journal)
+
+
+def test_every_other_finding_stays_decisive(tmp_path):
+    zone = _Zone(tmp_path)
+    # a path the OS does not deny (a sensitive place outside the denyRead list)
+    out, journal, _ = zone.audit(tmp_path, [("Bash", {"command": f"cat {zone.other}/x"}, "ok", False)])
+    assert [p for p in out if str(zone.other.name) in p] and journal == []
+    # a FILE-TOOL finding, even under a root the OS denies to the shell
+    out, journal, _ = zone.audit(tmp_path, [("Read", {"file_path": f"{zone.work}/private-b/x"}, "text", False)])
+    assert any("private-b" in p for p in out) and journal == []
+    # the same path named by a shell command AND by a file tool is decisive
+    both = [("Bash", {"command": f"ls {zone.work}/private-b"}, "ok", False),
+            ("Read", {"file_path": f"{zone.work}/private-b"}, "text", False)]
+    assert zone.audit(tmp_path, both)[0] and zone.audit(tmp_path, both)[1] == []
+    # a forbidden command, and a sensitive path shown by a tool result
+    out, _, _ = zone.audit(tmp_path, [("Bash", {"command": "git push origin main"}, "ok", False)])
+    assert "command:git push" in out
+    shown = [("Bash", {"command": "echo hi"}, f"see {zone.other}/secret.txt", False)]
+    assert any(p.startswith("tool_result:") for p in zone.audit(tmp_path, shown)[0])
+
+
+def test_without_the_policy_the_audit_returns_exactly_what_it_returned(tmp_path):
+    zone = _Zone(tmp_path)
+    calls = [("Bash", {"command": f"ls {zone.work}/private-b; cat {zone.other}/x"}, "ok", False),
+             ("Bash", {"command": f"cat {zone.home}/.config/foundry/x"}, REFUSAL, True)]
+    assert zone.audit(tmp_path, calls, policy=False)[0] == zone.audit(tmp_path, calls, policy=False)[0]
+    plain = zone.audit(tmp_path, calls, policy=False)[0]
+    assert any("private-b" in p for p in plain) and any(".config/foundry" in p for p in plain)  # both counted
+    # a stream of another version has no carried directory: the policy still only moves what the OS denies
+    odd, journal, _ = zone.audit(tmp_path, calls, version="9.9.9")
+    assert any("other" in p for p in odd) and journal
+
+
+def _policy_runner(tmp_path, monkeypatch, plan, *, version=lfr.OBSERVED_CLAUDE_CODE[0], policy=True):
+    from test_local_first_native_sandbox import _fake_runner as fake
+    runner, plan_path, tasks = fake(tmp_path, monkeypatch, version=version, plan=plan)
+    if policy:
+        runner.campaign["isolation"][lfr.AUDIT_POLICY_KEY] = POLICY
+        runner.audit_policy = True
+    return runner, tasks
+
+
+CLIMB = {**PLAN, "implementer": ["cmd:ls ../../.."], "reviewer": ["PASS"]}
+REVIEWER_CLIMBS = {**PLAN, "implementer": ["fix"], "reviewer": ["cmd:ls ../../.."]}
+
+
+def _cloud(runner):
+    return [r for r in results(runner) if r.get("path") == "A" and r.get("segment") == "cloud"]
+
+
+def test_under_the_policy_and_an_observed_barrier_a_climb_to_the_work_root_is_journaled_not_contamination(
+        tmp_path, monkeypatch):
+    runner, tasks = _policy_runner(tmp_path, monkeypatch, CLIMB)
+    runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+    rec = _cloud(runner)[0]
+    assert "contaminated" not in rec and rec["outcome"] == "accepted"
+    audit = rec["audit"]
+    assert audit["barrier"] == lfr.BARRIER_OBSERVED and audit["policy"] == POLICY
+    assert audit["journal"] and audit["journal_by_role"]["arm"] == len(audit["journal"]) and audit["refused_calls"] == {}
+    assert str(tmp_path) not in json.dumps(audit["policy"])
+    report = lfr.report(runner.campaign, results(runner), ledger_of(runner))
+    assert report["contaminated"] == [] and report["audit_journal"]["journal_paths_by_arm"] == {
+        "A": len(audit["journal"])}
+    assert report["audit_journal"]["host_refused_calls_total"] == 0
+
+
+def test_without_an_observed_barrier_or_without_the_key_the_audit_is_strict(tmp_path, monkeypatch):
+    for n, (kwargs, why) in enumerate((({"version": None}, "settings only"), ({"policy": False}, "no key"))):
+        runner, tasks = _policy_runner(_sub(tmp_path, f"s{n}"), monkeypatch, CLIMB, **kwargs)
+        runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+        rec = _cloud(runner)[0]
+        assert rec["outcome"] == "contaminated" and rec["contaminated"] is True, why
+        if kwargs.get("policy") is False:
+            assert "journal" not in rec["audit"] and "policy" not in rec["audit"], why  # the record shape is the old one
+        else:  # the key is on but the barrier is not observed: strict, and the journal stays empty
+            assert rec["audit"]["journal"] == [] and rec["audit"]["refused_calls"] == {}, why
+        has = "audit_journal" in lfr.report(runner.campaign, results(runner), ledger_of(runner))
+        assert has is (kwargs.get("policy") is not False), why
+
+
+def test_a_reviewer_with_a_journal_only_finding_keeps_its_verdict_one_with_a_decisive_finding_does_not(
+        tmp_path, monkeypatch):
+    runner, tasks = _policy_runner(tmp_path, monkeypatch, REVIEWER_CLIMBS)
+    runner.compare_exploration(tasks[:1], "cand-a", ("A",))
+    rec = _cloud(runner)[0]
+    assert rec["outcome"] == "accepted" and rec["accepted"] is True and "contamination" not in rec["review"]
+    assert rec["audit"]["journal_by_role"]["reviewer"] >= 1
+    assert lfr.report(runner.campaign, results(runner), ledger_of(runner))["audit_journal"][
+        "journal_paths_by_role"]["reviewer"] >= 1
+    # the same reviewer under the strict audit is unreadable (this is what pilot 2 lost)
+    strict, tasks2 = _policy_runner(_sub(tmp_path, "strict"), monkeypatch, REVIEWER_CLIMBS, policy=False)
+    strict.compare_exploration(tasks2[:1], "cand-a", ("A",))
+    assert _cloud(strict)[0]["outcome"] == "review_unreadable"
+    # a reviewer that READS the work root with its file tool: decisive, whatever the policy
+    target = tmp_path / "peek" / "x" / "work" / "private-zz"  # the work root of the runner below
+    again, tasks4 = _policy_runner(_sub(tmp_path, "peek"), monkeypatch, {**PLAN, "implementer": ["fix"],
+                                                                       "reviewer": [f"peek:{target}"]})
+    again.compare_exploration(tasks4[:1], "cand-a", ("A",))
+    rec = _cloud(again)[0]
+    assert rec["outcome"] == "review_unreadable" and rec["review"]["contamination"]["paths"]
+    assert rec["audit"]["journal"] == [] or all("private-zz" not in j for j in rec["audit"]["journal"])
+
+
+def test_the_policy_key_is_pinned_and_refused_where_it_cannot_hold(tmp_path):
+    for path, protocol in ((V5_PATH, lfr.PROTOCOL_V5), (PILOT_PATH, lfr.PROTOCOL_V5_PILOT)):
+        data = _load(path)
+        assert data["isolation"][lfr.AUDIT_POLICY_KEY] == POLICY and data["protocol"] == protocol
+        with pytest.raises(lfr.RunnerError, match="requires isolation.audit_policy"):
+            lfr.load_campaign(_broken(tmp_path, lambda d: d["isolation"].pop(lfr.AUDIT_POLICY_KEY), path))
+    with pytest.raises(lfr.RunnerError, match="is 'journal_under_observed_barrier' or absent"):
+        lfr.load_campaign(_broken(tmp_path, lambda d: d["isolation"].update(audit_policy="journal_all")))
+    with pytest.raises(lfr.RunnerError, match="needs isolation.cloud_native_sandbox true"):
+        lfr.load_campaign(_broken(tmp_path, lambda d: d["isolation"].update(audit_revision=1, cloud_native_sandbox=True)))
+    # a later unpinned protocol: accepted with the barrier, refused without it; before v5: refused
+    spec = _load(QUALIFICATION / "pat-19-campaign-v4.json")["exploration"]["ground_truth"]
+    (tmp_path / spec["file"]).write_bytes((QUALIFICATION / spec["file"]).read_bytes())
+    for n, (protocol, iso, message) in enumerate((
+            ("pat-19-protocol-v6", {"cloud_native_sandbox": True, "audit_revision": 2}, None),
+            ("pat-19-protocol-v6", {}, "needs isolation.cloud_native_sandbox true"),
+            ("pat-19-protocol-v4", {}, "accepted only under a protocol after v4"),
+            (None, {}, "accepted only under"))):
+        data = _load(V4_PATH)
+        data["isolation"].update(audit_policy=POLICY, **iso)
+        data.pop("protocol") if protocol is None else data.update(protocol=protocol)
+        (tmp_path / "x.json").write_text(json.dumps(data), encoding="utf-8")
+        if message is None:
+            assert lfr.load_campaign(tmp_path / "x.json")["isolation"]["audit_policy"] == POLICY
+        else:
+            with pytest.raises(lfr.RunnerError, match=message):
+                lfr.load_campaign(tmp_path / "x.json")
+    for v in (1, 2, 3):  # the frozen configs never carry it
+        assert lfr.AUDIT_POLICY_KEY not in _load(QUALIFICATION / f"pat-19-campaign-v{v}.json").get("isolation", {})
+
+
+def test_the_replay_reads_the_policy_per_stream_and_never_recomputes_an_outcome():
+    rec = {"outcome": "review_unreadable", "review": {"verdicts": ["PASS"]}}
+    streams = [{"role": "arm", "stream": "a", "new": [], "policy": {"decisive": [], "journal": [], "refused_calls": {}}},
+               {"role": "reviewer", "stream": "r", "new": ["/x/scratch"],
+                "policy": {"decisive": [], "journal": ["/x/scratch"], "refused_calls": {"Bash": 1}}}]
+    out = lfr._policy_reading(rec, streams)
+    assert [s["class"] for s in out["streams"]] == ["clean", "journal_only"]
+    assert out["outcome_recorded"] == "review_unreadable" and out["outcome_reading_non_decisional"] == "accepted"
+    streams[1]["policy"] = {"decisive": ["/x/scratch"], "journal": [], "refused_calls": {}}
+    out = lfr._policy_reading(rec, streams)
+    assert out["streams"][1]["class"] == "decisive_kept" and out["outcome_reading_non_decisional"] == "review_unreadable"
+    streams[1]["policy"] = {"decisive": [], "journal": [], "refused_calls": {"Bash": 1}}
+    assert lfr._policy_reading(rec, streams)["streams"][1]["class"] == "refused_calls_only"

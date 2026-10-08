@@ -67,6 +67,16 @@ V5_TASK_SET = {PROTOCOL_V5: "pat-19-v5", PROTOCOL_V5_PILOT: "pat-19-v5-pilot"}  
 V5_CLAUDE_CODE = "2.1.285"  # the only Claude Code version observed for the audit's assumptions and the sandbox trials
 V5_ALLOW_READ_HOME = (".config/git/ignore",)  # the one home file a v5 cloud shell may read (git's default excludes)
 COMPARISON_SET = "comparison"  # ``task.set`` of the comparison records of v1 to v4
+# PAT-126 (pilot 2): ``isolation.audit_policy``, a protocol v5+ key. Where the native sandbox is observed to be in force
+# (``BARRIER_OBSERVED``) the operating system is the barrier and the lexical audit a journal: a call the host refused did
+# not run (it counts for nothing), and a SHELL finding under a root the OS denies to that execution, or at a directory the
+# audit cannot name, is journaled (``audit.journal``), not a contamination.
+AUDIT_POLICY_KEY = "audit_policy"
+AUDIT_POLICY = "journal_under_observed_barrier"
+# whole-call refusals of the host, the shapes the trial tool knows (a result that is an error and says it, nothing else)
+_REFUSED_CALL = (re.compile(r"\APermission to use \w+ has been denied because Claude Code is running in don't ask mode", re.I),
+                 re.compile(r"denied by your permission settings|blocks reads outside the working directories|"
+                            r"blockReadsOutsideWorkingDirectories", re.I))
 # PAT-123: ``isolation.audit_revision`` 2 (a protocol after v4 only) follows the working directory of a command
 # line, attributes a flag of the reviewer's session to the review, and records a path that does not exist apart
 AUDIT_REVISION = 2
@@ -323,6 +333,15 @@ def load_campaign(path: Path) -> dict[str, Any]:
                           f"after v4 (pat-19-protocol-v5 or later), not under the frozen protocol "
                           f"{data.get('protocol')!r}")
     _check_native_sandbox(path, data, later)
+    if AUDIT_POLICY_KEY in iso:  # PAT-126: after v4 only, one value, and only with the barrier it relies on
+        if not later:
+            raise RunnerError(f"{path}: isolation.{AUDIT_POLICY_KEY} is accepted only under a protocol after v4 "
+                              f"(pat-19-protocol-v5 or later), not under {data.get('protocol')!r}")
+        if iso[AUDIT_POLICY_KEY] != AUDIT_POLICY:
+            raise RunnerError(f"{path}: isolation.{AUDIT_POLICY_KEY} is {AUDIT_POLICY!r} or absent")
+        if iso.get(NATIVE_SANDBOX_KEY) is not True or iso.get("audit_revision") != AUDIT_REVISION:
+            raise RunnerError(f"{path}: isolation.{AUDIT_POLICY_KEY} needs isolation.{NATIVE_SANDBOX_KEY} true and "
+                              f"isolation.audit_revision {AUDIT_REVISION} (the operating system is the barrier it relies on)")
     _check_correction_feedback(path, data)
     _check_cloud_bash_deny(path, data)
     for cid, cand in data["candidates"].items():
@@ -477,6 +496,8 @@ def _check_v5_pins(path: Path, data: Mapping[str, Any], frozen: Sequence[str], f
     feedback = data.get("correction_feedback") or {}
     if {k: feedback.get(k) for k in V4_FEEDBACK} != V4_FEEDBACK:
         raise RunnerError(f"{path}: protocol v5 requires correction_feedback {V4_FEEDBACK}")
+    if iso.get(AUDIT_POLICY_KEY) != AUDIT_POLICY:
+        raise RunnerError(f"{path}: protocol v5 requires isolation.{AUDIT_POLICY_KEY} {AUDIT_POLICY!r}")
     if iso.get("private_attempt_root") is not True or iso.get(NATIVE_SANDBOX_KEY) is not True \
             or iso.get("audit_revision") != AUDIT_REVISION:
         raise RunnerError(f"{path}: protocol v5 requires isolation.private_attempt_root true, "
@@ -2817,7 +2838,10 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                      attempt_dir: Path | None = None, private_root: Path | None = None,
                      revision: int = 1, not_found: list[str] | None = None,
                      host_model: list[str] | None = None,
-                     trace: list[frozenset[Path]] | None = None) -> list[str]:
+                     trace: list[frozenset[Path]] | None = None,
+                     policy_denied: tuple[Sequence[Path], Sequence[Path]] | None = None,
+                     journal: list[str] | None = None,
+                     refused: dict[str, int] | None = None) -> list[str]:
     """What an arm's stream shows it did outside its bundle and attempt directory. Only the path
     arguments of its tool calls (``_PATH_KEYS``, the ``pattern`` of a Glob/find tool) and its shell
     commands are read: the text it writes or searches (Edit ``old_string``/``new_string``, Write
@@ -2878,7 +2902,15 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
     ``cat x``, is read there). As in revision 1, a path built at run time is not seen. A path an omp tool call gave and the tool answered ``Path not found: <that path>`` was not
     read: it is not a hit, nor is the echo of it in the error result; it is appended to ``not_found`` (apart,
     never counted as a read). A path that exists, a command and every other failure text stay audited as
-    before."""
+    before.
+
+    ``policy_denied`` (PAT-126, ``isolation.audit_policy``, revision 2 and an observed barrier only: ``(denyRead,
+    allowRead)`` of the settings the execution received): (1) a tool call whose result is a whole-call refusal of the
+    host (``_REFUSED_CALL``, an error result) did not run: it contributes nothing and moves no directory; it is counted
+    per tool in ``refused`` (no text); (2) a finding of a SHELL command whose path lies under a ``denyRead`` root and
+    outside every ``allowRead`` entry, or at ``UNKNOWN_CWD``, is appended to ``journal`` and left out of the result; every
+    other finding (a file-tool path, a path the OS does not deny, a result path, a forbidden command) stays in the result.
+    Without it the result is exactly what it was."""
     try:
         lines = Path(stream_log).read_text("utf-8", "replace").splitlines()
     except FileNotFoundError:
@@ -2923,31 +2955,43 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
         return str(path).replace(str(home_real), "~", 1)
 
     hits: dict[str, None] = {}
+    hit_paths: dict[str, Path] = {}
+    file_tool: set[str] = set()  # hits some FILE-TOOL call (not only a shell command) produced
     commands: dict[str, None] = {}
     follow = revision >= AUDIT_REVISION
     missing = _missing_paths(lines) if follow else {}
     outcomes = _call_outcomes(lines) if follow else {}
+    policy = follow and policy_denied is not None
+    refused_ids = {i for i, o in outcomes.items() if o.get("error") is True and any(
+        rx.search(o["text"]) for rx in _REFUSED_CALL)} if policy else set()
     model = _host_model(lines) if follow else "unverified"
     if follow and host_model is not None:
         host_model.append(model)
     carried = model != "unverified"  # H1; otherwise H9: no directory is carried, no ``cd`` is believed
     session = frozenset({bundle_real})  # H1: where the shell may start the next call
     anywhere = {bundle_real}  # H9: every directory a call may have been in so far
-    unordered = _overlapping(lines, outcomes) if follow else set()  # calls whose order of execution is not known
+    unordered = (_overlapping(lines, outcomes) - refused_ids) if follow else set()  # order of execution not known
     unordered_moves = any(
         set(_shell_walk(_without_heredocs(text)[0], {bundle_real}, tilde, None)[2]) != {bundle_real}
         for call_id, _, args, _ in _tool_events(lines) if call_id is not None and str(call_id) in unordered
         for key, text in _strings(args) if key in _COMMAND_KEYS)
 
-    def consider(path: Path, broad: bool, relative: bool = False) -> None:
+    def consider(path: Path, broad: bool, relative: bool = False, shell: bool = False) -> None:
         if permitted(path):
             return
         if any(_within(path, r) for r in roots) or relative or (broad and (
                 _within(path, home_real) or _within(bundle_real, path)
                 or any(_within(r, path) for r in roots))):
             hits[shown(path)] = None
+            hit_paths[shown(path)] = path
+            if not shell:
+                file_tool.add(shown(path))
 
     for call_id, name, args, host in _tool_events(lines):
+        if call_id is not None and str(call_id) in refused_ids:  # the host refused the whole call: it did not run
+            if refused is not None:
+                refused[name] = refused.get(name, 0) + 1
+            continue
         path_keys = _PATH_KEYS | ({"pattern"} if name.lower() in _GLOB_TOOLS else frozenset())
         kept = follow and carried and host == "claude"
         ordered = call_id is not None and str(call_id) not in unordered
@@ -2982,7 +3026,8 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                     continue  # read by ``_shell_walk``, against the directories the shell may be in there
                 if token is not None:
                     consider(Path(os.path.realpath(token if os.path.isabs(token) else bundle / token)),
-                             key in path_keys, key in path_keys and not os.path.isabs(token))
+                             key in path_keys, key in path_keys and not os.path.isabs(token),
+                             shell=key in _COMMAND_KEYS)
             if key in _COMMAND_KEYS:
                 for n, script in enumerate(scripts):
                     if not follow:
@@ -2999,7 +3044,7 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                     else:
                         walked = _shell_walk(script, call_seen, tilde, None)[0]
                     for path, relative in walked:
-                        consider(path, True, relative)
+                        consider(path, True, relative, shell=True)
                     for found in _forbidden_commands(script):
                         commands[f"command:{found}"] = None
         if follow and call_end is not None:
@@ -3021,6 +3066,23 @@ def audit_transcript(stream_log: Path, *, bundle: Path, scratch: Path, sensitive
                 path = Path(os.path.realpath(token))
                 if any(_within(path, r) for r in roots) and not permitted(path):
                     seen[f"tool_result:{shown(path)}"] = None
+    if policy:  # journal what the operating system denies to the shell anyway, and the directory nobody can name
+        denied_roots = [Path(os.path.realpath(p)) for p in policy_denied[0]]
+        allowed_roots = [Path(os.path.realpath(p)) for p in policy_denied[1]]
+
+        def journaled(name: str) -> bool:
+            path = hit_paths[name]
+            if name in file_tool:
+                return False
+            if path == UNKNOWN_CWD or UNKNOWN_CWD in path.parents:
+                return True
+            return (any(_within(path, d) for d in denied_roots)
+                    and not any(_within(path, a) for a in allowed_roots))
+
+        moved = [h for h in hits if journaled(h)]
+        if journal is not None:
+            journal.extend(sorted(moved))
+        hits = {h: None for h in hits if h not in moved}
     return [*sorted(hits), *sorted(seen), *sorted(commands)]
 
 
@@ -3230,6 +3292,10 @@ class Runner:
         # and the interpreters the judge and the arms will use are probed before anything is claimed
         self.strict_judge = bool(_PROTOCOL_AFTER_V4.fullmatch(str(campaign.get("protocol"))))
         self.interpreters: dict[str, Any] | None = None
+        self.audit_policy = (campaign.get("isolation") or {}).get(AUDIT_POLICY_KEY) == AUDIT_POLICY
+        self.stream_roles: dict[str, str] = {}  # role of each audited cloud stream log
+        self.journals: dict[str, list[str]] = {}  # audit policy: journaled findings by stream log
+        self.refusals: dict[str, dict[str, int]] = {}  # audit policy: calls the host refused, per tool, by stream log
         # PAT-126 (a protocol after v4 only): the ``task.set`` label of the comparison records ("comparison" before)
         self.compare_set = _compare_set(campaign)
         self.screen_path = "XS" if self.exploring else "S"  # path name of the screening attempts
@@ -3397,15 +3463,28 @@ class Runner:
         self._executable(self._driver(driver_id))
 
     def _audit(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
-               session_id: str | None = None, exe: Mapping[str, str] | None = None) -> list[str]:
+               session_id: str | None = None, exe: Mapping[str, str] | None = None,
+               native: Mapping[str, Any] | None = None) -> list[str]:
         """``_audit_stream`` that keeps the paths the arm named without their existing (audit revision 2)
-        in ``self.not_found``, to be recorded apart."""
+        in ``self.not_found``, to be recorded apart. Under ``isolation.audit_policy`` and an observed barrier
+        (``native``: the settings this execution received) the returned list is the DECISIVE findings only; the
+        journaled ones and the calls the host refused are kept apart (``self.journals``, ``self.refusals``)."""
         notes: list[str] = []
         models: list[str] = []
-        hits = self._audit_stream(stream_log, bundle, scratch, driver, session_id, exe, notes, models)
+        barrier = self._stream_barrier(stream_log, driver)
+        denied = None
+        if self.audit_policy and barrier == BARRIER_OBSERVED and native is not None:
+            fs = (native.get("sandbox") or {}).get("filesystem") or {}
+            denied = (fs.get("denyRead") or [], fs.get("allowRead") or [])
+        journal: list[str] = []
+        refused: dict[str, int] = {}
+        hits = self._audit_stream(stream_log, bundle, scratch, driver, session_id, exe, notes, models,
+                                  policy_denied=denied, journal=journal, refused=refused)
         self.not_found[str(stream_log)] = list(dict.fromkeys(notes))
         self.host_models[str(stream_log)] = models[0] if models else "unverified"
-        self.barriers[str(stream_log)] = self._stream_barrier(stream_log, driver)
+        self.barriers[str(stream_log)] = barrier
+        self.journals[str(stream_log)] = journal
+        self.refusals[str(stream_log)] = refused
         return hits
 
     def _stream_barrier(self, stream_log: Path, driver: Mapping[str, Any]) -> str:
@@ -3446,7 +3525,7 @@ class Runner:
 
     def _audit_stream(self, stream_log: Path, bundle: Path, scratch: Path, driver: Mapping[str, Any],
                       session_id: str | None, exe: Mapping[str, str] | None, notes: list[str],
-                      models: list[str] | None = None) -> list[str]:
+                      models: list[str] | None = None, **policy: Any) -> list[str]:
         """Contamination audit of one arm's tool calls, on the stream the launcher kept. Always against
         the strictest list (the one of a local arm): a cloud arm keeps ``~/.claude`` for its identity,
         but reading anything there (the plugin cache holds the merged tests) is a contamination, except
@@ -3474,7 +3553,7 @@ class Runner:
                                 literals=self.literals.get(bundle, frozenset()), sandbox_denied=walled,
                                 attempt_dir=bundle.parent,  # ``_bundle`` builds <attempt dir>/bundle
                                 private_root=bundle.parent.parent if self.private_root else None,
-                                revision=self.audit_revision, not_found=notes, host_model=models)
+                                revision=self.audit_revision, not_found=notes, host_model=models, **policy)
 
     def _audit_note(self, stream_logs: Sequence[Path]) -> dict[str, Any]:
         """The ``audit`` field of a record that ran to completion under audit revision 2 (a record cut by
@@ -3489,9 +3568,20 @@ class Runner:
         names = [p for log in stream_logs for p in self.not_found.get(str(log), [])]
         barrier = min((self.barriers.get(str(log), AUDIT_BARRIER) for log in stream_logs),
                       key=BARRIERS.index, default=AUDIT_BARRIER)
-        return {"audit": {"revision": self.audit_revision, "barrier": barrier,
-                          "not_found": list(dict.fromkeys(names)),
-                          "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}}
+        note = {"revision": self.audit_revision, "barrier": barrier, "not_found": list(dict.fromkeys(names)),
+                "host_models": [self.host_models.get(str(log), "unverified") for log in stream_logs]}
+        if self.audit_policy:  # PAT-126: absent without the key, so the record of every other campaign keeps its shape
+            roles: dict[str, int] = {}
+            refused: dict[str, int] = {}
+            for log in stream_logs:
+                role = "reviewer" if self.stream_roles.get(str(log)) == "reviewer" else "arm"
+                roles[role] = roles.get(role, 0) + len(self.journals.get(str(log), []))
+                for tool, n in self.refusals.get(str(log), {}).items():
+                    refused[tool] = refused.get(tool, 0) + n
+            note.update(policy=AUDIT_POLICY,
+                        journal=list(dict.fromkeys(p for log in stream_logs for p in self.journals.get(str(log), []))),
+                        journal_by_role=roles, refused_calls=refused)
+        return {"audit": note}
 
     def _home(self) -> str:
         """The user's real HOME (the launcher's environment, or the injected ``host_env``)."""
@@ -3829,7 +3919,8 @@ class Runner:
         execution["by_model"] = by_model if tokens is not None else {}
         refusal = tool_allowlist_refusal(driver, execution["stream"])
         with self._critical():  # refused or not; a signal right after the audit never loses its result
-            execution["contamination"] = self._audit(stream_log, bundle, scratch, driver, session_id)
+            self.stream_roles[str(stream_log)] = role
+            execution["contamination"] = self._audit(stream_log, bundle, scratch, driver, session_id, native=native)
             self.audited[session_id] = execution["contamination"]
         if fingerprint_after != fingerprint:  # PAT-120: settled and audited above, then the campaign stops
             raise FoundryStateChanged(fingerprint, fingerprint_after, execution["contamination"])
@@ -5084,6 +5175,24 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                        for r in attempts if (r.get("review") or {}).get("contamination")]
     if flagged_reviews:  # audit revision 2 only (a frozen campaign has none: its report keeps its keys)
         out["review_contaminated"] = flagged_reviews
+    journaled = [r for r in attempts if (r.get("audit") or {}).get("policy")]
+    if journaled:  # PAT-126, isolation.audit_policy only (the key is absent otherwise): the journal, apart from the rule
+        by_arm: dict[str, int] = {}
+        by_role: dict[str, int] = {}
+        refused_calls: dict[str, int] = {}
+        for r in journaled:
+            a = r["audit"]
+            by_arm[r["path"]] = by_arm.get(r["path"], 0) + len(a.get("journal") or [])
+            for role, n in (a.get("journal_by_role") or {}).items():
+                by_role[role] = by_role.get(role, 0) + n
+            for tool, n in (a.get("refused_calls") or {}).items():
+                refused_calls[tool] = refused_calls.get(tool, 0) + n
+        out["audit_journal"] = {"policy": AUDIT_POLICY, "journal_paths_by_arm": dict(sorted(by_arm.items())),
+                                "journal_paths_by_role": dict(sorted(by_role.items())),
+                                "records_with_journal": sum(1 for r in journaled if r["audit"].get("journal")),
+                                "host_refused_calls": dict(sorted(refused_calls.items())),
+                                "host_refused_calls_total": sum(refused_calls.values()),
+                                "note": "findings kept apart from `contaminated`/`review_contaminated`: they decide nothing"}
     exploring = campaign.get("schema") == CAMPAIGN_SCHEMA_V2  # protocol v2: other paths, other rules
     screen_path = "XS" if exploring else "S"
     killed = len({(h["path"], h["pr"], h["candidate"], h["segment"], h["attempt"])
@@ -5591,6 +5700,36 @@ def _hidden_home(hit: str, home: str) -> str:
     return prefix + path
 
 
+def _policy_reading(rec: Mapping[str, Any], streams: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Per stream, the revision 2 findings (``strict``) and what ``isolation.audit_policy`` makes of them
+    (``decisive`` / ``journal``), and a NON-DECISIONAL reading of what the record's outcome would have been: nothing is
+    recomputed, the recorded outcome and verdicts stay what they are."""
+    rows = []
+    for st in streams:
+        pol = st.get("policy")
+        if pol is None:
+            continue
+        strict = st["new"]
+        rows.append({"role": st["role"], "stream": st["stream"], "strict": strict, "decisive": pol["decisive"],
+                     "journal": pol["journal"], "refused_calls": pol["refused_calls"],
+                     "class": ("clean" if not strict else
+                               "decisive_kept" if set(pol["decisive"]) == set(strict) else
+                               "decisive_reduced" if pol["decisive"] else
+                               "journal_only" if pol["journal"] else "refused_calls_only")})
+    arm_decisive = any(r["decisive"] for r in rows if r["role"] == "arm")
+    review_decisive = any(r["decisive"] for r in rows if r["role"] == "reviewer")
+    verdicts = (rec.get("review") or {}).get("verdicts") or []
+    recorded = rec.get("outcome")
+    reading = None
+    if recorded == "review_unreadable" and not arm_decisive and not review_decisive and any(
+            r["role"] == "reviewer" and r["class"] in ("journal_only", "refused_calls_only") for r in rows):
+        last = verdicts[-1] if verdicts else None
+        reading = {"PASS": "accepted", "BLOCK": "review_block"}.get(last, "undetermined (verdict not on the record)")
+    return {"streams": rows, "outcome_recorded": recorded, "outcome_reading_non_decisional": reading
+            if reading is not None else recorded,
+            "note": "a reading, not a recomputation: the record, its verdicts and the report are unchanged"}
+
+
 def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                  ledger: Sequence[Mapping[str, Any]], *, streams_dir: Path, work_root: Path, repo: Path,
                  state_dir: Path, home: str, results_sha256: str | None = None,
@@ -5624,8 +5763,19 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
     home_real = os.path.realpath(home)
     literals = base_literals(Path(repo), home)  # the checkout of now stands for the bundles of then
 
+    cloud_deny = read_deny_list(repo=Path(repo), home=home, state_dir=Path(state_dir), input_paths=[],
+                                kind="cloud_implementer", isolation=iso.get("deny_read_home"))
+    policy_on = iso.get(AUDIT_POLICY_KEY) == AUDIT_POLICY
+
+    def os_roots(attempt: Path) -> tuple[Sequence[Path], Sequence[Path]]:
+        """denyRead and allowRead of the settings an execution of that attempt received (rebuilt, not read)."""
+        fs = native_sandbox_settings(attempt_dir=attempt, work_root=work, home=home, deny_read=cloud_deny,
+                                     allow_read=[Path(home) / rel for rel in iso.get("allow_read_home", [])]
+                                     )["sandbox"]["filesystem"]
+        return [Path(x) for x in fs["denyRead"]], [Path(x) for x in fs["allowRead"]]
+
     def audit(stream: Path, bundle: Path, role: str, path: str, session: str | None, revision: int,
-              notes: list[str], models: list[str]) -> list[str]:
+              notes: list[str], models: list[str], policy: Mapping[str, Any] | None = None) -> list[str]:
         attempt = bundle.parent
         driver = (campaign.get("drivers") or {}).get(
             REVIEWER_DRIVER if role == "reviewer" else IMPLEMENTER_DRIVER.get(path, ""), {})
@@ -5635,7 +5785,7 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
                                 home=home, arm_home=None if session else str(attempt / "scratch" / "home"),
                                 own_session=own, attempt_dir=attempt, literals=literals,
                                 private_root=attempt.parent if private else None,
-                                revision=revision, not_found=notes, host_model=models)
+                                revision=revision, not_found=notes, host_model=models, **(policy or {}))
 
     rows = []
     for rec in records:
@@ -5668,11 +5818,19 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
             models: list[str] = []
             old = audit(stream, bundle, role, key[0], session, 1, [], [])
             new = audit(stream, bundle, role, key[0], session, AUDIT_REVISION, notes, models)
-            streams.append({"role": role, "stream": label, "host_model": models[0],
-                            "sha256": hashlib.sha256(stream.read_bytes()).hexdigest(),
-                            "old": [_hidden_home(h, home_real) for h in old],
-                            "new": [_hidden_home(h, home_real) for h in new],
-                            "not_found": list(dict.fromkeys(_hidden_home(n, home_real) for n in notes))})
+            entry = {"role": role, "stream": label, "host_model": models[0],
+                     "sha256": hashlib.sha256(stream.read_bytes()).hexdigest(),
+                     "old": [_hidden_home(h, home_real) for h in old],
+                     "new": [_hidden_home(h, home_real) for h in new],
+                     "not_found": list(dict.fromkeys(_hidden_home(n, home_real) for n in notes))}
+            if policy_on and (rec.get("audit") or {}).get("barrier") == BARRIER_OBSERVED:
+                journal, refused = [], {}
+                decisive = audit(stream, bundle, role, key[0], session, AUDIT_REVISION, [], [], {
+                    "policy_denied": os_roots(bundle.parent), "journal": journal, "refused": refused})
+                entry["policy"] = {"decisive": [_hidden_home(h, home_real) for h in decisive],
+                                   "journal": [_hidden_home(h, home_real) for h in journal],
+                                   "refused_calls": refused}
+            streams.append(entry)
         if unavailable:
             row.update(classification="unavailable", unavailable=unavailable)
             rows.append(row)
@@ -5697,6 +5855,8 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
             "flag_removed" if was else
             "flag_added" if now or new_review else "clean")
         row["streams"] = streams
+        if any("policy" in st for st in streams):
+            row["policy"] = _policy_reading(rec, streams)
         rows.append(row)
     classes: dict[str, int] = {}
     for row in rows:
@@ -5706,6 +5866,10 @@ def replay_audit(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any
            "summary": {"records": len(rows), "classification": dict(sorted(classes.items())),
                        "fidelity_mismatch": sum(1 for r in rows if r.get("fidelity") == "mismatch"),
                        "flagged_recorded": sum(1 for r in rows if r["recorded"]["contaminated"]),
+                       **({"policy_classes": {c: sum(1 for r in rows if "policy" in r for x in r["policy"]["streams"] if x["class"] == c)
+                                              for c in sorted({x["class"] for r in rows if "policy" in r
+                                                               for x in r["policy"]["streams"]})}}
+                          if any("policy" in r for r in rows) else {}),
                        "flagged_now": sum(1 for r in rows if r.get("new", {}).get("contaminated")),
                        "reviewer_flagged_now": sum(1 for r in rows if r.get("new", {}).get("reviewer_hits")),
                        "host_models": {m: sum(1 for r in rows for st in r.get("streams", [])
