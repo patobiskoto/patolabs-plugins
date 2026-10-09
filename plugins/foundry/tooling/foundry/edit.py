@@ -7,6 +7,8 @@ CLI:
   python3 -m foundry.edit create-issue '<json:{title,body,fields,parent}>'
   python3 -m foundry.edit set-field <ISSUE-ID> "<Field>" "<value>"
   python3 -m foundry.edit transition <ISSUE-ID> <state> [<expected-state>]
+      (Linear: `transition <ISSUE-ID> dropped <expected-state>` abandons the issue,
+       PAT-ADR-0017; `set-field <ISSUE-ID> State dropped` takes the same guarded path)
   python3 -m foundry.edit link <SRC-ID> <link-type> <DST-ID>
   python3 -m foundry.edit comment <ISSUE-ID> < note.md   (progress note, body on stdin)
   python3 -m foundry.edit body <ISSUE-ID> <expected-body.md> <updated-body.md>
@@ -43,8 +45,10 @@ def set_field(issue_id, field, value):
         # The portable port carries a list.  Keep one host-independent CLI syntax
         # instead of leaking each adapter's native label representation.
         value = [label.strip() for label in value.split(",") if label.strip()]
-    write.set_field(tr, issue_id, field, value)
+    result = write.set_field(tr, issue_id, field, value)
     print(f"✏️  {issue_id} · {field} = {value}")
+    if field == "State" and value == "dropped":
+        _name_linked_pr(result)
 
 
 def transition(issue_id, state, expected_state=None):
@@ -53,8 +57,18 @@ def transition(issue_id, state, expected_state=None):
         if expected_state is not None
         else None
     )
-    write.transition(foundry.tracker(), issue_id, state, context=context)
+    result = write.transition(foundry.tracker(), issue_id, state, context=context)
     print(f"🔀 {issue_id} → {state}")
+    if state == "dropped":
+        _name_linked_pr(result)
+
+
+def _name_linked_pr(issue):
+    """PAT-ADR-0017: abandoning an issue never closes its PR; name it."""
+    pr_url = getattr(issue, "pr_url", None)
+    if pr_url:
+        print(f"⚠️  PR liée non fermée par l'abandon : {pr_url} — "
+              "ferme-la à la main si elle est encore ouverte.")
 
 
 def link(src, link_type, dst):

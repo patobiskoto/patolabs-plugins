@@ -28,7 +28,7 @@ safe: no audit and an intent store that was READ and empty (nothing written, saf
 without a visible audit (ambiguous: a re-run uses a new nonce, hence another audit id, and is
 REFUSED, never reposting, until the expected audit is visible; it resumes only once it
 appears; if it never does, inspect the Epic comments and the intent file by hand), audit
-pending (re-run with the exact `--accept-override` set bound by the audit resumes), audit and
+pending (re-run with the exact `--accept-override` and `--accept-dropped` sets bound by the audit resumes), audit and
 Epic done (same set: replays and verifies), or "état du reçu inconnu" (check the Epic
 comments for an audit before re-running; this includes a tracker whose local intent store is
 not read: "intention locale non vérifiée pour ce tracker"). After a refusal about the waived
@@ -43,7 +43,7 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 
 `--status` writes nothing (no comment, no intent, no state) and takes no other flag. It
 prints `aucun audit`, `audit en attente` or `clos`, with the audit id and the node ids
-waived by the receipt (non-zero, "non vérifiée", for a tracker whose intent store is not read). The audit is read without `--human-verdict`/`--accept-override` and is
+waived by the receipt, plus the dropped node ids it binds when there are some (non-zero, "non vérifiée", for a tracker whose intent store is not read). The audit is read without `--human-verdict`/`--accept-override`/`--accept-dropped` and is
 not re-verified against the current graph (only the identical close command does). Exit code
 0 for a clean read, non-zero only if the read itself failed.
 
@@ -57,7 +57,8 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 The list is exact (no wildcard, duplicate, empty or lower-case id) and requires
 `--human-verdict=accepted`; it is validated before any provider read. Only a terminal
 node whose sole insufficiency is a valid typed override receipt is waivable. Unknown or
-incomplete proof, zero criteria, a non-terminal, dropped or foreign-project node, an
+incomplete proof, zero criteria, a non-terminal or foreign-project node, a dropped node
+(never waivable by this flag, see `--accept-dropped` below), an
 absent, malformed, other-generation or other-diff override receipt, and any node
 added, reopened or changed since the graph read still refuse. A refusal raised by the
 fresh graph read (a node's proof, a changed graph, a foreign or invalid node) lists the
@@ -72,6 +73,31 @@ converges, a different set is refused, and each node stays `override` (never
 accepted). The flag is neither a CAS nor an acceptance. YouTrack, GitHub Projects and
 DevHub refuse it. Never invent the list: the maintainer attests it.
 
+When a refusal lists abandoned (`dropped`) nodes, a human may name them on Linear only
+(PAT-ADR-0017). The refusal prints the exact command, combined with `--accept-override`
+when both apply:
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue close-epic <EPIC-ID> --human-verdict=accepted --accept-dropped=<ID>[,<ID>...]
+```
+
+Same grammar and same pre-read validation as `--accept-override`; an id cannot be named
+by both flags. The named set must be exactly the set of dropped nodes of the required
+graph: an unnamed dropped node refuses, and so does a named node that is not dropped or
+is not in that graph. Naming a node is not an acceptance and asks for no proof; a
+dropped node is never counted as accepted. Prerequisites reached only through a dropped
+node are not required; one reachable by another path stays required. At least one
+direct child must be `done` (accepted, or waived nominatively); an Epic whose direct
+children are all dropped, or that is itself dropped, cannot be closed. The receipt
+gains no field: the dropped node stays in the bound graph (id, version, state), the
+audit id derives from it, an exact replay converges and a different set is refused.
+Limits: a node cancelled or reopened after the closure makes the replay diverge, and a
+pending audit whose graph changes stays blocked; both fail closed, with no recovery
+path. YouTrack, GitHub Projects and DevHub refuse the flag and keep their current
+behaviour. Never invent the list and never cancel an issue to make the command pass:
+abandoning is the maintainer's decision, done with
+`edit transition <ISSUE-ID> dropped <expected-state>`.
+
 This path performs no Git or code-host operation and never reuses the code-issue
 `done` transition. It requires an explicit human `accepted` verdict and nonempty Epic
 validation criteria. For a non-code Epic, that verdict validates its own criteria;
@@ -79,8 +105,8 @@ Linear's unchecked native checkboxes are not a code-PR acceptance proof. The rec
 binds a digest of the Epic's exact need and test procedure, and every pending or done
 replay refuses a changed procedure. It also requires
 at least one linked required child, and qualified positive AC evidence for every child
-and transitive dependency. Zero criteria, an unknown proof, an override, or a dropped
-node never count as acceptance (an override is only ever waived nominatively, see the `--accept-override` paragraph above). The receipt binds the original parent predecessor, the
+and transitive dependency that is not an abandoned node named by `--accept-dropped`. Zero criteria, an unknown proof, an override, or a dropped
+node never count as acceptance (an override is only ever waived nominatively, and a dropped node only ever named, see the `--accept-override` and `--accept-dropped` paragraphs above). The receipt binds the original parent predecessor, the
 exact direct-child set, every dependency edge, each node version/state/AC snapshot and
 the provider's acceptance coordinates. DevHub retains its atomic transaction. YouTrack,
 Linear and the qualified private personal-Project GitHub profile use PAT-ADR-0006's

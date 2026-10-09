@@ -137,6 +137,14 @@ class Tracker(ABC):
     # PAT-ADR-0014: only Linear is qualified to close an Epic whose nodes were
     # delivered under an audited acceptance override, by explicit nominative flag.
     epic_override_closure_supported: bool = False
+    # PAT-ADR-0017: only Linear is qualified to close an Epic whose required graph
+    # contains abandoned nodes named by ``--accept-dropped``, and to abandon an
+    # existing issue through the guarded S1-S4 path (expected predecessor required).
+    epic_dropped_closure_supported: bool = False
+    guarded_abandon_supported: bool = False
+    # The native states that guarded path admits as a named predecessor: the single
+    # definition, owned by the adapter, also read by ``write.transition``.
+    abandon_predecessors: frozenset[str] = frozenset()
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
     epic_subgraph_supported: bool = False

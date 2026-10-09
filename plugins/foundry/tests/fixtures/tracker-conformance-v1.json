@@ -861,6 +861,86 @@
       "operations": [
         "epics-children-reparent-existing"
       ]
+    },
+    {
+      "id": "linear-abandon-bounded",
+      "test": "test_abandon_and_dropped_closure.py::test_abandon_succeeds_from_every_open_state_with_one_native_write",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "linear-abandon-refusals",
+      "test": "test_abandon_and_dropped_closure.py::test_abandon_is_refused_from_done_and_from_an_invalid_chain",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "explicit-refusals",
+        "conflicts"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "linear-abandon-replay",
+      "test": "test_abandon_and_dropped_closure.py::test_abandon_replay_converges_without_a_second_effect",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "replay"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "linear-abandon-lost-response",
+      "test": "test_abandon_and_dropped_closure.py::test_abandon_lost_response_converges_by_readback_without_retry",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "ambiguous-effects"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "linear-epic-closure-dropped",
+      "test": "test_abandon_and_dropped_closure.py::test_named_dropped_nodes_close_the_epic_and_are_never_counted_accepted",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "linear-epic-closure-dropped-replay",
+      "test": "test_abandon_and_dropped_closure.py::test_exact_replay_converges_and_a_different_set_is_refused",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "replay",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
     }
   ]
 }

@@ -127,7 +127,7 @@ Skills keep one shared implementation. Use `/foundry:<skill>` in Claude Code and
 | `foundry:roadmap` | sequence the smallest slice that proves value |
 | `foundry:next-issue` | pick the most valuable unblocked issue (reasoned) |
 | `foundry:start-issue` → `foundry:open-pr` → `foundry:merge-pr` | gated execution |
-| `foundry:close-epic` | human-verdict, audited non-atomic closure of a completed non-code Epic on the V1 trackers; bounded detection, no CAS; Linear-only nominative `--accept-override` waiver (PAT-ADR-0014) |
+| `foundry:close-epic` | human-verdict, audited non-atomic closure of a completed non-code Epic on the V1 trackers; bounded detection, no CAS; Linear-only nominative `--accept-override` waiver (PAT-ADR-0014) and `--accept-dropped` naming of abandoned nodes (PAT-ADR-0017) |
 | `foundry:resume-issue` | resume mid-flight work from tracker notes + git state |
 | `foundry:intake` | new idea → issue / refine / ADR / rejected-by-ADR |
 | `foundry:groom` · `foundry:blockers` | backlog health · what's stuck |

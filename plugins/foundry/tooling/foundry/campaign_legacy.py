@@ -1267,7 +1267,7 @@ def _legacy_f89_record(
         project = write._epic_closure_project(tracker)
         outcome = write._validate_epic_outcome(
             tracker.get_epic_closure(project, LEGACY_F89_PARENT_ID),
-            project=project, parent=parent, expected=None,
+            project=project, parent=parent, expected=None, tracker=tracker,
         )
     except (AttributeError, SystemExit, ValueError):
         raise LegacyCampaignRequalificationError(

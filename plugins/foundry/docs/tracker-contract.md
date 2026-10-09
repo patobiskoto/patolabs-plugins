@@ -553,9 +553,9 @@ machine.
 |---|---|---|
 | Grooming: fields, body, parent of an existing issue | S1-S4 on every portable write; targeted fields and both parent endpoints are read again before one write | S1-S4 in-place replacement under PAT-ADR-0006; only targeted inputs are sent and labels use deltas |
 | AC state | S1-S4 on the checkbox body (met, level 1) | PAT-ADR-0006 declares the proof-bound append-only projection the V1 authority (S5/S6); native checkbox replacement remains refused |
-| Status projection | S1-S5: the public operation supplies its original predecessor coordinate, `set_state` retains it through the effective S1 transport read before one native State write, and an exact retry at the target converges; another state or a missing predecessor fails closed | `in-progress`/`review`/`done`: one targeted native State projection under S1-S5 plus its append-only receipt; historical native observations and proof-bound logical targets are validated separately, only the latest relevant receipt may repair a missing projection, disagreement is observable, and a bare native terminal state is never positive proof |
+| Status projection | S1-S5: the public operation supplies its original predecessor coordinate, `set_state` retains it through the effective S1 transport read before one native State write, and an exact retry at the target converges; another state or a missing predecessor fails closed | `in-progress`/`review`/`done`: one targeted native State projection under S1-S5 plus its append-only receipt; historical native observations and proof-bound logical targets are validated separately, only the latest relevant receipt may repair a missing projection, disagreement is observable, and a bare native terminal state is never positive proof. `dropped` (PAT-ADR-0017) is a native-only State write under S1-S4 with a mandatory expected predecessor, no receipt, and on read a native `dropped` prevails over a valid non-terminal projection (see below) |
 | Resume | S5 on every replayable transition through the predecessor coordinate; free-text notes carry no state, a duplicate after an ambiguous replay is tolerated, never silently retried | exact native/receipt recovery completes only the missing effect; `add_comment` (`linear.py`) follows the free-text rule |
-| Epic closure | Fresh read of the Epic's nonempty validation criteria, exact required children and complete transitive dependency graph; every child/dependency must be `done` with non-empty qualified AC evidence (unknown, zero-criteria, override and dropped remain refusals). The human verdict validates the Epic's own need and procedure; its title/body/AC snapshot digest is bound into the deterministic audit and rechecked on pending and done replay. A machine-local intent, keyed by the Epic's project scope and carrying the exact audit ID, is durable before the one audit POST: an exact audit that becomes visible resumes, while an unresolved or still invisible effect fails closed on every replay, even if the caller generates a new timestamp and nonce. The intent is neither provider CAS nor an exactly-once guarantee. One targeted parent write and full graph readback follow. Divergence fails closed. This is bounded detection with the named S1→S2 overwrite risk, never CAS or an atomic transaction. | same, with Linear's append-only review-bound acceptance proof as authority for child/dependency issues; native Epic checkboxes alone are not code-PR proof and an override receipt remains distinct and blocks closure, except under PAT-ADR-0014 (Linear only): `close-epic --human-verdict=accepted --accept-override=ID[,ID...]` lets the human accept, node by node, a terminal node whose only insufficiency is a valid typed `acceptance-override` receipt (never: unknown/incomplete proof, zero criteria, non-terminal, dropped, foreign project, absent/malformed/other-generation/other-diff override, any node added/reopened/changed since the graph read). The append-only receipt then also binds, per waived node, its id, the sha256 of its canonical override coordinates and its reason code, so the receipt id derives from that set; exact replay converges, a different set is refused, and the node stays `override`. The flag is neither a CAS nor an acceptance. YouTrack, GitHub Projects and DevHub refuse it explicitly (`epic_override_closure_supported` is `False`). A refusal raised by the fresh graph read (node proof, changed graph, foreign or invalid node) lists the non-positive graph nodes with their cause, read-only; replay of an already closed Epic, a pending-audit refusal, a provider refusal after the read, an unknown named id raised alone and a transport error during the snapshot carry no such list. The list is a lower bound when a node could not be read (`read-error`, sub-graph not traversed); `foreign-project` is reserved for a deterministic binding refusal |
+| Epic closure | Fresh read of the Epic's nonempty validation criteria, exact required children and complete transitive dependency graph; every child/dependency must be `done` with non-empty qualified AC evidence (unknown, zero-criteria, override and dropped remain refusals). The human verdict validates the Epic's own need and procedure; its title/body/AC snapshot digest is bound into the deterministic audit and rechecked on pending and done replay. A machine-local intent, keyed by the Epic's project scope and carrying the exact audit ID, is durable before the one audit POST: an exact audit that becomes visible resumes, while an unresolved or still invisible effect fails closed on every replay, even if the caller generates a new timestamp and nonce. The intent is neither provider CAS nor an exactly-once guarantee. One targeted parent write and full graph readback follow. Divergence fails closed. This is bounded detection with the named S1→S2 overwrite risk, never CAS or an atomic transaction. | same, with Linear's append-only review-bound acceptance proof as authority for child/dependency issues; native Epic checkboxes alone are not code-PR proof and an override receipt remains distinct and blocks closure, except under PAT-ADR-0014 (Linear only): `close-epic --human-verdict=accepted --accept-override=ID[,ID...]` lets the human accept, node by node, a terminal node whose only insufficiency is a valid typed `acceptance-override` receipt (never: unknown/incomplete proof, zero criteria, non-terminal, foreign project, absent/malformed/other-generation/other-diff override, any node added/reopened/changed since the graph read; a `dropped` node is not waivable by this flag). The append-only receipt then also binds, per waived node, its id, the sha256 of its canonical override coordinates and its reason code, so the receipt id derives from that set; exact replay converges, a different set is refused, and the node stays `override`. The flag is neither a CAS nor an acceptance. YouTrack, GitHub Projects and DevHub refuse it explicitly (`epic_override_closure_supported` is `False`). Under PAT-ADR-0017 (Linear only), `--accept-dropped=ID[,ID...]` admits the `dropped` nodes of the required graph: the named set must be exactly that set, a named node is never counted as accepted, and the prerequisites reached only through it are not required (details below); the other providers refuse this flag too (`epic_dropped_closure_supported` is `False`) and keep refusing a dropped node. A refusal raised by the fresh graph read (node proof, changed graph, foreign or invalid node) lists the non-positive graph nodes with their cause, read-only; replay of an already closed Epic, a pending-audit refusal, a provider refusal after the read, an unknown named id raised alone and a transport error during the snapshot carry no such list. The list is a lower bound when a node could not be read (`read-error`, sub-graph not traversed); `foreign-project` is reserved for a deterministic binding refusal |
 
 The low-level CLI makes the predecessor explicit when the active adapter requires
 bounded native transitions: `edit transition <ISSUE-ID> <target> <expected-state>`.
@@ -569,6 +569,81 @@ or execution-receipt effect, whether the PR is open or already merged. For both 
 state-bound and proof-bound trackers, an open PR is reread after CI and immediately
 before merge; a changed base ref or SHA is refused. This remains bounded detection,
 not a CAS: GitHub provides no expected-base parameter for the merge endpoint.
+
+**Abandoning an issue and closing an Epic that has abandoned nodes (PAT-ADR-0017,
+PAT-131; Linear only).** PAT-ADR-0017 amends, for Linear, the `dropped` rule of
+PAT-ADR-0006 and of PAT-ADR-0014 point 3; every other guarantee of those decisions is
+unchanged.
+
+- *Abandon.* `edit transition <ISSUE-ID> dropped <expected-state>` writes only the
+  native State, from `backlog`, `ready`, `blocked`, `in-progress` or `review`, under
+  S1-S4: one fresh read, one targeted write, one readback, closed failure on any
+  divergence, no automatic retry. `<expected-state>` is mandatory and must be one of
+  those five states (refused before any provider read when absent or when it is any
+  other value, a replay on an already `dropped` issue included). It is compared with
+  the *native* state just read, never with the projected one: the abandon is admitted
+  from any open native state whose receipt chain is valid and non-terminal, whether or
+  not that native state agrees with the projection. A started issue moved natively to
+  `backlog`, `ready` or `blocked` is thus abandoned by naming that native state;
+  naming its projected state fails closed as a third state. It is
+  refused when the native state is `done`, when a `state-done` receipt exists, when an
+  Epic closure audit is present on the issue, when the receipt chain is invalid, or
+  when the chain holds advisory `cockpit-evidence` receipts and no lifecycle state
+  receipt (the read rule below would not read the result back). On
+  replay an issue already `dropped` converges without a write when the named
+  predecessor is admitted, and any third state
+  fails closed. `edit set-field <ISSUE-ID> State dropped` takes the same guarded path;
+  it names no predecessor: the state observed by its own first read stands for it, and
+  it cannot be combined with another field. No receipt is written, deleted or rewritten. A
+  linked PR is not closed: the command output names it. This is bounded detection with
+  the named S1→S2 overwrite risk, never CAS. The capability flag is
+  `guarded_abandon_supported` (`True` on Linear only), and the adapter's
+  `abandon_predecessors` is the single definition of those five states, read by the
+  `transition` gate ahead of its binding read; the other providers keep their
+  current `transition`/`set-field` behaviour.
+- *Read.* A natively cancelled issue whose append-only projection is valid and
+  non-terminal (`in-progress` or `review` receipts, no `done` receipt) reads
+  `state=dropped`, `normalized_state=dropped`, `projection_status=aligned`, with its
+  receipts kept and its `pr_url` still exposed. With a `done` receipt the conflict is
+  unchanged (strict reads refuse, observation reports `disagreement`). An issue that
+  was never started is outside this rule and reads as before PAT-131: `dropped` as
+  `native-only` when it has no receipt; a strict-read conflict, and `dropped` as
+  `native-only` in observation, when it only has advisory `cockpit-evidence` receipts.
+  Every lifecycle write (start, review, AC proof or override, done) on a natively
+  cancelled issue stays refused, before any append.
+- *Closure.* `issue close-epic <EPIC-ID> --human-verdict=accepted
+  --accept-dropped=ID[,ID...]` (same grammar as `--accept-override`, validated before
+  any provider read, never without the `accepted` verdict, an id cannot be named by
+  both flags). The named set must be exactly the set of `dropped` nodes of the required
+  graph: an unnamed dropped node, or a named node that is not a dropped node of that
+  graph, refuses. Naming a node is not an acceptance proof and asks for none; a dropped
+  node is never counted as accepted. Prerequisites reached only through a dropped node
+  are not required; one reachable through another path stays required. At least one
+  direct child must be `done` (accepted, or waived nominatively under PAT-ADR-0014). An
+  Epic that is itself `dropped` stays unclosable. Without the flag, Linear keeps
+  refusing a dropped node.
+- *Receipt.* No field is added: the dropped node stays in the graph the append-only
+  audit binds, as its id, version and state, so the deterministic audit id derives
+  from the set. An exact replay converges; a different set is refused, for a closed
+  Epic and for a pending audit alike. Audits written before this change keep their id.
+  `close-epic --status` also prints the dropped nodes bound by the receipt.
+- *Diagnostic.* A refusal raised by the fresh graph read lists each dropped node with
+  the cause "abandonné (dropped), acceptable nominativement" and, when only nominative
+  causes block, gives the exact command, combined with `--accept-override` when both
+  apply. The diagnostic does not descend below a dropped node, like the snapshot.
+- *Still refused* with or without the flag: a non-terminal node, unknown or incomplete
+  proof, zero criteria, an override without its nominative waiver, a foreign-project
+  node, any node added, reopened or changed since the graph read.
+
+Known limits, not addressed by PAT-ADR-0017: a node cancelled or reopened after the
+closure makes the replay of the closed Epic diverge, fail closed; a pending closure
+audit whose graph changes stays blocked, with no recovery path; a started-then-dropped
+issue that is reopened only reads back at its projected state (`in-progress` or
+`review`); a started issue moved natively to `backlog`, `ready` or `blocked` and not
+abandoned stays unreadable by a strict read (it can still be abandoned from that native
+state); release scope still counts a
+started-then-dropped issue as unfinished and a never-started one as unavailable; and
+`edit set-field <ISSUE-ID> State done` is not guarded by this change.
 
 YouTrack and Linear issue creation remain outside S5: they use provider-assigned or
 fresh client ids. GitHub Projects issue creation meets S5 within one Foundry data
