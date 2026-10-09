@@ -1629,3 +1629,17 @@ de campagnes jouées et les journaux de session de l'hôte (hors dépôt) et ren
 favorable), avec la distribution des écarts. Options : `--ledger` (répétable), `--session-logs-dir`, `--grid`, `--out` (n'écrase jamais) ; code de sortie
 0, ou 2 si une entrée est refusée. Il ne lance ni `claude`, ni modèle, ni appel réseau, ne modifie aucun journal et ne change aucun réglage
 du lanceur. Règle, résultats et limites : [`pat-19-cache-ttl-replay-v1.md`](pat-19-cache-ttl-replay-v1.md).
+
+### Sessions interactives, dans les deux sens (PAT-133)
+
+Même module, deux options en plus : `--host-session MAIN_LOG` (répétable ; désigne explicitement le journal principal `<dossier>/<session>.jsonl`
+d'une session interactive de l'hôte, ses journaux de sous-agents étant les `*.jsonl` sous `<dossier>/<session>/subagents/`, imbriqués compris ;
+remplace `--ledger` et `--session-logs-dir`, sans registre de campagne) et `--until ISO_INSTANT` (avec `--host-session` seulement : ignore tout
+enregistrement postérieur, pour rejouer de façon reproductible une session encore ouverte). Il rend, par lignée (un fichier, un alias de modèle),
+par genre (principale / sous-agent), par alias et par session nommée par rang, la durée de cache écrite réellement observée, le coût de liste
+réel, le coût simulé avec l'autre durée sous une borne prudente et une borne favorable, les écarts de plus de 5 minutes et les tokens
+réécrits ou relus juste après, et le résultat (gain net, perte nette, indécidable entre les bornes). Sens A : conversation principale « 1 heure »
+vers « 5 minutes » ; sens B : sous-agents « 5 minutes » vers « 1 heure ». Les lignées sans prix utilisable (jour hors grille, alias absent,
+Haiku 5.5) sont `unavailable` en dollars, gardent leur alias et sortent des deux côtés ; le rôle logique n'est pas dérivable dans les limites
+de FOUNDRY-ADR-0015. Mêmes garanties : ni `claude`, ni modèle, ni réseau, aucun journal modifié, aucun réglage du lanceur changé. Règle,
+résultats et limites : [`pat-133-cache-ttl-interactive-v1.md`](pat-133-cache-ttl-interactive-v1.md).
