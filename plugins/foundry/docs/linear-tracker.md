@@ -849,26 +849,40 @@ review generations, no `state-done`) reads `state=dropped`, `normalized_state=dr
 `observe_issue`, `query issue` and backlog reads. The receipts are kept and still
 validated (a malformed chain stays a conflict, `unknown` in observation), and the
 review's `pr_url` stays exposed. A `dropped` native state with a `state-done` receipt is
-unchanged: strict reads refuse it and observation reports `disagreement`. A cancelled
-issue that was never started still reads `dropped` as `native-only`. No write path uses
-this tolerance: starting, reviewing, projecting an AC proof or override, or completing a
-natively cancelled issue is refused before any receipt is appended.
+unchanged: strict reads refuse it and observation reports `disagreement`. The exception
+names those receipts only. An issue that was never started reads exactly as it did
+before PAT-131: with no receipt at all it reads `dropped` as `native-only` (strict and
+observation reads alike); with advisory `cockpit-evidence` receipts and no lifecycle
+state receipt, a native cancel stays a strict-read conflict and observation reports
+`dropped` as `native-only`. No write path uses this tolerance: starting, reviewing,
+projecting an AC proof or override, or completing a natively cancelled issue is refused
+before any receipt is appended.
 
 Foundry abandons an existing issue with `edit transition <ISSUE-ID> dropped
 <expected-state>` (or `edit set-field <ISSUE-ID> State dropped`, same guarded path):
 one fresh read, one `issueUpdate` carrying only `stateId`, one readback, closed failure
 on any divergence, no retry (bounded detection, not CAS; an external write in the S1→S2
 window is overwritten). The expected predecessor is mandatory and must be `backlog`,
-`ready`, `blocked`, `in-progress` or `review`; it is compared with the native state.
-The write is refused from native `done`, with a `state-done` receipt, with an Epic
-closure audit on the issue (pending or closed), or with an invalid receipt chain; an
-already `dropped` issue converges without a write. No lifecycle receipt is written,
+`ready`, `blocked`, `in-progress` or `review`; a `transition` naming any other value is
+refused before any provider read, even when the issue is already `dropped`. It is
+compared with the **native** state, never with the projected one. The general rule is
+therefore: the abandon is admitted from any open native state (those five) whose
+receipt chain is valid and non-terminal, whether or not the native state agrees with
+the projection. A started issue (an `in-progress` or `review` receipt) that was moved
+natively to `backlog`, `ready` or `blocked` is abandoned by naming that native state,
+and then reads `dropped` / `aligned`; naming its projected state is refused as a third
+state. The write is refused from native `done`, with a `state-done` receipt, with an
+Epic closure audit on the issue (pending or closed), with an invalid receipt chain, or
+with a chain made of advisory `cockpit-evidence` receipts and no lifecycle state receipt
+(the read rule above would not read the result back); an already `dropped` issue
+converges without a write when the named predecessor is one of the five, and
+`set-field`, which names none, converges the same way. No lifecycle receipt is written,
 deleted or rewritten, and an open PR is not closed: the command prints its URL.
 Limits: reopening a started-then-dropped issue by hand makes it read back at its
 projected state (`in-progress` or `review`), nothing more; a started issue moved
-natively to `blocked` stays unreadable by a strict read, although it can be abandoned
-from `blocked`; release scope reads a started-then-dropped issue as unfinished and a
-never-started one as unavailable.
+natively to `backlog`, `ready` or `blocked` and not abandoned stays unreadable by a
+strict read, although it can be abandoned from that native state; release scope reads a
+started-then-dropped issue as unfinished and a never-started one as unavailable.
 
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,

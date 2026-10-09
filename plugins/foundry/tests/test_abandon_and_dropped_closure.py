@@ -74,6 +74,22 @@ def _started(tracker, wire, project, number, *, upto="in-progress", **kwargs):
     return issue_id
 
 
+def _cockpit(tracker, wire, issue_id):
+    """Append one advisory cockpit-evidence receipt observed at the current State."""
+    raw = wire.issues[issue_id]
+    payload = {"envelope_id": "e" * 64, "native_state_id": raw["state"]["id"]}
+    _marker, body, comment_id = tracker._lifecycle_marker(
+        "cockpit-evidence", issue_id, payload,
+    )
+    wire.comments[comment_id] = {
+        "id": comment_id, "body": body,
+        "issue": {"id": raw["id"], "identifier": issue_id},
+    }
+    raw["comments"]["nodes"].append(
+        {"id": comment_id, "body": body, "createdAt": "2026-09-25T10:00:00Z"}
+    )
+
+
 def _abandon(tracker, project, issue_id, expected):
     return tracker.set_state(
         issue_id, "dropped", context=TransitionContext(expected_state=expected),
@@ -143,6 +159,36 @@ def test_abandon_succeeds_from_blocked_after_a_foundry_start(monkeypatch):
     assert (result.state, result.projection_status) == ("dropped", "aligned")
 
 
+@pytest.mark.parametrize("upto", ("in-progress", "review"))
+@pytest.mark.parametrize("native", ("backlog", "ready", "blocked"))
+def test_abandon_succeeds_from_any_open_native_state_after_a_foundry_start(
+    monkeypatch, upto, native,
+):
+    # The general rule: the predecessor is the open *native* state, whatever the
+    # valid non-terminal receipt chain says (here it says in-progress or review).
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto=upto)
+    _native(wire, issue_id, native)
+    receipts = copy.deepcopy(wire.issues[issue_id]["comments"])
+    before = len(wire.calls)
+    # The projected state is not an admitted answer when the native one differs.
+    with pytest.raises(TrackerConflictError, match=f"native state is {native}"):
+        _abandon(tracker, project, issue_id, upto)
+    assert not _writes(wire, before)
+    # Documented limit: left as it is, that native move is a strict-read conflict.
+    with pytest.raises(TrackerConflictError, match="changed outside lifecycle"):
+        tracker.get_issue(issue_id)
+
+    result = _abandon(tracker, project, issue_id, native)
+
+    assert [call[1]["input"] for call in _writes(wire, before)] == [
+        {"stateId": STATE_IDS["dropped"]}
+    ]
+    assert (result.state, result.normalized_state, result.native_state,
+            result.projection_status) == ("dropped", "dropped", "dropped", "aligned")
+    assert wire.issues[issue_id]["comments"] == receipts
+
+
 def test_abandon_requires_the_expected_state_before_any_provider_read(monkeypatch):
     tracker, wire, project = _graph(monkeypatch)
     issue_id = _add(wire, 5)
@@ -210,6 +256,34 @@ def test_abandon_replay_converges_without_a_second_effect(monkeypatch):
     with pytest.raises(TrackerConflictError, match="native state is ready"):
         _abandon(tracker, project, issue_id, "in-progress")
     assert not _writes(wire, before)
+
+
+@pytest.mark.parametrize("expected", ("done", "dropped", "unknown-state", "", None))
+def test_abandon_replay_refuses_an_inadmissible_expected_state_before_any_read(
+    monkeypatch, expected,
+):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5)
+    _abandon(tracker, project, issue_id, "in-progress")
+    before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="expected predecessor state required"):
+        tracker._abandon(issue_id, expected, project)
+    # Refused on its own, before the replay convergence: no provider call at all.
+    assert len(wire.calls) == before
+
+
+@pytest.mark.parametrize("expected", ("backlog", "ready", "blocked", "in-progress", "review"))
+def test_abandon_replay_converges_with_any_admitted_expected_state(monkeypatch, expected):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5)
+    _abandon(tracker, project, issue_id, "in-progress")
+    snapshot = copy.deepcopy(wire.issues[issue_id])
+    before = len(wire.calls)
+    again = _abandon(tracker, project, issue_id, expected)
+    assert (again.state, again.projection_status) == ("dropped", "aligned")
+    # set-field names no predecessor: its replay converges the same way.
+    assert write.set_field(tracker, issue_id, "State", "dropped").state == "dropped"
+    assert not _writes(wire, before) and wire.issues[issue_id] == snapshot
 
 
 def test_abandon_lost_response_converges_by_readback_without_retry(monkeypatch):
@@ -376,10 +450,42 @@ def test_started_then_cancelled_issue_reads_dropped_without_disagreement(monkeyp
 def test_never_started_cancelled_issue_still_reads_native_only_dropped(monkeypatch):
     tracker, wire, _project = _graph(monkeypatch)
     issue_id = _add(wire, 5, state="dropped")
-    seen = tracker.get_issue(issue_id)
-    assert (seen.state, seen.normalized_state, seen.projection_status) == (
-        "dropped", None, "native-only",
-    )
+    for seen in (tracker.get_issue(issue_id), tracker.observe_issue(issue_id)):
+        assert (seen.state, seen.normalized_state, seen.native_state,
+                seen.projection_status) == ("dropped", None, "dropped", "native-only")
+
+
+@pytest.mark.parametrize("source", ("backlog", "ready", "blocked"))
+def test_never_started_issue_with_cockpit_evidence_reads_as_before_the_abandon_rule(
+    monkeypatch, source,
+):
+    # Values observed at ff9a53a (before PAT-131) for this exact shape: the strict
+    # read refuses, the observation read reports dropped / native-only.  The
+    # PAT-ADR-0017 read rule names in-progress or review receipts only.
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _add(wire, 5, state=source)
+    _cockpit(tracker, wire, issue_id)
+    assert tracker.get_issue(issue_id).projection_status == "native-only"
+    _native(wire, issue_id, "dropped")  # cancelled by hand in Linear
+    with pytest.raises(TrackerConflictError, match="changed outside lifecycle"):
+        tracker.get_issue(issue_id)
+    seen = tracker.observe_issue(issue_id)
+    assert (seen.state, seen.normalized_state, seen.native_state,
+            seen.projection_status) == ("dropped", None, "dropped", "native-only")
+
+
+def test_abandon_is_refused_before_any_write_on_a_cockpit_only_receipt_chain(monkeypatch):
+    # Its dropped State could not be read back by a strict read (test above).
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _add(wire, 5)
+    _cockpit(tracker, wire, issue_id)
+    before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="without a lifecycle state receipt"):
+        _abandon(tracker, project, issue_id, "ready")
+    with pytest.raises(TrackerConflictError, match="without a lifecycle state receipt"):
+        tracker.update_fields(issue_id, {"State": "dropped"}, project=project)
+    assert not _writes(wire, before)
+    assert tracker.get_issue(issue_id).state == "ready"
 
 
 def test_done_receipt_with_a_native_cancel_stays_a_conflict(monkeypatch):
@@ -748,7 +854,7 @@ def test_validator_refuses_a_forged_dropped_receipt(monkeypatch):
         with pytest.raises(SystemExit, match=match):
             write._validate_epic_outcome(
                 replace(closed, receipt=receipt), project=project, parent=parent,
-                expected=None,
+                expected=None, tracker=tracker,
             )
 
     # An abandoned coordinate never carries a proof, and is never a waiver.
@@ -761,6 +867,36 @@ def test_validator_refuses_a_forged_dropped_receipt(monkeypatch):
     check(replace(good, dependencies=(*good.dependencies, EpicClosureDependency(
         source_id="LIN-5", target=live,
     ))), "prérequis d'un nœud abandonné")
+
+
+@pytest.mark.parametrize("provider", (
+    None, Tracker, YouTrackTracker, GitHubProjectsTracker, DevHubTracker,
+))
+def test_validator_admits_a_dropped_node_only_for_the_qualified_provider(
+    monkeypatch, provider,
+):
+    tracker, wire, project = _graph(monkeypatch, dependency=True)
+    _add(wire, 5, state="dropped")
+    closed = _close(tracker, dropped=("LIN-5",))
+    parent = tracker.get_issue("LIN-1")
+    check = {"project": project, "parent": parent, "expected": None}
+    # The capability decides, not the mere presence of a human verdict.
+    assert write._validate_epic_outcome(closed, tracker=tracker, **check) is closed
+    # Without it the refusal that predates PAT-ADR-0017 is kept, word for word.
+    with pytest.raises(SystemExit, match="preuve enfant non acceptée"):
+        write._validate_epic_outcome(closed, tracker=provider, **check)
+    live, gone = closed.receipt.children
+    as_dependency = replace(closed, receipt=replace(
+        closed.receipt, children=(live,), dependencies=(
+            *closed.receipt.dependencies,
+            EpicClosureDependency(source_id=live.id, target=gone),
+        ),
+    ))
+    assert write._validate_epic_outcome(
+        as_dependency, tracker=tracker, **check,
+    ) is as_dependency
+    with pytest.raises(SystemExit, match="preuve dépendance non acceptée"):
+        write._validate_epic_outcome(as_dependency, tracker=provider, **check)
 
 
 # --- AC 6 : Linear only -------------------------------------------------------

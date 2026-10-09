@@ -161,7 +161,7 @@ def _current_closure_coordinate(
         project = write._epic_closure_project(tracker)
         outcome = write._validate_epic_outcome(
             tracker.get_epic_closure(project, record.parent_id),
-            project=project, parent=parent, expected=None,
+            project=project, parent=parent, expected=None, tracker=tracker,
         )
     except (AttributeError, KeyError, SystemExit, TypeError, ValueError):
         raise TerminalCampaignReconciliationError(

@@ -1269,6 +1269,7 @@ class FoundryPrimitiveRunner:
             outcome = tracker.get_epic_closure(project, advancement.parent_id)
             outcome = write._validate_epic_outcome(
                 outcome, project=project, parent=parent, expected=None,
+                tracker=tracker,
             )
         except (AttributeError, SystemExit, ValueError):
             raise CampaignRevalidationError("parent_close_receipt_invalid") from None
@@ -1403,7 +1404,7 @@ class FoundryPrimitiveRunner:
             project = write._epic_closure_project(tracker)
             outcome = write._validate_epic_outcome(
                 tracker.get_epic_closure(project, record.parent_id),
-                project=project, parent=parent, expected=None,
+                project=project, parent=parent, expected=None, tracker=tracker,
             )
         except (AttributeError, SystemExit, ValueError):
             raise CampaignRevalidationError("legacy_close_receipt_invalid") from None

@@ -1117,7 +1117,18 @@ def _validate_epic_outcome(
     project: Project,
     parent,
     expected: EpicClosureReceipt | None,
+    tracker=None,
 ) -> EpicClosureOutcome:
+    """Validate a provider closure outcome before it is trusted.
+
+    ``tracker`` is the provider the outcome came from.  Only one that declares
+    ``epic_dropped_closure_supported`` (PAT-ADR-0017, Linear only) may bind an
+    abandoned node in a bounded receipt; without it, and with no tracker at all,
+    such a node keeps the rule that predates PAT-ADR-0017.
+    """
+    dropped_admitted = (
+        getattr(tracker, "epic_dropped_closure_supported", False) is True
+    )
     if type(outcome) is not EpicClosureOutcome:
         raise SystemExit("Clôture Epic refusée : reçu provider invalide.")
     receipt = outcome.receipt
@@ -1209,9 +1220,10 @@ def _validate_epic_outcome(
                 )
             waived_seen.add(child.id)
             return
-        if bounded_receipt and child.state == "dropped":
-            # PAT-ADR-0017: an abandoned node is bound by id, version and state
-            # only; it is never an accepted one and carries no proof.
+        if bounded_receipt and dropped_admitted and child.state == "dropped":
+            # PAT-ADR-0017 (qualified provider only): an abandoned node is bound
+            # by id, version and state only; it is never an accepted one and
+            # carries no proof.
             if child != EpicClosureChild(
                 id=child.id, version=child.version, state="dropped",
             ):
@@ -1246,7 +1258,10 @@ def _validate_epic_outcome(
         child_ids.append(child.id)
     if child_ids != sorted(child_ids) or len(child_ids) != len(set(child_ids)):
         raise SystemExit("Clôture Epic refusée : ensemble enfant non canonique.")
-    if bounded_receipt and all(child.state == "dropped" for child in receipt.children):
+    if (
+        bounded_receipt and dropped_admitted
+        and all(child.state == "dropped" for child in receipt.children)
+    ):
         raise SystemExit(_EPIC_NO_ACCEPTED_CHILD)
     if type(receipt.dependencies) is not tuple:
         raise SystemExit("Clôture Epic refusée : graphe de dépendances invalide.")
@@ -1520,6 +1535,7 @@ def close_epic(
             project=project,
             parent=parent,
             expected=None,
+            tracker=tracker,
         )
         if outcome.closed_parent_version != parent.version:
             raise SystemExit(
@@ -1606,6 +1622,7 @@ def close_epic(
                 project=project,
                 parent=parent,
                 expected=pending,
+                tracker=tracker,
             )
 
     dependencies: tuple[EpicClosureDependency, ...] = ()
@@ -1691,6 +1708,7 @@ def close_epic(
         project=project,
         parent=parent,
         expected=receipt,
+        tracker=tracker,
     )
 
 

@@ -578,14 +578,23 @@ unchanged.
 - *Abandon.* `edit transition <ISSUE-ID> dropped <expected-state>` writes only the
   native State, from `backlog`, `ready`, `blocked`, `in-progress` or `review`, under
   S1-S4: one fresh read, one targeted write, one readback, closed failure on any
-  divergence, no automatic retry. `<expected-state>` is mandatory (refused before any
-  provider read when absent) and compared with the native state just read. It is
+  divergence, no automatic retry. `<expected-state>` is mandatory and must be one of
+  those five states (refused before any provider read when absent or when it is any
+  other value, a replay on an already `dropped` issue included). It is compared with
+  the *native* state just read, never with the projected one: the abandon is admitted
+  from any open native state whose receipt chain is valid and non-terminal, whether or
+  not that native state agrees with the projection. A started issue moved natively to
+  `backlog`, `ready` or `blocked` is thus abandoned by naming that native state;
+  naming its projected state fails closed as a third state. It is
   refused when the native state is `done`, when a `state-done` receipt exists, when an
-  Epic closure audit is present on the issue, or when the receipt chain is invalid. On
-  replay an issue already `dropped` converges without a write and any third state
+  Epic closure audit is present on the issue, when the receipt chain is invalid, or
+  when the chain holds advisory `cockpit-evidence` receipts and no lifecycle state
+  receipt (the read rule below would not read the result back). On
+  replay an issue already `dropped` converges without a write when the named
+  predecessor is admitted, and any third state
   fails closed. `edit set-field <ISSUE-ID> State dropped` takes the same guarded path;
-  its expected predecessor is the state observed by its own first read, and it cannot
-  be combined with another field. No receipt is written, deleted or rewritten. A
+  it names no predecessor: the state observed by its own first read stands for it, and
+  it cannot be combined with another field. No receipt is written, deleted or rewritten. A
   linked PR is not closed: the command output names it. This is bounded detection with
   the named S1→S2 overwrite risk, never CAS. The capability flag is
   `guarded_abandon_supported` (`True` on Linear only); the other providers keep their
@@ -594,9 +603,12 @@ unchanged.
   non-terminal (`in-progress` or `review` receipts, no `done` receipt) reads
   `state=dropped`, `normalized_state=dropped`, `projection_status=aligned`, with its
   receipts kept and its `pr_url` still exposed. With a `done` receipt the conflict is
-  unchanged (strict reads refuse, observation reports `disagreement`). Every lifecycle
-  write (start, review, AC proof or override, done) on a natively cancelled issue
-  stays refused, before any append.
+  unchanged (strict reads refuse, observation reports `disagreement`). An issue that
+  was never started is outside this rule and reads as before PAT-131: `dropped` as
+  `native-only` when it has no receipt; a strict-read conflict, and `dropped` as
+  `native-only` in observation, when it only has advisory `cockpit-evidence` receipts.
+  Every lifecycle write (start, review, AC proof or override, done) on a natively
+  cancelled issue stays refused, before any append.
 - *Closure.* `issue close-epic <EPIC-ID> --human-verdict=accepted
   --accept-dropped=ID[,ID...]` (same grammar as `--accept-override`, validated before
   any provider read, never without the `accepted` verdict, an id cannot be named by
@@ -625,8 +637,9 @@ Known limits, not addressed by PAT-ADR-0017: a node cancelled or reopened after 
 closure makes the replay of the closed Epic diverge, fail closed; a pending closure
 audit whose graph changes stays blocked, with no recovery path; a started-then-dropped
 issue that is reopened only reads back at its projected state (`in-progress` or
-`review`); a native `in-progress → blocked` move of a started issue stays unreadable by
-a strict read (it can still be abandoned from `blocked`); release scope still counts a
+`review`); a started issue moved natively to `backlog`, `ready` or `blocked` and not
+abandoned stays unreadable by a strict read (it can still be abandoned from that native
+state); release scope still counts a
 started-then-dropped issue as unfinished and a never-started one as unavailable; and
 `edit set-field <ISSUE-ID> State done` is not guarded by this change.
 

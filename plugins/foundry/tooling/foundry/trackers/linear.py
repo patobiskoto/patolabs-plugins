@@ -3723,9 +3723,19 @@ class LinearTracker(Tracker):
         if allow_current_disagreement:
             return
         # PAT-ADR-0017: on an ordinary read a native ``dropped`` prevails over a
-        # valid, non-terminal projection.  Every receipt above was validated and is
-        # kept; a done receipt keeps the conflict, and no writer sets this flag.
-        if native_dropped_prevails and current_name == "dropped" and done is None:
+        # valid, non-terminal projection, which the decision names exactly: an
+        # ``in-progress`` or ``review`` receipt and no ``done`` receipt.  Every
+        # receipt above was validated and is kept; a done receipt keeps the
+        # conflict, and no writer sets this flag.  An issue that was never started
+        # is outside this tolerance and reads as before: with no receipt at all it
+        # never reaches this point (``native-only``), and with advisory
+        # ``cockpit-evidence`` receipts only it keeps the comparison below.
+        if (
+            native_dropped_prevails
+            and current_name == "dropped"
+            and done is None
+            and (rows.get("state-in-progress") or rows.get("state-review"))
+        ):
             return
         # PAT-28: Linear's GitHub integration can asynchronously apply its native
         # ``start`` automation after Foundry has already durably projected a PR
@@ -3848,6 +3858,7 @@ class LinearTracker(Tracker):
                 "pr_url": None,
                 "acceptance_complete": False,
                 "acceptance_override": None,
+                "receipts": False,
                 "in_progress": None,
                 "acceptance_by_generation": {},
                 "acceptance_override_by_generation": {},
@@ -4049,6 +4060,7 @@ class LinearTracker(Tracker):
         return {
             "state": "done" if epic_closure is not None else projected_state,
             "pr_url": (done or review or {}).get("pr_url"),
+            "receipts": True,
             "in_progress": in_progress,
             "acceptance_by_generation": acceptance_by_generation,
             "acceptance_complete": acceptance_complete,
@@ -5219,6 +5231,7 @@ class LinearTracker(Tracker):
                 raise ValueError("Linear State=dropped must be written alone")
             return self._abandon(
                 issue_id, self._native_state_name(raw, binding), project,
+                observed=True,
             )
         values, expected = self._desired_update(raw, project, fields)
         if self._raw_matches(raw, expected):
@@ -5282,6 +5295,7 @@ class LinearTracker(Tracker):
 
     def _abandon(
         self, issue_id: str, expected_state: str | None, project: Project,
+        *, observed: bool = False,
     ) -> Issue:
         """PAT-ADR-0017: write only the native State to ``dropped`` under S1-S4.
 
@@ -5291,6 +5305,14 @@ class LinearTracker(Tracker):
         PAT-ADR-0006 S1→S2 residual risk).  No lifecycle receipt is written,
         deleted or rewritten; a linked PR is left untouched.
         """
+        # A named predecessor is checked first, before any read: an inadmissible
+        # one is refused even when the issue is already dropped.  ``set-field``
+        # names none; it passes the state its own first read observed.
+        if not observed and expected_state not in _ABANDON_PREDECESSORS:
+            raise TrackerConflictError(
+                "Linear abandon refused: expected predecessor state required "
+                "(backlog, ready, blocked, in-progress or review)"
+            )
         binding = self._activate(project)
         target_state_id = binding["state_ids"].get("dropped")
         if target_state_id is None:
@@ -5320,10 +5342,13 @@ class LinearTracker(Tracker):
         if native == "dropped":
             # Replay: the target is already reached, nothing is written.
             return self._to_issue(raw, project)
-        if expected_state not in _ABANDON_PREDECESSORS:
+        if projection["state"] is None and projection["receipts"]:
+            # Advisory cockpit receipts without any lifecycle state receipt: the
+            # PAT-ADR-0017 read rule does not cover that chain, so the written
+            # State could not be read back.  Refused before the write.
             raise TrackerConflictError(
-                "Linear abandon refused: expected predecessor state required "
-                "(backlog, ready, blocked, in-progress or review)"
+                "Linear abandon refused: receipt chain without a lifecycle state "
+                "receipt"
             )
         if native != expected_state:
             raise TrackerConflictError(
@@ -5994,6 +6019,7 @@ class LinearTracker(Tracker):
                     raise SystemExit("verdict Epic absent ou invalide")
                 _validate_epic_outcome(
                     outcome, project=project, parent=issue, expected=None,
+                    tracker=self,
                 )
             except (SystemExit, AttributeError, TypeError, ValueError) as exc:
                 raise TrackerConflictError("audit de clôture Linear invalide") from exc
