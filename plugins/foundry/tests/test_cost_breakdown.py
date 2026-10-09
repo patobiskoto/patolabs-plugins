@@ -258,16 +258,16 @@ def _session_fixture(tmp_path, with_log):
     stream_calls = [
         _assistant("m1", [_tool("t1", "Read", file_path="a")], _usage(2, 100, 20, 5)),
         _assistant("m1", [_tool("t1", "Read", file_path="a")], _usage(2, 100, 20, 5)),  # duplicated event
-        _assistant("m2", [{"type": "thinking"}, _tool("t2", "Bash", command="pytest")], _usage(2, 100, 5, 3)),
-        _assistant("m3", [{"type": "text"}], _usage(2, 100, 5, 20)),
+        _assistant("m2", [{"type": "thinking"}, _tool("t2", "Bash", command="pytest")], _usage(2, 110, 5, 3)),
+        _assistant("m3", [{"type": "text"}], _usage(2, 90, 5, 20)),
     ]
     streams = tmp_path / "streams"
     _write(streams / "camp-s1.jsonl", [*stream_calls, final])
     logs = tmp_path / "logs"
     if with_log:
         exact = [_assistant("m1", [_tool("t1", "Read", file_path="a")], _usage(2, 100, 20, 100)),
-                 _assistant("m2", [_tool("t2", "Bash", command="pytest")], _usage(2, 100, 5, 200)),
-                 _assistant("m3", [{"type": "text"}], _usage(2, 100, 5, 100))]
+                 _assistant("m2", [_tool("t2", "Bash", command="pytest")], _usage(2, 110, 5, 200)),
+                 _assistant("m3", [{"type": "text"}], _usage(2, 90, 5, 100))]
         _write(logs / "proj" / "s1.jsonl", exact)
     return streams, logs
 
@@ -313,21 +313,55 @@ def test_a_transcript_without_a_result_is_refused(tmp_path):
         cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp")
 
 
-def test_pairing_is_by_message_id_and_a_mismatch_is_unavailable_not_approximated(tmp_path):
+def _only_role(streams, logs, **kw):
+    records = [_record("A", 1, {"implementer": _tok(6, 300, 30, 400)}, {"claude-sonnet-5-5": _tok(6, 300, 30, 400)})]
+    return cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp", logs, **kw)["A"]["implementer"]
+
+
+def test_join_uses_permitted_fields_and_a_mismatch_is_unavailable_not_approximated(tmp_path):
     streams, logs = _session_fixture(tmp_path, True)
     log = logs / "proj" / "s1.jsonl"
-    # same count and same total, but another id in the host log: a positional pairing would accept it
-    log.write_text(log.read_text().replace('"m2"', '"other"'))
-    records = [_record("A", 1, {"implementer": _tok(6, 300, 30, 400)}, {"claude-sonnet-5-5": _tok(6, 300, 30, 400)})]
-    out = cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp", logs)["A"]["implementer"]
-    assert out["explore_only_calls"] == {"status": "unavailable", "reasons": {"output_pairing": 1}}
+    log.write_text(log.read_text().replace('"cache_read_input_tokens": 110', '"cache_read_input_tokens": 111'))
+    out = _only_role(streams, logs)
+    assert out["explore_only_calls"] == {"status": "unavailable", "reasons": {"output_join": 1}}
     assert out["sessions_with_exact_per_call_output"] == 0
     assert out["tool_calls"]["exploration"] == 1  # the counts need no host log
 
 
-def test_host_log_reader_extracts_only_ids_and_output_counters(tmp_path):
+def test_ambiguous_join_keys_are_unavailable(tmp_path):
+    streams, logs = _session_fixture(tmp_path, True)
+    path = streams / "camp-s1.jsonl"
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    events[3]["message"]["usage"]["cache_read_input_tokens"] = 90  # m2 and m3 now carry equal counters
+    events[2]["message"]["usage"]["cache_read_input_tokens"] = 90
+    events[2]["message"]["usage"]["cache_creation_input_tokens"] = 5
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    assert _only_role(streams, logs)["explore_only_calls"]["status"] == "unavailable"
+
+
+def test_a_log_entry_with_two_output_values_for_one_key_is_unavailable(tmp_path):
+    streams, logs = _session_fixture(tmp_path, True)
+    log = logs / "proj" / "s1.jsonl"
+    extra = _assistant("mx", [{"type": "text"}], _usage(2, 100, 20, 7))
+    log.write_text(log.read_text() + json.dumps(extra) + "\n")
+    assert _only_role(streams, logs)["explore_only_calls"]["status"] == "unavailable"
+
+
+def test_input_side_mismatch_with_the_final_result_makes_the_role_unavailable(tmp_path):
+    streams, logs = _session_fixture(tmp_path, True)
+    path = streams / "camp-s1.jsonl"
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    events[-1]["usage"]["cache_read_input_tokens"] = 301
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    out = _only_role(streams, logs)
+    assert out["explore_only_calls"] == {"status": "unavailable", "reasons": {"input_side_mismatch": 1}}
+
+
+def test_host_log_reader_extracts_only_counters_and_the_model_alias(tmp_path):
     _, logs = _session_fixture(tmp_path, True)
-    assert cb.read_host_usage(logs / "proj" / "s1.jsonl") == {"m1": 100, "m2": 200, "m3": 100}
+    got = cb.read_host_counters(logs / "proj" / "s1.jsonl")
+    assert got == {("claude-sonnet-5-5", 2, 100, 20): {100}, ("claude-sonnet-5-5", 2, 110, 5): {200},
+                   ("claude-sonnet-5-5", 2, 90, 5): {100}}
 
 
 def test_absent_control_fields_stay_unknown(tmp_path):
@@ -408,3 +442,52 @@ def test_cli_exits_nonzero_when_the_totals_differ_from_the_report(tmp_path):
     path.write_text(json.dumps(report))
     assert cb.main(["--results", str(RUNS / name / f"results-pat-19-{name}.jsonl"), "--report", str(path),
                     "--out", str(tmp_path / "o.json")]) == 1
+
+
+# --- review round 3 ------------------------------------------------------------------------------------
+
+def test_unpriced_models_alone_are_listed():
+    records = [_record("A", 1, {"implementer": _tok(c=10), "reviewer": _tok(c=20)},
+                       {"claude-sonnet-5-5": _tok(c=10), "claude-mystery-9": _tok(c=20)}, sessions=("s1", "s2"))]
+    weighted = cb.breakdown(records, SESSIONS, cb.load_grid())["arms"]["A"]["weighted"]
+    assert weighted == {"status": "unavailable", "models_without_price": ["claude-mystery-9"]}
+
+
+def test_grid_uses_the_adr_field_name_captured_at():
+    assert all("captured_at" in e and "captured_on" not in e for e in json.loads(cb.GRID_PATH.read_text())["entries"])
+
+
+def test_a_none_model_mixed_with_strings_does_not_raise():
+    cells = [{"model": None, "day": "2026-10-07", "tokens": _tok(c=1), "models": [None, "claude-sonnet-5-5"]},
+             {"model": "claude-mystery-9", "day": "2026-10-07", "tokens": _tok(c=1), "models": ["claude-mystery-9"]}]
+    got = cb._weighted_group(cells, cb.load_grid())
+    assert got["models_without_price"] == ["None", "claude-mystery-9", "claude-sonnet-5-5"]
+
+
+@pytest.mark.parametrize("command", [
+    "sort -o out.txt a.txt", "sort --output=out.txt a.txt", "sort -ro out a", "uniq in.txt out.txt",
+    "cat a | tee out.txt", "cp a b", "mv a b", "touch a", "mkdir d", "rm a", "git commit -am x", "git checkout a",
+    "sed -n '1,5w out.txt' a.py", "sed -n 's/a/b/w out.txt' a.py", "sed -i -n p a", "cat a >| out", "ls &> out",
+    "find . -fprint out.txt", "cat a > /tmp/x", "echo hi >> a.txt", "cat a | python3 -c 'pass'",
+])
+def test_writers_are_never_exploration(command):
+    assert cb.classify_tool_use("Bash", {"command": command}) == "bash_other"
+
+
+@pytest.mark.parametrize("command", [
+    "cat a.txt | sort | uniq -c", "cat a.txt | uniq", "sed -n 's/a/word/p' a.py", "sed -n '1,5p' a.py", "cat a | sort -u | wc -l",
+])
+def test_readers_that_look_like_writers_stay_exploration(command):
+    assert cb.classify_tool_use("Bash", {"command": command}) == "explore_bash"
+
+
+def test_accepted_count_disagreement_exits_one_and_still_writes_the_file(tmp_path):
+    name = "x5compare-1"
+    report = json.loads((RUNS / name / f"report-pat-19-{name}.json").read_text())
+    report["exploration_comparison"]["paired_rule"]["accepted_on_paired"]["L"] = 4
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(report))
+    out = tmp_path / "o.json"
+    assert cb.main(["--results", str(RUNS / name / f"results-pat-19-{name}.jsonl"), "--report", str(path),
+                    "--out", str(out)]) == 1
+    assert json.loads(out.read_text())["paired_reading"]["accepted_counts_equal_records"] is False

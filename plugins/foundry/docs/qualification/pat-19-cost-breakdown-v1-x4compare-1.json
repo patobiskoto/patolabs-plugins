@@ -857,7 +857,7 @@
   "price_grid": {
     "entries": [
       {
-        "captured_on": "2026-10-08",
+        "captured_at": "2026-10-08",
         "effective_from": "2026-10-05",
         "effective_from_basis": "release date of the 5.5 models not recorded in the repository; effective_from is the earliest date at which the repository records the model in use (PAT-19 campaign notes, 2026-10-05); the price is ASSUMED unchanged between that date and the capture on 2026-10-08 [hypothesis, not verified]",
         "effective_to": "2026-12-31",
@@ -865,7 +865,7 @@
         "source": "https://platform.claude.com/docs/en/about-claude/pricing"
       },
       {
-        "captured_on": "2026-10-08",
+        "captured_at": "2026-10-08",
         "effective_from": "2026-10-05",
         "effective_from_basis": "release date of the 5.5 models not recorded in the repository; effective_from is the earliest date at which the repository records the model in use (PAT-19 campaign notes, 2026-10-05); the price is ASSUMED unchanged between that date and the capture on 2026-10-08 [hypothesis, not verified]",
         "effective_to": "2026-12-31",
@@ -873,7 +873,7 @@
         "source": "https://platform.claude.com/docs/en/about-claude/pricing"
       },
       {
-        "captured_on": "2026-10-08",
+        "captured_at": "2026-10-08",
         "effective_from": "2026-10-05",
         "effective_from_basis": "release date of the 5.5 models not recorded in the repository; effective_from is the earliest date at which the repository records a 5.5 model in use (2026-10-05); the price is ASSUMED unchanged between that date and the capture on 2026-10-08 [hypothesis, not verified]",
         "effective_to": "2026-12-31",

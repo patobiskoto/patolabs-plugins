@@ -8,6 +8,11 @@ the repository-exploration tool calls of each role. It runs no model, no ``claud
 mode, recomputes no frozen verdict, and prints aggregates only (never a path, a command or an excerpt).
 
 API list prices are WEIGHTS under a subscription, never a bill: nothing here is a saving.
+
+Exit codes of ``main``: 0 when everything agrees; 1 when, with ``--report``, the recomputed totals differ from the
+committed report OR the accepted counts of the report's paired rule differ from the records (the output is still
+written, with ``totals_equal_committed_report.all_equal`` or ``paired_reading.accepted_counts_equal_records`` false);
+2 when an input is refused or unreadable.
 """
 from __future__ import annotations
 
@@ -62,7 +67,7 @@ def load_grid(path: str | Path = GRID_PATH) -> dict[str, Any]:
     if not isinstance(grid, dict) or grid.get("schema") != "foundry.price-grid.breakdown.v1" \
             or grid.get("currency") != "USD" or not isinstance(grid.get("entries"), list):
         raise BreakdownError("price grid schema differs")
-    required = {"host", "model", "aliases", "source", "captured_on", "effective_from", "effective_to",
+    required = {"host", "model", "aliases", "source", "captured_at", "effective_from", "effective_to",
                 "effective_from_basis", "rates"}
     optional = {"prompt_tokens_threshold", "over_threshold_rates"}
     entries = []
@@ -75,7 +80,7 @@ def load_grid(path: str | Path = GRID_PATH) -> dict[str, Any]:
         if not isinstance(raw["source"], str) or not raw["source"] or not isinstance(raw["effective_from_basis"], str):
             raise BreakdownError("price provenance differs")
         entry = dict(raw)
-        entry["captured_on"] = _day(raw["captured_on"])
+        entry["captured_at"] = _day(raw["captured_at"])
         entry["effective_from"], entry["effective_to"] = _day(raw["effective_from"]), _day(raw["effective_to"])
         if entry["effective_to"] < entry["effective_from"]:
             raise BreakdownError("price range is inverted")
@@ -129,10 +134,12 @@ def _usd(value: Decimal) -> float:
     return float(round(value, 6))
 
 
-def _finish(parts: Sequence[Mapping[str, Decimal] | None], models: Iterable[str]) -> Any:
-    """Sum weighted cells; ``unavailable`` (naming the models) as soon as one cell has no price."""
-    if any(p is None for p in parts):
-        return {"status": UNAVAILABLE, "models_without_price": sorted(set(models))}
+def _finish(parts: Sequence[Mapping[str, Decimal] | None], models_by_part: Sequence[Iterable[object]]) -> Any:
+    """Sum weighted cells; ``unavailable`` as soon as one cell has no price, naming ONLY the models of the
+    unpriced cells (a cell whose model is itself unresolved names every candidate model)."""
+    missing = sorted({str(m) for part, models in zip(parts, models_by_part) if part is None for m in models})
+    if missing:
+        return {"status": UNAVAILABLE, "models_without_price": missing}
     total = {k: sum((p[k] for p in parts), Decimal(0)) for k in _PARTS}  # type: ignore[index]
     low = total["input"] + total["cached_input"] + total["cache_write_5m"] + total["output"]
     high = total["input"] + total["cached_input"] + total["cache_write_1h"] + total["output"]
@@ -236,7 +243,8 @@ def _share(part: int | Decimal, whole: int | Decimal) -> float | None:
 
 
 def _weighted_group(cells: Sequence[Mapping[str, Any]], grid: Mapping[str, Any]) -> Any:
-    return _finish([_cell_weight(c, grid) for c in cells], [m for c in cells for m in (c["models"] if c["model"] is None else [c["model"]])])
+    return _finish([_cell_weight(c, grid) for c in cells],
+                   [c["models"] if c["model"] is None else [c["model"]] for c in cells])
 
 
 def _tokens_view(vec: Mapping[str, int]) -> dict[str, int]:
@@ -419,13 +427,29 @@ def _command_name(segment: Sequence[str]) -> tuple[str, list[str]] | None:
     return rest[0].rsplit("/", 1)[-1], rest[1:]
 
 
+_SED_WRITE = re.compile(r"(?:^|[;{}\s])[\d$,]*w\s+\S|/[gpiI]*w\s+\S")
+
+
+def _writes_a_file(cmd: str, args: Sequence[str]) -> bool:
+    """Whether a command of the read/filter vocabulary can still write a file through one of its own options."""
+    if cmd == "sort":  # -o FILE / --output=FILE (also in a bundle of short options)
+        return any(a.startswith("--output") or (a.startswith("-") and not a.startswith("--") and "o" in a[1:])
+                   for a in args)
+    if cmd == "uniq":  # uniq INPUT OUTPUT
+        return len([a for a in args if not a.startswith("-")]) > 1
+    if cmd == "sed":  # a ``w FILE`` command or ``s///w FILE`` flag in a script
+        return any(_SED_WRITE.search(a) for a in args if not a.startswith("-"))
+    return False
+
+
 def classify_tool_use(name: str, tool_input: Mapping[str, Any] | None) -> str:
     """One of ``explore_read`` (Read), ``explore_search`` (Grep/Glob), ``explore_bash`` (a Bash call made only of
     read/search commands), ``bash_other``, ``edit`` (file writes), ``other`` (any other tool name).
 
     A Bash call is ``explore_bash`` only when it is a pipeline/sequence of simple commands, at least one in
     ``EXPLORE_COMMANDS`` (cat, head, tail, sed -n, grep, rg, find without action, ls) and every other one in
-    ``NEUTRAL_COMMANDS`` (cd, pwd, wc, ...), with no command substitution, heredoc or file redirection.
+    ``NEUTRAL_COMMANDS`` (cd, pwd, wc, ...), with no command substitution, heredoc or file redirection, and no option of those commands that writes a file
+    (``sort -o``, ``uniq IN OUT``, ``sed w``/``s///w``, ``sed -i``, ``find -fprint``/``-delete``/``-exec``).
     Anything unreadable is ``bash_other``: the count of exploration is a lower bound by construction."""
     if name in FILE_TOOLS:
         return "explore_read"
@@ -445,10 +469,12 @@ def classify_tool_use(name: str, tool_input: Mapping[str, Any] | None) -> str:
         if parsed is None:
             return "bash_other"
         cmd, args = parsed
+        if cmd not in NEUTRAL_COMMANDS and cmd not in EXPLORE_COMMANDS:
+            return "bash_other"  # every other command (tee, cp, mv, touch, mkdir, rm, git, python, ...)
+        if _writes_a_file(cmd, args):
+            return "bash_other"
         if cmd in NEUTRAL_COMMANDS:
             continue
-        if cmd not in EXPLORE_COMMANDS:
-            return "bash_other"
         if cmd == "sed" and (not any(a == "-n" or (a.startswith("-") and not a.startswith("--") and "n" in a)
                                      for a in args)
                              or any(a.startswith("--in-place") or (a.startswith("-") and not a.startswith("--")
@@ -485,22 +511,25 @@ def read_session(path: Path) -> dict[str, Any]:
     return {"calls": list(calls.values()), "result": result}
 
 
-def read_host_usage(path: Path) -> dict[str, int | None]:
-    """Output tokens per assistant message id from a HOST session log (FOUNDRY-ADR-0015 reader discipline).
+def read_host_counters(path: Path) -> dict[tuple, set]:
+    """Per assistant entry of a HOST session log: ``(model alias, input, cache read, cache write)`` -> the set of
+    ``output_tokens`` values seen for it (FOUNDRY-ADR-0015 reader discipline).
 
-    Extracts only the message id and its ``output_tokens`` counter: never a prompt, a tool name or input, a path,
-    a command, an excerpt or a file name. A counter that is absent or not a count is None (unknown)."""
-    out: dict[str, int | None] = {}
+    Extracts ONLY token counters and the model alias: never a message id, a prompt, a tool name or input, a path, a
+    command, an excerpt or a file name. A counter that is absent or not a count makes the entry unusable (the key
+    carries None, so no join with the campaign stream can match it)."""
+    out: dict[tuple, set] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         event = json.loads(line)
         message = event.get("message") if event.get("type") == "assistant" else None
-        if not isinstance(message, dict) or not isinstance(message.get("id"), str):
+        if not isinstance(message, dict) or not isinstance(message.get("usage"), dict):
             continue
-        usage = message.get("usage")
-        value = usage.get("output_tokens") if isinstance(usage, dict) else None
-        out[message["id"]] = max(value, out.get(message["id"]) or 0) if type(value) is int else out.get(message["id"])
+        u = message["usage"]
+        key = (message.get("model"), _count(u.get("input_tokens")), _count(u.get("cache_read_input_tokens")),
+               _count(u.get("cache_creation_input_tokens")))
+        out.setdefault(key, set()).add(_count(u.get("output_tokens")))
     return out
 
 
@@ -526,9 +555,10 @@ def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Map
 
     The unit of attribution is one API call (one assistant message id): its own input, cache and output tokens.
     The effect of an exploration result staying in the context of the later calls is NOT measured.
-    Output tokens per call come from the host session logs when ``logs_dir`` is given, paired by message id; if the
-    ids or the total do not match, or a counter is absent, the attribution of that role is ``unavailable`` (never
-    approximated). Without ``logs_dir`` the output is bounded (the stream's partial figure plus the session slack)."""
+    Output tokens per call come from the host session logs when ``logs_dir`` is given, joined to the campaign stream
+    on permitted fields only (model alias and the three input-side token counters; FOUNDRY-ADR-0015) and only when
+    the join is exact and unambiguous; otherwise, or if a counter is absent or does not add up to the session's final
+    counter, the attribution of that role is ``unavailable`` (never approximated). Without ``logs_dir`` the output is bounded (the stream's partial figure plus the session slack)."""
     keep = None if only_prs is None else set(only_prs)
     arm_of = {s: r["path"] for r in records if r.get("record_type") == "attempt" and not r.get("dry_run")
               and (keep is None or r["task"]["pr"] in keep) for s in r.get("cloud_sessions") or []}
@@ -545,31 +575,33 @@ def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Map
         total_out = _count(usage.get("output_tokens"))
         calls = stream["calls"]
         partial = [_count(c["usage"].get("output_tokens")) for c in calls]
+        call_tokens = [{k: _count(c["usage"].get(u)) for k, u in _INPUT_SIDE} for c in calls]
         per_call_out: list[int | None] = list(partial)
         output_exact, unavailable_reason = False, None
+        if any(v is None for t in call_tokens for v in t.values()):
+            unavailable_reason = "usage_absent"
         if logs_dir is not None:
             found = sorted(logs_dir.glob(f"*/{sid}.jsonl"))
-            host = read_host_usage(found[0]) if len(found) == 1 else None
-            if host is None or set(host) != {c["id"] for c in calls} or any(v is None for v in host.values()) \
-                    or total_out is None or sum(host.values()) != total_out:  # type: ignore[arg-type]
-                unavailable_reason = "output_pairing"
+            host = read_host_counters(found[0]) if len(found) == 1 else None
+            keys = [(c["model"], *t.values()) for c, t in zip(calls, call_tokens)]
+            # exact join on permitted fields only (model alias + token counters): every key must be unique among the
+            # campaign's calls, the two key sets must be equal, each key must carry ONE output value, and the sum
+            # must equal the session's final counter; otherwise the attribution is unavailable
+            if host is None or unavailable_reason or len(set(keys)) != len(keys) or set(host) != set(keys) \
+                    or any(len(host[k]) != 1 or None in host[k] for k in keys) or total_out is None \
+                    or sum(next(iter(host[k])) for k in keys) != total_out:
+                unavailable_reason = unavailable_reason or "output_join"
             else:
-                per_call_out, output_exact = [host[c["id"]] for c in calls], True
+                per_call_out, output_exact = [next(iter(host[k])) for k in keys], True
         elif total_out is None or any(v is None for v in partial):
-            unavailable_reason = "output_absent"
-        call_tokens = [{k: _count(c["usage"].get(u)) for k, u in _INPUT_SIDE} for c in calls]
-        if any(v is None for t in call_tokens for v in t.values()):
-            unavailable_reason = unavailable_reason or "usage_absent"
+            unavailable_reason = unavailable_reason or "output_absent"
         a = acc.setdefault((arm, role), {
             "sessions": 0, "api_calls": 0, "tool_calls": Counter(), "calls_by_kind": Counter(),
             "sessions_output_exact": 0, "sessions_input_side_matches_result": 0, "input_side_unavailable": 0,
             "unavailable": Counter(), "cache_write_split": {"ephemeral_5m": 0, "ephemeral_1h": 0},
-            "host_list_cost_usd": Decimal(0), "models": Counter()})
+            "host_list_cost_usd": Decimal(0)})
         a["sessions"] += 1
         a["api_calls"] += len(calls)
-        a["sessions_output_exact"] += output_exact
-        if unavailable_reason:
-            a["unavailable"][unavailable_reason] += 1
         split = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
         for key, name in (("ephemeral_5m", "ephemeral_5m_input_tokens"), ("ephemeral_1h", "ephemeral_1h_input_tokens")):
             value = _count(split.get(name))
@@ -578,30 +610,37 @@ def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Map
         cost = stream["result"].get("total_cost_usd")
         a["host_list_cost_usd"] = None if type(cost) not in (int, float) or a["host_list_cost_usd"] is None \
             else a["host_list_cost_usd"] + Decimal(str(cost))
-        sums = _zero()
+        sums, session_cells = _zero(), []
         for index, (call, toks3, out) in enumerate(zip(calls, call_tokens, per_call_out)):
             for name, tool_input in call["tools"].values():
                 a["tool_calls"][classify_tool_use(name, tool_input)] += 1
             kind = _call_kind(call)
             a["calls_by_kind"][kind] += 1
-            a["models"][call["model"]] += 1
             if None in toks3.values() or out is None:
                 continue
             toks = {**toks3, "output_tokens": out, REASONING: 0}
             _add(sums, toks)
-            if kind == "explore_only" and not unavailable_reason:
-                cells.append({"arm": arm, "role": role, "model": call["model"], "day": info["day"], "tokens": toks,
-                              "first_call": index == 0, "slack_session": None, "pr": 0, "models": [call["model"]]})
+            if kind == "explore_only":
+                session_cells.append({"arm": arm, "role": role, "model": call["model"], "day": info["day"],
+                                      "tokens": toks, "first_call": index == 0, "slack_session": None, "pr": 0,
+                                      "models": [call["model"]]})
         check = [usage.get(u) for _, u in _INPUT_SIDE]
-        if any(_count(v) is None for v in check) or any(None in t.values() for t in call_tokens):
+        if any(_count(v) is None for v in check) or unavailable_reason == "usage_absent":
             a["input_side_unavailable"] += 1
+        elif all(sums[k] == usage[u] for k, u in _INPUT_SIDE):
+            a["sessions_input_side_matches_result"] += 1
+        else:  # the per-call counters do not add up to the session's final counters: nothing is attributed
+            unavailable_reason = unavailable_reason or "input_side_mismatch"
+        if unavailable_reason:
+            a["unavailable"][unavailable_reason] += 1
         else:
-            a["sessions_input_side_matches_result"] += all(sums[k] == usage[u] for k, u in _INPUT_SIDE)
-        slack = None if unavailable_reason or output_exact or total_out is None else max(total_out - sum(partial), 0)  # type: ignore[arg-type]
-        if slack:
-            cells.append({"arm": arm, "role": role, "model": calls[0]["model"], "day": info["day"],
-                          "tokens": {**_zero(), "output_tokens": slack}, "first_call": False,
-                          "slack_session": True, "pr": 0, "models": [calls[0]["model"]]})
+            a["sessions_output_exact"] += output_exact
+            cells.extend(session_cells)
+            slack = None if output_exact or total_out is None else max(total_out - sum(partial), 0)  # type: ignore[arg-type]
+            if slack:
+                cells.append({"arm": arm, "role": role, "model": calls[0]["model"], "day": info["day"],
+                              "tokens": {**_zero(), "output_tokens": slack}, "first_call": False,
+                              "slack_session": True, "pr": 0, "models": [calls[0]["model"]]})
     out: dict[str, Any] = {}
     for (arm, role), a in sorted(acc.items()):
         mine = [c for c in cells if c["arm"] == arm and c["role"] == role]
@@ -695,7 +734,7 @@ def analyse(results: Path, *, ledger: Path | None = None, report: Path | None = 
     doc: dict[str, Any] = {
         "schema": "foundry.cost-breakdown.v1", "campaign_id": campaign_id,
         "reading": "outside the frozen rule; API list prices are weights under a subscription, never a bill",
-        "price_grid": {"entries": [{"model": e["model"], "source": e["source"], "captured_on": e["captured_on"],
+        "price_grid": {"entries": [{"model": e["model"], "source": e["source"], "captured_at": e["captured_at"],
                                     "effective_from": e["effective_from"], "effective_to": e["effective_to"],
                                     "effective_from_basis": e["effective_from_basis"]}
                                    for e in price_grid["entries"]]}}
