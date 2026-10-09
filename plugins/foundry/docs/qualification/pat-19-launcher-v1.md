@@ -1609,3 +1609,12 @@ n'est modifié.
   `ABSENT_FORMS`, paramètre `absent_forms` de `audit_transcript` et de `replay_audit`, option `--quoted-not-found` de `replay-audit`,
   champs `audit.absent_path_forms` et `arm_findings_replayed` : documentés ici. Aucune option de `foundry_cli.py`, aucune table de routage
   et aucune constante de routage ne change. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.
+
+## Mesure du travail premium par rôle (PAT-129)
+
+Module séparé du lanceur, lecture seule : `python3 -m foundry.cost_breakdown` (`tooling/foundry/cost_breakdown.py`). Il relit les `results-*.jsonl`, `ledger-*.jsonl`
+et `report-*.json` versés d'une campagne `compare_exploration` et rend, par bras, la répartition du travail premium par rôle, classe de tokens et modèle (somme non pondérée de la
+règle, et pondérée par la grille datée `pricing-breakdown-v1.json`), la lecture pondérée de L sur A hors règle, et, avec `--streams-dir` (et `--session-logs-dir`), le
+décompte des appels de lecture / recherche des sessions cloud et le poids des appels purement d'exploration. Options : `--results`, `--ledger`, `--report` (le code de sortie est 1 si les totaux
+recalculés diffèrent du rapport), `--grid`, `--streams-dir`, `--session-logs-dir`, `--out` (n'écrase jamais). Il ne lance ni `claude`, ni modèle, ni `lms`, ni mode de campagne, et ne recalcule aucun verdict.
+Résultats et méthode : [`pat-19-cost-breakdown-v1.md`](pat-19-cost-breakdown-v1.md).
