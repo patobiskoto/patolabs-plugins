@@ -111,10 +111,13 @@ def test_a_request_whose_write_classes_do_not_add_up_is_flagged_not_refused(tmp_
         ttl.read_host_requests(tmp_path / "s.jsonl")
 
 
-def test_a_unicode_line_separator_inside_a_json_string_does_not_split_a_record(tmp_path):
+def test_unicode_line_separators_inside_a_json_string_do_not_split_a_record(tmp_path):
     record = _rec("a", 0, w=10)
-    record["message"]["content"][0]["text"] = "x y\x0bz"
-    (tmp_path / "s.jsonl").write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    record["message"]["content"][0]["text"] = "x\u2028y\u0085z"  # valid raw in JSON; str.splitlines() splits on both
+    raw = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+    assert "\u2028".encode() in raw and "\u0085".encode() in raw  # really present in the written bytes
+    assert len(raw.decode().splitlines()) > 1  # the former reader would have cut the record
+    (tmp_path / "s.jsonl").write_bytes(raw)
     assert len(ttl.read_host_requests(tmp_path / "s.jsonl")) == 1
 
 
@@ -144,7 +147,8 @@ def test_direction_a_applies_the_pat_132_rule_with_a_strict_ttl(tmp_path, gap, e
     view = _kind(out, "main")
     assert view["simulated_direction"] == "1h_to_5m" and view["observed_cache_write_duration"] == "1h"
     # the first request reads nothing: no entry clause; m1 is found expired only above 300 s
-    assert view["tokens_by_bound"]["favourable"]["requests_found_expired"] == 1 + expired  # + the first request (no entry)
+    assert view["tokens_by_bound"]["favourable"]["requests_found_expired"] == expired  # requests with a predecessor only
+    assert view["tokens_by_bound"]["favourable"]["first_requests_found_expired"] == 1  # the first request (no entry)
     assert view["gaps"]["favourable"]["over_ttl"] == expired
 
 
@@ -231,6 +235,51 @@ def test_the_bounds_disagree_when_the_gap_readings_straddle_the_ttl(tmp_path):
     assert sub["tokens_by_bound"]["prudent"]["recovered_read_tokens"] == 0
     assert sub["tokens_by_bound"]["favourable"]["recovered_read_tokens"] == 1_001_000
     assert sub["usd"]["result"] == "undecidable_between_the_bounds"
+
+
+def test_the_bounds_disagree_when_the_gap_readings_straddle_an_hour(tmp_path):
+    # s2 at +100+3550: lower reading 3550 (inside the window), upper reading 3650 (over an hour): possible, not certain
+    sub = _kind(_b(tmp_path, _sub(3550)), "subagent")
+    assert sub["tokens_by_bound"]["prudent"]["recovered_read_tokens"] == 0
+    assert sub["tokens_by_bound"]["favourable"]["recovered_read_tokens"] == 1_001_000
+    assert sub["usd"]["result"] == "undecidable_between_the_bounds"
+
+
+def test_robustness_figures_of_direction_b(tmp_path):
+    usd = _kind(_b(tmp_path, _sub(500)), "subagent")["usd"]
+    # no recognised re-write real: every write at 1.5 USD/M more than at 5 minutes, nothing saved
+    assert usd["delta_usd_if_no_recognised_rewrite_is_real"] == pytest.approx(1_002_000 * 1.5e-6 + 1_000_000 * 1.5e-6 + 1000 * 1.5e-6, abs=1e-6)
+    prudent = usd["bounds"]["prudent"]
+    assert prudent["recognised_share_of_5m_writes"] == pytest.approx(1_000_000 / 2_003_000, abs=1e-6)
+    gain = usd["delta_usd_if_no_recognised_rewrite_is_real"] - prudent["delta_usd"]
+    assert prudent["wrong_share_of_recognised_rewrites_that_cancels_the_delta"] == pytest.approx(-prudent["delta_usd"] / gain, abs=1e-5)
+    assert usd["cold_start_write_tokens_not_modelled"] == 1_000_000
+    assert usd["cold_start_envelope_usd_not_modelled"] == pytest.approx(1_000_000 * (4 - 0.1) / 1e6, abs=1e-9)
+
+
+def test_until_counts_only_subagent_logs_with_a_record_at_or_before_the_instant(tmp_path):
+    main = _session(tmp_path, [_rec("m0", 0, w=10, one_hour=True)], [
+        ("agent-ok", _sub(500)),
+        ("agent-late", [_rec("l0", 5000, w=10)]),  # created after the instant: not counted, not listed
+        ("agent-user-only", [{"type": "user", "timestamp": _at(10), "message": {"content": SECRET}}])])
+    out = ttl.analyse_interactive([main], until=T0 + dt.timedelta(seconds=1000))
+    assert out["sessions"][0]["subagent_logs_found"] == 2
+    assert [(u["kind"], u["model"], u["reason"]) for u in out["lineages_unavailable_in_usd_or_unreadable"]] == [
+        ("subagent", "unavailable", "no_request")]
+    assert SECRET not in json.dumps(out)
+    full = ttl.analyse_interactive([main])
+    assert full["sessions"][0]["subagent_logs_found"] == 3
+
+
+def test_returns_to_an_earlier_alias_are_counted_and_the_day_is_utc(tmp_path):
+    main = [_rec("a0", 0, w=10, model=SONNET, one_hour=True), _rec("b0", 10, w=10, model=OPUS, one_hour=True),
+            _rec("a1", 20, r=10, model=SONNET, one_hour=True), _rec("b1", 30, r=10, model=OPUS, one_hour=True),
+            _rec("b2", 40, r=10, model=OPUS, one_hour=True)]
+    out = ttl.analyse_interactive([_session(tmp_path, main)])
+    assert out["sessions"][0]["main_returns_to_an_earlier_alias"] == 2  # a1 and b1
+    late = _rec("z0", 0, w=10, one_hour=True)
+    late["timestamp"] = "2026-10-07T00:30:00+02:00"  # 2026-10-06 in UTC
+    assert ttl.analyse_interactive([_session(tmp_path, [late], name="sess-tz")])["sessions"][0]["first_day_utc"] == "2026-10-06"
 
 
 def test_the_first_request_of_a_subagent_log_is_never_a_recovery_and_is_reported(tmp_path):
@@ -376,17 +425,41 @@ def test_committed_interactive_aggregates_are_clean_and_consistent():
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", text)  # a raw session id
     assert "session_id" not in text and ".jsonl" not in text and not re.search(r"(?<![a-z])agent-", text)
     assert data["until"] and data["fields_read_beyond_adr_0015"]
+    lineages = [v for v in data["lineages"]]
+    classes = ("input", "read", "write_1h", "write_5m", "output")
+
+    def recompute(rows):
+        out = {"requests": sum(v["requests"] for v in rows), "tokens": {c: sum(v["tokens"][c] for v in rows) for c in classes}}
+        priced = [v for v in rows if v["usd"] != "unavailable"]
+        out["priced"] = {"real": sum(v["usd"]["real_usd"] for v in priced),
+                         **{b: sum(v["usd"]["bounds"][b]["simulated_usd"] for v in priced) for b in ttl.BOUNDS}}
+        for b in ttl.BOUNDS:
+            for key in sorted({k for v in rows for k in v["tokens_by_bound"][b]}):
+                out[(b, key)] = sum(v["tokens_by_bound"][b].get(key, 0) for v in rows)
+        return out
+
+    def check(view, rows):
+        want = recompute(rows)
+        assert view["requests"] == want["requests"] and view["tokens"] == want["tokens"]
+        for b in ttl.BOUNDS:
+            for key, value in view["tokens_by_bound"][b].items():
+                if (b, key) in want and key not in ("first_requests_found_expired", "requests_found_expired"):
+                    assert value == want[(b, key)]
+        if view["usd"] == "unavailable":
+            assert all(v["usd"] == "unavailable" for v in rows)
+            return
+        assert view["usd"]["real_usd"] == pytest.approx(want["priced"]["real"], abs=1e-4)
+        for b in ttl.BOUNDS:
+            assert view["usd"]["bounds"][b]["simulated_usd"] == pytest.approx(want["priced"][b], abs=1e-4)
+
     for kind, view in data["by_kind"].items():
-        parts = [v for k, v in data["by_kind_and_model"].items() if k.startswith(kind + "/")]
-        assert sum(p["requests"] for p in parts) == view["requests"]
-        assert sum(p["tokens"]["read"] for p in parts) == view["tokens"]["read"]
-        assert sum(p["usd"]["requests"] for p in parts if p["usd"] != "unavailable") == view["usd"]["requests"]
-        for bound in ttl.BOUNDS:
-            assert sum(p["usd"]["bounds"][bound]["simulated_usd"] for p in parts if p["usd"] != "unavailable") == pytest.approx(
-                view["usd"]["bounds"][bound]["simulated_usd"], abs=1e-4)
+        check(view, [v for v in lineages if v["kind"] == kind])
         prudent, favourable = (view["usd"]["bounds"][b]["delta_usd"] for b in ttl.BOUNDS)
         assert prudent >= favourable
         assert view["usd"]["result"] in {"net_gain", "net_loss", "undecidable_between_the_bounds"}
+    for key, view in data["by_kind_and_model"].items():
+        kind, alias = key.split("/", 1)
+        check(view, [v for v in lineages if (v["kind"], v["model"]) == (kind, alias)])
     assert sum(s["by_kind"][k]["requests"] for s in data["sessions"] for k in s["by_kind"]) == sum(
         v["requests"] for v in data["by_kind"].values())
     assert all(u["provenance"] == "unavailable" for u in data["lineages_unavailable_in_usd_or_unreadable"])

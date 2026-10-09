@@ -30,8 +30,8 @@ ici**. **[code]** : lu dans le dépôt.
   modèle.** 4 207 requêtes tarifables : 328,37 USD réel, 316,14 (prudente, −12,22, −3,7 %) et 306,28 (favorable, −22,08, −6,7 %). **Sonnet 5.5 :
   gain net** (117,58 USD réel ; −33,83 / −38,95, soit −28,8 % / −33,1 %). **Opus 5.5 : perte nette** (210,79 USD réel ; +21,61 / +16,86, soit
   +10,2 % / +8,0 %). Seuls 4,0 % (prudente) / 2,1 % (favorable) des écarts de sous-agents dépassent 5 minutes, mais près de la moitié des
-  tokens qu'ils écrivent le sont juste après une telle pause (30,6 M / 29,7 M sur 62,6 M), et presque tous sont des réécritures d'un préfixe
-  déjà écrit. Le seuil de rentabilité est le même pour les deux modèles (voir plus bas) : le « 1 heure » paye si au moins 38,5 % des tokens
+  tokens qu'ils écrivent le sont juste après une telle pause (30,6 M / 29,7 M sur 62,6 M), et la règle en reconnaît comme réécritures d'un préfixe
+  déjà écrit 90 % (prudente) à 99 % (favorable) : c'est ce que la règle reconnaît, pas une mesure. Le seuil de rentabilité est le même pour les deux modèles (voir plus bas) : le « 1 heure » paye si au moins 38,5 % des tokens
   écrits à « 5 minutes » sont des réécritures dues à une expiration ; Sonnet est à environ 67–72 %, Opus à 24–26 %.
 - **Rôle logique : non dérivable** dans les limites de FOUNDRY-ADR-0015 (le type d'agent n'est pas un champ permis) ; les figures sont par
   genre de lignée (principale / sous-agent) et par alias de modèle.
@@ -70,7 +70,12 @@ comparaison en dollars (ses compteurs restent dans la vue en tokens). Haiku 5.5 
 ne portent pas, `unavailable`, jamais estimé. En conséquence, **le rang 1 et le rang 3 n'ont aucun chiffre en dollars** ; seule la session de
 rang 2 en a (une partie de ses lignées). Ce n'est pas un choix : ajouter une entrée antérieure serait une hypothèse de prix non sourcée.
 
-## Règle de simulation (écrite avant le calcul ; elle est aussi dans la docstring de `cache_ttl_replay.py`)
+## Règle de simulation (écrite avant le calcul, avec une limite ; elle est aussi dans la docstring de `cache_ttl_replay.py`)
+
+**Limite de « écrite avant le calcul »** : le coordinateur avait déjà fait, sur l'une des sessions rejouées (rang 2), une observation exploratoire non
+publiée (nombre d'écarts de la conversation principale et des sous-agents au-dessus de 5 minutes, tokens écrits juste après, tokens encore lus).
+Elle porte sur les quantités dont dépend le sens B ; la règle n'est donc pas aveugle à elle. Le recoupement plus bas n'est pas une validation
+indépendante.
 
 TTL = 300 s, TTL long = 3 600 s. Une requête est un `message.id` d'assistant. **Lignée** = les requêtes d'**un** fichier de journal avec **un**
 alias de modèle, dans l'ordre du journal (un cache est par modèle). Un changement de modèle dans la conversation principale ouvre une
@@ -100,10 +105,15 @@ que `j` avait elle-même lue (donc observée comme renvoyée à l'identique) :
 
 - écart au-dessus de 3 600 s : expiré sous les deux durées, `ρ_i = 0` ; écart d'au plus 300 s : pas d'expiration, `ρ_i = 0` ; première requête
   d'une lignée (pas de `j`) : `ρ_i = 0` ;
-- **borne prudente** (gain le plus faible) : l'expiration n'est reconnue que si elle est **certaine**, `L_i > 300` et `U_i ≤ 3 600`, et
+**Hypothèse commune aux deux bornes : un contexte qui ne fait que grandir** (le préfixe en cache avant la pause est renvoyé à l'identique). Un déficit
+de compteur après une pause peut aussi venir d'une compaction, d'une édition du contexte ou d'une invalidation sans rapport avec la durée de vie ; un
+cache « 1 heure » aurait alors manqué lui aussi et du contenu nouveau est compté comme récupérable. **Aucune des deux bornes n'est donc un minorant du
+gain** : la « prudente » ne l'est que relativement à la « favorable ».
+
+- **borne prudente** (gain le plus faible des deux) : l'expiration n'est reconnue que si les deux lectures de l'écart la situent dans la fenêtre, `L_i > 300` et `U_i ≤ 3 600`, et
   `ρ_i = min(W5, max(0, R_j − R_i))` : seul compte ce que `j` avait lu ; ce que `j` a écrit lui-même n'est confirmé renvoyé à l'identique par
   aucune lecture avant la pause ;
-- **borne favorable** (gain le plus fort) : l'expiration est reconnue dès qu'elle est **possible**, `U_i > 300` et `L_i ≤ 3 600`, et
+- **borne favorable** (gain le plus fort des deux) : l'expiration est reconnue dès qu'une lecture la situe dans la fenêtre, `U_i > 300` et `L_i ≤ 3 600`, et
   `ρ_i = min(W5, max(0, P − R_i))` : tout le préfixe en cache avant la pause est supposé renvoyé à l'identique (contexte qui ne fait que
   grandir) et est la part de l'écriture que le réglage « 1 heure » aurait lue ;
 - le déficit de compteur `P − R_i` (ou `R_j − R_i`) doit être positif : une écriture après une pause sans déficit n'est pas une réécriture
@@ -114,7 +124,7 @@ que `j` avait elle-même lue (donc observée comme renvoyée à l'identique) :
 positifs, sinon **indécidable entre les bornes**. Même ensemble des deux côtés ; une lignée `unavailable` n'est d'aucun côté en USD.
 
 **Inconnaissable avec les champs permis** [code] : quelle part d'une écriture après une pause est du contenu nouveau et quelle part est
-l'ancien préfixe renvoyé (les formules la bornent par la taille du préfixe, elles ne la mesurent pas) ; si un préfixe est partagé avec un autre
+l'ancien préfixe renvoyé (les formules la plafonnent par la taille du préfixe sous l'hypothèse d'un contexte qui ne fait que grandir, elles ne la mesurent pas) ; si un préfixe est partagé avec un autre
 journal (en « 1 heure », une première requête de sous-agent aurait pu lire l'entrée écrite par un frère ; **non modélisé**, voir le volume
 concerné plus bas) ; l'instant réel de début d'une requête ; plusieurs points d'ancrage de cache ; le fait documenté que le « 1 heure » est
 ignoré tant que l'abonnement consomme des crédits d'usage [doc] ; le quota d'abonnement.
@@ -142,6 +152,23 @@ une règle ci-dessus, aucune ne touche le mode de PAT-132 (les journaux de campa
 7. un alias exclu garde son nom dans le nouveau mode (`lineages_unavailable_in_usd_or_unreadable`) ; **le mode de PAT-132 ne le fait pas**
    (ses sessions exclues portent seulement session, rôle et raison) : non modifié pour garder ses sorties identiques ; aucune session de
    PAT-132 n'a été exclue.
+
+## Corrections du 2026-10-10, après la revue indépendante (aucune règle changée)
+
+Faites après les premiers chiffres du document, déclarées ; les valeurs d'avant sont gardées ici.
+
+- **`requests_found_expired` (sens A)** comptait aussi les premières requêtes de lignée (sans précédente) ; renommé en deux clés :
+  `requests_found_expired` (avec précédente, cohérent avec les écarts) et `first_requests_found_expired`. Valeurs d'avant (prudente / favorable) : toutes
+  lignées principales 551 / 274 (maintenant 545 / 268 + 6 premières requêtes) ; Opus 444 / 222 (441 / 219) ; Sonnet 105 / 50 (104 / 49) ; `<synthetic>` 2 / 2 (0 + 2
+  premières). Aucun coût, aucun verdict ni aucun autre chiffre ne change.
+- **`--until` et `subagent_logs_found`** : seuls comptent les journaux de sous-agent ayant un enregistrement à l'instant ou avant ; un journal sans requête
+  mais avec un enregistrement est listé (`no_request`) au lieu de disparaître. Effet sur les chiffres versés : **aucun compte ne change** (36, 176, 2) ; la liste
+  `lineages_unavailable_in_usd_or_unreadable` passe de 59 à 60 entrées (un journal sans requête, désormais listé).
+- Ajouts sans changement de chiffre existant : `main_returns_to_an_earlier_alias`, `tokens`/`tokens_by_bound`/`simulated_usd` par lignée,
+  `delta_usd_if_no_recognised_rewrite_is_real`, `recognised_share_of_5m_writes`, `wrong_share_of_recognised_rewrites_that_cancels_the_delta`,
+  `cold_start_write_tokens_not_modelled`, `cold_start_envelope_usd_not_modelled`. `first_day_utc` est maintenant converti en UTC (aucune valeur ne change).
+- Reformulations : hypothèse commune d'un contexte qui ne fait que grandir (plus de « certaine » ni de minorant), limite de « écrite avant le calcul »,
+  « reconnus comme », ADR-0019 par analogie, ρ/W sur deux périmètres.
 
 ## Résultats
 
@@ -191,9 +218,16 @@ Sonnet 5 (alias sans entrée de prix), 2 `<synthetic>`, 1 Haiku 5.5 (prix selon 
 
 **Seuil de rentabilité du « 1 heure »** [code] : pour des tokens écrits à « 5 minutes » `W` dont `ρ` sont des réécritures d'expiration, le
 coût change de `W·(écriture_1h − écriture_5m) − ρ·(écriture_1h − lecture)`, soit `ρ/W` ≥ (2 − 1,25) / (2 − 0,05) = 5/13 ≈ 38,5 % de l'entrée pour
-gagner (ce rapport est le même pour Sonnet et Opus, dont les tarifs sont des multiples de l'entrée). Rapports observés sur la vue en tokens
-(toutes lignées lisibles de l'alias, tarifables ou non, donc un ordre de grandeur) : Sonnet 5.5, `ρ/W` ≈ 67 % (prudente) à 72 % (favorable) ;
-Opus 5.5, ≈ 24 % à 26 % ; d'où les deux signes de résultat. [fichiers]
+gagner (ce rapport est le même pour Sonnet et Opus, dont les tarifs sont des multiples de l'entrée). Rapports observés, deux périmètres à ne pas
+confondre. **Vue en tokens, toutes lignées lisibles de l'alias** (tarifables ou non) : Sonnet 5.5 ≈ 67 % (prudente) à 72 % (favorable) ; Opus 5.5 ≈ 24 %
+à 26 %. **Sous-ensemble tarifé, celui des verdicts** : Sonnet 5.5 68,4 % / 72,9 % ; Opus 5.5 28,3 % / 30,5 % ; d'où les deux signes de résultat. [fichiers]
+
+**Robustesse (recalculée)** : si une part `f` des réécritures reconnues était fausse (compaction, édition, invalidation sans rapport avec la durée),
+le delta serait `A − (1 − f)·B` avec `A` le delta si aucune réécriture reconnue n'est réelle (Sonnet : +43,53 USD, toutes écritures à « 1 heure »
+sans rien de sauvé) et `B` la valeur des réécritures reconnues. Le verdict de Sonnet 5.5 cesse d'être un gain si **43,7 % (borne prudente) ou 47,2 %
+(borne favorable)** des réécritures reconnues sont fausses (sous-ensemble tarifé ; en agrégat des sous-agents tarifables : 8,9 % / 15,0 %).
+Pour Opus 5.5 (perte nette) la question ne se pose pas dans ce sens : même si toutes les réécritures reconnues étaient réelles, le delta resterait
+positif. Cette robustesse ne dit rien de la part réelle de réécritures fausses, qui est **inconnue**. [fichiers]
 
 ### Par session (rangs)
 
@@ -220,7 +254,7 @@ lecteur les retrouve (234 sur 1 914 ; 118 ; 29,68 M ; 0,92 M sous la lecture bas
   `pricing_derived` ; toute lignée sans prix utilisable `unavailable` (elle garde son alias) ; `client_observed` : aucun (le lecteur n'observe rien
   par lui-même).
 - **Pas de réseau, aucun journal modifié, idempotent** : testés (`test_cache_ttl_interactive.py`). Les sessions sont nommées par rang
-  (`session-02/subagent-017`) ; aucun identifiant, nom de fichier, de répertoire de projet, chemin ni nom d'utilisateur n'est dans le JSON ni
+  (`session-02/subagent-17`) ; aucun identifiant, nom de fichier, de répertoire de projet, chemin ni nom d'utilisateur n'est dans le JSON ni
   ici (contrôle à l'exécution dans le test).
 - Une lignée dont un journal est illisible ou ambigu est listée avec un code fixe et l'alias `unavailable` (l'alias n'est pas connu quand le
   fichier n'a pas pu être lu) ; aucune lignée de l'ensemble versé n'est dans ce cas.
@@ -230,8 +264,13 @@ lecteur les retrouve (234 sur 1 914 ; 118 ; 29,68 M ; 0,92 M sous la lecture bas
 - Quelle part d'une écriture après une pause est du contenu nouveau : les deux bornes l'encadrent (voir la règle) sans la mesurer. L'écart entre
   elles est de 9,9 USD sur 328 pour les sous-agents (−12,22 contre −22,08) et large sur la conversation principale (545 pauses de plus de
   5 minutes en lecture haute contre 268 en lecture basse) : la lecture haute compte la durée de la réponse précédente.
-- Le partage de préfixe entre journaux de sous-agents en « 1 heure » (2,96 M tokens d'écritures à froid, 4,7 % des écritures) : non modélisé,
-  d'effet favorable au « 1 heure » ; les bornes ne le contiennent pas.
+- Le partage de préfixe entre journaux de sous-agents en « 1 heure » : non modélisé, d'effet favorable au « 1 heure » ; les bornes ne le contiennent
+  pas. Ordre de grandeur, premières requêtes de lignées de sous-agents : toutes lignées lisibles, 214 requêtes, 2 957 304 tokens écrits (4,7 % des
+  écritures), dont **Opus 5.5 : 2 031 264 tokens écrits et 34 029 lus** (147 requêtes) ; seuls 98 725 tokens sont lus aujourd'hui sur ces premières
+  requêtes, tous alias confondus. Sur le **sous-ensemble tarifé**, qui est celui du verdict : Opus 5.5 1 546 265 tokens, au plus **12,06 USD** si chacun
+  devenait une lecture « 1 heure » (borne haute : 1 546 265 × (8 − 0,2) / 10⁶), contre un delta de +16,86 USD (favorable) ou +21,61 (prudente) ;
+  Sonnet 5.5 676 184 tokens, au plus 2,64 USD ; tous sous-agents tarifés 2 222 449 tokens, au plus 14,70 USD. Sur Opus la perte resterait donc
+  positive (au moins +4,8 USD en favorable) même si tout ce partage était réel, mais l'ordre de grandeur n'est pas négligeable.
 - Les sessions de rang 1 et 3 en dollars, et la lignée Sonnet principale du rang 2 : `unavailable`, pas de prix avant le 2026-10-05.
 - Le comportement du « 1 heure » pendant que l'abonnement consomme des crédits d'usage (ignoré selon la documentation) [doc], l'effet sur le
   **quota** d'abonnement, la qualité et la durée sous un autre réglage : **inconnus**, rien n'est conclu.
@@ -243,7 +282,7 @@ lecteur les retrouve (234 sur 1 914 ; 118 ; 29,68 M ; 0,92 M sous la lecture bas
 Selon la documentation [doc], un abonnement donne par défaut « 1 heure » à la conversation principale et « 5 minutes » aux sous-agents ;
 `promptCacheTtl` règle la conversation principale, `subagentPromptCacheTtl` les sous-agents et les requêtes hors conversation principale
 (variables d'environnement équivalentes, Claude Code 2.1.242 et plus), et un profil d'agent peut fixer `experimental: cacheTtl: 5m|1h`
-(2.1.248 et plus). FOUNDRY-ADR-0019 : une configuration moins chère s'adopte sous observation, sans banc.
+(2.1.248 et plus). FOUNDRY-ADR-0019 (cité **par analogie** : elle régit la promotion d'un modèle sur un rôle, pas un réglage de cache) : une configuration moins chère s'adopte sous observation, sans banc.
 
 - **Conversation principale** : **rien à changer**. Sur ce qui est tarifable, passer à « 5 minutes » est une perte nette sous les deux bornes
   (+120 % à +274 % du coût de liste) ; garder `promptCacheTtl` à « 1 heure ». Le moyen d'un tel changement serait un réglage de l'utilisateur
@@ -251,7 +290,7 @@ Selon la documentation [doc], un abonnement donne par défaut « 1 heure » à l
 - **Sous-agents** : le résultat est de **signe opposé selon le modèle** sur ces données (Sonnet gain net, Opus perte nette). Un réglage global
   `subagentPromptCacheTtl: 1h` s'applique à tous les sous-agents, Opus compris, et rendrait ce mélange ; le champ `experimental.cacheTtl: 1h`
   de l'**en-tête d'un profil d'agent** cible un profil donc un modèle. Un changement justifié, s'il est décidé, serait donc **par profil, pour
-  les profils sur Sonnet**, à instruire par un ticket qui décide aussi de la mesure sur observation (ADR-0019) et de l'effet sur le quota ;
+  les profils sur Sonnet**, à instruire par un ticket qui décide aussi de la mesure sur observation (par analogie avec ADR-0019) et de l'effet sur le quota ;
   `--settings` du lanceur ne concerne que les sessions sans interface (hors de ce rejeu, voir PAT-132 pour la question de transmission et la
   liste fermée de variables d'AGENTS.md R6). Aucun profil, réglage ni routage n'est modifié ici.
 - **Sessions sans interface** : inchangé par ce rapport (résultat de PAT-132, distinct).
@@ -259,6 +298,10 @@ Selon la documentation [doc], un abonnement donne par défaut « 1 heure » à l
 
 ## Limites
 
+- **Contexte qui ne fait que grandir** : hypothèse des deux bornes du sens B ; ni l'une ni l'autre n'est un minorant du gain (voir la règle).
+- **Retours à un alias après un changement de modèle** (sens A) : la référence haute d'une requête est la requête précédente du **même alias**, conformément
+  à la règle écrite ; elle reste un majorant mais gonfle la borne prudente d'au plus une requête par retour. Nombre de tels retours dans la
+  conversation principale : 3 (rang 1), 4 (rang 2), 0 (rang 3), 7 au total. [fichiers]
 - Trois sessions d'un seul dépôt et d'un seul utilisateur ; chiffres en dollars sur une session ; la plus récente est figée à un instant.
 - Prix de liste d'API utilisés comme poids sous un abonnement : jamais une facture, jamais une économie ; rien sur le quota.
 - Simulation à une seule lignée par fichier et par alias, deux lectures de l'écart dont aucune n'est exacte, aucun point d'ancrage multiple,
@@ -288,7 +331,9 @@ Selon la documentation [doc], un abonnement donne par défaut « 1 heure » à l
   `discover_subagent_logs`, `split_by_alias`, `recovered_reads`, `request_cost_long`, `lineage_rows`, `summarise`, `analyse_interactive`, le
   paramètre `interactive` de `read_host_requests` ; les clés `by_kind`, `by_kind_and_model`, `lineages`,
   `lineages_unavailable_in_usd_or_unreadable`, `simulated_direction` (`1h_to_5m`, `5m_to_1h`), `tokens_by_bound`,
-  `recovered_read_tokens`, `requests_with_recognised_expiry_rewrite`, `requests_ambiguous_counters_on_neither_side`, `usd`, `first_day_utc`,
+  `recovered_read_tokens`, `requests_with_recognised_expiry_rewrite`, `first_requests_found_expired`, `main_returns_to_an_earlier_alias`,
+  `delta_usd_if_no_recognised_rewrite_is_real`, `recognised_share_of_5m_writes`, `wrong_share_of_recognised_rewrites_that_cancels_the_delta`,
+  `cold_start_write_tokens_not_modelled`, `cold_start_envelope_usd_not_modelled`, le code `no_request` d'un journal de sous-agent sans requête, `requests_ambiguous_counters_on_neither_side`, `usd`, `first_day_utc`,
   `days_utc_with_requests`, `distinct_first_days_utc` ; les codes `no_price_for_alias_on_day` et `price_depends_on_prompt_length` : définis ici.
   Les codes d'exclusion et le vocabulaire de résultat de PAT-132 sont repris tels quels. Aucune table de routage, clé de configuration,
   réglage du lanceur ni protocole gelé n'a changé.
