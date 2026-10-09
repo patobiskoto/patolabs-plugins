@@ -10,6 +10,8 @@ import json
 import os
 import re
 import secrets
+import subprocess
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping
@@ -73,7 +75,14 @@ _CLAUDE_MODEL_DECLARATION = (
     ("sonnet-5.5", "claude-sonnet-5-5", ("claude-sonnet-5-5",)),
     ("opus-5.5", "claude-opus-5-5", ("claude-opus-5-5",)),
     ("fable-5.1", "claude-fable-5-1", ("claude-fable-5-1",)),
+    ("haiku-5.5", "claude-haiku-5-5", ("claude-haiku-5-5",)),
 )
+# PAT-ADR-0016: minimum Claude Code host version of a declared pin. Below it the
+# binding fails closed; no other model, pin or alias is ever substituted.
+CLAUDE_MODEL_MIN_HOST_VERSION = {"haiku-5.5": (2, 1, 293)}
+_CLAUDE_HOST_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\Z")
+_CLAUDE_BINARY_VERSION = re.compile(r"(\d+\.\d+\.\d+) \(Claude Code\)\Z")
+_TRANSCRIPT_TAIL_BYTES = 1 << 20
 _CLAUDE_MODEL_IDS = {canonical: alias for canonical, alias, _ in _CLAUDE_MODEL_DECLARATION}
 # Short aliases express version-dependent host intent, never a frozen version.
 CLAUDE_AGENT_MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")
@@ -920,16 +929,115 @@ def claude_pin_profile_documents(plugin_root) -> dict[str, str]:
     return result
 
 
-def claude_invocation_binding(route, capability: str, *, plugin_root, project_models=None) -> dict:
+def claude_host_version(transcript_path) -> str | None:
+    """Claude Code version the running host wrote on its last transcript record.
+
+    The hook payload names the session transcript, whose records each carry the
+    ``version`` of the host that wrote them. The environment is not a source: a
+    host started from another host's shell inherits that other host's variables.
+    Only the top-level ``version`` of the last versioned record in a bounded tail
+    is read; nothing else is parsed or kept. ``None`` means unknown, never conforming
+    (also when one record alone is larger than the tail: no complete line is left).
+    """
+    try:
+        with open(transcript_path, "rb") as handle:
+            start = max(0, handle.seek(0, os.SEEK_END) - _TRANSCRIPT_TAIL_BYTES)
+            handle.seek(start)
+            lines = handle.read().split(b"\n")
+    except (OSError, TypeError, ValueError):
+        return None
+    for raw in reversed(lines[1:] if start else lines):
+        if b'"version"' not in raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except ValueError:
+            continue
+        version = record.get("version") if isinstance(record, dict) else None
+        if isinstance(version, str) and _CLAUDE_HOST_VERSION.match(version):
+            return version
+    return None
+
+
+def _claude_minimum_host_version(invocation_model: str) -> tuple[int, ...] | None:
+    """Minimum of a declared pin; a dated snapshot ``<wire>-YYYYMMDD`` of its line carries it too."""
+    for canonical, wire, _ in _CLAUDE_MODEL_DECLARATION:
+        if canonical in CLAUDE_MODEL_MIN_HOST_VERSION and isinstance(invocation_model, str) and (
+                invocation_model == wire or re.fullmatch(re.escape(wire) + r"-\d{8}", invocation_model)):
+            return CLAUDE_MODEL_MIN_HOST_VERSION[canonical]
+    return None
+
+
+def claude_host_version_requirement(
+    invocation_model: str, host_version: str | None, *, from_transcript: bool = False,
+) -> dict | None:
+    """Fail closed below a pin's minimum host version; an unobserved version stays unknown."""
+    minimum = _claude_minimum_host_version(invocation_model)
+    if minimum is None:
+        return None
+    required = ".".join(str(part) for part in minimum)
+    observed = _CLAUDE_HOST_VERSION.match(host_version) if isinstance(host_version, str) else None
+    if observed is None:
+        return {"required": required, "observed": None, "status": "unknown"}
+    if tuple(int(part) for part in observed.groups()) < minimum:
+        raise RoutingConfigError(
+            f"modèle Claude '{invocation_model}' : Claude Code {required} ou supérieur requis "
+            f"(version hôte observée : {host_version}). Mettez à jour Claude Code, ou choisissez "
+            "explicitement un autre modèle dans le mapping projet (retour à Haiku 4.5 : "
+            '{"model": "haiku-4.5", "effort": null}). Aucun repli automatique.'
+            + (" Après une mise à jour de l'hôte, une session REPRISE peut encore porter l'ancienne "
+               "version dans son transcript : démarrez une nouvelle session." if from_transcript else "")
+        )
+    return {"required": required, "observed": host_version, "status": "conforming"}
+
+
+def claude_headless_host_version_requirement(
+    invocation_model: str, binary: str, *, runner, env, cwd=None,
+) -> dict | None:
+    """Apply a pin's minimum host version to the binary a headless runner is about to launch.
+
+    Only a model that declares a minimum costs a call: ``<binary> --version``, local and
+    unpaid, through the same runner, environment and working directory as the launch so
+    the same binary answers. Below the minimum this raises like the hook; an unreadable
+    answer is ``unknown``: the launch stays allowed and one line on standard error says
+    so at EVERY launch. No global state (no warning filter, safe across threads), and
+    nothing is written to a receipt.
+    """
+    if claude_host_version_requirement(invocation_model, None) is None:
+        return None
+    try:
+        completed = runner([binary, "--version"], cwd=cwd, capture_output=True, text=True,
+                           timeout=30, env=env, check=False)
+        stdout = getattr(completed, "stdout", None)
+        observed = (_CLAUDE_BINARY_VERSION.match(stdout.strip())
+                    if getattr(completed, "returncode", None) == 0 and isinstance(stdout, str) else None)
+    except (OSError, subprocess.SubprocessError):
+        observed = None
+    requirement = claude_host_version_requirement(invocation_model, observed.group(1) if observed else None)
+    if requirement["status"] == "unknown":
+        print(
+            f"CLAUDE_HOST_VERSION_UNOBSERVED : version de '{binary}' non observée ; minimum requis "
+            f"{requirement['required']} pour '{invocation_model}' non vérifié, jamais présumé conforme.",
+            file=sys.stderr, flush=True,
+        )
+    return requirement
+
+
+def claude_invocation_binding(
+    route, capability: str, *, plugin_root, project_models=None, host_version: str | None = None,
+) -> dict:
     """Bind pins to preloaded frontmatter; Agent.model accepts only short aliases."""
     model = claude_invocation_model(route.model, project_models=project_models)
     effort_parameters = claude_effort_parameters(route, invocation_model=model)
     effort = effort_parameters["transmitted"]
     if model in CLAUDE_AGENT_MODEL_ALIASES:
         return {"profile": f"routed-{capability}-{effort or 'none'}",
-                "agent_model": model, "transmitted_model": model,
+                "agent_model": model, "transmitted_model": model, "host_version": None,
                 "model_source": "agent_input", "effort_parameters": effort_parameters}
+    # A wire ID without a shipped pin (a dated snapshot, a custom ID) is refused for that
+    # reason first: advising a host update would not make it launchable.
     name, expected = claude_pin_profile_text(model, capability, effort, plugin_root=plugin_root)
+    version_requirement = claude_host_version_requirement(model, host_version, from_transcript=True)
     try:
         actual = (Path(plugin_root) / "agents" / f"{name}.md").read_text(encoding="utf-8")
     except OSError as exc:
@@ -940,6 +1048,7 @@ def claude_invocation_binding(route, capability: str, *, plugin_root, project_mo
     if actual != expected:
         raise RoutingConfigError(f"profil Claude épinglé divergent : {name} ; régénérez/rechargez le plugin.")
     return {"profile": name, "agent_model": None, "transmitted_model": model,
+            "host_version": version_requirement,
             "model_source": "profile_frontmatter", "effort_parameters": effort_parameters}
 
 

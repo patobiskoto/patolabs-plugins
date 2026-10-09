@@ -126,12 +126,12 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   (`plugins/foundry/tooling/foundry/routing.py`), itself validated from
   `plugins/foundry/tooling/foundry/effort_policy.py`.
 - `_CLAUDE_MODEL_DECLARATION` declares canonical versions and their explicit Agent
-  identifiers, including historical Sonnet/Opus/Fable 5, Sonnet/Opus 5.5, Fable 5.1
-  and Haiku 4.5 (including its explicit `20251001` snapshot). Versioned policy models
-  select a preloaded versioned profile whose frontmatter carries the declared full
-  identifier. The Agent tool wire omits `model` for these pins: the observed 2.1.285
-  Agent schema accepts only `haiku`, `sonnet`, `opus`, `fable` there. Historical pins
-  never become latest aliases.
+  identifiers, including historical Sonnet/Opus/Fable 5, Sonnet/Opus 5.5, Fable 5.1,
+  Haiku 5.5 and Haiku 4.5 (including its explicit `20251001` snapshot). Versioned
+  policy models select a preloaded versioned profile whose frontmatter carries the
+  declared full identifier. The Agent tool wire omits `model` for these pins: the
+  observed 2.1.285 Agent schema accepts only `haiku`, `sonnet`, `opus`, `fable` there.
+  Historical pins never become latest aliases.
   Short `haiku`, `sonnet`, `opus`, `fable` aliases preserve host alias intent and emit
   `CLAUDE_ALIAS_VERSION_UNOBSERVED`; they are not evidence of a precise version.
 - `claude_invocation_model()` normalizes full IDs to declared canonical names with
@@ -150,6 +150,40 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   effort null. Explicit user effort is rejected. Null has no rank and cannot satisfy
   reviewer/architect floors or another model's effort scope. Requested, transmitted and
   observed efforts stay separate; missing native observation remains unknown.
+- Claude Haiku 5.5 (`haiku-5.5` / `claude-haiku-5-5`, PAT-125, PAT-ADR-0016) is a
+  canonical pin with its own effort scope (`low` to `max`) and one versioned profile per
+  capability and effort; it always needs an effort and never inherits the Haiku 4.5
+  rule above. Haiku 4.5 stays an exact historical pin and never becomes an alias of it;
+  the short `haiku` alias is not promoted. `haiku-5.5` / `medium` is the shipped Claude
+  `economy` default, per tier: every non-gate role falling back to `economy` gets it
+  too. The effort `medium` is unmeasured, and no gain or saving is claimed. A project
+  returns to the incumbent by writing `{"model": "haiku-4.5", "effort": null}` under
+  `mappings.claude.economy`; the same mapping without the `effort` key, and a direct
+  request for `haiku-4.5` or `haiku`, inherit `medium` and are refused with that fix.
+  An effort-only `economy` override now applies to Haiku 5.5, and an availability list
+  (`FOUNDRY_CLAUDE_AVAILABLE_MODELS`) that lacks `haiku-5.5` makes the tier unavailable
+  (`RoutingUnavailableError`), with no substitution by a listed Haiku 4.5.
+  Both native trials of 2026-10-09 (first `not_conforming`, kept as recorded; second
+  `conforming`, authorised by the maintainer) are in
+  `plugins/foundry/docs/qualification/pat-125-haiku-55-promotion.md`.
+- `CLAUDE_MODEL_MIN_HOST_VERSION` (`routing_facades.py`) requires Claude Code 2.1.293
+  for the `haiku-5.5` pin. The routing hook observes the host version with
+  `claude_host_version()`: the top-level `version` of the last versioned record of the
+  session transcript named by its payload, never the environment and never a `claude`
+  found on `PATH`. An observed lower version makes `claude_invocation_binding()` raise
+  `RoutingConfigError` naming the required version: the launch is denied and nothing is
+  substituted, neither Haiku 4.5 nor an alias. An unobservable version is `unknown`:
+  the launch proceeds with `host_version.status = "unknown"` and the
+  `CLAUDE_HOST_VERSION_UNOBSERVED` warning, never reported as conforming. The headless
+  runners (`command_runtime.py`, `campaign_runtime.py`) apply the same rule through
+  `claude_headless_host_version_requirement()`: for such a pin only, they ask the
+  `claude` they are about to launch its `--version` (local, unpaid, same runner, child
+  environment and working directory), refuse below the minimum, and on an unreadable
+  answer launch after writing one line with the same code to standard error, at every
+  launch. There a dated snapshot `claude-haiku-5-5-YYYYMMDD` carries the same minimum;
+  the hook refuses such an identifier first because no preloaded pinned profile exists
+  for it. `routing show`/`resolve` and `doctor` bind nothing and observe no host
+  version.
 - **Effect of a model that resolves to neither the built-in table nor the project's
   `claude_models`**: `claude_invocation_model()` raises `RoutingConfigError` naming the
   unresolved canonical model. Resolution fails closed — it never guesses, silently

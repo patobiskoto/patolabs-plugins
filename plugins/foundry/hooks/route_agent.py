@@ -27,6 +27,7 @@ from foundry.routing_facades import (  # noqa: E402
     agent_identity,
     claude_invocation_binding,
     claude_effort_parameters,
+    claude_host_version,
     claude_route_plan,
     prepare_claude_invocation,
 )
@@ -111,6 +112,7 @@ def _warning_context(
         "transmitted_launch": ({key: invocation_binding[key] for key in
                                ("profile", "transmitted_model", "model_source")}
                                if invocation_binding else None),
+        "host_version": invocation_binding["host_version"] if invocation_binding else None,
         "execution_observation": {"model": None, "effort": None, "status": "unknown"},
         "sources": dict(route.sources),
         "fallback_path": list(route.fallback_path),
@@ -142,6 +144,12 @@ def _warning_context(
             for warning in route.warnings
         ],
     }
+    if (visible["host_version"] or {}).get("status") == "unknown":
+        visible["warnings"].append({
+            "code": "CLAUDE_HOST_VERSION_UNOBSERVED",
+            "message": ("Version de Claude Code non observée ; minimum requis "
+                        f"{visible['host_version']['required']} non vérifié, jamais présumé conforme."),
+        })
     return "Foundry Claude route: " + json.dumps(visible, ensure_ascii=False)
 
 
@@ -168,6 +176,7 @@ def route_tool_input(
     cwd: str | os.PathLike,
     environ: Mapping[str, str] | None = None,
     correlation: str | None = None,
+    host_version: str | None = None,
 ) -> tuple[dict[str, object], str] | None:
     """Return the rewritten Agent input + visible context, or None if out of scope."""
     role = _logical_role(tool_input.get("subagent_type"))
@@ -198,7 +207,7 @@ def route_tool_input(
         )
         binding = claude_invocation_binding(
             route, profile.capability, plugin_root=PLUGIN_ROOT,
-            project_models=resolution["claude_models"],
+            project_models=resolution["claude_models"], host_version=host_version,
         )
         routed_prompt = (
             f"{_ROUTED_MARKER}\n"
@@ -301,6 +310,7 @@ def main() -> None:
             cwd=payload.get("cwd") or os.getcwd(),
             environ=os.environ,
             correlation=payload.get("tool_use_id"),
+            host_version=claude_host_version(payload.get("transcript_path")),
         )
         assert routed is not None
         output = _allow(*routed)

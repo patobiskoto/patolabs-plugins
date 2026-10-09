@@ -196,7 +196,7 @@ def _credited_cross_host_state(root, state_dir, issue):
 @pytest.mark.parametrize(
     ("role", "identity", "agent", "model", "turns"),
     [
-        ("scout", "Lupin", "foundry:routed-readonly-none", "claude-haiku-4-5", 10),
+        ("scout", "Lupin", "foundry:routed-readonly-medium", "claude-haiku-5-5", 10),
         ("implementer", "Eiffel", "foundry:routed-worker-medium", "claude-sonnet-5-5", 50),
         ("reviewer", "Maigret", "foundry:routed-readonly-high", "claude-opus-5-5", 24),
         ("architect", "Vauban", "foundry:routed-readonly-high", "claude-opus-5-5", 30),
@@ -376,7 +376,7 @@ def test_claude_project_mapping_is_canonical_in_pending_telemetry(tmp_path):
     config = tmp_path / ".foundry" / "model-routing.json"
     config.parent.mkdir()
     config.write_text(json.dumps({
-        "mappings": {"claude": {"economy": {"model": "claude-haiku-4-5"}}},
+        "mappings": {"claude": {"economy": {"model": "claude-haiku-4-5", "effort": None}}},
     }), encoding="utf-8")
     data_dir = tmp_path / "state"
     data_dir.mkdir()
@@ -541,11 +541,11 @@ def test_ordinary_fallback_moves_down_and_is_visible(tmp_path):
     updated, context = route_agent.route_tool_input(
         {"subagent_type": "foundry:implementer", "prompt": _packet()},
         cwd=tmp_path,
-        environ={CLAUDE_AVAILABLE_MODELS: "haiku-4.5"},
+        environ={CLAUDE_AVAILABLE_MODELS: "haiku-5.5"},
     )
 
-    assert _transmitted_model(updated) == "claude-haiku-4-5"
-    assert _base_profile(updated) == "foundry:routed-worker-none"
+    assert _transmitted_model(updated) == "claude-haiku-5-5"
+    assert _base_profile(updated) == "foundry:routed-worker-medium"
     assert "MODEL_FALLBACK_DOWN" in context
     assert "descend vers economy" in context
     assert '"availability_probed": true' in context
@@ -628,7 +628,7 @@ def test_claude_host_override_warnings_are_deterministic(tmp_path):
 
     assert [
         re.search(r"hôte '([^']+)'", warning["message"]).group(1)
-        for warning in warnings
+        for warning in warnings if warning["code"] == "HOST_OVERRIDE_NEUTRALIZES_POLICY"
     ] == sorted(signals)
 
 
@@ -1057,7 +1057,7 @@ def test_hook_main_emits_updated_input_and_fails_closed_for_a_gate(
     route_agent.main()
     output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
     assert output["permissionDecision"] == "allow"
-    assert _base_profile(output["updatedInput"]) == "foundry:routed-readonly-none"
+    assert _base_profile(output["updatedInput"]) == "foundry:routed-readonly-medium"
 
     payload["tool_input"]["subagent_type"] = "foundry:reviewer"
     monkeypatch.setattr(route_agent.sys, "stdin", io.StringIO(json.dumps(payload)))
@@ -1199,7 +1199,7 @@ def _frontmatter(path):
 def test_agent_frontmatter_keeps_models_dynamic_and_effort_boundary_explicit():
     logical = {identity.lower() for identity in AGENT_IDENTITIES.values()}
     profiles = list((PLUGIN_ROOT / "agents").glob("routed-*.md"))
-    assert len(profiles) == 76
+    assert len(profiles) == 86
 
     for path in (PLUGIN_ROOT / "agents").glob("*.md"):
         frontmatter = _frontmatter(path)

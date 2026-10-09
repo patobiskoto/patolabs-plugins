@@ -52,7 +52,8 @@ from foundry.execution_receipts import (
 )
 from foundry.routing import LEVELS
 from foundry.routing_facades import (
-    _load_claude_policy, claude_effort_parameters, claude_invocation_model,
+    _load_claude_policy, claude_effort_parameters,
+    claude_headless_host_version_requirement, claude_invocation_model,
 )
 
 
@@ -521,6 +522,11 @@ class ClaudeCommandEffectProvider:
             route.model, project_models=getattr(self.routing, "claude_models", {}),
         )
         effort = claude_effort_parameters(route, invocation_model=invocation_model)["transmitted"]
+        environment = _claude_child_environment()
+        # PAT-ADR-0016: a pin with a minimum host version fails closed below it, here too.
+        claude_headless_host_version_requirement(
+            invocation_model, "claude", runner=self.runner, env=environment, cwd=self.root,
+        )
         argv = [
             "claude", "--print", "--output-format", "json",
             "--model", invocation_model,
@@ -532,7 +538,6 @@ class ClaudeCommandEffectProvider:
         if effort is not None:
             argv.extend(["--effort", effort])
         argv.extend(["--resume", session_id] if resume else ["--session-id", session_id])
-        environment = _claude_child_environment()
         # This deterministic session identity is also the immutable receipt binding.
         # The child may only append passive structured receipts under that identity;
         # it receives no DevHub transport credential or publisher authority.

@@ -62,7 +62,7 @@ class ModelTarget:
 # and semantic tiers, never their own copy of these mappings.
 DEFAULT_MAPPINGS = {
     "claude": {
-        "economy": ModelTarget("haiku-4.5", None),
+        "economy": ModelTarget("haiku-5.5", "medium"),
         "balanced": ModelTarget("sonnet-5.5", "medium"),
         "frontier": ModelTarget("opus-5.5", "high"),
         "apex": ModelTarget("opus-5.5", "high"),
@@ -498,9 +498,19 @@ class RoutingPolicy:
             haiku = host == "claude" and effective_model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001")
             if haiku:
                 if target.effort not in (None, "low") or user.effort is not None:
+                    # The mapping must name the model too unless it already does: an
+                    # effort-only null would apply to the tier's default model.
+                    entry = ('"effort": null' if sources["model"] == "project"
+                             else f'{{"model": "{target.model}", "effort": null}}')
+                    fix = {
+                        "user": "retirez l'effort de la demande utilisateur (ce modèle n'en accepte "
+                                f"aucun) ; mappings.claude.{tier} doit porter {entry}",
+                        "project": f"remplacez cet effort par null dans mappings.claude.{tier}",
+                    }.get(sources["effort"],
+                          f"écrivez explicitement {entry} dans mappings.claude.{tier}")
                     raise RoutingConfigError(
-                        "Haiku 4.5 : effort rejeté, non applicable ; demandez le tier economy "
-                        "ou configurez ce modèle avec effort null, sans effort utilisateur."
+                        f"Haiku 4.5 : effort rejeté, non applicable (reçu : '{target.effort}', "
+                        f"source : {sources['effort']}) ; {fix}."
                     )
                 if role in GATE_EFFORT_FLOORS:
                     raise RoutingConfigError("Haiku sans effort ne satisfait pas le plancher du gate.")
