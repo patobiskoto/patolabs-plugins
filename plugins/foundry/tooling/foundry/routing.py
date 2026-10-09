@@ -498,12 +498,16 @@ class RoutingPolicy:
             haiku = host == "claude" and effective_model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001")
             if haiku:
                 if target.effort not in (None, "low") or user.effort is not None:
+                    # The mapping must name the model too unless it already does: an
+                    # effort-only null would apply to the tier's default model.
+                    entry = ('"effort": null' if sources["model"] == "project"
+                             else f'{{"model": "{target.model}", "effort": null}}')
                     fix = {
                         "user": "retirez l'effort de la demande utilisateur (ce modèle n'en accepte "
-                                f"aucun) ; mappings.claude.{tier} doit porter \"effort\": null",
+                                f"aucun) ; mappings.claude.{tier} doit porter {entry}",
                         "project": f"remplacez cet effort par null dans mappings.claude.{tier}",
                     }.get(sources["effort"],
-                          f"écrivez explicitement \"effort\": null dans mappings.claude.{tier}")
+                          f"écrivez explicitement {entry} dans mappings.claude.{tier}")
                     raise RoutingConfigError(
                         f"Haiku 4.5 : effort rejeté, non applicable (reçu : '{target.effort}', "
                         f"source : {sources['effort']}) ; {fix}."

@@ -11,7 +11,7 @@ import os
 import re
 import secrets
 import subprocess
-import warnings
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping
@@ -992,20 +992,21 @@ def claude_host_version_requirement(
 
 
 def claude_headless_host_version_requirement(
-    invocation_model: str, binary: str, *, runner, env,
+    invocation_model: str, binary: str, *, runner, env, cwd=None,
 ) -> dict | None:
     """Apply a pin's minimum host version to the binary a headless runner is about to launch.
 
     Only a model that declares a minimum costs a call: ``<binary> --version``, local and
-    unpaid, through the same runner and environment as the launch so the same binary
-    answers. Below the minimum this raises like the hook; an unreadable answer is
-    ``unknown``: the launch stays allowed and a ``RuntimeWarning`` says so, at EVERY
-    launch (the default once-per-location filter would hide it in a long-lived worker).
+    unpaid, through the same runner, environment and working directory as the launch so
+    the same binary answers. Below the minimum this raises like the hook; an unreadable
+    answer is ``unknown``: the launch stays allowed and one line on standard error says
+    so at EVERY launch. No global state (no warning filter, safe across threads), and
+    nothing is written to a receipt.
     """
     if claude_host_version_requirement(invocation_model, None) is None:
         return None
     try:
-        completed = runner([binary, "--version"], capture_output=True, text=True,
+        completed = runner([binary, "--version"], cwd=cwd, capture_output=True, text=True,
                            timeout=30, env=env, check=False)
         stdout = getattr(completed, "stdout", None)
         observed = (_CLAUDE_BINARY_VERSION.match(stdout.strip())
@@ -1014,13 +1015,11 @@ def claude_headless_host_version_requirement(
         observed = None
     requirement = claude_host_version_requirement(invocation_model, observed.group(1) if observed else None)
     if requirement["status"] == "unknown":
-        with warnings.catch_warnings():
-            warnings.simplefilter("always", RuntimeWarning)
-            warnings.warn(
-                f"CLAUDE_HOST_VERSION_UNOBSERVED : version de '{binary}' non observée ; minimum requis "
-                f"{requirement['required']} pour '{invocation_model}' non vérifié, jamais présumé conforme.",
-                RuntimeWarning, stacklevel=2,
-            )
+        print(
+            f"CLAUDE_HOST_VERSION_UNOBSERVED : version de '{binary}' non observée ; minimum requis "
+            f"{requirement['required']} pour '{invocation_model}' non vérifié, jamais présumé conforme.",
+            file=sys.stderr, flush=True,
+        )
     return requirement
 
 
@@ -1035,8 +1034,10 @@ def claude_invocation_binding(
         return {"profile": f"routed-{capability}-{effort or 'none'}",
                 "agent_model": model, "transmitted_model": model, "host_version": None,
                 "model_source": "agent_input", "effort_parameters": effort_parameters}
-    version_requirement = claude_host_version_requirement(model, host_version, from_transcript=True)
+    # A wire ID without a shipped pin (a dated snapshot, a custom ID) is refused for that
+    # reason first: advising a host update would not make it launchable.
     name, expected = claude_pin_profile_text(model, capability, effort, plugin_root=plugin_root)
+    version_requirement = claude_host_version_requirement(model, host_version, from_transcript=True)
     try:
         actual = (Path(plugin_root) / "agents" / f"{name}.md").read_text(encoding="utf-8")
     except OSError as exc:

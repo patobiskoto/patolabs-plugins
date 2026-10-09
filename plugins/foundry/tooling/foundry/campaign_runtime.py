@@ -2151,6 +2151,7 @@ class IsolatedClaudeIssueExecutor:
             # PAT-ADR-0016: a pin with a minimum host version fails closed below it, here too.
             claude_headless_host_version_requirement(
                 invocation_model, "claude", runner=self.runner, env=child_environment,
+                cwd=worktree,
             )
             argv = [
                 "claude", "--print", "--output-format", "json",

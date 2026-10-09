@@ -241,7 +241,7 @@ def test_concrete_claude_runtime_enforces_budget_floor_and_scrubs_authority_secr
 
     def runner(argv, **kwargs):
         if list(argv[1:]) == ["--version"]:  # PAT-125: asked of the binary about to be launched
-            version_calls.append((argv[0], kwargs["env"]))
+            version_calls.append((argv[0], kwargs["env"], kwargs["cwd"]))
             return SimpleNamespace(returncode=0, stdout=binary_version[0])
         keychain_calls = []
 
@@ -377,7 +377,7 @@ def test_concrete_claude_runtime_enforces_budget_floor_and_scrubs_authority_secr
     assert "DEVHUB-21, DEVHUB-22" in kwargs["input"]
     # PAT-ADR-0016: only a pin with a minimum host version asks the launched binary its version,
     # with the launch's own environment; below the minimum nothing is launched.
-    assert version_calls == ([(argv[0], kwargs["env"])] if model == "haiku-5.5" else [])
+    assert version_calls == ([(argv[0], kwargs["env"], kwargs["cwd"])] if model == "haiku-5.5" else [])
     if model == "haiku-5.5":
         binary_version[0] = "2.1.292 (Claude Code)\n"
         refused = ClaudeCommandEffectProvider(

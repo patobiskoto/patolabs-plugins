@@ -177,11 +177,13 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   `CLAUDE_HOST_VERSION_UNOBSERVED` warning, never reported as conforming. The headless
   runners (`command_runtime.py`, `campaign_runtime.py`) apply the same rule through
   `claude_headless_host_version_requirement()`: for such a pin only, they ask the
-  `claude` they are about to launch its `--version` (local, unpaid, same runner and
-  child environment), refuse below the minimum, and on an unreadable answer launch
-  with a `RuntimeWarning` carrying the same code, shown at every launch. A dated
-  snapshot `claude-haiku-5-5-YYYYMMDD` carries the same minimum. `routing show`/`resolve`
-  and `doctor` bind nothing and observe no host version.
+  `claude` they are about to launch its `--version` (local, unpaid, same runner, child
+  environment and working directory), refuse below the minimum, and on an unreadable
+  answer launch after writing one line with the same code to standard error, at every
+  launch. There a dated snapshot `claude-haiku-5-5-YYYYMMDD` carries the same minimum;
+  the hook refuses such an identifier first because no preloaded pinned profile exists
+  for it. `routing show`/`resolve` and `doctor` bind nothing and observe no host
+  version.
 - **Effect of a model that resolves to neither the built-in table nor the project's
   `claude_models`**: `claude_invocation_model()` raises `RoutingConfigError` naming the
   unresolved canonical model. Resolution fails closed — it never guesses, silently

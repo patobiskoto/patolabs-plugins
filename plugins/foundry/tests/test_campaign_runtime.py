@@ -2061,7 +2061,7 @@ def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(
 
     def runner(argv, **kwargs):
         if list(argv[1:]) == ["--version"]:  # PAT-125: asked of the binary about to be launched
-            version_calls.append((argv[0], kwargs["env"]))
+            version_calls.append((argv[0], kwargs["env"], kwargs["cwd"]))
             return SimpleNamespace(returncode=0, stdout=binary_version[0])
         calls.append((argv, kwargs))
         return SimpleNamespace(
@@ -2112,7 +2112,7 @@ def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(
 
     assert proposal.outcome == "completed"
     argv, kwargs = calls[0]
-    assert version_calls[:1] == ([(argv[0], kwargs["env"])] if model == "haiku-5.5" else [])
+    assert version_calls[:1] == ([(argv[0], kwargs["env"], kwargs["cwd"])] if model == "haiku-5.5" else [])
     assert argv[argv.index("--model") + 1] == wire
     if model == "haiku-4.5":
         assert "--effort" not in argv

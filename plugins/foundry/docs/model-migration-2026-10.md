@@ -432,8 +432,9 @@ version-pinned defaults. List the actually available canonical/full version IDs,
 explicitly choose host aliases in the project mappings. Redundant built-in translations
 such as `claude_models: {"opus-5": "opus"}` must be removed to preserve the pin;
 choosing `model: "opus"` explicitly is a separate alias intent, never a migration default.
-A direct Haiku request inheriting medium/high must instead use economy or a project
-mapping with null effort. Headless runtimes now omit Haiku effort, like the Agent path.
+A direct Haiku 4.5 or `haiku` alias request inheriting an effort must instead use a
+project mapping of the tier with the model and `effort: null` (since PAT-125 the economy
+default carries Haiku 5.5 / `medium`, so « use economy » no longer holds). Headless runtimes now omit Haiku effort, like the Agent path.
 
 The historical FOUNDRY-43 measurement harness retains its frozen 2.1.224 alias corpus
 and refuses today's default version pins before launch. An intentional historical

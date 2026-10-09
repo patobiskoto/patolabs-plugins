@@ -243,8 +243,10 @@ def _head() -> dict[str, Any]:
     return {"commit": git("rev-parse", "HEAD"), "dirty": None if status is None else bool(status)}
 
 
-def _inside_repository(work: Path) -> bool:
-    return any((parent / ".git").exists() for parent in (work, *work.parents))
+def _inside_repository(work: Path, ceiling: Path | None = None) -> bool:
+    """Whether ``work`` or an ancestor holds ``.git``; ``ceiling`` (tests) bounds the walk to that directory."""
+    return any((parent / ".git").exists() for parent in (work, *work.parents)
+               if ceiling is None or parent == ceiling or ceiling in parent.parents)
 
 
 def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt.date | None = None) -> int:

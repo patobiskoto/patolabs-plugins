@@ -525,7 +525,7 @@ class ClaudeCommandEffectProvider:
         environment = _claude_child_environment()
         # PAT-ADR-0016: a pin with a minimum host version fails closed below it, here too.
         claude_headless_host_version_requirement(
-            invocation_model, "claude", runner=self.runner, env=environment,
+            invocation_model, "claude", runner=self.runner, env=environment, cwd=self.root,
         )
         argv = [
             "claude", "--print", "--output-format", "json",

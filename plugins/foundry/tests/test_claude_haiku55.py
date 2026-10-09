@@ -5,6 +5,7 @@ Offline only: no host, no model. The trial itself is never run here (fake launch
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import warnings
@@ -54,13 +55,15 @@ def _route(root, *, host_version=None, environ=None, prompt=PACKET, role="scout"
     return updated, json.loads(context.removeprefix("Foundry Claude route: "))
 
 
+_PRODUCTION_INSIDE_REPOSITORY = trial._inside_repository
+
+
 @pytest.fixture(autouse=True)
 def _isolated_from_an_enclosing_repository(tmp_path, monkeypatch):
     """Keep these tests valid when pytest's ``tmp_path`` itself lies under a git repository."""
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
-    monkeypatch.setattr(trial, "_inside_repository", lambda work: any(
-        (parent / ".git").exists() for parent in (work, *work.parents)
-        if parent == tmp_path or tmp_path in parent.parents))
+    monkeypatch.setattr(trial, "_inside_repository",
+                        lambda work: _PRODUCTION_INSIDE_REPOSITORY(work, ceiling=tmp_path))
 
 
 @pytest.fixture
@@ -478,6 +481,9 @@ def test_headless_check_asks_the_launched_binary_only_for_a_pin_with_a_minimum()
         "required": "2.1.293", "observed": "2.1.294", "status": "conforming"}
     (argv, kwargs), = calls
     assert argv == ["claude", "--version"] and kwargs["env"] is env and kwargs["check"] is False
+    assert kwargs["cwd"] is None  # no directory given: the runner's own default, as before
+    claude_headless_host_version_requirement("claude-haiku-5-5", "claude", runner=runner, env=env, cwd="/launch/dir")
+    assert calls[-1][1]["cwd"] == "/launch/dir"
 
 
 @pytest.mark.parametrize("answer", [(0, "2.1.292 (Claude Code)"), (0, "2.1.285 (Claude Code)\n")])
@@ -491,11 +497,13 @@ def test_headless_check_fails_closed_below_the_minimum(answer):
     (1, "2.1.294 (Claude Code)"), (0, ""), (0, "2.1.294"), (0, "claude 2.1.294"), (0, None),
     FileNotFoundError("claude"), subprocess.TimeoutExpired("claude", 30),
 ])
-def test_headless_check_keeps_an_unreadable_version_unknown_and_warns(answer):
-    with pytest.warns(RuntimeWarning, match="CLAUDE_HOST_VERSION_UNOBSERVED.*2.1.293.*jamais présumé conforme"):
-        assert claude_headless_host_version_requirement(
-            "claude-haiku-5-5", "claude", runner=_version_runner(answer, []), env={}) == {
-            "required": "2.1.293", "observed": None, "status": "unknown"}
+def test_headless_check_keeps_an_unreadable_version_unknown_and_says_so_on_stderr(answer, capsys):
+    assert claude_headless_host_version_requirement(
+        "claude-haiku-5-5", "claude", runner=_version_runner(answer, []), env={}) == {
+        "required": "2.1.293", "observed": None, "status": "unknown"}
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err.count("\n") == 1
+    assert re.search(r"CLAUDE_HOST_VERSION_UNOBSERVED.*2\.1\.293.*jamais présumé conforme", captured.err)
 
 
 def test_a_headless_launch_of_the_shipped_default_obeys_the_version_rule(tmp_path, promoted):
@@ -508,9 +516,8 @@ def test_a_headless_launch_of_the_shipped_default_obeys_the_version_rule(tmp_pat
             wire, "claude", runner=_version_runner((0, "2.1.292 (Claude Code)"), []), env={})
     assert claude_headless_host_version_requirement(
         wire, "claude", runner=_version_runner((0, "2.1.293 (Claude Code)"), []), env={})["status"] == "conforming"
-    with pytest.warns(RuntimeWarning, match="CLAUDE_HOST_VERSION_UNOBSERVED"):
-        assert claude_headless_host_version_requirement(
-            wire, "claude", runner=_version_runner(FileNotFoundError("claude"), []), env={})["status"] == "unknown"
+    assert claude_headless_host_version_requirement(
+        wire, "claude", runner=_version_runner(FileNotFoundError("claude"), []), env={})["status"] == "unknown"
 
 
 # ------------------------------------------------------------------ breaking shapes of the promotion (review)
@@ -543,20 +550,66 @@ def test_an_effort_only_economy_override_now_applies_to_haiku_55(tmp_path, promo
         _route(tmp_path, host_version="2.1.294")
 
 
-@pytest.mark.parametrize("economy,request_effort,source,fix", [
-    ({"model": "haiku-4.5"}, None, "default", '"effort": null dans mappings.claude.economy'),
-    ({"model": "haiku-4.5", "effort": "high"}, None, "project", "remplacez cet effort par null dans mappings.claude.economy"),
-    ({"model": "haiku-4.5", "effort": None}, "low", "user", "retirez l'effort de la demande utilisateur"),
+@pytest.mark.parametrize("economy,asked,source,fix,fixed_economy,fixed_asked", [
+    # project names the model, effort inherited from the default: add the null effort
+    ({"model": "haiku-4.5"}, {}, "default", 'écrivez explicitement "effort": null dans mappings.claude.economy',
+     {"model": "haiku-4.5", "effort": None}, {}),
+    # direct user request, nothing mapped: the mapping must name the model too
+    (None, {"model": "haiku-4.5"}, "default",
+     'écrivez explicitement {"model": "haiku-4.5", "effort": null} dans mappings.claude.economy',
+     {"model": "haiku-4.5", "effort": None}, {"model": "haiku-4.5"}),
+    (None, {"model": "haiku"}, "default",
+     'écrivez explicitement {"model": "haiku", "effort": null} dans mappings.claude.economy',
+     {"model": "haiku", "effort": None}, {"model": "haiku"}),
+    ({"model": "haiku-4.5", "effort": "high"}, {}, "project", "remplacez cet effort par null dans mappings.claude.economy",
+     {"model": "haiku-4.5", "effort": None}, {}),
+    ({"model": "haiku-4.5", "effort": None}, {"effort": "low"}, "user", "retirez l'effort de la demande utilisateur",
+     {"model": "haiku-4.5", "effort": None}, {}),
 ])
-def test_the_haiku_45_effort_refusal_names_the_fix_of_its_own_source(tmp_path, economy, request_effort, source, fix):
-    _config(tmp_path, economy)
-    user = UserRouteRequest(effort=request_effort) if request_effort else None
+def test_the_haiku_45_effort_refusal_names_a_fix_that_really_resolves(
+        tmp_path, economy, asked, source, fix, fixed_economy, fixed_asked):
+    if economy is not None:
+        _config(tmp_path, economy)
     with pytest.raises(RoutingConfigError) as error:
-        RoutingPolicy.load(tmp_path).resolve("scout", "claude", user=user)
+        RoutingPolicy.load(tmp_path).resolve("scout", "claude", user=UserRouteRequest(**asked))
     message = str(error.value)
     assert f"source : {source}" in message and fix in message
     if source == "user":
         assert "écrivez explicitement" not in message and "remplacez" not in message
+    # the suggested fix, applied, resolves to the effort-free pin or alias
+    _config(tmp_path, fixed_economy)
+    route = RoutingPolicy.load(tmp_path).resolve("scout", "claude", user=UserRouteRequest(**fixed_asked))
+    assert (route.model, route.effort) == (fixed_economy["model"], None)
+    # and it does not break the default scout the way an effort-only null would
+    _config(tmp_path, {"effort": None})
+    with pytest.raises(RoutingConfigError, match="effort null réservé à Haiku 4.5 ; pour 'haiku-5.5'"):
+        RoutingPolicy.load(tmp_path).resolve("scout", "claude")
+
+
+def test_a_dated_haiku_55_identifier_is_refused_by_the_hook_for_its_missing_profile_not_its_host(tmp_path):
+    _config(tmp_path, {"model": "project-dated", "effort": "medium"},
+            claude_models={"project-dated": "claude-haiku-5-5-20261007"})
+    for version in ("2.1.285", "2.1.294", None):
+        with pytest.raises(RoutingConfigError, match="aucun profil épinglé préchargé") as error:
+            _route(tmp_path, host_version=version)
+        assert "Mettez à jour Claude Code" not in str(error.value)
+
+
+def test_the_production_repository_check_sees_an_ancestor_git_and_nothing_else(tmp_path):
+    work = tmp_path / "a" / "b" / "work"
+    work.mkdir(parents=True)
+    check = _PRODUCTION_INSIDE_REPOSITORY  # the real function, not the bounded one of the autouse fixture
+    assert check(work, ceiling=tmp_path) is False
+    (tmp_path / "a" / ".git").mkdir()
+    assert check(work, ceiling=tmp_path) is True and check(tmp_path / "a", ceiling=tmp_path) is True
+    assert check(tmp_path / "other", ceiling=tmp_path) is False
+    (tmp_path / "a" / ".git").rmdir()
+    (work / ".git").write_text("gitdir: elsewhere\n")  # a worktree's .git file counts too
+    assert check(work, ceiling=tmp_path) is True
+    # unbounded, as production calls it: an ancestor repository above the ceiling is seen
+    (work / ".git").unlink()
+    (tmp_path / ".git").mkdir()
+    assert check(work) is True and check(work, ceiling=tmp_path / "a") is False
 
 
 def test_the_hook_refusal_mentions_a_resumed_session_and_the_headless_one_does_not(tmp_path):
@@ -583,13 +636,16 @@ def test_a_dated_snapshot_of_the_haiku_55_line_carries_the_same_minimum_in_a_hea
     assert calls == []
 
 
-def test_the_unobserved_version_warning_is_shown_at_every_headless_launch():
+def test_the_unobserved_version_line_is_written_at_every_headless_launch_without_global_state(capsys):
     runner = _version_runner(FileNotFoundError("claude"), [])
-    with warnings.catch_warnings(record=True) as shown:
-        warnings.simplefilter("default")  # Python's default: once per location
+    filters, registry = list(warnings.filters), dict(globals().get("__warningregistry__", {}))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # an operator's -W error is neither overridden nor triggered
         for _ in range(3):
             claude_headless_host_version_requirement("claude-haiku-5-5", "claude", runner=runner, env={})
-    assert [str(w.message).split(" ")[0] for w in shown] == ["CLAUDE_HOST_VERSION_UNOBSERVED"] * 3
+    lines = capsys.readouterr().err.splitlines()
+    assert [line.split(" ")[0] for line in lines] == ["CLAUDE_HOST_VERSION_UNOBSERVED"] * 3
+    assert list(warnings.filters) == filters and dict(globals().get("__warningregistry__", {})) == registry
 
 
 def test_a_single_record_larger_than_the_tail_leaves_the_version_unknown(tmp_path):

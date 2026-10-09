@@ -1227,15 +1227,21 @@ translation to `claude-haiku-5-5`. The check runs where the profile is bound, in
   (`claude --print --model ... --effort ...`) bind no profile, so they apply the same
   rule to the binary itself with `claude_headless_host_version_requirement()`. Only for
   a pin that declares a minimum, they first run `claude --version` (local, unpaid)
-  through the same runner and the same child environment as the launch, so the binary
-  that answers is the one launched. Below 2.1.293 they raise the same
-  `RoutingConfigError` before any provider invocation. A project `claude_models`
-  translation to a dated snapshot of the line (`claude-haiku-5-5-YYYYMMDD`) carries the
-  same minimum. An answer that is absent, fails or is not `X.Y.Z (Claude Code)` is
-  `unknown`: the launch proceeds and a `RuntimeWarning` carrying
-  `CLAUDE_HOST_VERSION_UNOBSERVED` says so at every launch, not once per process; these
-  runners have no structured warning channel and their receipts are unchanged. The child environment
-  allow-list (R6) is untouched.
+  through the same runner, the same child environment and the same working directory
+  as the launch (the command root, or the campaign worktree), so the name `claude`
+  resolves for the probe as it does for the launch, a directory-dependent shim
+  included. Below 2.1.293 they raise the same `RoutingConfigError` before any provider
+  invocation. A project `claude_models` translation to a dated snapshot of the line
+  (`claude-haiku-5-5-YYYYMMDD`) carries the same minimum in these runners. In the hook
+  such an identifier is refused first for its real blocker, whatever the host version:
+  no preloaded pinned profile exists for it (`aucun profil épinglé préchargé`). An
+  answer that is absent, fails or is not `X.Y.Z (Claude Code)` is `unknown`: the launch
+  proceeds and one line on standard error carrying `CLAUDE_HOST_VERSION_UNOBSERVED` and
+  the required version says so at every launch. It is a direct write: no warning
+  filter or other process-wide state is touched (safe across the campaign threads, and
+  an operator's `-W` / `PYTHONWARNINGS` settings neither hide nor escalate it); these
+  runners have no structured warning channel and their receipts are unchanged. The
+  child environment allow-list (R6) is untouched.
 - Limits: a session resumed after a host update reports the previous version until the
   running host has written a record. `routing show`, `routing resolve` and `doctor`
   bind nothing and observe no host version: they neither apply nor certify the minimum.
@@ -1253,7 +1259,11 @@ the `balanced`/`frontier`/`apex` tiers and the Codex defaults do not change.
   `Haiku 4.5 : effort rejeté, non applicable (reçu : 'medium', source : default)` and
   the instruction to write `"effort": null` in `mappings.claude.economy`. The message
   names the fix of its own source: write null (inherited default), replace the effort
-  by null (project mapping), or remove the effort from the request (user effort). It is not
+  by null (project mapping), or remove the effort from the request (user effort). When
+  the project mapping does not already name the model, as for a direct user request of
+  `haiku-4.5`, the fix it gives is the whole entry,
+  `{"model": "haiku-4.5", "effort": null}`: a null effort alone would apply to the
+  tier's default Haiku 5.5 and break the default scout. It is not
   silently read as "not applicable": resolution is field-aware and never guesses an
   effort, the same rule that refuses a non-Haiku model-only override inheriting null.
   A direct user request for `haiku-4.5` or the `haiku` alias on a tier whose effort is
