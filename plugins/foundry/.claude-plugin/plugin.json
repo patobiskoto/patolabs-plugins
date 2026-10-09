@@ -62,7 +62,7 @@
     "FOUNDRY_CLAUDE_AVAILABLE_MODELS": {
       "type": "string",
       "title": "Available Claude routing models",
-      "description": "Optional canonical CSV, e.g. haiku-4.5,sonnet-5.5,opus-5.5. Declared availability does not prove account access or runtime identity."
+      "description": "Optional canonical CSV, e.g. haiku-5.5,sonnet-5.5,opus-5.5. Declared availability does not prove account access or runtime identity."
     },
     "FOUNDRY_LOCAL_SCOUT_ENABLED": {
       "type": "string",

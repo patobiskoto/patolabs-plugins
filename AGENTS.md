@@ -154,12 +154,15 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   canonical pin with its own effort scope (`low` to `max`) and one versioned profile per
   capability and effort; it always needs an effort and never inherits the Haiku 4.5
   rule above. Haiku 4.5 stays an exact historical pin and never becomes an alias of it;
-  the short `haiku` alias is not promoted. The shipped `economy` default is still Haiku
-  4.5 / null. The one native trial of PAT-ADR-0016 ran on 2026-10-09 and its recorded
-  verdict is `not_conforming` (fixture check only; profile, model, effort and host
-  version observed exact): the incumbent is kept and the promotion to `haiku-5.5` /
-  `medium` is not applied, pending a maintainer decision
-  (`plugins/foundry/docs/qualification/pat-125-haiku-55-promotion.md`).
+  the short `haiku` alias is not promoted. `haiku-5.5` / `medium` is the shipped Claude
+  `economy` default, per tier: every non-gate role falling back to `economy` gets it
+  too. The effort `medium` is unmeasured, and no gain or saving is claimed. A project
+  returns to the incumbent by writing `{"model": "haiku-4.5", "effort": null}` under
+  `mappings.claude.economy`; the same mapping without the `effort` key, and a direct
+  request for `haiku-4.5` or `haiku`, inherit `medium` and are refused with that fix.
+  Both native trials of 2026-10-09 (first `not_conforming`, kept as recorded; second
+  `conforming`, authorised by the maintainer) are in
+  `plugins/foundry/docs/qualification/pat-125-haiku-55-promotion.md`.
 - `CLAUDE_MODEL_MIN_HOST_VERSION` (`routing_facades.py`) requires Claude Code 2.1.293
   for the `haiku-5.5` pin. The routing hook observes the host version with
   `claude_host_version()`: the top-level `version` of the last versioned record of the

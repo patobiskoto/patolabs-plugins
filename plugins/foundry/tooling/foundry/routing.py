@@ -62,7 +62,7 @@ class ModelTarget:
 # and semantic tiers, never their own copy of these mappings.
 DEFAULT_MAPPINGS = {
     "claude": {
-        "economy": ModelTarget("haiku-4.5", None),
+        "economy": ModelTarget("haiku-5.5", "medium"),
         "balanced": ModelTarget("sonnet-5.5", "medium"),
         "frontier": ModelTarget("opus-5.5", "high"),
         "apex": ModelTarget("opus-5.5", "high"),
@@ -500,7 +500,7 @@ class RoutingPolicy:
                 if target.effort not in (None, "low") or user.effort is not None:
                     raise RoutingConfigError(
                         f"Haiku 4.5 : effort rejeté, non applicable (reçu : '{target.effort}', "
-                        f"source : {sources['effort']}) ; demandez le tier economy ou écrivez "
+                        f"source : {sources['effort']}) ; écrivez "
                         f"explicitement \"effort\": null dans mappings.claude.{tier}, "
                         "sans effort utilisateur."
                     )

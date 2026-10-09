@@ -13,12 +13,13 @@ transmitted (profile selected by the hook) and observed (native child metadata) 
 not observed is ``unknown``, never a guess and never conforming. Nothing is replayed: an existing work directory or
 result file is refused. The child environment is the R6 allow-list, so no API key or host override reaches it.
 
-The trial of 2026-10-09 (``pat-125-native-trial.json``) ran with the default fixture and its verdict stands. That
-fixture names its value a "token" in ``token.txt``; under user settings that forbid displaying secrets the value
-was not returned, and the host launched the agent in the background. ``--neutral-fixture`` is a separate option for
-a FUTURE trial, only if the maintainer authorises one: a public "fixture marker" in ``marker.txt``, said not to be a
-secret, and a parent told to wait for the agent's final answer. It changes neither the default fixture, nor the
-verdict rule, nor the recorded result.
+The first trial of 2026-10-09 (``pat-125-native-trial.json``) ran with the default fixture and its verdict stands.
+That fixture names its value a "token" in ``token.txt``; under user settings that forbid displaying secrets the
+value was not returned, and the host launched the agent in the background. ``--neutral-fixture`` is a separate
+option, used by the second trial the maintainer authorised (``pat-125-native-trial-2.json``): a public "fixture
+marker" in ``marker.txt``, said not to be a secret, and a parent told to wait for the agent's final answer. It
+changes neither the default fixture, nor the verdict rule, nor the first recorded result. Any further trial needs a
+new maintainer decision.
 """
 from __future__ import annotations
 
@@ -298,7 +299,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--projects-dir", default="~/.claude/projects", help="host session logs")
     parser.add_argument("--dry-run", action="store_true", help="prepare the fixture and print the command; launch nothing")
     parser.add_argument("--neutral-fixture", action="store_true",
-                        help="future trial only: a public fixture marker instead of a value named token, and a "
+                        help="separate fixture: a public fixture marker instead of a value named token, and a "
                              "parent told to wait for the agent's answer")
     try:
         return run(parser.parse_args(arguments))

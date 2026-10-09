@@ -1,0 +1,128 @@
+{
+  "schema": "foundry.pat125-native-trial.v1",
+  "kind": "bounded native compatibility smoke (PAT-ADR-0016); not a benchmark, comparison, receipt or basis of the promotion",
+  "date": "2026-10-09",
+  "bounds": {
+    "parents": 1,
+    "children_expected": 1,
+    "timeout_seconds": 1200,
+    "concurrency": 1,
+    "replays": 0,
+    "environment_names": [
+      "FOUNDRY_DATA",
+      "FOUNDRY_RUNTIME_CONFIG_ISOLATED",
+      "HOME",
+      "LOGNAME",
+      "PATH",
+      "TMPDIR",
+      "USER"
+    ]
+  },
+  "source": {
+    "commit": "074675e92350e700c96d5e397dbb45da56629b3e",
+    "dirty": false
+  },
+  "fixture_variant": "neutral",
+  "argv": [
+    "claude",
+    "-p",
+    "<parent prompt>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--session-id",
+    "<session id>",
+    "--model",
+    "sonnet",
+    "--strict-mcp-config",
+    "--plugin-dir",
+    "<plugins/foundry of this checkout>"
+  ],
+  "requested": {
+    "role": "scout",
+    "tier": "economy",
+    "model": "haiku-5.5",
+    "effort": "medium"
+  },
+  "transmitted": {
+    "profile": "routed-readonly-medium-haiku-5.5",
+    "model": "claude-haiku-5-5",
+    "effort": "medium",
+    "source": "profile_frontmatter",
+    "basis": "computed offline from this checkout before launch; the hook's own statement, when the host kept it, is under hook"
+  },
+  "process": {
+    "exit_code": 0,
+    "timed_out": false,
+    "seconds": 7.265
+  },
+  "host": {
+    "claude_code_version": "2.1.294",
+    "plugin_from_this_checkout": true,
+    "profile_listed_at_init": true
+  },
+  "hook": {
+    "model": "haiku-5.5",
+    "effort": "medium",
+    "effort_parameters": {
+      "requested": "medium",
+      "transmitted": "medium",
+      "status": "requested",
+      "observed": null
+    },
+    "transmitted_launch": {
+      "profile": "routed-readonly-medium-haiku-5.5",
+      "transmitted_model": "claude-haiku-5-5",
+      "model_source": "profile_frontmatter"
+    },
+    "host_version": {
+      "required": "2.1.293",
+      "observed": "2.1.294",
+      "status": "conforming"
+    },
+    "sources": {
+      "tier": "default",
+      "model": "project",
+      "effort": "project"
+    },
+    "warnings": []
+  },
+  "observed": {
+    "children": 1,
+    "agent_types": [
+      "foundry:routed-readonly-medium-haiku-5.5"
+    ],
+    "models": [
+      "claude-haiku-5-5"
+    ],
+    "efforts": [
+      "medium"
+    ],
+    "per_turn_efforts": [
+      "medium"
+    ],
+    "child_host_versions": [
+      "2.1.294"
+    ],
+    "log_sha256": {
+      "parent": "eceba7bd9584b66b8196ff1858de39f3fd605d207fe0c28c70eb9202459aae0d",
+      "children": [
+        "3b2866d10618de04036252e01c064ad595609a9620cb312b06ca1d2ca18bc7ff"
+      ]
+    }
+  },
+  "parent_result": {
+    "is_error": false,
+    "subtype": "success"
+  },
+  "conformity": {
+    "profile": "exact",
+    "model": "exact",
+    "effort": "exact",
+    "host_version": "conforming",
+    "plugin_source": "this_checkout",
+    "fixture": "exact"
+  },
+  "verdict": "conforming",
+  "not_established": []
+}

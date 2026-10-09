@@ -165,7 +165,7 @@ def test_semantic_levels_roles_and_host_mappings_are_the_adr_contract(tmp_path):
         for host, mapping in DEFAULT_MAPPINGS.items()
     } == {
         "claude": {
-            "economy": ("haiku-4.5", None),
+            "economy": ("haiku-5.5", "medium"),
             "balanced": ("sonnet-5.5", "medium"),
             "frontier": ("opus-5.5", "high"),
             "apex": ("opus-5.5", "high"),

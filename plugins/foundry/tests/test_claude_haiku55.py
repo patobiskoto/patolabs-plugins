@@ -52,9 +52,9 @@ def _route(root, *, host_version=None, environ=None, prompt=PACKET, role="scout"
 
 
 @pytest.fixture
-def promoted(monkeypatch):
-    """The default PAT-ADR-0016 prepares, whatever the shipped default is at this revision."""
-    monkeypatch.setitem(routing.DEFAULT_MAPPINGS["claude"], "economy", ModelTarget("haiku-5.5", "medium"))
+def promoted():
+    """The shipped PAT-ADR-0016 default: asserted on the real mapping, never simulated."""
+    assert routing.DEFAULT_MAPPINGS["claude"]["economy"] == ModelTarget("haiku-5.5", "medium")
 
 
 # ---------------------------------------------------------------------------------------------- declaration
@@ -224,9 +224,9 @@ def test_the_hook_takes_the_version_from_its_payload_transcript_not_from_the_env
         assert visible["host_version"]["status"] == ("conforming" if version else "unknown")
 
 
-# ------------------------------------------------------------------ promoted default and rollback (prepared)
+# --------------------------------------------------------------------------- promoted default and rollback
 
-def test_the_prepared_default_is_per_tier_and_leaves_gates_and_other_tiers_alone(tmp_path, promoted):
+def test_the_shipped_default_is_per_tier_and_leaves_gates_and_other_tiers_alone(tmp_path, promoted):
     updated, visible = _route(tmp_path, host_version="2.1.293")
     assert updated["subagent_type"] == "foundry:routed-readonly-medium-haiku-5.5"
     assert (visible["model"], visible["effort"], visible["sources"]) == (
@@ -238,6 +238,9 @@ def test_the_prepared_default_is_per_tier_and_leaves_gates_and_other_tiers_alone
         ("reviewer", "opus-5.5", "high"), ("architect", "opus-5.5", "high")]
     assert routing.GATE_FLOORS == {"reviewer": "frontier", "architect": "apex"}
     assert routing.GATE_EFFORT_FLOORS == {"reviewer": "high", "architect": "high"}
+    assert {tier: (t.model, t.effort) for tier, t in routing.DEFAULT_MAPPINGS["codex"].items()} == {
+        "economy": ("gpt-6-luna", "low"), "balanced": ("gpt-6.1-sol", "medium"),
+        "frontier": ("gpt-6.1-sol", "high"), "apex": ("gpt-6.1-sol", "max")}
     # every non-gate role that falls back to economy gets the tier's target too
     fallen = policy.resolve("implementer", "claude", available_models={"haiku-5.5"})
     assert (fallen.selected_tier, fallen.model, fallen.effort) == ("economy", "haiku-5.5", "medium")
@@ -246,7 +249,7 @@ def test_the_prepared_default_is_per_tier_and_leaves_gates_and_other_tiers_alone
         policy.resolve("reviewer", "claude", user=UserRouteRequest(tier="economy"))
 
 
-def test_the_prepared_default_below_the_minimum_loses_the_tier_and_falls_back_to_nothing(tmp_path, promoted):
+def test_the_shipped_default_below_the_minimum_loses_the_tier_and_falls_back_to_nothing(tmp_path, promoted):
     with pytest.raises(RoutingConfigError, match=r"Claude Code 2\.1\.293 ou supérieur requis"):
         _route(tmp_path, host_version="2.1.285", environ={"FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku-4.5,haiku-5.5"})
 
@@ -427,6 +430,18 @@ def test_the_recorded_trial_result_is_kept_as_written_and_names_nothing_personal
         "profile": "exact", "model": "exact", "effort": "exact", "host_version": "conforming",
         "plugin_source": "this_checkout"}
     assert "/Users/" not in text and "/home/" not in text and "<session id>" in body["argv"]
+    assert "fixture_variant" not in body
+
+
+def test_the_second_trial_result_is_a_separate_file_with_its_own_verdict():
+    text = (ROOT / "docs/qualification/pat-125-native-trial-2.json").read_text()
+    body = json.loads(text)
+    assert body["schema"] == trial.TRIAL_SCHEMA and body["fixture_variant"] == "neutral"
+    assert body["verdict"] == "conforming" and body["not_established"] == []
+    assert body["conformity"] == {"profile": "exact", "model": "exact", "effort": "exact",
+                                  "host_version": "conforming", "plugin_source": "this_checkout", "fixture": "exact"}
+    assert (body["observed"]["models"], body["observed"]["efforts"]) == (["claude-haiku-5-5"], ["medium"])
+    assert "/Users/" not in text and "/home/" not in text and "<session id>" in body["argv"]
 
 
 # ------------------------------------------------------------------------------------ headless runners
@@ -469,3 +484,18 @@ def test_headless_check_keeps_an_unreadable_version_unknown_and_warns(answer):
         assert claude_headless_host_version_requirement(
             "claude-haiku-5-5", "claude", runner=_version_runner(answer, []), env={}) == {
             "required": "2.1.293", "observed": None, "status": "unknown"}
+
+
+def test_a_headless_launch_of_the_shipped_default_obeys_the_version_rule(tmp_path, promoted):
+    """A non-gate role that falls back down to ``economy`` reaches a headless runner with the Haiku 5.5 pin."""
+    route = RoutingPolicy.load(tmp_path).resolve("implementer", "claude", available_models={"haiku-5.5"})
+    assert (route.selected_tier, route.model, route.effort) == ("economy", "haiku-5.5", "medium")
+    wire = claude_invocation_model(route.model)
+    with pytest.raises(RoutingConfigError, match=r"Claude Code 2\.1\.293 ou supérieur requis"):
+        claude_headless_host_version_requirement(
+            wire, "claude", runner=_version_runner((0, "2.1.292 (Claude Code)"), []), env={})
+    assert claude_headless_host_version_requirement(
+        wire, "claude", runner=_version_runner((0, "2.1.293 (Claude Code)"), []), env={})["status"] == "conforming"
+    with pytest.warns(RuntimeWarning, match="CLAUDE_HOST_VERSION_UNOBSERVED"):
+        assert claude_headless_host_version_requirement(
+            wire, "claude", runner=_version_runner(FileNotFoundError("claude"), []), env={})["status"] == "unknown"

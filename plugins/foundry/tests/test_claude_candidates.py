@@ -39,7 +39,9 @@ def install_candidates(root):
 @pytest.mark.parametrize("configured", [False, True])
 def test_promoted_defaults_and_explicit_candidates_preserve_wire_permissions_and_unknown_observation(tmp_path, role, model, effort, profile, turns, configured):
     if configured:
-        install_candidates(tmp_path)
+        install_candidates(tmp_path)  # the PAT-16 example: the explicit Haiku 4.5 / null rollback form
+    elif role == "scout":  # PAT-ADR-0016 default
+        model, effort, profile = "claude-haiku-5-5", "medium", "readonly-medium"
     route = RoutingPolicy.load(tmp_path).resolve(role, "claude")
     assert (route.model, route.effort) == (claude_policy_model(model), effort)
     updated, context = hook.route_tool_input({"subagent_type": f"foundry:{role}", "prompt": packet(), "max_turns": 999, "effort": "max"}, cwd=tmp_path, environ={})
@@ -68,6 +70,8 @@ def test_alias_intent_is_preserved_and_diagnosed(tmp_path, alias):
     request = {"model": alias}
     if alias != "haiku":
         request["effort"] = "low"
+    else:  # an effort-free Haiku request needs a tier whose effort is explicitly null (PAT-ADR-0016)
+        install_candidates(tmp_path)
     prompt = 'FOUNDRY_ROUTE_REQUEST=' + json.dumps(request) + '\n' + packet()
     updated, context = hook.route_tool_input({"subagent_type": "foundry:scout", "prompt": prompt}, cwd=tmp_path, environ={})
     assert updated["model"] == alias
@@ -77,14 +81,22 @@ def test_alias_intent_is_preserved_and_diagnosed(tmp_path, alias):
 
 @pytest.mark.parametrize("model", ["sonnet", "opus", "fable", "claude-sonnet-5-5"])
 @pytest.mark.parametrize("source", ["user", "project"])
-def test_non_haiku_model_override_requires_explicit_effort(tmp_path, model, source):
+def test_economy_model_only_override_inherits_the_default_effort_and_a_null_one_is_refused(tmp_path, model, source):
+    """PAT-ADR-0016: the economy default now carries ``medium``, which a model-only override inherits."""
     prompt = packet()
+    path = tmp_path / ".foundry/model-routing.json"
+    path.parent.mkdir()
     if source == "user":
         prompt = 'FOUNDRY_ROUTE_REQUEST=' + json.dumps({"model": model}) + '\n' + prompt
     else:
-        path = tmp_path / ".foundry/model-routing.json"
-        path.parent.mkdir()
         path.write_text(json.dumps({"mappings": {"claude": {"economy": {"model": model}}}}))
+    updated, context = hook.route_tool_input({"subagent_type": "foundry:scout", "prompt": prompt},
+                                             cwd=tmp_path, environ={})
+    visible = json.loads(context.removeprefix("Foundry Claude route: "))
+    assert updated["subagent_type"].startswith("foundry:routed-readonly-medium")
+    assert (visible["effort"], visible["sources"]["effort"]) == ("medium", "default")
+    economy = {"effort": None} if source == "user" else {"model": model, "effort": None}
+    path.write_text(json.dumps({"mappings": {"claude": {"economy": economy}}}))
     with pytest.raises(RoutingConfigError, match="effort null réservé à Haiku 4.5.*effort explicite"):
         hook.route_tool_input({"subagent_type": "foundry:scout", "prompt": prompt},
                              cwd=tmp_path, environ={})
@@ -98,6 +110,7 @@ def test_alias_availability_cannot_certify_a_version_pin(tmp_path):
 
 @pytest.mark.parametrize("effort", ["low", "medium", "high", "max", "ultracode"])
 def test_haiku_explicit_effort_rejected(tmp_path, effort):
+    install_candidates(tmp_path)  # Haiku 4.5 / null on economy
     with pytest.raises(RoutingConfigError, match="non applicable"):
         RoutingPolicy.load(tmp_path).resolve("scout", "claude", user=UserRouteRequest(effort=effort))
 

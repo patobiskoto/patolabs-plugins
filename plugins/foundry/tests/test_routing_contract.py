@@ -57,7 +57,7 @@ def _frontmatter(path):
 @pytest.mark.parametrize(
     ("role", "profile", "model", "effort", "turns", "capability"),
     [
-        ("scout", "routed-readonly-none", "claude-haiku-4-5", None, 10, "readonly"),
+        ("scout", "routed-readonly-medium", "claude-haiku-5-5", "medium", 10, "readonly"),
         ("implementer", "routed-worker-medium", "claude-sonnet-5-5", "medium", 50,
          "worker"),
         ("reviewer", "routed-readonly-high", "claude-opus-5-5", "high", 24,
