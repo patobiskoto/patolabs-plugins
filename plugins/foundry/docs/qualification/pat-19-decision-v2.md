@@ -18,7 +18,7 @@ guillemets français sont attribués au mainteneur ; ce que le coordinateur a fi
 | Date | Qui | Quoi | Source |
 | --- | --- | --- | --- |
 | 2026-10-06 | mainteneur | usage 1 : conserver le cloud pour l'implémentation locale autonome, sans adopter ni abandonner le local en général | [`pat-19-decision-v1.md`](pat-19-decision-v1.md) [fichiers] |
-| 2026-10-08 | mainteneur | après lecture du bilan v1 à v5, a demandé « En résumé la 1.1.0 il en reste quoi de possible ? », puis « Ok donc on fixe les objectifs de la 1.1.0 au regarde de ce qui reste en backlog et de ce que nous pourrions travailler comme nouvelle piste stp » | [coord.] |
+| 2026-10-08 | mainteneur | après le compte rendu du bilan v1 à v5 par le coordinateur, a demandé « En résumé la 1.1.0 il en reste quoi de possible ? », puis « Ok donc on fixe les objectifs de la 1.1.0 au regarde de ce qui reste en backlog et de ce que nous pourrions travailler comme nouvelle piste stp » | [coord.] |
 | 2026-10-08 | coordinateur | a proposé un recadrage de l'Epic PAT-87 dont le premier objectif était : clore la qualification locale par usage (implémentation locale autonome : conserver le cloud ; exploration locale : conserver le cloud, gain non démontré), et qui reportait PAT-88 à PAT-91, PAT-17 et PAT-18 comme conditionnels à un profil local qualifié | [coord.] |
 | 2026-10-08 | mainteneur | a répondu « Ok go et va jusqu'au test et validation ». Le coordinateur a réécrit le corps de l'Epic PAT-87 en conséquence le même jour et consigné les décisions dans un commentaire de l'Epic (objectif : réduire le travail premium par tâche acceptée, avec preuve mesurée ; le local est un moyen parmi d'autres) | [coord.] ; contenu de l'Epic non relu ici [inconnu] |
 | 2026-10-09 | mainteneur | sur Haiku 5.5 : « Ok j'autorise le second essai » et « Médium très bien » : décision distincte, côté cloud, voir plus bas | [`pat-125-haiku-55-promotion.md`](pat-125-haiku-55-promotion.md) [fichiers] |
@@ -63,8 +63,8 @@ indécidées fixé avant la campagne. Les deux étiquettes recommandent le cloud
 Les trois lectures, séparées (PAT-ADR-0015) :
 
 - **Compatibilité** : remplie en v5 (24 préflights acceptés, supplément de swap 0 MiB, aucun signal externe) [fichiers] ; OrbStack (au-delà de 2 Gio) devait être arrêté pour satisfaire le préflight, et ChatGPT a été arrêté par précaution [coord.].
-- **Qualité** : sur les explorations scorées des v4 et v5, rappel de fichiers 1,0 et rappel de fonctions moyen (0,778 sur 9 explorations
-  scorées en v5) ; acceptation égale (5 contre 5 sur D) mais sur des ensembles de tâches qui diffèrent sur 4 tâches sur 10 [fichiers].
+- **Qualité** : sur les explorations scorées des v4 et v5, rappel de fichiers 1,0 et rappel de fonctions de 0,625 en v4 puis 0,778 en v5 (9 explorations
+  scorées en v5) ; acceptation égale (5 contre 5 sur D) mais sur des ensembles de tâches acceptées qui diffèrent sur 4 tâches sur 10 [fichiers].
 - **Économie** : le critère gelé échoue de peu (0,8579 contre 0,85, soit 0,93 % de la ligne) [fichiers]. **Lectures hors règle, sans
   valeur de décision, qui ne remplacent ni ne requalifient le verdict** ([`pat-19-cost-breakdown-v1.md`](pat-19-cost-breakdown-v1.md), PAT-129) :
   pondéré par des prix de liste (poids, pas une facture) : **v5**, rapport L/A par tâche acceptée sur D, 1,032 (0,8579 non pondéré) ; **v4**,
@@ -77,7 +77,7 @@ Les trois lectures, séparées (PAT-ADR-0015) :
 Instrument : PAT-128 a établi par rejeu pourquoi les deux explorations de la v5 (PR 42 et PR 33) avaient été signalées contaminées (le
 modèle local avait tapé un chemin inexistant, l'audit ne reconnaissait pas la forme `Path '<chemin>' not found` de l'erreur de l'outil) et a
 ajouté une coordonnée utilisable par un protocole postérieur à la v5 ([`pat-19-audit-replay-v5.md`](pat-19-audit-replay-v5.md)) [fichiers].
-Aucun verdict passé n'est recalculé ; l'effet sur le verdict de la v5 est **[inconnu]**. Aucun protocole v6 n'existe. Sur la cause de ces deux drapeaux, `pat-19-audit-replay-v5.md` (PAT-128, rejeu) prévaut : `pat-19-local-first-bilan.md` et `pat-19-exploration-results-v5.md`, écrits avant lui, disent encore « hypothèse, non rejouée » et ne sont pas édités.
+Aucun verdict passé n'est recalculé ; l'effet sur le verdict de la v5 est **[inconnu]**. Aucun protocole v6 n'existe. Sur la cause de ces deux drapeaux, `pat-19-audit-replay-v5.md` (PAT-128, rejeu) prévaut : `pat-19-local-first-bilan.md` et `pat-19-exploration-results-v5.md`, écrits avant lui, disent encore « hypothèse, non rejouée » et ne sont pas édités sur ce point.
 
 Ne permet pas de dire : que le local est « moins cher » ou « presque aussi bon » ; qu'un gain ou une perte de facture existe (le forfait est un
 abonnement, le temps, la mémoire et l'énergie locaux ne sont pas chiffrés) ; que l'issue vaut pour d'autres dépôts, tâches, candidats ou machines.
@@ -138,7 +138,7 @@ du coordinateur se fonde sur ces tailles (médiane de 9 336 octets, une tâche e
 ## Pistes que les mesures désignent, sans les décider
 
 - Le poids du relecteur Opus et de l'écriture de cache dans le coût pondéré par le prix (voir les lectures hors règle de l'usage 2).
-- Un explorateur cloud moins cher au prix de liste par token seulement est maintenant le défaut (Haiku 5.5) ; le coût par tâche est **non mesuré** et peut augmenter (`pat-125-haiku-55-promotion.md`).
+- Fait à connaître, issu d'une décision distincte et non d'une mesure de cette qualification : un explorateur cloud moins cher au prix de liste par token seulement est maintenant le défaut (Haiku 5.5) ; le coût par tâche est **non mesuré** et peut augmenter (`pat-125-haiku-55-promotion.md`).
 
 Ce sont des pistes de mesure, pas des engagements ; toute idée qui en sort passe par `foundry:intake` (R3).
 
