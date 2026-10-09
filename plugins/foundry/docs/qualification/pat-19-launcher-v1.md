@@ -1615,6 +1615,6 @@ n'est modifié.
 Module séparé du lanceur, lecture seule : `python3 -m foundry.cost_breakdown` (`tooling/foundry/cost_breakdown.py`). Il relit les `results-*.jsonl`, `ledger-*.jsonl`
 et `report-*.json` versés d'une campagne `compare_exploration` et rend, par bras, la répartition du travail premium par rôle, classe de tokens et modèle (somme non pondérée de la
 règle, et pondérée par la grille datée `pricing-breakdown-v1.json`), la lecture pondérée de L sur A hors règle, et, avec `--streams-dir` (et `--session-logs-dir`), le
-décompte des appels de lecture / recherche des sessions cloud et le poids des appels purement d'exploration. Options : `--results`, `--ledger`, `--report` (le code de sortie est 1 si les totaux
-recalculés diffèrent du rapport), `--grid`, `--streams-dir`, `--session-logs-dir`, `--out` (n'écrase jamais). Il ne lance ni `claude`, ni modèle, ni `lms`, ni mode de campagne, et ne recalcule aucun verdict.
+décompte des appels de lecture / recherche des sessions cloud et le poids direct des appels purement d'exploration (sous l'hypothèse qu'ils ne coûtent rien ; ce n'est pas un plafond de l'effet d'une réduction). Options : `--results`, `--ledger`, `--report` (le code de sortie est 1 si les totaux
+recalculés diffèrent du rapport), `--grid`, `--streams-dir`, `--session-logs-dir`, `--override-rate MODELE:CLE=VALEUR` (la même lecture refaite avec un tarif remplacé : sensibilité), `--out` (n'écrase jamais). Il ne lance ni `claude`, ni modèle, ni `lms`, ni mode de campagne, et ne recalcule aucun verdict.
 Résultats et méthode : [`pat-19-cost-breakdown-v1.md`](pat-19-cost-breakdown-v1.md).

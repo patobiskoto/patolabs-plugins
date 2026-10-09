@@ -62,23 +62,6 @@
         "cache_write_1h": 1,
         "output": 2.50
       }
-    },
-    {
-      "host": "claude",
-      "model": "claude-haiku-4-5",
-      "aliases": ["claude-haiku-4-5-20251001"],
-      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
-      "captured_on": "2026-10-08",
-      "effective_from": "2026-01-01",
-      "effective_to": "2026-12-31",
-      "effective_from_basis": "same window as the existing entry haiku-4.5 of pricing-v1.json (a test checks the shared rates agree)",
-      "rates": {
-        "input": 1,
-        "cache_read": 0.10,
-        "cache_write_5m": 1.25,
-        "cache_write_1h": 2,
-        "output": 5
-      }
     }
   ]
 }

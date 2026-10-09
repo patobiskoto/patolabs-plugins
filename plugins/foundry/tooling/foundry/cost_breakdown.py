@@ -232,7 +232,7 @@ def _cell_weight(cell: Mapping[str, Any], grid: Mapping[str, Any]) -> dict[str, 
 
 
 def _share(part: int | Decimal, whole: int | Decimal) -> float | None:
-    return None if not whole else float(round(Decimal(part) / Decimal(whole), 4))
+    return None if not whole else float(round(Decimal(part) / Decimal(whole), 6))
 
 
 def _weighted_group(cells: Sequence[Mapping[str, Any]], grid: Mapping[str, Any]) -> Any:
@@ -332,11 +332,16 @@ def paired_reading(result: Mapping[str, Any], report: Mapping[str, Any],
     prs = set(rule["paired_decided"])
     cells = [c for c in result["cells"] if c["pr"] in prs]
     out: dict[str, Any] = {"paired_tasks": sorted(prs), "outside_the_frozen_rule": True, "arms": {}}
+    equal = True
     for arm in ("A", "L"):
         mine = [c for c in cells if c["arm"] == arm]
-        # acceptance is per task (any record accepted), as the frozen report counts it
-        accepted_prs = {c["pr"] for c in result["cells"] if c["arm"] == arm and c["accepted"]} & prs
-        accepted = len(accepted_prs)
+        # the committed report's count decides; the records are only compared with it (a task accepted without
+        # any premium token would not show in the records)
+        accepted = _count(rule.get("accepted_on_paired", {}).get(arm))
+        if accepted is None:
+            raise BreakdownError("the committed paired rule carries no accepted count")
+        from_records = len({c["pr"] for c in result["cells"] if c["arm"] == arm and c["accepted"]} & prs)
+        equal = equal and from_records == accepted
         tokens = sum(sum(c["tokens"][k] for k in CLASSES) for c in mine)
         out["arms"][arm] = {
             "accepted": accepted, "billing_tokens": tokens, "weighted": _weighted_group(mine, grid),
@@ -355,6 +360,7 @@ def paired_reading(result: Mapping[str, Any], report: Mapping[str, Any],
         ratio = {"status": UNAVAILABLE}
     out["weighted_ratio_L_over_A_per_accepted"] = ratio
     out["frozen_ratio_in_report"] = rule.get("ratio")
+    out["accepted_counts_equal_records"] = equal
     return out
 
 
@@ -458,7 +464,9 @@ EXPLORE_KINDS = frozenset({"explore_read", "explore_search", "explore_bash"})
 
 
 def read_session(path: Path) -> dict[str, Any]:
-    """Calls (one per assistant message id, blocks merged), the final ``result`` event, from a session JSONL."""
+    """Calls (one per assistant message id, blocks merged), the final ``result`` event, from a CAMPAIGN stream.
+
+    Only the campaign streams are read for tool calls; an absent usage counter stays None (never zero)."""
     calls: dict[str, dict[str, Any]] = {}
     result = None
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -469,13 +477,31 @@ def read_session(path: Path) -> dict[str, Any]:
             result = event
         elif event.get("type") == "assistant" and isinstance(event.get("message"), dict):
             msg = event["message"]
-            call = calls.setdefault(msg["id"], {"model": msg.get("model"), "usage": msg.get("usage") or {},
-                                                "tools": {}, "output_seen": 0})
-            call["output_seen"] = max(call["output_seen"], int((msg.get("usage") or {}).get("output_tokens") or 0))
+            call = calls.setdefault(msg["id"], {"id": msg["id"], "model": msg.get("model"),
+                                                "usage": msg.get("usage") or {}, "tools": {}})
             for block in msg.get("content") or []:
                 if block.get("type") == "tool_use":
                     call["tools"][block["id"]] = (block.get("name"), block.get("input"))
     return {"calls": list(calls.values()), "result": result}
+
+
+def read_host_usage(path: Path) -> dict[str, int | None]:
+    """Output tokens per assistant message id from a HOST session log (FOUNDRY-ADR-0015 reader discipline).
+
+    Extracts only the message id and its ``output_tokens`` counter: never a prompt, a tool name or input, a path,
+    a command, an excerpt or a file name. A counter that is absent or not a count is None (unknown)."""
+    out: dict[str, int | None] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        message = event.get("message") if event.get("type") == "assistant" else None
+        if not isinstance(message, dict) or not isinstance(message.get("id"), str):
+            continue
+        usage = message.get("usage")
+        value = usage.get("output_tokens") if isinstance(usage, dict) else None
+        out[message["id"]] = max(value, out.get(message["id"]) or 0) if type(value) is int else out.get(message["id"])
+    return out
 
 
 def _call_kind(call: Mapping[str, Any]) -> str:
@@ -485,19 +511,24 @@ def _call_kind(call: Mapping[str, Any]) -> str:
     return "explore_only" if kinds == {True} else "action"
 
 
-def _session_tokens(call: Mapping[str, Any]) -> dict[str, int]:
-    u = call["usage"]
-    return {"input_tokens": int(u.get("input_tokens") or 0), "cached_input_tokens": int(u.get("cache_read_input_tokens") or 0),
-            "cache_write_input_tokens": int(u.get("cache_creation_input_tokens") or 0)}
+_INPUT_SIDE = (("input_tokens", "input_tokens"), ("cached_input_tokens", "cache_read_input_tokens"),
+               ("cache_write_input_tokens", "cache_creation_input_tokens"))
+
+
+def _count(value: object) -> int | None:
+    return value if type(value) is int and value >= 0 else None
 
 
 def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Mapping[str, Any]],
                 streams_dir: Path, grid: Mapping[str, Any], campaign_id: str,
                 logs_dir: Path | None = None, only_prs: Iterable[int] | None = None) -> dict[str, Any]:
-    """Counts of read/search tool calls per arm and role, and the cost of the API calls made only of them.
+    """Counts of read/search tool calls per arm and role, and the direct weight of the API calls made only of them.
 
-    The unit of attribution is one API call (one assistant message id): its own input, cache and output
-    tokens. The effect of an exploration result staying in the context of the later calls is NOT measured."""
+    The unit of attribution is one API call (one assistant message id): its own input, cache and output tokens.
+    The effect of an exploration result staying in the context of the later calls is NOT measured.
+    Output tokens per call come from the host session logs when ``logs_dir`` is given, paired by message id; if the
+    ids or the total do not match, or a counter is absent, the attribution of that role is ``unavailable`` (never
+    approximated). Without ``logs_dir`` the output is bounded (the stream's partial figure plus the session slack)."""
     keep = None if only_prs is None else set(only_prs)
     arm_of = {s: r["path"] for r in records if r.get("record_type") == "attempt" and not r.get("dry_run")
               and (keep is None or r["task"]["pr"] in keep) for s in r.get("cloud_sessions") or []}
@@ -510,52 +541,67 @@ def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Map
         stream = read_session(streams_dir / f"{campaign_id}-{sid}.jsonl")
         if stream["result"] is None:
             raise BreakdownError("a transcript without a final result event cannot be measured")
-        exact = None
+        usage = stream["result"].get("usage") or {}
+        total_out = _count(usage.get("output_tokens"))
+        calls = stream["calls"]
+        partial = [_count(c["usage"].get("output_tokens")) for c in calls]
+        per_call_out: list[int | None] = list(partial)
+        output_exact, unavailable_reason = False, None
         if logs_dir is not None:
             found = sorted(logs_dir.glob(f"*/{sid}.jsonl"))
-            if len(found) == 1:
-                exact = read_session(found[0])
-        usage = stream["result"]["usage"]
-        total_out = int(usage["output_tokens"])
-        per_call_out = [c["output_seen"] for c in stream["calls"]]
-        output_exact = False
-        if exact is not None and len(exact["calls"]) == len(stream["calls"]) \
-                and sum(c["output_seen"] for c in exact["calls"]) == total_out:
-            per_call_out, output_exact = [c["output_seen"] for c in exact["calls"]], True
-        slack = max(total_out - sum(per_call_out), 0)
+            host = read_host_usage(found[0]) if len(found) == 1 else None
+            if host is None or set(host) != {c["id"] for c in calls} or any(v is None for v in host.values()) \
+                    or total_out is None or sum(host.values()) != total_out:  # type: ignore[arg-type]
+                unavailable_reason = "output_pairing"
+            else:
+                per_call_out, output_exact = [host[c["id"]] for c in calls], True
+        elif total_out is None or any(v is None for v in partial):
+            unavailable_reason = "output_absent"
+        call_tokens = [{k: _count(c["usage"].get(u)) for k, u in _INPUT_SIDE} for c in calls]
+        if any(v is None for t in call_tokens for v in t.values()):
+            unavailable_reason = unavailable_reason or "usage_absent"
         a = acc.setdefault((arm, role), {
             "sessions": 0, "api_calls": 0, "tool_calls": Counter(), "calls_by_kind": Counter(),
-            "sessions_output_exact": 0, "sessions_input_side_matches_result": 0,
-            "cache_write_split": {"ephemeral_5m": 0, "ephemeral_1h": 0}, "host_list_cost_usd": Decimal(0),
-            "models": Counter()})
+            "sessions_output_exact": 0, "sessions_input_side_matches_result": 0, "input_side_unavailable": 0,
+            "unavailable": Counter(), "cache_write_split": {"ephemeral_5m": 0, "ephemeral_1h": 0},
+            "host_list_cost_usd": Decimal(0), "models": Counter()})
         a["sessions"] += 1
-        a["api_calls"] += len(stream["calls"])
+        a["api_calls"] += len(calls)
         a["sessions_output_exact"] += output_exact
-        split = usage.get("cache_creation") or {}
-        a["cache_write_split"]["ephemeral_5m"] += int(split.get("ephemeral_5m_input_tokens") or 0)
-        a["cache_write_split"]["ephemeral_1h"] += int(split.get("ephemeral_1h_input_tokens") or 0)
-        a["host_list_cost_usd"] += Decimal(str(stream["result"].get("total_cost_usd") or 0))
+        if unavailable_reason:
+            a["unavailable"][unavailable_reason] += 1
+        split = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+        for key, name in (("ephemeral_5m", "ephemeral_5m_input_tokens"), ("ephemeral_1h", "ephemeral_1h_input_tokens")):
+            value = _count(split.get(name))
+            a["cache_write_split"][key] = None if value is None or a["cache_write_split"][key] is None \
+                else a["cache_write_split"][key] + value
+        cost = stream["result"].get("total_cost_usd")
+        a["host_list_cost_usd"] = None if type(cost) not in (int, float) or a["host_list_cost_usd"] is None \
+            else a["host_list_cost_usd"] + Decimal(str(cost))
         sums = _zero()
-        for index, (call, out) in enumerate(zip(stream["calls"], per_call_out)):
-            toks = {**_session_tokens(call), "output_tokens": out, REASONING: 0}
-            _add(sums, toks)
+        for index, (call, toks3, out) in enumerate(zip(calls, call_tokens, per_call_out)):
             for name, tool_input in call["tools"].values():
-                kind = classify_tool_use(name, tool_input)
-                a["tool_calls"][kind] += 1
+                a["tool_calls"][classify_tool_use(name, tool_input)] += 1
             kind = _call_kind(call)
             a["calls_by_kind"][kind] += 1
             a["models"][call["model"]] += 1
-            if kind == "explore_only":
+            if None in toks3.values() or out is None:
+                continue
+            toks = {**toks3, "output_tokens": out, REASONING: 0}
+            _add(sums, toks)
+            if kind == "explore_only" and not unavailable_reason:
                 cells.append({"arm": arm, "role": role, "model": call["model"], "day": info["day"], "tokens": toks,
                               "first_call": index == 0, "slack_session": None, "pr": 0, "models": [call["model"]]})
-        a["sessions_input_side_matches_result"] += all(
-            sums[k] == int(usage[u]) for k, u in (("input_tokens", "input_tokens"),
-                                                 ("cached_input_tokens", "cache_read_input_tokens"),
-                                                 ("cache_write_input_tokens", "cache_creation_input_tokens")))
-        if slack and not output_exact:
-            cells.append({"arm": arm, "role": role, "model": stream["calls"][0]["model"], "day": info["day"],
+        check = [usage.get(u) for _, u in _INPUT_SIDE]
+        if any(_count(v) is None for v in check) or any(None in t.values() for t in call_tokens):
+            a["input_side_unavailable"] += 1
+        else:
+            a["sessions_input_side_matches_result"] += all(sums[k] == usage[u] for k, u in _INPUT_SIDE)
+        slack = None if unavailable_reason or output_exact or total_out is None else max(total_out - sum(partial), 0)  # type: ignore[arg-type]
+        if slack:
+            cells.append({"arm": arm, "role": role, "model": calls[0]["model"], "day": info["day"],
                           "tokens": {**_zero(), "output_tokens": slack}, "first_call": False,
-                          "slack_session": True, "pr": 0, "models": [stream["calls"][0]["model"]]})
+                          "slack_session": True, "pr": 0, "models": [calls[0]["model"]]})
     out: dict[str, Any] = {}
     for (arm, role), a in sorted(acc.items()):
         mine = [c for c in cells if c["arm"] == arm and c["role"] == role]
@@ -563,42 +609,78 @@ def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Map
         slack_cells = [c for c in mine if c["slack_session"]]
         tool_total = sum(a["tool_calls"].values())
         explore_tools = sum(a["tool_calls"][k] for k in EXPLORE_KINDS)
-        tok = _zero()
+        tok, first = _zero(), _zero()
         for c in explore_calls:
             _add(tok, c["tokens"])
-        first = _zero()
-        for c in explore_calls:
             if c["first_call"]:
                 _add(first, c["tokens"])
         slack_out = sum(c["tokens"]["output_tokens"] for c in slack_cells)
+        if a["unavailable"]:
+            explore = {"status": UNAVAILABLE, "reasons": dict(a["unavailable"])}
+        else:
+            explore = {
+                "status": "attributed",
+                "tokens": {c: tok[c] for c in CLASSES},
+                "billing_total": sum(tok[c] for c in CLASSES),
+                "of_which_first_call_of_session": {c: first[c] for c in CLASSES},
+                "output_unattributed_slack_tokens": slack_out,
+                "weighted": _weighted_group(explore_calls, grid) if explore_calls else None,
+                "weighted_excluding_first_call": (
+                    _weighted_group([c for c in explore_calls if not c["first_call"]], grid)
+                    if any(not c["first_call"] for c in explore_calls) else None),
+                "weighted_with_output_slack": (_weighted_group(explore_calls + slack_cells, grid)
+                                               if explore_calls and slack_cells else None)}
         out.setdefault(arm, {})[role] = {
             "sessions": a["sessions"], "api_calls": a["api_calls"],
             "tool_calls": {"total": tool_total, **{k: a["tool_calls"][k] for k in
                                                    ("explore_read", "explore_search", "explore_bash", "bash_other", "edit", "other")},
                            "exploration": explore_tools, "exploration_share": _share(explore_tools, tool_total)},
             "api_calls_by_kind": {k: a["calls_by_kind"][k] for k in ("explore_only", "action", "no_tool")},
-            "explore_only_calls": {
-                "tokens": {c: tok[c] for c in CLASSES},
-                "billing_total": sum(tok[c] for c in CLASSES),
-                "of_which_first_call_of_session": {c: first[c] for c in CLASSES},
-                "output_unattributed_upper_slack_tokens": slack_out,
-                "weighted": _weighted_group(explore_calls, grid) if explore_calls else None,
-                "weighted_excluding_first_call": (
-                    _weighted_group([c for c in explore_calls if not c["first_call"]], grid)
-                    if any(not c["first_call"] for c in explore_calls) else None),
-                "weighted_with_output_slack": (_weighted_group(explore_calls + slack_cells, grid)
-                                               if explore_calls and slack_cells else None)},
+            "explore_only_calls": explore,
             "sessions_with_exact_per_call_output": a["sessions_output_exact"],
             "sessions_input_side_equal_to_final_result": a["sessions_input_side_matches_result"],
+            "sessions_input_side_check_unavailable": a["input_side_unavailable"],
             "cache_write_split_tokens": a["cache_write_split"],
-            "host_list_cost_usd": _usd(a["host_list_cost_usd"])}
+            "host_list_cost_usd": None if a["host_list_cost_usd"] is None else _usd(a["host_list_cost_usd"])}
     return out
 
 
 # -------------------------------------------------------------------------------------------------- CLI
 
+def apply_override(grid: Mapping[str, Any], spec: str) -> dict[str, Any]:
+    """A copy of the grid with one rate replaced, for a SENSITIVITY reading: ``<model>:<rate key>=<value>``."""
+    match = re.fullmatch(r"([^:=]+):(%s)=([0-9]+(?:\.[0-9]+)?)" % "|".join(RATE_KEYS), spec)
+    if match is None:
+        raise BreakdownError("override must look like <model>:<rate key>=<value>")
+    model, key, value = match.group(1), match.group(2), Decimal(match.group(3))
+    entries = [dict(e, rates=dict(e["rates"])) for e in grid["entries"]]
+    hit = [e for e in entries if e["model"] == model]
+    if len(hit) != 1:
+        raise BreakdownError("override names a model without exactly one price entry")
+    hit[0]["rates"][key] = value
+    return {"currency": grid["currency"], "entries": entries}
+
+
+def _document(records, sessions, price_grid, report, streams_dir, logs_dir, campaign_id) -> dict[str, Any]:
+    result = breakdown(records, sessions, price_grid)
+    doc: dict[str, Any] = {"arms": result["arms"]}
+    paired = None
+    if report is not None:
+        doc["totals_equal_committed_report"] = check_against_report(result, report)
+        paired = paired_reading(result, report, price_grid)
+        if paired is not None:
+            doc["paired_reading"] = paired
+    if streams_dir is not None:
+        doc["exploration"] = exploration(records, sessions, streams_dir, price_grid, campaign_id, logs_dir)
+        if paired is not None:
+            doc["exploration_on_paired_set"] = exploration(
+                records, sessions, streams_dir, price_grid, campaign_id, logs_dir, paired["paired_tasks"])
+    return doc
+
+
 def analyse(results: Path, *, ledger: Path | None = None, report: Path | None = None, grid: Path = GRID_PATH,
-            streams_dir: Path | None = None, logs_dir: Path | None = None) -> dict[str, Any]:
+            streams_dir: Path | None = None, logs_dir: Path | None = None,
+            overrides: Sequence[str] = ()) -> dict[str, Any]:
     match = re.fullmatch(r"results-(.+)\.jsonl", results.name)
     if match is None:
         raise BreakdownError("results file must be named results-<campaign>.jsonl")
@@ -609,26 +691,22 @@ def analyse(results: Path, *, ledger: Path | None = None, report: Path | None = 
         raise BreakdownError("results hold records of another campaign id")
     price_grid = load_grid(grid)
     sessions = load_sessions(events)
-    result = breakdown(records, sessions, price_grid)
+    rep = json.loads(report.read_text(encoding="utf-8")) if report is not None else None
     doc: dict[str, Any] = {
-            "schema": "foundry.cost-breakdown.v1", "campaign_id": campaign_id,
-            "reading": "outside the frozen rule; API list prices are weights under a subscription, never a bill",
-            "price_grid": {"entries": [{"model": e["model"], "source": e["source"], "captured_on": e["captured_on"],
-                                        "effective_from": e["effective_from"], "effective_to": e["effective_to"]}
-                                       for e in price_grid["entries"]]},
-            "arms": result["arms"]}
-    paired = None
-    if report is not None:
-        rep = json.loads(report.read_text(encoding="utf-8"))
-        doc["totals_equal_committed_report"] = check_against_report(result, rep)
-        paired = paired_reading(result, rep, price_grid)
-        if paired is not None:
-            doc["paired_reading"] = paired
-    if streams_dir is not None:
-        doc["exploration"] = exploration(records, sessions, streams_dir, price_grid, campaign_id, logs_dir)
-        if paired is not None:
-            doc["exploration_on_paired_set"] = exploration(
-                records, sessions, streams_dir, price_grid, campaign_id, logs_dir, paired["paired_tasks"])
+        "schema": "foundry.cost-breakdown.v1", "campaign_id": campaign_id,
+        "reading": "outside the frozen rule; API list prices are weights under a subscription, never a bill",
+        "price_grid": {"entries": [{"model": e["model"], "source": e["source"], "captured_on": e["captured_on"],
+                                    "effective_from": e["effective_from"], "effective_to": e["effective_to"],
+                                    "effective_from_basis": e["effective_from_basis"]}
+                                   for e in price_grid["entries"]]}}
+    doc.update(_document(records, sessions, price_grid, rep, streams_dir, logs_dir, campaign_id))
+    if overrides:
+        sens = price_grid
+        for spec in overrides:
+            sens = apply_override(sens, spec)
+        doc["sensitivity"] = {"overrides": list(overrides),
+                              "note": "same reading under the overridden rates; a sensitivity, not a second grid",
+                              **_document(records, sessions, sens, rep, streams_dir, logs_dir, campaign_id)}
     return doc
 
 
@@ -641,24 +719,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--streams-dir", default=None, help="raw cloud transcripts kept off the repository")
     parser.add_argument("--session-logs-dir", default=None,
                         help="host session logs (<dir>/*/<session>.jsonl) for exact per-call output tokens")
+    parser.add_argument("--override-rate", action="append", default=[], metavar="MODEL:KEY=VALUE",
+                        help="also give the whole reading under one replaced rate (sensitivity), e.g. "
+                             "claude-sonnet-5-5:cache_read=0.20; repeatable")
     parser.add_argument("--out", default=None, help="write the aggregates here (never overwrites)")
     args = parser.parse_args(argv)
     try:
         doc = analyse(Path(args.results), ledger=Path(args.ledger) if args.ledger else None,
                       report=Path(args.report) if args.report else None, grid=Path(args.grid),
                       streams_dir=Path(args.streams_dir) if args.streams_dir else None,
-                      logs_dir=Path(args.session_logs_dir) if args.session_logs_dir else None)
+                      logs_dir=Path(args.session_logs_dir) if args.session_logs_dir else None,
+                      overrides=args.override_rate)
         text = json.dumps(doc, indent=2, sort_keys=True) + "\n"
         if args.out:
             with Path(args.out).open("x", encoding="utf-8") as handle:
                 handle.write(text)
         else:
             sys.stdout.write(text)
-    except (BreakdownError, OSError, KeyError, ValueError) as exc:
+    except OSError as exc:  # its message names an operator path: only the kind is printed
+        print(f"refused: {type(exc).__name__} (an input is unreadable or the output cannot be created)", file=sys.stderr)
+        return 2
+    except (BreakdownError, KeyError, ValueError) as exc:
         print(f"refused: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     check = doc.get("totals_equal_committed_report")
-    return 1 if check is not None and not check["all_equal"] else 0
+    paired = doc.get("paired_reading")
+    bad = (check is not None and not check["all_equal"]) or (
+        paired is not None and not paired["accepted_counts_equal_records"])
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":

@@ -56,14 +56,40 @@ def test_v5_paired_reading_is_outside_the_rule_and_agrees_with_the_frozen_ratio(
     assert paired["outside_the_frozen_rule"] is True
     assert paired["unweighted_ratio_L_over_A_per_accepted"] == paired["frozen_ratio_in_report"] == 0.8579
     assert paired["arms"]["A"]["billing_tokens"] == 9178695 and paired["arms"]["L"]["billing_tokens"] == 7874314
-    assert paired["arms"]["A"]["accepted"] == paired["arms"]["L"]["accepted"] == 5
+    committed = json.loads((RUNS / name / f"report-pat-19-{name}.json").read_text())
+    accepted = committed["exploration_comparison"]["paired_rule"]["accepted_on_paired"]
+    assert (paired["arms"]["A"]["accepted"], paired["arms"]["L"]["accepted"]) == (accepted["A"], accepted["L"])
+    assert paired["accepted_counts_equal_records"] is True
     assert set(paired["weighted_ratio_L_over_A_per_accepted"]) == {"cache_write_all_5m", "cache_write_all_1h"}
 
 
-def test_v4_has_no_ratio_when_no_arm_l_task_is_accepted():
+def test_v4_report_has_no_paired_rule_so_no_paired_reading():
     name = "x4compare-1"
     doc = cb.analyse(RUNS / name / f"results-pat-19-{name}.jsonl", report=RUNS / name / f"report-pat-19-{name}.json")
     assert "paired_reading" not in doc
+
+
+def _paired_fixture(accepted_a, accepted_l, flags=(True, False)):
+    records = [_record("A", 1, {"implementer": _tok(c=1_000_000)}, {"claude-sonnet-5-5": _tok(c=1_000_000)}, accepted=flags[0]),
+               _record("L", 1, {"implementer": _tok(c=500_000)}, {"claude-sonnet-5-5": _tok(c=500_000)}, accepted=flags[1])]
+    report = {"exploration_comparison": {"paired_rule": {"paired_decided": [1], "ratio": None,
+                                                         "accepted_on_paired": {"A": accepted_a, "L": accepted_l}}}}
+    result = cb.breakdown(records, SESSIONS, cb.load_grid())
+    return cb.paired_reading(result, report, cb.load_grid())
+
+
+def test_ratio_is_unavailable_when_an_arm_accepts_zero():
+    paired = _paired_fixture(1, 0)
+    assert paired["weighted_ratio_L_over_A_per_accepted"] == {"status": "unavailable"}
+    assert paired["unweighted_ratio_L_over_A_per_accepted"] is None
+    assert paired["accepted_counts_equal_records"] is True
+
+
+def test_the_committed_accepted_count_decides_and_a_difference_with_the_records_is_flagged():
+    paired = _paired_fixture(1, 1)  # the report says L accepted one task, the records say none
+    assert paired["arms"]["L"]["accepted"] == 1
+    assert paired["accepted_counts_equal_records"] is False
+    assert set(paired["weighted_ratio_L_over_A_per_accepted"]) == {"cache_write_all_5m", "cache_write_all_1h"}
 
 
 def test_the_analysis_does_not_recompute_a_verdict():
@@ -74,12 +100,11 @@ def test_the_analysis_does_not_recompute_a_verdict():
 
 # --- price grid ----------------------------------------------------------------------------------------
 
-def test_haiku_4_5_rates_agree_with_the_existing_grid():
-    old = next(e for e in load_price_grid(PRICE_GRID_PATH)["entries"] if e["model"] == "haiku-4.5")["rates"]
-    new = cb.price_for(cb.load_grid(), "claude", "claude-haiku-4-5-20251001", "2026-10-07")["rates"]
-    assert (new["input"], new["cache_read"], new["cache_write_5m"], new["output"]) == (
-        Decimal(str(old["input"])), Decimal(str(old["cached_input"])), Decimal(str(old["cache_write_input"])),
-        Decimal(str(old["output"])))
+def test_haiku_4_5_stays_priced_only_by_the_existing_grid():
+    """FOUNDRY-ADR-0015 refuses overlapping windows for a host/model: the new grid does not repeat Haiku 4.5."""
+    assert cb.price_for(cb.load_grid(), "claude", "claude-haiku-4-5-20251001", "2026-10-07") is None
+    assert cb.price_for(cb.load_grid(), "claude", "claude-haiku-4-5", "2026-10-07") is None
+    assert any(e["model"] == "haiku-4.5" for e in load_price_grid(PRICE_GRID_PATH)["entries"])
 
 
 def test_existing_pricing_grid_is_untouched_and_has_no_5_5_entry():
@@ -258,7 +283,7 @@ def test_exploration_counts_and_tokens_with_exact_per_call_output(tmp_path):
     assert out["explore_only_calls"]["tokens"] == {"input_tokens": 2, "cached_input_tokens": 100,
                                                    "cache_write_input_tokens": 20, "output_tokens": 100}
     assert out["explore_only_calls"]["of_which_first_call_of_session"]["cache_write_input_tokens"] == 20
-    assert out["explore_only_calls"]["output_unattributed_upper_slack_tokens"] == 0
+    assert out["explore_only_calls"]["output_unattributed_slack_tokens"] == 0
     assert out["sessions_with_exact_per_call_output"] == 1 and out["sessions_input_side_equal_to_final_result"] == 1
     assert out["cache_write_split_tokens"] == {"ephemeral_5m": 0, "ephemeral_1h": 30}
     assert out["host_list_cost_usd"] == 0.5
@@ -270,7 +295,7 @@ def test_without_exact_logs_the_output_is_bounded_not_estimated(tmp_path):
     out = cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp")["A"]["implementer"]
     assert out["sessions_with_exact_per_call_output"] == 0
     assert out["explore_only_calls"]["tokens"]["output_tokens"] == 5  # the stream's own (partial) figure
-    assert out["explore_only_calls"]["output_unattributed_upper_slack_tokens"] == 400 - (5 + 3 + 20)
+    assert out["explore_only_calls"]["output_unattributed_slack_tokens"] == 400 - (5 + 3 + 20)
     assert out["explore_only_calls"]["weighted_with_output_slack"]["status"] == "priced"
 
 
@@ -286,6 +311,79 @@ def test_a_transcript_without_a_result_is_refused(tmp_path):
     records = [_record("A", 1, {"implementer": _tok(c=1)}, {"claude-sonnet-5-5": _tok(c=1)})]
     with pytest.raises(cb.BreakdownError, match="result"):
         cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp")
+
+
+def test_pairing_is_by_message_id_and_a_mismatch_is_unavailable_not_approximated(tmp_path):
+    streams, logs = _session_fixture(tmp_path, True)
+    log = logs / "proj" / "s1.jsonl"
+    # same count and same total, but another id in the host log: a positional pairing would accept it
+    log.write_text(log.read_text().replace('"m2"', '"other"'))
+    records = [_record("A", 1, {"implementer": _tok(6, 300, 30, 400)}, {"claude-sonnet-5-5": _tok(6, 300, 30, 400)})]
+    out = cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp", logs)["A"]["implementer"]
+    assert out["explore_only_calls"] == {"status": "unavailable", "reasons": {"output_pairing": 1}}
+    assert out["sessions_with_exact_per_call_output"] == 0
+    assert out["tool_calls"]["exploration"] == 1  # the counts need no host log
+
+
+def test_host_log_reader_extracts_only_ids_and_output_counters(tmp_path):
+    _, logs = _session_fixture(tmp_path, True)
+    assert cb.read_host_usage(logs / "proj" / "s1.jsonl") == {"m1": 100, "m2": 200, "m3": 100}
+
+
+def test_absent_control_fields_stay_unknown(tmp_path):
+    streams, logs = _session_fixture(tmp_path, True)
+    path = streams / "camp-s1.jsonl"
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    result = events[-1]
+    del result["total_cost_usd"]
+    del result["usage"]["cache_creation"]
+    del result["usage"]["cache_read_input_tokens"]
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    records = [_record("A", 1, {"implementer": _tok(6, 300, 30, 400)}, {"claude-sonnet-5-5": _tok(6, 300, 30, 400)})]
+    out = cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp", logs)["A"]["implementer"]
+    assert out["host_list_cost_usd"] is None
+    assert out["cache_write_split_tokens"] == {"ephemeral_5m": None, "ephemeral_1h": None}
+    assert out["sessions_input_side_check_unavailable"] == 1 and out["sessions_input_side_equal_to_final_result"] == 0
+
+
+def test_an_absent_per_call_counter_makes_the_role_unavailable(tmp_path):
+    streams, _ = _session_fixture(tmp_path, False)
+    path = streams / "camp-s1.jsonl"
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    del events[2]["message"]["usage"]["cache_read_input_tokens"]
+    path.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    records = [_record("A", 1, {"implementer": _tok(6, 300, 30, 400)}, {"claude-sonnet-5-5": _tok(6, 300, 30, 400)})]
+    out = cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp")["A"]["implementer"]
+    assert out["explore_only_calls"]["status"] == "unavailable"
+
+
+def test_a_sensitivity_replaces_one_rate_and_leaves_the_main_reading_alone(tmp_path):
+    name = "x5compare-1"
+    args = dict(report=RUNS / name / f"report-pat-19-{name}.json")
+    plain = cb.analyse(RUNS / name / f"results-pat-19-{name}.jsonl", **args)
+    sens = cb.analyse(RUNS / name / f"results-pat-19-{name}.jsonl", overrides=["claude-sonnet-5-5:cache_read=0.20"], **args)
+    assert sens["arms"] == plain["arms"]
+    low = sens["sensitivity"]["arms"]["A"]["weighted"]["total_usd"]["cache_write_all_1h"]
+    assert low > plain["arms"]["A"]["weighted"]["total_usd"]["cache_write_all_1h"]
+    assert sens["sensitivity"]["paired_reading"]["weighted_ratio_L_over_A_per_accepted"]["cache_write_all_1h"] < 1.02
+    with pytest.raises(cb.BreakdownError):
+        cb.apply_override(cb.load_grid(), "claude-nothing:cache_read=1")
+    with pytest.raises(cb.BreakdownError):
+        cb.apply_override(cb.load_grid(), "bad")
+
+
+def test_the_price_basis_is_in_the_output():
+    name = "x5compare-1"
+    doc = cb.analyse(RUNS / name / f"results-pat-19-{name}.jsonl")
+    assert all("assumed" in e["effective_from_basis"].lower() or "ASSUMED" in e["effective_from_basis"]
+               for e in doc["price_grid"]["entries"])
+
+
+def test_cli_error_message_never_prints_a_path(tmp_path, capsys):
+    missing = tmp_path / "secret-operator-dir" / "results-x.jsonl"
+    assert cb.main(["--results", str(missing)]) == 2
+    err = capsys.readouterr().err
+    assert "secret-operator-dir" not in err and str(tmp_path) not in err
 
 
 # --- CLI ---------------------------------------------------------------------------------------------------
