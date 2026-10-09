@@ -7,6 +7,7 @@ import io
 import json
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +16,9 @@ import pytest
 from foundry import claude_profile_trial as trial
 from foundry import routing
 from foundry.effort_policy import scope_for
-from foundry.routing import ModelTarget, RoutingConfigError, RoutingPolicy, UserRouteRequest
+from foundry.routing import (
+    ModelTarget, RoutingConfigError, RoutingPolicy, RoutingUnavailableError, UserRouteRequest,
+)
 from foundry.routing_facades import (
     CLAUDE_MODEL_MIN_HOST_VERSION, claude_headless_host_version_requirement, claude_host_version,
     claude_invocation_model,
@@ -49,6 +52,15 @@ def _route(root, *, host_version=None, environ=None, prompt=PACKET, role="scout"
     updated, context = hook.route_tool_input({"subagent_type": f"foundry:{role}", "prompt": prompt},
                                              cwd=root, environ=environ or {}, host_version=host_version, **kw)
     return updated, json.loads(context.removeprefix("Foundry Claude route: "))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_from_an_enclosing_repository(tmp_path, monkeypatch):
+    """Keep these tests valid when pytest's ``tmp_path`` itself lies under a git repository."""
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    monkeypatch.setattr(trial, "_inside_repository", lambda work: any(
+        (parent / ".git").exists() for parent in (work, *work.parents)
+        if parent == tmp_path or tmp_path in parent.parents))
 
 
 @pytest.fixture
@@ -499,3 +511,89 @@ def test_a_headless_launch_of_the_shipped_default_obeys_the_version_rule(tmp_pat
     with pytest.warns(RuntimeWarning, match="CLAUDE_HOST_VERSION_UNOBSERVED"):
         assert claude_headless_host_version_requirement(
             wire, "claude", runner=_version_runner(FileNotFoundError("claude"), []), env={})["status"] == "unknown"
+
+
+# ------------------------------------------------------------------ breaking shapes of the promotion (review)
+
+def test_an_availability_list_without_haiku_55_refuses_the_economy_tier_even_on_a_conforming_host(tmp_path, promoted):
+    """BREAKING: the list documented before PAT-125 names ``haiku-4.5``; the fix is to add ``haiku-5.5``."""
+    former = {"FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku-4.5,sonnet-5.5,opus-5.5"}
+    with pytest.raises(RoutingUnavailableError) as error:
+        _route(tmp_path, host_version="2.1.294", environ=former)
+    assert "Aucun modèle disponible pour le rôle 'scout' sur claude" in str(error.value)
+    assert "Niveaux inférieurs essayés : economy" in str(error.value)
+    # no substitution by the listed Haiku 4.5; a non-gate downward fallback ends the same way
+    with pytest.raises(RoutingUnavailableError, match="essayés : balanced, economy"):
+        _route(tmp_path, host_version="2.1.294", role="implementer",
+               environ={"FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku-4.5,opus-5.5"})
+    fixed = {"FOUNDRY_CLAUDE_AVAILABLE_MODELS": "haiku-5.5,sonnet-5.5,opus-5.5"}
+    assert _route(tmp_path, host_version="2.1.294", environ=fixed)[0]["subagent_type"] == (
+        "foundry:routed-readonly-medium-haiku-5.5")
+
+
+def test_an_effort_only_economy_override_now_applies_to_haiku_55(tmp_path, promoted):
+    """BREAKING: ``{"effort": "low"}`` used to mean Haiku 4.5 without effort; ``{"effort": null}`` used to pass."""
+    _config(tmp_path, {"effort": "low"})
+    updated, visible = _route(tmp_path, host_version="2.1.294")
+    assert updated["subagent_type"] == "foundry:routed-readonly-low-haiku-5.5"  # declared, not qualified
+    assert (visible["model"], visible["effort"], visible["sources"]["model"], visible["sources"]["effort"]) == (
+        "haiku-5.5", "low", "default", "project")
+    _config(tmp_path, {"effort": None})
+    with pytest.raises(RoutingConfigError, match="effort null réservé à Haiku 4.5 ; pour 'haiku-5.5'"):
+        _route(tmp_path, host_version="2.1.294")
+
+
+@pytest.mark.parametrize("economy,request_effort,source,fix", [
+    ({"model": "haiku-4.5"}, None, "default", '"effort": null dans mappings.claude.economy'),
+    ({"model": "haiku-4.5", "effort": "high"}, None, "project", "remplacez cet effort par null dans mappings.claude.economy"),
+    ({"model": "haiku-4.5", "effort": None}, "low", "user", "retirez l'effort de la demande utilisateur"),
+])
+def test_the_haiku_45_effort_refusal_names_the_fix_of_its_own_source(tmp_path, economy, request_effort, source, fix):
+    _config(tmp_path, economy)
+    user = UserRouteRequest(effort=request_effort) if request_effort else None
+    with pytest.raises(RoutingConfigError) as error:
+        RoutingPolicy.load(tmp_path).resolve("scout", "claude", user=user)
+    message = str(error.value)
+    assert f"source : {source}" in message and fix in message
+    if source == "user":
+        assert "écrivez explicitement" not in message and "remplacez" not in message
+
+
+def test_the_hook_refusal_mentions_a_resumed_session_and_the_headless_one_does_not(tmp_path):
+    _config(tmp_path, {"model": "haiku-5.5", "effort": "medium"})
+    with pytest.raises(RoutingConfigError, match="session REPRISE.*démarrez une nouvelle session"):
+        _route(tmp_path, host_version="2.1.292")
+    with pytest.raises(RoutingConfigError) as error:
+        claude_headless_host_version_requirement(
+            "claude-haiku-5-5", "claude", runner=_version_runner((0, "2.1.292 (Claude Code)"), []), env={})
+    assert "session" not in str(error.value)
+
+
+def test_a_dated_snapshot_of_the_haiku_55_line_carries_the_same_minimum_in_a_headless_launch():
+    dated = "claude-haiku-5-5-20261007"
+    with pytest.raises(RoutingConfigError, match=r"claude-haiku-5-5-20261007.*2\.1\.293 ou supérieur requis"):
+        claude_headless_host_version_requirement(
+            dated, "claude", runner=_version_runner((0, "2.1.292 (Claude Code)"), []), env={})
+    assert claude_headless_host_version_requirement(
+        dated, "claude", runner=_version_runner((0, "2.1.293 (Claude Code)"), []), env={})["status"] == "conforming"
+    calls = []
+    for other in ("claude-haiku-5-5-preview", "claude-haiku-5-50", "claude-haiku-4-5-20251001", "xclaude-haiku-5-5"):
+        assert claude_headless_host_version_requirement(
+            other, "claude", runner=_version_runner((0, "2.1.1 (Claude Code)"), calls), env={}) is None
+    assert calls == []
+
+
+def test_the_unobserved_version_warning_is_shown_at_every_headless_launch():
+    runner = _version_runner(FileNotFoundError("claude"), [])
+    with warnings.catch_warnings(record=True) as shown:
+        warnings.simplefilter("default")  # Python's default: once per location
+        for _ in range(3):
+            claude_headless_host_version_requirement("claude-haiku-5-5", "claude", runner=runner, env={})
+    assert [str(w.message).split(" ")[0] for w in shown] == ["CLAUDE_HOST_VERSION_UNOBSERVED"] * 3
+
+
+def test_a_single_record_larger_than_the_tail_leaves_the_version_unknown(tmp_path):
+    path = tmp_path / "session.jsonl"
+    path.write_text(json.dumps({"version": "2.1.294"}) + "\n"
+                    + json.dumps({"type": "user", "version": "2.1.294", "pad": "x" * (1 << 20)}))
+    assert claude_host_version(path) is None

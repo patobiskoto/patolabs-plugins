@@ -498,11 +498,15 @@ class RoutingPolicy:
             haiku = host == "claude" and effective_model in ("haiku-4.5", "claude-haiku-4-5", "haiku", "haiku-4.5-20251001", "claude-haiku-4-5-20251001")
             if haiku:
                 if target.effort not in (None, "low") or user.effort is not None:
+                    fix = {
+                        "user": "retirez l'effort de la demande utilisateur (ce modèle n'en accepte "
+                                f"aucun) ; mappings.claude.{tier} doit porter \"effort\": null",
+                        "project": f"remplacez cet effort par null dans mappings.claude.{tier}",
+                    }.get(sources["effort"],
+                          f"écrivez explicitement \"effort\": null dans mappings.claude.{tier}")
                     raise RoutingConfigError(
                         f"Haiku 4.5 : effort rejeté, non applicable (reçu : '{target.effort}', "
-                        f"source : {sources['effort']}) ; écrivez "
-                        f"explicitement \"effort\": null dans mappings.claude.{tier}, "
-                        "sans effort utilisateur."
+                        f"source : {sources['effort']}) ; {fix}."
                     )
                 if role in GATE_EFFORT_FLOORS:
                     raise RoutingConfigError("Haiku sans effort ne satisfait pas le plancher du gate.")

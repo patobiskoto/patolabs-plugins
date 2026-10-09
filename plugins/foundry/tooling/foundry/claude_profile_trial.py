@@ -1,6 +1,10 @@
-"""PAT-125: the ONE bounded native compatibility trial of the ``haiku-5.5`` / ``medium`` profile (PAT-ADR-0016).
+"""PAT-125: a bounded native compatibility trial of the ``haiku-5.5`` / ``medium`` profile (PAT-ADR-0016).
 
-Run once, by hand, on the maintainer's machine, by the coordinator; never by the tests. One ``claude -p`` parent
+PAT-ADR-0016 authorises ONE trial and no other without a new maintainer decision; two were run on 2026-10-09, the
+second under such a decision. The tool enforces only what it can see: a run is refused when its work directory or
+its result file already exists, so it blocks a replay by path, not a new run with new paths; whether a run is
+authorised is the operator's responsibility. Each run is by hand, on the maintainer's machine, by the coordinator;
+never by the tests. One ``claude -p`` parent
 loads the Foundry plugin of THIS checkout (``--plugin-dir``, the source mode of the PAT-16 trials), delegates once to
 the logical scout ``foundry:lupin`` from an isolated fixture whose project policy maps ``economy`` to ``haiku-5.5`` /
 ``medium``, and is killed after twenty minutes. The tool then reads the stream and the host's own session logs and
@@ -239,11 +243,15 @@ def _head() -> dict[str, Any]:
     return {"commit": git("rev-parse", "HEAD"), "dirty": None if status is None else bool(status)}
 
 
+def _inside_repository(work: Path) -> bool:
+    return any((parent / ".git").exists() for parent in (work, *work.parents))
+
+
 def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt.date | None = None) -> int:
     work, out = Path(args.work_dir).expanduser().resolve(), Path(args.out).expanduser().resolve()
     if work.exists() or out.exists():
         raise TrialError("the work directory and the result file must not exist: the trial is never replayed")
-    if any((parent / ".git").exists() for parent in (work, *work.parents)):
+    if _inside_repository(work):
         raise TrialError("the work directory must be outside any git repository: the fixture carries its own policy")
     neutral = bool(getattr(args, "neutral_fixture", False))
     token = f"marqueur-de-fixture-{secrets.randbelow(10**8):08d}" if neutral else f"PAT125-{secrets.token_hex(8)}"

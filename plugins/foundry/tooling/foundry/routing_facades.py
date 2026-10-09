@@ -936,7 +936,8 @@ def claude_host_version(transcript_path) -> str | None:
     ``version`` of the host that wrote them. The environment is not a source: a
     host started from another host's shell inherits that other host's variables.
     Only the top-level ``version`` of the last versioned record in a bounded tail
-    is read; nothing else is parsed or kept. ``None`` means unknown, never conforming.
+    is read; nothing else is parsed or kept. ``None`` means unknown, never conforming
+    (also when one record alone is larger than the tail: no complete line is left).
     """
     try:
         with open(transcript_path, "rb") as handle:
@@ -958,11 +959,20 @@ def claude_host_version(transcript_path) -> str | None:
     return None
 
 
-def claude_host_version_requirement(invocation_model: str, host_version: str | None) -> dict | None:
+def _claude_minimum_host_version(invocation_model: str) -> tuple[int, ...] | None:
+    """Minimum of a declared pin; a dated snapshot ``<wire>-YYYYMMDD`` of its line carries it too."""
+    for canonical, wire, _ in _CLAUDE_MODEL_DECLARATION:
+        if canonical in CLAUDE_MODEL_MIN_HOST_VERSION and isinstance(invocation_model, str) and (
+                invocation_model == wire or re.fullmatch(re.escape(wire) + r"-\d{8}", invocation_model)):
+            return CLAUDE_MODEL_MIN_HOST_VERSION[canonical]
+    return None
+
+
+def claude_host_version_requirement(
+    invocation_model: str, host_version: str | None, *, from_transcript: bool = False,
+) -> dict | None:
     """Fail closed below a pin's minimum host version; an unobserved version stays unknown."""
-    canonical = next((canonical for canonical, wire, _ in _CLAUDE_MODEL_DECLARATION
-                      if wire == invocation_model), None)
-    minimum = CLAUDE_MODEL_MIN_HOST_VERSION.get(canonical)
+    minimum = _claude_minimum_host_version(invocation_model)
     if minimum is None:
         return None
     required = ".".join(str(part) for part in minimum)
@@ -975,6 +985,8 @@ def claude_host_version_requirement(invocation_model: str, host_version: str | N
             f"(version hôte observée : {host_version}). Mettez à jour Claude Code, ou choisissez "
             "explicitement un autre modèle dans le mapping projet (retour à Haiku 4.5 : "
             '{"model": "haiku-4.5", "effort": null}). Aucun repli automatique.'
+            + (" Après une mise à jour de l'hôte, une session REPRISE peut encore porter l'ancienne "
+               "version dans son transcript : démarrez une nouvelle session." if from_transcript else "")
         )
     return {"required": required, "observed": host_version, "status": "conforming"}
 
@@ -987,7 +999,8 @@ def claude_headless_host_version_requirement(
     Only a model that declares a minimum costs a call: ``<binary> --version``, local and
     unpaid, through the same runner and environment as the launch so the same binary
     answers. Below the minimum this raises like the hook; an unreadable answer is
-    ``unknown``: the launch stays allowed and a ``RuntimeWarning`` says so.
+    ``unknown``: the launch stays allowed and a ``RuntimeWarning`` says so, at EVERY
+    launch (the default once-per-location filter would hide it in a long-lived worker).
     """
     if claude_host_version_requirement(invocation_model, None) is None:
         return None
@@ -1001,11 +1014,13 @@ def claude_headless_host_version_requirement(
         observed = None
     requirement = claude_host_version_requirement(invocation_model, observed.group(1) if observed else None)
     if requirement["status"] == "unknown":
-        warnings.warn(
-            f"CLAUDE_HOST_VERSION_UNOBSERVED : version de '{binary}' non observée ; minimum requis "
-            f"{requirement['required']} pour '{invocation_model}' non vérifié, jamais présumé conforme.",
-            RuntimeWarning, stacklevel=2,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("always", RuntimeWarning)
+            warnings.warn(
+                f"CLAUDE_HOST_VERSION_UNOBSERVED : version de '{binary}' non observée ; minimum requis "
+                f"{requirement['required']} pour '{invocation_model}' non vérifié, jamais présumé conforme.",
+                RuntimeWarning, stacklevel=2,
+            )
     return requirement
 
 
@@ -1020,7 +1035,7 @@ def claude_invocation_binding(
         return {"profile": f"routed-{capability}-{effort or 'none'}",
                 "agent_model": model, "transmitted_model": model, "host_version": None,
                 "model_source": "agent_input", "effort_parameters": effort_parameters}
-    version_requirement = claude_host_version_requirement(model, host_version)
+    version_requirement = claude_host_version_requirement(model, host_version, from_transcript=True)
     name, expected = claude_pin_profile_text(model, capability, effort, plugin_root=plugin_root)
     try:
         actual = (Path(plugin_root) / "agents" / f"{name}.md").read_text(encoding="utf-8")

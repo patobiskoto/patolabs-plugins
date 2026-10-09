@@ -59,6 +59,22 @@ conséquence : un mapping projet `economy` qui ne nomme que le modèle hérite d
 `medium` ; pour `haiku-4.5` ou l'alias `haiku`, comme pour une demande directe de ces
 modèles, il faut un tier dont l'effort est écrit `null`.
 
+Deux autres ruptures, relevées en revue :
+
+- Liste de disponibilité sans `haiku-5.5` : avec
+  `FOUNDRY_CLAUDE_AVAILABLE_MODELS=haiku-4.5,sonnet-5.5,opus-5.5` (l'exemple documenté
+  avant PAT-125), la cible du tier `economy` est hors liste. Le scout est refusé, même
+  sur un hôte conforme, avec « Aucun modèle disponible pour le rôle 'scout' sur claude.
+  Niveaux inférieurs essayés : economy. », et tout fallback descendant d'un rôle
+  non-gate finit de même ; le Haiku 4.5 listé n'est jamais substitué. Correction :
+  ajouter `haiku-5.5` à la liste. Cette variable n'est pas définie sur la machine du
+  mainteneur (fait rapporté par le coordinateur).
+- Mapping projet `economy` qui ne nomme que l'effort : `{"effort": "low"}` donnait Haiku
+  4.5 sans effort et donne maintenant `haiku-5.5` / `low`, profil déclaré mais non
+  qualifié, sans avertissement ; `{"effort": null}` passait et est maintenant refusé
+  (« effort null réservé à Haiku 4.5 »). Correction : nommer aussi le modèle, ou retirer
+  la surcharge.
+
 ## Essais natifs de compatibilité
 
 PAT-ADR-0016 autorise, avant le changement du défaut, UN essai borné sur la machine du
@@ -189,7 +205,9 @@ essai ». C'est la « nouvelle décision » que PAT-ADR-0016 exige pour tout ess
 supplémentaire. Un second essai a donc été lancé parce que le mainteneur l'a décidé, et
 pour cette seule raison ; le premier verdict n'est ni effacé, ni corrigé, ni
 réinterprété. Le mainteneur a aussi demandé ce jour-là pourquoi l'effort `medium` : il
-lui a été répondu que c'est le défaut du fournisseur, pas un choix mesuré. L'effort
+lui a été répondu que c'est le défaut du fournisseur, pas un choix mesuré. Il a alors
+confirmé l'effort : « Médium très bien ». C'est la confirmation que le critère
+d'acceptation de PAT-125 demandait (« valeur à confirmer par le mainteneur »). L'effort
 reste `medium`, non mesuré.
 
 ### Second essai : verdict `conforming`
@@ -222,7 +240,14 @@ dépôt.
   checkout ; le modèle exécuté observé est `claude-haiku-5-5` ; l'effort observé est
   `medium` ; la version de l'hôte (2.1.294) a été observée par le crochet lui-même,
   conforme au minimum.
-- Établi au second essai seulement : l'aller-retour de la fixture.
+- Établi au second essai seulement, et précisément : le marqueur figure dans la réponse
+  finale du parent. L'outil contrôle le texte du dernier événement `result`, et les
+  outils du parent ne sont pas filtrés : ce n'est donc pas strictement la preuve que la
+  valeur a transité par l'enfant.
+- Non isolé : la variante neutre change deux choses à la fois, le nom donné à la valeur
+  et la consigne d'attendre l'agent. La cause de la première divergence n'est donc pas
+  isolée par le second essai. Les observations de profil, de modèle, d'effort et de
+  version d'hôte ne dépendent pas de la fixture.
 - Non affirmé : aucun gain mesuré de qualité ou de coût, aucune économie de facture ou
   de quota. L'effort `medium` n'est pas mesuré. Deux lancements de quelques secondes
   sont une fumée de compatibilité, rien de plus. Le risque de coût connu demeure :
