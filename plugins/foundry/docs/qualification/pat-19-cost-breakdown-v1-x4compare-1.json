@@ -1,0 +1,2823 @@
+{
+  "arms": {
+    "A": {
+      "by_class": {
+        "cache_read": {
+          "tokens": 3659056,
+          "weighted_usd": 0.406186
+        },
+        "cache_write": {
+          "tokens": 392149,
+          "weighted_usd": {
+            "all_1h": 1.828608,
+            "all_5m": 1.14288
+          }
+        },
+        "input": {
+          "tokens": 390,
+          "weighted_usd": 0.000856
+        },
+        "output": {
+          "tokens": 83102,
+          "weighted_usd": 1.02191
+        },
+        "reasoning_output_visible": {
+          "note": "a subset of output, not an extra class",
+          "tokens": 21293
+        }
+      },
+      "by_model": {
+        "claude-opus-5-5": {
+          "tokens": {
+            "billing_total": 486939,
+            "cache_write_input_tokens": 65003,
+            "cached_input_tokens": 402809,
+            "input_tokens": 38,
+            "output_tokens": 19089,
+            "reasoning_output_tokens": 6109
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.520024,
+              "all_5m": 0.325015
+            },
+            "cached_input_usd": 0.080562,
+            "input_usd": 0.000152,
+            "output_usd": 0.38178,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.982518,
+              "cache_write_all_5m": 0.787509
+            }
+          }
+        },
+        "claude-sonnet-5-5": {
+          "tokens": {
+            "billing_total": 3647758,
+            "cache_write_input_tokens": 327146,
+            "cached_input_tokens": 3256247,
+            "input_tokens": 352,
+            "output_tokens": 64013,
+            "reasoning_output_tokens": 15184
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 1.308584,
+              "all_5m": 0.817865
+            },
+            "cached_input_usd": 0.325625,
+            "input_usd": 0.000704,
+            "output_usd": 0.64013,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 2.275043,
+              "cache_write_all_5m": 1.784324
+            }
+          }
+        }
+      },
+      "by_role": {
+        "corrector": {
+          "token_share": 0.382353,
+          "tokens": {
+            "billing_total": 1580914,
+            "cache_write_input_tokens": 159837,
+            "cached_input_tokens": 1389894,
+            "input_tokens": 176,
+            "output_tokens": 31007,
+            "reasoning_output_tokens": 9926
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.639348,
+              "all_5m": 0.399592
+            },
+            "cached_input_usd": 0.138989,
+            "input_usd": 0.000352,
+            "output_usd": 0.31007,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 1.088759,
+              "cache_write_all_5m": 0.849004
+            }
+          },
+          "weighted_share": {
+            "cache_write_all_1h": 0.334225,
+            "cache_write_all_5m": 0.330116
+          }
+        },
+        "explorer": {
+          "note": "0 local exploration record(s); local tokens are not premium tokens and are not counted (no premium token recorded)",
+          "tokens": {
+            "billing_total": 0,
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "weighted": null
+        },
+        "implementer": {
+          "token_share": 0.499878,
+          "tokens": {
+            "billing_total": 2066844,
+            "cache_write_input_tokens": 167309,
+            "cached_input_tokens": 1866353,
+            "input_tokens": 176,
+            "output_tokens": 33006,
+            "reasoning_output_tokens": 5258
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.669236,
+              "all_5m": 0.418272
+            },
+            "cached_input_usd": 0.186635,
+            "input_usd": 0.000352,
+            "output_usd": 0.33006,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 1.186283,
+              "cache_write_all_5m": 0.93532
+            }
+          },
+          "weighted_share": {
+            "cache_write_all_1h": 0.364163,
+            "cache_write_all_5m": 0.363678
+          }
+        },
+        "reviewer": {
+          "token_share": 0.117769,
+          "tokens": {
+            "billing_total": 486939,
+            "cache_write_input_tokens": 65003,
+            "cached_input_tokens": 402809,
+            "input_tokens": 38,
+            "output_tokens": 19089,
+            "reasoning_output_tokens": 6109
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.520024,
+              "all_5m": 0.325015
+            },
+            "cached_input_usd": 0.080562,
+            "input_usd": 0.000152,
+            "output_usd": 0.38178,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.982518,
+              "cache_write_all_5m": 0.787509
+            }
+          },
+          "weighted_share": {
+            "cache_write_all_1h": 0.301612,
+            "cache_write_all_5m": 0.306205
+          }
+        }
+      },
+      "records": 14,
+      "tokens": {
+        "billing_total": 4134697,
+        "cache_write_input_tokens": 392149,
+        "cached_input_tokens": 3659056,
+        "input_tokens": 390,
+        "output_tokens": 83102,
+        "reasoning_output_tokens": 21293
+      },
+      "weighted": {
+        "cache_write_usd": {
+          "all_1h": 1.828608,
+          "all_5m": 1.14288
+        },
+        "cached_input_usd": 0.406186,
+        "input_usd": 0.000856,
+        "output_usd": 1.02191,
+        "status": "priced",
+        "total_usd": {
+          "cache_write_all_1h": 3.25756,
+          "cache_write_all_5m": 2.571832
+        }
+      }
+    },
+    "L": {
+      "by_class": {
+        "cache_read": {
+          "tokens": 2454250,
+          "weighted_usd": 0.284514
+        },
+        "cache_write": {
+          "tokens": 344151,
+          "weighted_usd": {
+            "all_1h": 1.697164,
+            "all_5m": 1.060728
+          }
+        },
+        "input": {
+          "tokens": 276,
+          "weighted_usd": 0.000616
+        },
+        "output": {
+          "tokens": 71449,
+          "weighted_usd": 0.90773
+        },
+        "reasoning_output_visible": {
+          "note": "a subset of output, not an extra class",
+          "tokens": 17522
+        }
+      },
+      "by_model": {
+        "claude-opus-5-5": {
+          "tokens": {
+            "billing_total": 490385,
+            "cache_write_input_tokens": 80140,
+            "cached_input_tokens": 390889,
+            "input_tokens": 32,
+            "output_tokens": 19324,
+            "reasoning_output_tokens": 5511
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.64112,
+              "all_5m": 0.4007
+            },
+            "cached_input_usd": 0.078178,
+            "input_usd": 0.000128,
+            "output_usd": 0.38648,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 1.105906,
+              "cache_write_all_5m": 0.865486
+            }
+          }
+        },
+        "claude-sonnet-5-5": {
+          "tokens": {
+            "billing_total": 2379741,
+            "cache_write_input_tokens": 264011,
+            "cached_input_tokens": 2063361,
+            "input_tokens": 244,
+            "output_tokens": 52125,
+            "reasoning_output_tokens": 12011
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 1.056044,
+              "all_5m": 0.660028
+            },
+            "cached_input_usd": 0.206336,
+            "input_usd": 0.000488,
+            "output_usd": 0.52125,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 1.784118,
+              "cache_write_all_5m": 1.388102
+            }
+          }
+        }
+      },
+      "by_role": {
+        "corrector": {
+          "token_share": 0.457664,
+          "tokens": {
+            "billing_total": 1313554,
+            "cache_write_input_tokens": 145693,
+            "cached_input_tokens": 1138796,
+            "input_tokens": 142,
+            "output_tokens": 28923,
+            "reasoning_output_tokens": 7943
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.582772,
+              "all_5m": 0.364232
+            },
+            "cached_input_usd": 0.11388,
+            "input_usd": 0.000284,
+            "output_usd": 0.28923,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.986166,
+              "cache_write_all_5m": 0.767626
+            }
+          },
+          "weighted_share": {
+            "cache_write_all_1h": 0.341231,
+            "cache_write_all_5m": 0.340624
+          }
+        },
+        "explorer": {
+          "note": "6 local exploration record(s); local tokens are not premium tokens and are not counted (no premium token recorded)",
+          "tokens": {
+            "billing_total": 0,
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "weighted": null
+        },
+        "implementer": {
+          "token_share": 0.371477,
+          "tokens": {
+            "billing_total": 1066187,
+            "cache_write_input_tokens": 118318,
+            "cached_input_tokens": 924565,
+            "input_tokens": 102,
+            "output_tokens": 23202,
+            "reasoning_output_tokens": 4068
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.473272,
+              "all_5m": 0.295795
+            },
+            "cached_input_usd": 0.092456,
+            "input_usd": 0.000204,
+            "output_usd": 0.23202,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.797952,
+              "cache_write_all_5m": 0.620476
+            }
+          },
+          "weighted_share": {
+            "cache_write_all_1h": 0.276106,
+            "cache_write_all_5m": 0.275328
+          }
+        },
+        "reviewer": {
+          "token_share": 0.170858,
+          "tokens": {
+            "billing_total": 490385,
+            "cache_write_input_tokens": 80140,
+            "cached_input_tokens": 390889,
+            "input_tokens": 32,
+            "output_tokens": 19324,
+            "reasoning_output_tokens": 5511
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.64112,
+              "all_5m": 0.4007
+            },
+            "cached_input_usd": 0.078178,
+            "input_usd": 0.000128,
+            "output_usd": 0.38648,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 1.105906,
+              "cache_write_all_5m": 0.865486
+            }
+          },
+          "weighted_share": {
+            "cache_write_all_1h": 0.382663,
+            "cache_write_all_5m": 0.384048
+          }
+        }
+      },
+      "records": 18,
+      "tokens": {
+        "billing_total": 2870126,
+        "cache_write_input_tokens": 344151,
+        "cached_input_tokens": 2454250,
+        "input_tokens": 276,
+        "output_tokens": 71449,
+        "reasoning_output_tokens": 17522
+      },
+      "weighted": {
+        "cache_write_usd": {
+          "all_1h": 1.697164,
+          "all_5m": 1.060728
+        },
+        "cached_input_usd": 0.284514,
+        "input_usd": 0.000616,
+        "output_usd": 0.90773,
+        "status": "priced",
+        "total_usd": {
+          "cache_write_all_1h": 2.890024,
+          "cache_write_all_5m": 2.253587
+        }
+      }
+    }
+  },
+  "campaign_id": "pat-19-x4compare-1",
+  "exploration": {
+    "A": {
+      "corrector": {
+        "api_calls": 88,
+        "api_calls_by_kind": {
+          "action": 40,
+          "explore_only": 40,
+          "no_tool": 8
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 159837,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 622877,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 53533,
+            "cached_input_tokens": 24976,
+            "input_tokens": 16,
+            "output_tokens": 1800
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 93100,
+            "cached_input_tokens": 519227,
+            "input_tokens": 80,
+            "output_tokens": 10470
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.3724,
+              "all_5m": 0.23275
+            },
+            "cached_input_usd": 0.051923,
+            "input_usd": 0.00016,
+            "output_usd": 0.1047,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.529183,
+              "cache_write_all_5m": 0.389533
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.158268,
+              "all_5m": 0.098918
+            },
+            "cached_input_usd": 0.049425,
+            "input_usd": 0.000128,
+            "output_usd": 0.0867,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.294521,
+              "cache_write_all_5m": 0.235171
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 1.227749,
+        "sessions": 8,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 8,
+        "sessions_with_exact_per_call_output": 8,
+        "tool_calls": {
+          "bash_other": 40,
+          "edit": 0,
+          "exploration": 49,
+          "exploration_share": 0.550562,
+          "explore_bash": 31,
+          "explore_read": 18,
+          "explore_search": 0,
+          "other": 0,
+          "total": 89
+        }
+      },
+      "implementer": {
+        "api_calls": 88,
+        "api_calls_by_kind": {
+          "action": 36,
+          "explore_only": 46,
+          "no_tool": 6
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 167309,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 796607,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 38781,
+            "cached_input_tokens": 18732,
+            "input_tokens": 12,
+            "output_tokens": 684
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 108769,
+            "cached_input_tokens": 679034,
+            "input_tokens": 92,
+            "output_tokens": 8712
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.435076,
+              "all_5m": 0.271922
+            },
+            "cached_input_usd": 0.067903,
+            "input_usd": 0.000184,
+            "output_usd": 0.08712,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.590283,
+              "cache_write_all_5m": 0.42713
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.279952,
+              "all_5m": 0.17497
+            },
+            "cached_input_usd": 0.06603,
+            "input_usd": 0.00016,
+            "output_usd": 0.08028,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.426422,
+              "cache_write_all_5m": 0.32144
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 1.372919,
+        "sessions": 6,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 6,
+        "sessions_with_exact_per_call_output": 6,
+        "tool_calls": {
+          "bash_other": 33,
+          "edit": 3,
+          "exploration": 52,
+          "exploration_share": 0.58427,
+          "explore_bash": 36,
+          "explore_read": 16,
+          "explore_search": 0,
+          "other": 1,
+          "total": 89
+        }
+      },
+      "reviewer": {
+        "api_calls": 19,
+        "api_calls_by_kind": {
+          "action": 14,
+          "explore_only": 3,
+          "no_tool": 2
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 65003,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 63869,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 8346,
+            "cached_input_tokens": 53640,
+            "input_tokens": 6,
+            "output_tokens": 1877
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.066768,
+              "all_5m": 0.04173
+            },
+            "cached_input_usd": 0.010728,
+            "input_usd": 2.4e-05,
+            "output_usd": 0.03754,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.11506,
+              "cache_write_all_5m": 0.090022
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.066768,
+              "all_5m": 0.04173
+            },
+            "cached_input_usd": 0.010728,
+            "input_usd": 2.4e-05,
+            "output_usd": 0.03754,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.11506,
+              "cache_write_all_5m": 0.090022
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 0.982518,
+        "sessions": 2,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 2,
+        "sessions_with_exact_per_call_output": 2,
+        "tool_calls": {
+          "bash_other": 13,
+          "edit": 2,
+          "exploration": 5,
+          "exploration_share": 0.25,
+          "explore_bash": 5,
+          "explore_read": 0,
+          "explore_search": 0,
+          "other": 0,
+          "total": 20
+        }
+      }
+    },
+    "L": {
+      "corrector": {
+        "api_calls": 71,
+        "api_calls_by_kind": {
+          "action": 35,
+          "explore_only": 29,
+          "no_tool": 7
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 145693,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 479090,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 47182,
+            "cached_input_tokens": 21854,
+            "input_tokens": 14,
+            "output_tokens": 1575
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 85538,
+            "cached_input_tokens": 386349,
+            "input_tokens": 58,
+            "output_tokens": 7145
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.342152,
+              "all_5m": 0.213845
+            },
+            "cached_input_usd": 0.038635,
+            "input_usd": 0.000116,
+            "output_usd": 0.07145,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.452353,
+              "cache_write_all_5m": 0.324046
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.153424,
+              "all_5m": 0.09589
+            },
+            "cached_input_usd": 0.03645,
+            "input_usd": 8.8e-05,
+            "output_usd": 0.0557,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.245662,
+              "cache_write_all_5m": 0.188128
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 1.100045,
+        "sessions": 7,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 7,
+        "sessions_with_exact_per_call_output": 7,
+        "tool_calls": {
+          "bash_other": 34,
+          "edit": 1,
+          "exploration": 38,
+          "exploration_share": 0.520548,
+          "explore_bash": 18,
+          "explore_read": 20,
+          "explore_search": 0,
+          "other": 0,
+          "total": 73
+        }
+      },
+      "implementer": {
+        "api_calls": 51,
+        "api_calls_by_kind": {
+          "action": 18,
+          "explore_only": 28,
+          "no_tool": 5
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 118318,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 470839,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 32296,
+            "cached_input_tokens": 15610,
+            "input_tokens": 10,
+            "output_tokens": 570
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 81548,
+            "cached_input_tokens": 381145,
+            "input_tokens": 56,
+            "output_tokens": 8090
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.326192,
+              "all_5m": 0.20387
+            },
+            "cached_input_usd": 0.038114,
+            "input_usd": 0.000112,
+            "output_usd": 0.0809,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.445318,
+              "cache_write_all_5m": 0.322996
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.197008,
+              "all_5m": 0.12313
+            },
+            "cached_input_usd": 0.036554,
+            "input_usd": 9.2e-05,
+            "output_usd": 0.0752,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.308854,
+              "cache_write_all_5m": 0.234976
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 0.890409,
+        "sessions": 5,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 5,
+        "sessions_with_exact_per_call_output": 5,
+        "tool_calls": {
+          "bash_other": 18,
+          "edit": 0,
+          "exploration": 34,
+          "exploration_share": 0.653846,
+          "explore_bash": 22,
+          "explore_read": 12,
+          "explore_search": 0,
+          "other": 0,
+          "total": 52
+        }
+      },
+      "reviewer": {
+        "api_calls": 16,
+        "api_calls_by_kind": {
+          "action": 12,
+          "explore_only": 2,
+          "no_tool": 2
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 80140,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 38707,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 11931,
+            "cached_input_tokens": 25161,
+            "input_tokens": 4,
+            "output_tokens": 1611
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.095448,
+              "all_5m": 0.059655
+            },
+            "cached_input_usd": 0.005032,
+            "input_usd": 1.6e-05,
+            "output_usd": 0.03222,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.132716,
+              "cache_write_all_5m": 0.096923
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.095448,
+              "all_5m": 0.059655
+            },
+            "cached_input_usd": 0.005032,
+            "input_usd": 1.6e-05,
+            "output_usd": 0.03222,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.132716,
+              "cache_write_all_5m": 0.096923
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 1.105906,
+        "sessions": 2,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 2,
+        "sessions_with_exact_per_call_output": 2,
+        "tool_calls": {
+          "bash_other": 11,
+          "edit": 2,
+          "exploration": 4,
+          "exploration_share": 0.235294,
+          "explore_bash": 4,
+          "explore_read": 0,
+          "explore_search": 0,
+          "other": 0,
+          "total": 17
+        }
+      }
+    }
+  },
+  "exploration_on_common_tasks": {
+    "A": {
+      "corrector": {
+        "api_calls": 72,
+        "api_calls_by_kind": {
+          "action": 32,
+          "explore_only": 34,
+          "no_tool": 6
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 122058,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 527326,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 40045,
+            "cached_input_tokens": 18732,
+            "input_tokens": 12,
+            "output_tokens": 1350
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 71454,
+            "cached_input_tokens": 446941,
+            "input_tokens": 68,
+            "output_tokens": 8863
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.285816,
+              "all_5m": 0.178635
+            },
+            "cached_input_usd": 0.044694,
+            "input_usd": 0.000136,
+            "output_usd": 0.08863,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.419276,
+              "cache_write_all_5m": 0.312095
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.125636,
+              "all_5m": 0.078522
+            },
+            "cached_input_usd": 0.042821,
+            "input_usd": 0.000112,
+            "output_usd": 0.07513,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.243699,
+              "cache_write_all_5m": 0.196585
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 0.981678,
+        "sessions": 6,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 6,
+        "sessions_with_exact_per_call_output": 6,
+        "tool_calls": {
+          "bash_other": 32,
+          "edit": 0,
+          "exploration": 41,
+          "exploration_share": 0.561644,
+          "explore_bash": 27,
+          "explore_read": 14,
+          "explore_search": 0,
+          "other": 0,
+          "total": 73
+        }
+      },
+      "implementer": {
+        "api_calls": 65,
+        "api_calls_by_kind": {
+          "action": 25,
+          "explore_only": 35,
+          "no_tool": 5
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 133590,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 555276,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 32299,
+            "cached_input_tokens": 15610,
+            "input_tokens": 10,
+            "output_tokens": 570
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 87780,
+            "cached_input_tokens": 460015,
+            "input_tokens": 70,
+            "output_tokens": 7411
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.35112,
+              "all_5m": 0.21945
+            },
+            "cached_input_usd": 0.046002,
+            "input_usd": 0.00014,
+            "output_usd": 0.07411,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.471372,
+              "cache_write_all_5m": 0.339702
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.221924,
+              "all_5m": 0.138702
+            },
+            "cached_input_usd": 0.04444,
+            "input_usd": 0.00012,
+            "output_usd": 0.06841,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.334894,
+              "cache_write_all_5m": 0.251673
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 1.056534,
+        "sessions": 5,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 5,
+        "sessions_with_exact_per_call_output": 5,
+        "tool_calls": {
+          "bash_other": 24,
+          "edit": 1,
+          "exploration": 41,
+          "exploration_share": 0.621212,
+          "explore_bash": 26,
+          "explore_read": 15,
+          "explore_search": 0,
+          "other": 0,
+          "total": 66
+        }
+      },
+      "reviewer": {
+        "api_calls": 19,
+        "api_calls_by_kind": {
+          "action": 14,
+          "explore_only": 3,
+          "no_tool": 2
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 65003,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 63869,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 8346,
+            "cached_input_tokens": 53640,
+            "input_tokens": 6,
+            "output_tokens": 1877
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.066768,
+              "all_5m": 0.04173
+            },
+            "cached_input_usd": 0.010728,
+            "input_usd": 2.4e-05,
+            "output_usd": 0.03754,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.11506,
+              "cache_write_all_5m": 0.090022
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.066768,
+              "all_5m": 0.04173
+            },
+            "cached_input_usd": 0.010728,
+            "input_usd": 2.4e-05,
+            "output_usd": 0.03754,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.11506,
+              "cache_write_all_5m": 0.090022
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 0.982518,
+        "sessions": 2,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 2,
+        "sessions_with_exact_per_call_output": 2,
+        "tool_calls": {
+          "bash_other": 13,
+          "edit": 2,
+          "exploration": 5,
+          "exploration_share": 0.25,
+          "explore_bash": 5,
+          "explore_read": 0,
+          "explore_search": 0,
+          "other": 0,
+          "total": 20
+        }
+      }
+    },
+    "L": {
+      "corrector": {
+        "api_calls": 71,
+        "api_calls_by_kind": {
+          "action": 35,
+          "explore_only": 29,
+          "no_tool": 7
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 145693,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 479090,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 47182,
+            "cached_input_tokens": 21854,
+            "input_tokens": 14,
+            "output_tokens": 1575
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 85538,
+            "cached_input_tokens": 386349,
+            "input_tokens": 58,
+            "output_tokens": 7145
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.342152,
+              "all_5m": 0.213845
+            },
+            "cached_input_usd": 0.038635,
+            "input_usd": 0.000116,
+            "output_usd": 0.07145,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.452353,
+              "cache_write_all_5m": 0.324046
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.153424,
+              "all_5m": 0.09589
+            },
+            "cached_input_usd": 0.03645,
+            "input_usd": 8.8e-05,
+            "output_usd": 0.0557,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.245662,
+              "cache_write_all_5m": 0.188128
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 1.100045,
+        "sessions": 7,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 7,
+        "sessions_with_exact_per_call_output": 7,
+        "tool_calls": {
+          "bash_other": 34,
+          "edit": 1,
+          "exploration": 38,
+          "exploration_share": 0.520548,
+          "explore_bash": 18,
+          "explore_read": 20,
+          "explore_search": 0,
+          "other": 0,
+          "total": 73
+        }
+      },
+      "implementer": {
+        "api_calls": 51,
+        "api_calls_by_kind": {
+          "action": 18,
+          "explore_only": 28,
+          "no_tool": 5
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 118318,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 470839,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 32296,
+            "cached_input_tokens": 15610,
+            "input_tokens": 10,
+            "output_tokens": 570
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 81548,
+            "cached_input_tokens": 381145,
+            "input_tokens": 56,
+            "output_tokens": 8090
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.326192,
+              "all_5m": 0.20387
+            },
+            "cached_input_usd": 0.038114,
+            "input_usd": 0.000112,
+            "output_usd": 0.0809,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.445318,
+              "cache_write_all_5m": 0.322996
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.197008,
+              "all_5m": 0.12313
+            },
+            "cached_input_usd": 0.036554,
+            "input_usd": 9.2e-05,
+            "output_usd": 0.0752,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.308854,
+              "cache_write_all_5m": 0.234976
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 0.890409,
+        "sessions": 5,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 5,
+        "sessions_with_exact_per_call_output": 5,
+        "tool_calls": {
+          "bash_other": 18,
+          "edit": 0,
+          "exploration": 34,
+          "exploration_share": 0.653846,
+          "explore_bash": 22,
+          "explore_read": 12,
+          "explore_search": 0,
+          "other": 0,
+          "total": 52
+        }
+      },
+      "reviewer": {
+        "api_calls": 16,
+        "api_calls_by_kind": {
+          "action": 12,
+          "explore_only": 2,
+          "no_tool": 2
+        },
+        "cache_write_split_tokens": {
+          "ephemeral_1h": 80140,
+          "ephemeral_5m": 0
+        },
+        "explore_only_calls": {
+          "billing_total": 38707,
+          "of_which_first_call_of_session": {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "output_unattributed_slack_tokens": 0,
+          "status": "attributed",
+          "tokens": {
+            "cache_write_input_tokens": 11931,
+            "cached_input_tokens": 25161,
+            "input_tokens": 4,
+            "output_tokens": 1611
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 0.095448,
+              "all_5m": 0.059655
+            },
+            "cached_input_usd": 0.005032,
+            "input_usd": 1.6e-05,
+            "output_usd": 0.03222,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.132716,
+              "cache_write_all_5m": 0.096923
+            }
+          },
+          "weighted_excluding_first_call": {
+            "cache_write_usd": {
+              "all_1h": 0.095448,
+              "all_5m": 0.059655
+            },
+            "cached_input_usd": 0.005032,
+            "input_usd": 1.6e-05,
+            "output_usd": 0.03222,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 0.132716,
+              "cache_write_all_5m": 0.096923
+            }
+          },
+          "weighted_with_output_slack": null
+        },
+        "host_list_cost_usd": 1.105906,
+        "sessions": 2,
+        "sessions_input_side_check_unavailable": 0,
+        "sessions_input_side_equal_to_final_result": 2,
+        "sessions_with_exact_per_call_output": 2,
+        "tool_calls": {
+          "bash_other": 11,
+          "edit": 2,
+          "exploration": 4,
+          "exploration_share": 0.235294,
+          "explore_bash": 4,
+          "explore_read": 0,
+          "explore_search": 0,
+          "other": 0,
+          "total": 17
+        }
+      }
+    }
+  },
+  "price_grid": {
+    "entries": [
+      {
+        "captured_at": "2026-10-08",
+        "effective_from": "2026-10-05",
+        "effective_from_basis": "release date of the 5.5 models not recorded in the repository; effective_from is the earliest date at which the repository records the model in use (PAT-19 campaign notes, 2026-10-05); the price is ASSUMED unchanged between that date and the capture on 2026-10-08 [hypothesis, not verified]",
+        "effective_to": "2026-12-31",
+        "model": "claude-opus-5-5",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+      },
+      {
+        "captured_at": "2026-10-08",
+        "effective_from": "2026-10-05",
+        "effective_from_basis": "release date of the 5.5 models not recorded in the repository; effective_from is the earliest date at which the repository records the model in use (PAT-19 campaign notes, 2026-10-05); the price is ASSUMED unchanged between that date and the capture on 2026-10-08 [hypothesis, not verified]",
+        "effective_to": "2026-12-31",
+        "model": "claude-sonnet-5-5",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+      },
+      {
+        "captured_at": "2026-10-08",
+        "effective_from": "2026-10-05",
+        "effective_from_basis": "release date of the 5.5 models not recorded in the repository; effective_from is the earliest date at which the repository records a 5.5 model in use (2026-10-05); the price is ASSUMED unchanged between that date and the capture on 2026-10-08 [hypothesis, not verified]",
+        "effective_to": "2026-12-31",
+        "model": "claude-haiku-5-5",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing"
+      }
+    ]
+  },
+  "reading": "outside the frozen rule; API list prices are weights under a subscription, never a bill",
+  "schema": "foundry.cost-breakdown.v1",
+  "sensitivity": {
+    "arms": {
+      "A": {
+        "by_class": {
+          "cache_read": {
+            "tokens": 3659056,
+            "weighted_usd": 0.731811
+          },
+          "cache_write": {
+            "tokens": 392149,
+            "weighted_usd": {
+              "all_1h": 1.828608,
+              "all_5m": 1.14288
+            }
+          },
+          "input": {
+            "tokens": 390,
+            "weighted_usd": 0.000856
+          },
+          "output": {
+            "tokens": 83102,
+            "weighted_usd": 1.02191
+          },
+          "reasoning_output_visible": {
+            "note": "a subset of output, not an extra class",
+            "tokens": 21293
+          }
+        },
+        "by_model": {
+          "claude-opus-5-5": {
+            "tokens": {
+              "billing_total": 486939,
+              "cache_write_input_tokens": 65003,
+              "cached_input_tokens": 402809,
+              "input_tokens": 38,
+              "output_tokens": 19089,
+              "reasoning_output_tokens": 6109
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.520024,
+                "all_5m": 0.325015
+              },
+              "cached_input_usd": 0.080562,
+              "input_usd": 0.000152,
+              "output_usd": 0.38178,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.982518,
+                "cache_write_all_5m": 0.787509
+              }
+            }
+          },
+          "claude-sonnet-5-5": {
+            "tokens": {
+              "billing_total": 3647758,
+              "cache_write_input_tokens": 327146,
+              "cached_input_tokens": 3256247,
+              "input_tokens": 352,
+              "output_tokens": 64013,
+              "reasoning_output_tokens": 15184
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 1.308584,
+                "all_5m": 0.817865
+              },
+              "cached_input_usd": 0.651249,
+              "input_usd": 0.000704,
+              "output_usd": 0.64013,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 2.600667,
+                "cache_write_all_5m": 2.109948
+              }
+            }
+          }
+        },
+        "by_role": {
+          "corrector": {
+            "token_share": 0.382353,
+            "tokens": {
+              "billing_total": 1580914,
+              "cache_write_input_tokens": 159837,
+              "cached_input_tokens": 1389894,
+              "input_tokens": 176,
+              "output_tokens": 31007,
+              "reasoning_output_tokens": 9926
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.639348,
+                "all_5m": 0.399592
+              },
+              "cached_input_usd": 0.277979,
+              "input_usd": 0.000352,
+              "output_usd": 0.31007,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 1.227749,
+                "cache_write_all_5m": 0.987993
+              }
+            },
+            "weighted_share": {
+              "cache_write_all_1h": 0.342642,
+              "cache_write_all_5m": 0.340986
+            }
+          },
+          "explorer": {
+            "note": "0 local exploration record(s); local tokens are not premium tokens and are not counted (no premium token recorded)",
+            "tokens": {
+              "billing_total": 0,
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 0,
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "weighted": null
+          },
+          "implementer": {
+            "token_share": 0.499878,
+            "tokens": {
+              "billing_total": 2066844,
+              "cache_write_input_tokens": 167309,
+              "cached_input_tokens": 1866353,
+              "input_tokens": 176,
+              "output_tokens": 33006,
+              "reasoning_output_tokens": 5258
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.669236,
+                "all_5m": 0.418272
+              },
+              "cached_input_usd": 0.373271,
+              "input_usd": 0.000352,
+              "output_usd": 0.33006,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 1.372919,
+                "cache_write_all_5m": 1.121955
+              }
+            },
+            "weighted_share": {
+              "cache_write_all_1h": 0.383156,
+              "cache_write_all_5m": 0.387221
+            }
+          },
+          "reviewer": {
+            "token_share": 0.117769,
+            "tokens": {
+              "billing_total": 486939,
+              "cache_write_input_tokens": 65003,
+              "cached_input_tokens": 402809,
+              "input_tokens": 38,
+              "output_tokens": 19089,
+              "reasoning_output_tokens": 6109
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.520024,
+                "all_5m": 0.325015
+              },
+              "cached_input_usd": 0.080562,
+              "input_usd": 0.000152,
+              "output_usd": 0.38178,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.982518,
+                "cache_write_all_5m": 0.787509
+              }
+            },
+            "weighted_share": {
+              "cache_write_all_1h": 0.274202,
+              "cache_write_all_5m": 0.271793
+            }
+          }
+        },
+        "records": 14,
+        "tokens": {
+          "billing_total": 4134697,
+          "cache_write_input_tokens": 392149,
+          "cached_input_tokens": 3659056,
+          "input_tokens": 390,
+          "output_tokens": 83102,
+          "reasoning_output_tokens": 21293
+        },
+        "weighted": {
+          "cache_write_usd": {
+            "all_1h": 1.828608,
+            "all_5m": 1.14288
+          },
+          "cached_input_usd": 0.731811,
+          "input_usd": 0.000856,
+          "output_usd": 1.02191,
+          "status": "priced",
+          "total_usd": {
+            "cache_write_all_1h": 3.583185,
+            "cache_write_all_5m": 2.897457
+          }
+        }
+      },
+      "L": {
+        "by_class": {
+          "cache_read": {
+            "tokens": 2454250,
+            "weighted_usd": 0.49085
+          },
+          "cache_write": {
+            "tokens": 344151,
+            "weighted_usd": {
+              "all_1h": 1.697164,
+              "all_5m": 1.060728
+            }
+          },
+          "input": {
+            "tokens": 276,
+            "weighted_usd": 0.000616
+          },
+          "output": {
+            "tokens": 71449,
+            "weighted_usd": 0.90773
+          },
+          "reasoning_output_visible": {
+            "note": "a subset of output, not an extra class",
+            "tokens": 17522
+          }
+        },
+        "by_model": {
+          "claude-opus-5-5": {
+            "tokens": {
+              "billing_total": 490385,
+              "cache_write_input_tokens": 80140,
+              "cached_input_tokens": 390889,
+              "input_tokens": 32,
+              "output_tokens": 19324,
+              "reasoning_output_tokens": 5511
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.64112,
+                "all_5m": 0.4007
+              },
+              "cached_input_usd": 0.078178,
+              "input_usd": 0.000128,
+              "output_usd": 0.38648,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 1.105906,
+                "cache_write_all_5m": 0.865486
+              }
+            }
+          },
+          "claude-sonnet-5-5": {
+            "tokens": {
+              "billing_total": 2379741,
+              "cache_write_input_tokens": 264011,
+              "cached_input_tokens": 2063361,
+              "input_tokens": 244,
+              "output_tokens": 52125,
+              "reasoning_output_tokens": 12011
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 1.056044,
+                "all_5m": 0.660028
+              },
+              "cached_input_usd": 0.412672,
+              "input_usd": 0.000488,
+              "output_usd": 0.52125,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 1.990454,
+                "cache_write_all_5m": 1.594438
+              }
+            }
+          }
+        },
+        "by_role": {
+          "corrector": {
+            "token_share": 0.457664,
+            "tokens": {
+              "billing_total": 1313554,
+              "cache_write_input_tokens": 145693,
+              "cached_input_tokens": 1138796,
+              "input_tokens": 142,
+              "output_tokens": 28923,
+              "reasoning_output_tokens": 7943
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.582772,
+                "all_5m": 0.364232
+              },
+              "cached_input_usd": 0.227759,
+              "input_usd": 0.000284,
+              "output_usd": 0.28923,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 1.100045,
+                "cache_write_all_5m": 0.881506
+              }
+            },
+            "weighted_share": {
+              "cache_write_all_1h": 0.35527,
+              "cache_write_all_5m": 0.358347
+            }
+          },
+          "explorer": {
+            "note": "6 local exploration record(s); local tokens are not premium tokens and are not counted (no premium token recorded)",
+            "tokens": {
+              "billing_total": 0,
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 0,
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "reasoning_output_tokens": 0
+            },
+            "weighted": null
+          },
+          "implementer": {
+            "token_share": 0.371477,
+            "tokens": {
+              "billing_total": 1066187,
+              "cache_write_input_tokens": 118318,
+              "cached_input_tokens": 924565,
+              "input_tokens": 102,
+              "output_tokens": 23202,
+              "reasoning_output_tokens": 4068
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.473272,
+                "all_5m": 0.295795
+              },
+              "cached_input_usd": 0.184913,
+              "input_usd": 0.000204,
+              "output_usd": 0.23202,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.890409,
+                "cache_write_all_5m": 0.712932
+              }
+            },
+            "weighted_share": {
+              "cache_write_all_1h": 0.287566,
+              "cache_write_all_5m": 0.289819
+            }
+          },
+          "reviewer": {
+            "token_share": 0.170858,
+            "tokens": {
+              "billing_total": 490385,
+              "cache_write_input_tokens": 80140,
+              "cached_input_tokens": 390889,
+              "input_tokens": 32,
+              "output_tokens": 19324,
+              "reasoning_output_tokens": 5511
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.64112,
+                "all_5m": 0.4007
+              },
+              "cached_input_usd": 0.078178,
+              "input_usd": 0.000128,
+              "output_usd": 0.38648,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 1.105906,
+                "cache_write_all_5m": 0.865486
+              }
+            },
+            "weighted_share": {
+              "cache_write_all_1h": 0.357163,
+              "cache_write_all_5m": 0.351834
+            }
+          }
+        },
+        "records": 18,
+        "tokens": {
+          "billing_total": 2870126,
+          "cache_write_input_tokens": 344151,
+          "cached_input_tokens": 2454250,
+          "input_tokens": 276,
+          "output_tokens": 71449,
+          "reasoning_output_tokens": 17522
+        },
+        "weighted": {
+          "cache_write_usd": {
+            "all_1h": 1.697164,
+            "all_5m": 1.060728
+          },
+          "cached_input_usd": 0.49085,
+          "input_usd": 0.000616,
+          "output_usd": 0.90773,
+          "status": "priced",
+          "total_usd": {
+            "cache_write_all_1h": 3.09636,
+            "cache_write_all_5m": 2.459924
+          }
+        }
+      }
+    },
+    "exploration": {
+      "A": {
+        "corrector": {
+          "api_calls": 88,
+          "api_calls_by_kind": {
+            "action": 40,
+            "explore_only": 40,
+            "no_tool": 8
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 159837,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 622877,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 53533,
+              "cached_input_tokens": 24976,
+              "input_tokens": 16,
+              "output_tokens": 1800
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 93100,
+              "cached_input_tokens": 519227,
+              "input_tokens": 80,
+              "output_tokens": 10470
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.3724,
+                "all_5m": 0.23275
+              },
+              "cached_input_usd": 0.103845,
+              "input_usd": 0.00016,
+              "output_usd": 0.1047,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.581105,
+                "cache_write_all_5m": 0.441455
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.158268,
+                "all_5m": 0.098918
+              },
+              "cached_input_usd": 0.09885,
+              "input_usd": 0.000128,
+              "output_usd": 0.0867,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.343946,
+                "cache_write_all_5m": 0.284596
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 1.227749,
+          "sessions": 8,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 8,
+          "sessions_with_exact_per_call_output": 8,
+          "tool_calls": {
+            "bash_other": 40,
+            "edit": 0,
+            "exploration": 49,
+            "exploration_share": 0.550562,
+            "explore_bash": 31,
+            "explore_read": 18,
+            "explore_search": 0,
+            "other": 0,
+            "total": 89
+          }
+        },
+        "implementer": {
+          "api_calls": 88,
+          "api_calls_by_kind": {
+            "action": 36,
+            "explore_only": 46,
+            "no_tool": 6
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 167309,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 796607,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 38781,
+              "cached_input_tokens": 18732,
+              "input_tokens": 12,
+              "output_tokens": 684
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 108769,
+              "cached_input_tokens": 679034,
+              "input_tokens": 92,
+              "output_tokens": 8712
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.435076,
+                "all_5m": 0.271922
+              },
+              "cached_input_usd": 0.135807,
+              "input_usd": 0.000184,
+              "output_usd": 0.08712,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.658187,
+                "cache_write_all_5m": 0.495033
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.279952,
+                "all_5m": 0.17497
+              },
+              "cached_input_usd": 0.13206,
+              "input_usd": 0.00016,
+              "output_usd": 0.08028,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.492452,
+                "cache_write_all_5m": 0.38747
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 1.372919,
+          "sessions": 6,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 6,
+          "sessions_with_exact_per_call_output": 6,
+          "tool_calls": {
+            "bash_other": 33,
+            "edit": 3,
+            "exploration": 52,
+            "exploration_share": 0.58427,
+            "explore_bash": 36,
+            "explore_read": 16,
+            "explore_search": 0,
+            "other": 1,
+            "total": 89
+          }
+        },
+        "reviewer": {
+          "api_calls": 19,
+          "api_calls_by_kind": {
+            "action": 14,
+            "explore_only": 3,
+            "no_tool": 2
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 65003,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 63869,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 0,
+              "input_tokens": 0,
+              "output_tokens": 0
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 8346,
+              "cached_input_tokens": 53640,
+              "input_tokens": 6,
+              "output_tokens": 1877
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.066768,
+                "all_5m": 0.04173
+              },
+              "cached_input_usd": 0.010728,
+              "input_usd": 2.4e-05,
+              "output_usd": 0.03754,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.11506,
+                "cache_write_all_5m": 0.090022
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.066768,
+                "all_5m": 0.04173
+              },
+              "cached_input_usd": 0.010728,
+              "input_usd": 2.4e-05,
+              "output_usd": 0.03754,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.11506,
+                "cache_write_all_5m": 0.090022
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 0.982518,
+          "sessions": 2,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 2,
+          "sessions_with_exact_per_call_output": 2,
+          "tool_calls": {
+            "bash_other": 13,
+            "edit": 2,
+            "exploration": 5,
+            "exploration_share": 0.25,
+            "explore_bash": 5,
+            "explore_read": 0,
+            "explore_search": 0,
+            "other": 0,
+            "total": 20
+          }
+        }
+      },
+      "L": {
+        "corrector": {
+          "api_calls": 71,
+          "api_calls_by_kind": {
+            "action": 35,
+            "explore_only": 29,
+            "no_tool": 7
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 145693,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 479090,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 47182,
+              "cached_input_tokens": 21854,
+              "input_tokens": 14,
+              "output_tokens": 1575
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 85538,
+              "cached_input_tokens": 386349,
+              "input_tokens": 58,
+              "output_tokens": 7145
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.342152,
+                "all_5m": 0.213845
+              },
+              "cached_input_usd": 0.07727,
+              "input_usd": 0.000116,
+              "output_usd": 0.07145,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.490988,
+                "cache_write_all_5m": 0.362681
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.153424,
+                "all_5m": 0.09589
+              },
+              "cached_input_usd": 0.072899,
+              "input_usd": 8.8e-05,
+              "output_usd": 0.0557,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.282111,
+                "cache_write_all_5m": 0.224577
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 1.100045,
+          "sessions": 7,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 7,
+          "sessions_with_exact_per_call_output": 7,
+          "tool_calls": {
+            "bash_other": 34,
+            "edit": 1,
+            "exploration": 38,
+            "exploration_share": 0.520548,
+            "explore_bash": 18,
+            "explore_read": 20,
+            "explore_search": 0,
+            "other": 0,
+            "total": 73
+          }
+        },
+        "implementer": {
+          "api_calls": 51,
+          "api_calls_by_kind": {
+            "action": 18,
+            "explore_only": 28,
+            "no_tool": 5
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 118318,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 470839,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 32296,
+              "cached_input_tokens": 15610,
+              "input_tokens": 10,
+              "output_tokens": 570
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 81548,
+              "cached_input_tokens": 381145,
+              "input_tokens": 56,
+              "output_tokens": 8090
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.326192,
+                "all_5m": 0.20387
+              },
+              "cached_input_usd": 0.076229,
+              "input_usd": 0.000112,
+              "output_usd": 0.0809,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.483433,
+                "cache_write_all_5m": 0.361111
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.197008,
+                "all_5m": 0.12313
+              },
+              "cached_input_usd": 0.073107,
+              "input_usd": 9.2e-05,
+              "output_usd": 0.0752,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.345407,
+                "cache_write_all_5m": 0.271529
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 0.890409,
+          "sessions": 5,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 5,
+          "sessions_with_exact_per_call_output": 5,
+          "tool_calls": {
+            "bash_other": 18,
+            "edit": 0,
+            "exploration": 34,
+            "exploration_share": 0.653846,
+            "explore_bash": 22,
+            "explore_read": 12,
+            "explore_search": 0,
+            "other": 0,
+            "total": 52
+          }
+        },
+        "reviewer": {
+          "api_calls": 16,
+          "api_calls_by_kind": {
+            "action": 12,
+            "explore_only": 2,
+            "no_tool": 2
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 80140,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 38707,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 0,
+              "input_tokens": 0,
+              "output_tokens": 0
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 11931,
+              "cached_input_tokens": 25161,
+              "input_tokens": 4,
+              "output_tokens": 1611
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.095448,
+                "all_5m": 0.059655
+              },
+              "cached_input_usd": 0.005032,
+              "input_usd": 1.6e-05,
+              "output_usd": 0.03222,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.132716,
+                "cache_write_all_5m": 0.096923
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.095448,
+                "all_5m": 0.059655
+              },
+              "cached_input_usd": 0.005032,
+              "input_usd": 1.6e-05,
+              "output_usd": 0.03222,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.132716,
+                "cache_write_all_5m": 0.096923
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 1.105906,
+          "sessions": 2,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 2,
+          "sessions_with_exact_per_call_output": 2,
+          "tool_calls": {
+            "bash_other": 11,
+            "edit": 2,
+            "exploration": 4,
+            "exploration_share": 0.235294,
+            "explore_bash": 4,
+            "explore_read": 0,
+            "explore_search": 0,
+            "other": 0,
+            "total": 17
+          }
+        }
+      }
+    },
+    "exploration_on_common_tasks": {
+      "A": {
+        "corrector": {
+          "api_calls": 72,
+          "api_calls_by_kind": {
+            "action": 32,
+            "explore_only": 34,
+            "no_tool": 6
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 122058,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 527326,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 40045,
+              "cached_input_tokens": 18732,
+              "input_tokens": 12,
+              "output_tokens": 1350
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 71454,
+              "cached_input_tokens": 446941,
+              "input_tokens": 68,
+              "output_tokens": 8863
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.285816,
+                "all_5m": 0.178635
+              },
+              "cached_input_usd": 0.089388,
+              "input_usd": 0.000136,
+              "output_usd": 0.08863,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.46397,
+                "cache_write_all_5m": 0.356789
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.125636,
+                "all_5m": 0.078522
+              },
+              "cached_input_usd": 0.085642,
+              "input_usd": 0.000112,
+              "output_usd": 0.07513,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.28652,
+                "cache_write_all_5m": 0.239406
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 0.981678,
+          "sessions": 6,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 6,
+          "sessions_with_exact_per_call_output": 6,
+          "tool_calls": {
+            "bash_other": 32,
+            "edit": 0,
+            "exploration": 41,
+            "exploration_share": 0.561644,
+            "explore_bash": 27,
+            "explore_read": 14,
+            "explore_search": 0,
+            "other": 0,
+            "total": 73
+          }
+        },
+        "implementer": {
+          "api_calls": 65,
+          "api_calls_by_kind": {
+            "action": 25,
+            "explore_only": 35,
+            "no_tool": 5
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 133590,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 555276,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 32299,
+              "cached_input_tokens": 15610,
+              "input_tokens": 10,
+              "output_tokens": 570
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 87780,
+              "cached_input_tokens": 460015,
+              "input_tokens": 70,
+              "output_tokens": 7411
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.35112,
+                "all_5m": 0.21945
+              },
+              "cached_input_usd": 0.092003,
+              "input_usd": 0.00014,
+              "output_usd": 0.07411,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.517373,
+                "cache_write_all_5m": 0.385703
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.221924,
+                "all_5m": 0.138702
+              },
+              "cached_input_usd": 0.088881,
+              "input_usd": 0.00012,
+              "output_usd": 0.06841,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.379335,
+                "cache_write_all_5m": 0.296114
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 1.056534,
+          "sessions": 5,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 5,
+          "sessions_with_exact_per_call_output": 5,
+          "tool_calls": {
+            "bash_other": 24,
+            "edit": 1,
+            "exploration": 41,
+            "exploration_share": 0.621212,
+            "explore_bash": 26,
+            "explore_read": 15,
+            "explore_search": 0,
+            "other": 0,
+            "total": 66
+          }
+        },
+        "reviewer": {
+          "api_calls": 19,
+          "api_calls_by_kind": {
+            "action": 14,
+            "explore_only": 3,
+            "no_tool": 2
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 65003,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 63869,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 0,
+              "input_tokens": 0,
+              "output_tokens": 0
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 8346,
+              "cached_input_tokens": 53640,
+              "input_tokens": 6,
+              "output_tokens": 1877
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.066768,
+                "all_5m": 0.04173
+              },
+              "cached_input_usd": 0.010728,
+              "input_usd": 2.4e-05,
+              "output_usd": 0.03754,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.11506,
+                "cache_write_all_5m": 0.090022
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.066768,
+                "all_5m": 0.04173
+              },
+              "cached_input_usd": 0.010728,
+              "input_usd": 2.4e-05,
+              "output_usd": 0.03754,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.11506,
+                "cache_write_all_5m": 0.090022
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 0.982518,
+          "sessions": 2,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 2,
+          "sessions_with_exact_per_call_output": 2,
+          "tool_calls": {
+            "bash_other": 13,
+            "edit": 2,
+            "exploration": 5,
+            "exploration_share": 0.25,
+            "explore_bash": 5,
+            "explore_read": 0,
+            "explore_search": 0,
+            "other": 0,
+            "total": 20
+          }
+        }
+      },
+      "L": {
+        "corrector": {
+          "api_calls": 71,
+          "api_calls_by_kind": {
+            "action": 35,
+            "explore_only": 29,
+            "no_tool": 7
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 145693,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 479090,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 47182,
+              "cached_input_tokens": 21854,
+              "input_tokens": 14,
+              "output_tokens": 1575
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 85538,
+              "cached_input_tokens": 386349,
+              "input_tokens": 58,
+              "output_tokens": 7145
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.342152,
+                "all_5m": 0.213845
+              },
+              "cached_input_usd": 0.07727,
+              "input_usd": 0.000116,
+              "output_usd": 0.07145,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.490988,
+                "cache_write_all_5m": 0.362681
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.153424,
+                "all_5m": 0.09589
+              },
+              "cached_input_usd": 0.072899,
+              "input_usd": 8.8e-05,
+              "output_usd": 0.0557,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.282111,
+                "cache_write_all_5m": 0.224577
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 1.100045,
+          "sessions": 7,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 7,
+          "sessions_with_exact_per_call_output": 7,
+          "tool_calls": {
+            "bash_other": 34,
+            "edit": 1,
+            "exploration": 38,
+            "exploration_share": 0.520548,
+            "explore_bash": 18,
+            "explore_read": 20,
+            "explore_search": 0,
+            "other": 0,
+            "total": 73
+          }
+        },
+        "implementer": {
+          "api_calls": 51,
+          "api_calls_by_kind": {
+            "action": 18,
+            "explore_only": 28,
+            "no_tool": 5
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 118318,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 470839,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 32296,
+              "cached_input_tokens": 15610,
+              "input_tokens": 10,
+              "output_tokens": 570
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 81548,
+              "cached_input_tokens": 381145,
+              "input_tokens": 56,
+              "output_tokens": 8090
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.326192,
+                "all_5m": 0.20387
+              },
+              "cached_input_usd": 0.076229,
+              "input_usd": 0.000112,
+              "output_usd": 0.0809,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.483433,
+                "cache_write_all_5m": 0.361111
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.197008,
+                "all_5m": 0.12313
+              },
+              "cached_input_usd": 0.073107,
+              "input_usd": 9.2e-05,
+              "output_usd": 0.0752,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.345407,
+                "cache_write_all_5m": 0.271529
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 0.890409,
+          "sessions": 5,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 5,
+          "sessions_with_exact_per_call_output": 5,
+          "tool_calls": {
+            "bash_other": 18,
+            "edit": 0,
+            "exploration": 34,
+            "exploration_share": 0.653846,
+            "explore_bash": 22,
+            "explore_read": 12,
+            "explore_search": 0,
+            "other": 0,
+            "total": 52
+          }
+        },
+        "reviewer": {
+          "api_calls": 16,
+          "api_calls_by_kind": {
+            "action": 12,
+            "explore_only": 2,
+            "no_tool": 2
+          },
+          "cache_write_split_tokens": {
+            "ephemeral_1h": 80140,
+            "ephemeral_5m": 0
+          },
+          "explore_only_calls": {
+            "billing_total": 38707,
+            "of_which_first_call_of_session": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 0,
+              "input_tokens": 0,
+              "output_tokens": 0
+            },
+            "output_unattributed_slack_tokens": 0,
+            "status": "attributed",
+            "tokens": {
+              "cache_write_input_tokens": 11931,
+              "cached_input_tokens": 25161,
+              "input_tokens": 4,
+              "output_tokens": 1611
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 0.095448,
+                "all_5m": 0.059655
+              },
+              "cached_input_usd": 0.005032,
+              "input_usd": 1.6e-05,
+              "output_usd": 0.03222,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.132716,
+                "cache_write_all_5m": 0.096923
+              }
+            },
+            "weighted_excluding_first_call": {
+              "cache_write_usd": {
+                "all_1h": 0.095448,
+                "all_5m": 0.059655
+              },
+              "cached_input_usd": 0.005032,
+              "input_usd": 1.6e-05,
+              "output_usd": 0.03222,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 0.132716,
+                "cache_write_all_5m": 0.096923
+              }
+            },
+            "weighted_with_output_slack": null
+          },
+          "host_list_cost_usd": 1.105906,
+          "sessions": 2,
+          "sessions_input_side_check_unavailable": 0,
+          "sessions_input_side_equal_to_final_result": 2,
+          "sessions_with_exact_per_call_output": 2,
+          "tool_calls": {
+            "bash_other": 11,
+            "edit": 2,
+            "exploration": 4,
+            "exploration_share": 0.235294,
+            "explore_bash": 4,
+            "explore_read": 0,
+            "explore_search": 0,
+            "other": 0,
+            "total": 17
+          }
+        }
+      }
+    },
+    "note": "same reading under the overridden rates; a sensitivity, not a second grid",
+    "overrides": [
+      "claude-sonnet-5-5:cache_read=0.20"
+    ],
+    "task_coverage": {
+      "arm_totals_cover_the_same_tasks": false,
+      "arms": {
+        "A": {
+          "on_common_tasks": {
+            "billing_tokens": 3274632,
+            "billing_tokens_by_role": {
+              "corrector": 1308994,
+              "implementer": 1478699,
+              "reviewer": 486939
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 1.542616,
+                "all_5m": 0.964135
+              },
+              "cached_input_usd": 0.576534,
+              "input_usd": 0.0007,
+              "output_usd": 0.90088,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 3.02073,
+                "cache_write_all_5m": 2.442249
+              }
+            }
+          },
+          "tasks_with_a_record": 6,
+          "tasks_with_premium": 6,
+          "tasks_without_premium": []
+        },
+        "L": {
+          "on_common_tasks": {
+            "billing_tokens": 2870126,
+            "billing_tokens_by_role": {
+              "corrector": 1313554,
+              "implementer": 1066187,
+              "reviewer": 490385
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 1.697164,
+                "all_5m": 1.060728
+              },
+              "cached_input_usd": 0.49085,
+              "input_usd": 0.000616,
+              "output_usd": 0.90773,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 3.09636,
+                "cache_write_all_5m": 2.459924
+              }
+            }
+          },
+          "tasks_with_a_record": 6,
+          "tasks_with_premium": 5,
+          "tasks_without_premium": [
+            48
+          ]
+        }
+      },
+      "note": "arm totals compare only on the tasks where every arm spent premium; the ratio below is a ratio of totals on that common set, not per accepted task, not decisional, not comparable to a frozen threshold",
+      "outside_the_frozen_rule": true,
+      "ratio_L_over_A_of_totals_on_common_tasks": {
+        "unweighted": 0.8765,
+        "weighted": {
+          "cache_write_all_1h": 1.025,
+          "cache_write_all_5m": 1.0072
+        }
+      },
+      "tasks_with_premium_in_every_arm": [
+        19,
+        24,
+        27,
+        30,
+        83
+      ]
+    },
+    "totals_equal_committed_report": {
+      "A": {
+        "billing_total_equal": true,
+        "by_model_equal": true
+      },
+      "L": {
+        "billing_total_equal": true,
+        "by_model_equal": true
+      },
+      "all_equal": true
+    }
+  },
+  "task_coverage": {
+    "arm_totals_cover_the_same_tasks": false,
+    "arms": {
+      "A": {
+        "on_common_tasks": {
+          "billing_tokens": 3274632,
+          "billing_tokens_by_role": {
+            "corrector": 1308994,
+            "implementer": 1478699,
+            "reviewer": 486939
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 1.542616,
+              "all_5m": 0.964135
+            },
+            "cached_input_usd": 0.328548,
+            "input_usd": 0.0007,
+            "output_usd": 0.90088,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 2.772744,
+              "cache_write_all_5m": 2.194263
+            }
+          }
+        },
+        "tasks_with_a_record": 6,
+        "tasks_with_premium": 6,
+        "tasks_without_premium": []
+      },
+      "L": {
+        "on_common_tasks": {
+          "billing_tokens": 2870126,
+          "billing_tokens_by_role": {
+            "corrector": 1313554,
+            "implementer": 1066187,
+            "reviewer": 490385
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 1.697164,
+              "all_5m": 1.060728
+            },
+            "cached_input_usd": 0.284514,
+            "input_usd": 0.000616,
+            "output_usd": 0.90773,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 2.890024,
+              "cache_write_all_5m": 2.253587
+            }
+          }
+        },
+        "tasks_with_a_record": 6,
+        "tasks_with_premium": 5,
+        "tasks_without_premium": [
+          48
+        ]
+      }
+    },
+    "note": "arm totals compare only on the tasks where every arm spent premium; the ratio below is a ratio of totals on that common set, not per accepted task, not decisional, not comparable to a frozen threshold",
+    "outside_the_frozen_rule": true,
+    "ratio_L_over_A_of_totals_on_common_tasks": {
+      "unweighted": 0.8765,
+      "weighted": {
+        "cache_write_all_1h": 1.0423,
+        "cache_write_all_5m": 1.027
+      }
+    },
+    "tasks_with_premium_in_every_arm": [
+      19,
+      24,
+      27,
+      30,
+      83
+    ]
+  },
+  "totals_equal_committed_report": {
+    "A": {
+      "billing_total_equal": true,
+      "by_model_equal": true
+    },
+    "L": {
+      "billing_total_equal": true,
+      "by_model_equal": true
+    },
+    "all_equal": true
+  }
+}
