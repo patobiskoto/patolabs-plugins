@@ -272,6 +272,50 @@ def test_abandon_replay_refuses_an_inadmissible_expected_state_before_any_read(
     assert len(wire.calls) == before
 
 
+@pytest.mark.parametrize("expected", ("done", "dropped", "unknown-state"))
+@pytest.mark.parametrize("already_dropped", (False, True))
+@pytest.mark.parametrize("entry", ("write", "cli"))
+def test_transition_refuses_an_inadmissible_expected_state_with_zero_provider_call(
+    monkeypatch, expected, already_dropped, entry,
+):
+    """The public path, not the adapter: refused ahead of the binding read."""
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5)
+    if already_dropped:
+        _abandon(tracker, project, issue_id, "in-progress")
+    snapshot = copy.deepcopy(wire.issues[issue_id])
+    monkeypatch.setattr(edit_cli.foundry, "tracker", lambda: tracker)
+    before = len(wire.calls)
+    with pytest.raises(SystemExit, match=f"état attendu `{expected}` inadmissible"):
+        if entry == "cli":
+            edit_cli.transition(issue_id, "dropped", expected)
+        else:
+            write.transition(
+                tracker, issue_id, "dropped",
+                context=TransitionContext(expected_state=expected),
+            )
+    assert len(wire.calls) == before
+    assert wire.issues[issue_id] == snapshot
+
+
+def test_transition_admits_exactly_the_predecessors_the_adapter_declares(monkeypatch):
+    """One definition: the pre-read gate reads the adapter's set, it keeps no copy."""
+    tracker, wire, project = _graph(monkeypatch)
+    assert Tracker.abandon_predecessors == frozenset()
+    assert LinearTracker.abandon_predecessors == frozenset(
+        {"backlog", "ready", "blocked", "in-progress", "review"}
+    )
+    issue_id = _add(wire, 5)
+    monkeypatch.setattr(tracker, "abandon_predecessors", frozenset({"backlog"}))
+    before = len(wire.calls)
+    with pytest.raises(SystemExit, match="état attendu `ready` inadmissible"):
+        write.transition(
+            tracker, issue_id, "dropped",
+            context=TransitionContext(expected_state="ready"),
+        )
+    assert len(wire.calls) == before
+
+
 @pytest.mark.parametrize("expected", ("backlog", "ready", "blocked", "in-progress", "review"))
 def test_abandon_replay_converges_with_any_admitted_expected_state(monkeypatch, expected):
     tracker, wire, project = _graph(monkeypatch)
@@ -777,29 +821,51 @@ def test_still_refused_unknown_or_incomplete_proof(monkeypatch):
         row for row in wire.issues["LIN-2"]["comments"]["nodes"]
         if ":acceptance-override:" not in row["body"]
     ]
-    _refused(tracker, wire, "LIN-2", dropped=("LIN-5",))
+    message = _refused(
+        tracker, wire,
+        r"LIN-2 \(enfant\) : lecture impossible "
+        r"\(TrackerConflictError: Linear done proof lacks matching acceptance\)",
+        dropped=("LIN-5",),
+    )
+    assert "Commande exacte" not in message
 
 
 def test_still_refused_zero_criteria(monkeypatch):
     tracker, wire, _project = _with_dropped(monkeypatch, acceptance="override")
     wire.issues["LIN-2"]["description"] = "no checklist at all"
     message = _refused(
-        tracker, wire, "LIN-2.*aucun critère", dropped=("LIN-5",), overrides=("LIN-2",),
+        tracker, wire,
+        r"--accept-override LIN-2 \(enfant\) inacceptable : aucun critère d'acceptation",
+        dropped=("LIN-5",), overrides=("LIN-2",),
     )
     assert "Commande exacte" not in message
 
 
 def test_still_refused_override_without_its_nominative_waiver(monkeypatch):
     tracker, wire, _project = _with_dropped(monkeypatch, acceptance="override")
-    _refused(tracker, wire, "LIN-2", dropped=("LIN-5",))
+    missing_waiver = (
+        r"LIN-2 \(enfant\) : terminal sous reçu d'override valide \(raison [a-z0-9_-]+\) ; "
+        r"acceptable seulement nominativement par --accept-override"
+    )
+    message = _refused(tracker, wire, missing_waiver, dropped=("LIN-5",))
+    assert "--accept-override=LIN-2 --accept-dropped=LIN-5" in message
     # --accept-dropped never stands for a waiver: the override is not a dropped node.
-    _refused(tracker, wire, "LIN-2", dropped=("LIN-2", "LIN-5"))
+    message = _refused(tracker, wire, missing_waiver, dropped=("LIN-2", "LIN-5"))
+    assert (
+        "--accept-dropped désigne des identifiants qui ne sont pas des nœuds "
+        "abandonnés du graphe requis : LIN-2." in message
+    )
 
 
 def test_still_refused_foreign_project_node(monkeypatch):
     tracker, wire, _project = _with_dropped(monkeypatch, dependency=True)
     wire.issues["LIN-3"]["project"] = {"id": "other-project", "name": "Other"}
-    _refused(tracker, wire, "hors projet|issue_outside_binding|binding", dropped=("LIN-5",))
+    _refused(
+        tracker, wire,
+        r"LIN-3 \(dépendance\) : hors projet ou binding invalide "
+        r"\(LinearBindingError: Linear binding invalid: issue_outside_binding\)",
+        dropped=("LIN-5",),
+    )
 
 
 @pytest.mark.parametrize("mutation", ("reopened-dropped", "dropped-later", "changed"))

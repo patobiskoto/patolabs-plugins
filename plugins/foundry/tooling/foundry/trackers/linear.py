@@ -2727,6 +2727,7 @@ class LinearTracker(Tracker):
     epic_override_closure_supported = True
     epic_dropped_closure_supported = True
     guarded_abandon_supported = True
+    abandon_predecessors = _ABANDON_PREDECESSORS
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })

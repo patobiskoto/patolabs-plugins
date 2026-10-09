@@ -294,6 +294,18 @@ def transition(tracker, issue_id: str, state: str, context=None):
             f"`edit transition {issue_id} dropped <état-attendu>` "
             "(backlog, ready, blocked, in-progress ou review)."
         )
+    # Same gate, same place, for a named predecessor the adapter does not admit:
+    # ``issue_binding`` below already reads the provider.  The adapter owns the
+    # set and keeps its own check; no second copy of the list lives here.
+    if normalized == "dropped" and getattr(tracker, "guarded_abandon_supported", False):
+        expected = context.expected_state
+        admitted = getattr(tracker, "abandon_predecessors", frozenset())
+        if not isinstance(expected, str) or expected not in admitted:
+            raise SystemExit(
+                f"Abandon refusé : état attendu `{expected}` inadmissible — "
+                f"`edit transition {issue_id} dropped <état-attendu>` "
+                f"({', '.join(sorted(admitted))})."
+            )
     binding = issue_binding(tracker, issue_id)
     kwargs = {}
     if context is not None:

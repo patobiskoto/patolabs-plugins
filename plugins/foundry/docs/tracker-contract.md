@@ -597,7 +597,9 @@ unchanged.
   it cannot be combined with another field. No receipt is written, deleted or rewritten. A
   linked PR is not closed: the command output names it. This is bounded detection with
   the named S1→S2 overwrite risk, never CAS. The capability flag is
-  `guarded_abandon_supported` (`True` on Linear only); the other providers keep their
+  `guarded_abandon_supported` (`True` on Linear only), and the adapter's
+  `abandon_predecessors` is the single definition of those five states, read by the
+  `transition` gate ahead of its binding read; the other providers keep their
   current `transition`/`set-field` behaviour.
 - *Read.* A natively cancelled issue whose append-only projection is valid and
   non-terminal (`in-progress` or `review` receipts, no `done` receipt) reads
