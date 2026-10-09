@@ -1,0 +1,53 @@
+........................................................................ [ 44%]
+..............................................................FF........ [ 88%]
+...................                                                      [100%]
+=================================== FAILURES ===================================
+______________ test_linear_profile_preserves_exact_source_witness ______________
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x10576e850>, <test_linear_tracker.LinearWire object at 0x1067cb0e0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1067ca580>
+
+    def test_linear_profile_preserves_exact_source_witness(tracker, monkeypatch):
+        instance, wire = tracker
+        source = _synthetic_profile_body()
+        rendered = _synthetic_profile_readback(source)
+    
+        assert hashlib.sha256(source.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256
+        assert hashlib.sha256(rendered.encode()).hexdigest() == (
+            SYNTHETIC_PROFILE_READBACK_SHA256
+        )
+>       monkeypatch.setattr(
+            linear_module,
+            "_FOUNDRY_ADR_0012_SOURCE_SHA256",
+            SYNTHETIC_PROFILE_SOURCE_SHA256,
+        )
+E       AttributeError: <module 'foundry.trackers.linear' from '<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py'> has no attribute '_FOUNDRY_ADR_0012_SOURCE_SHA256'
+
+tests/test_linear_tracker.py:3879: AttributeError
+_____ test_linear_profile_recovery_rejects_source_collision_before_effects _____
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106515a50>, <test_linear_tracker.LinearWire object at 0x1065a2890>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1065a2820>
+
+    def test_linear_profile_recovery_rejects_source_collision_before_effects(
+        tracker, monkeypatch
+    ):
+        instance, wire = tracker
+        source = _synthetic_profile_body()
+        rendered = _synthetic_profile_readback(source)
+        assert hashlib.sha256(source.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256
+        assert hashlib.sha256(rendered.encode()).hexdigest() == (
+            SYNTHETIC_PROFILE_READBACK_SHA256
+        )
+>       monkeypatch.setattr(
+            linear_module,
+            "_FOUNDRY_ADR_0012_SOURCE_SHA256",
+            SYNTHETIC_PROFILE_SOURCE_SHA256,
+        )
+E       AttributeError: <module 'foundry.trackers.linear' from '<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py'> has no attribute '_FOUNDRY_ADR_0012_SOURCE_SHA256'
+
+tests/test_linear_tracker.py:3923: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_linear_tracker.py::test_linear_profile_preserves_exact_source_witness
+FAILED tests/test_linear_tracker.py::test_linear_profile_recovery_rejects_source_collision_before_effects
+2 failed, 161 passed in 0.44s

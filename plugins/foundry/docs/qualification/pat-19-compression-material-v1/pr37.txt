@@ -1,0 +1,45 @@
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1061d49d0>
+
+    def test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status(monkeypatch):
+        # A missing supersession target in the embedded ADR index (AdrUnavailableError)
+        # must not sink the whole issue read, must not surface as an empty list, and must
+        # not be conflated with either the conflict or the capability-unavailable status.
+        class _UnavailableAdrTracker(_FakeTracker):
+            def list_adrs(self, project):
+                raise AdrUnavailableError("T-ADR-0002")
+    
+        issues = [Issue(id="A", title="a", state="ready", body="text")]
+        monkeypatch.setattr(foundry, "tracker", lambda name=None: _UnavailableAdrTracker(issues))
+        monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+    
+>       out = query.issue("A")
+              ^^^^^^^^^^^^^^^^
+
+tests/test_pure.py:462: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/query.py:445: in issue
+    "adrs": _adr_index_or_capability(tr, p)}
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/query.py:405: in _adr_index_or_capability
+    return _adr_index(tr, p)
+           ^^^^^^^^^^^^^^^^^
+tooling/foundry/query.py:390: in _adr_index
+    for a in tr.list_adrs(p)]
+             ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_pure.test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status.<locals>._UnavailableAdrTracker object at 0x106249160>
+project = Project(key='T', id='0-0', extra={})
+
+    def list_adrs(self, project):
+>       raise AdrUnavailableError("T-ADR-0002")
+E       foundry.trackers.base.AdrUnavailableError: ADR unavailable: T-ADR-0002
+
+tests/test_pure.py:456: AdrUnavailableError
+=========================== short test summary info ============================
+FAILED tests/test_pure.py::test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status
+1 failed, 1 passed in 0.11s

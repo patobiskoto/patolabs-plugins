@@ -1,0 +1,87 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+____ test_linear_historical_batch_refuses_comment_deleted_after_validation _____
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x10401cb90>, <test_linear_tracker.LinearWire object at 0x10401c910>)
+
+    def test_linear_historical_batch_refuses_comment_deleted_after_validation(
+        tracker,
+    ):
+        instance, wire = tracker
+        records = _historical_batch_pair()
+        instance.import_adr_batch(PROJECT, records)
+        comment_id, _body = linear_module._adr_issue_link(
+            {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+            records[0]["adr_id"],
+            records[0]["issue_refs"][0],
+        )
+        original = wire.__call__
+        deleted = False
+    
+        def delete_after_graph_read(document, variables):
+            nonlocal deleted
+            response = original(document, variables)
+            if (
+                not deleted
+                and "FoundryLinearCommentsById" in document
+                and variables["id"] == comment_id
+            ):
+                # The graph validator has received the reciprocal witness; model an
+                # external deletion before import_adr_batch reaches its next step.
+                del wire.comments[comment_id]
+                wire.issues["LIN-2"]["comments"]["nodes"] = [
+                    comment
+                    for comment in wire.issues["LIN-2"]["comments"]["nodes"]
+                    if comment["id"] != comment_id
+                ]
+                deleted = True
+            return response
+    
+        instance._transport = delete_after_graph_read
+        before_documents = copy.deepcopy(wire.documents)
+        calls_before = len(wire.calls)
+    
+>       with pytest.raises(TrackerConflictError, match="not reciprocal"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE TrackerConflictError
+
+tests/test_linear_tracker.py:2923: Failed
+_ test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x10401d450>, <test_linear_tracker.LinearWire object at 0x10401d090>)
+
+    def test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect(
+        tracker,
+    ):
+        instance, wire = tracker
+        records = _historical_batch_pair()
+        instance.import_adr_batch(PROJECT, records)
+        comment_id, _body = linear_module._adr_issue_link(
+            {"project_id": PROJECT.id, "team_id": PROJECT.extra["team_id"]},
+            records[0]["adr_id"],
+            records[0]["issue_refs"][0],
+        )
+    
+        # Model an external deletion after the complete import.
+        del wire.comments[comment_id]
+        wire.issues["LIN-2"]["comments"]["nodes"] = [
+            comment
+            for comment in wire.issues["LIN-2"]["comments"]["nodes"]
+            if comment["id"] != comment_id
+        ]
+        before = (
+            copy.deepcopy(wire.documents),
+            copy.deepcopy(wire.comments),
+            copy.deepcopy(wire.issues),
+        )
+        calls_before = len(wire.calls)
+    
+>       with pytest.raises(TrackerConflictError, match="not reciprocal"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE TrackerConflictError
+
+tests/test_linear_tracker.py:2875: Failed
+=========================== short test summary info ============================
+FAILED tests/test_linear_tracker.py::test_linear_historical_batch_refuses_comment_deleted_after_validation
+FAILED tests/test_linear_tracker.py::test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect
+2 failed, 1 passed in 0.19s

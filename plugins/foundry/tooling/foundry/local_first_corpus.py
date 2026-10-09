@@ -671,7 +671,7 @@ class JudgeInstrumentError(CorpusError):
 
 
 def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: bool = False,
-          strict_report: bool = False) -> dict[str, Any]:
+          strict_report: bool = False, capture: dict[str, Any] | None = None) -> dict[str, Any]:
     """Restore the protected tests from the merged SHA over the candidate bundle, run only
     them and return a mechanical verdict. Tests the candidate wrote never count: the protected
     paths are overwritten and only their node ids are run.
@@ -690,7 +690,12 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: boo
 
     ``strict_report=True`` (PAT-126, protocol v5 and later only): when pytest wrote no junit report, or exited with
     a usage error (4) or "nothing collected" (5) and reports no test at all, the judge raises ``JudgeInstrumentError``
-    instead of returning ``REFUSED`` with 0/0/0 (v1 to v4 return that verdict, and keep doing so: their records exist)."""
+    instead of returning ``REFUSED`` with 0/0/0 (v1 to v4 return that verdict, and keep doing so: their records exist).
+
+    ``capture`` (PAT-118, offline material generation only; a dict the caller owns, ``None`` by default: the verdict and
+    everything the judge does are then exactly what they were): receives, once pytest has run, what the judge saw of it,
+    ``stdout``, ``stderr``, ``returncode``, the command ``argv`` (``sys.executable`` first), the two directories the output
+    may name (``candidate``, ``tmp_dir``) and the junit counts ``junit_counts`` (passed, failed, errors, skipped)."""
     candidate = candidate.resolve()
     if inside_developer_checkout(repo, candidate):  # PAT-108 N-B: the judge rewrites the tree
         raise CorpusError(f"candidate is inside the developer checkout: {candidate}")
@@ -765,6 +770,9 @@ def judge(repo: Path, task: Mapping[str, Any], candidate: Path, *, failures: boo
         except subprocess.TimeoutExpired:
             return _verdict("timeout", selected, 0, 0, 0, 0, None, extra)
         counts = _junit_counts(junit)
+        if capture is not None:
+            capture.update(stdout=proc.stdout, stderr=proc.stderr, returncode=code, argv=list(cmd),
+                           candidate=str(candidate), tmp_dir=str(tmp_dir), junit_counts=list(counts))
         no_report = None
         if strict_report and (not junit.exists() or (sum(counts) == 0 and code in (4, 5))):
             tail = " ".join(proc.stderr.strip().splitlines()[-1:])[:200] or "no stderr"

@@ -36,6 +36,7 @@ CLASSES = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "o
 REASONING = "reasoning_output_tokens"  # recorded separately; a SUBSET of output_tokens, never added
 RATE_KEYS = ("input", "cache_read", "cache_write_5m", "cache_write_1h", "output")
 ROLES = ("implementer", "corrector", "reviewer", "explorer")
+EXTRA_ROLES = ("diagnoser",)  # PAT-118 (protocol c1): listed only for a campaign whose records carry it
 UNAVAILABLE = "unavailable"
 _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -267,6 +268,12 @@ def _tokens_view(vec: Mapping[str, int]) -> dict[str, int]:
     return {**{c: vec[c] for c in CLASSES}, REASONING: vec[REASONING], "billing_total": sum(vec[c] for c in CLASSES)}
 
 
+def _roles_of(cells: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    """The roles of a group of cells: the four of protocols v1 to v5, plus an extra role only where the cells hold it
+    (so that the document of an earlier campaign keeps exactly its keys)."""
+    return ROLES + tuple(r for r in EXTRA_ROLES if any(c["role"] == r for c in cells))
+
+
 def breakdown(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Mapping[str, Any]],
               grid: Mapping[str, Any]) -> dict[str, Any]:
     """Premium work by arm, role, token class and model, unweighted and weighted."""
@@ -276,20 +283,21 @@ def breakdown(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Mappi
     for arm in sorted({r["path"] for r in attempts}):
         mine = [c for c in cells if c["arm"] == arm]
         own = [r for r in attempts if r["path"] == arm]
+        here = _roles_of(mine)
         roles: dict[str, Any] = {}
         grand = _zero()
         by_model: dict[str, dict[str, int]] = {}
         for rec in own:
             for model, tokens in rec["premium"]["by_model"].items():
                 _add(by_model.setdefault(model, _zero()), _vector(tokens))
-        for role in ROLES:
+        for role in here:
             group = [c for c in mine if c["role"] == role]
             vec = _zero()
             for c in group:
                 _add(vec, c["tokens"])
             _add(grand, vec)
             roles[role] = {"tokens": _tokens_view(vec), "weighted": _weighted_group(group, grid) if group else None}
-        extra = sorted({c["role"] for c in mine} - set(ROLES))
+        extra = sorted({c["role"] for c in mine} - set(here))
         if extra:
             raise BreakdownError(f"unexpected roles in the records: {extra}")
         explorer_records = sum(1 for r in own if r.get("segment") == "explore")
@@ -314,7 +322,7 @@ def breakdown(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Mappi
                              "weighted": (_unavailable(unresolved=unresolved) if unresolved
                                           else _weighted_group(group, grid))}
         total = _tokens_view(grand)
-        for role in ROLES:
+        for role in here:
             if role != "explorer":
                 roles[role]["token_share"] = _share(roles[role]["tokens"]["billing_total"], total["billing_total"])
                 w = roles[role]["weighted"]
@@ -353,7 +361,7 @@ def task_coverage(result: Mapping[str, Any], grid: Mapping[str, Any]) -> dict[st
                 "billing_tokens": sum(sum(c["tokens"][k] for k in CLASSES) for c in mine),
                 "billing_tokens_by_role": {
                     role: sum(sum(c["tokens"][k] for k in CLASSES) for c in mine if c["role"] == role)
-                    for role in ROLES if role != "explorer"},
+                    for role in _roles_of(mine) if role != "explorer"},
                 "weighted": _weighted_group(mine, grid) if mine else None}}
     out: dict[str, Any] = {
         "outside_the_frozen_rule": True,
@@ -370,6 +378,21 @@ def task_coverage(result: Mapping[str, Any], grid: Mapping[str, Any]) -> dict[st
                         for bound in ("cache_write_all_5m", "cache_write_all_1h")}
         out["ratio_L_over_A_of_totals_on_common_tasks"] = {
             "unweighted": _ratio(lo["billing_tokens"], a["billing_tokens"]), "weighted": weighted}
+    if {"F", "S"} <= set(arms):  # PAT-118 (protocol c1): the summary arm over the full-output arm, same reading
+        both = spent["F"] & spent["S"]  # the screening arm (local calls) spends no premium: it is not in this set
+        totals: dict[str, Any] = {}
+        for name in ("F", "S"):
+            mine = [c for c in result["cells"] if c["arm"] == name and c["pr"] in both]
+            totals[name] = {"billing_tokens": sum(sum(c["tokens"][k] for k in CLASSES) for c in mine),
+                            "weighted": _weighted_group(mine, grid) if mine else None}
+        f, sm = totals["F"], totals["S"]
+        weighted = {"status": UNAVAILABLE}
+        if f["weighted"] and sm["weighted"] and f["weighted"]["status"] == sm["weighted"]["status"] == "priced":
+            weighted = {bound: _ratio(Decimal(str(sm["weighted"]["total_usd"][bound])),
+                                      Decimal(str(f["weighted"]["total_usd"][bound])))
+                        for bound in ("cache_write_all_5m", "cache_write_all_1h")}
+        out["ratio_S_over_F_of_totals_on_common_tasks"] = {
+            "tasks": sorted(both), "unweighted": _ratio(sm["billing_tokens"], f["billing_tokens"]), "weighted": weighted}
     return out
 
 
@@ -386,6 +409,47 @@ def check_against_report(result: Mapping[str, Any], report: Mapping[str, Any]) -
             m: {k: v for k, v in x["tokens"].items() if k != "billing_total"} for m, x in mine["by_model"].items()}
         out[arm] = {"billing_total_equal": mine["tokens"]["billing_total"] == total, "by_model_equal": ok_models}
     out["all_equal"] = all(v["billing_total_equal"] and v["by_model_equal"] for v in out.values())
+    return out
+
+
+def paired_reading_compression(result: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
+                               report: Mapping[str, Any], grid: Mapping[str, Any]) -> dict[str, Any] | None:
+    """PAT-118 (protocol c1): the weighted S/F premium per CORRECT diagnosis on the paired decided set of the committed
+    report. A READING OUTSIDE THE FROZEN RULE: the verdict is the report's, it is neither recomputed nor requalified."""
+    rule = (report["compression_comparison"] or {}).get("paired_rule")
+    if not rule or not rule.get("paired_decided"):
+        return None
+    prs = set(rule["paired_decided"])
+    cells = [c for c in result["cells"] if c["pr"] in prs]
+    out: dict[str, Any] = {"paired_tasks": sorted(prs), "outside_the_frozen_rule": True, "arms": {}}
+    equal = True
+    for arm in ("F", "S"):
+        mine = [c for c in cells if c["arm"] == arm]
+        correct = _count(rule.get("correct_on_paired", {}).get(arm))
+        if correct is None:
+            raise BreakdownError("the committed paired rule carries no correct count")
+        from_records = len({r["task"]["pr"] for r in records if r.get("record_type") == "attempt" and r["path"] == arm
+                            and (r.get("judge") or {}).get("correct") is True} & prs)
+        equal = equal and from_records == correct
+        out["arms"][arm] = {
+            "correct": correct, "billing_tokens": sum(sum(c["tokens"][k] for k in CLASSES) for c in mine),
+            "weighted": _weighted_group(mine, grid),
+            "billing_tokens_by_role": {role: sum(sum(c["tokens"][k] for k in CLASSES) for c in mine if c["role"] == role)
+                                       for role in _roles_of(mine) if role != "explorer"}}
+    f, sm = out["arms"]["F"], out["arms"]["S"]
+    out["unweighted_ratio_S_over_F_per_correct"] = (
+        None if not f["correct"] or not sm["correct"] else float(round(
+            (Decimal(sm["billing_tokens"]) / sm["correct"]) / (Decimal(f["billing_tokens"]) / f["correct"]), 4)))
+    ratio: dict[str, Any] = {}
+    if f["weighted"]["status"] == "priced" and sm["weighted"]["status"] == "priced" and f["correct"] and sm["correct"]:
+        for bound in ("cache_write_all_5m", "cache_write_all_1h"):
+            wf, ws = Decimal(str(f["weighted"]["total_usd"][bound])), Decimal(str(sm["weighted"]["total_usd"][bound]))
+            ratio[bound] = float(round((ws / sm["correct"]) / (wf / f["correct"]), 4))
+    else:
+        ratio = {"status": UNAVAILABLE}
+    out["weighted_ratio_S_over_F_per_correct"] = ratio
+    out["frozen_ratio_in_report"] = rule.get("ratio")
+    out["correct_counts_equal_records"] = equal
     return out
 
 
@@ -787,7 +851,11 @@ def _document(records, sessions, price_grid, report, streams_dir, logs_dir, camp
     doc: dict[str, Any] = {"arms": result["arms"], "task_coverage": task_coverage(result, price_grid)}
     common = doc["task_coverage"]["tasks_with_premium_in_every_arm"]
     paired = None
-    if report is not None:
+    if report is not None and "compression_comparison" in report:  # PAT-118, protocol c1
+        paired = paired_reading_compression(result, records, report, price_grid)
+        if paired is not None:
+            doc["paired_reading"] = paired
+    elif report is not None:
         doc["totals_equal_committed_report"] = check_against_report(result, report)
         paired = paired_reading(result, report, price_grid)
         if paired is not None:
@@ -873,7 +941,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     check = doc.get("totals_equal_committed_report")
     paired = doc.get("paired_reading")
     bad = (check is not None and not check["all_equal"]) or (
-        paired is not None and not paired["accepted_counts_equal_records"])
+        paired is not None and not paired.get("accepted_counts_equal_records", True)) or (
+        paired is not None and not paired.get("correct_counts_equal_records", True))
     return 1 if bad else 0
 
 

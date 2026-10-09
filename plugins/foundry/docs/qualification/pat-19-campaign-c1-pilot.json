@@ -1,0 +1,509 @@
+{
+  "schema": "foundry.local-first-campaign.v3",
+  "protocol": "pat-19-protocol-c1-pilot",
+  "status": "DRAFT: not frozen",
+  "note": "DRAFT of PAT-118, phase 1: NOT frozen, nothing here is a frozen coordinate until the freeze of phase 2 (which follows the coordinator's real pilot of the instrument). PILOT of the instrument on one task (PR 27), under a protocol name and a campaign id of its own so that its records can never be read as, or mixed with, the campaign's; it tunes no value of the decision rule. Campaign config of the PAT-19 protocol c1 (PAT-118): the compression of a long test output by ONE call to the local endpoint before it is sent to the cloud. Values validated by the maintainer on 2026-10-07: the material, the five v1 candidates, recall 0.8 and size 25 %, the downstream comparison with the 0.85 ratio, the cap of 40 cloud executions. Every other value (prompts, temperature, max tokens, timeouts, per-task size reading, minimum of decided tasks, arms' framing, the diagnoser's tools and bounds, the Claude Code pin 2.1.294, shares 36 + 4 of the cap) was fixed by the coordinator under the maintainer's mandate of 2026-10-08, none validated one by one; the machine block authorisation of 2026-10-08 covers the loads of the five candidates, the stops and relaunches of OrbStack and ChatGPT and at most 40 cloud executions. Based on the v5 config (pat-19-campaign-v5.json, untouched). The decision rule and its limits are in pat-19-protocol-c1.md.",
+  "frozen_machine": {
+    "chip_contains": "M5 Pro",
+    "memory_gib": 64,
+    "os_version": "27.0.1",
+    "lm_studio_version_contains": "0.4.25",
+    "mlx_runtime_contains": "1.11.0",
+    "min_free_disk_gib": 30
+  },
+  "server_process_pattern": "LM Studio",
+  "bounds": {
+    "cloud_max_seconds": 900,
+    "note": "cloud_max_seconds bounds the one cloud diagnosis of an arm (a read-only reading of one bundle, no tests to run, no correction round): 900 s. An execution cut by it has an absent answer: an incorrect diagnosis, its cost counted. The local call has its own timeout (compression.local_call.timeout_seconds)."
+  },
+  "isolation": {
+    "note": "Launcher choice, not a protocol coordinate, EXCEPT private_attempt_root, cloud_native_sandbox, audit_revision, audit_policy and audit_absent_path_forms, which are protocol c1 coordinates pinned by the loader (as in v5, plus PAT-128's audit_absent_path_forms), and allow_read_home, whose only accepted entry is pinned too. Protocol c1 has no local driver: the one local call is made by the launcher itself to a literal loopback endpoint, without tool, so deny_home_by_default and deny_read_home.local are kept as data only (the audit's sensitive list uses the local list). The cloud diagnoser runs under the v5 instrument: see native_sandbox_note.",
+    "deny_home_by_default": true,
+    "allow_read_home": [
+      ".config/git/ignore"
+    ],
+    "deny_read_home": {
+      "local": [
+        ".claude",
+        ".claude.json",
+        ".codex",
+        ".config",
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".netrc",
+        "Library/Keychains",
+        ".git-credentials",
+        ".npmrc",
+        ".pypirc",
+        ".docker",
+        ".kube",
+        ".zsh_history",
+        ".bash_history",
+        ".python_history"
+      ],
+      "cloud": [
+        ".codex",
+        ".config/foundry",
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".netrc",
+        "Library/Keychains",
+        ".git-credentials",
+        ".npmrc",
+        ".pypirc",
+        ".docker",
+        ".kube",
+        ".zsh_history",
+        ".bash_history",
+        ".python_history"
+      ]
+    },
+    "private_attempt_root": true,
+    "private_attempt_root_note": "PAT-121 (kept as in v5): the diagnoser's attempt is built in <work-root>/private-<attempt>/<attempt>/.",
+    "cloud_native_sandbox": true,
+    "native_sandbox_note": "PAT-124, kept as in v5: the diagnoser gets --permission-mode dontAsk (replacing bypassPermissions) and --settings <json> (native Bash sandbox; reads of the home and of the work root denied to the shell and re-allowed on the attempt directory and allow_read_home; file tools under permission rules); HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR and USER of the child are untouched (AGENTS.md R6) and claude is never wrapped by sandbox-exec. PAT-118: for the diagnoser the whole BUNDLE is protected, not only its .claude directory (denyWrite for the shell, Edit/Write deny rules), so that the read-only role is enforced by the settings and not only asked for; the launcher also compares git status before and after (a changed bundle refuses the diagnosis). Whether this holds with Claude Code 2.1.294 is NOT established: the first run is the pilot. The launcher never observes the operating system enforce the sandbox: audit.barrier says only what it verified. Accepted limits as in v5: the per-user temp directory is shared by all attempts (TMPDIR cannot be changed, R6).",
+    "audit_revision": 2,
+    "audit_revision_note": "PAT-123, as in v5 (accepted only with cloud_native_sandbox); it over-flags some ordinary gestures, the report reads each flag on the transcript before qualifying it.",
+    "audit_policy": "journal_under_observed_barrier",
+    "audit_policy_note": "PAT-126, as in v5 (journal under an observed barrier); same assumptions and limits.",
+    "allow_read_home_note": "PAT-126, as in v5: the one home file the cloud shell may read (git's default excludes file); the Read tool stays denied on the home.",
+    "audit_absent_path_forms": "quoted_path",
+    "audit_absent_path_forms_note": "PAT-128: a path the arm named that does not exist, in the form Claude Code's Read tool and omp's read tool answer, is recorded apart from the hits (accepted only after v5; pinned by the loader for protocol c1)."
+  },
+  "cloud_bash_deny": [
+    "Bash(gh:*)",
+    "Bash(git push:*)",
+    "Bash(git remote:*)",
+    "Bash(git clone:*)",
+    "Bash(git fetch:*)",
+    "Bash(git pull:*)",
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+    "Bash(claude:*)",
+    "Bash(codex:*)",
+    "Bash(omp:*)",
+    "Bash(ssh:*)",
+    "Bash(scp:*)",
+    "Bash(nc:*)",
+    "Bash(python3 -m http:*)",
+    "Bash(pip install:*)",
+    "Bash(npm:*)",
+    "Bash(security:*)",
+    "Bash(open:*)"
+  ],
+  "cloud_bash_deny_note": "Best-effort Bash permission rules in the --disallowedTools of the diagnoser (the loader refuses a real cloud driver whose argv lacks one of them); not a sandbox, as in v4 and v5.",
+  "dedicated_machine": {
+    "note": "Protocol v2 admission inherited by v3, v4 and v5 (thresholds: maintainer, 2026-10-06; narrowed system patterns: coordinator, 2026-10-07, before any corpus trial; validated by the maintainer on 2026-10-07), applied by the preflight of compare-exploration when arm L runs (screen-exploration is refused in v4 and v5; in v2 and v3 it applied before every screening task): refuse when a process outside the allow-list below holds more than max_other_process_rss_gib of resident memory (ps -axo rss=,command=), or when the free memory percentage of memory_pressure is under min_free_percent (35: replaces the 'swap de départ' threshold of the ticket's original AC; swap in use does not come down without a reboot, and the process rule is the real guard, see pat-19-preflight-v2-2026-10-06.json#dedicated_machine_measurement). Both commands are already in the launcher's read-only list. An unreadable output refuses. Only a process NAME (application name or executable basename, never an argument) is recorded with the observed values. The system patterns are deliberately narrow: /System/Library/ (daemons and frameworks), /usr/libexec|sbin|bin, /sbin, /Library/Apple and kernel_task; NOT /System/Applications/ (consumer apps such as Mail or Photos) nor /System/Volumes/Preboot/Cryptexes/App/ (Safari/WebKit), which are ordinary memory consumers.",
+    "max_other_process_rss_gib": 2,
+    "min_free_percent": 35,
+    "allowed_command_patterns": {
+      "lm_studio": [
+        "/LM Studio\\.app/",
+        "/\\.lmstudio/",
+        "(^|/)lms( |$)"
+      ],
+      "launcher": [
+        "foundry[._]local_first_runner",
+        "local_first_runner\\.py"
+      ],
+      "system": [
+        "^/System/Library/",
+        "^/usr/(libexec|sbin|bin)/",
+        "^/sbin/",
+        "^/Library/Apple/",
+        "^kernel_task( |$)"
+      ]
+    }
+  },
+  "compression": {
+    "tasks": [
+      27
+    ],
+    "task_set": "pat-19-c1-pilot",
+    "ground_truth": {
+      "file": "pat-19-exploration-truth-v2.json",
+      "sha256": "9172feb07762d65f43280a2f8fa06181c4f13ed1c09c979227b9e4e58e21784c",
+      "note": "the single source of the ground truth: the launcher loads this committed file and refuses (campaign load, code 2, before any attempt) a file whose sha256 differs"
+    },
+    "material": {
+      "file": "pat-19-compression-material-v1.json",
+      "sha256": "a5bbc1ef35d25e27a1c46e7febf2f6ea812aaed619c5baa19a2d6bddd82e73dd",
+      "note": "the committed output of the protected tests of the 12 tasks on their unmodified base bundles, with its hashes and sizes (pat-19-protocol-c1.md, section 2); verified at load"
+    },
+    "local_call": {
+      "endpoint": "http://127.0.0.1:1234/v1/chat/completions",
+      "temperature": 0,
+      "max_tokens": 4096,
+      "timeout_seconds": 600,
+      "target_fraction": 0.2,
+      "system": "You compress the output of a test run for a reader who will not see it. Answer with the summary only.",
+      "prompt": "Below is the complete output of a pytest run. Write a summary of it that a reader who will not see the output can rely on to find why the tests fail. Name EVERY failing or erroring test by its complete node id, copied exactly as it appears in the lines that start with FAILED or ERROR, and say for each, in a few words, what went wrong and where (the file and the function of the code under test, when the output shows them). Stay under {budget} characters in total. Add nothing else.\n\n<output>\n{output}\n</output>",
+      "note": "ONE non-streaming Chat Completions call, no tools, no other sampling parameter, to a literal loopback address (FOUNDRY-ADR-0007: preprocessing, loopback only); the summary is the raw content of the answer; a timeout, an invalid or an empty answer is a failed summary (recall 0 for the screening), never retried; an endpoint that cannot be reached at all is an instrument failure (void attempt, replayed once). {budget} is target_fraction (0.2, a margin under the 25 % of the rule) of the output's bytes. 1234 is LM Studio's default server port: the operator starts the server; it is not read from the machine."
+    },
+    "output_kinds": {
+      "F": "the complete output of that run",
+      "S": "a summary of that run's output, written by a local model; it may omit or distort details, which you can check in the repository"
+    }
+  },
+  "non_protocol_choices": {
+    "one_launch_per_candidate": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the calls are independent single-shot requests (no history, no tool loop): the operator loads each candidate once and the launcher plays its 12 tasks; the per-task reload of v3 to v5 (long tool loops) is not required here, and no cause of a difference between a fresh load and a loaded model is established"
+    },
+    "min_free_disk_gib": {
+      "not_a_protocol_coordinate": true,
+      "value_at": "frozen_machine.min_free_disk_gib",
+      "rationale": "launcher safety margin, as in v5"
+    },
+    "envelope_recommendation": {
+      "not_a_protocol_coordinate": true,
+      "rationale": "the caps below are a recommendation for the operator's envelope file; the launcher refuses an envelope above rules.compression_comparison.cloud_executions_max cloud executions, whose shares (36 campaign + 4 pilot) hold the cap of 40 by construction"
+    }
+  },
+  "statement_footer": "\n\n---\nLauncher note (identical for every arm): this is a read-only diagnosis. Work only inside this repository. Do not create, modify or delete any file, do not create virtual environments, install packages or run the test suite.\n",
+  "prompts": {
+    "diagnose": "The task described in {statement_file} was attempted on the code of this repository and its acceptance tests failed. Read the task. Below is {output_kind}.\n\nFind the cause of the failure: the ONE file and the ONE function of the repository's own code (not of the tests) that must be corrected so that these tests pass. Work only inside this repository, READ-ONLY: do not modify, create or delete any file. Answer with ONE JSON object as your final message, and nothing after it: {\"file\": \"<path from the repository root>\", \"function\": \"<name of the function, qualified by its class when it is a method>\"}.\n\n<test_output>\n{test_output}\n</test_output>"
+  },
+  "rules": {
+    "compression_screening": {
+      "tasks": 1,
+      "recall_mean_min": 0.8,
+      "size_ratio_max": 0.25,
+      "candidates": [
+        "qwen3.8-27b-mlx-6bit",
+        "qwen3.8-27b-mlx-4bit",
+        "qwen3.6-35b-a3b-mlx-4bit",
+        "muse-glimmer-30b-gguf",
+        "qwen3-coder-30b-a3b-mlx-4bit"
+      ],
+      "note": "Validated 2026-10-07: recall of the failing tests cited in the summary, 0.8 on average over the tasks, AND summary size at most 25 % of the original output. Fixed by the coordinator (mandate of 2026-10-08): the 25 % applies PER TASK (every summary produced, against its own output); a failed summary has no size and is judged on its recall 0; selection: best mean recall among the candidates that pass both, ties by the smaller total size of the summaries, then by the order of protocol v1; no candidate passes: STOP, keep_cloud, no comparison."
+    },
+    "compression_comparison": {
+      "tasks": 1,
+      "premium_per_correct_ratio_max": 0.85,
+      "paired_decided_min": 1,
+      "cloud_executions_max": 4,
+      "note": "Validated 2026-10-07: accuracy with the summary at least equal to accuracy with the full output AND premium tokens per correct diagnosis at most 0.85 times the full arm's; cap of 40 cloud executions; unknown never counted as zero. Fixed by the coordinator (mandate of 2026-10-08): the order of reading, the paired decided set D with a minimum of 9 tasks of 12 (v5's), the worst-case robustness of a retained verdict, and the shares of the cap (36 campaign, 4 pilot). See pat-19-protocol-c1.md section 5."
+    }
+  },
+  "envelope_recommended": {
+    "compression": {
+      "allowed_modes": [
+        "screen_compression",
+        "compare_compression"
+      ],
+      "caps": {
+        "cloud_executions": 4,
+        "premium_tokens": 2500000,
+        "wall_clock_seconds": 10000
+      },
+      "justification": "Pilot: 1 task x 2 arms = 2 cloud executions, 2 spare for the replay of an execution cut before its record (cap 4 = the pilot's share of 40). premium_tokens and wall clock are recommendations, not enforced by the launcher."
+    }
+  },
+  "drivers": {
+    "cloud_diagnoser": {
+      "kind": "cloud_explorer",
+      "verified": true,
+      "home": "real",
+      "network": "open",
+      "env_allow": [],
+      "stream": {
+        "format": "claude-stream-json"
+      },
+      "session_log": {
+        "host": "claude",
+        "projects_dir": "~/.claude/projects",
+        "layout_verified": true,
+        "layout_note": "Verified on 2026-10-05 (PAT-111) for the implementer and the reviewer of v4 and v5: the launcher's reading of <projects_dir>/*/<session>.jsonl equals the host's own result.usage exactly, one file per session id. Same reading here; conditional on the launcher's assertion, from the stream's system/init event, that the arm's tools are a subset of allowed_tools."
+      },
+      "model": "claude-sonnet-5-5",
+      "note": "Claude Code 2.1.294 headless, Sonnet 5.5 at effort medium (the model and effort of the v5 implementer arms). READ-ONLY diagnoser: the argv of the v5 implementer with Edit and Write added to the denied tools (as the cloud explorer of v2 and v3); Bash stays available under the native Bash sandbox because the host's search runs through it (the v2 cloud explorer's init listed exactly Bash and Read), with the whole bundle protected against writes (see isolation.native_sandbox_note). The init tools must be a subset of allowed_tools (Bash, Glob, Grep, Read) or the record is refused. NOT RUN with this argv or this version: 'verified' here means that the arm may be launched under the evidence of the v5 instrument (native_sandbox_evidence); the diagnoser itself is first exercised by the pilot. Claude Code is pinned to 2.1.294 by binary_version, checked before the first cloud execution of a launch.",
+      "argv": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--session-id",
+        "{session_id}",
+        "--model",
+        "{model}",
+        "--effort",
+        "medium",
+        "--permission-mode",
+        "bypassPermissions",
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "Task",
+        "TaskStop",
+        "Workflow",
+        "SendMessage",
+        "ListAgents",
+        "Monitor",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        "RemoteTrigger",
+        "PushNotification",
+        "WebFetch",
+        "WebSearch",
+        "Skill",
+        "DesignSync",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ReportFindings",
+        "ToolSearch",
+        "NotebookEdit",
+        "Artifact",
+        "ArtifactComments",
+        "ArtifactData",
+        "SendFeedback",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "Edit",
+        "Write",
+        "Bash(gh:*)",
+        "Bash(git push:*)",
+        "Bash(git remote:*)",
+        "Bash(git clone:*)",
+        "Bash(git fetch:*)",
+        "Bash(git pull:*)",
+        "Bash(curl:*)",
+        "Bash(wget:*)",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(omp:*)",
+        "Bash(ssh:*)",
+        "Bash(scp:*)",
+        "Bash(nc:*)",
+        "Bash(python3 -m http:*)",
+        "Bash(pip install:*)",
+        "Bash(npm:*)",
+        "Bash(security:*)",
+        "Bash(open:*)",
+        "--output-format",
+        "stream-json",
+        "--verbose"
+      ],
+      "binary_version": {
+        "command": [
+          "claude",
+          "--version"
+        ],
+        "pattern": "^(\\d+\\.\\d+\\.\\d+) \\(Claude Code\\)$",
+        "version": "2.1.294"
+      },
+      "evidence": "pat-19-native-sandbox-trial-2026-10-08-t4.json",
+      "sandbox": false,
+      "sandbox_reason": "Claude Code cannot authenticate under sandbox-exec ('Not logged in' with the keychain denied, '401 OAuth access token has been revoked' with it allowed; cause not established). The arm runs unsandboxed with the AGENTS.md R6 environment intact (real HOME, LANG, LC_ALL, LOGNAME, PATH, TMPDIR, USER) in the disposable bundle; its tool calls are audited after the run. Consequences, not mitigated by the launcher: real home, open network, the user's implicit credentials, no Foundry hook (no R1 guard); see cloud_bash_deny and isolation.note.",
+      "allowed_tools": [
+        "Bash",
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "native_sandbox_evidence": "pat-19-native-sandbox-trial-2026-10-08-t4.json"
+    }
+  },
+  "candidates": {
+    "qwen3.8-27b-mlx-6bit": {
+      "model": "qwen3.8-27b-mlx-alias",
+      "lm_studio_key": "qwen3.8-27b-mlx-alias",
+      "engine": "mlx",
+      "quantization": "6bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.8-27B-MLX-6bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen3.8-27b-mlx-alias",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen3.8-27b-mlx-alias",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "config.json": "f2490d237e42fc8418ee62b7416e360785b7de308f43d8f794ccf4f185bdeec9",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00005.safetensors": "39a48bfd79609b341f4ed420cdc92e3edce316cd3f5ef7db2dcd371f48c90588",
+        "model-00002-of-00005.safetensors": "d9011deb397afa986754a8abe3872b87a21c2bd6d7f9ed50bd8cba3890b782f9",
+        "model-00003-of-00005.safetensors": "760d392182ee77093df96328110596e230a9f4cab37febd70ae29173f7ff7e01",
+        "model-00004-of-00005.safetensors": "513fbeb37662c2b6020ebe4d61e5e9192f7abb5970aef0cd291b7a55f445c23e",
+        "model-00005-of-00005.safetensors": "6ed59540691cfb8f8adeaa186506d3fc44b0f0ce392c7caf59116bb6ae580c01",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "45fc17c8dd2474af6b493b52483c26c0584b0082d368c480f9fa611e73070040",
+        "tokenizer_config.json": "47a7a8371379b07650b22f3c8a78c32fed85c4e35ea88e3da0c4b7a7611e8082",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-6bit.deny_home_trial"
+      },
+      "note": "Reached through the LM Studio model key qwen3.8-27b-mlx-alias: a folder of hard links (pat19-campaign/Qwen3.8-27B-MLX-6bit-alias) to the 6-bit files, because LM Studio groups the 4-bit and 6-bit variants under qwen/qwen3.8-27b and no CLI or API key selects the 6-bit variant."
+    },
+    "qwen3.8-27b-mlx-4bit": {
+      "model": "qwen/qwen3.8-27b",
+      "lm_studio_key": "qwen/qwen3.8-27b",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.8-27B-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen/qwen3.8-27b",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen/qwen3.8-27b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+        "config.json": "14b65a0ee06517060a6bbd979bb1a8ff54e7b304b1a1f01d54344b88b8285e85",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00003.safetensors": "471a9a81b54dddbfef43e8a71960ca24ad3c727891c6b0750a9db9a214aab504",
+        "model-00002-of-00003.safetensors": "e7474b8f968f4078dfd4889925961c5b0da9939219b614dba08eb63c46590de7",
+        "model-00003-of-00003.safetensors": "1038989bed1346ecdb541a45c078df2aae99a9509f35bfd51e7a04802a5d8402",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "45fc17c8dd2474af6b493b52483c26c0584b0082d368c480f9fa611e73070040",
+        "tokenizer_config.json": "47a7a8371379b07650b22f3c8a78c32fed85c4e35ea88e3da0c4b7a7611e8082",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.8-27b-mlx-4bit.deny_home_trial"
+      },
+      "note": "The selected variant of qwen/qwen3.8-27b must be the 4-bit one: the preflight refuses a loaded instance whose quantization is not 4bit."
+    },
+    "qwen3.6-35b-a3b-mlx-4bit": {
+      "model": "qwen/qwen3.6-35b-a3b",
+      "lm_studio_key": "qwen/qwen3.6-35b-a3b",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen/qwen3.6-35b-a3b",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen/qwen3.6-35b-a3b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259",
+        "config.json": "a822a9e48b0aafbe3144ec37d4fb067e178ed96615ce6e4420b3149893cc5767",
+        "generation_config.json": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+        "model-00001-of-00004.safetensors": "09f3e6ecb0b7af6e6a38bc8169a134c821b0924c2679b2bb8f4426ad38d032b8",
+        "model-00002-of-00004.safetensors": "31dcdb1c49eebdb1505bd14e3cb33f9cf900bd2546b638f2464694ae763a033f",
+        "model-00003-of-00004.safetensors": "3e66de06a1f03dade16a612a368cfce4a4c9caa4efd7d28185454384082cec03",
+        "model-00004-of-00004.safetensors": "a5d0cf03519c26f8b506df6b0ba60526e5c08c8cea22d0c21ce92950e58a5422",
+        "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+        "processor_config.json": "d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1",
+        "tokenizer_config.json": "672488283cdbf3530ecd2e3f90da54f9998cbae6befb5b32877590f72c7a9b2c",
+        "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "chat_template_sha256": "e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259",
+      "generation_config_sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit",
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3.6-35b-a3b-mlx-4bit.deny_home_trial"
+      }
+    },
+    "muse-glimmer-30b-gguf": {
+      "model": "muse-glimmer-30b",
+      "lm_studio_key": "muse-glimmer-30b",
+      "engine": "llama.cpp",
+      "quantization": "Q4_K_M",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Muse-Glimmer-30B-GGUF",
+      "load_command": [
+        "lms",
+        "load",
+        "muse-glimmer-30b",
+        "-c",
+        "65536",
+        "--identifier",
+        "muse-glimmer-30b",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf": "4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e",
+        "mmproj-Muse-Glimmer-30B-Q4_K_M.gguf": "f48b452316f9b213758e8659444029b961a24a07f99a1abb2a9f88b06f7c00c6"
+      },
+      "chat_template_sha256": null,
+      "generation_config_sha256": null,
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.muse-glimmer-30b-gguf",
+        "failed_at_default_8192": true,
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.muse-glimmer-30b-gguf.deny_home_trial"
+      },
+      "note": "Chat template embedded in the GGUF (covered by the file digest)."
+    },
+    "qwen3-coder-30b-a3b-mlx-4bit": {
+      "model": "qwen3-coder-30b-a3b-instruct-mlx",
+      "lm_studio_key": "qwen3-coder-30b-a3b-instruct-mlx",
+      "engine": "mlx",
+      "quantization": "4bit",
+      "min_context": 65536,
+      "hf_repo_provenance": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit",
+      "load_command": [
+        "lms",
+        "load",
+        "qwen3-coder-30b-a3b-instruct-mlx",
+        "-c",
+        "65536",
+        "--identifier",
+        "qwen3-coder-30b-a3b-instruct-mlx",
+        "--parallel",
+        "1"
+      ],
+      "file_sha256": {
+        "chat_template.jinja": "672e747c77e990320152343b0a4951222e40de5645297905d89afba05586d827",
+        "config.json": "6fb72959ce0deb110c85627c09041cbcad46163c3802914ebefd02bbcf3304e6",
+        "generation_config.json": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d",
+        "model-00001-of-00004.safetensors": "961d4610b969fcf61b015f59654da6b12a158af5a1104be0fadd75268bd9535c",
+        "model-00002-of-00004.safetensors": "916440f8de7a85b62ae74711a36b7d59bf8b04101e85a23717287cbd60fdd193",
+        "model-00003-of-00004.safetensors": "02be309a7a17b0ab0e6df48e5d6070940e05492392a3501a629c7f21d18588e2",
+        "model-00004-of-00004.safetensors": "17701098bfd26cfe4d14e4ec96e3a483a6cfe3798d4c6586638beaab48c6bf51",
+        "tokenizer_config.json": "c8785e5cc844c31853fa42c926e80aa7659e6d3cb237dcbbe6071ae93917ade7"
+      },
+      "chat_template_sha256": "672e747c77e990320152343b0a4951222e40de5645297905d89afba05586d827",
+      "generation_config_sha256": "c99723ab3ba28630d26ae23def77603b540a46924895af5cf234740d3b27b51d",
+      "generation_parameters": "server and harness defaults, not overridden by the launcher (no temperature, top_p, top_k, seed or max_tokens is passed)",
+      "smoke": {
+        "passed_at_65536": true,
+        "evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3-coder-30b-a3b-mlx-4bit",
+        "failed_at_default_8192": true,
+        "deny_home_evidence": "pat-19-preflight-2026-10-05.json#candidates.qwen3-coder-30b-a3b-mlx-4bit.deny_home_trial"
+      }
+    }
+  },
+  "candidates_note": "The five local candidates of protocol v1, copied unchanged from pat-19-campaign-v1.json in its order (the sixth entry of that file, devstral, is declared unused there and is not part of protocol c1)."
+}

@@ -1,0 +1,26 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_linear_historical_batch_refuses_orphan_witness_before_effect _______
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x104ff42f0>, <test_linear_tracker.LinearWire object at 0x104ff4440>)
+
+    def test_linear_historical_batch_refuses_orphan_witness_before_effect(tracker):
+        instance, wire = tracker
+        records = _historical_batch_pair()
+        instance.import_adr_batch(PROJECT, records)
+        version_id = linear_module._adr_document_id(
+            PROJECT.id, records[0]["adr_id"], 0
+        )
+        del wire.documents[version_id]
+        before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+        calls_before = len(wire.calls)
+    
+>       with pytest.raises(
+            TrackerConflictError, match="batch witness has no matching version"
+        ):
+E       Failed: DID NOT RAISE TrackerConflictError
+
+tests/test_linear_tracker.py:2836: Failed
+=========================== short test summary info ============================
+FAILED tests/test_linear_tracker.py::test_linear_historical_batch_refuses_orphan_witness_before_effect
+1 failed in 0.17s

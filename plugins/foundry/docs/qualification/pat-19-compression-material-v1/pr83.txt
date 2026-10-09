@@ -1,0 +1,1060 @@
+..FFF.....FFFFFFFF                                                       [100%]
+=================================== FAILURES ===================================
+_ test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-observed-form] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x1126cc1a0>, <test_linear_tracker.LinearWire object at 0x1126cc050>)
+body = '\n1. a\n\n2. b'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("\n1. a\n\n2. b", id="leading-blank-observed-form"),
+            pytest.param("\n- a", id="leading-blank-bullet"),
+            pytest.param("\n1. a\n2. b", id="leading-blank-tight-ordered"),
+            pytest.param("\n \n* a", id="leading-whitespace-blank-bullet"),
+        ],
+    )
+    def test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused(
+        tracker, body
+    ):
+        instance, wire = tracker
+>       with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE TrackerConflictError
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9216: Failed
+_ test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-bullet] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106db1590>, <test_linear_tracker.LinearWire object at 0x106db1450>)
+body = '\n- a'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("\n1. a\n\n2. b", id="leading-blank-observed-form"),
+            pytest.param("\n- a", id="leading-blank-bullet"),
+            pytest.param("\n1. a\n2. b", id="leading-blank-tight-ordered"),
+            pytest.param("\n \n* a", id="leading-whitespace-blank-bullet"),
+        ],
+    )
+    def test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused(
+        tracker, body
+    ):
+        instance, wire = tracker
+>       with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE TrackerConflictError
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9216: Failed
+_ test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-tight-ordered] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106db1bd0>, <test_linear_tracker.LinearWire object at 0x106db1a90>)
+body = '\n1. a\n2. b'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("\n1. a\n\n2. b", id="leading-blank-observed-form"),
+            pytest.param("\n- a", id="leading-blank-bullet"),
+            pytest.param("\n1. a\n2. b", id="leading-blank-tight-ordered"),
+            pytest.param("\n \n* a", id="leading-whitespace-blank-bullet"),
+        ],
+    )
+    def test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused(
+        tracker, body
+    ):
+        instance, wire = tracker
+>       with pytest.raises(TrackerConflictError, match="unsupported Markdown") as raised:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE TrackerConflictError
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9216: Failed
+_ test_linear_adr_pat101_pinned_pat72_profile_applies_before_the_strict_check __
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x112541480>, <test_linear_tracker.LinearWire object at 0x112541350>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x112622b30>
+
+    def test_linear_adr_pat101_pinned_pat72_profile_applies_before_the_strict_check(
+        tracker, monkeypatch
+    ):
+        """A new ADR identical to a digest-pinned source is accepted; a neighbour is not."""
+        instance, wire = tracker
+        fragment = linear_module._PAT_72_BLANK_LINE_FRAGMENT
+        # The pinned gap follows a list item, which the general strict model refuses.
+        source = "- item\n  " + fragment + " After.\n"
+        with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+            linear_module._preflight_adr_body_readback(source)
+        star = source.replace("- item", "* item", 1)
+        monkeypatch.setattr(
+            linear_module, "_PAT_72_SOURCE_SHA256", hashlib.sha256(source.encode()).hexdigest()
+        )
+        monkeypatch.setattr(
+            linear_module,
+            "_PAT_72_READBACK_SHA256",
+            hashlib.sha256(
+                star.replace(fragment, linear_module._PAT_72_RENDERED_FRAGMENT, 1).encode()
+            ).hexdigest(),
+        )
+>       assert linear_module._linear_markdown_readback_body(source, strict=True) == (
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            star.replace(fragment, linear_module._PAT_72_RENDERED_FRAGMENT, 1)
+        )
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9759: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1496: in _linear_markdown_readback_body
+    _linear_observed_list_blank_lines(body, strict=strict)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+body = '- item\n  append-only à identifiant déterministe, il est préféré à un remplacement en place.\n\n\n**Portée des propriétés.** After.\n'
+strict = True
+
+    def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
+        """Return the offsets of the empty lines Linear drops from the observed form.
+    
+        Observed (PAT-94, native PAT-ADR-0014): a top-level ordered list `1. ` to at
+        most `9. `, numbered from 1 by +1, one plain LF line per item, items separated
+        by exactly one empty LF line, preceded by the start of the body or empty LF
+        lines and followed by the end of the body or empty LF lines and a non-list
+        block, is read back with the separating empty lines removed.  ``strict``
+        accepts it only with at most one empty line on each side (PAT-72: Linear
+        collapses two empty lines after a list item).
+    
+        Whitelist: a blank line in a list context -- after a block holding a
+        list-item-like line (also inside a blockquote) or its indented continuation,
+        before a block starting with a list-item-like or indented line -- has an
+        unobserved rendering unless it lies inside that exact form.  So has a gap of
+        two or more empty lines before or after a list-context paragraph.  ``strict``
+        refuses either, naming the first offending 1-based CommonMark line; otherwise
+        they are left untouched, as before PAT-94.  A body with neither is never
+        refused here.  Lines and blank lines are CommonMark ones (only spaces or
+        tabs); fenced code is one opaque block.  Forward only: a source is never
+        recovered from a rendering.
+        """
+        lines = _COMMONMARK_LINE.findall(body)
+        offsets = [0]
+        for source_line in lines:
+            offsets.append(offsets[-1] + len(source_line))
+        blocks: list[tuple[int, bool]] = []  # (first line, fenced)
+        fence = None
+        for number, source_line in enumerate(lines):
+            line = source_line.rstrip("\r\n")
+            if fence is not None:
+                if _markdown_fence_closing(line, *fence):
+                    fence = None
+                continue
+            fence = _markdown_fence_opening(line)
+            blocks.append((number, fence is not None))
+    
+        def content(block: int) -> str:
+            line = lines[blocks[block][0]].rstrip("\r\n")
+            quote = _BLOCKQUOTE_PREFIX.match(line)
+            return line[quote.end() :] if quote else line
+    
+        def is_item(block: int) -> bool:
+            text = content(block)
+            return (
+                not blocks[block][1]
+                and _LIST_LIKE.match(text) is not None
+                and _THEMATIC_BREAK.fullmatch(text) is None
+            )
+    
+        def is_lf_gap(gap: list[int]) -> bool:
+            return all(lines[blocks[block][0]] == "\n" for block in gap)
+    
+        leading: list[int] = []
+        paragraphs: list[list[int]] = []
+        gaps: list[list[int]] = []  # gaps[k]: blank blocks after paragraphs[k]
+        for block, (_, fenced) in enumerate(blocks):
+            if not fenced and not content(block).strip(" \t"):
+                (gaps[-1] if paragraphs else leading).append(block)
+            elif paragraphs and not gaps[-1]:
+                paragraphs[-1].append(block)
+            else:
+                paragraphs.append([block])
+                gaps.append([])
+    
+        risky = []  # risky[k]: blank lines between paragraphs k and k + 1 are in a list
+        listed = []  # listed[k]: paragraph k is in a list context
+        in_list = False
+        for index, paragraph in enumerate(paragraphs):
+            indented = content(paragraph[0])[:1] in (" ", "\t")
+            if index:
+                risky.append(in_list and (is_item(paragraph[0]) or indented))
+            in_list = any(is_item(block) for block in paragraph) or (indented and in_list)
+            listed.append(in_list)
+    
+        def observed_item(index: int, number: int) -> bool:
+            if len(paragraphs[index]) != 1:
+                return False
+            line_number, fenced = blocks[paragraphs[index][0]]
+            line = lines[line_number]
+            match = _OBSERVED_ORDERED_ITEM.fullmatch(line)
+            return (
+                not fenced
+                and match is not None
+                and match[1] == str(number)
+                and _NOT_PLAIN_ITEM_TEXT.match(match[2]) is None
+                and match[2][-1] not in " \t"
+                and _NON_LF_SEPARATORS.isdisjoint(line)
+            )
+    
+        drops: set[int] = set()
+        covered: set[int] = set()
+        start = 0
+        while start < len(paragraphs):
+            last = start
+            while (
+                observed_item(start, 1)
+                and last + 1 < len(paragraphs)
+                and len(gaps[last]) == 1
+                and is_lf_gap(gaps[last])
+                and observed_item(last + 1, last - start + 2)
+            ):
+                last += 1
+            if (
+                last > start
+                and (start == 0 or not risky[start - 1])
+                and (last + 1 == len(paragraphs) or not risky[last])
+                and is_lf_gap((leading if start == 0 else gaps[start - 1]) + gaps[last])
+            ):
+                covered.update(range(start, last))
+                drops.update(
+                    offsets[blocks[gaps[index][0]][0]] for index in range(start, last)
+                )
+            start = last + 1
+        if strict:
+            # Uncovered list blank lines, and every gap of two or more empty lines
+            # next to a list-context paragraph: PAT-72 shows Linear collapsing such a
+            # gap after a list item, so even the observed form is accepted only with
+            # at most one empty line on each side.
+            offending = [
+                gaps[index][0] for index, risk in enumerate(risky)
+                if risk and index not in covered
+            ]
+            offending.extend(
+                gap[0]
+                for gap, beside in [
+                    (leading, listed[:1]),
+                    *((gap, listed[index : index + 2]) for index, gap in enumerate(gaps)),
+                ]
+                if len(gap) > 1 and any(beside)
+            )
+            if offending:
+                line = blocks[min(offending)][0] + 1
+>               raise ValueError(f"unsupported list Markdown in ADR body (line {line})")
+E               ValueError: unsupported list Markdown in ADR body (line 3)
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1471: ValueError
+_ test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot[replacement] _
+
+self = <foundry.trackers.linear.LinearTracker object at 0x112636210>
+adr = Adr(id='LIN-ADR-0001', title='PAT-101 source', status='accepted', body='<!-- foundry-linear-adr.v1\n{"body_sha256":"a1...:"accepted","team_id":"team-uuid","title":"PAT-101 source"}\n-->\n\nplain', ref='194f2586-ddf5-4ff7-8b4b-2cda033a4b0c')
+replacement_id = 'LIN-ADR-0002'
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+
+    def supersede_adr(
+        self, adr: Adr, replacement_id: str, project: Project | None = None
+    ) -> None:
+        project = project or self._project()
+        try:
+>           _, chains = self._adr_snapshot(project)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:7705: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:5756: in _adr_snapshot
+    chains = _adr_chain(documents, binding)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+documents = [{'id': '3369607c-e7ae-4bb5-97ee-da3d23ddb5ab', 'title': '[Foundry ADR] LIN-ADR-0001 / v0000 / PAT-101 source', 'conte...37d904bbf4e41d865f90475","source_encoding":"base64-utf8","team_id":"team-uuid"}\n\\-->', 'archivedAt': None, ...}, ...]
+binding = {'key': 'LIN', 'project_id': 'project-uuid', 'team_id': 'team-uuid', 'canonical_repo': 'github.com/acme/widgets', ...}
+
+    def _adr_chain(documents: list[dict], binding: dict) -> dict:
+        chains = {}
+        witnesses = {}
+        version_documents = []
+        for raw in documents:
+            if isinstance(raw, dict) and (
+                str(raw.get("title", "")).startswith(_ADR_WITNESS_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_WITNESS_HEADER)
+            ):
+                witness = _parse_adr_witness(raw, binding)
+                key = (witness["adr_id"], witness["sequence"])
+                if key in witnesses:
+                    raise TrackerConflictError("Linear ADR witness slot has a fork")
+                witnesses[key] = (witness, raw)
+                continue
+            if not (
+                isinstance(raw, dict)
+                and (
+                    str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
+                    or str(raw.get("content", "")).startswith(_ADR_HEADER)
+                )
+            ):
+                continue
+            version_documents.append(raw)
+    
+        for raw in version_documents:
+            matching_witnesses = [
+                witness
+                for witness, _witness_raw in witnesses.values()
+                if witness["document_id"] == raw.get("id")
+            ]
+            if len(matching_witnesses) > 1:
+                raise TrackerConflictError("Linear ADR witness slot has a fork")
+            witness = matching_witnesses[0] if matching_witnesses else None
+            source_body = (
+                witness.get(_ADR_BOUND_SOURCE_BODY)
+                if witness is not None
+                else None
+            )
+            metadata, parsed_body = _parse_adr_document(
+                raw,
+                binding,
+                source_body=source_body,
+                allow_unbound_body=witness is None,
+                allow_witness_bound_readback=witness is not None,
+            )
+            if witness is not None and (
+                witness["adr_id"] != metadata["id"]
+                or witness["sequence"] != metadata["sequence"]
+                or (
+                    source_body is not None
+                    and witness["source_body_sha256"] != metadata["body_sha256"]
+                )
+            ):
+                raise TrackerConflictError("Linear ADR version witness diverged")
+            bound_raw = dict(raw)
+            bound_raw[_ADR_BOUND_SOURCE_BODY] = parsed_body
+            chains.setdefault(metadata["id"], []).append((metadata, bound_raw))
+        observed = set()
+        for adr_id, versions in chains.items():
+            versions.sort(key=lambda item: item[0]["sequence"])
+            for sequence, (metadata, raw) in enumerate(versions):
+                key = (adr_id, sequence)
+                witness_pair = witnesses.get(key)
+                if witness_pair is None:
+>                   raise TrackerConflictError("Linear ADR version witness is missing")
+E                   foundry.trackers.base.TrackerConflictError: Linear ADR version witness is missing
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:2201: TrackerConflictError
+
+During handling of the above exception, another exception occurred:
+
+body = '- a\n\n- b', allow_foundry_adr_0001 = False, new_body = True
+
+    def _preflight_adr_body_readback(
+        body: str, *, allow_foundry_adr_0001: bool = False, new_body: bool = True
+    ) -> None:
+        """Refuse a body with an unmodelled Linear rendering before any write.
+    
+        Every body keeps the pre-PAT-94 refusals.  A ``new_body`` (the fail-closed
+        default) also gets the strict PAT-94 list whitelist.  Callers pass
+        ``new_body=False`` only when the body's Linear rendering is already proven:
+        it is the exact body of the stored previous version whose bytes the model
+        verifies (`_is_stored_adr_body`), of an existing exact slot being recovered,
+        or of a batch import whose provider bytes a qualification probe pins.
+        """
+        try:
+            _linear_markdown_readback_body(
+                body, allow_foundry_adr_0001=allow_foundry_adr_0001, observed_lists=False
+            )
+            if new_body:
+>               _linear_markdown_readback_body(
+                    body, allow_foundry_adr_0001=allow_foundry_adr_0001, strict=True
+                )
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1584: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1496: in _linear_markdown_readback_body
+    _linear_observed_list_blank_lines(body, strict=strict)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+body = '- a\n\n- b', strict = True
+
+    def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
+        """Return the offsets of the empty lines Linear drops from the observed form.
+    
+        Observed (PAT-94, native PAT-ADR-0014): a top-level ordered list `1. ` to at
+        most `9. `, numbered from 1 by +1, one plain LF line per item, items separated
+        by exactly one empty LF line, preceded by the start of the body or empty LF
+        lines and followed by the end of the body or empty LF lines and a non-list
+        block, is read back with the separating empty lines removed.  ``strict``
+        accepts it only with at most one empty line on each side (PAT-72: Linear
+        collapses two empty lines after a list item).
+    
+        Whitelist: a blank line in a list context -- after a block holding a
+        list-item-like line (also inside a blockquote) or its indented continuation,
+        before a block starting with a list-item-like or indented line -- has an
+        unobserved rendering unless it lies inside that exact form.  So has a gap of
+        two or more empty lines before or after a list-context paragraph.  ``strict``
+        refuses either, naming the first offending 1-based CommonMark line; otherwise
+        they are left untouched, as before PAT-94.  A body with neither is never
+        refused here.  Lines and blank lines are CommonMark ones (only spaces or
+        tabs); fenced code is one opaque block.  Forward only: a source is never
+        recovered from a rendering.
+        """
+        lines = _COMMONMARK_LINE.findall(body)
+        offsets = [0]
+        for source_line in lines:
+            offsets.append(offsets[-1] + len(source_line))
+        blocks: list[tuple[int, bool]] = []  # (first line, fenced)
+        fence = None
+        for number, source_line in enumerate(lines):
+            line = source_line.rstrip("\r\n")
+            if fence is not None:
+                if _markdown_fence_closing(line, *fence):
+                    fence = None
+                continue
+            fence = _markdown_fence_opening(line)
+            blocks.append((number, fence is not None))
+    
+        def content(block: int) -> str:
+            line = lines[blocks[block][0]].rstrip("\r\n")
+            quote = _BLOCKQUOTE_PREFIX.match(line)
+            return line[quote.end() :] if quote else line
+    
+        def is_item(block: int) -> bool:
+            text = content(block)
+            return (
+                not blocks[block][1]
+                and _LIST_LIKE.match(text) is not None
+                and _THEMATIC_BREAK.fullmatch(text) is None
+            )
+    
+        def is_lf_gap(gap: list[int]) -> bool:
+            return all(lines[blocks[block][0]] == "\n" for block in gap)
+    
+        leading: list[int] = []
+        paragraphs: list[list[int]] = []
+        gaps: list[list[int]] = []  # gaps[k]: blank blocks after paragraphs[k]
+        for block, (_, fenced) in enumerate(blocks):
+            if not fenced and not content(block).strip(" \t"):
+                (gaps[-1] if paragraphs else leading).append(block)
+            elif paragraphs and not gaps[-1]:
+                paragraphs[-1].append(block)
+            else:
+                paragraphs.append([block])
+                gaps.append([])
+    
+        risky = []  # risky[k]: blank lines between paragraphs k and k + 1 are in a list
+        listed = []  # listed[k]: paragraph k is in a list context
+        in_list = False
+        for index, paragraph in enumerate(paragraphs):
+            indented = content(paragraph[0])[:1] in (" ", "\t")
+            if index:
+                risky.append(in_list and (is_item(paragraph[0]) or indented))
+            in_list = any(is_item(block) for block in paragraph) or (indented and in_list)
+            listed.append(in_list)
+    
+        def observed_item(index: int, number: int) -> bool:
+            if len(paragraphs[index]) != 1:
+                return False
+            line_number, fenced = blocks[paragraphs[index][0]]
+            line = lines[line_number]
+            match = _OBSERVED_ORDERED_ITEM.fullmatch(line)
+            return (
+                not fenced
+                and match is not None
+                and match[1] == str(number)
+                and _NOT_PLAIN_ITEM_TEXT.match(match[2]) is None
+                and match[2][-1] not in " \t"
+                and _NON_LF_SEPARATORS.isdisjoint(line)
+            )
+    
+        drops: set[int] = set()
+        covered: set[int] = set()
+        start = 0
+        while start < len(paragraphs):
+            last = start
+            while (
+                observed_item(start, 1)
+                and last + 1 < len(paragraphs)
+                and len(gaps[last]) == 1
+                and is_lf_gap(gaps[last])
+                and observed_item(last + 1, last - start + 2)
+            ):
+                last += 1
+            if (
+                last > start
+                and (start == 0 or not risky[start - 1])
+                and (last + 1 == len(paragraphs) or not risky[last])
+                and is_lf_gap((leading if start == 0 else gaps[start - 1]) + gaps[last])
+            ):
+                covered.update(range(start, last))
+                drops.update(
+                    offsets[blocks[gaps[index][0]][0]] for index in range(start, last)
+                )
+            start = last + 1
+        if strict:
+            # Uncovered list blank lines, and every gap of two or more empty lines
+            # next to a list-context paragraph: PAT-72 shows Linear collapsing such a
+            # gap after a list item, so even the observed form is accepted only with
+            # at most one empty line on each side.
+            offending = [
+                gaps[index][0] for index, risk in enumerate(risky)
+                if risk and index not in covered
+            ]
+            offending.extend(
+                gap[0]
+                for gap, beside in [
+                    (leading, listed[:1]),
+                    *((gap, listed[index : index + 2]) for index, gap in enumerate(gaps)),
+                ]
+                if len(gap) > 1 and any(beside)
+            )
+            if offending:
+                line = blocks[min(offending)][0] + 1
+>               raise ValueError(f"unsupported list Markdown in ADR body (line {line})")
+E               ValueError: unsupported list Markdown in ADR body (line 2)
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1471: ValueError
+
+The above exception was the direct cause of the following exception:
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x112636210>, <test_linear_tracker.LinearWire object at 0x112635910>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x105e4d7e0>
+interrupted = 'replacement'
+
+    @pytest.mark.parametrize("interrupted", ["replacement", "source"])
+    def test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot(
+        tracker, monkeypatch, interrupted
+    ):
+        """A resume that only writes the witness is not refused for the previous bytes."""
+        instance, wire = tracker
+        refused, plain = "- a\n\n- b", "plain"
+        def store(title, body):
+            if body == plain:
+                return instance.create_adr(PROJECT, title, body)
+            return _store_pre_pat94(instance, monkeypatch, title, body)
+    
+        stored = store("PAT-101 source", refused if interrupted == "source" else plain)
+        other = store("PAT-101 other", refused if interrupted == "replacement" else plain)
+        instance.set_adr_status(stored, "accepted", project=PROJECT)
+        instance.set_adr_status(other, "accepted", project=PROJECT)
+        current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+        target = other.id if interrupted == "replacement" else stored.id
+        original = _interrupt_witness(instance, wire, f"{target} / v0002")
+        with pytest.raises(LinearTrackerError, match="transport_error"):
+            instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+        instance._transport = original
+        # The previous version's bytes are no longer proven by the model (as for a
+        # probe-qualified historical version 0): only the existing slot proves them.
+        monkeypatch.setattr(linear_module, "_is_stored_adr_body", lambda *_args: False)
+        wire.calls.clear()
+>       instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9727: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:7712: in supersede_adr
+    self._recover_supersession_pair(project, adr, replacement_id)
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:7891: in _recover_supersession_pair
+    _preflight_adr_body_readback(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+body = '- a\n\n- b', allow_foundry_adr_0001 = False, new_body = True
+
+    def _preflight_adr_body_readback(
+        body: str, *, allow_foundry_adr_0001: bool = False, new_body: bool = True
+    ) -> None:
+        """Refuse a body with an unmodelled Linear rendering before any write.
+    
+        Every body keeps the pre-PAT-94 refusals.  A ``new_body`` (the fail-closed
+        default) also gets the strict PAT-94 list whitelist.  Callers pass
+        ``new_body=False`` only when the body's Linear rendering is already proven:
+        it is the exact body of the stored previous version whose bytes the model
+        verifies (`_is_stored_adr_body`), of an existing exact slot being recovered,
+        or of a batch import whose provider bytes a qualification probe pins.
+        """
+        try:
+            _linear_markdown_readback_body(
+                body, allow_foundry_adr_0001=allow_foundry_adr_0001, observed_lists=False
+            )
+            if new_body:
+                _linear_markdown_readback_body(
+                    body, allow_foundry_adr_0001=allow_foundry_adr_0001, strict=True
+                )
+        except ValueError as exc:
+>           raise TrackerConflictError(
+                "Linear ADR body has unsupported Markdown serialization"
+            ) from exc
+E           foundry.trackers.base.TrackerConflictError: Linear ADR body has unsupported Markdown serialization
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1588: TrackerConflictError
+_ test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot[source] _
+
+self = <foundry.trackers.linear.LinearTracker object at 0x106daee00>
+adr = Adr(id='LIN-ADR-0001', title='PAT-101 source', status='accepted', body='<!-- foundry-linear-adr.v1\n{"body_sha256":"f7...epted","team_id":"team-uuid","title":"PAT-101 source"}\n-->\n\n- a\n\n- b', ref='194f2586-ddf5-4ff7-8b4b-2cda033a4b0c')
+replacement_id = 'LIN-ADR-0002'
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+
+    def supersede_adr(
+        self, adr: Adr, replacement_id: str, project: Project | None = None
+    ) -> None:
+        project = project or self._project()
+        try:
+>           _, chains = self._adr_snapshot(project)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:7705: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:5756: in _adr_snapshot
+    chains = _adr_chain(documents, binding)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+documents = [{'id': '3369607c-e7ae-4bb5-97ee-da3d23ddb5ab', 'title': '[Foundry ADR] LIN-ADR-0001 / v0000 / PAT-101 source', 'conte...9ec8b6655c13c5e206afa9d","source_encoding":"base64-utf8","team_id":"team-uuid"}\n\\-->', 'archivedAt': None, ...}, ...]
+binding = {'key': 'LIN', 'project_id': 'project-uuid', 'team_id': 'team-uuid', 'canonical_repo': 'github.com/acme/widgets', ...}
+
+    def _adr_chain(documents: list[dict], binding: dict) -> dict:
+        chains = {}
+        witnesses = {}
+        version_documents = []
+        for raw in documents:
+            if isinstance(raw, dict) and (
+                str(raw.get("title", "")).startswith(_ADR_WITNESS_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_WITNESS_HEADER)
+            ):
+                witness = _parse_adr_witness(raw, binding)
+                key = (witness["adr_id"], witness["sequence"])
+                if key in witnesses:
+                    raise TrackerConflictError("Linear ADR witness slot has a fork")
+                witnesses[key] = (witness, raw)
+                continue
+            if not (
+                isinstance(raw, dict)
+                and (
+                    str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
+                    or str(raw.get("content", "")).startswith(_ADR_HEADER)
+                )
+            ):
+                continue
+            version_documents.append(raw)
+    
+        for raw in version_documents:
+            matching_witnesses = [
+                witness
+                for witness, _witness_raw in witnesses.values()
+                if witness["document_id"] == raw.get("id")
+            ]
+            if len(matching_witnesses) > 1:
+                raise TrackerConflictError("Linear ADR witness slot has a fork")
+            witness = matching_witnesses[0] if matching_witnesses else None
+            source_body = (
+                witness.get(_ADR_BOUND_SOURCE_BODY)
+                if witness is not None
+                else None
+            )
+            metadata, parsed_body = _parse_adr_document(
+                raw,
+                binding,
+                source_body=source_body,
+                allow_unbound_body=witness is None,
+                allow_witness_bound_readback=witness is not None,
+            )
+            if witness is not None and (
+                witness["adr_id"] != metadata["id"]
+                or witness["sequence"] != metadata["sequence"]
+                or (
+                    source_body is not None
+                    and witness["source_body_sha256"] != metadata["body_sha256"]
+                )
+            ):
+                raise TrackerConflictError("Linear ADR version witness diverged")
+            bound_raw = dict(raw)
+            bound_raw[_ADR_BOUND_SOURCE_BODY] = parsed_body
+            chains.setdefault(metadata["id"], []).append((metadata, bound_raw))
+        observed = set()
+        for adr_id, versions in chains.items():
+            versions.sort(key=lambda item: item[0]["sequence"])
+            for sequence, (metadata, raw) in enumerate(versions):
+                key = (adr_id, sequence)
+                witness_pair = witnesses.get(key)
+                if witness_pair is None:
+>                   raise TrackerConflictError("Linear ADR version witness is missing")
+E                   foundry.trackers.base.TrackerConflictError: Linear ADR version witness is missing
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:2201: TrackerConflictError
+
+During handling of the above exception, another exception occurred:
+
+body = '- a\n\n- b', allow_foundry_adr_0001 = False, new_body = True
+
+    def _preflight_adr_body_readback(
+        body: str, *, allow_foundry_adr_0001: bool = False, new_body: bool = True
+    ) -> None:
+        """Refuse a body with an unmodelled Linear rendering before any write.
+    
+        Every body keeps the pre-PAT-94 refusals.  A ``new_body`` (the fail-closed
+        default) also gets the strict PAT-94 list whitelist.  Callers pass
+        ``new_body=False`` only when the body's Linear rendering is already proven:
+        it is the exact body of the stored previous version whose bytes the model
+        verifies (`_is_stored_adr_body`), of an existing exact slot being recovered,
+        or of a batch import whose provider bytes a qualification probe pins.
+        """
+        try:
+            _linear_markdown_readback_body(
+                body, allow_foundry_adr_0001=allow_foundry_adr_0001, observed_lists=False
+            )
+            if new_body:
+>               _linear_markdown_readback_body(
+                    body, allow_foundry_adr_0001=allow_foundry_adr_0001, strict=True
+                )
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1584: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1496: in _linear_markdown_readback_body
+    _linear_observed_list_blank_lines(body, strict=strict)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+body = '- a\n\n- b', strict = True
+
+    def _linear_observed_list_blank_lines(body: str, *, strict: bool) -> set[int]:
+        """Return the offsets of the empty lines Linear drops from the observed form.
+    
+        Observed (PAT-94, native PAT-ADR-0014): a top-level ordered list `1. ` to at
+        most `9. `, numbered from 1 by +1, one plain LF line per item, items separated
+        by exactly one empty LF line, preceded by the start of the body or empty LF
+        lines and followed by the end of the body or empty LF lines and a non-list
+        block, is read back with the separating empty lines removed.  ``strict``
+        accepts it only with at most one empty line on each side (PAT-72: Linear
+        collapses two empty lines after a list item).
+    
+        Whitelist: a blank line in a list context -- after a block holding a
+        list-item-like line (also inside a blockquote) or its indented continuation,
+        before a block starting with a list-item-like or indented line -- has an
+        unobserved rendering unless it lies inside that exact form.  So has a gap of
+        two or more empty lines before or after a list-context paragraph.  ``strict``
+        refuses either, naming the first offending 1-based CommonMark line; otherwise
+        they are left untouched, as before PAT-94.  A body with neither is never
+        refused here.  Lines and blank lines are CommonMark ones (only spaces or
+        tabs); fenced code is one opaque block.  Forward only: a source is never
+        recovered from a rendering.
+        """
+        lines = _COMMONMARK_LINE.findall(body)
+        offsets = [0]
+        for source_line in lines:
+            offsets.append(offsets[-1] + len(source_line))
+        blocks: list[tuple[int, bool]] = []  # (first line, fenced)
+        fence = None
+        for number, source_line in enumerate(lines):
+            line = source_line.rstrip("\r\n")
+            if fence is not None:
+                if _markdown_fence_closing(line, *fence):
+                    fence = None
+                continue
+            fence = _markdown_fence_opening(line)
+            blocks.append((number, fence is not None))
+    
+        def content(block: int) -> str:
+            line = lines[blocks[block][0]].rstrip("\r\n")
+            quote = _BLOCKQUOTE_PREFIX.match(line)
+            return line[quote.end() :] if quote else line
+    
+        def is_item(block: int) -> bool:
+            text = content(block)
+            return (
+                not blocks[block][1]
+                and _LIST_LIKE.match(text) is not None
+                and _THEMATIC_BREAK.fullmatch(text) is None
+            )
+    
+        def is_lf_gap(gap: list[int]) -> bool:
+            return all(lines[blocks[block][0]] == "\n" for block in gap)
+    
+        leading: list[int] = []
+        paragraphs: list[list[int]] = []
+        gaps: list[list[int]] = []  # gaps[k]: blank blocks after paragraphs[k]
+        for block, (_, fenced) in enumerate(blocks):
+            if not fenced and not content(block).strip(" \t"):
+                (gaps[-1] if paragraphs else leading).append(block)
+            elif paragraphs and not gaps[-1]:
+                paragraphs[-1].append(block)
+            else:
+                paragraphs.append([block])
+                gaps.append([])
+    
+        risky = []  # risky[k]: blank lines between paragraphs k and k + 1 are in a list
+        listed = []  # listed[k]: paragraph k is in a list context
+        in_list = False
+        for index, paragraph in enumerate(paragraphs):
+            indented = content(paragraph[0])[:1] in (" ", "\t")
+            if index:
+                risky.append(in_list and (is_item(paragraph[0]) or indented))
+            in_list = any(is_item(block) for block in paragraph) or (indented and in_list)
+            listed.append(in_list)
+    
+        def observed_item(index: int, number: int) -> bool:
+            if len(paragraphs[index]) != 1:
+                return False
+            line_number, fenced = blocks[paragraphs[index][0]]
+            line = lines[line_number]
+            match = _OBSERVED_ORDERED_ITEM.fullmatch(line)
+            return (
+                not fenced
+                and match is not None
+                and match[1] == str(number)
+                and _NOT_PLAIN_ITEM_TEXT.match(match[2]) is None
+                and match[2][-1] not in " \t"
+                and _NON_LF_SEPARATORS.isdisjoint(line)
+            )
+    
+        drops: set[int] = set()
+        covered: set[int] = set()
+        start = 0
+        while start < len(paragraphs):
+            last = start
+            while (
+                observed_item(start, 1)
+                and last + 1 < len(paragraphs)
+                and len(gaps[last]) == 1
+                and is_lf_gap(gaps[last])
+                and observed_item(last + 1, last - start + 2)
+            ):
+                last += 1
+            if (
+                last > start
+                and (start == 0 or not risky[start - 1])
+                and (last + 1 == len(paragraphs) or not risky[last])
+                and is_lf_gap((leading if start == 0 else gaps[start - 1]) + gaps[last])
+            ):
+                covered.update(range(start, last))
+                drops.update(
+                    offsets[blocks[gaps[index][0]][0]] for index in range(start, last)
+                )
+            start = last + 1
+        if strict:
+            # Uncovered list blank lines, and every gap of two or more empty lines
+            # next to a list-context paragraph: PAT-72 shows Linear collapsing such a
+            # gap after a list item, so even the observed form is accepted only with
+            # at most one empty line on each side.
+            offending = [
+                gaps[index][0] for index, risk in enumerate(risky)
+                if risk and index not in covered
+            ]
+            offending.extend(
+                gap[0]
+                for gap, beside in [
+                    (leading, listed[:1]),
+                    *((gap, listed[index : index + 2]) for index, gap in enumerate(gaps)),
+                ]
+                if len(gap) > 1 and any(beside)
+            )
+            if offending:
+                line = blocks[min(offending)][0] + 1
+>               raise ValueError(f"unsupported list Markdown in ADR body (line {line})")
+E               ValueError: unsupported list Markdown in ADR body (line 2)
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1471: ValueError
+
+The above exception was the direct cause of the following exception:
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106daee00>, <test_linear_tracker.LinearWire object at 0x106dafce0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x106bd3950>
+interrupted = 'source'
+
+    @pytest.mark.parametrize("interrupted", ["replacement", "source"])
+    def test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot(
+        tracker, monkeypatch, interrupted
+    ):
+        """A resume that only writes the witness is not refused for the previous bytes."""
+        instance, wire = tracker
+        refused, plain = "- a\n\n- b", "plain"
+        def store(title, body):
+            if body == plain:
+                return instance.create_adr(PROJECT, title, body)
+            return _store_pre_pat94(instance, monkeypatch, title, body)
+    
+        stored = store("PAT-101 source", refused if interrupted == "source" else plain)
+        other = store("PAT-101 other", refused if interrupted == "replacement" else plain)
+        instance.set_adr_status(stored, "accepted", project=PROJECT)
+        instance.set_adr_status(other, "accepted", project=PROJECT)
+        current = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+        target = other.id if interrupted == "replacement" else stored.id
+        original = _interrupt_witness(instance, wire, f"{target} / v0002")
+        with pytest.raises(LinearTrackerError, match="transport_error"):
+            instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+        instance._transport = original
+        # The previous version's bytes are no longer proven by the model (as for a
+        # probe-qualified historical version 0): only the existing slot proves them.
+        monkeypatch.setattr(linear_module, "_is_stored_adr_body", lambda *_args: False)
+        wire.calls.clear()
+>       instance.supersede_adr(current[stored.id], other.id, project=PROJECT)
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9727: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:7712: in supersede_adr
+    self._recover_supersession_pair(project, adr, replacement_id)
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:7883: in _recover_supersession_pair
+    _preflight_adr_body_readback(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+body = '- a\n\n- b', allow_foundry_adr_0001 = False, new_body = True
+
+    def _preflight_adr_body_readback(
+        body: str, *, allow_foundry_adr_0001: bool = False, new_body: bool = True
+    ) -> None:
+        """Refuse a body with an unmodelled Linear rendering before any write.
+    
+        Every body keeps the pre-PAT-94 refusals.  A ``new_body`` (the fail-closed
+        default) also gets the strict PAT-94 list whitelist.  Callers pass
+        ``new_body=False`` only when the body's Linear rendering is already proven:
+        it is the exact body of the stored previous version whose bytes the model
+        verifies (`_is_stored_adr_body`), of an existing exact slot being recovered,
+        or of a batch import whose provider bytes a qualification probe pins.
+        """
+        try:
+            _linear_markdown_readback_body(
+                body, allow_foundry_adr_0001=allow_foundry_adr_0001, observed_lists=False
+            )
+            if new_body:
+                _linear_markdown_readback_body(
+                    body, allow_foundry_adr_0001=allow_foundry_adr_0001, strict=True
+                )
+        except ValueError as exc:
+>           raise TrackerConflictError(
+                "Linear ADR body has unsupported Markdown serialization"
+            ) from exc
+E           foundry.trackers.base.TrackerConflictError: Linear ADR body has unsupported Markdown serialization
+
+<bundle>/plugins/foundry/tooling/foundry/trackers/linear.py:1588: TrackerConflictError
+__________ test_linear_adr_pat101_task_items_are_not_plain[unchecked] __________
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106dae7a0>, <test_linear_tracker.LinearWire object at 0x106daecf0>)
+body = '1. [ ] a\n\n2. [ ] b'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("1. [ ] a\n\n2. [ ] b", id="unchecked"),
+            pytest.param("1. [x] a\n\n2. [x] b", id="checked"),
+            pytest.param("1. [X] a\n\n2. b", id="upper-checked-first"),
+            pytest.param("1. a\n\n2. [ ] b", id="task-second"),
+            pytest.param("1. [ ]\n\n2. b", id="empty-task"),
+        ],
+    )
+    def test_linear_adr_pat101_task_items_are_not_plain(tracker, body):
+        instance, wire = tracker
+>       assert linear_module._linear_observed_list_blank_lines(body, strict=False) == set()
+E       assert {9} == set()
+E         
+E         Extra items in the left set:
+E         9
+E         Use -v to get more diff
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9243: AssertionError
+___________ test_linear_adr_pat101_task_items_are_not_plain[checked] ___________
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106d76a50>, <test_linear_tracker.LinearWire object at 0x106d76450>)
+body = '1. [x] a\n\n2. [x] b'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("1. [ ] a\n\n2. [ ] b", id="unchecked"),
+            pytest.param("1. [x] a\n\n2. [x] b", id="checked"),
+            pytest.param("1. [X] a\n\n2. b", id="upper-checked-first"),
+            pytest.param("1. a\n\n2. [ ] b", id="task-second"),
+            pytest.param("1. [ ]\n\n2. b", id="empty-task"),
+        ],
+    )
+    def test_linear_adr_pat101_task_items_are_not_plain(tracker, body):
+        instance, wire = tracker
+>       assert linear_module._linear_observed_list_blank_lines(body, strict=False) == set()
+E       assert {9} == set()
+E         
+E         Extra items in the left set:
+E         9
+E         Use -v to get more diff
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9243: AssertionError
+_____ test_linear_adr_pat101_task_items_are_not_plain[upper-checked-first] _____
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106d75750>, <test_linear_tracker.LinearWire object at 0x106d75e50>)
+body = '1. [X] a\n\n2. b'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("1. [ ] a\n\n2. [ ] b", id="unchecked"),
+            pytest.param("1. [x] a\n\n2. [x] b", id="checked"),
+            pytest.param("1. [X] a\n\n2. b", id="upper-checked-first"),
+            pytest.param("1. a\n\n2. [ ] b", id="task-second"),
+            pytest.param("1. [ ]\n\n2. b", id="empty-task"),
+        ],
+    )
+    def test_linear_adr_pat101_task_items_are_not_plain(tracker, body):
+        instance, wire = tracker
+>       assert linear_module._linear_observed_list_blank_lines(body, strict=False) == set()
+E       assert {9} == set()
+E         
+E         Extra items in the left set:
+E         9
+E         Use -v to get more diff
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9243: AssertionError
+_________ test_linear_adr_pat101_task_items_are_not_plain[task-second] _________
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106d42030>, <test_linear_tracker.LinearWire object at 0x106d423f0>)
+body = '1. a\n\n2. [ ] b'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("1. [ ] a\n\n2. [ ] b", id="unchecked"),
+            pytest.param("1. [x] a\n\n2. [x] b", id="checked"),
+            pytest.param("1. [X] a\n\n2. b", id="upper-checked-first"),
+            pytest.param("1. a\n\n2. [ ] b", id="task-second"),
+            pytest.param("1. [ ]\n\n2. b", id="empty-task"),
+        ],
+    )
+    def test_linear_adr_pat101_task_items_are_not_plain(tracker, body):
+        instance, wire = tracker
+>       assert linear_module._linear_observed_list_blank_lines(body, strict=False) == set()
+E       assert {5} == set()
+E         
+E         Extra items in the left set:
+E         5
+E         Use -v to get more diff
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9243: AssertionError
+_________ test_linear_adr_pat101_task_items_are_not_plain[empty-task] __________
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106d419a0>, <test_linear_tracker.LinearWire object at 0x106d41a90>)
+body = '1. [ ]\n\n2. b'
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param("1. [ ] a\n\n2. [ ] b", id="unchecked"),
+            pytest.param("1. [x] a\n\n2. [x] b", id="checked"),
+            pytest.param("1. [X] a\n\n2. b", id="upper-checked-first"),
+            pytest.param("1. a\n\n2. [ ] b", id="task-second"),
+            pytest.param("1. [ ]\n\n2. b", id="empty-task"),
+        ],
+    )
+    def test_linear_adr_pat101_task_items_are_not_plain(tracker, body):
+        instance, wire = tracker
+>       assert linear_module._linear_observed_list_blank_lines(body, strict=False) == set()
+E       assert {7} == set()
+E         
+E         Extra items in the left set:
+E         7
+E         Use -v to get more diff
+
+<bundle>/plugins/foundry/tests/test_linear_tracker.py:9243: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-observed-form]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-bullet]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-tight-ordered]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_pinned_pat72_profile_applies_before_the_strict_check
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot[replacement]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot[source]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[unchecked]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[checked]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[upper-checked-first]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[task-second]
+FAILED tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[empty-task]
+11 failed, 7 passed in 1.22s

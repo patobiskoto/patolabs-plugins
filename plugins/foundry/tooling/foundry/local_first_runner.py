@@ -47,6 +47,7 @@ from foundry import local_first_exploration as lfe
 
 CAMPAIGN_SCHEMA = "foundry.local-first-campaign.v1"
 CAMPAIGN_SCHEMA_V2 = "foundry.local-first-campaign.v2"  # protocol v2 (PAT-114): read-only exploration
+CAMPAIGN_SCHEMA_V3 = "foundry.local-first-campaign.v3"  # protocol c1 (PAT-118): one-call compression of a test output
 PROTOCOL_V3 = "pat-19-protocol-v3"  # protocol v3 (PAT-116): a v2-schema campaign with a wider budget, 2 candidates
 V3_CANDIDATES = ("qwen3.6-35b-a3b-mlx-4bit", "qwen3-coder-30b-a3b-mlx-4bit")
 V3_BOUNDS = {"explorer_max_steps": 60, "explorer_max_seconds": 900}
@@ -117,14 +118,17 @@ NATIVE_GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}  
 NATIVE_REFUSED_FLAGS = ("--settings", "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions",
                         "--add-dir", "--allowedTools", "--allowed-tools", "--mcp-config", "--plugin-dir")
 NATIVE_TRIAL_KEY = "_native_trial"  # set in memory by the trial verb only; refused in a config file
-_PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)|pat-19-protocol-v5-pilot")
+_PROTOCOL_AFTER_V4 = re.compile(r"pat-19-protocol-v(?:[5-9]|[1-9]\d+)|pat-19-protocol-v5-pilot"
+                                r"|pat-19-protocol-c1(?:-pilot)?")  # PAT-118: protocol c1 and its pilot carry the v5 instrument
 WORK_REMAINS_LINE = "pat19-v3: work_remains={}"  # printed on stdout by a one-task-per-launch launch
 ENVELOPE_SCHEMA = "foundry.local-first-envelope.v1"
 RESULT_SCHEMA = "foundry.local-first-result.v1"
 # ``screen`` and ``compare`` are the protocol v1 modes; the two ``*_exploration`` modes are protocol v2.
 EXPLORE_MODES = ("screen_exploration", "compare_exploration")
-MODES = ("screen", "compare", *EXPLORE_MODES)
-CLOUD_MODES = ("compare", "compare_exploration")  # the only modes that may start a cloud execution
+# PAT-118 (protocol c1, config schema v3): the screening of the one-call compression (local only) and its comparison
+COMPRESSION_MODES = ("screen_compression", "compare_compression")
+MODES = ("screen", "compare", *EXPLORE_MODES, *COMPRESSION_MODES)
+CLOUD_MODES = ("compare", "compare_exploration", "compare_compression")  # the only modes that may start a cloud execution
 DRIVER_KINDS = ("local_harness", "neutral_harness", "cloud_implementer", "cloud_reviewer",
                 "local_explorer", "cloud_explorer")
 LOCAL_KINDS = ("local_harness", "neutral_harness", "local_explorer")
@@ -137,6 +141,7 @@ IMPLEMENTER_DRIVER = {"A": "cloud_implementer_current", "B": "cloud_implementer_
                       "L": "cloud_implementer_current", "E": "cloud_implementer_current"}
 REVIEWER_DRIVER = "cloud_reviewer"
 LOCAL_EXPLORER_DRIVER = "local_explorer"
+DIAGNOSER_DRIVER = "cloud_diagnoser"  # protocol c1: the one read-only cloud arm
 CLOUD_EXPLORER_DRIVER = "cloud_explorer_economy"
 BOUND_HIT = "the exploration was cut by a bound (time or steps): refused, whatever a draft contains"
 BUNDLE_MODIFIED = "the explorer modified the bundle (it is a read-only role): exploration refused"
@@ -280,19 +285,29 @@ def _check_native_sandbox(path: Any, data: Mapping[str, Any], later: bool) -> No
 def load_campaign(path: Path) -> dict[str, Any]:
     """The frozen campaign config. Fails closed on any missing piece."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("schema") not in (CAMPAIGN_SCHEMA, CAMPAIGN_SCHEMA_V2):
+    if not isinstance(data, dict) or data.get("schema") not in (CAMPAIGN_SCHEMA, CAMPAIGN_SCHEMA_V2, CAMPAIGN_SCHEMA_V3):
         raise RunnerError(f"{path}: unexpected schema")
+    compression = data.get("schema") == CAMPAIGN_SCHEMA_V3  # PAT-118: protocol c1 only, and nothing else carries its key
+    if "compression" in data and not compression:
+        raise RunnerError(f"{path}: the compression key is accepted only by the schema {CAMPAIGN_SCHEMA_V3} "
+                          f"(protocol pat-19-protocol-c1 or its pilot), not by {data.get('protocol')!r}")
+    c1_names = ("pat-19-protocol-c1", "pat-19-protocol-c1-pilot")
+    if data.get("protocol") in c1_names and not compression:
+        raise RunnerError(f"{path}: protocol {data['protocol']} is a schema {CAMPAIGN_SCHEMA_V3} protocol")
+    if compression and data.get("protocol") not in c1_names:
+        raise RunnerError(f"{path}: the schema {CAMPAIGN_SCHEMA_V3} is the schema of protocol pat-19-protocol-c1 and "
+                          f"its pilot, not of {data.get('protocol')!r}")
     if NATIVE_TRIAL_KEY in data:  # PAT-124: the trial verb sets it in memory, after this load
         raise RunnerError(f"{path}: {NATIVE_TRIAL_KEY} is not a configuration key (the trial verb sets it in memory)")
     for key in ("frozen_machine", "bounds", "statement_footer", "prompts", "rules", "drivers",
                 "candidates"):
         if key not in data:
             raise RunnerError(f"{path}: missing {key}")
-    for key in ("local_max_seconds", "local_max_steps", "cloud_max_seconds",
-                "max_correction_rounds"):
+    for key in (("cloud_max_seconds",) if compression else
+                ("local_max_seconds", "local_max_steps", "cloud_max_seconds", "max_correction_rounds")):
         if type(data["bounds"].get(key)) is not int or data["bounds"][key] < 0:
             raise RunnerError(f"{path}: bounds.{key} must be a non-negative integer")
-    for key in ("implement", "correct", "review"):
+    for key in (("diagnose",) if compression else ("implement", "correct", "review")):
         if not isinstance(data["prompts"].get(key), str):
             raise RunnerError(f"{path}: prompts.{key} missing")
     for name, driver in data["drivers"].items():
@@ -377,6 +392,8 @@ def load_campaign(path: Path) -> dict[str, Any]:
                 raise RunnerError(f"{path}: candidate {cid}: {key} must be a non-empty {kind.__name__}")
     if data["schema"] == CAMPAIGN_SCHEMA_V2:
         _check_exploration_config(path, data)
+    elif compression:
+        _check_compression_config(path, data)
     return data
 
 
@@ -393,6 +410,25 @@ def _check_correction_feedback(path: Path, data: Mapping[str, Any]) -> None:
             type(spec.get(k)) is int and spec[k] > 0 for k in ("max_failures", "max_message_chars", "max_name_chars")):
         raise RunnerError(f"{path}: correction_feedback.max_failures, max_message_chars and max_name_chars "
                           "must be positive integers")
+
+
+def _check_dedicated_machine(path: Path, data: Mapping[str, Any]) -> None:
+    """The dedicated-machine thresholds and command patterns (protocol v2 admission, inherited by v3 to v5 and c1)."""
+    machine = data.get("dedicated_machine")
+    if not isinstance(machine, dict) or not all(
+            isinstance(machine.get(k), (int, float)) and not isinstance(machine.get(k), bool)
+            for k in ("max_other_process_rss_gib", "min_free_percent")):
+        raise RunnerError(f"{path}: dedicated_machine needs max_other_process_rss_gib and min_free_percent")
+    patterns = machine.get("allowed_command_patterns")
+    if not isinstance(patterns, dict) or not patterns or not all(
+            isinstance(v, list) and all(isinstance(p, str) for p in v) for v in patterns.values()):
+        raise RunnerError(f"{path}: dedicated_machine.allowed_command_patterns needs lists of patterns")
+    for pats in patterns.values():
+        for pattern in pats:
+            try:
+                re.compile(pattern)
+            except re.error:
+                raise RunnerError(f"{path}: dedicated_machine pattern {pattern!r} is not a regex") from None
 
 
 def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
@@ -412,21 +448,7 @@ def _check_exploration_config(path: Path, data: Mapping[str, Any]) -> None:
                 isinstance(rules[name].get(k), (int, float)) and not isinstance(rules[name][k], bool)
                 for k in keys):
             raise RunnerError(f"{path}: rules.{name} needs numeric {', '.join(keys)}")
-    machine = data.get("dedicated_machine")
-    if not isinstance(machine, dict) or not all(
-            isinstance(machine.get(k), (int, float)) and not isinstance(machine.get(k), bool)
-            for k in ("max_other_process_rss_gib", "min_free_percent")):
-        raise RunnerError(f"{path}: dedicated_machine needs max_other_process_rss_gib and min_free_percent")
-    patterns = machine.get("allowed_command_patterns")
-    if not isinstance(patterns, dict) or not patterns or not all(
-            isinstance(v, list) and all(isinstance(p, str) for p in v) for v in patterns.values()):
-        raise RunnerError(f"{path}: dedicated_machine.allowed_command_patterns needs lists of patterns")
-    for pats in patterns.values():
-        for pattern in pats:
-            try:
-                re.compile(pattern)
-            except re.error:
-                raise RunnerError(f"{path}: dedicated_machine pattern {pattern!r} is not a regex") from None
+    _check_dedicated_machine(path, data)
     limits = (data.get("exploration") or {}).get("report_render_limits")
     if not isinstance(limits, dict) or not all(
             type(limits.get(k)) is int and limits[k] > 0 for k in ("max_files", "max_functions",
@@ -545,6 +567,105 @@ def _check_v5_pins(path: Path, data: Mapping[str, Any], frozen: Sequence[str], f
                                               or list(pin.get("command") or ()) != ["claude", "--version"]):
             raise RunnerError(f"{path}: protocol v5 pins Claude Code {V5_CLAUDE_CODE} on every cloud driver "
                               f"(binary_version, command ['claude', '--version']): driver {name}")
+
+
+def _check_compression_config(path: Path, data: Mapping[str, Any]) -> None:
+    """What a protocol c1 campaign (PAT-118) and its one-task pilot pin at load: the v5 instrument for the cloud arm
+    (native Bash sandbox, audit revision 2, private root, the one home file), the five v1 candidates in their order, the
+    committed material and ground truth (sha256 verified), the one local call (a literal loopback endpoint, NO tool, a
+    fixed temperature), the read-only cloud diagnoser pinned to Claude Code 2.1.294, and the values of the rules
+    validated on 2026-10-07. The pilot differs from the campaign by its protocol name, its task list, its label and its
+    shares of the cap of 40 cloud executions."""
+    from foundry import local_first_compression as lfk
+    protocol, iso = data["protocol"], data.get("isolation") or {}
+    pilot = protocol == lfk.PROTOCOL_C1_PILOT
+    wanted = lfk.C1_PILOT_TASKS if pilot else lfk.C1_TASKS
+    conf = data.get("compression")
+    if not isinstance(conf, dict):
+        raise RunnerError(f"{path}: the compression block is missing")
+    if tuple(conf.get("tasks") or ()) != wanted or conf.get("task_set") != lfk.C1_TASK_SET[protocol]:
+        raise RunnerError(f"{path}: protocol {protocol} requires compression.tasks {list(wanted)} (in this order) and "
+                          f"compression.task_set {lfk.C1_TASK_SET[protocol]!r}")
+    if tuple(data["candidates"]) != lfk.C1_CANDIDATES:
+        raise RunnerError(f"{path}: protocol {protocol} freezes exactly the five candidates of protocol v1, in their "
+                          f"order: {list(lfk.C1_CANDIDATES)}")
+    if iso.get("private_attempt_root") is not True or iso.get(NATIVE_SANDBOX_KEY) is not True \
+            or iso.get("audit_revision") != AUDIT_REVISION or iso.get(AUDIT_POLICY_KEY) != AUDIT_POLICY \
+            or iso.get(ABSENT_FORMS_KEY) != ABSENT_FORMS:
+        raise RunnerError(f"{path}: protocol {protocol} requires isolation.private_attempt_root true, "
+                          f"isolation.{NATIVE_SANDBOX_KEY} true, isolation.audit_revision {AUDIT_REVISION}, "
+                          f"isolation.{AUDIT_POLICY_KEY} {AUDIT_POLICY!r} and isolation.{ABSENT_FORMS_KEY} {ABSENT_FORMS!r}")
+    if not set(iso.get("allow_read_home", [])) <= set(V5_ALLOW_READ_HOME):
+        raise RunnerError(f"{path}: protocol {protocol} allows reading nothing of the home but "
+                          f"{list(V5_ALLOW_READ_HOME)} (isolation.allow_read_home)")
+    _check_dedicated_machine(path, data)
+    rules = data["rules"]
+    screening, comparison = rules.get("compression_screening"), rules.get("compression_comparison")
+    if not isinstance(screening, dict) or not isinstance(comparison, dict):
+        raise RunnerError(f"{path}: rules.compression_screening and rules.compression_comparison are required")
+    if (screening.get("tasks") != len(wanted) or screening.get("recall_mean_min") != float(lfk.C1_RECALL_MEAN_MIN)
+            or screening.get("size_ratio_max") != float(lfk.C1_SIZE_RATIO_MAX)
+            or screening.get("candidates") != list(lfk.C1_CANDIDATES)):
+        raise RunnerError(f"{path}: rules.compression_screening pins tasks {len(wanted)}, recall_mean_min 0.8, "
+                          "size_ratio_max 0.25 and the five candidates (values validated on 2026-10-07)")
+    if (comparison.get("tasks") != len(wanted)
+            or comparison.get("premium_per_correct_ratio_max") != float(lfk.C1_PREMIUM_RATIO_MAX)
+            or comparison.get("paired_decided_min") != lfk.C1_PAIRED_DECIDED_MIN[protocol]
+            or comparison.get("cloud_executions_max") != lfk.C1_ENVELOPE_SHARE[protocol]):
+        raise RunnerError(f"{path}: rules.compression_comparison pins tasks {len(wanted)}, premium_per_correct_ratio_max "
+                          f"0.85, paired_decided_min {lfk.C1_PAIRED_DECIDED_MIN[protocol]} and cloud_executions_max "
+                          f"{lfk.C1_ENVELOPE_SHARE[protocol]} (the share of the cap of 40 executions of this protocol)")
+    call = conf.get("local_call")
+    keys = {"endpoint", "temperature", "max_tokens", "timeout_seconds", "target_fraction", "system", "prompt", "note"}
+    if (not isinstance(call, dict) or set(call) - keys or keys - {"note"} - set(call)
+            or call["temperature"] != 0 or type(call["temperature"]) is not int
+            or any(type(call[k]) is not int or call[k] <= 0 for k in ("max_tokens", "timeout_seconds"))
+            or type(call["target_fraction"]) is not float or not 0 < call["target_fraction"] <= 0.25
+            or not all(isinstance(call[k], str) and call[k].strip() for k in ("system", "prompt"))
+            or "{output}" not in call["prompt"] or "{budget}" not in call["prompt"]):
+        raise RunnerError(f"{path}: compression.local_call needs endpoint, temperature 0, positive integer max_tokens and "
+                          "timeout_seconds, target_fraction in (0, 0.25], system and a prompt holding {output} and "
+                          "{budget}; nothing else (no tools, no streaming, no other sampling parameter)")
+    try:
+        lfk.check_endpoint(call["endpoint"])
+    except lfk.CompressionError as exc:
+        raise RunnerError(f"{path}: {exc}") from None
+    kinds = conf.get("output_kinds")
+    if not isinstance(kinds, dict) or set(kinds) != {"F", "S"} or not all(isinstance(v, str) and v.strip()
+                                                                          for v in kinds.values()):
+        raise RunnerError(f"{path}: compression.output_kinds names, for the arms F and S, how the prompt introduces "
+                          "what the diagnoser receives")
+    for key in ("ground_truth", "material"):
+        spec = conf.get(key)
+        if not isinstance(spec, dict) or not all(isinstance(spec.get(k), str) and spec[k] for k in ("file", "sha256")):
+            raise RunnerError(f"{path}: compression.{key} needs file and sha256")
+    try:
+        truth = lfe.load_truth_set(Path(path).parent, conf["ground_truth"])  # the frozen truth cannot drift
+        material = lfk.load_material(Path(path).parent, conf["material"])  # nor the committed material
+    except (lfe.ExplorationError, lfk.CompressionError) as exc:
+        raise RunnerError(f"{path}: {exc}") from None
+    missing = [pr for pr in wanted if str(pr) not in truth or pr not in material]
+    if missing:
+        raise RunnerError(f"{path}: no ground truth or no material for PR {missing}")
+    drivers = data["drivers"]
+    if list(drivers) != ["cloud_diagnoser"]:
+        raise RunnerError(f"{path}: protocol {protocol} has the one cloud driver cloud_diagnoser (no implementer, no "
+                          "reviewer, no explorer)")
+    driver, argv = drivers["cloud_diagnoser"], drivers["cloud_diagnoser"]["argv"]
+    denied = argv[argv.index("--disallowedTools") + 1:] if "--disallowedTools" in argv else []
+    pairs = {argv[i]: argv[i + 1] for i in range(len(argv) - 1) if argv[i] in ("--model", "--effort")}
+    if (driver["kind"] != "cloud_explorer" or not {"Edit", "Write"} <= set(denied)
+            or pairs != {"--model": "{model}", "--effort": lfk.C1_EFFORT} or driver.get("model") != lfk.C1_DIAGNOSER_MODEL
+            or driver.get("allowed_tools") != ["Bash", "Glob", "Grep", "Read"]):
+        raise RunnerError(f"{path}: cloud_diagnoser is a read-only cloud_explorer (Edit and Write denied) on "
+                          f"{lfk.C1_DIAGNOSER_MODEL} at effort {lfk.C1_EFFORT}, with the tools Bash, Glob, Grep and Read")
+    pin = driver.get("binary_version") or {}
+    if pin.get("version") != lfk.C1_CLAUDE_CODE or list(pin.get("command") or ()) != ["claude", "--version"]:
+        raise RunnerError(f"{path}: protocol {protocol} pins Claude Code {lfk.C1_CLAUDE_CODE} on the cloud driver "
+                          "(binary_version, command ['claude', '--version'])")
+    for placeholder in ("{statement_file}", "{test_output}", "{output_kind}"):
+        if placeholder not in data["prompts"]["diagnose"]:
+            raise RunnerError(f"{path}: prompts.diagnose needs {placeholder}")
 
 
 def _check_driver_pins(path: Path, name: str, driver: Mapping[str, Any]) -> None:
@@ -3378,13 +3499,16 @@ class Runner:
                  host_env: Mapping[str, str] | None = None, now: Callable[[], float] = time.time,
                  today: Callable[[], dt.date] = dt.date.today, input_paths: Sequence[Path] = (),
                  provenance: Mapping[str, Any] | None = None, require_screening: bool = True,
-                 screening_campaign: str | None = None, truths: Mapping[str, Any] | None = None):
+                 screening_campaign: str | None = None, truths: Mapping[str, Any] | None = None,
+                 material: Mapping[int, Mapping[str, Any]] | None = None,
+                 local_call: Callable[..., dict[str, Any]] | None = None):
         if mode not in MODES:
             raise RunnerError(f"unknown mode {mode!r}")
-        if (mode in EXPLORE_MODES) != (campaign.get("schema") == CAMPAIGN_SCHEMA_V2):
+        if ((mode in EXPLORE_MODES) != (campaign.get("schema") == CAMPAIGN_SCHEMA_V2)
+                or (mode in COMPRESSION_MODES) != (campaign.get("schema") == CAMPAIGN_SCHEMA_V3)):
             raise RunnerError(f"mode {mode!r} does not match the campaign schema "
-                              f"{campaign.get('schema')!r} (protocol v2 modes need a v2 campaign, and "
-                              "protocol v1 modes a v1 campaign)")
+                              f"{campaign.get('schema')!r} (protocol v2 modes need a v2 campaign, protocol c1 modes "
+                              "a v3 campaign, and protocol v1 modes a v1 campaign)")
         self.repo, self.campaign, self.envelope = Path(repo).resolve(), campaign, envelope
         self.state_dir, self.work_root = Path(state_dir).resolve(), Path(work_root).resolve()
         self.mode, self.dry_run, self.sandbox = mode, dry_run, sandbox
@@ -3409,6 +3533,18 @@ class Runner:
             raise RunnerError(f"protocol {campaign['protocol']} needs a campaign id "
                               f"{'containing' if pilot else 'NOT containing'} 'pilot' (the pilot is never mixed with "
                               f"the campaign): got {envelope['campaign_id']!r}")
+        # PAT-118: the same for the pilot of protocol c1; and the cap of 40 cloud executions of the protocol is held by
+        # construction: the campaign's envelope may name 36 of them, the pilot's 4 (36 + 4 = 40)
+        if campaign.get("schema") == CAMPAIGN_SCHEMA_V3:
+            c1_pilot = campaign.get("protocol") == "pat-19-protocol-c1-pilot"
+            if c1_pilot != ("pilot" in envelope["campaign_id"]):
+                raise RunnerError(f"protocol {campaign['protocol']} needs a campaign id "
+                                  f"{'containing' if c1_pilot else 'NOT containing'} 'pilot' (the pilot is never mixed "
+                                  f"with the campaign): got {envelope['campaign_id']!r}")
+            share = campaign["rules"]["compression_comparison"]["cloud_executions_max"]
+            if mode == "compare_compression" and envelope["caps"]["cloud_executions"] > share:
+                raise EnvelopeError(f"the envelope names {envelope['caps']['cloud_executions']} cloud executions, "
+                                    f"above the {share} this protocol may spend (cap of 40 = 36 campaign + 4 pilot)")
         self.results_path = self.state_dir / f"results-{envelope['campaign_id']}.jsonl"
         self.seen = self._scan_results()  # refuses a mixed or foreign state before anything starts
         self.prior_ledger: list[dict[str, Any]] = []
@@ -3433,6 +3569,9 @@ class Runner:
         self.guards: dict[Path, tuple[str, dict[str, str | None]]] = {}
         self.literals: dict[Path, frozenset[str]] = {}  # ``base_literals`` of each bundle handed out
         self.exploring = mode in EXPLORE_MODES  # protocol v2: exploration screening and comparison
+        self.compressing = mode in COMPRESSION_MODES  # protocol c1 (PAT-118): one-call compression, screening and comparison
+        self.material = dict(material or {})  # protocol c1: the committed outputs of the protected tests, by PR
+        self.local_call = local_call  # protocol c1: the one local call (injected by the tests; ``None``: the real one)
         # protocol v3: at most one undecided task per launch (the operator reloads the model between launches);
         # ``work_remains`` is set by such a launch (None when the rule is off or the launch was cut)
         self.one_task = bool((campaign.get("exploration") or {}).get("one_task_per_launch")) and self.exploring
@@ -3863,8 +4002,11 @@ class Runner:
 
     def _values(self, bundle: Path, attempt_dir: Path, **extra: str) -> dict[str, str]:
         b = self.campaign["bounds"]
-        steps, seconds = ((b["explorer_max_steps"], b["explorer_max_seconds"]) if self.exploring
-                          else (b["local_max_steps"], b["local_max_seconds"]))  # v2: the explorer's bounds
+        if self.compressing:  # protocol c1: the only bounded arm is the cloud diagnoser (no step bound)
+            steps, seconds = 0, b["cloud_max_seconds"]
+        else:
+            steps, seconds = ((b["explorer_max_steps"], b["explorer_max_seconds"]) if self.exploring
+                              else (b["local_max_steps"], b["local_max_seconds"]))  # v2: the explorer's bounds
         return {"workdir": str(bundle), "statement_file": str(bundle / "TASK.md"),
                 "scratch": str(attempt_dir / "scratch"), "max_steps": str(steps),
                 "max_seconds": str(seconds),
@@ -4032,7 +4174,8 @@ class Runner:
 
     # ---- one cloud execution
     def cloud_execution(self, role: str, driver_id: str, bundle: Path, attempt_dir: Path,
-                        prompt_key: str, feedback: str | None = None, seconds_key: str = "cloud_max_seconds"
+                        prompt_key: str, feedback: str | None = None, seconds_key: str = "cloud_max_seconds",
+                        values_extra: Mapping[str, str] | None = None
                         ) -> tuple[dict[str, Any], dict[str, int | None] | None, str | None]:
         if self.mode not in CLOUD_MODES:
             raise EnvelopeError(f"mode {self.mode!r} can never start a cloud execution")
@@ -4047,7 +4190,7 @@ class Runner:
         if feedback is not None:
             (scratch / "feedback.md").write_text(feedback, encoding="utf-8")
         values = self._values(bundle, attempt_dir, session_id=session_id,
-                              model=driver.get("model", ""))
+                              model=driver.get("model", ""), **(values_extra or {}))
         values["prompt"] = self._prompt(prompt_key, values)
         extra = _extra_write(driver)
         deny = self._deny_read(driver)
@@ -4059,7 +4202,10 @@ class Runner:
             native = native_sandbox_settings(
                 attempt_dir=attempt_dir, work_root=self.work_root, home=self._home(), deny_read=deny,
                 allow_read=[Path(self._home()) / rel for rel in iso.get("allow_read_home", [])],
-                allow_write=extra, protect=[bundle / ".claude"])
+                allow_write=extra,
+                # PAT-118: a diagnoser reads the bundle and writes nothing in it (shell writes and the Edit/Write tools
+                # are denied on the whole bundle); every other role protects its ``.claude`` directory only
+                protect=[bundle] if role == "diagnoser" else [bundle / ".claude"])
         budget = min(self.campaign["bounds"][seconds_key],
                      max(self.ledger.remaining_seconds(), 0))
         reserved = False
@@ -4745,15 +4891,264 @@ class Runner:
                 self.work_remains = False
         return out
 
+    # ---- protocol c1: one-call compression of a test output (PAT-118)
+    def _c1(self):
+        """The compression module, imported when a compression mode runs (it imports this one)."""
+        from foundry import local_first_compression as lfk
+        return lfk
+
+    def compress_local(self, task: Mapping[str, Any], candidate_id: str, *, attempt: int = 0,
+                       replay_of: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """ONE local call for one (candidate, task): the committed output of the protected tests goes to the local
+        endpoint in a single non-streaming Chat Completions call without a tool, and the raw content of the answer is the
+        summary, judged without a model (``score_summary``: recall of the failing identifiers cited verbatim, size ratio).
+        A timeout, an invalid or an empty answer is a failed summary: a decided attempt with recall 0, never retried. An
+        endpoint that cannot be reached at all is a launcher failure before any verdict (void, replayed once like every
+        attempt cut before its verdict). No bundle, no tool and no sandbox: nothing the model says is ever executed."""
+        lfk = self._c1()
+        conf = self.campaign["compression"]
+        material = self.material.get(task["pr"])
+        if material is None:
+            raise RunnerError(f"no committed material for PR {task['pr']}")
+        model = self.campaign["candidates"][candidate_id]["model"]
+        self.ledger.check(cloud=False)
+        if self.ledger.remaining_seconds() < conf["local_call"]["timeout_seconds"]:
+            raise CapReached("wall_clock_seconds")  # a call the envelope would cut below its bound is not started
+        task_set = conf["task_set"]
+        self._claim(lfk.SCREEN_PATH, task, task_set, candidate_id, "local", attempt, 1 if replay_of else 0)
+        started, result, before = None, None, None
+        hold = contextlib.ExitStack()  # once the answer exists, a signal waits until the attempt is settled
+        name = self._attempt_name(task, f"{lfk.SCREEN_PATH}-{candidate_id}")
+        self.ledger.append("attempt_started", attempt_dir=name, path=lfk.SCREEN_PATH, pr=task["pr"], set=task_set,
+                           candidate=candidate_id, segment="local", attempt=attempt)
+        call = self.local_call or lfk.call_local
+        try:
+            before = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
+            started = time.monotonic()
+            result = call(conf["local_call"], model, material["text"])
+            wall = time.monotonic() - started
+            after = machine_snapshot(self.run, self.campaign.get("server_process_pattern"))
+            hold.enter_context(self._critical())  # no gap between the call and the settle below
+        except BaseException as exc:  # unreachable endpoint, interruption: time is counted, the attempt is recorded
+            with hold, self._critical():
+                wall = 0.0 if started is None else time.monotonic() - started
+                self.ledger.settle(cloud=False, seconds=wall, premium_tokens=None, attempt_dir=name,
+                                   **({"interrupted": True} if _cut(exc) == "interrupted" else {}))
+                self._tool_error(task, lfk.SCREEN_PATH, "local", attempt, task_set, exc, wall=wall,
+                                 local={"harness": "local_call", "harness_kind": "local_call",
+                                        "candidate": candidate_id}, replay_of=replay_of)
+            raise
+        with hold, self._critical():  # settled and registered as unrecorded together (see ``_stop``)
+            self.ledger.settle(cloud=False, seconds=wall, premium_tokens=None, attempt_dir=name)
+            summary = result["summary"]
+            verdict = lfk.score_summary(material["text"], material["failing_ids"], summary)
+            unknown = {f"machine.{k}": v for k, v in {**before["unknown"], **after["unknown"]}.items()}
+            if summary is None:
+                unknown["compression.summary"] = f"failed summary: {result['reason']}"
+            local = {"harness": "local_call", "harness_kind": "local_call", "candidate": candidate_id, "model": model,
+                     "endpoint": conf["local_call"]["endpoint"], "temperature": conf["local_call"]["temperature"],
+                     "max_tokens": conf["local_call"]["max_tokens"],
+                     "timeout_seconds": conf["local_call"]["timeout_seconds"],
+                     "http_status": result["http_status"], "finish_reason": result["finish_reason"],
+                     "usage": result["usage"], "failure": result["reason"]}
+            record = {"record_type": "attempt", "task": _task_ref(task, task_set), "path": lfk.SCREEN_PATH,
+                      "segment": "local", "attempt": attempt, "judge": verdict,
+                      "local_outcome": "scored" if summary is not None else "refused",
+                      "accepted": None, "review": {"rounds": 0, "verdicts": []}, "wall_seconds": round(wall, 3),
+                      "cloud_executions": 0, "cloud_sessions": [],
+                      "premium": {"by_role": {}, "by_model": {}, "billing_total": 0}, "local": local,
+                      "machine": {"before": _strip(before), "after": _strip(after),
+                                  **({"dedicated": self.dedicated} if self.dedicated else {})},
+                      "compression": {"summary": summary, "summary_sha256": None if summary is None
+                                      else lfk.sha256_text(summary), "output_sha256": material["sha256"],
+                                      "output_bytes": material["bytes"], "output_lines": material["lines"]},
+                      "unknown": unknown, **({"replay_of": dict(replay_of)} if replay_of else {})}
+            self.unrecorded = record  # until ``_emit`` writes it, an interruption writes it as interrupted
+        return record
+
+    def screen_compression(self, tasks: Sequence[Mapping[str, Any]], candidate_ids: Sequence[str]
+                           ) -> list[dict[str, Any]]:
+        """Local calls only (candidate x task), judged without a model: no cloud, ever. The machine preflight,
+        dedicated-machine admission included, is re-run before every call. One launch handles the candidate(s) it is
+        given: the operator loads each candidate once (the calls are independent single-shot requests, no history and no
+        tool loop, so the per-task reload of the long tool loops of v3 to v5 is not required; PAT-118 open choice)."""
+        out: list[dict[str, Any]] = []
+        with self._guarded():
+            for candidate_id in candidate_ids:
+                for task in tasks:
+                    state, info = self._local_state(self._c1().SCREEN_PATH, task, self.campaign["compression"]["task_set"],
+                                                    candidate_id, "local", 0)
+                    if state in ("decided", "undecided"):
+                        continue  # resume: a decided task is never replayed, an undecided one stays so
+                    self.preflight(candidate_id)
+                    out.append(self._emit(self.compress_local(task, candidate_id, replay_of=info)))
+        return out
+
+    def _summary_of(self, task: Mapping[str, Any], candidate_id: str) -> dict[str, Any] | None:
+        """The screening record of ``candidate_id`` on ``task``, or ``None`` when its call yielded no summary (a failed
+        summary: nothing to send to the cloud) or was not made."""
+        label, path = self.campaign["compression"]["task_set"], self._c1().SCREEN_PATH
+        for rec in self.prior_records:
+            if (rec.get("record_type") == "attempt" and rec["path"] == path and rec["task"]["pr"] == task["pr"]
+                    and rec["task"].get("set") == label and (rec.get("local") or {}).get("candidate") == candidate_id
+                    and rec.get("judge") and (rec.get("compression") or {}).get("summary") is not None):
+                return rec
+        return None
+
+    def _check_selected_compression(self, candidate_id: str, tasks: Sequence[Mapping[str, Any]]) -> None:
+        """The compared candidate must be the one the pre-registered screening rule selected, from the screening
+        results of THIS campaign id (same state directory and file). The pilot has no selection: its candidate is the
+        operator's, and it needs only a screening record on each of its tasks."""
+        lfk = self._c1()
+        label = self.campaign["compression"]["task_set"]
+        attempts = [r for r in self.prior_records if r.get("record_type") == "attempt" and r["task"].get("set") == label]
+        mine = {r["task"]["pr"] for r in attempts if r["path"] == lfk.SCREEN_PATH and r.get("judge")
+                and (r.get("local") or {}).get("candidate") == candidate_id}
+        if self.campaign["protocol"] == lfk.PROTOCOL_C1_PILOT:
+            if mine != {t["pr"] for t in tasks}:
+                raise RunnerError(f"no screening result of candidate {candidate_id} on every task of the pilot: run "
+                                  "screen-compression first")
+            return
+        if not any(r["path"] == lfk.SCREEN_PATH for r in attempts):
+            raise RunnerError(f"no screening results under campaign id {self.envelope['campaign_id']}: the comparison "
+                              "of the retained candidate needs them (run screen-compression first)")
+        rules = self.campaign["rules"]
+        table = lfk.report_screening(rules["compression_screening"], attempts, list(self.campaign["compression"]["tasks"]),
+                                     rules["compression_screening"]["candidates"])
+        if table["selected"] != candidate_id:
+            raise RunnerError(f"candidate {candidate_id} is not the one the screening selected "
+                              f"({table['selected']}: {table['reason']})")
+
+    def diagnose_cloud(self, task: Mapping[str, Any], arm: str, candidate_id: str) -> list[dict[str, Any]]:
+        """One cloud diagnosis for (task, arm): ``F`` receives the full committed output, ``S`` the summary of the
+        retained candidate; the same read-only arm, the same prompt, a bundle it cannot write, no correction round, no
+        reviewer. The arm must name ONE file and ONE function (its final message), judged without a model against the
+        committed ground truth. An unreadable or absent answer is an incorrect diagnosis, its cost counted. A first
+        execution cut before it was recorded is replayed once (it passes the caps again); a recorded one is never
+        replayed. Arm ``S`` on a task whose summary failed has nothing to send: no execution, no record."""
+        lfk = self._c1()
+        label = self.campaign["compression"]["task_set"]
+        material = self.material.get(task["pr"])
+        if material is None:
+            raise RunnerError(f"no committed material for PR {task['pr']}")
+        sent, summary_of = material["text"], None
+        if arm == "S":
+            screening = self._summary_of(task, candidate_id)
+            if screening is None:
+                return []
+            sent = screening["compression"]["summary"]
+            summary_of = {"candidate": candidate_id, "summary_sha256": screening["compression"]["summary_sha256"],
+                          "summary_bytes": len(sent.encode("utf-8"))}
+        prior = [r for r in self.prior_records if r.get("record_type") == "attempt"
+                 and (r["path"], r["task"]["pr"], r["task"].get("set"), r.get("segment")) ==
+                 (arm, task["pr"], label, lfk.DIAGNOSE_SEGMENT)]
+        replay = None
+        if prior:
+            kept = [r for r in prior if r.get("outcome") not in LOST_OUTCOMES]
+            if kept or len(prior) != 1:  # recorded (or cut twice): never replayed
+                return []
+            self.ledger.check(cloud=True)
+            replay = {"attempt": 0, "attempt_dir": None, "outcome": prior[0]["outcome"],
+                      "reason": prior[0].get("reason"), "cloud_sessions": list(prior[0]["cloud_sessions"])}
+        truth = self._truth(task)
+        self._claim(arm, task, label, None, lfk.DIAGNOSE_SEGMENT, 0, 1 if replay else 0)
+        mark = len(self.sessions)
+        by_role: dict[str, Any] = {}
+        models: dict[str, dict[str, int | None]] = {}
+        unknown: dict[str, str] = {}
+        seconds = 0.0
+        driver = self._driver(DIAGNOSER_DRIVER)
+        try:
+            bundle, attempt_dir = self._bundle(task, f"{arm}-diagnose")
+            try:
+                status_before = self._bundle_status(bundle)
+                execution, tokens, reason = self.cloud_execution(
+                    "diagnoser", DIAGNOSER_DRIVER, bundle, attempt_dir, "diagnose",
+                    values_extra={"test_output": sent, "output_kind": self.campaign["compression"]["output_kinds"][arm]})
+                seconds = execution["wall_seconds"]
+                if execution["start_error"]:  # the arm never ran: void (replayable once), not an incorrect diagnosis
+                    raise RunnerError(f"the diagnoser could not be started: {execution['start_error']}")
+                modified = self._bundle_modified(status_before, self._bundle_status(bundle))
+                by_role["diagnoser"] = tokens
+                _merge_models(models, execution["by_model"])
+                if tokens is None:
+                    unknown["premium.diagnoser"] = reason or "unknown"
+                if execution["timed_out"]:
+                    answer, refusal = None, "the diagnosis was cut by the time bound"
+                elif modified:  # a read-only role: a changed bundle refuses the diagnosis
+                    answer, refusal = None, "the diagnoser modified the bundle (it is a read-only role): diagnosis refused"
+                else:
+                    answer, refusal = lfk.load_diagnosis(execution["stream_log"],
+                                                         (driver.get("stream") or {}).get("format", "none"),
+                                                         root=str(bundle))
+            finally:
+                self._discard(bundle, attempt_dir)
+            contamination = execution["contamination"]
+            verdict = None if contamination else lfk.judge_diagnosis(truth, answer, refusal)
+            spent = self.sessions[mark:]
+            if contamination:
+                unknown["contaminated"] = _CONTAMINATED
+            elif verdict["verdict"] == "REFUSED":
+                unknown["diagnosis"] = verdict["note"]
+            record = self._emit({
+                "record_type": "attempt", "task": _task_ref(task, label), "path": arm,
+                "segment": lfk.DIAGNOSE_SEGMENT, "attempt": 0,
+                "outcome": "contaminated" if contamination else "diagnosed", "judge": verdict, "accepted": None,
+                "review": {"rounds": 0, "verdicts": []}, "wall_seconds": round(seconds, 3),
+                "cloud_executions": len(spent), "cloud_sessions": spent,
+                "premium": {"by_role": {r: _classes(t) for r, t in by_role.items()}, "by_model": models,
+                            "billing_total": _record_total(by_role, spent)},
+                "local": None, "machine": None, "unknown": unknown,
+                "diagnosis": {"answer": None if contamination else answer, "refusal": None if contamination else refusal,
+                              "bundle_modified": modified, "output_kind": "full" if arm == "F" else "summary",
+                              "compared_candidate": candidate_id,
+                              "output_sha256": material["sha256"] if arm == "F"
+                              else summary_of["summary_sha256"], "output_bytes": len(sent.encode("utf-8")),
+                              **({"summary_of": summary_of} if summary_of else {})},
+                **({"contaminated": True, "contamination": _contamination(contamination)} if contamination else {}),
+                **self._audit_note([execution["stream_log"]]), **({"replay_of": replay} if replay else {})})
+        except CapReached:  # the cut execution is recorded: the task is not decided, never an incorrect diagnosis
+            spent = self.sessions[mark:]
+            self._emit({"record_type": "attempt", "task": _task_ref(task, label), "path": arm,
+                        "segment": lfk.DIAGNOSE_SEGMENT, "attempt": 0, "outcome": "stopped_by_cap", "judge": None,
+                        "accepted": None, "review": {"rounds": 0, "verdicts": []}, "wall_seconds": 0.0,
+                        "cloud_executions": len(spent), "cloud_sessions": spent,
+                        "premium": {"by_role": {}, "by_model": {}, "billing_total": _record_total({}, spent)},
+                        "local": None, "machine": None, "unknown": {"stopped_by_cap": "cap reached"}})
+            raise
+        except BaseException as exc:  # tool failure, Ctrl-C, SIGTERM, anything: never silent
+            self._tool_error(task, arm, lfk.DIAGNOSE_SEGMENT, 0, label, exc, wall=seconds,
+                             sessions=self.sessions[mark:], by_role=by_role, by_model=models, replay_of=replay,
+                             contamination=self._audited_since(mark))
+            raise
+        return [record]
+
+    def compare_compression(self, tasks: Sequence[Mapping[str, Any]], candidate_id: str,
+                            arms: Sequence[str] = ("F", "S")) -> list[dict[str, Any]]:
+        """Protocol c1 comparison, each task in each requested arm from the same base: ``F`` the full output, ``S`` the
+        summary of the retained candidate (read from its screening record: the comparison loads no model). The
+        pinned Claude Code version is checked, and the retained candidate verified, before any claim or reservation."""
+        lfk = self._c1()
+        if not set(arms) <= set(lfk.ARMS):
+            raise RunnerError(f"protocol c1 has the arms {list(lfk.ARMS)} only, got {list(arms)}")
+        self._check_harness(DIAGNOSER_DRIVER)  # PAT-118: Claude Code 2.1.294, before any claim or spend
+        self._check_selected_compression(candidate_id, tasks)
+        out: list[dict[str, Any]] = []
+        with self._guarded():
+            for task in tasks:
+                for arm in arms:
+                    out += self.diagnose_cloud(task, arm, candidate_id)
+        return out
+
     # ---- orchestration
     def preflight(self, candidate_id: str, phase: str | None = None) -> dict[str, Any]:
         model = self.campaign["candidates"][candidate_id]["model"]
         result = preflight(self.campaign, model, self.preflight_run(candidate_id), self.disk_free_gib,
-                           self.campaign["candidates"][candidate_id], dedicated=self.exploring)
+                           self.campaign["candidates"][candidate_id], dedicated=self.exploring or self.compressing)
         self.dedicated = result["facts"].get("dedicated_machine")
         self.ledger.append("preflight", candidate=candidate_id, ok=result["ok"],
                            refusals=result["refusals"],
-                           **({"dedicated_machine": self.dedicated} if self.exploring else {}),
+                           **({"dedicated_machine": self.dedicated} if self.exploring or self.compressing else {}),
                            **({"interpreters": self.interpreters} if self.interpreters else {}),
                            **({"phase": phase} if phase else {}))
         if not result["ok"]:
@@ -5143,7 +5538,8 @@ def _classes(tokens: Mapping[str, int | None] | None) -> dict[str, int | None] |
 
 def _compare_set(campaign: Mapping[str, Any]) -> str:
     """``task.set`` of the comparison records: ``exploration.comparison_task_set`` (protocol v5), else ``comparison``."""
-    return (campaign.get("exploration") or {}).get("comparison_task_set") or COMPARISON_SET
+    return ((campaign.get("exploration") or {}).get("comparison_task_set")
+            or (campaign.get("compression") or {}).get("task_set") or COMPARISON_SET)
 
 
 def _task_ref(task: Mapping[str, Any], task_set: str) -> dict[str, Any]:
@@ -5383,6 +5779,11 @@ def report(campaign: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
                                 "host_refused_calls": dict(sorted(refused_calls.items())),
                                 "host_refused_calls_total": sum(refused_calls.values()),
                                 "note": "findings kept apart from `contaminated`/`review_contaminated`: they decide nothing"}
+    if campaign.get("schema") == CAMPAIGN_SCHEMA_V3:  # PAT-118, protocol c1: its own paths and rules
+        from foundry import local_first_compression as lfk
+        out.update(lfk.report_sections(campaign, attempts, unknown_work, {
+            mode: [h["warning"] for h in open_holes if h["mode"] == mode] for mode in COMPRESSION_MODES}))
+        return out
     exploring = campaign.get("schema") == CAMPAIGN_SCHEMA_V2  # protocol v2: other paths, other rules
     screen_path = "XS" if exploring else "S"
     killed = len({(h["path"], h["pr"], h["candidate"], h["segment"], h["attempt"])
@@ -6289,6 +6690,15 @@ def _listed_tasks(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], prs:
     return [by_pr[n] for n in prs]
 
 
+def _c1_material(directory: Path, campaign: Mapping[str, Any]) -> dict[int, dict[str, Any]]:
+    """The committed material of a protocol c1 campaign (sha256 verified again, as the loader did)."""
+    from foundry import local_first_compression as lfk
+    try:
+        return lfk.load_material(directory, campaign["compression"]["material"])
+    except lfk.CompressionError as exc:
+        raise RunnerError(str(exc)) from None
+
+
 GOLDEN_SCHEMA = "foundry.local-first-golden-check.v1"
 
 
@@ -6362,7 +6772,8 @@ def golden_check(campaign: Mapping[str, Any], campaign_path: Path, tasks: Sequen
 def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> int:
     parser = argparse.ArgumentParser(prog="foundry.local_first_runner", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    for name in ("preflight", "screen", "compare", "screen-exploration", "compare-exploration"):
+    for name in ("preflight", "screen", "compare", "screen-exploration", "compare-exploration",
+                 "screen-compression", "compare-compression"):
         p = sub.add_parser(name)
         p.add_argument("--campaign", required=True, help="the campaign config JSON")
         p.add_argument("--dry-run", action="store_true", help="fake drivers only, canned machine facts")
@@ -6377,14 +6788,14 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             p.add_argument("--repo", default=".")
             p.add_argument("--snapshot", required=True)
             p.add_argument("--manifest", required=True)
-            if not name.endswith("exploration"):  # protocol v2 has one explorer driver per kind
+            if not name.endswith(("exploration", "compression")):  # protocol v2 has one explorer driver per kind
                 p.add_argument("--harness", default="local_harness",
                                choices=("local_harness", "neutral_harness"))
             p.add_argument("--sandbox", action="store_true", help="also sandbox a dry run")
-        if name in ("compare", "compare-exploration"):
+        if name in ("compare", "compare-exploration", "compare-compression"):
             p.add_argument("--paths", default=None,
                            help="arms to play (default A,L,E for compare-exploration, A,B,C for compare; "
-                                "A,L under protocol v4)")
+                                "A,L under protocol v4; F,S for compare-compression)")
             p.add_argument("--screening-campaign", default=None,
                            help="campaign id of a completed screening (results read-only in --state-dir) "
                                 "when this campaign id holds none; C and N need one or the other")
@@ -6427,6 +6838,14 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                         "its own streams with the current classification (offline, no cloud call)")
     nr.add_argument("--from-dir", required=True, help="the trial directory (result.json and state/), read only")
     nr.add_argument("--out", required=True, help="the new result file (never overwritten)")
+    cm = sub.add_parser("compression-material", help="PAT-118: offline (git and pytest only: no model, no cloud), run "
+                        "the protected tests of the 12 corpus tasks on their unmodified base bundles with the judge's "
+                        "own interpreter and command, mask, and write the committed material with its hashes")
+    cm.add_argument("--repo", required=True, help="the full clone the corpus tasks are built from")
+    cm.add_argument("--work-root", required=True, help="a throwaway area outside every checkout")
+    cm.add_argument("--snapshot", required=True)
+    cm.add_argument("--manifest", required=True)
+    cm.add_argument("--out-dir", required=True, help="the qualification folder (never overwritten)")
     r = sub.add_parser("report")
     r.add_argument("--campaign", required=True)
     r.add_argument("--results", required=True,
@@ -6439,6 +6858,20 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
         except (RunnerError, trial.lfr.RunnerError, OSError, ValueError, KeyError) as exc:  # ``-m``: two module objects
             print(f"refused: {exc}", file=sys.stderr)
             return 2
+        return 0
+    if args.cmd == "compression-material":
+        from foundry import local_first_compression as lfk
+        try:
+            manifest = json.loads(Path(args.manifest).read_text("utf-8"))
+            snapshot = json.loads(Path(args.snapshot).read_text("utf-8"))
+            tasks = _listed_tasks(manifest, snapshot, lfk.C1_TASKS)
+            table = lfk.generate_material(Path(args.repo), tasks, Path(args.work_root), Path(args.out_dir),
+                                          snapshot_path=Path(args.snapshot), manifest_path=Path(args.manifest),
+                                          today=today or dt.date.today())
+        except (RunnerError, lfc.CorpusError, OSError, ValueError, KeyError) as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(table, indent=2, sort_keys=True))
         return 0
     try:
         campaign = load_campaign(Path(args.campaign))
@@ -6512,7 +6945,7 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                 raise RunnerError(f"{results} holds records of another campaign id")
             result = report(campaign, records, _read_jsonl(ledger),
                             campaign_sha256=hashlib.sha256(Path(args.campaign).read_bytes()).hexdigest())
-        except RunnerError as exc:
+        except (RunnerError, lfc.CorpusError) as exc:  # a protocol c1 report refuses a contradictory state the same way
             print(f"refused: {exc}", file=sys.stderr)
             return 2
         print(json.dumps(result, indent=2))
@@ -6534,14 +6967,17 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
     try:
         envelope = load_envelope(Path(args.envelope) if args.envelope else None, mode,
                                  today or dt.date.today())
-        candidates = args.candidate if mode in ("screen", "screen_exploration") else [args.candidate]
+        candidates = args.candidate if mode in ("screen", "screen_exploration", "screen_compression") else [args.candidate]
         for cid in candidates:
             if cid not in campaign["candidates"]:
                 raise RunnerError(f"unknown candidate {cid}")
         default = ",".join(V4_ARMS) if campaign.get("protocol") in (PROTOCOL_V4, *V5_PROTOCOLS) else (
             "A,L,E" if mode == "compare_exploration" else "A,B,C")
+        allowed = EXPLORE_ARMS if mode == "compare_exploration" else PATHS
+        if mode == "compare_compression":  # PAT-118
+            default, allowed = "F,S", ("F", "S")
         paths = (default if args.paths is None else args.paths).split(",") if mode in CLOUD_MODES else []
-        if not set(paths) <= set(EXPLORE_ARMS if mode == "compare_exploration" else PATHS):
+        if not set(paths) <= set(allowed):
             raise RunnerError(f"unknown path in {args.paths}")
         manifest = json.loads(Path(args.manifest).read_text("utf-8"))
         snapshot = json.loads(Path(args.snapshot).read_text("utf-8"))
@@ -6555,7 +6991,10 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
                         "manifest_sha256": hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()},
             screening_campaign=getattr(args, "screening_campaign", None),
             truths=(lfe.load_truth_set(Path(args.campaign).parent, campaign["exploration"]["ground_truth"])
-                    if mode in EXPLORE_MODES else None),
+                    if mode in EXPLORE_MODES else
+                    lfe.load_truth_set(Path(args.campaign).parent, campaign["compression"]["ground_truth"])
+                    if mode in COMPRESSION_MODES else None),
+            material=(_c1_material(Path(args.campaign).parent, campaign) if mode in COMPRESSION_MODES else None),
             sandbox=(not args.dry_run) or args.sandbox,
             run=(lambda _argv: None) if args.dry_run else default_run,
             preflight_run=(lambda cid: dry_run_facts(campaign, campaign["candidates"][cid]["model"]))
@@ -6565,6 +7004,11 @@ def main(argv: Sequence[str] | None = None, *, today: dt.date | None = None) -> 
             runner.screen(_tasks(manifest, snapshot, "screening"), candidates, args.harness)
         elif mode == "screen_exploration":
             runner.screen_exploration(_tasks(manifest, snapshot, "screening"), candidates)
+        elif mode == "screen_compression":
+            runner.screen_compression(_listed_tasks(manifest, snapshot, campaign["compression"]["tasks"]), candidates)
+        elif mode == "compare_compression":
+            runner.compare_compression(_listed_tasks(manifest, snapshot, campaign["compression"]["tasks"]),
+                                       candidates[0], paths)
         elif mode == "compare_exploration":
             listed = campaign["exploration"].get("comparison_tasks")  # v5: an explicit, ordered list of PRs
             group = campaign["exploration"].get("comparison_task_group", "comparison")  # v4: "screening"

@@ -1,0 +1,489 @@
+{
+  "schema": "foundry.local-first-compression-material.v1",
+  "provenance": {
+    "date": "2026-10-09",
+    "tooling_commit": "b6a86de2b8575ed7198cd767a4d7a7142d880206",
+    "tooling_dirty": true,
+    "python": "3.13.13",
+    "pytest": "9.1.1",
+    "system": "Darwin",
+    "snapshot_sha256": "c948cf13178f7ee48467a1888974e84123abd6d0ca316a0fab7f0a7e9baf012a",
+    "manifest_sha256": "8ac6509142b34e2313bcc0ca8726ea0c2530976dc6a923b5d2f685d5923cb4fb",
+    "command": "the judge's own: <python> -P -m pytest -q -p no:cacheprovider --junitxml=<report> --confcutdir=<bundle>/plugins/foundry/tests --rootdir=<bundle>/plugins/foundry -c <merged pytest.ini> <the protected tests of the task>, in <bundle>/plugins/foundry, on the base tree without the protected tests, the protected tests restored from the merged commit (lfc.judge)",
+    "masking": "the bundle directory -> <bundle>, the judge's temporary directory -> <tmp>, the home directory -> <home>, the user name -> <user>; counts per task in each entry; nothing else is changed",
+    "stderr": "appended after a line '--- stderr ---' only when pytest wrote something on stderr"
+  },
+  "tasks": {
+    "26": {
+      "pr": 26,
+      "file": "pat-19-compression-material-v1/pr26.txt",
+      "sha256": "f8f064bb00124c232564775f600d97552400f79b80e28c9269c8e696d856cbf2",
+      "bytes": 1274,
+      "lines": 26,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_orphan_witness_before_effect"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 0,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    },
+    "38": {
+      "pr": 38,
+      "file": "pat-19-compression-material-v1/pr38.txt",
+      "sha256": "f2b45048a6da06544e8732440d7f85134afb96375e241e8f9a1de951b384cc5f",
+      "bytes": 10835,
+      "lines": 198,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 27,
+        "failed": 9,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_doctor.py::test_doctor_reports_missing_local_hook_path_as_actionable_warning",
+        "tests/test_doctor.py::test_doctor_falls_back_to_monorepo_hook_dir_in_fix_command",
+        "tests/test_doctor.py::test_doctor_accepts_monorepo_hook_dir_as_healthy",
+        "tests/test_doctor.py::test_doctor_rejects_known_candidate_missing_hook_file",
+        "tests/test_doctor.py::test_doctor_resolves_healthy_hook_from_a_subdirectory",
+        "tests/test_doctor.py::test_doctor_reports_incorrect_local_hook_path_as_actionable_warning",
+        "tests/test_doctor.py::test_doctor_preserves_surrounding_spaces_in_local_hook_path",
+        "tests/test_doctor.py::test_doctor_reports_correct_local_hook_path_as_healthy",
+        "tests/test_doctor.py::test_doctor_accepts_absolute_hooks_path_matching_toplevel_candidate"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 9,
+        "home": 0,
+        "user": 9
+      },
+      "stderr_bytes": 0
+    },
+    "25": {
+      "pr": 25,
+      "file": "pat-19-compression-material-v1/pr25.txt",
+      "sha256": "f6478ce96432e2f65e422405cbf53178e3cc3337d5422eea3daa6b55ae2883f0",
+      "bytes": 24078,
+      "lines": 501,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 1,
+        "failed": 4,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[incoming-title-collides-with-own-index]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[incoming-title-collides-with-other-index]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[duplicate-incoming-title]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 0,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    },
+    "42": {
+      "pr": 42,
+      "file": "pat-19-compression-material-v1/pr42.txt",
+      "sha256": "cad6d00a2c3437ff20352d2bc47f1ff4cb2bdb807fbc5dbaa3e13ba5e1c1c935",
+      "bytes": 5317,
+      "lines": 100,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 0,
+        "failed": 4,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_registry_sharing.py::test_alias_registration_cannot_replace_an_archive_tombstone",
+        "tests/test_registry_sharing.py::test_archived_alias_error_directs_reads_to_a_live_archive_alias",
+        "tests/test_registry_sharing.py::test_generic_registration_cannot_remove_an_archive_tombstone",
+        "tests/test_registry_sharing.py::test_registry_digest_drift_requires_exact_approved_recovery"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 4,
+        "home": 0,
+        "user": 4
+      },
+      "stderr_bytes": 0
+    },
+    "33": {
+      "pr": 33,
+      "file": "pat-19-compression-material-v1/pr33.txt",
+      "sha256": "ad22e59fbae2a728d64666260c5f8f986299c148fe70c8a98dd4fdcdf7ba903c",
+      "bytes": 7837,
+      "lines": 159,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 170,
+        "failed": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_query_issue_projects_real_transport_missing_witness_as_conflict",
+        "tests/test_pure.py::test_issue_projects_embedded_adr_index_conflict_as_distinct_status"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 0,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    },
+    "37": {
+      "pr": 37,
+      "file": "pat-19-compression-material-v1/pr37.txt",
+      "sha256": "d0820c1935fa3a1db357e81ec25c54185c73a135be773b716e41c5478a40a022",
+      "bytes": 2294,
+      "lines": 45,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 1,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_pure.py::test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 0,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    },
+    "30": {
+      "pr": 30,
+      "file": "pat-19-compression-material-v1/pr30.txt",
+      "sha256": "6d5ef79d81b8f7158906b2166593b11c739be3a9fdddda103c1f332229be037e",
+      "bytes": 2859,
+      "lines": 53,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 161,
+        "failed": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_linear_profile_preserves_exact_source_witness",
+        "tests/test_linear_tracker.py::test_linear_profile_recovery_rejects_source_collision_before_effects"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 2,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    },
+    "83": {
+      "pr": 83,
+      "file": "pat-19-compression-material-v1/pr83.txt",
+      "sha256": "6d4eb40affe959668d211dce244bd6fb2a539aacfd1dfbbf6f86e368fbece964",
+      "bytes": 52188,
+      "lines": 1060,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 7,
+        "failed": 11,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-observed-form]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-bullet]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_leading_blank_line_before_a_list_is_refused[leading-blank-tight-ordered]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_pinned_pat72_profile_applies_before_the_strict_check",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot[replacement]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_supersession_resume_derives_new_body_from_existing_slot[source]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[unchecked]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[checked]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[upper-checked-first]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[task-second]",
+        "tests/test_linear_tracker.py::test_linear_adr_pat101_task_items_are_not_plain[empty-task]"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 31,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    },
+    "27": {
+      "pr": 27,
+      "file": "pat-19-compression-material-v1/pr27.txt",
+      "sha256": "b7bc0e5bb3870c7d372b15dbf298cc1518237e3e9214e957b9cc18a7f2935c87",
+      "bytes": 3854,
+      "lines": 87,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 1,
+        "failed": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_comment_deleted_after_validation",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 0,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    },
+    "24": {
+      "pr": 24,
+      "file": "pat-19-compression-material-v1/pr24.txt",
+      "sha256": "525f1cea02d624f9c0af0ebea8306d7aa44bbe2fa1fd2109ac187273b7b0f726",
+      "bytes": 33026,
+      "lines": 643,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 1,
+        "failed": 9,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_accepted_incoming_adr_before_first_write[False]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_accepted_incoming_adr_before_first_write[True]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[deprecated]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[superseded]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[unreadable]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[None]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_terminal_existing_adr_before_first_write[deprecated]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_terminal_existing_adr_before_first_write[superseded]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 0,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    },
+    "48": {
+      "pr": 48,
+      "file": "pat-19-compression-material-v1/pr48.txt",
+      "sha256": "4e2bc7c3058805882b1bbb689a0ae38f03756aedf843c6e964eaa4c793224925",
+      "bytes": 425688,
+      "lines": 7661,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 223,
+        "failed": 122,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_query_issue_projects_real_transport_missing_witness_as_conflict",
+        "tests/test_linear_tracker.py::test_query_issue_projects_real_unavailable_adr_issue_with_provenance",
+        "tests/test_linear_tracker.py::test_query_issue_propagates_real_adr_issue_nonabsence_failures[transport-LinearTrackerError-transport_error]",
+        "tests/test_linear_tracker.py::test_query_issue_propagates_real_adr_issue_nonabsence_failures[binding-LinearBindingError-issue_outside_binding]",
+        "tests/test_linear_tracker.py::test_query_issue_propagates_real_adr_issue_nonabsence_failures[payload-LinearTrackerError-invalid_response]",
+        "tests/test_linear_tracker.py::test_query_adr_paths_stay_fail_closed_on_real_unavailable_adr_issue",
+        "tests/test_linear_tracker.py::test_query_adrs_adr_and_frame_stay_fail_closed_on_real_missing_witness",
+        "tests/test_linear_tracker.py::test_linear_adr_create_uses_filtered_absence_read_and_indexes_native_document",
+        "tests/test_linear_tracker.py::test_linear_adr_versions_append_replay_and_refuse_stale_concurrent_writer",
+        "tests/test_linear_tracker.py::test_linear_adr_edit_complete_replay_is_idempotent",
+        "tests/test_linear_tracker.py::test_linear_adr_edit_complete_replay_refuses_stale_resource_before_effect",
+        "tests/test_linear_tracker.py::test_linear_adr_edit_complete_replay_refuses_changed_input_before_effect[expected]",
+        "tests/test_linear_tracker.py::test_linear_adr_edit_complete_replay_refuses_changed_input_before_effect[updated]",
+        "tests/test_linear_tracker.py::test_linear_adr_edit_complete_replay_requires_intact_witnesses_before_effect[missing_predecessor]",
+        "tests/test_linear_tracker.py::test_linear_adr_edit_complete_replay_requires_intact_witnesses_before_effect[tampered_latest]",
+        "tests/test_linear_tracker.py::test_linear_adr_supersession_and_historical_import_preserve_relations_origin",
+        "tests/test_linear_tracker.py::test_linear_adr_import_preserves_unknown_vs_known_empty_relations",
+        "tests/test_linear_tracker.py::test_linear_import_preserves_superseded_with_unknown_successor",
+        "tests/test_linear_tracker.py::test_linear_native_adr_issue_link_is_canonical_reciprocal_and_replay_safe",
+        "tests/test_linear_tracker.py::test_linear_adr_issue_link_replays_exact_version_without_witness",
+        "tests/test_linear_tracker.py::test_linear_frame_materializes_native_reciprocal_adr_issue_link",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_terminal_existing_adr_before_first_write[deprecated]",
+        "tests/test_linear_tracker.py::test_linear_frame_rejects_terminal_existing_adr_before_first_write[superseded]",
+        "tests/test_linear_tracker.py::test_linear_supersession_replay_is_idempotent_and_completes_exact_partial_pair[False]",
+        "tests/test_linear_tracker.py::test_linear_supersession_replay_is_idempotent_and_completes_exact_partial_pair[True]",
+        "tests/test_linear_tracker.py::test_linear_supersession_recovers_replacement_version_without_witness",
+        "tests/test_linear_tracker.py::test_linear_adr_commands_recover_exact_missing_witness",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_plan_is_read_only_and_matches_import_bytes",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_imports_reciprocal_closure_into_empty_project",
+        "tests/test_linear_tracker.py::test_linear_historical_partial_batch_binds_unknown_relations_and_exact_body",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_unknown_and_known_empty_have_distinct_manifest",
+        "tests/test_linear_tracker.py::test_linear_historical_partial_batch_preserves_unknown_superseded_successor",
+        "tests/test_linear_tracker.py::test_linear_historical_partial_batch_refuses_changed_missing_flags_before_effect",
+        "tests/test_linear_tracker.py::test_linear_historical_partial_batch_plan_and_import_share_exact_bytes",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_bad_or_changed_manifest_before_effect",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_qualifies_complete_document_not_standalone_body",
+        "tests/test_linear_tracker.py::test_linear_native_adrs_stay_readable_beside_qualified_historical_import",
+        "tests/test_linear_tracker.py::test_linear_native_adr_readable_body_edit_with_recomputed_witness_fails_closed",
+        "tests/test_linear_tracker.py::test_linear_probe_qualified_historical_adr_can_append_full_lifecycle",
+        "tests/test_linear_tracker.py::test_linear_probe_qualified_historical_append_refuses_damaged_evidence[predecessor]",
+        "tests/test_linear_tracker.py::test_linear_probe_qualified_historical_append_refuses_damaged_evidence[witness]",
+        "tests/test_linear_tracker.py::test_linear_probe_qualified_historical_successor_refuses_unknown_readback",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_stops_after_write_when_provider_diverges_from_probe",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_invalid_probe_before_effect[<lambda>-qualification probe is not exact0]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_invalid_probe_before_effect[<lambda>-qualification probe is not exact1]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_invalid_probe_before_effect[<lambda>-qualification probe is not exact2]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_invalid_probe_before_effect[<lambda>-qualification probe is not exact3]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_invalid_probe_before_effect[<lambda>-qualification probe is not exact4]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_invalid_probe_before_effect[<lambda>-qualification probe is not exact5]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_invalid_probe_before_effect[<lambda>-qualification probe is not exact6]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_invalid_probe_before_effect[<lambda>-qualification probe is not exact7]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_inconsistent_profile_before_effect[<lambda>-not isolated-TrackerConflictError0]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_inconsistent_profile_before_effect[<lambda>-not isolated-TrackerConflictError1]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_inconsistent_profile_before_effect[<lambda>-probe collides-TrackerConflictError0]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_inconsistent_profile_before_effect[<lambda>-probe collides-TrackerConflictError1]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_inconsistent_profile_before_effect[<lambda>-record invalid-ValueError0]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_inconsistent_profile_before_effect[<lambda>-record invalid-ValueError1]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_inconsistent_profile_before_effect[<lambda>-witness readback is not qualified-TrackerConflictError]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_inconsistent_profile_before_effect[<lambda>-document readback is not qualified-TrackerConflictError]",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_colliding_probe_before_effect",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_recovers_exact_partial_version_witness",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_orphan_witness_before_effect",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_deleted_reciprocal_comment_before_effect",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_refuses_comment_deleted_after_validation",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_recovers_missing_comment_before_documents",
+        "tests/test_linear_tracker.py::test_linear_historical_batch_recovers_completed_first_half",
+        "tests/test_linear_tracker.py::test_linear_supersession_partial_pair_refuses_wrong_replacement_before_effect",
+        "tests/test_linear_tracker.py::test_linear_adr_import_canonicalizes_single_issue_alias_and_replays_by_uuid",
+        "tests/test_linear_tracker.py::test_linear_adr_import_replays_v0_before_reciprocal_relation_version",
+        "tests/test_linear_tracker.py::test_linear_adr_import_replays_v0_missing_witness_before_reciprocal_version",
+        "tests/test_linear_tracker.py::test_linear_adr_import_replays_after_first_of_two_reciprocal_versions",
+        "tests/test_linear_tracker.py::test_linear_adr_import_replays_reciprocal_version_without_witness",
+        "tests/test_linear_tracker.py::test_linear_adr_issue_relation_limit_accepts_100_and_refuses_101_before_effect",
+        "tests/test_linear_tracker.py::test_linear_adr_supersedes_limit_is_prevalidated_before_provider_effect[99-True-supersede]",
+        "tests/test_linear_tracker.py::test_linear_adr_supersedes_limit_is_prevalidated_before_provider_effect[99-True-historical_import]",
+        "tests/test_linear_tracker.py::test_linear_adr_chain_refuses_archived_tampered_or_deleted_history[archive]",
+        "tests/test_linear_tracker.py::test_linear_adr_chain_refuses_archived_tampered_or_deleted_history[tamper]",
+        "tests/test_linear_tracker.py::test_linear_adr_chain_refuses_archived_tampered_or_deleted_history[delete_previous]",
+        "tests/test_linear_tracker.py::test_linear_adr_chain_refuses_witnessed_composite_version_delta[status_body]",
+        "tests/test_linear_tracker.py::test_linear_adr_chain_refuses_witnessed_composite_version_delta[supersedes_body]",
+        "tests/test_linear_tracker.py::test_linear_adr_witness_refuses_isolated_unique_or_head_deletion[unique]",
+        "tests/test_linear_tracker.py::test_linear_adr_witness_refuses_isolated_unique_or_head_deletion[head]",
+        "tests/test_linear_tracker.py::test_linear_adr_witness_refuses_semantically_equal_reencoding[pretty]",
+        "tests/test_linear_tracker.py::test_linear_adr_witness_refuses_semantically_equal_reencoding[duplicate_key]",
+        "tests/test_linear_tracker.py::test_linear_adr_native_readback_accepts_only_observed_marker_escape",
+        "tests/test_linear_tracker.py::test_linear_adr_readback_rewrites_only_top_level_dash_lists[```text-```]",
+        "tests/test_linear_tracker.py::test_linear_adr_readback_rewrites_only_top_level_dash_lists[~~~~ markdown-~~~~~]",
+        "tests/test_linear_tracker.py::test_linear_pat72_digest_pinned_blank_line_readback_recovers_only_witness",
+        "tests/test_linear_tracker.py::test_linear_pat72_recovery_refuses_corruption_and_retries_interrupted_witness",
+        "tests/test_linear_tracker.py::test_linear_pat72_interrupted_edit_replays_only_sequence_one_witness",
+        "tests/test_linear_tracker.py::test_linear_adr_raw_html_is_refused_before_any_provider_write",
+        "tests/test_linear_tracker.py::test_linear_adr_witness_preserves_lossy_dash_source_distinct_from_native_star",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_partial_pair_only_replays_exact_source",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_import_replays_exact_missing_witness",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_binding_rejects_hostile_edits[rendered]",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_binding_rejects_hostile_edits[source]",
+        "tests/test_linear_tracker.py::test_linear_adr_legacy_lossless_witness_remains_compatible",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_source_survives_lifecycle_and_import_paths",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_status_retry_recovers_exact_missing_witness",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_link_retry_recovers_only_exact_target",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_edit_retry_recovers_only_exact_source",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_supersession_retry_recovers_each_exact_missing_witness[replacement]",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_supersession_retry_recovers_each_exact_missing_witness[source]",
+        "tests/test_linear_tracker.py::test_linear_adr_lossy_interrupted_status_refuses_edited_readback",
+        "tests/test_linear_tracker.py::test_linear_adr_missing_witness_fails_closed_and_exact_pair_replays",
+        "tests/test_linear_tracker.py::test_linear_adr_pair_recovers_accepted_effect_after_each_interruption[version]",
+        "tests/test_linear_tracker.py::test_linear_adr_pair_recovers_accepted_effect_after_each_interruption[witness]",
+        "tests/test_linear_tracker.py::test_linear_adr_witness_create_unavailable_leaves_detectable_partial_pair",
+        "tests/test_linear_tracker.py::test_linear_adr_relations_are_reciprocal_and_project_bounded",
+        "tests/test_linear_tracker.py::test_linear_adr_read_refuses_internally_witnessed_unilateral_relation",
+        "tests/test_linear_tracker.py::test_linear_adr_issue_relation_requires_reciprocal_project_comment",
+        "tests/test_linear_tracker.py::test_linear_adr_issue_relation_read_refuses_alias_identity_drift[stored_alias]",
+        "tests/test_linear_tracker.py::test_linear_adr_issue_relation_read_refuses_alias_identity_drift[comment_alias]",
+        "tests/test_linear_tracker.py::test_linear_historical_proposed_adr_cannot_supersede_accepted_adr",
+        "tests/test_linear_tracker.py::test_linear_adr_storage_survives_actual_youtrack_adapter_outage",
+        "tests/test_linear_tracker.py::test_linear_adr_read_refuses_collection_collision_and_bad_page_info",
+        "tests/test_linear_tracker.py::test_adr_writes_refuse_unavailable_declared_issue_before_mutation[create]",
+        "tests/test_linear_tracker.py::test_adr_writes_refuse_unavailable_declared_issue_before_mutation[status]",
+        "tests/test_linear_tracker.py::test_adr_writes_refuse_unavailable_declared_issue_before_mutation[body]",
+        "tests/test_linear_tracker.py::test_adr_writes_refuse_unavailable_declared_issue_before_mutation[link]",
+        "tests/test_linear_tracker.py::test_adr_writes_refuse_unavailable_declared_issue_before_mutation[supersede]"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 670,
+        "home": 0,
+        "user": 6
+      },
+      "stderr_bytes": 0
+    },
+    "19": {
+      "pr": 19,
+      "file": "pat-19-compression-material-v1/pr19.txt",
+      "sha256": "e04c86e0255d38b493a517e43ae3b39aaa3ffc79fbbc00dc80f0a1f9ae75415c",
+      "bytes": 23896,
+      "lines": 424,
+      "token_estimate": null,
+      "token_estimate_note": "unknown: no exact local tokenizer count was taken",
+      "pytest_exit_code": 1,
+      "junit": {
+        "passed": 5,
+        "failed": 4,
+        "errors": 0,
+        "skipped": 0
+      },
+      "failing_ids": [
+        "tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation[False-backlog]",
+        "tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation[False-ready]",
+        "tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation[True-backlog]",
+        "tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation[True-ready]"
+      ],
+      "parser_cross_check": "ok",
+      "masked": {
+        "paths": 0,
+        "home": 0,
+        "user": 0
+      },
+      "stderr_bytes": 0
+    }
+  }
+}

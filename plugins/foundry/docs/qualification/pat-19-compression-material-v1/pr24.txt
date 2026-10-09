@@ -1,0 +1,643 @@
+.FFFFFFFFF                                                               [100%]
+=================================== FAILURES ===================================
+__ test_linear_frame_rejects_accepted_incoming_adr_before_first_write[False] ___
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x1043a4a50>, <test_linear_tracker.LinearWire object at 0x102a43c50>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x102bd8c30>
+with_reference = False
+
+    @pytest.mark.parametrize("with_reference", [False, True])
+    def test_linear_frame_rejects_accepted_incoming_adr_before_first_write(
+        tracker, monkeypatch, with_reference
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+>           frame.materialize({
+                "adrs": [
+                    {"title": "Earlier proposed", "body": "decision"},
+                    {
+                        "title": "Later accepted", "body": "decision",
+                        "status": "accepted",
+                    },
+                ],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist",
+                    "body": "- [ ] Done",
+                    "constrained_by": ["Later accepted"] if with_reference else [],
+                }],
+            })
+
+tests/test_linear_tracker.py:2424: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:60: in materialize
+    adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x1043a4a50>
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+title = 'Later accepted', body = 'decision', status = 'accepted'
+
+    def create_adr(
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        status: str = "proposed",
+    ) -> Adr:
+        if status != "proposed":
+>           raise TrackerConflictError("Linear ADR creation must begin proposed")
+E           foundry.trackers.base.TrackerConflictError: Linear ADR creation must begin proposed
+
+tooling/foundry/trackers/linear.py:2875: TrackerConflictError
+----------------------------- Captured stdout call -----------------------------
+📐 LIN-ADR-0001 — Earlier proposed
+___ test_linear_frame_rejects_accepted_incoming_adr_before_first_write[True] ___
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x1043a5450>, <test_linear_tracker.LinearWire object at 0x1043a5310>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x104350cb0>
+with_reference = True
+
+    @pytest.mark.parametrize("with_reference", [False, True])
+    def test_linear_frame_rejects_accepted_incoming_adr_before_first_write(
+        tracker, monkeypatch, with_reference
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+>           frame.materialize({
+                "adrs": [
+                    {"title": "Earlier proposed", "body": "decision"},
+                    {
+                        "title": "Later accepted", "body": "decision",
+                        "status": "accepted",
+                    },
+                ],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist",
+                    "body": "- [ ] Done",
+                    "constrained_by": ["Later accepted"] if with_reference else [],
+                }],
+            })
+
+tests/test_linear_tracker.py:2424: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:60: in materialize
+    adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x1043a5450>
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+title = 'Later accepted', body = 'decision', status = 'accepted'
+
+    def create_adr(
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        status: str = "proposed",
+    ) -> Adr:
+        if status != "proposed":
+>           raise TrackerConflictError("Linear ADR creation must begin proposed")
+E           foundry.trackers.base.TrackerConflictError: Linear ADR creation must begin proposed
+
+tooling/foundry/trackers/linear.py:2875: TrackerConflictError
+----------------------------- Captured stdout call -----------------------------
+📐 LIN-ADR-0001 — Earlier proposed
+_ test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[deprecated] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x104314e90>, <test_linear_tracker.LinearWire object at 0x104314fc0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x101f2e7a0>
+status = 'deprecated'
+
+    @pytest.mark.parametrize("status", ["deprecated", "superseded", "unreadable", None])
+    def test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write(
+        tracker, monkeypatch, status
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+>           frame.materialize({
+                "adrs": [{
+                    "title": "Inactive decision", "body": "decision", "status": status,
+                }],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": ["Inactive decision"],
+                }],
+            })
+
+tests/test_linear_tracker.py:2492: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:60: in materialize
+    adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x104314e90>
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+title = 'Inactive decision', body = 'decision', status = 'deprecated'
+
+    def create_adr(
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        status: str = "proposed",
+    ) -> Adr:
+        if status != "proposed":
+>           raise TrackerConflictError("Linear ADR creation must begin proposed")
+E           foundry.trackers.base.TrackerConflictError: Linear ADR creation must begin proposed
+
+tooling/foundry/trackers/linear.py:2875: TrackerConflictError
+_ test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[superseded] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x101fba190>, <test_linear_tracker.LinearWire object at 0x101fbbce0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x101f2dbf0>
+status = 'superseded'
+
+    @pytest.mark.parametrize("status", ["deprecated", "superseded", "unreadable", None])
+    def test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write(
+        tracker, monkeypatch, status
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+>           frame.materialize({
+                "adrs": [{
+                    "title": "Inactive decision", "body": "decision", "status": status,
+                }],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": ["Inactive decision"],
+                }],
+            })
+
+tests/test_linear_tracker.py:2492: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:60: in materialize
+    adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x101fba190>
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+title = 'Inactive decision', body = 'decision', status = 'superseded'
+
+    def create_adr(
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        status: str = "proposed",
+    ) -> Adr:
+        if status != "proposed":
+>           raise TrackerConflictError("Linear ADR creation must begin proposed")
+E           foundry.trackers.base.TrackerConflictError: Linear ADR creation must begin proposed
+
+tooling/foundry/trackers/linear.py:2875: TrackerConflictError
+_ test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[unreadable] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x10431ed50>, <test_linear_tracker.LinearWire object at 0x10431fbf0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x104379950>
+status = 'unreadable'
+
+    @pytest.mark.parametrize("status", ["deprecated", "superseded", "unreadable", None])
+    def test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write(
+        tracker, monkeypatch, status
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+>           frame.materialize({
+                "adrs": [{
+                    "title": "Inactive decision", "body": "decision", "status": status,
+                }],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": ["Inactive decision"],
+                }],
+            })
+
+tests/test_linear_tracker.py:2492: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:60: in materialize
+    adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x10431ed50>
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+title = 'Inactive decision', body = 'decision', status = 'unreadable'
+
+    def create_adr(
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        status: str = "proposed",
+    ) -> Adr:
+        if status != "proposed":
+>           raise TrackerConflictError("Linear ADR creation must begin proposed")
+E           foundry.trackers.base.TrackerConflictError: Linear ADR creation must begin proposed
+
+tooling/foundry/trackers/linear.py:2875: TrackerConflictError
+_ test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[None] __
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x101f2f350>, <test_linear_tracker.LinearWire object at 0x101f2f020>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x104379f50>
+status = None
+
+    @pytest.mark.parametrize("status", ["deprecated", "superseded", "unreadable", None])
+    def test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write(
+        tracker, monkeypatch, status
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="Linear ADR creation must begin proposed"):
+>           frame.materialize({
+                "adrs": [{
+                    "title": "Inactive decision", "body": "decision", "status": status,
+                }],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": ["Inactive decision"],
+                }],
+            })
+
+tests/test_linear_tracker.py:2492: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:60: in materialize
+    adr = tr.create_adr(p, a["title"], a["body"], status=a.get("status", "proposed"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x101f2f350>
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+title = 'Inactive decision', body = 'decision', status = None
+
+    def create_adr(
+        self,
+        project: Project,
+        title: str,
+        body: str,
+        status: str = "proposed",
+    ) -> Adr:
+        if status != "proposed":
+>           raise TrackerConflictError("Linear ADR creation must begin proposed")
+E           foundry.trackers.base.TrackerConflictError: Linear ADR creation must begin proposed
+
+tooling/foundry/trackers/linear.py:2875: TrackerConflictError
+_ test_linear_frame_rejects_terminal_existing_adr_before_first_write[deprecated] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x101f2f570>, <test_linear_tracker.LinearWire object at 0x101f2ebe0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10436c410>
+status = 'deprecated'
+
+    @pytest.mark.parametrize("status", ["deprecated", "superseded"])
+    def test_linear_frame_rejects_terminal_existing_adr_before_first_write(
+        tracker, monkeypatch, status
+    ):
+        instance, wire = tracker
+        terminal = instance.create_adr(PROJECT, "Retired decision", "decision")
+        instance.set_adr_status(terminal, "accepted", project=PROJECT)
+        if status == "deprecated":
+            terminal = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[terminal.id]
+            instance.set_adr_status(terminal, status, project=PROJECT)
+        else:
+            replacement = instance.create_adr(PROJECT, "Replacement", "decision")
+            instance.set_adr_status(replacement, "accepted", project=PROJECT)
+            accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+            instance.supersede_adr(accepted[terminal.id], replacement.id, project=PROJECT)
+        terminal = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[terminal.id]
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+        before_documents = copy.deepcopy(wire.documents)
+        before_comments = copy.deepcopy(wire.comments)
+    
+        with pytest.raises(ValueError, match="ADR inactive"):
+>           frame.materialize({
+                "adrs": [{"title": "Would be new", "body": "decision"}],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": ["Would be new", terminal.id],
+                }],
+            })
+
+tests/test_linear_tracker.py:2468: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:72: in materialize
+    epic = tr.create_issue(p, e["title"], e.get("body", ""), fields=fields)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:1971: in create_issue
+    self._desired_update(skeleton, project, fields) if fields else ({}, {})
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x101f2f570>
+raw = {'labels': {'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+fields = {'Type': 'Epic', 'State': 'backlog'}
+
+    def _desired_update(
+        self, raw: dict, project: Project, fields: dict
+    ) -> tuple[dict, dict]:
+        self._field_names(fields)
+        binding = self._binding(project)
+        values: dict = {}
+        expected: dict = {}
+        if "State" in fields:
+            state = fields["State"]
+            if state not in binding["state_ids"]:
+                raise LinearBindingError("state_unmapped")
+            values["stateId"] = binding["state_ids"][state]
+            expected["state_id"] = values["stateId"]
+        if "Priority" in fields:
+            priority = fields["Priority"]
+            if priority not in _PRIORITY_TO_LINEAR:
+                raise ValueError("Linear priority must be P0, P1, P2, P3, or null")
+            values["priority"] = _PRIORITY_TO_LINEAR[priority]
+            expected["priority"] = values["priority"]
+        if "Estimate" in fields:
+            estimate = fields["Estimate"]
+            if estimate is not None and (type(estimate) is not int or estimate < 0):
+                raise ValueError(
+                    "Linear estimate must be a non-negative integer or null"
+                )
+            values["estimate"] = estimate
+            expected["estimate"] = estimate
+        if "Milestone" in fields:
+            milestone = fields["Milestone"]
+            if milestone is None:
+                milestone_id = None
+            else:
+                milestone_id = binding["milestone_ids"].get(milestone)
+                if milestone_id is None:
+                    raise LinearBindingError("milestone_unmapped")
+            values["projectMilestoneId"] = milestone_id
+            expected["milestone_id"] = milestone_id
+    
+        labels = _connection(raw.get("labels"), "issue.update.labels")
+        current_ids = {
+            node.get("id") for node in labels if isinstance(node.get("id"), str)
+        }
+        type_ids = set(binding["type_label_ids"].values())
+        desired_ids = set(current_ids)
+        if "Labels" in fields:
+            requested = fields["Labels"]
+            if not isinstance(requested, list) or any(
+                not isinstance(item, str) for item in requested
+            ):
+                raise ValueError("Linear Labels must be a list of configured names")
+            missing = [name for name in requested if name not in binding["label_ids"]]
+            if missing:
+                raise LinearBindingError("label_unmapped")
+            desired_ids = {binding["label_ids"][name] for name in requested} | (
+                current_ids & type_ids
+            )
+        if "Type" in fields:
+            issue_type = fields["Type"]
+            if issue_type is None:
+                type_id = None
+            else:
+                type_id = binding["type_label_ids"].get(issue_type)
+                if type_id is None:
+>                   raise LinearBindingError("type_unmapped")
+E                   foundry.trackers.linear.LinearBindingError: Linear binding invalid: type_unmapped
+
+tooling/foundry/trackers/linear.py:1917: LinearBindingError
+----------------------------- Captured stdout call -----------------------------
+📐 LIN-ADR-0002 — Would be new
+_ test_linear_frame_rejects_terminal_existing_adr_before_first_write[superseded] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x10437a050>, <test_linear_tracker.LinearWire object at 0x10437a550>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10436c8c0>
+status = 'superseded'
+
+    @pytest.mark.parametrize("status", ["deprecated", "superseded"])
+    def test_linear_frame_rejects_terminal_existing_adr_before_first_write(
+        tracker, monkeypatch, status
+    ):
+        instance, wire = tracker
+        terminal = instance.create_adr(PROJECT, "Retired decision", "decision")
+        instance.set_adr_status(terminal, "accepted", project=PROJECT)
+        if status == "deprecated":
+            terminal = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[terminal.id]
+            instance.set_adr_status(terminal, status, project=PROJECT)
+        else:
+            replacement = instance.create_adr(PROJECT, "Replacement", "decision")
+            instance.set_adr_status(replacement, "accepted", project=PROJECT)
+            accepted = {adr.id: adr for adr in instance.list_adrs(PROJECT)}
+            instance.supersede_adr(accepted[terminal.id], replacement.id, project=PROJECT)
+        terminal = {adr.id: adr for adr in instance.list_adrs(PROJECT)}[terminal.id]
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+        before_documents = copy.deepcopy(wire.documents)
+        before_comments = copy.deepcopy(wire.comments)
+    
+        with pytest.raises(ValueError, match="ADR inactive"):
+>           frame.materialize({
+                "adrs": [{"title": "Would be new", "body": "decision"}],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": ["Would be new", terminal.id],
+                }],
+            })
+
+tests/test_linear_tracker.py:2468: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:72: in materialize
+    epic = tr.create_issue(p, e["title"], e.get("body", ""), fields=fields)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:1971: in create_issue
+    self._desired_update(skeleton, project, fields) if fields else ({}, {})
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x10437a050>
+raw = {'labels': {'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+fields = {'Type': 'Epic', 'State': 'backlog'}
+
+    def _desired_update(
+        self, raw: dict, project: Project, fields: dict
+    ) -> tuple[dict, dict]:
+        self._field_names(fields)
+        binding = self._binding(project)
+        values: dict = {}
+        expected: dict = {}
+        if "State" in fields:
+            state = fields["State"]
+            if state not in binding["state_ids"]:
+                raise LinearBindingError("state_unmapped")
+            values["stateId"] = binding["state_ids"][state]
+            expected["state_id"] = values["stateId"]
+        if "Priority" in fields:
+            priority = fields["Priority"]
+            if priority not in _PRIORITY_TO_LINEAR:
+                raise ValueError("Linear priority must be P0, P1, P2, P3, or null")
+            values["priority"] = _PRIORITY_TO_LINEAR[priority]
+            expected["priority"] = values["priority"]
+        if "Estimate" in fields:
+            estimate = fields["Estimate"]
+            if estimate is not None and (type(estimate) is not int or estimate < 0):
+                raise ValueError(
+                    "Linear estimate must be a non-negative integer or null"
+                )
+            values["estimate"] = estimate
+            expected["estimate"] = estimate
+        if "Milestone" in fields:
+            milestone = fields["Milestone"]
+            if milestone is None:
+                milestone_id = None
+            else:
+                milestone_id = binding["milestone_ids"].get(milestone)
+                if milestone_id is None:
+                    raise LinearBindingError("milestone_unmapped")
+            values["projectMilestoneId"] = milestone_id
+            expected["milestone_id"] = milestone_id
+    
+        labels = _connection(raw.get("labels"), "issue.update.labels")
+        current_ids = {
+            node.get("id") for node in labels if isinstance(node.get("id"), str)
+        }
+        type_ids = set(binding["type_label_ids"].values())
+        desired_ids = set(current_ids)
+        if "Labels" in fields:
+            requested = fields["Labels"]
+            if not isinstance(requested, list) or any(
+                not isinstance(item, str) for item in requested
+            ):
+                raise ValueError("Linear Labels must be a list of configured names")
+            missing = [name for name in requested if name not in binding["label_ids"]]
+            if missing:
+                raise LinearBindingError("label_unmapped")
+            desired_ids = {binding["label_ids"][name] for name in requested} | (
+                current_ids & type_ids
+            )
+        if "Type" in fields:
+            issue_type = fields["Type"]
+            if issue_type is None:
+                type_id = None
+            else:
+                type_id = binding["type_label_ids"].get(issue_type)
+                if type_id is None:
+>                   raise LinearBindingError("type_unmapped")
+E                   foundry.trackers.linear.LinearBindingError: Linear binding invalid: type_unmapped
+
+tooling/foundry/trackers/linear.py:1917: LinearBindingError
+----------------------------- Captured stdout call -----------------------------
+📐 LIN-ADR-0003 — Would be new
+_ test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write __
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x10437a450>, <test_linear_tracker.LinearWire object at 0x10437a950>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x101f4add0>
+
+    def test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write(
+        tracker, monkeypatch
+    ):
+        instance, wire = tracker
+        unreadable = Adr("LIN-ADR-9999", "Unreadable", status=None)
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        monkeypatch.setattr(instance, "list_adrs", lambda _project: [unreadable])
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="ADR inactive"):
+>           frame.materialize({
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": [unreadable.id],
+                }],
+            })
+
+tests/test_linear_tracker.py:2519: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:92: in materialize
+    adr_by_id[ref] = write.link_adr_issue(tr, current, issue.id)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/write.py:476: in link_adr_issue
+    return tracker.link_adr_issue(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x10437a450>
+adr = Adr(id='LIN-ADR-9999', title='Unreadable', status=None, body=None, ref=None)
+issue_ref = 'LIN-3'
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+
+    def link_adr_issue(
+        self, adr: Adr, issue_ref: str, project: Project | None = None
+    ) -> Adr:
+        """Append one native ADR↔issue relation after canonical identity preflight."""
+        project = project or self._project()
+        try:
+            binding, chains = self._adr_snapshot(project)
+        except TrackerConflictError as error:
+            if str(error) != "Linear ADR version witness is missing":
+                raise
+            binding, documents = self._adr_documents(project)
+            predecessors = [
+                raw for raw in documents
+                if isinstance(raw, dict) and raw.get("id") == adr.ref
+            ]
+            if len(predecessors) != 1:
+                raise TrackerConflictError("Linear ADR interrupted link predecessor diverged")
+            previous_metadata, _ = _parse_adr_document(predecessors[0], binding)
+            if previous_metadata["id"] != adr.id or previous_metadata["status"] not in {
+                "proposed", "accepted"
+            }:
+                raise TrackerConflictError("Linear ADR interrupted link binding invalid")
+            issue_id, _native_id = self._resolve_adr_issue_reference(issue_ref, binding)
+            metadata, body = self._next_adr_metadata(
+                (previous_metadata, predecessors[0]), issue_id=issue_id
+            )
+            return self._recover_exact_missing_witness(
+                project, binding, documents, metadata, body
+            )
+        versions = chains.get(adr.id)
+        if versions is None or versions[-1][1]["id"] != adr.ref:
+>           raise TrackerConflictError("Linear ADR snapshot is stale")
+E           foundry.trackers.base.TrackerConflictError: Linear ADR snapshot is stale
+
+tooling/foundry/trackers/linear.py:2969: TrackerConflictError
+=========================== short test summary info ============================
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_accepted_incoming_adr_before_first_write[False]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_accepted_incoming_adr_before_first_write[True]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[deprecated]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[superseded]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[unreadable]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_nonproposed_upcoming_adr_before_first_write[None]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_terminal_existing_adr_before_first_write[deprecated]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_terminal_existing_adr_before_first_write[superseded]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_unreadable_existing_adr_status_before_first_write
+9 failed, 1 passed in 0.47s

@@ -1,0 +1,501 @@
+.FFFF                                                                    [100%]
+=================================== FAILURES ===================================
+_ test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[incoming-title-collides-with-own-index] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x103db0a50>, <test_linear_tracker.LinearWire object at 0x102a1bd90>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x103c89f30>
+adrs = [{'title': '0', 'body': 'decision'}]
+
+    @pytest.mark.parametrize(
+        "adrs",
+        [
+            [{"title": "0", "body": "decision"}],
+            [
+                {"title": "First decision", "body": "decision"},
+                {"title": "0", "body": "decision"},
+            ],
+            [
+                {"title": "Repeated decision", "body": "first"},
+                {"title": "Repeated decision", "body": "second"},
+            ],
+        ],
+        ids=[
+            "incoming-title-collides-with-own-index",
+            "incoming-title-collides-with-other-index",
+            "duplicate-incoming-title",
+        ],
+    )
+    def test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write(
+        tracker, monkeypatch, adrs
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="ADR ambiguë"):
+>           frame.materialize({
+                "adrs": adrs,
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": [0],
+                }],
+            })
+
+tests/test_linear_tracker.py:2442: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:94: in materialize
+    epic = tr.create_issue(p, e["title"], e.get("body", ""), fields=fields)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:1971: in create_issue
+    self._desired_update(skeleton, project, fields) if fields else ({}, {})
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x103db0a50>
+raw = {'labels': {'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+fields = {'Type': 'Epic', 'State': 'backlog'}
+
+    def _desired_update(
+        self, raw: dict, project: Project, fields: dict
+    ) -> tuple[dict, dict]:
+        self._field_names(fields)
+        binding = self._binding(project)
+        values: dict = {}
+        expected: dict = {}
+        if "State" in fields:
+            state = fields["State"]
+            if state not in binding["state_ids"]:
+                raise LinearBindingError("state_unmapped")
+            values["stateId"] = binding["state_ids"][state]
+            expected["state_id"] = values["stateId"]
+        if "Priority" in fields:
+            priority = fields["Priority"]
+            if priority not in _PRIORITY_TO_LINEAR:
+                raise ValueError("Linear priority must be P0, P1, P2, P3, or null")
+            values["priority"] = _PRIORITY_TO_LINEAR[priority]
+            expected["priority"] = values["priority"]
+        if "Estimate" in fields:
+            estimate = fields["Estimate"]
+            if estimate is not None and (type(estimate) is not int or estimate < 0):
+                raise ValueError(
+                    "Linear estimate must be a non-negative integer or null"
+                )
+            values["estimate"] = estimate
+            expected["estimate"] = estimate
+        if "Milestone" in fields:
+            milestone = fields["Milestone"]
+            if milestone is None:
+                milestone_id = None
+            else:
+                milestone_id = binding["milestone_ids"].get(milestone)
+                if milestone_id is None:
+                    raise LinearBindingError("milestone_unmapped")
+            values["projectMilestoneId"] = milestone_id
+            expected["milestone_id"] = milestone_id
+    
+        labels = _connection(raw.get("labels"), "issue.update.labels")
+        current_ids = {
+            node.get("id") for node in labels if isinstance(node.get("id"), str)
+        }
+        type_ids = set(binding["type_label_ids"].values())
+        desired_ids = set(current_ids)
+        if "Labels" in fields:
+            requested = fields["Labels"]
+            if not isinstance(requested, list) or any(
+                not isinstance(item, str) for item in requested
+            ):
+                raise ValueError("Linear Labels must be a list of configured names")
+            missing = [name for name in requested if name not in binding["label_ids"]]
+            if missing:
+                raise LinearBindingError("label_unmapped")
+            desired_ids = {binding["label_ids"][name] for name in requested} | (
+                current_ids & type_ids
+            )
+        if "Type" in fields:
+            issue_type = fields["Type"]
+            if issue_type is None:
+                type_id = None
+            else:
+                type_id = binding["type_label_ids"].get(issue_type)
+                if type_id is None:
+>                   raise LinearBindingError("type_unmapped")
+E                   foundry.trackers.linear.LinearBindingError: Linear binding invalid: type_unmapped
+
+tooling/foundry/trackers/linear.py:1917: LinearBindingError
+----------------------------- Captured stdout call -----------------------------
+📐 LIN-ADR-0001 — 0
+_ test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[incoming-title-collides-with-other-index] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x103db1590>, <test_linear_tracker.LinearWire object at 0x103db1450>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x103dc71d0>
+adrs = [{'title': 'First decision', 'body': 'decision'}, {'title': '0', 'body': 'decision'}]
+
+    @pytest.mark.parametrize(
+        "adrs",
+        [
+            [{"title": "0", "body": "decision"}],
+            [
+                {"title": "First decision", "body": "decision"},
+                {"title": "0", "body": "decision"},
+            ],
+            [
+                {"title": "Repeated decision", "body": "first"},
+                {"title": "Repeated decision", "body": "second"},
+            ],
+        ],
+        ids=[
+            "incoming-title-collides-with-own-index",
+            "incoming-title-collides-with-other-index",
+            "duplicate-incoming-title",
+        ],
+    )
+    def test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write(
+        tracker, monkeypatch, adrs
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="ADR ambiguë"):
+>           frame.materialize({
+                "adrs": adrs,
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": [0],
+                }],
+            })
+
+tests/test_linear_tracker.py:2442: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:94: in materialize
+    epic = tr.create_issue(p, e["title"], e.get("body", ""), fields=fields)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:1971: in create_issue
+    self._desired_update(skeleton, project, fields) if fields else ({}, {})
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x103db1590>
+raw = {'labels': {'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+fields = {'Type': 'Epic', 'State': 'backlog'}
+
+    def _desired_update(
+        self, raw: dict, project: Project, fields: dict
+    ) -> tuple[dict, dict]:
+        self._field_names(fields)
+        binding = self._binding(project)
+        values: dict = {}
+        expected: dict = {}
+        if "State" in fields:
+            state = fields["State"]
+            if state not in binding["state_ids"]:
+                raise LinearBindingError("state_unmapped")
+            values["stateId"] = binding["state_ids"][state]
+            expected["state_id"] = values["stateId"]
+        if "Priority" in fields:
+            priority = fields["Priority"]
+            if priority not in _PRIORITY_TO_LINEAR:
+                raise ValueError("Linear priority must be P0, P1, P2, P3, or null")
+            values["priority"] = _PRIORITY_TO_LINEAR[priority]
+            expected["priority"] = values["priority"]
+        if "Estimate" in fields:
+            estimate = fields["Estimate"]
+            if estimate is not None and (type(estimate) is not int or estimate < 0):
+                raise ValueError(
+                    "Linear estimate must be a non-negative integer or null"
+                )
+            values["estimate"] = estimate
+            expected["estimate"] = estimate
+        if "Milestone" in fields:
+            milestone = fields["Milestone"]
+            if milestone is None:
+                milestone_id = None
+            else:
+                milestone_id = binding["milestone_ids"].get(milestone)
+                if milestone_id is None:
+                    raise LinearBindingError("milestone_unmapped")
+            values["projectMilestoneId"] = milestone_id
+            expected["milestone_id"] = milestone_id
+    
+        labels = _connection(raw.get("labels"), "issue.update.labels")
+        current_ids = {
+            node.get("id") for node in labels if isinstance(node.get("id"), str)
+        }
+        type_ids = set(binding["type_label_ids"].values())
+        desired_ids = set(current_ids)
+        if "Labels" in fields:
+            requested = fields["Labels"]
+            if not isinstance(requested, list) or any(
+                not isinstance(item, str) for item in requested
+            ):
+                raise ValueError("Linear Labels must be a list of configured names")
+            missing = [name for name in requested if name not in binding["label_ids"]]
+            if missing:
+                raise LinearBindingError("label_unmapped")
+            desired_ids = {binding["label_ids"][name] for name in requested} | (
+                current_ids & type_ids
+            )
+        if "Type" in fields:
+            issue_type = fields["Type"]
+            if issue_type is None:
+                type_id = None
+            else:
+                type_id = binding["type_label_ids"].get(issue_type)
+                if type_id is None:
+>                   raise LinearBindingError("type_unmapped")
+E                   foundry.trackers.linear.LinearBindingError: Linear binding invalid: type_unmapped
+
+tooling/foundry/trackers/linear.py:1917: LinearBindingError
+----------------------------- Captured stdout call -----------------------------
+📐 LIN-ADR-0001 — First decision
+📐 LIN-ADR-0002 — 0
+_ test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[duplicate-incoming-title] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x103c8ba80>, <test_linear_tracker.LinearWire object at 0x103c8bbb0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x103c9aad0>
+adrs = [{'title': 'Repeated decision', 'body': 'first'}, {'title': 'Repeated decision', 'body': 'second'}]
+
+    @pytest.mark.parametrize(
+        "adrs",
+        [
+            [{"title": "0", "body": "decision"}],
+            [
+                {"title": "First decision", "body": "decision"},
+                {"title": "0", "body": "decision"},
+            ],
+            [
+                {"title": "Repeated decision", "body": "first"},
+                {"title": "Repeated decision", "body": "second"},
+            ],
+        ],
+        ids=[
+            "incoming-title-collides-with-own-index",
+            "incoming-title-collides-with-other-index",
+            "duplicate-incoming-title",
+        ],
+    )
+    def test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write(
+        tracker, monkeypatch, adrs
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+    
+        with pytest.raises(ValueError, match="ADR ambiguë"):
+>           frame.materialize({
+                "adrs": adrs,
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": [0],
+                }],
+            })
+
+tests/test_linear_tracker.py:2442: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:94: in materialize
+    epic = tr.create_issue(p, e["title"], e.get("body", ""), fields=fields)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:1971: in create_issue
+    self._desired_update(skeleton, project, fields) if fields else ({}, {})
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x103c8ba80>
+raw = {'labels': {'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+fields = {'Type': 'Epic', 'State': 'backlog'}
+
+    def _desired_update(
+        self, raw: dict, project: Project, fields: dict
+    ) -> tuple[dict, dict]:
+        self._field_names(fields)
+        binding = self._binding(project)
+        values: dict = {}
+        expected: dict = {}
+        if "State" in fields:
+            state = fields["State"]
+            if state not in binding["state_ids"]:
+                raise LinearBindingError("state_unmapped")
+            values["stateId"] = binding["state_ids"][state]
+            expected["state_id"] = values["stateId"]
+        if "Priority" in fields:
+            priority = fields["Priority"]
+            if priority not in _PRIORITY_TO_LINEAR:
+                raise ValueError("Linear priority must be P0, P1, P2, P3, or null")
+            values["priority"] = _PRIORITY_TO_LINEAR[priority]
+            expected["priority"] = values["priority"]
+        if "Estimate" in fields:
+            estimate = fields["Estimate"]
+            if estimate is not None and (type(estimate) is not int or estimate < 0):
+                raise ValueError(
+                    "Linear estimate must be a non-negative integer or null"
+                )
+            values["estimate"] = estimate
+            expected["estimate"] = estimate
+        if "Milestone" in fields:
+            milestone = fields["Milestone"]
+            if milestone is None:
+                milestone_id = None
+            else:
+                milestone_id = binding["milestone_ids"].get(milestone)
+                if milestone_id is None:
+                    raise LinearBindingError("milestone_unmapped")
+            values["projectMilestoneId"] = milestone_id
+            expected["milestone_id"] = milestone_id
+    
+        labels = _connection(raw.get("labels"), "issue.update.labels")
+        current_ids = {
+            node.get("id") for node in labels if isinstance(node.get("id"), str)
+        }
+        type_ids = set(binding["type_label_ids"].values())
+        desired_ids = set(current_ids)
+        if "Labels" in fields:
+            requested = fields["Labels"]
+            if not isinstance(requested, list) or any(
+                not isinstance(item, str) for item in requested
+            ):
+                raise ValueError("Linear Labels must be a list of configured names")
+            missing = [name for name in requested if name not in binding["label_ids"]]
+            if missing:
+                raise LinearBindingError("label_unmapped")
+            desired_ids = {binding["label_ids"][name] for name in requested} | (
+                current_ids & type_ids
+            )
+        if "Type" in fields:
+            issue_type = fields["Type"]
+            if issue_type is None:
+                type_id = None
+            else:
+                type_id = binding["type_label_ids"].get(issue_type)
+                if type_id is None:
+>                   raise LinearBindingError("type_unmapped")
+E                   foundry.trackers.linear.LinearBindingError: Linear binding invalid: type_unmapped
+
+tooling/foundry/trackers/linear.py:1917: LinearBindingError
+----------------------------- Captured stdout call -----------------------------
+📐 LIN-ADR-0001 — Repeated decision
+📐 LIN-ADR-0002 — Repeated decision
+_ test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id __
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x103dc02b0>, <test_linear_tracker.LinearWire object at 0x103dc0180>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x103c99d00>
+
+    def test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id(
+        tracker, monkeypatch
+    ):
+        instance, wire = tracker
+        existing = instance.create_adr(PROJECT, "Existing decision", "decision")
+        monkeypatch.setattr(foundry, "tracker", lambda: instance)
+        monkeypatch.setattr(write, "mutation_project", lambda _tracker: PROJECT)
+        before_issues = copy.deepcopy(wire.issues)
+        before_documents = copy.deepcopy(wire.documents)
+        before_comments = copy.deepcopy(wire.comments)
+    
+        with pytest.raises(ValueError, match="ADR ambiguë"):
+>           frame.materialize({
+                "adrs": [{"title": existing.id, "body": "decision"}],
+                "epic": {"title": "Should not exist"},
+                "issues": [{
+                    "title": "Should not exist", "body": "- [ ] Done",
+                    "constrained_by": [existing.id],
+                }],
+            })
+
+tests/test_linear_tracker.py:2468: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/frame.py:94: in materialize
+    epic = tr.create_issue(p, e["title"], e.get("body", ""), fields=fields)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:1971: in create_issue
+    self._desired_update(skeleton, project, fields) if fields else ({}, {})
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x103dc02b0>
+raw = {'labels': {'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}
+project = Project(key='LIN', id='project-uuid', extra={'canonical_repo': 'github.com/acme/widgets', 'team_id': 'team-uuid', 'sta...bel_ids': {'Feature': 'label-feature', 'Bug': 'label-bug'}, 'label_ids': {'pilot': 'label-pilot', 'api': 'label-api'}})
+fields = {'Type': 'Epic', 'State': 'backlog'}
+
+    def _desired_update(
+        self, raw: dict, project: Project, fields: dict
+    ) -> tuple[dict, dict]:
+        self._field_names(fields)
+        binding = self._binding(project)
+        values: dict = {}
+        expected: dict = {}
+        if "State" in fields:
+            state = fields["State"]
+            if state not in binding["state_ids"]:
+                raise LinearBindingError("state_unmapped")
+            values["stateId"] = binding["state_ids"][state]
+            expected["state_id"] = values["stateId"]
+        if "Priority" in fields:
+            priority = fields["Priority"]
+            if priority not in _PRIORITY_TO_LINEAR:
+                raise ValueError("Linear priority must be P0, P1, P2, P3, or null")
+            values["priority"] = _PRIORITY_TO_LINEAR[priority]
+            expected["priority"] = values["priority"]
+        if "Estimate" in fields:
+            estimate = fields["Estimate"]
+            if estimate is not None and (type(estimate) is not int or estimate < 0):
+                raise ValueError(
+                    "Linear estimate must be a non-negative integer or null"
+                )
+            values["estimate"] = estimate
+            expected["estimate"] = estimate
+        if "Milestone" in fields:
+            milestone = fields["Milestone"]
+            if milestone is None:
+                milestone_id = None
+            else:
+                milestone_id = binding["milestone_ids"].get(milestone)
+                if milestone_id is None:
+                    raise LinearBindingError("milestone_unmapped")
+            values["projectMilestoneId"] = milestone_id
+            expected["milestone_id"] = milestone_id
+    
+        labels = _connection(raw.get("labels"), "issue.update.labels")
+        current_ids = {
+            node.get("id") for node in labels if isinstance(node.get("id"), str)
+        }
+        type_ids = set(binding["type_label_ids"].values())
+        desired_ids = set(current_ids)
+        if "Labels" in fields:
+            requested = fields["Labels"]
+            if not isinstance(requested, list) or any(
+                not isinstance(item, str) for item in requested
+            ):
+                raise ValueError("Linear Labels must be a list of configured names")
+            missing = [name for name in requested if name not in binding["label_ids"]]
+            if missing:
+                raise LinearBindingError("label_unmapped")
+            desired_ids = {binding["label_ids"][name] for name in requested} | (
+                current_ids & type_ids
+            )
+        if "Type" in fields:
+            issue_type = fields["Type"]
+            if issue_type is None:
+                type_id = None
+            else:
+                type_id = binding["type_label_ids"].get(issue_type)
+                if type_id is None:
+>                   raise LinearBindingError("type_unmapped")
+E                   foundry.trackers.linear.LinearBindingError: Linear binding invalid: type_unmapped
+
+tooling/foundry/trackers/linear.py:1917: LinearBindingError
+----------------------------- Captured stdout call -----------------------------
+📐 LIN-ADR-0002 — LIN-ADR-0001
+=========================== short test summary info ============================
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[incoming-title-collides-with-own-index]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[incoming-title-collides-with-other-index]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_ambiguous_incoming_adr_alias_before_first_write[duplicate-incoming-title]
+FAILED tests/test_linear_tracker.py::test_linear_frame_rejects_incoming_title_that_collides_with_existing_adr_id
+4 failed, 1 passed in 0.32s

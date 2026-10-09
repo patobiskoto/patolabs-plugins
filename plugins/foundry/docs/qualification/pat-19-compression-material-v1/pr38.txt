@@ -1,0 +1,198 @@
+FFFFF..FF.F.F.......................                                     [100%]
+=================================== FAILURES ===================================
+______ test_doctor_reports_missing_local_hook_path_as_actionable_warning _______
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_reports_missing_lo0')
+capsys = <_pytest.capture.CaptureFixture object at 0x105df8440>
+
+    def test_doctor_reports_missing_local_hook_path_as_actionable_warning(tmp_path, capsys):
+        runner = _make_runner("", hooks_path_returncode=1, toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+        doctor._print_local_hook(payload)
+    
+        assert (
+            ["git", "-C", str(tmp_path), "config", "--get", "core.hooksPath"],
+            {"capture_output": True, "text": True, "check": False},
+        ) in runner.commands
+        assert payload["status"] == "warning"
+        assert payload["detail"] == "core.hooksPath absent, vide ou illisible"
+        output = capsys.readouterr().out
+>       assert "🟠 Hook local pre-push" in output
+E       AssertionError: assert '🟠 Hook local pre-push' in '  🟠 Hook local .githooks/pre-push — core.hooksPath absent, vide ou illisible ; active-le avec : git config core.hooksPath .githooks\n  🟠 Garde-fou local — fail-open opérationnel ; il ne constitue pas une frontière de sécurité\n'
+
+tests/test_doctor.py:49: AssertionError
+__________ test_doctor_falls_back_to_monorepo_hook_dir_in_fix_command __________
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_falls_back_to_mono0')
+capsys = <_pytest.capture.CaptureFixture object at 0x10673ae90>
+
+    def test_doctor_falls_back_to_monorepo_hook_dir_in_fix_command(tmp_path, capsys):
+        """When only the monorepo path exists, the fix command must point at it, not .githooks."""
+        _make_hook(tmp_path, "plugins/foundry/.githooks")
+        runner = _make_runner("", hooks_path_returncode=1, toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+        doctor._print_local_hook(payload)
+    
+        assert payload["status"] == "warning"
+        output = capsys.readouterr().out
+>       assert "git config core.hooksPath plugins/foundry/.githooks" in output
+E       AssertionError: assert 'git config core.hooksPath plugins/foundry/.githooks' in '  🟠 Hook local .githooks/pre-push — core.hooksPath absent, vide ou illisible ; active-le avec : git config core.hooksPath .githooks\n  🟠 Garde-fou local — fail-open opérationnel ; il ne constitue pas une frontière de sécurité\n'
+
+tests/test_doctor.py:63: AssertionError
+_______________ test_doctor_accepts_monorepo_hook_dir_as_healthy _______________
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_accepts_monorepo_h0')
+capsys = <_pytest.capture.CaptureFixture object at 0x10673b250>
+
+    def test_doctor_accepts_monorepo_hook_dir_as_healthy(tmp_path, capsys):
+        """AGENTS.md#R1's documented monorepo hook path is a healthy configuration too."""
+        _make_hook(tmp_path, "plugins/foundry/.githooks")
+        runner = _make_runner("plugins/foundry/.githooks\n", toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+        doctor._print_local_hook(payload)
+    
+>       assert payload["status"] == "healthy"
+E       AssertionError: assert 'warning' == 'healthy'
+E         
+E         - healthy
+E         + warning
+
+tests/test_doctor.py:74: AssertionError
+----------------------------- Captured stdout call -----------------------------
+  🟠 Hook local .githooks/pre-push — core.hooksPath='plugins/foundry/.githooks', attendu '.githooks' ; active-le avec : git config core.hooksPath .githooks
+  🟠 Garde-fou local — fail-open opérationnel ; il ne constitue pas une frontière de sécurité
+____________ test_doctor_rejects_known_candidate_missing_hook_file _____________
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_rejects_known_cand0')
+capsys = <_pytest.capture.CaptureFixture object at 0x10692a650>
+
+    def test_doctor_rejects_known_candidate_missing_hook_file(tmp_path, capsys):
+        """A candidate directory that exists but has no pre-push hook stays orange."""
+        (tmp_path / ".githooks").mkdir()
+        runner = _make_runner(".githooks\n", toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+    
+>       assert payload["status"] == "warning"
+E       AssertionError: assert 'healthy' == 'warning'
+E         
+E         - warning
+E         + healthy
+
+tests/test_doctor.py:86: AssertionError
+____________ test_doctor_resolves_healthy_hook_from_a_subdirectory _____________
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_resolves_healthy_h0')
+capsys = <_pytest.capture.CaptureFixture object at 0x106929ba0>
+
+    def test_doctor_resolves_healthy_hook_from_a_subdirectory(tmp_path, capsys):
+        """core.hooksPath is resolved by Git relative to the toplevel, not the cwd doctor
+        happens to run from (e.g. plugins/foundry inside this monorepo)."""
+        _make_hook(tmp_path, "plugins/foundry/.githooks")
+        subdirectory = tmp_path / "plugins" / "foundry"
+        runner = _make_runner("plugins/foundry/.githooks\n", toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(subdirectory, runner=runner)
+        doctor._print_local_hook(payload)
+    
+>       assert payload["status"] == "healthy"
+E       AssertionError: assert 'warning' == 'healthy'
+E         
+E         - healthy
+E         + warning
+
+tests/test_doctor.py:100: AssertionError
+----------------------------- Captured stdout call -----------------------------
+  🟠 Hook local .githooks/pre-push — core.hooksPath='plugins/foundry/.githooks', attendu '.githooks' ; active-le avec : git config core.hooksPath .githooks
+  🟠 Garde-fou local — fail-open opérationnel ; il ne constitue pas une frontière de sécurité
+_____ test_doctor_reports_incorrect_local_hook_path_as_actionable_warning ______
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_reports_incorrect_0')
+capsys = <_pytest.capture.CaptureFixture object at 0x10672bdf0>
+
+    def test_doctor_reports_incorrect_local_hook_path_as_actionable_warning(tmp_path, capsys):
+        runner = _make_runner(".other-hooks\n", toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+        doctor._print_local_hook(payload)
+    
+        assert payload["status"] == "warning"
+>       assert "attendu '.githooks' ou 'plugins/foundry/.githooks'" in payload["detail"]
+E       assert "attendu '.githooks' ou 'plugins/foundry/.githooks'" in "core.hooksPath='.other-hooks', attendu '.githooks'"
+
+tests/test_doctor.py:135: AssertionError
+----------------------------- Captured stdout call -----------------------------
+  🟠 Hook local .githooks/pre-push — core.hooksPath='.other-hooks', attendu '.githooks' ; active-le avec : git config core.hooksPath .githooks
+  🟠 Garde-fou local — fail-open opérationnel ; il ne constitue pas une frontière de sécurité
+_________ test_doctor_preserves_surrounding_spaces_in_local_hook_path __________
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_preserves_surround0')
+
+    def test_doctor_preserves_surrounding_spaces_in_local_hook_path(tmp_path):
+        runner = _make_runner(" .githooks \n", toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+    
+        assert payload["status"] == "warning"
+>       assert payload["detail"] == (
+            "core.hooksPath=' .githooks ', attendu '.githooks' ou 'plugins/foundry/.githooks'"
+        )
+E       assert "core.hooksPa...u '.githooks'" == "core.hooksPa...ry/.githooks'"
+E         
+E         Skipping 38 identical leading characters in diff, use -v to show
+E         - '.githooks' ou 'plugins/foundry/.githooks'
+E         + '.githooks'
+
+tests/test_doctor.py:145: AssertionError
+____________ test_doctor_reports_correct_local_hook_path_as_healthy ____________
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_reports_correct_lo0')
+capsys = <_pytest.capture.CaptureFixture object at 0x1068fc8d0>
+
+    def test_doctor_reports_correct_local_hook_path_as_healthy(tmp_path, capsys):
+        _make_hook(tmp_path, ".githooks")
+        runner = _make_runner(".githooks\n", toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+        doctor._print_local_hook(payload)
+    
+        assert payload["status"] == "healthy"
+        output = capsys.readouterr().out
+>       assert "🟢 Hook local pre-push" in output
+E       AssertionError: assert '🟢 Hook local pre-push' in '  🟢 Hook local .githooks/pre-push — core.hooksPath=.githooks\n  🟠 Garde-fou local — fail-open opérationnel ; il ne constitue pas une frontière de sécurité\n'
+
+tests/test_doctor.py:168: AssertionError
+_____ test_doctor_accepts_absolute_hooks_path_matching_toplevel_candidate ______
+
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_doctor_accepts_absolute_h0')
+capsys = <_pytest.capture.CaptureFixture object at 0x106984150>
+
+    def test_doctor_accepts_absolute_hooks_path_matching_toplevel_candidate(tmp_path, capsys):
+        """A trivially-resolvable absolute core.hooksPath (<toplevel>/<candidate>) is healthy too."""
+        _make_hook(tmp_path, ".githooks")
+        absolute_value = str(tmp_path / ".githooks")
+        runner = _make_runner(f"{absolute_value}\n", toplevel=str(tmp_path))
+    
+        payload = doctor.local_hook_diagnostic(tmp_path, runner=runner)
+    
+>       assert payload["status"] == "healthy"
+E       AssertionError: assert 'warning' == 'healthy'
+E         
+E         - healthy
+E         + warning
+
+tests/test_doctor.py:189: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_doctor.py::test_doctor_reports_missing_local_hook_path_as_actionable_warning
+FAILED tests/test_doctor.py::test_doctor_falls_back_to_monorepo_hook_dir_in_fix_command
+FAILED tests/test_doctor.py::test_doctor_accepts_monorepo_hook_dir_as_healthy
+FAILED tests/test_doctor.py::test_doctor_rejects_known_candidate_missing_hook_file
+FAILED tests/test_doctor.py::test_doctor_resolves_healthy_hook_from_a_subdirectory
+FAILED tests/test_doctor.py::test_doctor_reports_incorrect_local_hook_path_as_actionable_warning
+FAILED tests/test_doctor.py::test_doctor_preserves_surrounding_spaces_in_local_hook_path
+FAILED tests/test_doctor.py::test_doctor_reports_correct_local_hook_path_as_healthy
+FAILED tests/test_doctor.py::test_doctor_accepts_absolute_hooks_path_matching_toplevel_candidate
+9 failed, 27 passed in 0.44s

@@ -1,0 +1,100 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_________ test_alias_registration_cannot_replace_an_archive_tombstone __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107668770>
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_alias_registration_cannot0')
+
+    def test_alias_registration_cannot_replace_an_archive_tombstone(monkeypatch, tmp_path):
+        _clear_data_env(monkeypatch)
+        state = tmp_path / "state"
+        monkeypatch.setenv("FOUNDRY_DATA", str(state))
+        registry.register("youtrack", "source", "FOUNDRY", "0-3")
+        data = registry.load()
+        data["youtrack"]["public"] = {
+            "key": "FOUNDRY", "id": "0-3", "archive": True,
+        }
+        registry._save(data)
+        before = (state / "registry.json").read_bytes()
+    
+>       with pytest.raises(ValueError, match="restaurez l'entrée approuvée exacte"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: "restaurez l'entrée approuvée exacte"
+E         Actual message: "binding archive 'youtrack/public' immuable sans rollback explicite"
+
+tests/test_registry_sharing.py:379: AssertionError
+_______ test_archived_alias_error_directs_reads_to_a_live_archive_alias ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107568c30>
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_archived_alias_error_dire0')
+
+    def test_archived_alias_error_directs_reads_to_a_live_archive_alias(monkeypatch, tmp_path):
+        repo, _extra = _prepare_cutover(monkeypatch, tmp_path)
+        historical = _make_repo(tmp_path, "claude-plugins")
+        registry.cutover_repository_tracker(
+            "linear", "PAT", _LINEAR_PROJECT_ID,
+            migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+        )
+    
+>       with pytest.raises(SystemExit, match="alias non archivé du même projet"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'alias non archivé du même projet'
+E         Actual message: "Binding tracker archivé : 'public' ne peut plus recevoir d'écriture via 'youtrack'."
+
+tests/test_registry_sharing.py:745: AssertionError
+_________ test_generic_registration_cannot_remove_an_archive_tombstone _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1074f3bf0>
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_generic_registration_cann0')
+
+    def test_generic_registration_cannot_remove_an_archive_tombstone(monkeypatch, tmp_path):
+        _clear_data_env(monkeypatch)
+        state = tmp_path / "state"
+        monkeypatch.setenv("FOUNDRY_DATA", str(state))
+        registry._save({
+            "youtrack": {
+                "public": {"key": "FOUNDRY", "id": "0-3", "archive": True},
+            },
+        })
+        before = (state / "registry.json").read_bytes()
+    
+>       with pytest.raises(ValueError, match="restaurez l'entrée approuvée exacte"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: "restaurez l'entrée approuvée exacte"
+E         Actual message: "binding archive 'youtrack/public' immuable sans rollback explicite"
+
+tests/test_registry_sharing.py:358: AssertionError
+_________ test_registry_digest_drift_requires_exact_approved_recovery __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x106de8380>
+tmp_path = PosixPath('<tmp>/tmp/pytest-of-<user>/pytest-0/test_registry_digest_drift_req0')
+
+    def test_registry_digest_drift_requires_exact_approved_recovery(monkeypatch, tmp_path):
+        repo, _extra = _prepare_cutover(monkeypatch, tmp_path)
+        registry.cutover_repository_tracker(
+            "linear", "PAT", _LINEAR_PROJECT_ID,
+            migration_manifest_digest=_MANIFEST_DIGEST, cwd=str(repo),
+        )
+        data = registry.load()
+        data["linear"]["public"]["label_ids"] = {"reconfigured": (
+            "00000000-0000-4000-8000-000000000099"
+        )}
+        registry._save(data)
+        monkeypatch.setenv("FOUNDRY_TRACKER", "youtrack")
+    
+>       with pytest.raises(ValueError, match="restaurez l'entrée approuvée exacte"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: "restaurez l'entrée approuvée exacte"
+E         Actual message: 'binding tracker du registre modifié depuis le cutover'
+
+tests/test_registry_sharing.py:729: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_registry_sharing.py::test_alias_registration_cannot_replace_an_archive_tombstone
+FAILED tests/test_registry_sharing.py::test_archived_alias_error_directs_reads_to_a_live_archive_alias
+FAILED tests/test_registry_sharing.py::test_generic_registration_cannot_remove_an_archive_tombstone
+FAILED tests/test_registry_sharing.py::test_registry_digest_drift_requires_exact_approved_recovery
+4 failed in 0.30s

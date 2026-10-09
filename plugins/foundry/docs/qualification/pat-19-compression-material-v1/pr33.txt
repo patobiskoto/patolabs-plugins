@@ -1,0 +1,159 @@
+............F........................................................... [ 41%]
+........................................................................ [ 83%]
+.........................F..                                             [100%]
+=================================== FAILURES ===================================
+_____ test_query_issue_projects_real_transport_missing_witness_as_conflict _____
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x1075346d0>, <test_linear_tracker.LinearWire object at 0x10a821130>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a92d610>
+
+    def test_query_issue_projects_real_transport_missing_witness_as_conflict(
+        tracker, monkeypatch,
+    ):
+        # AC-4: exercise the real LinearWire transport, not a fake tracker — create an
+        # ADR through the adapter, delete its witness from the wire's documents, and
+        # confirm `query issue` keeps the issue payload readable behind a typed
+        # conflict projection instead of raising or losing data.
+        instance, wire = tracker
+        instance.create_adr(PROJECT, "Witness dropped", "decision body")
+        del wire.documents[_witness_document_id(wire)]
+    
+        _bind_query_registry(monkeypatch, instance)
+    
+>       result = query.issue("LIN-2")
+                 ^^^^^^^^^^^^^^^^^^^^
+
+tests/test_linear_tracker.py:885: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/query.py:428: in issue
+    "adrs": _adr_index_or_capability(tr, p)}
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/query.py:399: in _adr_index_or_capability
+    return _adr_index(tr, p)
+           ^^^^^^^^^^^^^^^^^
+tooling/foundry/query.py:389: in _adr_index
+    for a in tr.list_adrs(p)]
+             ^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:3190: in list_adrs
+    _, chains = self._adr_snapshot(project)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:2629: in _adr_snapshot
+    chains = _adr_chain(documents, binding)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+documents = [{'id': '3369607c-e7ae-4bb5-97ee-da3d23ddb5ab', 'title': '[Foundry ADR] LIN-ADR-0001 / v0000 / Witness dropped', 'cont...status":"proposed","team_id":"team-uuid","title":"Witness dropped"}\n\\-->\n\ndecision body', 'archivedAt': None, ...}]
+binding = {'key': 'LIN', 'project_id': 'project-uuid', 'team_id': 'team-uuid', 'canonical_repo': 'github.com/acme/widgets', ...}
+
+    def _adr_chain(documents: list[dict], binding: dict) -> dict:
+        chains = {}
+        witnesses = {}
+        version_documents = []
+        for raw in documents:
+            if isinstance(raw, dict) and (
+                str(raw.get("title", "")).startswith(_ADR_WITNESS_PREFIX)
+                or str(raw.get("content", "")).startswith(_ADR_WITNESS_HEADER)
+            ):
+                witness = _parse_adr_witness(raw, binding)
+                key = (witness["adr_id"], witness["sequence"])
+                if key in witnesses:
+                    raise TrackerConflictError("Linear ADR witness slot has a fork")
+                witnesses[key] = (witness, raw)
+                continue
+            if not (
+                isinstance(raw, dict)
+                and (
+                    str(raw.get("title", "")).startswith(_ADR_DOCUMENT_PREFIX)
+                    or str(raw.get("content", "")).startswith(_ADR_HEADER)
+                )
+            ):
+                continue
+            version_documents.append(raw)
+    
+        for raw in version_documents:
+            matching_witnesses = [
+                witness
+                for witness, _witness_raw in witnesses.values()
+                if witness["document_id"] == raw.get("id")
+            ]
+            if len(matching_witnesses) > 1:
+                raise TrackerConflictError("Linear ADR witness slot has a fork")
+            witness = matching_witnesses[0] if matching_witnesses else None
+            source_body = (
+                witness.get(_ADR_BOUND_SOURCE_BODY)
+                if witness is not None
+                else None
+            )
+            metadata, parsed_body = _parse_adr_document(
+                raw,
+                binding,
+                source_body=source_body,
+                allow_unbound_body=witness is None,
+            )
+            if witness is not None and (
+                witness["adr_id"] != metadata["id"]
+                or witness["sequence"] != metadata["sequence"]
+                or (
+                    source_body is not None
+                    and witness["source_body_sha256"] != metadata["body_sha256"]
+                )
+            ):
+                raise TrackerConflictError("Linear ADR version witness diverged")
+            bound_raw = dict(raw)
+            bound_raw[_ADR_BOUND_SOURCE_BODY] = parsed_body
+            chains.setdefault(metadata["id"], []).append((metadata, bound_raw))
+        observed = set()
+        for adr_id, versions in chains.items():
+            versions.sort(key=lambda item: item[0]["sequence"])
+            for sequence, (metadata, raw) in enumerate(versions):
+                key = (adr_id, sequence)
+                witness_pair = witnesses.get(key)
+                if witness_pair is None:
+>                   raise TrackerConflictError("Linear ADR version witness is missing")
+E                   foundry.trackers.base.TrackerConflictError: Linear ADR version witness is missing
+
+tooling/foundry/trackers/linear.py:957: TrackerConflictError
+______ test_issue_projects_embedded_adr_index_conflict_as_distinct_status ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107a5ac10>
+
+    def test_issue_projects_embedded_adr_index_conflict_as_distinct_status(monkeypatch):
+        # A conflict in the embedded ADR index (e.g. an ADR version without a matching
+        # witness) must not sink the whole issue read, must not surface as an empty
+        # list, and must not be conflated with a capability-unavailable tracker.
+        class _ConflictedAdrTracker(_FakeTracker):
+            def list_adrs(self, project):
+                raise TrackerConflictError("Linear ADR version witness diverged")
+    
+        issues = [Issue(id="A", title="a", state="ready", body="text")]
+        monkeypatch.setattr(foundry, "tracker", lambda name=None: _ConflictedAdrTracker(issues))
+        monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "x")
+    
+>       out = query.issue("A")
+              ^^^^^^^^^^^^^^^^
+
+tests/test_pure.py:414: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/query.py:428: in issue
+    "adrs": _adr_index_or_capability(tr, p)}
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/query.py:399: in _adr_index_or_capability
+    return _adr_index(tr, p)
+           ^^^^^^^^^^^^^^^^^
+tooling/foundry/query.py:389: in _adr_index
+    for a in tr.list_adrs(p)]
+             ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_pure.test_issue_projects_embedded_adr_index_conflict_as_distinct_status.<locals>._ConflictedAdrTracker object at 0x107d0acf0>
+project = Project(key='T', id='0-0', extra={})
+
+    def list_adrs(self, project):
+>       raise TrackerConflictError("Linear ADR version witness diverged")
+E       foundry.trackers.base.TrackerConflictError: Linear ADR version witness diverged
+
+tests/test_pure.py:408: TrackerConflictError
+=========================== short test summary info ============================
+FAILED tests/test_linear_tracker.py::test_query_issue_projects_real_transport_missing_witness_as_conflict
+FAILED tests/test_pure.py::test_issue_projects_embedded_adr_index_conflict_as_distinct_status
+2 failed, 170 passed in 0.50s

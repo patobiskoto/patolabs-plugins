@@ -1,0 +1,424 @@
+...FFFF..                                                                [100%]
+=================================== FAILURES ===================================
+_ test_linear_review_receipt_tolerates_only_delayed_native_start_automation[False-backlog] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x106699480>, <test_linear_tracker.LinearWire object at 0x106698c30>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10693bbd0>
+source_state = 'backlog', has_start_receipt = False
+
+    @pytest.mark.parametrize("source_state", ["backlog", "ready"])
+    @pytest.mark.parametrize("has_start_receipt", [False, True])
+    def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
+        tracker, monkeypatch, source_state, has_start_receipt,
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+        review = TransitionContext(
+            pr_url="https://github.com/acme/widgets/pull/17",
+            head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        )
+        body = "- [ ] acceptance"
+    
+        # This is the production order: Foundry has durably recorded review while the
+        # native issue is still Backlog/Ready, then Linear's integration starts it later.
+        wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[source_state]
+        if has_start_receipt:
+            instance.set_state("LIN-2", "in-progress", project=PROJECT)
+        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+        write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
+        comments_before_drift = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+        wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    
+>       projected = instance.get_issue("LIN-2")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_linear_tracker.py:1125: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/trackers/linear.py:1047: in get_issue
+    return self._to_issue(self._read_raw(issue_id), project)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:991: in _to_issue
+    lifecycle = self._lifecycle_projection(raw["identifier"], raw)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:747: in _lifecycle_projection
+    self._validate_native_state_history(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x106699480>
+rows = {'state-review': [({'base_sha': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'generation': 1, 'head_sha': 'aaaaaaaaaaaa...generation":1,"role":"reviewer"},"schema_version":1},"review_generation":1},"schema":"foundry-linear-lifecycle.v1"}')]}
+ordered = [{'base_sha': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'generation': 1, 'head_sha': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...'}, 'proof_id': '72ab50399900d2ac09de33617aad1f099057d7d8c9c2b36ab876a1d242a49f2a', 'quality': 'mergeable', ...}, ...}]
+native_state_id = 'state-in-progress', pending_operation = None
+acceptance_complete = True, done = None
+
+    def _validate_native_state_history(
+        self, rows: dict[str, list[tuple[dict, str]]], ordered: list[dict],
+        native_state_id: str, *, pending_operation: str | None,
+        acceptance_complete: bool, done: dict | None,
+    ) -> None:
+        state_ids = self._binding(self._project())["state_ids"]
+        state_by_id = {identifier: name for name, identifier in state_ids.items()}
+        receipt_ids = [
+            payload.get("native_state_id")
+            for operation_rows in rows.values() for payload, _body in operation_rows
+        ]
+        if any(not isinstance(identifier, str) or identifier not in state_by_id
+               for identifier in receipt_ids):
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+    
+        ordered_ids = [payload["native_state_id"] for payload in ordered]
+        cockpit_ids = [
+            payload["native_state_id"]
+            for payload, _body in rows.get("cockpit-evidence", [])
+        ]
+        if not ordered_ids:
+            ordered_ids = cockpit_ids
+        elif any(identifier not in set(ordered_ids) for identifier in cockpit_ids):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+        if not ordered_ids:
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+    
+        names = [state_by_id[identifier] for identifier in ordered_ids]
+        if any(not self._native_state_can_advance(previous, current)
+               for previous, current in zip(names, names[1:])):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+    
+        current_name = state_by_id.get(native_state_id)
+        if current_name is None:
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
+        latest_name = names[-1]
+        current_is_durable = native_state_id == ordered_ids[-1]
+        pending_forward = (
+            pending_operation in {"state-review", "acceptance"}
+            and current_name != "done"
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        pending_done = (
+            pending_operation == "state-done"
+            and current_name == "done"
+            and done is None
+            and acceptance_complete
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        if not (current_is_durable or pending_forward or pending_done):
+>           raise TrackerConflictError("Linear native state changed outside lifecycle")
+E           foundry.trackers.base.TrackerConflictError: Linear native state changed outside lifecycle
+
+tooling/foundry/trackers/linear.py:619: TrackerConflictError
+_ test_linear_review_receipt_tolerates_only_delayed_native_start_automation[False-ready] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x10694bbb0>, <test_linear_tracker.LinearWire object at 0x10694b6f0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x105cc8380>
+source_state = 'ready', has_start_receipt = False
+
+    @pytest.mark.parametrize("source_state", ["backlog", "ready"])
+    @pytest.mark.parametrize("has_start_receipt", [False, True])
+    def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
+        tracker, monkeypatch, source_state, has_start_receipt,
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+        review = TransitionContext(
+            pr_url="https://github.com/acme/widgets/pull/17",
+            head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        )
+        body = "- [ ] acceptance"
+    
+        # This is the production order: Foundry has durably recorded review while the
+        # native issue is still Backlog/Ready, then Linear's integration starts it later.
+        wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[source_state]
+        if has_start_receipt:
+            instance.set_state("LIN-2", "in-progress", project=PROJECT)
+        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+        write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
+        comments_before_drift = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+        wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    
+>       projected = instance.get_issue("LIN-2")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_linear_tracker.py:1125: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/trackers/linear.py:1047: in get_issue
+    return self._to_issue(self._read_raw(issue_id), project)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:991: in _to_issue
+    lifecycle = self._lifecycle_projection(raw["identifier"], raw)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:747: in _lifecycle_projection
+    self._validate_native_state_history(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x10694bbb0>
+rows = {'state-review': [({'base_sha': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'generation': 1, 'head_sha': 'aaaaaaaaaaaa...generation":1,"role":"reviewer"},"schema_version":1},"review_generation":1},"schema":"foundry-linear-lifecycle.v1"}')]}
+ordered = [{'base_sha': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'generation': 1, 'head_sha': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...'}, 'proof_id': '72ab50399900d2ac09de33617aad1f099057d7d8c9c2b36ab876a1d242a49f2a', 'quality': 'mergeable', ...}, ...}]
+native_state_id = 'state-in-progress', pending_operation = None
+acceptance_complete = True, done = None
+
+    def _validate_native_state_history(
+        self, rows: dict[str, list[tuple[dict, str]]], ordered: list[dict],
+        native_state_id: str, *, pending_operation: str | None,
+        acceptance_complete: bool, done: dict | None,
+    ) -> None:
+        state_ids = self._binding(self._project())["state_ids"]
+        state_by_id = {identifier: name for name, identifier in state_ids.items()}
+        receipt_ids = [
+            payload.get("native_state_id")
+            for operation_rows in rows.values() for payload, _body in operation_rows
+        ]
+        if any(not isinstance(identifier, str) or identifier not in state_by_id
+               for identifier in receipt_ids):
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+    
+        ordered_ids = [payload["native_state_id"] for payload in ordered]
+        cockpit_ids = [
+            payload["native_state_id"]
+            for payload, _body in rows.get("cockpit-evidence", [])
+        ]
+        if not ordered_ids:
+            ordered_ids = cockpit_ids
+        elif any(identifier not in set(ordered_ids) for identifier in cockpit_ids):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+        if not ordered_ids:
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+    
+        names = [state_by_id[identifier] for identifier in ordered_ids]
+        if any(not self._native_state_can_advance(previous, current)
+               for previous, current in zip(names, names[1:])):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+    
+        current_name = state_by_id.get(native_state_id)
+        if current_name is None:
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
+        latest_name = names[-1]
+        current_is_durable = native_state_id == ordered_ids[-1]
+        pending_forward = (
+            pending_operation in {"state-review", "acceptance"}
+            and current_name != "done"
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        pending_done = (
+            pending_operation == "state-done"
+            and current_name == "done"
+            and done is None
+            and acceptance_complete
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        if not (current_is_durable or pending_forward or pending_done):
+>           raise TrackerConflictError("Linear native state changed outside lifecycle")
+E           foundry.trackers.base.TrackerConflictError: Linear native state changed outside lifecycle
+
+tooling/foundry/trackers/linear.py:619: TrackerConflictError
+_ test_linear_review_receipt_tolerates_only_delayed_native_start_automation[True-backlog] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x105d597f0>, <test_linear_tracker.LinearWire object at 0x105d59010>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x106916b50>
+source_state = 'backlog', has_start_receipt = True
+
+    @pytest.mark.parametrize("source_state", ["backlog", "ready"])
+    @pytest.mark.parametrize("has_start_receipt", [False, True])
+    def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
+        tracker, monkeypatch, source_state, has_start_receipt,
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+        review = TransitionContext(
+            pr_url="https://github.com/acme/widgets/pull/17",
+            head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        )
+        body = "- [ ] acceptance"
+    
+        # This is the production order: Foundry has durably recorded review while the
+        # native issue is still Backlog/Ready, then Linear's integration starts it later.
+        wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[source_state]
+        if has_start_receipt:
+            instance.set_state("LIN-2", "in-progress", project=PROJECT)
+        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+        write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
+        comments_before_drift = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+        wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    
+>       projected = instance.get_issue("LIN-2")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_linear_tracker.py:1125: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/trackers/linear.py:1047: in get_issue
+    return self._to_issue(self._read_raw(issue_id), project)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:991: in _to_issue
+    lifecycle = self._lifecycle_projection(raw["identifier"], raw)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:747: in _lifecycle_projection
+    self._validate_native_state_history(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x105d597f0>
+rows = {'state-in-progress': [({'native_state_id': 'state-backlog', 'state': 'in-progress'}, 'Foundry lifecycle proof (append...generation":1,"role":"reviewer"},"schema_version":1},"review_generation":1},"schema":"foundry-linear-lifecycle.v1"}')]}
+ordered = [{'native_state_id': 'state-backlog', 'state': 'in-progress'}, {'base_sha': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'...'}, 'proof_id': '72ab50399900d2ac09de33617aad1f099057d7d8c9c2b36ab876a1d242a49f2a', 'quality': 'mergeable', ...}, ...}]
+native_state_id = 'state-in-progress', pending_operation = None
+acceptance_complete = True, done = None
+
+    def _validate_native_state_history(
+        self, rows: dict[str, list[tuple[dict, str]]], ordered: list[dict],
+        native_state_id: str, *, pending_operation: str | None,
+        acceptance_complete: bool, done: dict | None,
+    ) -> None:
+        state_ids = self._binding(self._project())["state_ids"]
+        state_by_id = {identifier: name for name, identifier in state_ids.items()}
+        receipt_ids = [
+            payload.get("native_state_id")
+            for operation_rows in rows.values() for payload, _body in operation_rows
+        ]
+        if any(not isinstance(identifier, str) or identifier not in state_by_id
+               for identifier in receipt_ids):
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+    
+        ordered_ids = [payload["native_state_id"] for payload in ordered]
+        cockpit_ids = [
+            payload["native_state_id"]
+            for payload, _body in rows.get("cockpit-evidence", [])
+        ]
+        if not ordered_ids:
+            ordered_ids = cockpit_ids
+        elif any(identifier not in set(ordered_ids) for identifier in cockpit_ids):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+        if not ordered_ids:
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+    
+        names = [state_by_id[identifier] for identifier in ordered_ids]
+        if any(not self._native_state_can_advance(previous, current)
+               for previous, current in zip(names, names[1:])):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+    
+        current_name = state_by_id.get(native_state_id)
+        if current_name is None:
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
+        latest_name = names[-1]
+        current_is_durable = native_state_id == ordered_ids[-1]
+        pending_forward = (
+            pending_operation in {"state-review", "acceptance"}
+            and current_name != "done"
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        pending_done = (
+            pending_operation == "state-done"
+            and current_name == "done"
+            and done is None
+            and acceptance_complete
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        if not (current_is_durable or pending_forward or pending_done):
+>           raise TrackerConflictError("Linear native state changed outside lifecycle")
+E           foundry.trackers.base.TrackerConflictError: Linear native state changed outside lifecycle
+
+tooling/foundry/trackers/linear.py:619: TrackerConflictError
+_ test_linear_review_receipt_tolerates_only_delayed_native_start_automation[True-ready] _
+
+tracker = (<foundry.trackers.linear.LinearTracker object at 0x105cc8d10>, <test_linear_tracker.LinearWire object at 0x105cc8af0>)
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x106916c50>
+source_state = 'ready', has_start_receipt = True
+
+    @pytest.mark.parametrize("source_state", ["backlog", "ready"])
+    @pytest.mark.parametrize("has_start_receipt", [False, True])
+    def test_linear_review_receipt_tolerates_only_delayed_native_start_automation(
+        tracker, monkeypatch, source_state, has_start_receipt,
+    ):
+        instance, wire = tracker
+        monkeypatch.setattr(write, "issue_binding", lambda *_args: PROJECT)
+        review = TransitionContext(
+            pr_url="https://github.com/acme/widgets/pull/17",
+            head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+        )
+        body = "- [ ] acceptance"
+    
+        # This is the production order: Foundry has durably recorded review while the
+        # native issue is still Backlog/Ready, then Linear's integration starts it later.
+        wire.issues["LIN-2"]["state"]["id"] = STATE_IDS[source_state]
+        if has_start_receipt:
+            instance.set_state("LIN-2", "in-progress", project=PROJECT)
+        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+        write.sync_acceptance(instance, "LIN-2", body, proof("LIN-2", body))
+        comments_before_drift = copy.deepcopy(wire.issues["LIN-2"]["comments"]["nodes"])
+        wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    
+>       projected = instance.get_issue("LIN-2")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_linear_tracker.py:1125: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tooling/foundry/trackers/linear.py:1047: in get_issue
+    return self._to_issue(self._read_raw(issue_id), project)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:991: in _to_issue
+    lifecycle = self._lifecycle_projection(raw["identifier"], raw)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tooling/foundry/trackers/linear.py:747: in _lifecycle_projection
+    self._validate_native_state_history(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <foundry.trackers.linear.LinearTracker object at 0x105cc8d10>
+rows = {'state-in-progress': [({'native_state_id': 'state-ready', 'state': 'in-progress'}, 'Foundry lifecycle proof (append-o...generation":1,"role":"reviewer"},"schema_version":1},"review_generation":1},"schema":"foundry-linear-lifecycle.v1"}')]}
+ordered = [{'native_state_id': 'state-ready', 'state': 'in-progress'}, {'base_sha': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', ...'}, 'proof_id': '72ab50399900d2ac09de33617aad1f099057d7d8c9c2b36ab876a1d242a49f2a', 'quality': 'mergeable', ...}, ...}]
+native_state_id = 'state-in-progress', pending_operation = None
+acceptance_complete = True, done = None
+
+    def _validate_native_state_history(
+        self, rows: dict[str, list[tuple[dict, str]]], ordered: list[dict],
+        native_state_id: str, *, pending_operation: str | None,
+        acceptance_complete: bool, done: dict | None,
+    ) -> None:
+        state_ids = self._binding(self._project())["state_ids"]
+        state_by_id = {identifier: name for name, identifier in state_ids.items()}
+        receipt_ids = [
+            payload.get("native_state_id")
+            for operation_rows in rows.values() for payload, _body in operation_rows
+        ]
+        if any(not isinstance(identifier, str) or identifier not in state_by_id
+               for identifier in receipt_ids):
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+    
+        ordered_ids = [payload["native_state_id"] for payload in ordered]
+        cockpit_ids = [
+            payload["native_state_id"]
+            for payload, _body in rows.get("cockpit-evidence", [])
+        ]
+        if not ordered_ids:
+            ordered_ids = cockpit_ids
+        elif any(identifier not in set(ordered_ids) for identifier in cockpit_ids):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+        if not ordered_ids:
+            raise TrackerConflictError("Linear lifecycle native state proof malformed")
+    
+        names = [state_by_id[identifier] for identifier in ordered_ids]
+        if any(not self._native_state_can_advance(previous, current)
+               for previous, current in zip(names, names[1:])):
+            raise TrackerConflictError("Linear native state changed outside lifecycle")
+    
+        current_name = state_by_id.get(native_state_id)
+        if current_name is None:
+            raise TrackerConflictError("Linear lifecycle native state unavailable")
+        latest_name = names[-1]
+        current_is_durable = native_state_id == ordered_ids[-1]
+        pending_forward = (
+            pending_operation in {"state-review", "acceptance"}
+            and current_name != "done"
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        pending_done = (
+            pending_operation == "state-done"
+            and current_name == "done"
+            and done is None
+            and acceptance_complete
+            and self._native_state_can_advance(latest_name, current_name)
+        )
+        if not (current_is_durable or pending_forward or pending_done):
+>           raise TrackerConflictError("Linear native state changed outside lifecycle")
+E           foundry.trackers.base.TrackerConflictError: Linear native state changed outside lifecycle
+
+tooling/foundry/trackers/linear.py:619: TrackerConflictError
+=========================== short test summary info ============================
+FAILED tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation[False-backlog]
+FAILED tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation[False-ready]
+FAILED tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation[True-backlog]
+FAILED tests/test_linear_tracker.py::test_linear_review_receipt_tolerates_only_delayed_native_start_automation[True-ready]
+4 failed, 5 passed in 0.21s
