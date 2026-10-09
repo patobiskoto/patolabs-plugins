@@ -14,7 +14,7 @@
             "delta_usd_before_correction": -2.459193,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 27394,
-              "sessions": 8
+              "requests": 8
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -43,7 +43,7 @@
             "delta_usd_before_correction": -2.189471,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 68764,
-              "sessions": 20
+              "requests": 20
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -69,7 +69,7 @@
         },
         "first_request_cache_reads": {
           "cache_read_tokens": 68764,
-          "sessions": 20
+          "requests": 20
         },
         "gap_between_the_bounds_usd": {
           "first_request_reads": 0.198576,
@@ -97,7 +97,7 @@
             "delta_usd_before_correction": -2.932047,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 26650,
-              "sessions": 8
+              "requests": 8
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -126,7 +126,7 @@
             "delta_usd_before_correction": -2.932047,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 271628,
-              "sessions": 82
+              "requests": 82
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -152,7 +152,7 @@
         },
         "first_request_cache_reads": {
           "cache_read_tokens": 271628,
-          "sessions": 82
+          "requests": 82
         },
         "gap_between_the_bounds_usd": {
           "first_request_reads": 0.587947,
@@ -182,7 +182,7 @@
             "delta_usd_before_correction": -1.590824,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 0,
-              "sessions": 0
+              "requests": 0
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -211,7 +211,7 @@
             "delta_usd_before_correction": -1.590824,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 165865,
-              "sessions": 50
+              "requests": 50
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -237,7 +237,7 @@
         },
         "first_request_cache_reads": {
           "cache_read_tokens": 165865,
-          "sessions": 50
+          "requests": 50
         },
         "gap_between_the_bounds_usd": {
           "first_request_reads": 0.398076,
@@ -265,7 +265,7 @@
             "delta_usd_before_correction": -1.341224,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 26650,
-              "sessions": 8
+              "requests": 8
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -294,7 +294,7 @@
             "delta_usd_before_correction": -1.341224,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 105763,
-              "sessions": 32
+              "requests": 32
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -320,7 +320,7 @@
         },
         "first_request_cache_reads": {
           "cache_read_tokens": 105763,
-          "sessions": 32
+          "requests": 32
         },
         "gap_between_the_bounds_usd": {
           "first_request_reads": 0.189871,
@@ -348,7 +348,7 @@
             "delta_usd_before_correction": -2.459193,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 27394,
-              "sessions": 8
+              "requests": 8
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -377,7 +377,7 @@
             "delta_usd_before_correction": -2.189471,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 68764,
-              "sessions": 20
+              "requests": 20
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -403,7 +403,7 @@
         },
         "first_request_cache_reads": {
           "cache_read_tokens": 68764,
-          "sessions": 20
+          "requests": 20
         },
         "gap_between_the_bounds_usd": {
           "first_request_reads": 0.198576,
@@ -432,7 +432,7 @@
           "delta_usd_before_correction": -5.39124,
           "first_requests_with_expired_cache_read": {
             "cache_read_tokens": 54044,
-            "sessions": 16
+            "requests": 16
           },
           "gap_distribution_seconds": {
             "gt_3600": 0,
@@ -461,7 +461,7 @@
           "delta_usd_before_correction": -5.121518,
           "first_requests_with_expired_cache_read": {
             "cache_read_tokens": 340392,
-            "sessions": 102
+            "requests": 102
           },
           "gap_distribution_seconds": {
             "gt_3600": 0,
@@ -487,7 +487,7 @@
       },
       "first_request_cache_reads": {
         "cache_read_tokens": 340392,
-        "sessions": 102
+        "requests": 102
       },
       "gap_between_the_bounds_usd": {
         "first_request_reads": 0.786523,
@@ -519,7 +519,7 @@
               "delta_usd_before_correction": -0.435429,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 6430,
-                "sessions": 2
+                "requests": 2
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -548,7 +548,7 @@
               "delta_usd_before_correction": -0.435429,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 12860,
-                "sessions": 4
+                "requests": 4
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -574,7 +574,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 12860,
-            "sessions": 4
+            "requests": 4
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.030864,
@@ -602,7 +602,7 @@
               "delta_usd_before_correction": -0.886736,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 6244,
-                "sessions": 2
+                "requests": 2
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -631,7 +631,7 @@
               "delta_usd_before_correction": -0.886736,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 81172,
-                "sessions": 26
+                "requests": 26
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -657,7 +657,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 81172,
-            "sessions": 26
+            "requests": 26
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.179827,
@@ -687,7 +687,7 @@
               "delta_usd_before_correction": -0.458295,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -716,7 +716,7 @@
               "delta_usd_before_correction": -0.458295,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 46830,
-                "sessions": 15
+                "requests": 15
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -742,7 +742,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 46830,
-            "sessions": 15
+            "requests": 15
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.112392,
@@ -770,7 +770,7 @@
               "delta_usd_before_correction": -0.42844,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 6244,
-                "sessions": 2
+                "requests": 2
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -799,7 +799,7 @@
               "delta_usd_before_correction": -0.42844,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 34342,
-                "sessions": 11
+                "requests": 11
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -825,7 +825,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 34342,
-            "sessions": 11
+            "requests": 11
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.067435,
@@ -853,7 +853,7 @@
               "delta_usd_before_correction": -0.435429,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 6430,
-                "sessions": 2
+                "requests": 2
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -882,7 +882,7 @@
               "delta_usd_before_correction": -0.435429,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 12860,
-                "sessions": 4
+                "requests": 4
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -908,7 +908,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 12860,
-            "sessions": 4
+            "requests": 4
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.030864,
@@ -939,7 +939,7 @@
               "delta_usd_before_correction": -0.042344,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -968,7 +968,7 @@
               "delta_usd_before_correction": -0.042344,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -994,7 +994,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -1024,7 +1024,7 @@
               "delta_usd_before_correction": -0.022366,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1053,7 +1053,7 @@
               "delta_usd_before_correction": -0.022366,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1079,7 +1079,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -1109,7 +1109,7 @@
               "delta_usd_before_correction": -0.041826,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1138,7 +1138,7 @@
               "delta_usd_before_correction": -0.041826,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1164,7 +1164,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -1194,7 +1194,7 @@
               "delta_usd_before_correction": -0.064438,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1223,7 +1223,7 @@
               "delta_usd_before_correction": -0.064438,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1249,7 +1249,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -1279,7 +1279,7 @@
               "delta_usd_before_correction": -0.051081,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1308,7 +1308,7 @@
               "delta_usd_before_correction": -0.051081,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1334,7 +1334,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -1364,7 +1364,7 @@
               "delta_usd_before_correction": -0.038925,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1393,7 +1393,7 @@
               "delta_usd_before_correction": -0.038925,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1419,7 +1419,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -1449,7 +1449,7 @@
               "delta_usd_before_correction": -0.124137,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3215,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1478,7 +1478,7 @@
               "delta_usd_before_correction": -0.124137,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3215,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1504,7 +1504,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3215,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -1534,7 +1534,7 @@
               "delta_usd_before_correction": -0.034632,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1563,7 +1563,7 @@
               "delta_usd_before_correction": -0.034632,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1589,7 +1589,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -1619,7 +1619,7 @@
               "delta_usd_before_correction": -0.030674,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1648,7 +1648,7 @@
               "delta_usd_before_correction": -0.030674,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1674,7 +1674,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -1704,7 +1704,7 @@
               "delta_usd_before_correction": -0.086724,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1733,7 +1733,7 @@
               "delta_usd_before_correction": -0.086724,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3215,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1759,7 +1759,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3215,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.015432,
@@ -1789,7 +1789,7 @@
               "delta_usd_before_correction": -0.031728,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1818,7 +1818,7 @@
               "delta_usd_before_correction": -0.031728,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1844,7 +1844,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -1874,7 +1874,7 @@
               "delta_usd_before_correction": -0.023036,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1903,7 +1903,7 @@
               "delta_usd_before_correction": -0.023036,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1929,7 +1929,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -1959,7 +1959,7 @@
               "delta_usd_before_correction": -0.018897,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -1988,7 +1988,7 @@
               "delta_usd_before_correction": -0.018897,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2014,7 +2014,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2044,7 +2044,7 @@
               "delta_usd_before_correction": -0.028476,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2073,7 +2073,7 @@
               "delta_usd_before_correction": -0.028476,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2099,7 +2099,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2129,7 +2129,7 @@
               "delta_usd_before_correction": -0.024422,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2158,7 +2158,7 @@
               "delta_usd_before_correction": -0.024422,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2184,7 +2184,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2214,7 +2214,7 @@
               "delta_usd_before_correction": -0.022052,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2243,7 +2243,7 @@
               "delta_usd_before_correction": -0.022052,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2269,7 +2269,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2299,7 +2299,7 @@
               "delta_usd_before_correction": -0.108285,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3215,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2328,7 +2328,7 @@
               "delta_usd_before_correction": -0.108285,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3215,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2354,7 +2354,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3215,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -2384,7 +2384,7 @@
               "delta_usd_before_correction": -0.027798,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2413,7 +2413,7 @@
               "delta_usd_before_correction": -0.027798,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2439,7 +2439,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2469,7 +2469,7 @@
               "delta_usd_before_correction": -0.025353,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2498,7 +2498,7 @@
               "delta_usd_before_correction": -0.025353,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2524,7 +2524,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2554,7 +2554,7 @@
               "delta_usd_before_correction": -0.116283,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2583,7 +2583,7 @@
               "delta_usd_before_correction": -0.116283,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3215,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2609,7 +2609,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3215,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.015432,
@@ -2639,7 +2639,7 @@
               "delta_usd_before_correction": -0.036288,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2668,7 +2668,7 @@
               "delta_usd_before_correction": -0.036288,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2694,7 +2694,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2724,7 +2724,7 @@
               "delta_usd_before_correction": -0.050578,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2753,7 +2753,7 @@
               "delta_usd_before_correction": -0.050578,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2779,7 +2779,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2809,7 +2809,7 @@
               "delta_usd_before_correction": -0.028244,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2838,7 +2838,7 @@
               "delta_usd_before_correction": -0.028244,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2864,7 +2864,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2894,7 +2894,7 @@
               "delta_usd_before_correction": -0.028425,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2923,7 +2923,7 @@
               "delta_usd_before_correction": -0.028425,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -2949,7 +2949,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -2979,7 +2979,7 @@
               "delta_usd_before_correction": -0.030495,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3008,7 +3008,7 @@
               "delta_usd_before_correction": -0.030495,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3034,7 +3034,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -3064,7 +3064,7 @@
               "delta_usd_before_correction": -0.041115,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3093,7 +3093,7 @@
               "delta_usd_before_correction": -0.041115,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3119,7 +3119,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -3149,7 +3149,7 @@
               "delta_usd_before_correction": -0.042459,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3178,7 +3178,7 @@
               "delta_usd_before_correction": -0.042459,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3204,7 +3204,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -3234,7 +3234,7 @@
               "delta_usd_before_correction": -0.025044,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3263,7 +3263,7 @@
               "delta_usd_before_correction": -0.025044,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3289,7 +3289,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -3319,7 +3319,7 @@
               "delta_usd_before_correction": -0.03573,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3348,7 +3348,7 @@
               "delta_usd_before_correction": -0.03573,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3374,7 +3374,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -3404,7 +3404,7 @@
               "delta_usd_before_correction": -0.040311,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3433,7 +3433,7 @@
               "delta_usd_before_correction": -0.040311,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3122,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3459,7 +3459,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3122,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.007493,
@@ -3493,7 +3493,7 @@
             "delta_usd_before_correction": -1.322164,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 12674,
-              "sessions": 4
+              "requests": 4
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -3522,7 +3522,7 @@
             "delta_usd_before_correction": -1.322164,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 94032,
-              "sessions": 30
+              "requests": 30
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -3548,7 +3548,7 @@
         },
         "first_request_cache_reads": {
           "cache_read_tokens": 94032,
-          "sessions": 30
+          "requests": 30
         },
         "gap_between_the_bounds_usd": {
           "first_request_reads": 0.210691,
@@ -3579,7 +3579,7 @@
               "delta_usd_before_correction": -2.023764,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 20964,
-                "sessions": 6
+                "requests": 6
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3608,7 +3608,7 @@
               "delta_usd_before_correction": -1.754042,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 55904,
-                "sessions": 16
+                "requests": 16
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3634,7 +3634,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 55904,
-            "sessions": 16
+            "requests": 16
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.167712,
@@ -3662,7 +3662,7 @@
               "delta_usd_before_correction": -2.045312,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 20406,
-                "sessions": 6
+                "requests": 6
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3691,7 +3691,7 @@
               "delta_usd_before_correction": -2.045312,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 190456,
-                "sessions": 56
+                "requests": 56
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3717,7 +3717,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 190456,
-            "sessions": 56
+            "requests": 56
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.40812,
@@ -3747,7 +3747,7 @@
               "delta_usd_before_correction": -1.132528,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3776,7 +3776,7 @@
               "delta_usd_before_correction": -1.132528,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 119035,
-                "sessions": 35
+                "requests": 35
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3802,7 +3802,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 119035,
-            "sessions": 35
+            "requests": 35
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.285684,
@@ -3830,7 +3830,7 @@
               "delta_usd_before_correction": -0.912783,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 20406,
-                "sessions": 6
+                "requests": 6
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3859,7 +3859,7 @@
               "delta_usd_before_correction": -0.912783,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 71421,
-                "sessions": 21
+                "requests": 21
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3885,7 +3885,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 71421,
-            "sessions": 21
+            "requests": 21
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.122436,
@@ -3913,7 +3913,7 @@
               "delta_usd_before_correction": -2.023764,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 20964,
-                "sessions": 6
+                "requests": 6
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3942,7 +3942,7 @@
               "delta_usd_before_correction": -1.754042,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 55904,
-                "sessions": 16
+                "requests": 16
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -3968,7 +3968,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 55904,
-            "sessions": 16
+            "requests": 16
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.167712,
@@ -3999,7 +3999,7 @@
               "delta_usd_before_correction": -0.043438,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4028,7 +4028,7 @@
               "delta_usd_before_correction": -0.043438,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4054,7 +4054,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 0,
-            "sessions": 0
+            "requests": 0
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -4084,7 +4084,7 @@
               "delta_usd_before_correction": -0.019398,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4113,7 +4113,7 @@
               "delta_usd_before_correction": -0.019398,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4139,7 +4139,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -4169,7 +4169,7 @@
               "delta_usd_before_correction": -0.106044,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4198,7 +4198,7 @@
               "delta_usd_before_correction": -0.106044,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4224,7 +4224,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 0,
-            "sessions": 0
+            "requests": 0
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -4254,7 +4254,7 @@
               "delta_usd_before_correction": -0.032356,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4283,7 +4283,7 @@
               "delta_usd_before_correction": -0.032356,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4309,7 +4309,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -4339,7 +4339,7 @@
               "delta_usd_before_correction": -0.020942,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4368,7 +4368,7 @@
               "delta_usd_before_correction": -0.020942,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4394,7 +4394,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -4424,7 +4424,7 @@
               "delta_usd_before_correction": -0.111954,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4453,7 +4453,7 @@
               "delta_usd_before_correction": -0.111954,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4479,7 +4479,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -4509,7 +4509,7 @@
               "delta_usd_before_correction": -0.043298,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4538,7 +4538,7 @@
               "delta_usd_before_correction": -0.043298,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4564,7 +4564,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -4594,7 +4594,7 @@
               "delta_usd_before_correction": -0.031528,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4623,7 +4623,7 @@
               "delta_usd_before_correction": -0.031528,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4649,7 +4649,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -4679,7 +4679,7 @@
               "delta_usd_before_correction": -0.029145,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4708,7 +4708,7 @@
               "delta_usd_before_correction": -0.029145,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4734,7 +4734,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -4764,7 +4764,7 @@
               "delta_usd_before_correction": -0.026811,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4793,7 +4793,7 @@
               "delta_usd_before_correction": -0.026811,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4819,7 +4819,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -4849,7 +4849,7 @@
               "delta_usd_before_correction": -0.035268,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4878,7 +4878,7 @@
               "delta_usd_before_correction": -0.035268,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4904,7 +4904,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -4934,7 +4934,7 @@
               "delta_usd_before_correction": -0.025485,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4963,7 +4963,7 @@
               "delta_usd_before_correction": -0.025485,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -4989,7 +4989,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -5019,7 +5019,7 @@
               "delta_usd_before_correction": -0.074436,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5048,7 +5048,7 @@
               "delta_usd_before_correction": -0.074436,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5074,7 +5074,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -5104,7 +5104,7 @@
               "delta_usd_before_correction": -0.032138,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5133,7 +5133,7 @@
               "delta_usd_before_correction": -0.032138,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5159,7 +5159,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -5189,7 +5189,7 @@
               "delta_usd_before_correction": -0.024762,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5218,7 +5218,7 @@
               "delta_usd_before_correction": -0.024762,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5244,7 +5244,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -5274,7 +5274,7 @@
               "delta_usd_before_correction": -0.072024,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5303,7 +5303,7 @@
               "delta_usd_before_correction": -0.072024,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5329,7 +5329,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -5359,7 +5359,7 @@
               "delta_usd_before_correction": -0.043168,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5388,7 +5388,7 @@
               "delta_usd_before_correction": -0.043168,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5414,7 +5414,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -5444,7 +5444,7 @@
               "delta_usd_before_correction": -0.130164,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5473,7 +5473,7 @@
               "delta_usd_before_correction": -0.130164,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5499,7 +5499,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -5529,7 +5529,7 @@
               "delta_usd_before_correction": -0.034798,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5558,7 +5558,7 @@
               "delta_usd_before_correction": -0.034798,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5584,7 +5584,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -5614,7 +5614,7 @@
               "delta_usd_before_correction": -0.030026,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5643,7 +5643,7 @@
               "delta_usd_before_correction": -0.030026,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5669,7 +5669,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -5699,7 +5699,7 @@
               "delta_usd_before_correction": -0.129111,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5728,7 +5728,7 @@
               "delta_usd_before_correction": -0.129111,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5754,7 +5754,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -5784,7 +5784,7 @@
               "delta_usd_before_correction": -0.037104,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5813,7 +5813,7 @@
               "delta_usd_before_correction": -0.037104,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5839,7 +5839,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -5869,7 +5869,7 @@
               "delta_usd_before_correction": -0.11982,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5898,7 +5898,7 @@
               "delta_usd_before_correction": -0.11982,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5924,7 +5924,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -5954,7 +5954,7 @@
               "delta_usd_before_correction": -0.069828,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -5983,7 +5983,7 @@
               "delta_usd_before_correction": -0.069828,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6009,7 +6009,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -6039,7 +6039,7 @@
               "delta_usd_before_correction": -0.029374,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6068,7 +6068,7 @@
               "delta_usd_before_correction": -0.029374,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6094,7 +6094,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -6124,7 +6124,7 @@
               "delta_usd_before_correction": -0.18012,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6153,7 +6153,7 @@
               "delta_usd_before_correction": -0.18012,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6179,7 +6179,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -6209,7 +6209,7 @@
               "delta_usd_before_correction": -0.040758,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6238,7 +6238,7 @@
               "delta_usd_before_correction": -0.040758,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6264,7 +6264,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -6294,7 +6294,7 @@
               "delta_usd_before_correction": -0.034828,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6323,7 +6323,7 @@
               "delta_usd_before_correction": -0.034828,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6349,7 +6349,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -6379,7 +6379,7 @@
               "delta_usd_before_correction": -0.132525,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6408,7 +6408,7 @@
               "delta_usd_before_correction": -0.132525,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6434,7 +6434,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -6464,7 +6464,7 @@
               "delta_usd_before_correction": -0.034856,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6493,7 +6493,7 @@
               "delta_usd_before_correction": -0.034856,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6519,7 +6519,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -6549,7 +6549,7 @@
               "delta_usd_before_correction": -0.022725,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6578,7 +6578,7 @@
               "delta_usd_before_correction": -0.022725,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6604,7 +6604,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -6634,7 +6634,7 @@
               "delta_usd_before_correction": -0.117741,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6663,7 +6663,7 @@
               "delta_usd_before_correction": -0.117741,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6689,7 +6689,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -6719,7 +6719,7 @@
               "delta_usd_before_correction": -0.040104,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6748,7 +6748,7 @@
               "delta_usd_before_correction": -0.040104,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6774,7 +6774,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -6804,7 +6804,7 @@
               "delta_usd_before_correction": -0.101268,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6833,7 +6833,7 @@
               "delta_usd_before_correction": -0.101268,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6859,7 +6859,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -6889,7 +6889,7 @@
               "delta_usd_before_correction": -0.032918,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6918,7 +6918,7 @@
               "delta_usd_before_correction": -0.032918,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -6944,7 +6944,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -6974,7 +6974,7 @@
               "delta_usd_before_correction": -0.022302,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7003,7 +7003,7 @@
               "delta_usd_before_correction": -0.022302,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7029,7 +7029,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -7059,7 +7059,7 @@
               "delta_usd_before_correction": -0.098142,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7088,7 +7088,7 @@
               "delta_usd_before_correction": -0.098142,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7114,7 +7114,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -7144,7 +7144,7 @@
               "delta_usd_before_correction": -0.02942,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7173,7 +7173,7 @@
               "delta_usd_before_correction": -0.02942,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7199,7 +7199,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -7229,7 +7229,7 @@
               "delta_usd_before_correction": -0.02784,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7258,7 +7258,7 @@
               "delta_usd_before_correction": -0.02784,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7284,7 +7284,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -7314,7 +7314,7 @@
               "delta_usd_before_correction": -0.0279,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7343,7 +7343,7 @@
               "delta_usd_before_correction": -0.0279,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7369,7 +7369,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -7399,7 +7399,7 @@
               "delta_usd_before_correction": -0.030945,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7428,7 +7428,7 @@
               "delta_usd_before_correction": -0.030945,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7454,7 +7454,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -7484,7 +7484,7 @@
               "delta_usd_before_correction": -0.022862,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7513,7 +7513,7 @@
               "delta_usd_before_correction": -0.022862,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7539,7 +7539,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -7569,7 +7569,7 @@
               "delta_usd_before_correction": -0.026468,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7598,7 +7598,7 @@
               "delta_usd_before_correction": -0.026468,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7624,7 +7624,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -7654,7 +7654,7 @@
               "delta_usd_before_correction": -0.0989,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7683,7 +7683,7 @@
               "delta_usd_before_correction": -0.0989,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7709,7 +7709,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -7739,7 +7739,7 @@
               "delta_usd_before_correction": -0.177066,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7768,7 +7768,7 @@
               "delta_usd_before_correction": 0.092656,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7794,7 +7794,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -7824,7 +7824,7 @@
               "delta_usd_before_correction": -0.07435,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7853,7 +7853,7 @@
               "delta_usd_before_correction": -0.07435,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7879,7 +7879,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -7909,7 +7909,7 @@
               "delta_usd_before_correction": -0.052324,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7938,7 +7938,7 @@
               "delta_usd_before_correction": -0.052324,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -7964,7 +7964,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -7994,7 +7994,7 @@
               "delta_usd_before_correction": -0.037628,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8023,7 +8023,7 @@
               "delta_usd_before_correction": -0.037628,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8049,7 +8049,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -8079,7 +8079,7 @@
               "delta_usd_before_correction": -0.039123,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8108,7 +8108,7 @@
               "delta_usd_before_correction": -0.039123,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8134,7 +8134,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -8164,7 +8164,7 @@
               "delta_usd_before_correction": -0.030912,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8193,7 +8193,7 @@
               "delta_usd_before_correction": -0.030912,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8219,7 +8219,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -8249,7 +8249,7 @@
               "delta_usd_before_correction": -0.105264,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8278,7 +8278,7 @@
               "delta_usd_before_correction": -0.105264,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8304,7 +8304,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -8334,7 +8334,7 @@
               "delta_usd_before_correction": -0.032476,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8363,7 +8363,7 @@
               "delta_usd_before_correction": -0.032476,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8389,7 +8389,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -8419,7 +8419,7 @@
               "delta_usd_before_correction": -0.027507,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8448,7 +8448,7 @@
               "delta_usd_before_correction": -0.027507,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8474,7 +8474,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -8504,7 +8504,7 @@
               "delta_usd_before_correction": -0.117351,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8533,7 +8533,7 @@
               "delta_usd_before_correction": -0.117351,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8559,7 +8559,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -8589,7 +8589,7 @@
               "delta_usd_before_correction": -0.038922,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8618,7 +8618,7 @@
               "delta_usd_before_correction": -0.038922,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8644,7 +8644,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -8674,7 +8674,7 @@
               "delta_usd_before_correction": -0.028538,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8703,7 +8703,7 @@
               "delta_usd_before_correction": -0.028538,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8729,7 +8729,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -8759,7 +8759,7 @@
               "delta_usd_before_correction": -0.021896,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8788,7 +8788,7 @@
               "delta_usd_before_correction": -0.021896,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8814,7 +8814,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -8844,7 +8844,7 @@
               "delta_usd_before_correction": -0.030732,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8873,7 +8873,7 @@
               "delta_usd_before_correction": -0.030732,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8899,7 +8899,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -8929,7 +8929,7 @@
               "delta_usd_before_correction": -0.032889,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8958,7 +8958,7 @@
               "delta_usd_before_correction": -0.032889,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -8984,7 +8984,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9014,7 +9014,7 @@
               "delta_usd_before_correction": -0.134574,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9043,7 +9043,7 @@
               "delta_usd_before_correction": -0.134574,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9069,7 +9069,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.0,
@@ -9099,7 +9099,7 @@
               "delta_usd_before_correction": -0.02593,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9128,7 +9128,7 @@
               "delta_usd_before_correction": -0.02593,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9154,7 +9154,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9184,7 +9184,7 @@
               "delta_usd_before_correction": -0.11616,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9213,7 +9213,7 @@
               "delta_usd_before_correction": -0.11616,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3494,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9239,7 +9239,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3494,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.016771,
@@ -9269,7 +9269,7 @@
               "delta_usd_before_correction": -0.053044,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9298,7 +9298,7 @@
               "delta_usd_before_correction": -0.053044,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9324,7 +9324,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9354,7 +9354,7 @@
               "delta_usd_before_correction": -0.040905,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9383,7 +9383,7 @@
               "delta_usd_before_correction": -0.040905,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9409,7 +9409,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9439,7 +9439,7 @@
               "delta_usd_before_correction": -0.041152,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9468,7 +9468,7 @@
               "delta_usd_before_correction": -0.041152,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9494,7 +9494,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9524,7 +9524,7 @@
               "delta_usd_before_correction": -0.030651,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9553,7 +9553,7 @@
               "delta_usd_before_correction": -0.030651,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9579,7 +9579,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9609,7 +9609,7 @@
               "delta_usd_before_correction": -0.044415,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9638,7 +9638,7 @@
               "delta_usd_before_correction": -0.044415,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9664,7 +9664,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9694,7 +9694,7 @@
               "delta_usd_before_correction": -0.032356,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9723,7 +9723,7 @@
               "delta_usd_before_correction": -0.032356,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9749,7 +9749,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9779,7 +9779,7 @@
               "delta_usd_before_correction": -0.031724,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9808,7 +9808,7 @@
               "delta_usd_before_correction": -0.031724,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9834,7 +9834,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9864,7 +9864,7 @@
               "delta_usd_before_correction": -0.047412,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9893,7 +9893,7 @@
               "delta_usd_before_correction": -0.047412,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9919,7 +9919,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -9949,7 +9949,7 @@
               "delta_usd_before_correction": -0.031472,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -9978,7 +9978,7 @@
               "delta_usd_before_correction": -0.031472,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -10004,7 +10004,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -10034,7 +10034,7 @@
               "delta_usd_before_correction": -0.037227,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -10063,7 +10063,7 @@
               "delta_usd_before_correction": -0.037227,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -10089,7 +10089,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -10119,7 +10119,7 @@
               "delta_usd_before_correction": -0.032038,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -10148,7 +10148,7 @@
               "delta_usd_before_correction": -0.032038,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -10174,7 +10174,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -10204,7 +10204,7 @@
               "delta_usd_before_correction": -0.047996,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 0,
-                "sessions": 0
+                "requests": 0
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -10233,7 +10233,7 @@
               "delta_usd_before_correction": -0.047996,
               "first_requests_with_expired_cache_read": {
                 "cache_read_tokens": 3401,
-                "sessions": 1
+                "requests": 1
               },
               "gap_distribution_seconds": {
                 "gt_3600": 0,
@@ -10259,7 +10259,7 @@
           },
           "first_request_cache_reads": {
             "cache_read_tokens": 3401,
-            "sessions": 1
+            "requests": 1
           },
           "gap_between_the_bounds_usd": {
             "first_request_reads": 0.008162,
@@ -10293,7 +10293,7 @@
             "delta_usd_before_correction": -4.069076,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 41370,
-              "sessions": 12
+              "requests": 12
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -10322,7 +10322,7 @@
             "delta_usd_before_correction": -3.799354,
             "first_requests_with_expired_cache_read": {
               "cache_read_tokens": 246360,
-              "sessions": 72
+              "requests": 72
             },
             "gap_distribution_seconds": {
               "gt_3600": 0,
@@ -10348,7 +10348,7 @@
         },
         "first_request_cache_reads": {
           "cache_read_tokens": 246360,
-          "sessions": 72
+          "requests": 72
         },
         "gap_between_the_bounds_usd": {
           "first_request_reads": 0.575832,

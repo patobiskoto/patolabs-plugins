@@ -6,7 +6,8 @@ recorded (cache writes at the 1-hour price, as the logs say) and the cost the sa
 5-minute cache, with the dated grid ``pricing-breakdown-v1.json``. No model, no ``claude``, no network, no log
 modified. API list prices are WEIGHTS under a subscription, never a bill; nothing here says anything about quota.
 
-SIMULATION RULE (written before any figure was computed; not to be changed after seeing results). TTL = 300 s.
+SIMULATION RULE (first written before any figure was computed; it was then AMENDED TWICE after figures had been seen,
+both amendments declared below and in the results document, with the earlier figures kept in the output). TTL = 300 s.
 One request = one assistant ``message.id`` (streaming duplicates count once). Per session, in log order, request
 ``i`` has a first record instant ``f_i`` and a last record instant ``e_i`` (the log timestamps are those of the
 records, NOT the start of the request, which is earlier by an unknown latency; the cache lifetime is measured from
@@ -44,7 +45,8 @@ SECOND AMENDMENT (2026-10-09, after the independent review, made after the earli
 rule as first written stay as ``*_before_correction`` and those after the first amendment as
 ``*_after_first_correction``). (B) The prudent gap of the second request was not an upper bound (``f_1 - f_0``): the
 reference is now the timestamp of the last timestamped record that precedes the first assistant record of the session
-(a lower bound of the real start of request 0; only its timestamp is read), else ``f_0`` as before. (D) A request that
+(a lower bound of the real start of request 0 UNDER AN ASSUMPTION the data do not prove: that the host writes no record
+between sending request 0 and its first assistant record; only its timestamp is read), else ``f_0`` as before. (D) A request that
 neither reads nor writes cache does not refresh the entry: the reference of request i is the last EARLIER request
 that read or wrote cache (``j``); favourable gap ``f_i - e_j``; prudent gap ``f_i - (e_(j-1), or the instant of B when
 j = 0)``. A request with no earlier request that read or wrote cache takes the entry status of the first amendment.
@@ -260,7 +262,7 @@ def aggregate(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "cache_write_tokens_as_logged": {"ephemeral_1h": sum(r["write_1h"] for r in rows),
                                          "ephemeral_5m": sum(r["write_5m"] for r in rows)},
         "real_1h_usd": _usd(real),
-        "first_request_cache_reads": {"sessions": len(firsts), "cache_read_tokens": sum(r["read"] for r in firsts)},
+        "first_request_cache_reads": {"requests": len(firsts), "cache_read_tokens": sum(r["read"] for r in firsts)},
         "bounds": {}}
     deltas, before, first_fix = {}, {}, {}
     for b in BOUNDS:
@@ -286,7 +288,7 @@ def aggregate(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "delta_share_of_real_after_first_correction": _share(sim_first - real, real),
             "gaps_changed_by_second_correction": sum(1 for r in rows if r["changed"][b]),
             "first_requests_with_expired_cache_read": {
-                "sessions": len(late_first), "cache_read_tokens": sum(r["read"] for r in late_first)},
+                "requests": len(late_first), "cache_read_tokens": sum(r["read"] for r in late_first)},
             "requests_over_ttl": len(late),
             "share_of_requests_over_ttl": _share(len(late), out["requests_with_a_predecessor"]),
             "cache_read_tokens_on_requests_over_ttl": sum(r["read"] for r in late),

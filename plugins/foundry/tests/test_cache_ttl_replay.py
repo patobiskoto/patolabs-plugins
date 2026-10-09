@@ -14,10 +14,20 @@ from foundry.cost_breakdown import BreakdownError
 
 DOCS = Path(__file__).resolve().parents[1] / "docs" / "qualification"
 T0 = dt.datetime(2026, 10, 7, 12, 0, 0, tzinfo=dt.timezone.utc)
-def _personal_strings():
-    """What a committed file must not carry, derived at run time (no name is written in this file)."""
-    names = {Path.home().name, getpass.getuser()}
-    return ("/Users/", "/home/", "/.claude", *(n for n in names if len(n) >= 4))
+def _personal_patterns():
+    """What a committed file must not carry, derived at run time (no name is written in this file).
+
+    The generic fragments are matched anywhere; the OS user and home directory names only as a path component, so a
+    short name that is a substring of legitimate content cannot fail the test. ``getpass.getuser()`` can raise (no
+    passwd entry in a container): then only the home directory name is used."""
+    names = {Path.home().name}
+    try:
+        names.add(getpass.getuser())
+    except (KeyError, OSError, ImportError):
+        pass
+    patterns = [re.escape(f) for f in ("/Users/", "/home/", "/.claude")]
+    patterns += [rf"/{re.escape(n)}(?:/|\"|$)" for n in names if len(n) >= 3]
+    return patterns
 
 
 SECRET = "SECRET-PROMPT-/Users/someone/private"
@@ -241,9 +251,9 @@ def _first_read(tmp_path, gap, **kw):
 def test_prudent_counts_every_first_request_read_as_expired_favourable_keeps_a_near_one(tmp_path):
     out, b = _first_read(tmp_path, 300)  # exactly the TTL: kept under the favourable reading
     fav, pru = b["bounds"]["favourable"], b["bounds"]["prudent"]
-    assert pru["first_requests_with_expired_cache_read"] == {"sessions": 1, "cache_read_tokens": 1_000_000}
-    assert fav["first_requests_with_expired_cache_read"] == {"sessions": 0, "cache_read_tokens": 0}
-    assert b["first_request_cache_reads"] == {"sessions": 1, "cache_read_tokens": 1_000_000}
+    assert pru["first_requests_with_expired_cache_read"] == {"requests": 1, "cache_read_tokens": 1_000_000}
+    assert fav["first_requests_with_expired_cache_read"] == {"requests": 0, "cache_read_tokens": 0}
+    assert b["first_request_cache_reads"] == {"requests": 1, "cache_read_tokens": 1_000_000}
     # 1 000 000 read at 0.10 kept ; rewritten at 2.50 when expired ; the 100 written tokens are priced the same
     assert pru["simulated_5m_usd"] - fav["simulated_5m_usd"] == pytest.approx(2.4, abs=1e-5)
     # the figures of the rule without the amendment stay available and equal the favourable ones here
@@ -253,14 +263,14 @@ def test_prudent_counts_every_first_request_read_as_expired_favourable_keeps_a_n
 
 def test_favourable_expires_a_first_request_read_when_the_nearest_earlier_session_is_too_old(tmp_path):
     out, b = _first_read(tmp_path, 301)
-    assert b["bounds"]["favourable"]["first_requests_with_expired_cache_read"]["sessions"] == 1
+    assert b["bounds"]["favourable"]["first_requests_with_expired_cache_read"]["requests"] == 1
     assert b["bounds"]["favourable"]["simulated_5m_usd"] == b["bounds"]["prudent"]["simulated_5m_usd"]
     assert b["bounds"]["favourable"]["simulated_5m_usd"] > b["bounds"]["favourable"]["simulated_5m_usd_before_correction"]
 
 
 def test_favourable_needs_an_earlier_session_with_the_same_model_alias(tmp_path):
     _, b = _first_read(tmp_path, 5, first_model="claude-opus-5-5")
-    assert b["bounds"]["favourable"]["first_requests_with_expired_cache_read"]["sessions"] == 1
+    assert b["bounds"]["favourable"]["first_requests_with_expired_cache_read"]["requests"] == 1
 
 
 def test_the_first_session_of_a_campaign_has_no_earlier_session_so_its_read_is_expired(tmp_path):
@@ -276,13 +286,13 @@ def test_an_overlapping_earlier_session_keeps_the_read_and_is_counted(tmp_path):
     out = ttl.analyse([ledger], logs)["campaigns"]["c1"]
     assert out["sessions_started_while_an_earlier_one_was_still_running"] == 1
     assert {s["role"]: s for s in out["sessions"]}["reviewer"]["bounds"]["favourable"][
-        "first_requests_with_expired_cache_read"]["sessions"] == 0
+        "first_requests_with_expired_cache_read"]["requests"] == 0
 
 
 def test_a_first_request_without_cache_read_is_unaffected_by_the_clause(tmp_path):
     ledger, logs = _campaign(tmp_path, [("implementer", "sid-a", [_rec("a0", 0, w=1000, o=3)], None)])
     s = ttl.analyse([ledger], logs)["campaigns"]["c1"]["sessions"][0]
-    assert s["first_request_cache_reads"]["sessions"] == 0
+    assert s["first_request_cache_reads"]["requests"] == 0
     assert all(b["simulated_5m_usd"] == b["simulated_5m_usd_before_correction"] for b in s["bounds"].values())
 
 
@@ -328,8 +338,9 @@ def test_output_has_no_raw_session_id_prompt_or_path_and_never_overwrites(tmp_pa
     target = tmp_path / "out.json"
     assert ttl.main(["--ledger", str(ledger), "--session-logs-dir", str(logs), "--out", str(target)]) == 0
     text = target.read_text()
-    for forbidden in ("sid-RAW-123", SECRET, "someone", str(tmp_path), *_personal_strings()):
+    for forbidden in ("sid-RAW-123", SECRET, "someone", str(tmp_path)):
         assert forbidden not in text
+    assert not any(re.search(pattern, text, re.M) for pattern in _personal_patterns())
     assert ttl.main(["--ledger", str(ledger), "--session-logs-dir", str(logs), "--out", str(target)]) == 2
     assert "refused: FileExistsError" in capsys.readouterr().err
 
@@ -358,8 +369,8 @@ def test_committed_aggregates_are_clean_and_consistent():
     text = path.read_text(encoding="utf-8")
     data = json.loads(text)
     assert data["schema"] == "foundry.cache-ttl-replay.v1"
-    for forbidden in ("session_id", *_personal_strings()):
-        assert forbidden not in text
+    assert "session_id" not in text
+    assert not any(re.search(pattern, text, re.M) for pattern in _personal_patterns())
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", text)  # a raw session id
     for camp in data["campaigns"].values():
         assert camp["sessions_replayed"] + len(camp["sessions_excluded"]) == camp["cloud_sessions_in_ledger"]
@@ -383,7 +394,7 @@ def test_committed_aggregates_are_clean_and_consistent():
     assert sum(c["total"]["real_1h_usd"] for c in data["campaigns"].values()) == pytest.approx(allc["real_1h_usd"], abs=1e-4)
     split = allc["gap_between_the_bounds_usd"]
     assert split["first_request_reads"] + split["in_session_gaps"] == pytest.approx(split["total"], abs=1e-5)
-    assert allc["first_request_cache_reads"]["sessions"] == 102 and allc["first_request_cache_reads"]["cache_read_tokens"] == 340392
+    assert allc["first_request_cache_reads"]["requests"] == 102 and allc["first_request_cache_reads"]["cache_read_tokens"] == 340392
     assert allc["bounds"]["prudent"]["simulated_5m_usd"] > allc["bounds"]["prudent"]["simulated_5m_usd_before_correction"]
     assert allc["requests"] == sum(c["total"]["requests"] for c in data["campaigns"].values())
     assert allc["bounds"]["prudent"]["simulated_5m_usd"] >= allc["bounds"]["favourable"]["simulated_5m_usd"]

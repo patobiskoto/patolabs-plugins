@@ -35,13 +35,13 @@ fait de la documentation d'Anthropic **lu par le coordinateur le 2026-10-09** (p
 - **Par rôle** (toutes campagnes, corrigé, prudente / favorable) : implémenteur −17,6 % / −20,7 % ; correcteur −17,3 % / −23,1 % ; relecteur
   −15,5 % / −19,4 %. Par modèle : Sonnet 5.5 −17,4 % / −21,9 % ; Opus 5.5 −15,5 % / −19,4 % (le relecteur est le seul Opus).
 - **Un ticket de changement est justifié** (pour décider et mesurer, pas pour appliquer d'office) : sur ces sessions, passer à
-  « 5 minutes » aurait été gagnant en coût de liste sous les deux bornes, d'environ un sixième à un cinquième. **Cela ne dit rien du quota de
+  « 5 minutes » aurait été gagnant, dans la simulation, en coût de liste sous les deux bornes, d'environ un sixième à un cinquième. **Cela ne dit rien du quota de
   l'abonnement : l'effet est inconnu et non documenté.** La question de transmission du réglage est posée plus bas, non résolue.
 - **Ce qui ne se conclut pas** : le résultat vaut pour ces 104 sessions (deux campagnes de 6 et 12 tâches non indépendantes, un passage par
   couple tâche / bras). L'écart prudent maximal observé (388,9 s) montre que le seuil de 300 s est proche pour certaines requêtes du
   relecteur ; une tâche dont les tests durent plus de 10 minutes n'est pas dans ces données, et son comportement est **inconnu**.
 
-## Règle de simulation (écrite avant le calcul ; un seul amendement, daté, voir la section suivante)
+## Règle de simulation (écrite avant le calcul, puis amendée deux fois après que des chiffres ont été vus : deux amendements datés, voir les deux sections suivantes)
 
 Elle est aussi dans la docstring de `cache_ttl_replay.py`, où la clause de la correction du 2026-10-09 (section suivante) est ajoutée à la suite. TTL = 300 s. Une requête est un `message.id` d'assistant (les doublons de
 diffusion portent les mêmes compteurs et comptent une fois). Pour la requête `i` d'une session, `f_i` est l'instant de son premier
@@ -108,8 +108,10 @@ Une **deuxième correction** (ci-dessous) a suivi la revue indépendante. Les pr
 
 - **B. Borne prudente de la deuxième requête.** `f_1 − f_0` n'était pas un majorant (104 écarts sur 970, un par session). La référence est
   maintenant l'horodatage du dernier enregistrement qui précède le premier enregistrement d'assistant de la session (seul son
-  horodatage est lu, FOUNDRY-ADR-0015), car le début réel de la requête 0 ne peut le précéder ; à défaut, `f_0`. Les 104 sessions ont un tel
-  enregistrement ; les 104 écarts prudents ont changé de 1,4 à 15,2 s (médiane 2,1 s). Aucun n'a franchi 300 s : les chiffres ne bougent pas
+  horodatage est lu, FOUNDRY-ADR-0015), car le début réel de la requête 0 ne peut le précéder **si l'hôte n'écrit aucun enregistrement entre l'envoi de la requête 0 et son premier
+  enregistrement d'assistant : c'est une hypothèse, que les données ne prouvent pas** ; à défaut, `f_0`. Les 104 sessions ont un tel
+  enregistrement ; les 104 écarts prudents ont changé de 1,4 à 15,2 s (médiane 2,1 s ; **chiffres lus dans les journaux hors dépôt, non
+  recalculables depuis le JSON versé**). Aucun n'a franchi 300 s : les chiffres ne bougent pas
   à l'arrondi près, la distribution par tranche non plus.
 - **C. Sessions à plusieurs modèles.** Les caches sont par modèle. Une session à plusieurs alias est listée et exclue (`several_models`)
   plutôt que rejouée avec des lignées fondues. Aucune session de ces données n'en a plus d'un : aucune exclusion, aucun effet.
@@ -135,7 +137,10 @@ Code de sortie 0, ou 2 si une entrée est refusée. Il réutilise le lecteur de 
 
 - **Jointure** : les sessions viennent des événements `cloud_started` réels (hors essais à blanc) du registre de la campagne ; le journal de
   l'hôte est le fichier `<identifiant>.jsonl` sous le dossier donné, exactement un.
-- **Lecteur (FOUNDRY-ADR-0015)** : il extrait seulement le type d'enregistrement, l'horodatage, l'identifiant de message (pour compter une
+- **Lecteur (FOUNDRY-ADR-0015)** — **écarts à la lettre de l'ADR, à reconnaître par le mainteneur** : le lecteur lit aussi `type` (pour choisir
+  les enregistrements d'assistant) et `message.id` (pour dédupliquer), en mémoire seulement, sans jamais les émettre ; et la vérification de
+  l'indicateur `isSidechain` a été faite à la main, hors de l'outil, une fois. L'ADR ne permet que compteurs, alias de modèle, horodatage et
+  identifiant de session. Aucun changement de code ici. Concrètement, il extrait seulement le type d'enregistrement, l'horodatage, l'identifiant de message (pour compter une
   requête une fois), l'alias du modèle et les compteurs de tokens (entrée, lecture de cache, écriture de cache et sa scission 5 min / 1 h,
   sortie). Jamais d'invite, de chemin, de commande, de nom d'outil ni d'extrait. Un refus est un code fixe, jamais un message qui porte un
   chemin ou un contenu.
@@ -145,8 +150,12 @@ Code de sortie 0, ou 2 si une entrée est refusée. Il réutilise le lecteur de 
   **listées et exclues des deux côtés**, jamais estimées. Ici : aucune (104 sur 104 rejouées ; le total de tokens de chaque journal égale
   celui du registre) [flux].
 - **Prix** : `pricing-breakdown-v1.json` seul, aucun prix ajouté. Le prix de lecture de cache de Sonnet 5.5 (0,10 selon la page, 0,20 selon
-  l'hôte, voir PAT-129) ne touche pas la différence : une lecture non expirée coûte pareil dans les deux mondes ; il ne change que la
-  part relative.
+  l'hôte, voir PAT-129) ne change pas la différence pour une lecture **non expirée** (même coût dans les deux mondes), mais la change pour une
+  lecture **expirée** : le coût supplémentaire est (écriture 5 min − lecture) par token, soit 0,10 USD par million de tokens de plus de réel
+  avec 0,20. Recalculé avec 0,20 (grille temporaire hors dépôt, mêmes entrées) : réel 26,76 USD ; écart prudent −4,167 USD au lieu de −4,140
+  (271 628 tokens de lecture Sonnet expirés, −0,027 USD), soit −15,6 % au lieu de −16,5 % ; écart favorable −5,198 USD au lieu de −5,196
+  (26 650 tokens, −0,003 USD), soit −19,4 % au lieu de −20,7 %. Le gain absolu est donc un peu plus grand avec 0,20, la part relative plus
+  petite ; la grille utilisée (0,10) est le choix prudent pour le gain absolu. Aucun verdict ne change.
 - **Noms des sessions** : campagne, rôle et rang dans le registre (`pat-19-x5compare-1/reviewer-13`), jamais l'identifiant brut.
 - **Citation de la documentation** (lue le 2026-10-09 [doc]) : écriture « 5 minutes » = 1,25 × le prix d'entrée de base, « 1 heure » = 2 ×
   ; la durée de vie d'une entrée est rafraîchie sans frais à chaque lecture et se mesure depuis le début de la requête qui l'écrit ou la
@@ -191,7 +200,7 @@ vides, sauf mention.
 
 ### Lectures de cache de première requête (correction), sessions et tokens concernés
 
-« Sessions » = sessions dont la première requête lit du cache ; « expirées » = celles dont la lecture est comptée expirée, prudente / favorable.
+« Sessions » = sessions dont la première requête lit du cache (clés `requests` du JSON : au plus une requête d'entrée par session, donc autant de requêtes que de sessions) ; « expirées » = celles dont la lecture est comptée expirée, prudente / favorable.
 Tokens de cache relus par ces premières requêtes, puis ceux comptés expirés.
 
 | Ensemble | Sessions avec lecture | Tokens lus | Sessions expirées | Tokens expirés |
