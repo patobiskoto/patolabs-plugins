@@ -155,8 +155,11 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   capability and effort; it always needs an effort and never inherits the Haiku 4.5
   rule above. Haiku 4.5 stays an exact historical pin and never becomes an alias of it;
   the short `haiku` alias is not promoted. The shipped `economy` default is still Haiku
-  4.5 / null: its promotion to `haiku-5.5` / `medium` is prepared and waits for the
-  recorded native trial of PAT-ADR-0016.
+  4.5 / null. The one native trial of PAT-ADR-0016 ran on 2026-10-09 and its recorded
+  verdict is `not_conforming` (fixture check only; profile, model, effort and host
+  version observed exact): the incumbent is kept and the promotion to `haiku-5.5` /
+  `medium` is not applied, pending a maintainer decision
+  (`plugins/foundry/docs/qualification/pat-125-haiku-55-promotion.md`).
 - `CLAUDE_MODEL_MIN_HOST_VERSION` (`routing_facades.py`) requires Claude Code 2.1.293
   for the `haiku-5.5` pin. The routing hook observes the host version with
   `claude_host_version()`: the top-level `version` of the last versioned record of the
@@ -165,9 +168,13 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   `RoutingConfigError` naming the required version: the launch is denied and nothing is
   substituted, neither Haiku 4.5 nor an alias. An unobservable version is `unknown`:
   the launch proceeds with `host_version.status = "unknown"` and the
-  `CLAUDE_HOST_VERSION_UNOBSERVED` warning, never reported as conforming. The check
-  exists only where a profile is bound (the Agent hook); `routing show`/`resolve`,
-  `doctor` and the headless runners observe no host version.
+  `CLAUDE_HOST_VERSION_UNOBSERVED` warning, never reported as conforming. The headless
+  runners (`command_runtime.py`, `campaign_runtime.py`) apply the same rule through
+  `claude_headless_host_version_requirement()`: for such a pin only, they ask the
+  `claude` they are about to launch its `--version` (local, unpaid, same runner and
+  child environment), refuse below the minimum, and on an unreadable answer launch
+  with a `RuntimeWarning` carrying the same code. `routing show`/`resolve` and `doctor`
+  bind nothing and observe no host version.
 - **Effect of a model that resolves to neither the built-in table nor the project's
   `claude_models`**: `claude_invocation_model()` raises `RoutingConfigError` naming the
   unresolved canonical model. Resolution fails closed — it never guesses, silently

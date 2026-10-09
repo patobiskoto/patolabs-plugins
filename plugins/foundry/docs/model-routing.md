@@ -1120,12 +1120,19 @@ No new price, cost claim, hook log reader, evidence pipeline or role authority i
 ### PAT-125 Claude Haiku 5.5 (PAT-ADR-0016)
 
 Status at this revision: Haiku 5.5 is DECLARED; the `economy` default is unchanged
-(Haiku 4.5 / null, table above). PAT-ADR-0016 adopts `haiku-5.5` / `medium` on the Claude
-`economy` tier under the cheaper-candidate regime of FOUNDRY-ADR-0019 (list price per
-token only; no measured gain, bill or quota saving is claimed, and no benchmark, replay,
-comparison or effort matrix is run). The default changes only after the single bounded
-native compatibility trial of that ADR is recorded; the decision, the trial command and
-its result are in [`pat-125-haiku-55-promotion.md`](qualification/pat-125-haiku-55-promotion.md).
+(Haiku 4.5 / null, table above) and the promotion is NOT applied. PAT-ADR-0016 frames
+the adoption of `haiku-5.5` / `medium` on the Claude `economy` tier under the
+cheaper-candidate regime of FOUNDRY-ADR-0019 (list price per token only; no measured
+gain, bill or quota saving is claimed, and no benchmark, replay, comparison or effort
+matrix is run) and requires one bounded native compatibility trial before the default
+changes. That trial ran once on 2026-10-09; its recorded verdict is `not_conforming`:
+the launched profile, the executed model, the observed effort and the host version were
+exact, the fixture check of the trial tool was not. As the ADR writes, the incumbent
+Haiku 4.5 is kept and no further trial is authorised without a new decision; whether to
+promote is a pending maintainer decision. The decision note, the trial command and the
+recorded result are in
+[`pat-125-haiku-55-promotion.md`](qualification/pat-125-haiku-55-promotion.md) and
+[`pat-125-native-trial.json`](qualification/pat-125-native-trial.json).
 
 Declaration. `haiku-5.5` / `claude-haiku-5-5` is a canonical version pin with its own
 effort scope `(claude, haiku-5.5, v1)`, levels `low`, `medium`, `high`, `xhigh`, `max`
@@ -1167,22 +1174,33 @@ translation to `claude-haiku-5-5`. The check runs where the profile is bound, in
   unprobed model availability; refusing every unobserved host instead would deny the
   tier on conforming hosts whenever the transcript is not readable. On an observed
   conforming host the context carries `status: "conforming"`.
+- Headless runners: the DevHub command runner and the isolated campaign executor
+  (`claude --print --model ... --effort ...`) bind no profile, so they apply the same
+  rule to the binary itself with `claude_headless_host_version_requirement()`. Only for
+  a pin that declares a minimum, they first run `claude --version` (local, unpaid)
+  through the same runner and the same child environment as the launch, so the binary
+  that answers is the one launched. Below 2.1.293 they raise the same
+  `RoutingConfigError` before any provider invocation. An answer that is absent, fails
+  or is not `X.Y.Z (Claude Code)` is `unknown`: the launch proceeds and a
+  `RuntimeWarning` carrying `CLAUDE_HOST_VERSION_UNOBSERVED` says so; these runners have
+  no structured warning channel and their receipts are unchanged. The child environment
+  allow-list (R6) is untouched.
 - Limits: a session resumed after a host update reports the previous version until the
-  running host has written a record. `routing show`, `routing resolve`, `doctor` and the
-  headless DevHub/campaign runners (`claude --model ... --effort ...`) bind no profile
-  and observe no host version: they neither apply nor certify the minimum.
+  running host has written a record. `routing show`, `routing resolve` and `doctor`
+  bind nothing and observe no host version: they neither apply nor certify the minimum.
 
-Tier scope and rollback (applies once the default is promoted). The mapping is per
-tier: every non-gate role that falls back down to `economy` gets its target too.
-Reviewer and architect tier and effort floors, the `balanced`/`frontier`/`apex` tiers
-and the Codex defaults do not change.
+Tier scope and rollback, as prepared (they would apply only if the default were
+promoted; it is not). The mapping is per tier: every non-gate role that falls back down
+to `economy` would get its target too. Reviewer and architect tier and effort floors,
+the `balanced`/`frontier`/`apex` tiers and the Codex defaults would not change.
 
 - Project rollback: write the incumbent explicitly in `.foundry/model-routing.json`,
   `{"mappings": {"claude": {"economy": {"model": "haiku-4.5", "effort": null}}}}`.
   It selects `routed-<capability>-none-haiku-4.5`, transmits no effort and carries no
   host version requirement.
-- The same mapping WITHOUT the `effort` key inherits the tier's default effort
-  (`medium` once promoted), which Haiku 4.5 does not accept: resolution fails with
+- The same mapping WITHOUT the `effort` key inherits the tier's default effort. Today
+  that default is null and the form resolves. Under a promoted default it would be
+  `medium`, which Haiku 4.5 does not accept: resolution would fail with
   `Haiku 4.5 : effort rejeté, non applicable (reçu : 'medium', source : default)` and
   the instruction to write `"effort": null` in `mappings.claude.economy`. It is not
   silently read as "not applicable": resolution is field-aware and never guesses an
@@ -1198,7 +1216,9 @@ Both project forms and the restored default are covered offline by
 Documentation status (PAT-125, R5): updated here for the `haiku-5.5` declaration and
 effort scope, `CLAUDE_MODEL_MIN_HOST_VERSION`, `claude_host_version()`, the hook context
 key `host_version`, the warning `CLAUDE_HOST_VERSION_UNOBSERVED`, the reworded Haiku 4.5
-effort refusal and the trial tool `foundry.claude_profile_trial`; R7 of the process
+effort refusal, `claude_headless_host_version_requirement()` in the two headless
+runners and the trial tool `foundry.claude_profile_trial` (including its
+`--neutral-fixture` option, prepared for a future trial only); R7 of the process
 contract carries the current-state summary. `claude_invocation_binding()` gains an
 optional `host_version` argument: internal, no caller-facing surface beyond the above.
 

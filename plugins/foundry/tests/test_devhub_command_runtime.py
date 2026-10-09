@@ -222,6 +222,7 @@ def test_file_authority_persists_an_exact_approved_ac_child_mapping(tmp_path):
     ("runtime-model", "high", "runtime-wire-alias"),
     ("haiku-4.5", "low", "claude-haiku-4-5"),
     ("haiku-4.5", None, "claude-haiku-4-5"),
+    ("haiku-5.5", "high", "claude-haiku-5-5"),
 ])
 def test_concrete_claude_runtime_enforces_budget_floor_and_scrubs_authority_secrets(
     tmp_path, monkeypatch, model, effort, wire,
@@ -235,8 +236,13 @@ def test_concrete_claude_runtime_enforces_budget_floor_and_scrubs_authority_secr
         "claude_models": {"runtime-model": "runtime-wire-alias"},
     }), encoding="utf-8")
     calls = []
+    version_calls = []
+    binary_version = ["2.1.293 (Claude Code)\n"]
 
     def runner(argv, **kwargs):
+        if list(argv[1:]) == ["--version"]:  # PAT-125: asked of the binary about to be launched
+            version_calls.append((argv[0], kwargs["env"]))
+            return SimpleNamespace(returncode=0, stdout=binary_version[0])
         keychain_calls = []
 
         def keychain_secret(account):
@@ -369,6 +375,19 @@ def test_concrete_claude_runtime_enforces_budget_floor_and_scrubs_authority_secr
         "FOUNDRY_RUNTIME_CONFIG_ISOLATED", ATTEMPT_ID_ENV, RECEIPT_DIRECTORY_ENV,
     }
     assert "DEVHUB-21, DEVHUB-22" in kwargs["input"]
+    # PAT-ADR-0016: only a pin with a minimum host version asks the launched binary its version,
+    # with the launch's own environment; below the minimum nothing is launched.
+    assert version_calls == ([(argv[0], kwargs["env"])] if model == "haiku-5.5" else [])
+    if model == "haiku-5.5":
+        binary_version[0] = "2.1.292 (Claude Code)\n"
+        refused = ClaudeCommandEffectProvider(
+            FileAuthoritySource(directory, now_ms=lambda: 10_000),
+            root=tmp_path, effect_directory=tmp_path / "effects-old-host", runner=runner,
+        )
+        with pytest.raises(RoutingConfigError, match=r"Claude Code 2\.1\.293 ou supérieur requis"):
+            refused.launch(command, authorization, effect_id=command.id,
+                           heartbeat=lambda: None, reconcile_capacity=lambda _observation: None)
+        assert len(calls) == 1 and len(version_calls) == 2
 
 
 def test_claude_child_environment_has_an_exact_non_secret_allowlist(monkeypatch):

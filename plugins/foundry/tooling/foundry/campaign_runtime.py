@@ -89,7 +89,8 @@ from foundry.routing import (
     repository_identity,
 )
 from foundry.routing_facades import (
-    _load_claude_policy, claude_effort_parameters, claude_invocation_model,
+    _load_claude_policy, claude_effort_parameters,
+    claude_headless_host_version_requirement, claude_invocation_model,
 )
 from foundry.trackers.devhub import DevHubTrackerError
 
@@ -2146,6 +2147,11 @@ class IsolatedClaudeIssueExecutor:
                 route.model, project_models=getattr(self.routing, "claude_models", {}),
             )
             effort = claude_effort_parameters(route, invocation_model=invocation_model)["transmitted"]
+            child_environment = _child_environment()
+            # PAT-ADR-0016: a pin with a minimum host version fails closed below it, here too.
+            claude_headless_host_version_requirement(
+                invocation_model, "claude", runner=self.runner, env=child_environment,
+            )
             argv = [
                 "claude", "--print", "--output-format", "json",
                 "--json-schema", self._SCHEMA,
@@ -2162,7 +2168,7 @@ class IsolatedClaudeIssueExecutor:
             provider_invoked = True
             completed = self.runner(
                 argv, cwd=worktree, input=prompt, capture_output=True, text=True,
-                timeout=MAX_IMPLEMENTATION_SECONDS, env=_child_environment(), check=False,
+                timeout=MAX_IMPLEMENTATION_SECONDS, env=child_environment, check=False,
             )
             provider_returned = True
             stdout = getattr(completed, "stdout", None)

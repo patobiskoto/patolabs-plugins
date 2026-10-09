@@ -10,6 +10,8 @@ import json
 import os
 import re
 import secrets
+import subprocess
+import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping
@@ -79,6 +81,7 @@ _CLAUDE_MODEL_DECLARATION = (
 # binding fails closed; no other model, pin or alias is ever substituted.
 CLAUDE_MODEL_MIN_HOST_VERSION = {"haiku-5.5": (2, 1, 293)}
 _CLAUDE_HOST_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\Z")
+_CLAUDE_BINARY_VERSION = re.compile(r"(\d+\.\d+\.\d+) \(Claude Code\)\Z")
 _TRANSCRIPT_TAIL_BYTES = 1 << 20
 _CLAUDE_MODEL_IDS = {canonical: alias for canonical, alias, _ in _CLAUDE_MODEL_DECLARATION}
 # Short aliases express version-dependent host intent, never a frozen version.
@@ -974,6 +977,36 @@ def claude_host_version_requirement(invocation_model: str, host_version: str | N
             '{"model": "haiku-4.5", "effort": null}). Aucun repli automatique.'
         )
     return {"required": required, "observed": host_version, "status": "conforming"}
+
+
+def claude_headless_host_version_requirement(
+    invocation_model: str, binary: str, *, runner, env,
+) -> dict | None:
+    """Apply a pin's minimum host version to the binary a headless runner is about to launch.
+
+    Only a model that declares a minimum costs a call: ``<binary> --version``, local and
+    unpaid, through the same runner and environment as the launch so the same binary
+    answers. Below the minimum this raises like the hook; an unreadable answer is
+    ``unknown``: the launch stays allowed and a ``RuntimeWarning`` says so.
+    """
+    if claude_host_version_requirement(invocation_model, None) is None:
+        return None
+    try:
+        completed = runner([binary, "--version"], capture_output=True, text=True,
+                           timeout=30, env=env, check=False)
+        stdout = getattr(completed, "stdout", None)
+        observed = (_CLAUDE_BINARY_VERSION.match(stdout.strip())
+                    if getattr(completed, "returncode", None) == 0 and isinstance(stdout, str) else None)
+    except (OSError, subprocess.SubprocessError):
+        observed = None
+    requirement = claude_host_version_requirement(invocation_model, observed.group(1) if observed else None)
+    if requirement["status"] == "unknown":
+        warnings.warn(
+            f"CLAUDE_HOST_VERSION_UNOBSERVED : version de '{binary}' non observée ; minimum requis "
+            f"{requirement['required']} pour '{invocation_model}' non vérifié, jamais présumé conforme.",
+            RuntimeWarning, stacklevel=2,
+        )
+    return requirement
 
 
 def claude_invocation_binding(

@@ -12,6 +12,13 @@ It is a compatibility smoke: not a benchmark, not a comparison, not the basis of
 transmitted (profile selected by the hook) and observed (native child metadata) stay three separate values; what was
 not observed is ``unknown``, never a guess and never conforming. Nothing is replayed: an existing work directory or
 result file is refused. The child environment is the R6 allow-list, so no API key or host override reaches it.
+
+The trial of 2026-10-09 (``pat-125-native-trial.json``) ran with the default fixture and its verdict stands. That
+fixture names its value a "token" in ``token.txt``; under user settings that forbid displaying secrets the value
+was not returned, and the host launched the agent in the background. ``--neutral-fixture`` is a separate option for
+a FUTURE trial, only if the maintainer authorises one: a public "fixture marker" in ``marker.txt``, said not to be a
+secret, and a parent told to wait for the agent's final answer. It changes neither the default fixture, nor the
+verdict rule, nor the recorded result.
 """
 from __future__ import annotations
 
@@ -49,14 +56,27 @@ class TrialError(RuntimeError):
     """The trial was refused before any launch."""
 
 
-def _packet(token_file: Path) -> str:
+def _packet(token_file: Path, neutral: bool = False) -> str:
+    if neutral:
+        return ("Goal:\nRead the single line of the file named in Inputs and return it verbatim. It is a public "
+                "fixture marker generated for this compatibility test, not a secret or a credential.\n"
+                f"Inputs:\n{token_file}\n"
+                "Constraints:\nRead-only; one Read call; no delegation.\n"
+                "Done when:\nThe fixture marker line is returned verbatim.")
     return ("Goal:\nRead the single line of the file named in Inputs and return it verbatim.\n"
             f"Inputs:\n{token_file}\n"
             "Constraints:\nRead-only; one Read call; no delegation.\n"
             "Done when:\nThe line is returned verbatim.")
 
 
-def parent_prompt(token_file: Path) -> str:
+def parent_prompt(token_file: Path, neutral: bool = False) -> str:
+    if neutral:
+        return ("Call the Agent tool exactly once with subagent_type \"foundry:lupin\", description \"PAT-125 trial\" "
+                "and exactly the prompt below. Wait for the agent's final answer: if the agent runs in the "
+                "background, do not reply until it has completed. Then reply with the agent's answer verbatim, "
+                "including the public fixture marker it read (a test value, not a secret), and stop. Use no other "
+                "tool. If the call is refused or fails, reply with the refusal text verbatim and stop; never "
+                "retry.\n\n" + _packet(token_file, True))
     return ("Call the Agent tool exactly once with subagent_type \"foundry:lupin\", description \"PAT-125 trial\" "
             "and exactly this prompt, then reply with the agent's answer verbatim and stop. Use no other tool. If the "
             "call is refused or fails, reply with the refusal text verbatim and stop; never retry.\n\n"
@@ -224,17 +244,19 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt
         raise TrialError("the work directory and the result file must not exist: the trial is never replayed")
     if any((parent / ".git").exists() for parent in (work, *work.parents)):
         raise TrialError("the work directory must be outside any git repository: the fixture carries its own policy")
-    token, session_id = f"PAT125-{secrets.token_hex(8)}", str(uuid.uuid4())
+    neutral = bool(getattr(args, "neutral_fixture", False))
+    token = f"marqueur-de-fixture-{secrets.randbelow(10**8):08d}" if neutral else f"PAT125-{secrets.token_hex(8)}"
+    session_id = str(uuid.uuid4())
     (work / ".foundry").mkdir(parents=True)
     (work / "fixture").mkdir()
     (work / ".foundry" / "model-routing.json").write_text(json.dumps(POLICY), encoding="utf-8")
-    token_file = work / "fixture" / "token.txt"
+    token_file = work / "fixture" / ("marker.txt" if neutral else "token.txt")
     token_file.write_text(token + "\n", encoding="utf-8")
     route = _load_claude_policy(work).resolve(ROLE, "claude")
     binding = claude_invocation_binding(route, CAPABILITY, plugin_root=PLUGIN_ROOT)  # absent/divergent: refused here
     if (route.model, route.effort, binding["transmitted_model"]) != (MODEL, EFFORT, WIRE_MODEL):
         raise TrialError("this checkout does not resolve the fixture to haiku-5.5 / medium")
-    command = argv(args.claude, parent_prompt(token_file), session_id, args.parent_model)
+    command = argv(args.claude, parent_prompt(token_file, neutral), session_id, args.parent_model)
     environment = {**_claude_child_environment(), "FOUNDRY_DATA": str(work / "foundry-data")}
     body: dict[str, Any] = {
         "schema": TRIAL_SCHEMA,
@@ -244,6 +266,7 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt
         "bounds": {"parents": 1, "children_expected": 1, "timeout_seconds": TIMEOUT_SECONDS, "concurrency": 1,
                    "replays": 0, "environment_names": sorted(environment)},
         "source": _head(),
+        **({"fixture_variant": "neutral"} if neutral else {}),
         "argv": [part if part != session_id else "<session id>" for part in
                  (command[0], "-p", "<parent prompt>", *command[3:-1], "<plugins/foundry of this checkout>")],
         "requested": {"role": ROLE, "tier": route.selected_tier, "model": route.model, "effort": route.effort},
@@ -274,6 +297,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--parent-model", default="sonnet", help="model of the parent session (not under trial)")
     parser.add_argument("--projects-dir", default="~/.claude/projects", help="host session logs")
     parser.add_argument("--dry-run", action="store_true", help="prepare the fixture and print the command; launch nothing")
+    parser.add_argument("--neutral-fixture", action="store_true",
+                        help="future trial only: a public fixture marker instead of a value named token, and a "
+                             "parent told to wait for the agent's answer")
     try:
         return run(parser.parse_args(arguments))
     except TrialError as exc:

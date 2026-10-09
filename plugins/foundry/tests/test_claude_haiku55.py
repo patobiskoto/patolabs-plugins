@@ -5,6 +5,7 @@ Offline only: no host, no model. The trial itself is never run here (fake launch
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +17,8 @@ from foundry import routing
 from foundry.effort_policy import scope_for
 from foundry.routing import ModelTarget, RoutingConfigError, RoutingPolicy, UserRouteRequest
 from foundry.routing_facades import (
-    CLAUDE_MODEL_MIN_HOST_VERSION, claude_host_version, claude_invocation_model,
+    CLAUDE_MODEL_MIN_HOST_VERSION, claude_headless_host_version_requirement, claude_host_version,
+    claude_invocation_model,
     claude_pin_profile_documents, claude_policy_model,
 )
 
@@ -298,7 +300,7 @@ def _fake_host(tmp_path, *, model="claude-haiku-5-5", effort="medium", agent_typ
         if calls is not None:
             calls.append((list(command), dict(env)))
         session = command[command.index("--session-id") + 1]
-        token = (cwd / "fixture/token.txt").read_text().strip()
+        token = next((cwd / "fixture").iterdir()).read_text().strip()
         stdout.write_text("\n".join(json.dumps(event) for event in (
             {"type": "system", "subtype": "init", "claude_code_version": version,
              "plugins": [{"name": "foundry", "path": command[-1]}], "agents": [f"foundry:{PROFILE}"]},
@@ -388,3 +390,82 @@ def test_trial_refuses_a_work_directory_inside_a_repository(tmp_path):
         trial.run(_args(tmp_path), launch=lambda *a, **k: pytest.fail("launched"))
     assert trial.main(["--work-dir", str(tmp_path / "work"), "--out", str(tmp_path / "r.json"),
                        "--claude", str(tmp_path / "no-such-binary")]) == 2
+
+
+def test_the_neutral_fixture_is_a_separate_option_that_leaves_the_default_trial_as_recorded(tmp_path):
+    default = trial.parent_prompt(Path("/f/token.txt"))
+    assert "token.txt" in default and "marker" not in default and "background" not in default
+    calls = []
+    args = _args(tmp_path, neutral_fixture=True)
+    assert trial.run(args, launch=_fake_host(tmp_path, calls=calls)) == 0
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["fixture_variant"] == "neutral" and body["verdict"] == "conforming"
+    prompt = calls[0][0][2]
+    marker = (tmp_path / "work/fixture/marker.txt").read_text().strip()
+    assert marker.startswith("marqueur-de-fixture-") and marker[-8:].isdigit()
+    assert "marker.txt" in prompt and "not a secret" in prompt and "do not reply until it has completed" in prompt
+    for word in ("token", "jeton", "password", "credential\""):
+        assert word not in prompt.lower() and word not in marker
+    assert not (tmp_path / "work/fixture/token.txt").exists()
+    # the verdict rule is the same: a marker that does not come back is still not conforming
+    args.work_dir, args.out = str(tmp_path / "w2"), str(tmp_path / "r2.json")
+    assert trial.run(args, launch=_fake_host(tmp_path, answer=False)) == 1
+    assert json.loads((tmp_path / "r2.json").read_text())["verdict"] == "not_conforming"
+    # the default run carries no variant key: its result shape is the recorded one
+    plain = _args(tmp_path)
+    plain.work_dir, plain.out = str(tmp_path / "w3"), str(tmp_path / "r3.json")
+    assert trial.run(plain, launch=_fake_host(tmp_path)) == 0
+    assert "fixture_variant" not in json.loads((tmp_path / "r3.json").read_text())
+
+
+def test_the_recorded_trial_result_is_kept_as_written_and_names_nothing_personal():
+    text = (ROOT / "docs/qualification/pat-125-native-trial.json").read_text()
+    body = json.loads(text)
+    assert body["schema"] == trial.TRIAL_SCHEMA and body["verdict"] == "not_conforming"
+    assert body["not_established"] == ["fixture"] and body["conformity"]["fixture"] == "divergent"
+    assert {k: v for k, v in body["conformity"].items() if k != "fixture"} == {
+        "profile": "exact", "model": "exact", "effort": "exact", "host_version": "conforming",
+        "plugin_source": "this_checkout"}
+    assert "/Users/" not in text and "/home/" not in text and "<session id>" in body["argv"]
+
+
+# ------------------------------------------------------------------------------------ headless runners
+
+def _version_runner(answer, calls):
+    def runner(argv, **kwargs):
+        calls.append((list(argv), kwargs))
+        if isinstance(answer, BaseException):
+            raise answer
+        return SimpleNamespace(returncode=answer[0], stdout=answer[1])
+    return runner
+
+
+def test_headless_check_asks_the_launched_binary_only_for_a_pin_with_a_minimum():
+    calls = []
+    runner = _version_runner((0, "2.1.294 (Claude Code)\n"), calls)
+    env = {"PATH": "/bin"}
+    for model in ("claude-haiku-4-5", "claude-sonnet-5-5", "haiku", "project-wire-alias"):
+        assert claude_headless_host_version_requirement(model, "claude", runner=runner, env=env) is None
+    assert calls == []
+    assert claude_headless_host_version_requirement("claude-haiku-5-5", "claude", runner=runner, env=env) == {
+        "required": "2.1.293", "observed": "2.1.294", "status": "conforming"}
+    (argv, kwargs), = calls
+    assert argv == ["claude", "--version"] and kwargs["env"] is env and kwargs["check"] is False
+
+
+@pytest.mark.parametrize("answer", [(0, "2.1.292 (Claude Code)"), (0, "2.1.285 (Claude Code)\n")])
+def test_headless_check_fails_closed_below_the_minimum(answer):
+    with pytest.raises(RoutingConfigError, match=r"Claude Code 2\.1\.293 ou supérieur requis.*observée : 2\.1\.2"):
+        claude_headless_host_version_requirement(
+            "claude-haiku-5-5", "claude", runner=_version_runner(answer, []), env={})
+
+
+@pytest.mark.parametrize("answer", [
+    (1, "2.1.294 (Claude Code)"), (0, ""), (0, "2.1.294"), (0, "claude 2.1.294"), (0, None),
+    FileNotFoundError("claude"), subprocess.TimeoutExpired("claude", 30),
+])
+def test_headless_check_keeps_an_unreadable_version_unknown_and_warns(answer):
+    with pytest.warns(RuntimeWarning, match="CLAUDE_HOST_VERSION_UNOBSERVED.*2.1.293.*jamais présumé conforme"):
+        assert claude_headless_host_version_requirement(
+            "claude-haiku-5-5", "claude", runner=_version_runner(answer, []), env={}) == {
+            "required": "2.1.293", "observed": None, "status": "unknown"}

@@ -2035,11 +2035,14 @@ def test_production_ambiguous_implementation_stays_suspended_without_duplicate(t
     ("opus-5", "high", "claude-opus-5"),
     ("haiku-4.5", "low", "claude-haiku-4-5"),
     ("haiku-4.5", None, "claude-haiku-4-5"),
+    ("haiku-5.5", "high", "claude-haiku-5-5"),
 ])
 def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(
     tmp_path, monkeypatch, model, effort, wire,
 ):
     calls = []
+    version_calls = []
+    binary_version = ["2.1.293 (Claude Code)\n"]
     routing_config = tmp_path / ".foundry" / "model-routing.json"
     routing_config.parent.mkdir()
     routing_config.write_text(json.dumps({
@@ -2057,6 +2060,9 @@ def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(
             ])
 
     def runner(argv, **kwargs):
+        if list(argv[1:]) == ["--version"]:  # PAT-125: asked of the binary about to be launched
+            version_calls.append((argv[0], kwargs["env"]))
+            return SimpleNamespace(returncode=0, stdout=binary_version[0])
         calls.append((argv, kwargs))
         return SimpleNamespace(
             returncode=0,
@@ -2094,9 +2100,19 @@ def test_isolated_executor_has_no_shell_plugin_mcp_or_foundry_secrets(
             selected_tier="frontier", cost_ceiling_cents=100, runner=runner,
         )
         proposal = executor.execute(envelope)
+        if model == "haiku-5.5":  # PAT-ADR-0016: below the minimum the provider is never invoked
+            binary_version[0] = "2.1.292 (Claude Code)\n"
+            old_host = IsolatedClaudeIssueExecutor(
+                tmp_path, Worktrees(), proposal_directory=tmp_path / "proposals-old-host",
+                selected_tier="frontier", cost_ceiling_cents=100, runner=runner,
+            )
+            with pytest.raises(RoutingConfigError, match=r"Claude Code 2\.1\.293 ou supérieur requis"):
+                old_host.execute(envelope)
+            assert len(calls) == 1 and len(version_calls) == 2
 
     assert proposal.outcome == "completed"
     argv, kwargs = calls[0]
+    assert version_calls[:1] == ([(argv[0], kwargs["env"])] if model == "haiku-5.5" else [])
     assert argv[argv.index("--model") + 1] == wire
     if model == "haiku-4.5":
         assert "--effort" not in argv
