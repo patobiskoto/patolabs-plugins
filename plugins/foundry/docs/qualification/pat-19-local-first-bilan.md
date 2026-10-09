@@ -12,6 +12,8 @@ produit). Sources : [`pat-19-decision-v1.md`](pat-19-decision-v1.md), [`pat-19-s
 par leurs auteurs) ; je n'ai pas relu les Epics du tracker, donc tout ce qui touche à l'état des tickets PAT-87 à PAT-91 hors des
 documents est **inconnu**.
 
+Décision par usage qui conclut la qualification (PAT-130) : [`pat-19-decision-v2.md`](pat-19-decision-v2.md).
+
 ## Ce qu'il faut garder en tête
 
 Douze tâches du même dépôt, dont plusieurs modifient le même fichier, rejouées d'une campagne à l'autre et déjà vues par

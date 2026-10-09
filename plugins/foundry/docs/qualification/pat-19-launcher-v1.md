@@ -1610,6 +1610,8 @@ n'est modifié.
   champs `audit.absent_path_forms` et `arm_findings_replayed` : documentés ici. Aucune option de `foundry_cli.py`, aucune table de routage
   et aucune constante de routage ne change. Détecteur FOUNDRY-123 non livré : statut affirmé ici, vérifié en revue.
 
+Décision par usage qui conclut la qualification (PAT-130) : [`pat-19-decision-v2.md`](pat-19-decision-v2.md).
+
 ## Mesure du travail premium par rôle (PAT-129)
 
 Module séparé du lanceur, lecture seule : `python3 -m foundry.cost_breakdown` (`tooling/foundry/cost_breakdown.py`). Il relit les `results-*.jsonl`, `ledger-*.jsonl`
