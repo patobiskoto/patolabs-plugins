@@ -50,7 +50,8 @@ ALLOWED_STATES = {
     "dropped",
 }
 # DevHub retains its historical atomic contract, which permits a dropped child.
-# PAT-ADR-0006 providers apply the stricter accepted-only rule below.
+# PAT-ADR-0006 providers apply the stricter accepted-only rule below; on Linear
+# only, PAT-ADR-0017 admits a dropped node named by ``--accept-dropped``.
 EPIC_CHILD_TERMINAL_STATES = frozenset({"done", "dropped"})
 _EPIC_HUMAN_VERDICT = "accepted"
 _SAFE_RECEIPT_NONCE = re.compile(r"[A-Za-z0-9_-]{16,128}")
@@ -253,8 +254,11 @@ def adr_binding(tracker, *adr_ids):
     return project
 
 
-def transition(tracker, issue_id: str, state: str, context=None) -> None:
-    """Set State after validating it against the controlled vocabulary."""
+def transition(tracker, issue_id: str, state: str, context=None):
+    """Set State after validating it against the controlled vocabulary.
+
+    Returns what the adapter returns (the read-back issue of a guarded abandon).
+    """
     normalized = validate_state(state)
     if (
         getattr(tracker, "bounded_transition_proofs", False)
@@ -278,21 +282,33 @@ def transition(tracker, issue_id: str, state: str, context=None) -> None:
         raise TrackerConflictError(
             "transition bornée sans état prédécesseur explicite"
         )
+    # PAT-ADR-0017: abandoning an existing issue needs the expected predecessor,
+    # refused here before any provider read.
+    if (
+        normalized == "dropped"
+        and getattr(tracker, "guarded_abandon_supported", False)
+        and not getattr(context, "expected_state", None)
+    ):
+        raise SystemExit(
+            "Abandon refusé : état attendu obligatoire — "
+            f"`edit transition {issue_id} dropped <état-attendu>` "
+            "(backlog, ready, blocked, in-progress ou review)."
+        )
     binding = issue_binding(tracker, issue_id)
     kwargs = {}
     if context is not None:
         kwargs["context"] = context
     if binding is not None:
         kwargs["project"] = binding
-    tracker.set_state(issue_id, normalized, **kwargs)
+    return tracker.set_state(issue_id, normalized, **kwargs)
 
 
-def set_field(tracker, issue_id: str, name: str, value) -> None:
+def set_field(tracker, issue_id: str, name: str, value):
     """Generic field write. Judgment skills MUST get human confirmation before calling this —
     the tier does the write, it does not decide to."""
     binding = issue_binding(tracker, issue_id)
     kwargs = {"project": binding} if binding is not None else {}
-    tracker.update_fields(issue_id, {name: value}, **kwargs)
+    return tracker.update_fields(issue_id, {name: value}, **kwargs)
 
 
 def link(tracker, src_id: str, link_type: str, dst_id: str) -> None:
@@ -471,10 +487,19 @@ def parse_accept_overrides(raw) -> tuple[str, ...]:
     Accepts one comma-separated string or an iterable of ids.  Empty list, empty
     element, duplicate, wildcard, lowercase or any non-canonical id is refused.
     """
+    return _parse_node_ids(raw, "--accept-override")
+
+
+def parse_accept_dropped(raw) -> tuple[str, ...]:
+    """Validate the nominative ``--accept-dropped`` list (PAT-ADR-0017), same grammar."""
+    return _parse_node_ids(raw, "--accept-dropped")
+
+
+def _parse_node_ids(raw, flag: str) -> tuple[str, ...]:
     items = raw.split(",") if isinstance(raw, str) else list(raw)
     if not items:
         raise SystemExit(
-            "Clôture Epic refusée : --accept-override exige au moins un identifiant."
+            f"Clôture Epic refusée : {flag} exige au moins un identifiant."
         )
     bad = [
         item for item in items
@@ -482,14 +507,14 @@ def parse_accept_overrides(raw) -> tuple[str, ...]:
     ]
     if bad:
         raise SystemExit(
-            "Clôture Epic refusée : --accept-override n'accepte que des identifiants "
+            f"Clôture Epic refusée : {flag} n'accepte que des identifiants "
             "exacts (ex. PAT-10, sans joker ni élément vide) ; refusé : "
             + ", ".join(repr(item) for item in bad) + "."
         )
     duplicated = sorted({item for item in items if items.count(item) > 1})
     if duplicated:
         raise SystemExit(
-            "Clôture Epic refusée : --accept-override contient des doublons : "
+            f"Clôture Epic refusée : {flag} contient des doublons : "
             + ", ".join(duplicated) + "."
         )
     return tuple(sorted(items))
@@ -533,18 +558,20 @@ def _epic_override_evidence(node) -> tuple[str, str] | None:
 
 
 class _EpicOverrideRefusal(SystemExit):
-    """The strict refusal is itself an override refusal (PAT-102: gates the hint)."""
+    """The strict refusal is itself a nominative one: an unnamed override or an
+    unnamed abandoned node (PAT-102: gates the hint)."""
 
 
 def _bounded_epic_node(
     issue: Issue, *, role: str, tracker=None, waivable: frozenset = frozenset(),
+    dropped: frozenset = frozenset(),
 ) -> EpicClosureChild:
     """Build one strictly accepted graph coordinate for PAT-ADR-0006."""
-    if issue.state == "dropped":
-        raise SystemExit(
+    if issue.state == "dropped" and issue.id not in dropped:
+        raise _EpicOverrideRefusal(
             f"Clôture Epic refusée : {role} {issue.id} est abandonné, pas accepté."
         )
-    if issue.state != "done":
+    if issue.state not in {"done", "dropped"}:
         raise SystemExit(
             f"Clôture Epic refusée : {role} {issue.id} n'est pas terminal accepté."
         )
@@ -554,6 +581,10 @@ def _bounded_epic_node(
         if callable(resolver):
             observed_version = resolver(issue)
     version = _exact_positive_version(observed_version, f"version {role}")
+    if issue.state == "dropped":
+        # PAT-ADR-0017: the human named this abandoned node.  It is bound by id,
+        # version and state only: no acceptance proof is asked and none is claimed.
+        return EpicClosureChild(id=issue.id, version=version, state="dropped")
     ac_done = _exact_nonnegative_int(issue.ac_done, f"AC {role} satisfaites")
     ac_total = _exact_nonnegative_int(issue.ac_total, f"AC {role} totales")
     if issue.id in waivable:
@@ -616,6 +647,7 @@ def _graph_snapshot_scope(tracker):
 def bounded_epic_graph_snapshot(
     tracker, project: Project, parent: Issue,
     accept_overrides: frozenset = frozenset(),
+    accept_dropped: frozenset = frozenset(),
 ) -> tuple[tuple[EpicClosureChild, ...], tuple[EpicClosureDependency, ...]]:
     """Read the complete required-child/dependency graph in canonical order.
 
@@ -624,21 +656,26 @@ def bounded_epic_graph_snapshot(
     """
     with _graph_snapshot_scope(tracker):
         return _bounded_epic_graph_snapshot(
-            tracker, project, parent, accept_overrides,
+            tracker, project, parent, accept_overrides, accept_dropped,
         )
 
 
 def _bounded_epic_graph_snapshot(
     tracker, project: Project, parent: Issue,
     accept_overrides: frozenset = frozenset(),
+    accept_dropped: frozenset = frozenset(),
 ) -> tuple[tuple[EpicClosureChild, ...], tuple[EpicClosureDependency, ...]]:
     """Read the complete required-child/dependency graph in canonical order.
 
     This is the one canonical builder used by the write preflight, provider S1,
     readback and replay.  It has no write side effect.  ``accept_overrides`` is
     the exact nominative PAT-ADR-0014 waiver set; empty keeps the historical rule.
+    ``accept_dropped`` is the exact PAT-ADR-0017 set of abandoned nodes: it must
+    equal the dropped nodes of the required graph, and the sub-graph reached only
+    through such a node is not required; empty keeps the refusal of a dropped node.
     """
     waivable = frozenset(accept_overrides)
+    named_dropped = frozenset(accept_dropped)
     child_ids = [
         relation.target for relation in parent.links if relation.type == "parent-of"
     ]
@@ -668,9 +705,12 @@ def _bounded_epic_graph_snapshot(
     children = tuple(
         _bounded_epic_node(
             fetch(child_id), role="enfant", tracker=tracker, waivable=waivable,
+            dropped=named_dropped,
         )
         for child_id in child_ids
     )
+    if all(child.state == "dropped" for child in children):
+        raise SystemExit(_EPIC_NO_ACCEPTED_CHILD)
     edges: list[EpicClosureDependency] = []
     expanded: set[str] = set()
 
@@ -693,23 +733,55 @@ def _bounded_epic_graph_snapshot(
                 )
             tracker.validate_issue_binding(project, parent.id, source.id, target_id)
             target = fetch(target_id)
-            edges.append(EpicClosureDependency(
-                source_id=source.id,
-                target=_bounded_epic_node(
-                    target, role="dépendance", tracker=tracker, waivable=waivable,
-                ),
-            ))
-            if target_id not in expanded:
+            node = _bounded_epic_node(
+                target, role="dépendance", tracker=tracker, waivable=waivable,
+                dropped=named_dropped,
+            )
+            edges.append(EpicClosureDependency(source_id=source.id, target=node))
+            # What is reached only through an abandoned node is not required.
+            if target_id not in expanded and node.state != "dropped":
                 visit(target, (*path, target_id))
         expanded.add(source.id)
 
     for root in (parent, *(cache[item] for item in child_ids)):
-        if root.id not in expanded:
+        if root.id not in expanded and (root is parent or root.state != "dropped"):
             visit(root, (root.id,))
     ordered = tuple(sorted(edges, key=lambda edge: (edge.source_id, edge.target.id)))
     if len({(edge.source_id, edge.target.id) for edge in ordered}) != len(ordered):
         raise SystemExit("Clôture Epic refusée : graphe de dépendances dupliqué.")
+    stray = named_dropped - {
+        node.id for node in (*children, *(edge.target for edge in ordered))
+        if node.state == "dropped"
+    }
+    if stray:
+        raise SystemExit(_stray_dropped_text(stray))
     return children, ordered
+
+
+_EPIC_NO_ACCEPTED_CHILD = (
+    "Clôture Epic refusée : aucun enfant direct n'est done (accepté ou dérogé "
+    "nominativement) ; tous sont abandonnés."
+)
+
+
+def _stray_dropped_text(stray) -> str:
+    return (
+        "Clôture Epic refusée : --accept-dropped désigne des identifiants qui ne "
+        "sont pas des nœuds abandonnés du graphe requis : "
+        + ", ".join(sorted(stray)) + "."
+    )
+
+
+def epic_receipt_dropped(receipt: EpicClosureReceipt) -> tuple[str, ...]:
+    """Ids of the abandoned nodes a bounded receipt binds (PAT-ADR-0017).
+
+    Derived from the bound graph itself, so the receipt carries no extra field.
+    DevHub's atomic receipt (no human verdict) never names such a set.
+    """
+    if receipt.human_verdict is None:
+        return ()
+    nodes = (*receipt.children, *(edge.target for edge in receipt.dependencies))
+    return tuple(sorted({node.id for node in nodes if node.state == "dropped"}))
 
 
 def epic_receipt_overrides(
@@ -743,17 +815,22 @@ _FOREIGN_BINDING_CODES = frozenset({None, "issue_outside_binding"})
 
 def _epic_graph_walk(
     tracker, project: Project, parent: Issue, accept: frozenset = frozenset(),
+    accept_dropped: frozenset = frozenset(),
 ) -> tuple[list[dict], frozenset]:
     """Walk the graph read-only; return (report, ids of every graph node met)."""
     nodes: dict[str, dict] = {}
     seen: set[str] = {parent.id}
     cache: dict[str, Issue] = {parent.id: parent}
+    # PAT-ADR-0017 (Linear only): a dropped node is nameable and, like the snapshot,
+    # the walk does not descend below it, so both agree on lists and totals.
+    nameable = getattr(tracker, "epic_dropped_closure_supported", False)
 
     def add(issue_id: str, role: str, code: str, cause: str) -> None:
         nodes.setdefault(
             issue_id,
             {"id": issue_id, "role": role, "code": code, "cause": cause,
-             "waivable": code == "override"},
+             "waivable": code == "override",
+             "droppable": nameable and code == "dropped"},
         )
 
     def read(issue_id: str, role: str) -> Issue | None:
@@ -802,7 +879,10 @@ def _epic_graph_walk(
 
     def classify(issue: Issue, role: str) -> None:
         if issue.state == "dropped":
-            add(issue.id, role, "dropped", "abandonné (dropped), jamais acceptable")
+            add(issue.id, role, "dropped", (
+                "abandonné (dropped), acceptable nominativement par --accept-dropped ; "
+                "jamais compté comme accepté"
+            ) if nameable else "abandonné (dropped), jamais acceptable")
         elif issue.state != "done":
             add(issue.id, role, "non-terminal", f"n'est pas terminal (état {issue.state})")
         elif type(issue.ac_total) is not int or issue.ac_total <= 0:
@@ -827,6 +907,8 @@ def _epic_graph_walk(
     def visit(issue: Issue, role: str) -> None:
         if issue.id != parent.id:
             classify(issue, role)
+            if nameable and issue.state == "dropped":
+                return
         for relation in issue.links:
             if relation.type != "depends-on" or not isinstance(relation.target, str):
                 continue
@@ -848,9 +930,16 @@ def _epic_graph_walk(
         if child is not None:
             visit(child, "enfant")
     incomplete = any(item["code"] in _UNTRAVERSED_CODES for item in nodes.values())
+    no_accepted_child = nameable and bool(children) and all(
+        child is not None and child.state == "dropped" for _cid, child in children
+    )
     for item in nodes.values():
-        item["named"] = item["id"] in accept
+        item["named"] = item["id"] in (
+            accept_dropped if item["code"] == "dropped" else accept
+        )
         item["incomplete"] = incomplete
+        item["no_accepted_child"] = no_accepted_child
+        item["epic"] = parent.id
     report = sorted(nodes.values(), key=lambda item: item["id"])
     for item in report:
         item["total"] = len(seen) - 1
@@ -867,6 +956,7 @@ def _read_error_cause(exc: Exception) -> str:
 
 def epic_graph_diagnostic(
     tracker, project: Project, parent: Issue, accept: frozenset = frozenset(),
+    accept_dropped: frozenset = frozenset(),
 ) -> list[dict]:
     """List the graph nodes whose acceptance proof is not positive (read-only).
 
@@ -878,10 +968,12 @@ def epic_graph_diagnostic(
     tracker ``SystemExit``); decoding errors and failed reads are ``read-error``.  No provider write.
     """
     with _graph_snapshot_scope(tracker):
-        return _epic_graph_walk(tracker, project, parent, accept)[0]
+        return _epic_graph_walk(tracker, project, parent, accept, accept_dropped)[0]
 
 
-def format_epic_diagnostic(report: list[dict], *, override_cause: bool = False) -> str:
+def format_epic_diagnostic(
+    report: list[dict], *, override_cause: bool = False, stray_named: bool = False,
+) -> str:
     if not report:
         return ""
     incomplete = any(item.get("incomplete") for item in report)
@@ -900,13 +992,37 @@ def format_epic_diagnostic(report: list[dict], *, override_cause: bool = False) 
         )
         return "\n".join(lines)
     waivable = [item["id"] for item in report if item["waivable"]]
-    if (
+    droppable = [item["id"] for item in report if item.get("droppable")]
+    if any(item.get("no_accepted_child") for item in report):
+        lines.append(
+            "Tous les enfants directs sont abandonnés : au moins un enfant direct "
+            "doit être done, accepté positivement ou dérogé nominativement ; "
+            "--accept-dropped ne peut pas clôturer cet Epic."
+        )
+        return "\n".join(lines)
+    # The hint is only stated flatly when the strict refusal is itself a nominative
+    # refusal; otherwise it only describes the nodes that were read.
+    lead = "Seuls" if override_cause else "Parmi les nœuds lus, seuls"
+    if droppable and len(waivable) + len(droppable) == len(report) and (
+        stray_named or not all(item["named"] for item in report)
+    ):
+        # PAT-ADR-0017: the exact command, combined with --accept-override when
+        # both nominative cases apply.
+        flags = "--human-verdict=accepted"
+        if waivable:
+            flags += " --accept-override=" + ",".join(waivable)
+        flags += " --accept-dropped=" + ",".join(droppable)
+        epic = report[0].get("epic")
+        command = f"issue close-epic {epic} {flags}" if epic else flags
+        lines.append(
+            f"{lead} des nœuds acceptables nominativement bloquent. Commande exacte : "
+            f"`{command}` (ni CAS ni acceptation : un nœud abandonné n'est jamais "
+            "compté comme accepté et ses prérequis propres ne sont pas exigés)."
+        )
+    elif (
         waivable and len(waivable) == len(report)
         and not all(item["named"] for item in report)
     ):
-        # The hint is only stated flatly when the strict refusal is itself an override
-        # refusal; otherwise it only describes the nodes that were read.
-        lead = "Seuls" if override_cause else "Parmi les nœuds lus, seuls"
         lines.append(
             f"{lead} des reçus d'override valides bloquent : le mainteneur peut les attester "
             "nommément par --human-verdict=accepted --accept-override=" + ",".join(waivable)
@@ -921,20 +1037,26 @@ class _SnapshotReadError(TrackerConflictError):
 
 def _snapshot_with_diagnostic(
     tracker, project: Project, parent: Issue, accept: frozenset,
+    accept_dropped: frozenset = frozenset(),
 ):
     """Build the graph snapshot; on refusal, append the complete read-only diagnostic."""
     # PAT-99: the refused snapshot and its diagnostic are ONE snapshot, so a node read
     # by the former is not read again by the latter (a failed read is never cached).
     with _graph_snapshot_scope(tracker):
-        return _snapshot_with_diagnostic_in_scope(tracker, project, parent, accept)
+        return _snapshot_with_diagnostic_in_scope(
+            tracker, project, parent, accept, accept_dropped,
+        )
 
 
 def _snapshot_with_diagnostic_in_scope(
     tracker, project: Project, parent: Issue, accept: frozenset,
+    accept_dropped: frozenset = frozenset(),
 ):
     try:
         try:
-            return _bounded_epic_graph_snapshot(tracker, project, parent, accept)
+            return _bounded_epic_graph_snapshot(
+                tracker, project, parent, accept, accept_dropped,
+            )
         except (SystemExit, TrackerConflictError, TrackerBindingError):
             raise
         except Exception as exc:
@@ -951,16 +1073,27 @@ def _snapshot_with_diagnostic_in_scope(
     except (SystemExit, TrackerConflictError, TrackerBindingError) as exc:
         text = ""
         try:
-            report, graph_ids = _epic_graph_walk(tracker, project, parent, accept)
+            report, graph_ids = _epic_graph_walk(
+                tracker, project, parent, accept, accept_dropped,
+            )
+            complete = not any(item.get("incomplete") for item in report)
+            stray = accept_dropped - {
+                item["id"] for item in report if item["code"] == "dropped"
+            } if complete else frozenset()
             text = format_epic_diagnostic(
                 report, override_cause=isinstance(exc, _EpicOverrideRefusal),
+                stray_named=bool(stray),
             )
-            if not any(item.get("incomplete") for item in report):
+            if complete:
                 unknown = sorted(accept - graph_ids)
                 if unknown:
                     text += ("\n" if text else "") + (
                         "--accept-override désigne des identifiants hors du graphe de "
                         "l'Epic : " + ", ".join(unknown) + "."
+                    )
+                if stray and str(exc) != _stray_dropped_text(stray):
+                    text += ("\n" if text else "") + _stray_dropped_text(stray).removeprefix(
+                        "Clôture Epic refusée : "
                     )
         except (Exception, SystemExit):
             text = ""
@@ -1051,6 +1184,7 @@ def _validate_epic_outcome(
     if list(waivers) != sorted(waivers):
         raise SystemExit("Clôture Epic refusée : dérogations non canoniques.")
     waived_seen: set[str] = set()
+    dropped_seen: set[str] = set()
 
     def validate_node(child: EpicClosureChild, label: str) -> None:
         if (
@@ -1074,6 +1208,17 @@ def _validate_epic_outcome(
                     f"Clôture Epic refusée : dérogation de {child.id} incohérente avec son reçu d'override."
                 )
             waived_seen.add(child.id)
+            return
+        if bounded_receipt and child.state == "dropped":
+            # PAT-ADR-0017: an abandoned node is bound by id, version and state
+            # only; it is never an accepted one and carries no proof.
+            if child != EpicClosureChild(
+                id=child.id, version=child.version, state="dropped",
+            ):
+                raise SystemExit(
+                    f"Clôture Epic refusée : coordonnée abandonnée {label} invalide."
+                )
+            dropped_seen.add(child.id)
             return
         if child.acceptance_status == "override" and bounded_receipt:
             raise SystemExit(
@@ -1101,6 +1246,8 @@ def _validate_epic_outcome(
         child_ids.append(child.id)
     if child_ids != sorted(child_ids) or len(child_ids) != len(set(child_ids)):
         raise SystemExit("Clôture Epic refusée : ensemble enfant non canonique.")
+    if bounded_receipt and all(child.state == "dropped" for child in receipt.children):
+        raise SystemExit(_EPIC_NO_ACCEPTED_CHILD)
     if type(receipt.dependencies) is not tuple:
         raise SystemExit("Clôture Epic refusée : graphe de dépendances invalide.")
     dependency_keys = []
@@ -1121,6 +1268,10 @@ def _validate_epic_outcome(
         raise SystemExit("Clôture Epic refusée : graphe de dépendances non canonique.")
     if any(source not in known_nodes for source in adjacency):
         raise SystemExit("Clôture Epic refusée : source de dépendance étrangère.")
+    if dropped_seen & set(adjacency):
+        raise SystemExit(
+            "Clôture Epic refusée : le reçu exige les prérequis d'un nœud abandonné."
+        )
     if waived_seen != set(waivers):
         raise SystemExit(
             "Clôture Epic refusée : dérogation nommée absente du graphe du reçu : "
@@ -1172,6 +1323,8 @@ class EpicClosureState:
     intent_audit_id: str | None = None
     waived: tuple[str, ...] = ()
     cause: str | None = None
+    # PAT-ADR-0017: abandoned nodes bound by the receipt, derived from its graph.
+    dropped: tuple[str, ...] = ()
 
 
 _INTENT_PROVIDERS = frozenset({"linear", "ghprojects"})
@@ -1255,11 +1408,12 @@ def epic_closure_state(tracker, parent_id: str) -> EpicClosureState:
         "closed" if done else "pending", audit_id=outcome.audit_id,
         intent=intent_state, intent_audit_id=intent_audit,
         waived=tuple(item.node_id for item in outcome.receipt.accepted_overrides),
+        dropped=epic_receipt_dropped(outcome.receipt),
     )
 
 
 def validate_epic_closure_request(
-    tracker, parent_id, human_verdict, accept_overrides,
+    tracker, parent_id, human_verdict, accept_overrides, accept_dropped=None,
 ) -> tuple[str, ...]:
     """Pure pre-provider validation of a close-epic request (no provider read).
 
@@ -1290,6 +1444,24 @@ def validate_epic_closure_request(
                 "Clôture Epic refusée : --accept-override n'est qualifié que pour Linear "
                 f"(tracker {tracker.name})."
             )
+    # PAT-ADR-0017: same fail-closed rule, before any provider read.
+    if accept_dropped is not None:
+        dropped_ids = parse_accept_dropped(accept_dropped)
+        if human_verdict != _EPIC_HUMAN_VERDICT:
+            raise SystemExit(
+                "Clôture Epic refusée : --accept-dropped exige --human-verdict=accepted."
+            )
+        if not bounded or not getattr(tracker, "epic_dropped_closure_supported", False):
+            raise SystemExit(
+                "Clôture Epic refusée : --accept-dropped n'est qualifié que pour Linear "
+                f"(tracker {tracker.name})."
+            )
+        both = sorted(set(dropped_ids) & set(accepted_ids))
+        if both:
+            raise SystemExit(
+                "Clôture Epic refusée : identifiants nommés à la fois par "
+                "--accept-override et --accept-dropped : " + ", ".join(both) + "."
+            )
     return accepted_ids
 
 
@@ -1301,6 +1473,7 @@ def close_epic(
     nonce: str | None = None,
     human_verdict: str | None = None,
     accept_overrides=None,
+    accept_dropped=None,
 ) -> EpicClosureOutcome:
     """Close one non-code Epic through its qualified audited capability.
 
@@ -1310,9 +1483,13 @@ def close_epic(
     """
     bounded = getattr(tracker, "bounded_epic_closure_supported", False)
     accepted_ids = validate_epic_closure_request(
-        tracker, parent_id, human_verdict, accept_overrides,
+        tracker, parent_id, human_verdict, accept_overrides, accept_dropped,
     )
     requested = frozenset(accepted_ids)
+    dropped_ids = (
+        parse_accept_dropped(accept_dropped) if accept_dropped is not None else ()
+    )
+    requested_dropped = frozenset(dropped_ids)
     project = _epic_closure_project(tracker)
     tracker.validate_issue_binding(project, parent_id)
     try:
@@ -1354,6 +1531,13 @@ def close_epic(
                 "Clôture Epic refusée : ensemble --accept-override différent du reçu "
                 f"déjà écrit (reçu : {', '.join(recorded) or 'aucun'} ; "
                 f"demandé : {', '.join(accepted_ids) or 'aucun'})."
+            )
+        recorded_dropped = epic_receipt_dropped(outcome.receipt)
+        if recorded_dropped != dropped_ids:
+            raise SystemExit(
+                "Clôture Epic refusée : ensemble --accept-dropped différent du reçu "
+                f"déjà écrit (reçu : {', '.join(recorded_dropped) or 'aucun'} ; "
+                f"demandé : {', '.join(dropped_ids) or 'aucun'})."
             )
         return EpicClosureOutcome(
             receipt=outcome.receipt,
@@ -1398,8 +1582,16 @@ def close_epic(
                     f"demandé : {', '.join(accepted_ids) or 'aucun'}). "
                     "Relance avec l'ensemble exact de l'audit."
                 )
+            pending_dropped = epic_receipt_dropped(pending)
+            if pending_dropped != dropped_ids:
+                raise SystemExit(
+                    "Clôture Epic refusée : audit en attente avec un autre ensemble "
+                    f"--accept-dropped (audit : {', '.join(pending_dropped) or 'aucun'} ; "
+                    f"demandé : {', '.join(dropped_ids) or 'aucun'}). "
+                    "Relance avec l'ensemble exact de l'audit."
+                )
             children, dependencies = _snapshot_with_diagnostic(
-                tracker, project, parent, requested,
+                tracker, project, parent, requested, requested_dropped,
             )
             if (
                 pending.children != children
@@ -1420,7 +1612,7 @@ def close_epic(
     overrides: tuple[EpicClosureOverride, ...] = ()
     if bounded:
         children, dependencies = _snapshot_with_diagnostic(
-            tracker, project, parent, requested,
+            tracker, project, parent, requested, requested_dropped,
         )
         overrides = epic_receipt_overrides(children, dependencies)
         missing = requested - {item.node_id for item in overrides}

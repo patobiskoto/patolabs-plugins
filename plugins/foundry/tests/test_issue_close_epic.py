@@ -17,6 +17,7 @@ from foundry.trackers.base import (
     TrackerConflictError,
 )
 from foundry.trackers.devhub import DevHubTracker, DevHubTrackerError
+from foundry.trackers.ghprojects import GitHubProjectsTracker
 from foundry.trackers.youtrack import YouTrackTracker
 
 
@@ -422,3 +423,53 @@ def test_code_issue_done_gate_still_requires_the_existing_merge_context():
 
 def test_close_epic_is_a_dedicated_cli_command_without_flags():
     assert issue._KNOWN_FLAGS["close-epic"] == set()
+
+
+# --- PAT-131 / PAT-ADR-0017 : --accept-dropped is qualified for Linear only ---
+
+@pytest.mark.parametrize("fixture", (AtomicEpicTracker, BoundedEpicTracker))
+def test_unqualified_trackers_refuse_accept_dropped_before_any_read(monkeypatch, fixture):
+    tracker = fixture()
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    with pytest.raises(SystemExit, match="--accept-dropped n'est qualifié que pour Linear"):
+        write.close_epic(
+            tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+        )
+    assert tracker.get_calls == [] and tracker.binding_calls == []
+    assert tracker.close_calls == 0
+
+
+@pytest.mark.parametrize("provider", (YouTrackTracker, GitHubProjectsTracker, DevHubTracker))
+def test_youtrack_ghprojects_and_devhub_refuse_accept_dropped_fail_closed(provider):
+    # Built without __init__: any provider read or write would raise AttributeError.
+    tracker = object.__new__(provider)
+    assert provider.epic_dropped_closure_supported is False
+    with pytest.raises(SystemExit, match="--accept-dropped n'est qualifié que pour Linear"):
+        write.close_epic(
+            tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+        )
+
+
+def test_bounded_provider_keeps_its_refusal_of_a_dropped_child(monkeypatch):
+    tracker = BoundedEpicTracker()
+    monkeypatch.setattr(write.registry, "repo_basename", lambda: "demo")
+    with pytest.raises(SystemExit) as excinfo:
+        write.close_epic(tracker, "DEMO-1", human_verdict="accepted")
+    message = str(excinfo.value)
+    assert "DEMO-3 est abandonné, pas accepté" in message
+    # The unqualified provider is never told the node could be named.
+    assert "abandonné (dropped), jamais acceptable" in message
+    assert "--accept-dropped" not in message
+    assert tracker.close_calls == 0
+
+
+def test_atomic_provider_keeps_accepting_a_dropped_child_without_the_flag(monkeypatch):
+    tracker = AtomicEpicTracker()
+    monkeypatch.setattr(write.registry, "repo_basename", lambda: "demo")
+    outcome = write.close_epic(tracker, "DEMO-1")
+    assert [(child.id, child.state) for child in outcome.receipt.children] == [
+        ("DEMO-2", "done"), ("DEMO-3", "dropped"),
+    ]
+    # Its replay names no --accept-dropped set: the atomic receipt carries none.
+    assert write.epic_receipt_dropped(outcome.receipt) == ()
+    assert write.close_epic(tracker, "DEMO-1").replayed

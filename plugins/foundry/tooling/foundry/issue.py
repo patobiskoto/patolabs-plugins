@@ -986,10 +986,12 @@ def _cause_text(exc) -> tuple[str, str]:
 
 
 def _audit_command(tracker, issue_id, state) -> str:
-    """The command carrying exactly the --accept-override set bound by the audit."""
+    """The command carrying exactly the nominative sets bound by the audit."""
     flags = set()
     if state.waived:
         flags.add("--accept-override=" + ",".join(state.waived))
+    if state.dropped:
+        flags.add("--accept-dropped=" + ",".join(state.dropped))
     return _epic_command(tracker, issue_id, flags)
 
 
@@ -1040,6 +1042,9 @@ def _state_lines(
                     "clôture effective.")
             tail = "elle rejoue et vérifie le reçu (aucun second audit)."
         bound = ", ".join(state.waived) or "aucun"
+        if state.dropped:
+            # PAT-ADR-0017: the audit also binds its abandoned nodes.
+            bound += " ; --accept-dropped : " + ", ".join(state.dropped)
         if refused:
             return [f"{head} {wait}Ne relance pas la commande refusée telle quelle. "
                     f"Ensemble --accept-override lié à l'audit : {bound}. Si ta commande "
@@ -1065,7 +1070,8 @@ def _epic_command(tracker, issue_id, flags) -> str:
         else ""
     )
     verdict_flag += "".join(
-        f" {flag}" for flag in sorted(flags) if flag.startswith("--accept-override=")
+        f" {flag}" for flag in sorted(flags, reverse=True)
+        if flag.startswith(("--accept-override=", "--accept-dropped="))
     )
     return f"issue close-epic {issue_id}{verdict_flag}"
 
@@ -1095,8 +1101,12 @@ def _epic_status(tracker, issue_id):
         print(f"aucun audit · Epic {issue_id}{extra}")
         return
     label = "clos" if state.kind == "closed" else "audit en attente"
+    dropped = (
+        f" · nœuds abandonnés liés au reçu : {', '.join(state.dropped)}"
+        if state.dropped else ""
+    )
     print(f"{label} · Epic {issue_id} · audit {state.audit_id} · dérogations liées au "
-          f"reçu : {waived}")
+          f"reçu : {waived}{dropped}")
 
 
 def close_epic(issue_id, flags=()):
@@ -1106,7 +1116,7 @@ def close_epic(issue_id, flags=()):
         if flags != {"--status"}:
             raise SystemExit(
                 "⛔ --status est en lecture seule et n'accepte aucun autre flag : le reçu "
-                "d'audit se lit sans --human-verdict ni --accept-override."
+                "d'audit se lit sans --human-verdict, --accept-override ni --accept-dropped."
             )
         return _epic_status(tracker, issue_id)
     verdicts = [flag.removeprefix("--human-verdict=") for flag in flags
@@ -1117,22 +1127,27 @@ def close_epic(issue_id, flags=()):
                if flag.startswith("--accept-override=")]
     if len(waivers) > 1:
         raise SystemExit("⛔ Clôture Epic refusée : --accept-override ambigu.")
+    abandoned = [flag.removeprefix("--accept-dropped=") for flag in flags
+                 if flag.startswith("--accept-dropped=")]
+    if len(abandoned) > 1:
+        raise SystemExit("⛔ Clôture Epic refusée : --accept-dropped ambigu.")
     command = _epic_command(tracker, issue_id, flags)
     status_command = f"issue close-epic {issue_id} --status"
     human_verdict = verdicts[0] if verdicts else None
     accept_overrides = write.parse_accept_overrides(waivers[0]) if waivers else None
+    accept_dropped = write.parse_accept_dropped(abandoned[0]) if abandoned else None
     try:
         # Pure local validation: a refusal here happened before any provider read or
         # write, so it carries no closure state (and costs no provider call).
         write.validate_epic_closure_request(
-            tracker, issue_id, human_verdict, accept_overrides,
+            tracker, issue_id, human_verdict, accept_overrides, accept_dropped,
         )
     except EpicClosureUnavailableError:
         pass  # reported once below by write.close_epic itself
     try:
         outcome = write.close_epic(
             tracker, issue_id, human_verdict=human_verdict,
-            accept_overrides=accept_overrides,
+            accept_overrides=accept_overrides, accept_dropped=accept_dropped,
         )
     except EpicClosureUnavailableError:
         raise SystemExit(
@@ -1208,7 +1223,9 @@ if __name__ == "__main__":
     epic_verdict_flags = (
         {flag for flag in flags
          if flag == "--status"
-         or flag.startswith(("--human-verdict=", "--accept-override="))}
+         or flag.startswith(
+             ("--human-verdict=", "--accept-override=", "--accept-dropped=")
+         )}
         if cmd == "close-epic" else set()
     )
     unknown = flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags - epic_verdict_flags

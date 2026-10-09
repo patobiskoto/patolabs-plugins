@@ -841,6 +841,35 @@ an unmapped state are not. The issue's present native state must be the last dur
 snapshot. A review or acceptance write may record one next forward native snapshot, but
 an ordinary query remains fail-closed until that receipt exists.
 
+**Abandoned issue (PAT-ADR-0017, PAT-131).** One exception applies to reads only: for
+`dropped` the native State is the authority. An issue whose present native state is
+`dropped` and whose receipt chain is valid and non-terminal (`state-in-progress` and/or
+review generations, no `state-done`) reads `state=dropped`, `normalized_state=dropped`,
+`native_state=dropped`, `projection_status=aligned` through `get_issue`,
+`observe_issue`, `query issue` and backlog reads. The receipts are kept and still
+validated (a malformed chain stays a conflict, `unknown` in observation), and the
+review's `pr_url` stays exposed. A `dropped` native state with a `state-done` receipt is
+unchanged: strict reads refuse it and observation reports `disagreement`. A cancelled
+issue that was never started still reads `dropped` as `native-only`. No write path uses
+this tolerance: starting, reviewing, projecting an AC proof or override, or completing a
+natively cancelled issue is refused before any receipt is appended.
+
+Foundry abandons an existing issue with `edit transition <ISSUE-ID> dropped
+<expected-state>` (or `edit set-field <ISSUE-ID> State dropped`, same guarded path):
+one fresh read, one `issueUpdate` carrying only `stateId`, one readback, closed failure
+on any divergence, no retry (bounded detection, not CAS; an external write in the S1→S2
+window is overwritten). The expected predecessor is mandatory and must be `backlog`,
+`ready`, `blocked`, `in-progress` or `review`; it is compared with the native state.
+The write is refused from native `done`, with a `state-done` receipt, with an Epic
+closure audit on the issue (pending or closed), or with an invalid receipt chain; an
+already `dropped` issue converges without a write. No lifecycle receipt is written,
+deleted or rewritten, and an open PR is not closed: the command prints its URL.
+Limits: reopening a started-then-dropped issue by hand makes it read back at its
+projected state (`in-progress` or `review`), nothing more; a started issue moved
+natively to `blocked` stays unreadable by a strict read, although it can be abandoned
+from `blocked`; release scope reads a started-then-dropped issue as unfinished and a
+never-started one as unavailable.
+
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
 matches the latest reviewed generation and its AC proof, and carries the exact merge
@@ -871,7 +900,8 @@ The `state-in-progress` step replayed by Foundry's merge path is a no-op once an
 durable review generation exists, including after a corrected PR adds a later review on
 native `in-progress`. This avoids a late start receipt being reordered before earlier
 reviews; the following exact review and CI gates remain mandatory. Native `done`,
-`blocked`, `dropped`, any native state other than `in-progress`, an unmapped state, a
+`blocked`, `dropped` (for every write; its read rule is the PAT-ADR-0017 paragraph
+above), any native state other than `in-progress`, an unmapped state, a
 missing review receipt, a missing start receipt in the PAT-76 sequence, or other
 divergent histories still fail closed. This
 does not authorize review, AC, CI, Done or merge: their existing exact-coordinate gates
@@ -1000,7 +1030,8 @@ remains `unknown`, with no artificial PR. These reads perform no writes.
 refuses a node whose acceptance is only a typed `acceptance-override` receipt. The
 refusal raised by the fresh graph read now lists the graph nodes (required children and
 transitive dependencies) whose proof is not positive, with the cause of each (valid
-override, unknown proof, zero criteria, non-terminal, dropped, `foreign-project` for a
+override, unknown proof, zero criteria, non-terminal, dropped (nameable, see the
+PAT-ADR-0017 paragraph below), `foreign-project` for a
 binding refusal only, `binding-error` for a configuration error, or `read-error` for a
 read that raises, such as `Linear native state changed outside lifecycle` or a transient
 transport failure), read-only, and no longer hides the real cause behind the generic
@@ -1015,7 +1046,8 @@ exact nominative list (no wildcard, no duplicate, ids matching
 `[A-Z][A-Z0-9]{0,15}-[1-9][0-9]{0,8}`, never without the
 `accepted` verdict; validated before any provider read). Only a terminal node whose
 sole insufficiency is a valid override receipt is waivable; unknown or incomplete
-proof, zero criteria, non-terminal, dropped, foreign-project nodes, an absent,
+proof, zero criteria, non-terminal, dropped (never waivable by this flag),
+foreign-project nodes, an absent,
 malformed, other-generation or other-diff override receipt, and any node added,
 reopened or changed since the graph read stay refused. The same fresh graph read that
 the closure binds validates the list. The append-only audit then also binds, per
@@ -1031,6 +1063,35 @@ receipt or replay path compared the former shorter coordinates (override nodes a
 refused closure before PAT-95). This is neither a CAS nor an acceptance:
 PAT-ADR-0006's bounded detection, non-transactional write and residual S1→S2 risk
 are unchanged. Other trackers refuse the flag.
+
+**Epic with abandoned nodes (PAT-ADR-0017, PAT-131).** Without a flag, `close-epic`
+still refuses a `dropped` required child or transitive prerequisite; the refusal lists
+each one with the cause "abandonné (dropped), acceptable nominativement par
+--accept-dropped" and, when only nominative causes block, prints the exact command
+(`issue close-epic <EPIC-ID> --human-verdict=accepted [--accept-override=...]
+--accept-dropped=ID[,ID...]`). The list uses the `--accept-override` grammar, needs the
+`accepted` verdict and is validated before any provider read; one id cannot be named by
+both flags. The named set must be exactly the set of dropped nodes of the required
+graph: an unnamed dropped node refuses, and so does a named node that is not dropped,
+is outside the graph, or is only reachable through another dropped node. Naming a node
+asks for no acceptance proof and never counts it as accepted. The graph is not
+traversed below a dropped node, so its own prerequisites are not required unless
+another path reaches them. At least one direct child must be `done` (accepted or
+waived nominatively); an Epic whose direct children are all dropped, and an Epic that
+is itself dropped, stay unclosable. Non-terminal nodes, unknown or incomplete proof,
+zero criteria, an override without its waiver, foreign-project nodes and any node
+added, reopened or changed since the graph read stay refused.
+
+The audit gains no field: a dropped node is bound in `children`/`dependencies` as its
+id, version and `state: dropped` (no AC counts, no acceptance coordinates), so the
+deterministic audit id derives from the dropped set and audits written earlier keep
+theirs. An exact replay converges without a second audit; a different or missing set
+is refused; a pending audit resumes only with its exact set; `close-epic --status`
+prints the dropped nodes bound by the receipt. Limits: cancelling or reopening a node
+after the closure makes the replay of the closed Epic diverge (fail closed), and a
+pending audit whose graph changes stays blocked; no recovery path is added.
+YouTrack, GitHub Projects and DevHub refuse `--accept-dropped` before any read and
+keep their current handling of a dropped child.
 
 Malformed, duplicate, foreign or stale audits and changed validation/type/graph
 coordinates supply no terminal authority: strict reads refuse them, while

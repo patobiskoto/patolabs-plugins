@@ -91,6 +91,10 @@ _LIFECYCLE_OPERATIONS = frozenset(
 # Public audit code of an explicit human AC override (never free text).
 _AC_OVERRIDE_REASON = re.compile(r"[a-z0-9_-]{3,80}\Z")
 _AC_OVERRIDE_BOUND_KEYS = ("pr_url", "head_sha", "base_sha", "review_digest")
+# PAT-ADR-0017: native states an existing issue may be abandoned from.
+_ABANDON_PREDECESSORS = frozenset(
+    {"backlog", "ready", "blocked", "in-progress", "review"}
+)
 _ADR_SCHEMA = "foundry-linear-adr.v1"
 _ADR_HEADER = "<!-- foundry-linear-adr.v1\n"
 _ADR_DOCUMENT_PREFIX = "[Foundry ADR] "
@@ -2721,6 +2725,8 @@ class LinearTracker(Tracker):
     cockpit_evidence_projection_supported = True
     bounded_epic_closure_supported = True
     epic_override_closure_supported = True
+    epic_dropped_closure_supported = True
+    guarded_abandon_supported = True
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })
@@ -3627,6 +3633,7 @@ class LinearTracker(Tracker):
         acceptance_complete: bool,
         done: dict | None,
         allow_current_disagreement: bool,
+        native_dropped_prevails: bool = False,
     ) -> None:
         state_ids = self._binding(self._project())["state_ids"]
         state_by_id = {identifier: name for name, identifier in state_ids.items()}
@@ -3714,6 +3721,11 @@ class LinearTracker(Tracker):
         latest_name = logical_names[-1]
         current_is_durable = native_state_id == ordered_ids[-1]
         if allow_current_disagreement:
+            return
+        # PAT-ADR-0017: on an ordinary read a native ``dropped`` prevails over a
+        # valid, non-terminal projection.  Every receipt above was validated and is
+        # kept; a done receipt keeps the conflict, and no writer sets this flag.
+        if native_dropped_prevails and current_name == "dropped" and done is None:
             return
         # PAT-28: Linear's GitHub integration can asynchronously apply its native
         # ``start`` automation after Foundry has already durably projected a PR
@@ -3805,6 +3817,7 @@ class LinearTracker(Tracker):
         pending_operation: str | None = None,
         allow_current_disagreement: bool = False,
         epic_closure: EpicClosureOutcome | None = None,
+        native_dropped_prevails: bool = False,
     ) -> dict:
         # Only the fully verified non-code Epic audit supplies this terminal
         # authority. Historical code receipts still undergo all normal checks.
@@ -4031,6 +4044,7 @@ class LinearTracker(Tracker):
             allow_current_disagreement=(
                 allow_current_disagreement or epic_closure is not None
             ),
+            native_dropped_prevails=native_dropped_prevails,
         )
         return {
             "state": "done" if epic_closure is not None else projected_state,
@@ -4069,6 +4083,11 @@ class LinearTracker(Tracker):
         observed_native_state_id = state.get("id") if isinstance(state, dict) else None
         if not isinstance(observed_native_state_id, str):
             raise TrackerConflictError("Linear lifecycle native state unavailable")
+        if observed_native_state_id == binding["state_ids"].get("dropped"):
+            # PAT-ADR-0017: no lifecycle receipt is appended to an abandoned issue.
+            raise TrackerConflictError(
+                "Linear issue natively dropped; lifecycle write refused"
+            )
         if operation == "state-in-progress" and projection["state"] == "review":
             # merge() replays this step before the current exact review/CI gates.
             # A start receipt written after any durable review generation would be
@@ -4490,7 +4509,14 @@ class LinearTracker(Tracker):
                 raw,
                 allow_current_disagreement=observe_lifecycle,
                 epic_closure=epic_closure,
+                native_dropped_prevails=True,
             )
+            if native_state == "dropped" and lifecycle["state"] in {
+                "in-progress", "review",
+            }:
+                # PAT-ADR-0017: the native abandon is the authority; the receipts
+                # stay (and still expose the PR), they are no longer a disagreement.
+                lifecycle = {**lifecycle, "state": "dropped"}
             projection_status = (
                 "native-only" if lifecycle["state"] is None
                 else "aligned" if lifecycle["state"] == native_state
@@ -5186,6 +5212,14 @@ class LinearTracker(Tracker):
             raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
         raw = self._read_raw(issue_id)
         self._assert_issue_project(raw, binding)
+        if isinstance(fields, dict) and fields.get("State") == "dropped":
+            # PAT-ADR-0017: same guarded path as ``set_state(dropped)``; the state
+            # observed by this first read is the expected predecessor.
+            if len(fields) != 1:
+                raise ValueError("Linear State=dropped must be written alone")
+            return self._abandon(
+                issue_id, self._native_state_name(raw, binding), project,
+            )
         values, expected = self._desired_update(raw, project, fields)
         if self._raw_matches(raw, expected):
             return self._to_issue(raw, project)
@@ -5237,6 +5271,71 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear issue divergent after bounded write")
         return readback
 
+    @staticmethod
+    def _native_state_name(raw: dict, binding: dict) -> str:
+        state = raw.get("state")
+        native_id = state.get("id") if isinstance(state, dict) else None
+        for name, identifier in binding["state_ids"].items():
+            if identifier == native_id:
+                return name
+        raise LinearBindingError("state_id_unmapped")
+
+    def _abandon(
+        self, issue_id: str, expected_state: str | None, project: Project,
+    ) -> Issue:
+        """PAT-ADR-0017: write only the native State to ``dropped`` under S1-S4.
+
+        Bounded detection, not CAS: one fresh read, one targeted write, one
+        readback, closed failure on any divergence and no retry.  An external
+        write landing between the read and the write is overwritten (the named
+        PAT-ADR-0006 S1→S2 residual risk).  No lifecycle receipt is written,
+        deleted or rewritten; a linked PR is left untouched.
+        """
+        binding = self._activate(project)
+        target_state_id = binding["state_ids"].get("dropped")
+        if target_state_id is None:
+            raise LinearBindingError("state_unmapped")
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, binding)
+        native = self._native_state_name(raw, binding)
+        if native == "done":
+            raise TrackerConflictError("Linear abandon refused: native state is done")
+        if any(
+            isinstance(row.get("body"), str)
+            and row["body"].startswith("Foundry Epic closure audit (append-only).")
+            for row in _connection(raw.get("comments"), "abandon.comments")
+        ):
+            raise TrackerConflictError(
+                "Linear abandon refused: Epic closure audit present"
+            )
+        # The whole receipt chain is validated; only its comparison with the
+        # current native State is skipped, since that State is what is replaced.
+        projection = self._lifecycle_projection(
+            issue_id, raw, allow_current_disagreement=True,
+        )
+        if projection["done"] is not None:
+            raise TrackerConflictError(
+                "Linear abandon refused: state-done receipt present"
+            )
+        if native == "dropped":
+            # Replay: the target is already reached, nothing is written.
+            return self._to_issue(raw, project)
+        if expected_state not in _ABANDON_PREDECESSORS:
+            raise TrackerConflictError(
+                "Linear abandon refused: expected predecessor state required "
+                "(backlog, ready, blocked, in-progress or review)"
+            )
+        if native != expected_state:
+            raise TrackerConflictError(
+                f"Linear abandon refused: native state is {native}, "
+                f"expected {expected_state}"
+            )
+        updated = self._bounded_issue_update(
+            issue_id, raw, binding, {"stateId": target_state_id},
+            {"state_id": target_state_id}, "issue.update.abandon",
+        )
+        return self._to_issue(updated, project)
+
     def _project_native_state(
         self, issue_id: str, state: str, project: Project, binding: dict,
     ) -> dict:
@@ -5262,9 +5361,16 @@ class LinearTracker(Tracker):
         state: str,
         context=None,
         project: Project | None = None,
-    ) -> None:
+    ) -> Issue | None:
         if project is None:
             raise LinearBindingError("mutation_project_required")
+        if state == "dropped":
+            expected_state = getattr(context, "expected_state", None)
+            if not expected_state:
+                raise TrackerConflictError(
+                    "Linear abandon refused: expected predecessor state required"
+                )
+            return self._abandon(issue_id, expected_state, project)
         if state not in {"in-progress", "review", "done"}:
             raise TrackerCapabilityUnavailableError(
                 self.name, "existing-issue-field-replacement"
@@ -5949,7 +6055,7 @@ class LinearTracker(Tracker):
             outcome = self._closure_from_raw(raw, project)
             if outcome is None:
                 return None
-            from foundry.write import bounded_epic_graph_snapshot
+            from foundry.write import bounded_epic_graph_snapshot, epic_receipt_dropped
             try:
                 parent = self._to_issue(
                     raw, project, observe_lifecycle=True, project_epic_closure=False,
@@ -5960,6 +6066,7 @@ class LinearTracker(Tracker):
                     accept_overrides=frozenset(
                         item.node_id for item in outcome.receipt.accepted_overrides
                     ),
+                    accept_dropped=frozenset(epic_receipt_dropped(outcome.receipt)),
                 )
             except (SystemExit, TrackerConflictError) as exc:
                 raise TrackerConflictError(
@@ -6019,7 +6126,10 @@ class LinearTracker(Tracker):
             return existing
         if observed is not None and observed.receipt != receipt:
             raise TrackerConflictError("audit pending Linear divergent")
-        from foundry.write import bounded_epic_graph_snapshot, epic_parent_validation_digest
+        from foundry.write import (
+            bounded_epic_graph_snapshot, epic_parent_validation_digest,
+            epic_receipt_dropped,
+        )
 
         try:
             children, dependencies = bounded_epic_graph_snapshot(
@@ -6027,6 +6137,7 @@ class LinearTracker(Tracker):
                 accept_overrides=frozenset(
                     item.node_id for item in receipt.accepted_overrides
                 ),
+                accept_dropped=frozenset(epic_receipt_dropped(receipt)),
             )
         except SystemExit as exc:
             raise TrackerConflictError(
@@ -6093,6 +6204,7 @@ class LinearTracker(Tracker):
                     accept_overrides=frozenset(
                         item.node_id for item in receipt.accepted_overrides
                     ),
+                    accept_dropped=frozenset(epic_receipt_dropped(receipt)),
                 )
             except (SystemExit, TrackerConflictError) as exc:
                 raise TrackerConflictError(
