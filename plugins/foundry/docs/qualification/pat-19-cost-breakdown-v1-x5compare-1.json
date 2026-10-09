@@ -2783,6 +2783,89 @@
         "cache_write_all_5m": 1.0083
       }
     },
+    "task_coverage": {
+      "arm_totals_cover_the_same_tasks": false,
+      "arms": {
+        "A": {
+          "on_common_tasks": {
+            "billing_tokens": 9178695,
+            "billing_tokens_by_role": {
+              "corrector": 3209177,
+              "implementer": 3457293,
+              "reviewer": 2512225
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 4.702104,
+                "all_5m": 2.938815
+              },
+              "cached_input_usd": 1.619211,
+              "input_usd": 0.001696,
+              "output_usd": 2.42836,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 8.751371,
+                "cache_write_all_5m": 6.988082
+              }
+            }
+          },
+          "tasks_with_a_record": 12,
+          "tasks_with_premium": 12,
+          "tasks_without_premium": []
+        },
+        "L": {
+          "on_common_tasks": {
+            "billing_tokens": 7874314,
+            "billing_tokens_by_role": {
+              "corrector": 2972315,
+              "implementer": 2200468,
+              "reviewer": 2701531
+            },
+            "weighted": {
+              "cache_write_usd": {
+                "all_1h": 4.84894,
+                "all_5m": 3.030588
+              },
+              "cached_input_usd": 1.355557,
+              "input_usd": 0.001628,
+              "output_usd": 2.6582,
+              "status": "priced",
+              "total_usd": {
+                "cache_write_all_1h": 8.864325,
+                "cache_write_all_5m": 7.045972
+              }
+            }
+          },
+          "tasks_with_a_record": 12,
+          "tasks_with_premium": 10,
+          "tasks_without_premium": [
+            33,
+            42
+          ]
+        }
+      },
+      "note": "arm totals compare only on the tasks where every arm spent premium; the ratio below is a ratio of totals on that common set, not per accepted task, not decisional, not comparable to a frozen threshold",
+      "outside_the_frozen_rule": true,
+      "ratio_L_over_A_of_totals_on_common_tasks": {
+        "unweighted": 0.8579,
+        "weighted": {
+          "cache_write_all_1h": 1.0129,
+          "cache_write_all_5m": 1.0083
+        }
+      },
+      "tasks_with_premium_in_every_arm": [
+        19,
+        24,
+        25,
+        26,
+        27,
+        30,
+        37,
+        38,
+        48,
+        83
+      ]
+    },
     "totals_equal_committed_report": {
       "A": {
         "billing_total_equal": true,
@@ -2794,6 +2877,89 @@
       },
       "all_equal": true
     }
+  },
+  "task_coverage": {
+    "arm_totals_cover_the_same_tasks": false,
+    "arms": {
+      "A": {
+        "on_common_tasks": {
+          "billing_tokens": 9178695,
+          "billing_tokens_by_role": {
+            "corrector": 3209177,
+            "implementer": 3457293,
+            "reviewer": 2512225
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 4.702104,
+              "all_5m": 2.938815
+            },
+            "cached_input_usd": 1.027171,
+            "input_usd": 0.001696,
+            "output_usd": 2.42836,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 8.159331,
+              "cache_write_all_5m": 6.396042
+            }
+          }
+        },
+        "tasks_with_a_record": 12,
+        "tasks_with_premium": 12,
+        "tasks_without_premium": []
+      },
+      "L": {
+        "on_common_tasks": {
+          "billing_tokens": 7874314,
+          "billing_tokens_by_role": {
+            "corrector": 2972315,
+            "implementer": 2200468,
+            "reviewer": 2701531
+          },
+          "weighted": {
+            "cache_write_usd": {
+              "all_1h": 4.84894,
+              "all_5m": 3.030588
+            },
+            "cached_input_usd": 0.909698,
+            "input_usd": 0.001628,
+            "output_usd": 2.6582,
+            "status": "priced",
+            "total_usd": {
+              "cache_write_all_1h": 8.418466,
+              "cache_write_all_5m": 6.600113
+            }
+          }
+        },
+        "tasks_with_a_record": 12,
+        "tasks_with_premium": 10,
+        "tasks_without_premium": [
+          33,
+          42
+        ]
+      }
+    },
+    "note": "arm totals compare only on the tasks where every arm spent premium; the ratio below is a ratio of totals on that common set, not per accepted task, not decisional, not comparable to a frozen threshold",
+    "outside_the_frozen_rule": true,
+    "ratio_L_over_A_of_totals_on_common_tasks": {
+      "unweighted": 0.8579,
+      "weighted": {
+        "cache_write_all_1h": 1.0318,
+        "cache_write_all_5m": 1.0319
+      }
+    },
+    "tasks_with_premium_in_every_arm": [
+      19,
+      24,
+      25,
+      26,
+      27,
+      30,
+      37,
+      38,
+      48,
+      83
+    ]
   },
   "totals_equal_committed_report": {
     "A": {

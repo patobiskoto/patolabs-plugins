@@ -26,6 +26,10 @@ coordinateur, hors dépôt. **[hypothèse]** : lecture non établie. **[inconnu]
   31,1 %, relecteur Opus 29,6 % ; bras L (7 874 314) : 27,9 %, 37,7 %, 34,3 %. Les lectures de cache font 88 % (A) et 86 % (L) des
   tokens ; la sortie 2 %. v4, bras A (4 134 697) : 50,0 %, 38,2 %, 11,8 % ; bras L (2 870 126) : 37,1 %, 45,8 %, 17,1 %.
   L'explorateur du bras L est local : zéro token premium, il n'apparaît dans aucune de ces parts.
+  **Ces totaux ne se comparent pas entre bras, dans aucune des deux campagnes** [fichiers][code] : le bras L n'a rien dépensé là où son
+  exploration locale est contaminée (v5 : PR 42 et PR 33, donc 10 tâches avec prime contre 12 pour A ; v4 : PR 48, donc 5 contre 6). Toutes les
+  parts de ce document sont des parts **à l'intérieur d'un bras** ; une lecture d'un bras contre l'autre n'est faite que sur les tâches où
+  les deux ont dépensé (v5 : l'ensemble apparié D ; v4 : 5 tâches communes), bloc `task_coverage` des fichiers d'agrégats.
 - **Le même travail pondéré par des prix de liste d'API** (poids, pas une facture) change l'image. Avec les écritures de cache à 1 h (la borne qui correspond aux transcriptions : 100 % des écritures de cache observées sont à 1 h) : l'écriture de cache pèse 56 à 59 % du poids total, la sortie 30 à 32 %, la lecture de cache 10 à 13 % (v4 et v5, deux bras). Avec les écritures à 5 min (contrefactuel) : 44 à 47 %, 39 à 40 % et 13 à 16 %. Le relecteur Opus, 30 à 34 % des tokens en v5, pèse **51 à 55 %** du poids en v5 (51,4 à 53,5 % à 1 h, 51,8 à 54,5 % à 5 min). Avec le prix de lecture de cache de Sonnet 5.5 que reproduit l'hôte (0,20 au lieu de 0,10, voir plus bas), cette part est de **48 % (A) et 51 % (L)** en v5, et la lecture de cache y pèse 15 à 23 %. [code]
 - **La lecture pondérée du rapport L sur A, par tâche acceptée, sur l'ensemble apparié D de la v5, hors règle** : **1,032** (écritures de
   cache à 5 min ou à 1 h : 1,0319 ou 1,0318), contre 0,8579 non pondéré ; avec le prix de lecture de cache de Sonnet 5.5 que reproduit l'hôte (0,20), **1,013** (1 h) et **1,008** (5 min). Autrement dit, pondéré, L n'est pas en dessous de A sur D ;
@@ -34,8 +38,8 @@ coordinateur, hors dépôt. **[hypothèse]** : lecture non établie. **[inconnu]
   seuil de 0,85) reste celui du rapport. Aucun gain de facture n'est annoncé, aucune perte non plus : le forfait est un abonnement.
 - **Exploration du dépôt dans les sessions cloud de l'implémenteur et du correcteur** [flux]. Part des appels d'outil qui sont des lectures ou
   recherches (définition précise plus bas) : v5, A : implémenteur 51,7 %, correcteur 53,0 % ; L : 63,3 % et 46,6 %. Sur D : A 53,0 %
-  et 52,1 % ; L 63,3 % et 46,6 %. Par session de l'implémenteur sur D : 7,1 appels de lecture ou recherche (A) contre 6,2 (L). **Les sessions de l'implémenteur du bras L, qui reçoit le rapport de l'explorateur local, en comptent donc encore 6,2 en moyenne sur D** ; les données ne disent pas pourquoi (voir « Ce qui reste inconnu » et « Limites »).
-- **Poids direct des appels API purement d'exploration, par rôle, sous hypothèse** (hypothèse : ces appels ne coûteraient rien ; le poids est celui de leurs seuls tokens propres) : v5, bras A, pondéré, écritures à 1 h : implémenteur 11,6 % du poids du bras, correcteur 12,8 %, relecteur 7,9 %, soit **32,3 %** pour les trois ; **20,1 %** si l'on retire le premier appel de chaque session (qui écrit dans le cache le prompt du système et de la tâche). Bras L : 33,6 % et 20,0 %. **Ce n'est pas un plafond du gain d'une réduction** : le chiffre est incomplet dans les deux sens (il ne compte pas ce que le résultat d'une lecture coûte ensuite en cache relu, il ne compte pas les lectures cachées dans `bash_other` ni les appels mixtes classés en action, ce qui le sous-estime ; il traite comme exploration une lecture qui précède une modification du même fichier, ce qui le surestime), et supprimer ces appels n'est pas une mesure disponible. Il dit seulement quelle part du poids est portée directement par ces appels, aujourd'hui, dans ces deux campagnes. Il ne vaut ni prévision ni gain de facture.
+  et 52,1 % ; L 63,3 % et 46,6 %. Par session de l'implémenteur sur D : 7,1 appels de lecture ou recherche (A) contre 6,2 (L). **Les 10 sessions de l'implémenteur du bras L sur D en comptent donc encore 6,2 en moyenne.** 9 de ces 10 sessions suivent une exploration locale notée, dont le rapport est transmis ; la dixième (PR 30) n'a **pas** de rapport : son exploration a été refusée (coupée à la borne de 900 s) et, selon la règle gelée de la v5, L joue alors sans rapport [fichiers]. En v4, 4 des 5 sessions de l'implémenteur de L (PR 30 : exploration refusée, coupée à la borne de 60 étapes). Les données ne disent pas pourquoi ces lectures restent (voir « Ce qui reste inconnu » et « Limites »).
+- **Poids direct des appels API purement d'exploration, par rôle, sous hypothèse** (hypothèse : ces appels ne coûteraient rien ; le poids est celui de leurs seuls tokens propres) : v5, bras A, pondéré, écritures à 1 h : implémenteur 11,6 % du poids du bras, correcteur 12,8 %, relecteur 7,9 %, soit **32,3 %** pour les trois ; **20,1 %** si l'on retire le premier appel de chaque session (qui écrit dans le cache le prompt du système et de la tâche). Bras L : 33,6 % et 20,0 % (parts internes à chaque bras, sur des tâches différentes : A 12 tâches, L 10). **Ce n'est pas un plafond du gain d'une réduction** : le chiffre est incomplet dans les deux sens (il ne compte pas ce que le résultat d'une lecture coûte ensuite en cache relu, il ne compte pas les lectures cachées dans `bash_other` ni les appels mixtes classés en action, ce qui le sous-estime ; il traite comme exploration une lecture qui précède une modification du même fichier, ce qui le surestime), et supprimer ces appels n'est pas une mesure disponible. Il dit seulement quelle part du poids est portée directement par ces appels, aujourd'hui, dans ces deux campagnes. Il ne vaut ni prévision ni gain de facture.
 - **Écriture de cache : la scission 5 min / 1 h est connue ici** [flux] : dans les 104 sessions cloud des deux campagnes, 100 % des tokens
   d'écriture de cache sont des écritures à 1 h, aucune à 5 min. Les enregistrements versés n'ont qu'une classe d'écriture ; les tableaux
   donnent donc les deux bornes, et la borne à 1 h est celle qui correspond aux transcriptions.
@@ -89,21 +93,24 @@ facture : le forfait est un abonnement, aucune économie ni aucun coût en dolla
 - `explore_read` : outil `Read` ; `explore_search` : outils `Grep` / `Glob` (non utilisés dans ces campagnes : les bras n'avaient que `Bash`,
   `Edit`, `Read`, `Write`) ;
 - `explore_bash` : appel `Bash` fait uniquement de commandes simples de lecture ou de recherche : `cat`, `head`, `tail`, `grep` (et
-  `egrep`/`fgrep`), `rg`, `ls`, `find` (sans `-exec`/`-delete`/`-ok`/`-fprint…`), `sed` (avec `-n`, jamais `-i`), au moins une, composées avec des filtres
+  `egrep`/`fgrep`), `rg`, `ls`, `find` (sans `-exec`/`-delete`/`-ok`/`-fprint…`), `sed` (avec `-n`, jamais `-i`, jamais `-f` / `--file` : un fichier de script ne se lit pas sur la ligne), `rg` (jamais `--pre`, qui lance un programme), au moins une, composées avec des filtres
   neutres (`cd`, `pwd`, `wc`, `sort`, `uniq`, `cut`, `tr`, `echo`, `printf`, `true`) par `&&`, `||`, `;`, `|` ou saut de ligne ; pas de
-  substitution de commande, de document ici, ni de redirection vers un fichier (`2>&1` et `> /dev/null` tolérées) ;
+  substitution de commande, de document ici, ni de redirection vers un fichier (`2>&1` et `> /dev/null` tolérées ; `/dev/null` doit être le nom entier de la cible) ;
+  tout signe de ponctuation du shell qui n'est pas l'un de ces séparateurs (par exemple `&>>`, `;>`, `;;`, des parenthèses) rend l'appel illisible, donc `bash_other` ; de même une option qui écrit un fichier ou lance un programme (`sort -o` / `--compress-program`, `uniq ENTRÉE SORTIE`, `sed … w fichier`) ;
 - `bash_other` : tout autre `Bash`, y compris ce qu'on ne sait pas lire avec certitude (guillemet ouvert, substitution…), `edit` : `Edit`/`Write`,
   `other` : le reste (un nom d'outil inconnu).
 
 Le décompte d'exploration est donc **une borne basse** des lectures de dépôt (un script Python qui lit des fichiers, ou `pytest`, est `bash_other`).
 Un appel `Read` d'un fichier qu'on va ensuite modifier compte comme exploration : la mesure ne sait pas séparer lire pour comprendre et lire pour
-modifier.
+modifier. Non couvert : la commande `e` de GNU sed (qui lance un programme) n'est pas détectée [code].
+
+**Couverture des tâches par bras** [fichiers][code]. Un bras ne dépense rien sur une tâche dont l'exploration locale est contaminée (aucune session cloud ne suit). Le bloc `task_coverage` des agrégats donne, par bras, le nombre de tâches avec un enregistrement, le nombre de tâches avec de la prime, les tâches sans prime, puis les totaux de chaque bras **restreints aux tâches où tous les bras ont dépensé**, et le rapport L / A de ces totaux. Ce rapport est une lecture hors règle, sans valeur de décision, qui n'est pas un rapport par tâche acceptée et ne se compare à aucun seuil gelé. Quand les bras ne couvrent pas les mêmes tâches, les décomptes d'exploration sont aussi donnés sur les tâches communes (`exploration_on_common_tasks` ; en v5 c'est l'ensemble apparié, déjà donné par `exploration_on_paired_set`).
 
 **Attribution de tokens** [flux]. L'unité est l'appel API (un identifiant de message de l'assistant ; les blocs et les évènements dupliqués sont
 fusionnés). Un appel est « purement d'exploration » si tous ses `tool_use` sont des lectures ou recherches (et au moins un) ; « d'action » s'il en a un
 autre ; sans outil (réponse finale) sinon. Les compteurs d'entrée, de lecture et d'écriture de cache de chaque appel viennent du flux de la campagne (leur somme
 par session égale le compteur final de la session : vérifié pour les 104 sessions) ; les tokens de sortie par appel ne sont pas fiables dans le flux
-(valeurs partielles) et viennent du journal de session de l'hôte. **Conformité à FOUNDRY-ADR-0015** : le lecteur du journal de l'hôte (`read_host_counters`) n'extrait que des compteurs de tokens et l'alias du modèle ; il ne lit ni identifiant de message, ni invite, ni nom ou entrée d'outil, ni chemin, ni commande, ni extrait ; l'identifiant de session ne sert qu'à choisir le fichier, et l'horodatage n'est pas lu. La jointure avec le flux de la campagne se fait sur ces seuls champs (alias du modèle et les trois compteurs d'entrée, de lecture et d'écriture de cache) et n'est acceptée que si elle est exacte et sans ambiguïté : clés uniques parmi les appels de la campagne, mêmes ensembles de clés des deux côtés, une seule valeur de sortie par clé, somme des sorties égale au compteur final. **Prouvé sur les 104 sessions réelles** (toutes jointes exactement : les chiffres d'attribution sont identiques à ceux d'une jointure par identifiant de message faite auparavant) et par des tests ; toute ambiguïté, tout écart, tout compteur absent, ou tout écart entre la somme des compteurs d'entrée par appel et le compteur final de la session rend l'attribution du rôle `unavailable`, jamais approchée. Les appels d'outil ne sont lus que dans les flux de la campagne. Aucune
+(valeurs partielles) et viennent du journal de session de l'hôte. **Conformité à FOUNDRY-ADR-0015** : le lecteur du journal de l'hôte (`read_host_counters`) n'extrait que des compteurs de tokens et l'alias du modèle ; il ne lit ni identifiant de message, ni invite, ni nom ou entrée d'outil, ni chemin, ni commande, ni extrait ; l'identifiant de session ne sert qu'à choisir le fichier, et l'horodatage n'est pas lu. La jointure avec le flux de la campagne se fait sur ces seuls champs (alias du modèle et les trois compteurs d'entrée, de lecture et d'écriture de cache) et n'est acceptée que si elle est exacte et sans ambiguïté : clés uniques parmi les appels de la campagne, mêmes ensembles de clés des deux côtés, une seule valeur de sortie par clé, somme des sorties égale au compteur final. **Prouvé sur les 104 sessions réelles** (toutes jointes exactement : les chiffres d'attribution sont identiques à ceux d'une jointure par identifiant de message faite auparavant) et par des tests ; toute ambiguïté, tout écart, tout compteur absent (d'un appel, ou du résultat final de la session : un contrôle qui ne peut pas être fait ne passe jamais pour un contrôle réussi, raison `final_counter_absent`), tout écart entre la somme des compteurs d'entrée par appel et le compteur final de la session, ou une session qui déclare de la sortie sans aucun appel API, rend l'attribution du rôle `unavailable` avec sa raison, jamais approchée. Aucune des 104 sessions n'est dans l'un de ces cas (`sessions_input_side_check_unavailable` = 0 partout). Les appels d'outil ne sont lus que dans les flux de la campagne. Aucune
 estimation n'est donc nécessaire : l'attribution de tokens est **possible à la granularité de l'appel API** pour ces 104 sessions. Ce qu'elle ne mesure pas : le coût que le
 résultat d'une lecture continue d'imposer dans les appels suivants, où il reste dans le contexte relu en cache [inconnu].
 
@@ -113,10 +120,13 @@ Les tableaux sont des lectures [code] des fichiers versés ; les agrégats compl
 [`pat-19-cost-breakdown-v1-x4compare-1.json`](pat-19-cost-breakdown-v1-x4compare-1.json) et
 [`pat-19-cost-breakdown-v1-x5compare-1.json`](pat-19-cost-breakdown-v1-x5compare-1.json). « Pondéré » : USD de liste en poids, écritures de cache
 à 5 min / à 1 h. Les parts pondérées sont des parts du poids du bras. Le rôle `explorer` est local : aucun token premium.
+**Les tableaux d'un bras ne se comparent pas à ceux de l'autre** : dans les deux campagnes, le bras L a de la prime sur moins de tâches que le
+bras A (voir sous chaque titre). Les lectures d'un bras contre l'autre sont dans la section « Lecture pondérée de L sur A, hors règle », sur les tâches communes seulement.
 
 ### v4 (`pat-19-x4compare-1`, 6 tâches, 2026-10-07)
 
-Bras A : 16 exécutions cloud, 1 tâche acceptée ; bras L : 14 exécutions, 0 acceptée (décision gelée : `inconclusive`). Les deux bras couvrent les 6 tâches.
+Bras A : 16 exécutions cloud, 1 tâche acceptée ; bras L : 14 exécutions, 0 acceptée (décision gelée : `inconclusive`). Les totaux des 6 tâches ne se comparent pas entre bras : L n'a rien dépensé sur PR 48 (exploration
+contaminée, aucune session cloud ensuite), où A dépense 860 065 tokens. A a de la prime sur 6 tâches, L sur 5.
 
 **Bras A** : 4 134 697 tokens de facturation.
 
@@ -270,11 +280,20 @@ Poids direct des appels purement d'exploration avec Sonnet 5.5 à 0,20 (v4 puis 
 
 Lecture : la part du relecteur Opus passe, en v5, de 51–52 % (A) et 54–55 % (L) à 48 % (A) et 51 % (L) ; en v4, de 30–31 % (A) et 38 % (L) à 27 % (A) et 35–36 % (L) ; le poids direct des trois rôles reste à 30 à 34 % en v5 (21 % hors premier appel). Les ordres de grandeur et le sens des constats ne changent pas ; les valeurs sont donc à lire avec cet intervalle.
 
-**Contrôle contre le coût de liste que l'hôte écrit dans les transcriptions** [flux] (`total_cost_usd`, `costBasis` « list ») : v5, bras A 11,21 USD, bras L 8,86 ; v4, A 3,58, L 3,10.
+**Contrôle contre le coût de liste que l'hôte écrit dans les transcriptions** [flux] (`total_cost_usd`, `costBasis` « list ») ; totaux par bras, donnés pour contrôler la grille et non pour comparer les bras (ils ne couvrent pas les mêmes tâches) : v5, bras A 11,21 USD, bras L 8,86 ; v4, A 3,58, L 3,10.
 Avec la grille de la page, écritures à 1 h : v5 A 10,50 et L 8,42 ; v4 A 3,26 et L 2,89. L'écart est exactement la lecture de cache de Sonnet × 0,10 USD par million ; avec 0,20 pour la lecture de cache de Sonnet 5.5 (et les prix de la page pour le reste), le coût de liste de l'hôte se reproduit à 10^-6 USD près **dans chacune des 104 sessions** (Opus compris, avec les prix de la page).
 
-**v4 (6 tâches)** : L n'a accepté aucune tâche, A une ; le rapport par tâche acceptée est `unavailable` (comme dans le rapport gelé). Pour mémoire seulement, sur les 6 tâches : pondéré, L / A vaut
-0,876 (écritures à 5 min) et 0,887 (à 1 h), contre 0,694 en tokens bruts ; ce n'est pas un rapport par tâche acceptée et il ne se compare pas au seuil 0,85.
+**v4** : L n'a accepté aucune tâche, A une ; le rapport par tâche acceptée est `unavailable` (comme dans le rapport gelé), et **aucun rapport des totaux des 6 tâches n'est donné** : il comparerait 6 tâches de A à 5 tâches de L (PR 48). **Pour mémoire seulement, hors règle, sans valeur de décision**, sur les **5 tâches où les deux bras ont dépensé** (PR 19, 24, 27, 30, 83 ; bloc `task_coverage`) [code] :
+
+| Lecture, 5 tâches communes de la v4 | A | L | Rapport L / A des totaux |
+| --- | --- | --- | --- |
+| Tokens, somme non pondérée | 3 274 632 | 2 870 126 | 0,8765 |
+| Pondéré, écritures à 5 min (USD de liste, poids) | 2,19 | 2,25 | 1,0270 |
+| Pondéré, écritures à 1 h (USD de liste, poids) | 2,77 | 2,89 | 1,0423 |
+
+Avec Sonnet 5.5 à 0,20 pour la lecture de cache : 1,0072 (5 min) et 1,0250 (1 h). Ce n'est pas un rapport par tâche acceptée (0 acceptée en L, 1 en A, et cette tâche, PR 27, est dans les 5). Il **ne se compare pas au seuil de 0,85** : la v4 n'avait pas de règle appariée de cette forme, et ce seuil porte sur une prime par tâche acceptée. Cinq tâches, un seul passage, 4 indécidées sur 6 dans chaque bras : ce rapport ne distingue pas L de A.
+
+**v5, contrôle de cohérence** [code] : les tâches où les deux bras ont dépensé sont exactement les 10 tâches de D ; le rapport des totaux y vaut 0,8579 non pondéré et 1,0319 / 1,0318 pondéré, égal au rapport par tâche acceptée ci-dessus parce que les deux bras acceptent 5 tâches.
 
 **Lecture, sans cause** : la pondération déplace le poids vers l'écriture de cache, la sortie et le relecteur Opus, et L ne dépense pas moins que A sur ces postes
 sur D. Cela ne dit pas que L est plus cher ni moins bon : 10 tâches, 5 acceptées par bras, des ensembles de tâches acceptées qui diffèrent sur 4 des 10,
@@ -307,7 +326,22 @@ explorations locales du bras L (6 en v4, 12 en v5) ne sont pas des sessions clou
 | L | corrector | 17 | 138 | 146 | 68 (Read 40, Bash 28) | 46,6 % | 4,0 | 50 sur 138 | 975 511 (32,8 %) | 0,78 / 1,12 (44,1 % / 47,9 %) | 0,31 / 0,38 (17,4 % / 16,5 %) |
 | L | reviewer | 8 | 86 | 99 | 32 (Read 0, Bash 32) | 32,3 % | 4,0 | 19 sur 86 | 570 756 (21,1 %) | 0,62 / 0,77 (17,2 % / 17,1 %) | 0,62 / 0,77 (17,2 % / 17,1 %) |
 
+### v4, 5 tâches communes
+
+Les 5 tâches où les deux bras ont dépensé (sans PR 48, où L n'a aucune session cloud) ; `exploration_on_common_tasks`. Les lignes de L sont celles du tableau v4 complet.
+
+| Bras | Rôle | Sessions | Appels d'outil | Lectures / recherches | Part des appels d'outil | Par session |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | implementer | 5 | 66 | 41 | 62,1 % | 8,2 |
+| A | corrector | 6 | 73 | 41 | 56,2 % | 6,8 |
+| A | reviewer | 2 | 20 | 5 | 25,0 % | 2,5 |
+| L | implementer | 5 | 52 | 34 | 65,4 % | 6,8 |
+| L | corrector | 7 | 73 | 38 | 52,1 % | 5,4 |
+| L | reviewer | 2 | 17 | 4 | 23,5 % | 2,0 |
+
 ### v5, ensemble apparié D
+
+Les 10 tâches où les deux bras ont dépensé ; `exploration_on_paired_set`. Les lignes de L sont celles du tableau v5 complet.
 
 | Bras | Rôle | Sessions | Appels d'outil | Lectures / recherches | Part des appels d'outil | Par session |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -320,19 +354,21 @@ explorations locales du bras L (6 en v4, 12 en v5) ne sont pas des sessions clou
 
 Lectures [flux], sans cause :
 
-- Dans les deux campagnes et les deux bras, **plus de la moitié des appels d'outil de l'implémenteur** sont des lectures ou recherches (51,7 % à 65,4 %) ; chez le correcteur, 46,6 % à 55,1 % ; chez le
+- Dans les deux campagnes et les deux bras, **plus de la moitié des appels d'outil de l'implémenteur** sont des lectures ou recherches (51,7 % à 65,4 % dans les tableaux complets) ; chez le correcteur, 46,6 % à 55,1 % ; chez le
   relecteur 23,5 % à 32,3 %. Aucun appel `Grep` ou `Glob` : les bras n'en disposaient pas.
-- **A contre L** : l'implémenteur de L fait une part plus grande de lectures (63,3 % contre 51,7 % en v5 ; 65,4 % contre 58,4 % en v4) mais moins d'appels par session
-  (v5 sur D : 6,2 contre 7,1 ; v4 : 6,8 contre 8,7). Le correcteur de L en fait moins en part et en nombre par session en v5 (46,6 % ; 4,0 contre 5,4 par session), et à peu près pareil en v4 (52,1 % ; 5,4 contre 6,1).
-  Sessions différentes en nombre et en tâches (sur les 12 tâches, L compte 10 sessions d'implémenteur contre 12 ; sur D, 10 contre 10), un seul passage : ces écarts sont des constats, **pas** une
-  mesure de l'effet du rapport de l'explorateur local.
+- **A contre L, sur les tâches communes seulement** (les tableaux complets comparent 12 tâches de A à 10 de L en v5, 6 à 5 en v4) : l'implémenteur de L fait une part plus grande de lectures (v5 sur D : 63,3 % contre 53,0 % ; v4 sur les 5 tâches communes : 65,4 % contre 62,1 %) mais moins d'appels par session
+  (v5 sur D : 6,2 contre 7,1 ; v4 : 6,8 contre 8,2). Le correcteur de L en fait moins en part et en nombre par session (v5 sur D : 46,6 % contre 52,1 %, 4,0 contre 5,4 par session ; v4 : 52,1 % contre 56,2 %, 5,4 contre 6,8).
+  Même nombre de sessions d'implémenteur sur les tâches communes (10 et 10 sur D ; 5 et 5 en v4), pas le même nombre de sessions de correcteur (17 contre 16 ; 7 contre 6), un seul passage : ces écarts sont des constats, **pas** une
+  mesure de l'effet du rapport de l'explorateur local (que 9 des 10 implémenteurs de L ont reçu sur D, et 4 des 5 en v4).
 - Les appels API purement d'exploration sont 51 à 59 % des appels de l'implémenteur et 36 à 46 % de ceux du correcteur ; leurs tokens sont 33 à 51 % des tokens du rôle. [hypothèse, non testée] Une part importante de ces tokens est de la lecture de cache du contexte déjà accumulé à chaque appel ; la mesure ne le décompose pas par appel.
 
 ## Poids direct des appels purement d'exploration, par rôle, sous hypothèse
 
+Toutes les parts de cette section sont **internes à un bras** ; les bras ne couvrent pas les mêmes tâches (v4 : A 6, L 5 ; v5 : A 12, L 10), l'écart entre une ligne A et une ligne L n'est donc pas un effet du bras.
+
 **Définition** [code]. Pour un bras et un rôle : le poids (pondéré) des tokens propres des appels API purement d'exploration, en part du poids du bras. C'est la part que l'on retirerait si, et seulement si, ces appels ne coûtaient rien et que rien d'autre ne changeait. **Ce n'est pas une borne supérieure** de ce qu'une réduction pourrait apporter (voir ci-dessous).
 
-**La seule borne supérieure démontrée, par rôle, est la part du rôle dans le poids du bras** (colonne « Part du rôle dans le poids du bras (5 min / 1 h) » des tableaux ci-dessous) : retirer entièrement le coût d'un rôle ne peut pas rapporter plus que cette part. En v5, à 5 min / 1 h : bras A, implémenteur 24,9 % / 24,8 %, correcteur 23,2 % / 23,8 %, relecteur 51,8 % / 51,4 % ; bras L, 18,6 % / 18,9 %, 26,9 % / 27,6 %, 54,5 % / 53,5 %. Aucune autre borne n'est établie ici. La colonne « hors premier appel » retire le premier appel de chaque session, qui écrit dans le cache le prompt de la tâche. La dernière colonne donne le même poids direct en part des tokens du bras.
+**La seule borne donnée ici, par rôle, est comptable : la part du rôle dans le poids du bras** (colonne « Part du rôle dans le poids du bras (5 min / 1 h) » des tableaux ci-dessous). Retirer entièrement le coût d'un rôle ne peut pas rapporter plus que cette part **toutes choses égales par ailleurs**, c'est-à-dire si les autres rôles font exactement le même travail. Elle **ne borne pas les effets croisés entre rôles** : un implémenteur différent change le nombre de manches du correcteur et du relecteur, dans un sens ou dans l'autre, et le gain ou la perte réels peuvent donc dépasser cette part [inconnu]. En v5, à 5 min / 1 h : bras A, implémenteur 24,9 % / 24,8 %, correcteur 23,2 % / 23,8 %, relecteur 51,8 % / 51,4 % ; bras L, 18,6 % / 18,9 %, 26,9 % / 27,6 %, 54,5 % / 53,5 %. Aucune autre borne n'est établie ici. La colonne « hors premier appel » retire le premier appel de chaque session, qui écrit dans le cache le prompt de la tâche. La dernière colonne donne le même poids direct en part des tokens du bras.
 
 ### v4
 
@@ -391,17 +427,18 @@ reproduit avec la sortie seule). Et le coût de liste de l'hôte (voir plus haut
 
 ## Limites
 
-- **12 tâches non indépendantes**, déjà jouées dans les campagnes antérieures ; v4 en compte 6 ; **un seul passage** par couple tâche / bras ; **aucune généralité** à tirer : ce sont deux campagnes, pas une preuve générale.
+- **12 tâches non indépendantes**, déjà jouées dans les campagnes antérieures ; v4 en compte 6 ; les bras n'ont pas de prime sur les mêmes tâches (L : 10 sur 12 en v5, 5 sur 6 en v4), donc aucun total de bras ne se compare à l'autre hors des tâches communes ; **un seul passage** par couple tâche / bras ; **aucune généralité** à tirer : ce sont deux campagnes, pas une preuve générale.
 - **Prix de liste d'API utilisés comme poids sous un abonnement** : jamais une facture, jamais une économie. La pondération dépend de la grille (voir la sensibilité).
 - **Scission de l'écriture de cache** : connue par les transcriptions (100 % à 1 h) mais absente des enregistrements versés ; les tableaux donnent les deux bornes, et la lecture « 5 min » est un contrefactuel.
-- **Heuristiques de classification** : exploration comptée par lecture de la ligne de commande (bornes basses), sans interpréter ce que la commande fait réellement ; les appels `bash_other` incluent des lectures déguisées (script, redirection).
+- **Heuristiques de classification** : exploration comptée par lecture de la ligne de commande (bornes basses), sans interpréter ce que la commande fait réellement ; les appels `bash_other` incluent des lectures déguisées (script, redirection). La liste des options qui écrivent ou exécutent est finie (la commande `e` de GNU sed n'y est pas).
+- **Borne par rôle** : comptable, toutes choses égales par ailleurs ; elle ignore les effets d'un rôle sur les manches des autres.
 - **Pas de cause** : aucun de ces constats n'établit pourquoi un bras lit plus ou moins qu'un autre, ni qu'une réduction de lecture améliorerait ou dégraderait la qualité.
 - **Relecteur et Opus** : la répartition par rôle recoupe le modèle (le relecteur est le seul Opus) ; elle ne les sépare pas.
 
 ## Pièces versionnées
 
 - `plugins/foundry/tooling/foundry/cost_breakdown.py`, `plugins/foundry/tooling/foundry/pricing-breakdown-v1.json`, `plugins/foundry/tests/test_cost_breakdown.py`.
-- `pat-19-cost-breakdown-v1-x4compare-1.json` et `pat-19-cost-breakdown-v1-x5compare-1.json` : agrégats seulement (comptes, tokens, USD de liste, base de validité de la grille, bloc `sensitivity`), sans chemin, commande, extrait, identifiant de session ni transcription.
+- `pat-19-cost-breakdown-v1-x4compare-1.json` et `pat-19-cost-breakdown-v1-x5compare-1.json` : agrégats seulement (comptes, tokens, USD de liste, base de validité de la grille, blocs `task_coverage` et `sensitivity`, et pour la v4 `exploration_on_common_tasks`), sans chemin, commande, extrait, identifiant de session ni transcription.
   Reproduction : `python3 -m foundry.cost_breakdown --results <results> --report <report> --streams-dir <flux> --session-logs-dir <journaux> --override-rate claude-sonnet-5-5:cache_read=0.20 --out <fichier>` (les deux dernières entrées sont hors dépôt ; sans elles, seules les sections issues des fichiers versés sont produites).
 - Contrôle avant versement : aucune occurrence du préfixe d'un dossier personnel, d'un nom d'utilisateur, d'un chemin de travail temporaire ou d'un secret dans les deux fichiers JSON ni dans ce document.
 
@@ -413,6 +450,7 @@ Artefacts ajoutés ou modifiés, chacun avec son statut :
 - **Nouveau module avec point d'entrée `python3 -m foundry.cost_breakdown`** (options `--results`, `--ledger`, `--report`, `--grid`, `--streams-dir`, `--session-logs-dir`, `--override-rate`, `--out`) : documenté ici (section « Méthode ») et dans une section ajoutée à
   [`pat-19-launcher-v1.md`](pat-19-launcher-v1.md). Aucun verbe ni option de `foundry_cli.py` ni du lanceur `local_first_runner` n'a changé.
 - **Nouvelle grille de prix `pricing-breakdown-v1.json`** (source, `captured_at` (nom du champ de FOUNDRY-ADR-0015 ; la date seule est connue, pas l'heure), validité, base de la validité, schéma) : documentée ici (« Méthode »). `pricing-v1.json` et `cost_attribution.py` : inchangés, aucun consommateur touché.
+- **Clés de sortie** documentées ici (« Méthode ») : `task_coverage` (tâches avec et sans prime par bras, totaux et rapport L / A sur les tâches communes, hors règle), `exploration_on_common_tasks` ; une pondération `unavailable` sépare ses causes : `models_without_price` (seulement des modèles résolus sans prix utilisable), `unresolved_model_cells` (nombre de cellules dont le modèle n'est pas résolu, et leurs modèles candidats), `cells_without_session_day` ; raisons d'une attribution `unavailable` : `usage_absent`, `output_absent`, `output_join`, `input_side_mismatch`, `final_counter_absent`, `output_without_api_call`.
 - **Nouveaux documents** : ce document et les deux fichiers d'agrégats. **CHANGELOG** : une entrée.
 - Constantes publiques / vocabulaires : les classes d'outils (`explore_read`, `explore_search`, `explore_bash`, `bash_other`, `edit`, `other`) et les ensembles de commandes de lecture sont définis ici ; aucune table de routage, clé de configuration ni protocole gelé n'a changé.
 - Protocoles v1 à v5, configurations, résultats, rapports et pièces de preuve : inchangés ; aucun verdict recalculé ni requalifié.

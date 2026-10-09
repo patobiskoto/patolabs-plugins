@@ -30,6 +30,12 @@ def _record(arm, pr, roles, models, accepted=None, sessions=("s1",), segment="cl
             "premium": {"billing_total": 1, "by_role": roles, "by_model": models}}
 
 
+def _unpriced(models=(), unresolved=0, candidates=(), no_day=0):
+    return {"status": "unavailable", "models_without_price": list(models),
+            "unresolved_model_cells": {"count": unresolved, "candidate_models": list(candidates)},
+            "cells_without_session_day": no_day}
+
+
 SESSIONS = {"s1": {"role": "implementer", "day": "2026-10-07"}, "s2": {"role": "reviewer", "day": "2026-10-07"}}
 
 
@@ -144,7 +150,7 @@ def test_weights_are_exact_and_carry_both_cache_write_bounds():
 def test_a_model_without_a_price_stays_unavailable():
     records = [_record("A", 1, {"implementer": _tok(c=10)}, {"claude-mystery-9": _tok(c=10)})]
     arm = cb.breakdown(records, SESSIONS, cb.load_grid())["arms"]["A"]
-    assert arm["weighted"] == {"status": "unavailable", "models_without_price": ["claude-mystery-9"]}
+    assert arm["weighted"] == _unpriced(["claude-mystery-9"])
     assert arm["tokens"]["billing_total"] == 10  # the unweighted reading is unaffected
 
 
@@ -378,6 +384,31 @@ def test_absent_control_fields_stay_unknown(tmp_path):
     assert out["host_list_cost_usd"] is None
     assert out["cache_write_split_tokens"] == {"ephemeral_5m": None, "ephemeral_1h": None}
     assert out["sessions_input_side_check_unavailable"] == 1 and out["sessions_input_side_equal_to_final_result"] == 0
+    # an absent control counter never lets the attribution through as if it had been checked
+    assert out["explore_only_calls"] == {"status": "unavailable", "reasons": {"final_counter_absent": 1}}
+    assert out["sessions_with_exact_per_call_output"] == 0
+    assert out["tool_calls"]["exploration"] == 1  # the counts need no counter
+
+
+def test_a_session_with_output_but_no_api_call_is_unavailable_not_an_error(tmp_path):
+    streams = tmp_path / "streams"
+    _write(streams / "camp-s1.jsonl", [{"type": "result", "usage": _usage(0, 0, 0, 7)}])
+    records = [_record("A", 1, {"implementer": _tok(o=7)}, {"claude-sonnet-5-5": _tok(o=7)})]
+    out = cb.exploration(records, SESSIONS, streams, cb.load_grid(), "camp")["A"]["implementer"]
+    assert out["explore_only_calls"] == {"status": "unavailable", "reasons": {"output_without_api_call": 1}}
+    assert out["api_calls"] == 0
+
+
+def test_cli_does_not_crash_on_a_session_without_api_call(tmp_path):
+    results = tmp_path / "results-camp.jsonl"
+    record = dict(_record("A", 1, {"implementer": _tok(o=7)}, {"claude-sonnet-5-5": _tok(o=7)}), campaign_id="camp")
+    results.write_text(json.dumps(record) + "\n")
+    (tmp_path / "ledger-camp.jsonl").write_text(json.dumps(
+        {"kind": "cloud_started", "dry_run": False, "at": 1791392445.0, "session_id": "s1", "role": "implementer"}) + "\n")
+    _write(tmp_path / "streams" / "camp-s1.jsonl", [{"type": "result", "usage": _usage(0, 0, 0, 7)}])
+    out = tmp_path / "o.json"
+    assert cb.main(["--results", str(results), "--streams-dir", str(tmp_path / "streams"), "--out", str(out)]) == 0
+    assert json.loads(out.read_text())["exploration"]["A"]["implementer"]["explore_only_calls"]["status"] == "unavailable"
 
 
 def test_an_absent_per_call_counter_makes_the_role_unavailable(tmp_path):
@@ -450,7 +481,7 @@ def test_unpriced_models_alone_are_listed():
     records = [_record("A", 1, {"implementer": _tok(c=10), "reviewer": _tok(c=20)},
                        {"claude-sonnet-5-5": _tok(c=10), "claude-mystery-9": _tok(c=20)}, sessions=("s1", "s2"))]
     weighted = cb.breakdown(records, SESSIONS, cb.load_grid())["arms"]["A"]["weighted"]
-    assert weighted == {"status": "unavailable", "models_without_price": ["claude-mystery-9"]}
+    assert weighted == _unpriced(["claude-mystery-9"])
 
 
 def test_grid_uses_the_adr_field_name_captured_at():
@@ -461,7 +492,23 @@ def test_a_none_model_mixed_with_strings_does_not_raise():
     cells = [{"model": None, "day": "2026-10-07", "tokens": _tok(c=1), "models": [None, "claude-sonnet-5-5"]},
              {"model": "claude-mystery-9", "day": "2026-10-07", "tokens": _tok(c=1), "models": ["claude-mystery-9"]}]
     got = cb._weighted_group(cells, cb.load_grid())
-    assert got["models_without_price"] == ["None", "claude-mystery-9", "claude-sonnet-5-5"]
+    # the unresolved cell is reported under its own key: a priced candidate is never listed as unpriced, no "None"
+    assert got == _unpriced(["claude-mystery-9"], unresolved=1, candidates=["claude-sonnet-5-5"])
+
+
+def test_an_unresolved_cell_is_not_reported_as_a_model_without_price():
+    same = _tok(0, 5, 0, 1)
+    records = [_record("A", 1, {"implementer": same, "corrector": same},
+                       {"claude-sonnet-5-5": same, "claude-opus-5-5": same})]
+    arm = cb.breakdown(records, SESSIONS, cb.load_grid())["arms"]["A"]
+    expected = _unpriced(unresolved=2, candidates=["claude-opus-5-5", "claude-sonnet-5-5"])
+    assert arm["weighted"] == expected
+    assert arm["by_model"]["claude-sonnet-5-5"]["weighted"] == expected
+
+
+def test_a_cell_without_a_session_day_is_not_reported_as_a_model_without_price():
+    records = [_record("A", 1, {"implementer": _tok(c=10)}, {"claude-sonnet-5-5": _tok(c=10)}, sessions=())]
+    assert cb.breakdown(records, SESSIONS, cb.load_grid())["arms"]["A"]["weighted"] == _unpriced(no_day=1)
 
 
 @pytest.mark.parametrize("command", [
@@ -469,6 +516,15 @@ def test_a_none_model_mixed_with_strings_does_not_raise():
     "cat a | tee out.txt", "cp a b", "mv a b", "touch a", "mkdir d", "rm a", "git commit -am x", "git checkout a",
     "sed -n '1,5w out.txt' a.py", "sed -n 's/a/b/w out.txt' a.py", "sed -i -n p a", "cat a >| out", "ls &> out",
     "find . -fprint out.txt", "cat a > /tmp/x", "echo hi >> a.txt", "cat a | python3 -c 'pass'",
+    # round 4: composite punctuation is unreadable, the null device must be exactly the null device
+    "ls &>> out", "ls;>out", "ls ;> out", "ls >>> out", "ls ;; cat a", "ls &&& cat a", "ls ||| cat a", "ls;&cat a",
+    "cat a > /dev/nullx", "cat a >/dev/null/x", "cat a 2>> /dev/null.log", "cat a &>/dev/null2", "(ls)", "cat a <b",
+    "cat ''",
+    # round 4: options of read commands that run a script or a program
+    "sed -n -f script.sed a.py", "sed -nf script.sed a.py", "sed -n --file=script.sed a.py", "sed -n --file script.sed a",
+    "sed -n -e's/a/b/w out.txt' a.py", "sed -n --expression='1,5w out.txt' a.py", "sed -n -e'1,5w out.txt' a.py",
+    "rg --pre cat foo", "rg --pre=./run.sh foo .", "rg foo --pre-glob '*.pdf' --pre ./run.sh", "cat a | rg --pre x y",
+    "cat a | sort --compress-program=./run.sh",
 ])
 def test_writers_are_never_exploration(command):
     assert cb.classify_tool_use("Bash", {"command": command}) == "bash_other"
@@ -476,6 +532,10 @@ def test_writers_are_never_exploration(command):
 
 @pytest.mark.parametrize("command", [
     "cat a.txt | sort | uniq -c", "cat a.txt | uniq", "sed -n 's/a/word/p' a.py", "sed -n '1,5p' a.py", "cat a | sort -u | wc -l",
+    # round 4: the neutral forms stay readable
+    "ls &&\ncat a", "ls\n\ncat a", "ls;\ncat a", "ls |\n wc -l", "cat a > /dev/null", "cat a 2>/dev/null; ls",
+    "cat a >/dev/null 2>&1", "ls &>/dev/null && cat a", "cat a 2>/dev/null|wc -l",
+    "rg -n --pretty foo .", "sed -n -e '1,5p' a.py", "sed -n -e'1,5p' a.py",
 ])
 def test_readers_that_look_like_writers_stay_exploration(command):
     assert cb.classify_tool_use("Bash", {"command": command}) == "explore_bash"
@@ -491,3 +551,59 @@ def test_accepted_count_disagreement_exits_one_and_still_writes_the_file(tmp_pat
     assert cb.main(["--results", str(RUNS / name / f"results-pat-19-{name}.jsonl"), "--report", str(path),
                     "--out", str(out)]) == 1
     assert json.loads(out.read_text())["paired_reading"]["accepted_counts_equal_records"] is False
+
+
+# --- review round 4: arm totals only compare on the tasks where both arms spent premium --------------------
+
+def test_task_coverage_names_the_tasks_one_arm_spent_nothing_on_and_compares_on_the_common_set():
+    def sonnet(n):
+        return {"implementer": _tok(c=n)}, {"claude-sonnet-5-5": _tok(c=n)}
+
+    records = [_record("A", 1, *sonnet(1_000_000)), _record("A", 2, *sonnet(3_000_000)),
+               _record("L", 1, *sonnet(500_000)),
+               _record("L", 2, {}, {}, sessions=(), segment="explore")]  # contaminated: no cloud session followed
+    grid = cb.load_grid()
+    cover = cb.task_coverage(cb.breakdown(records, SESSIONS, grid), grid)
+    assert cover["outside_the_frozen_rule"] is True and cover["arm_totals_cover_the_same_tasks"] is False
+    assert cover["tasks_with_premium_in_every_arm"] == [1]
+    assert cover["arms"]["L"]["tasks_with_a_record"] == 2 and cover["arms"]["L"]["tasks_with_premium"] == 1
+    assert cover["arms"]["L"]["tasks_without_premium"] == [2] and cover["arms"]["A"]["tasks_without_premium"] == []
+    assert cover["arms"]["A"]["on_common_tasks"]["billing_tokens"] == 1_000_000  # not the 4 000 000 of the arm
+    ratio = cover["ratio_L_over_A_of_totals_on_common_tasks"]
+    assert ratio == {"unweighted": 0.5, "weighted": {"cache_write_all_5m": 0.5, "cache_write_all_1h": 0.5}}  # not 0.125
+
+
+def test_task_coverage_on_the_committed_campaigns():
+    """v4: L spent nothing on PR 48 (contaminated exploration); v5: nothing on PR 33 and 42. Neither total compares."""
+    expected = {"x4compare-1": ([48], 5, 3274632, 2870126), "x5compare-1": ([33, 42], 10, 9178695, 7874314)}
+    for name, (missing, common, a_tokens, l_tokens) in expected.items():
+        doc = cb.analyse(RUNS / name / f"results-pat-19-{name}.jsonl", report=RUNS / name / f"report-pat-19-{name}.json")
+        cover = doc["task_coverage"]
+        assert cover["arm_totals_cover_the_same_tasks"] is False
+        assert cover["arms"]["L"]["tasks_without_premium"] == missing and cover["arms"]["A"]["tasks_without_premium"] == []
+        assert len(cover["tasks_with_premium_in_every_arm"]) == common
+        assert cover["arms"]["A"]["on_common_tasks"]["billing_tokens"] == a_tokens
+        assert cover["arms"]["L"]["on_common_tasks"]["billing_tokens"] == l_tokens
+        assert cover["arms"]["L"]["on_common_tasks"]["billing_tokens"] == doc["arms"]["L"]["tokens"]["billing_total"]
+        assert cover["arms"]["A"]["on_common_tasks"]["billing_tokens"] < doc["arms"]["A"]["tokens"]["billing_total"]
+    # v5: the common set is the paired set of the committed report
+    assert cover["tasks_with_premium_in_every_arm"] == doc["paired_reading"]["paired_tasks"]
+
+
+def test_exploration_is_also_given_on_the_common_tasks_when_the_arms_differ(tmp_path):
+    streams, _ = _session_fixture(tmp_path, False)
+    for copy in ("s2", "s3"):
+        (streams / f"camp-{copy}.jsonl").write_text((streams / "camp-s1.jsonl").read_text())
+    tokens = ({"implementer": _tok(6, 300, 30, 400)}, {"claude-sonnet-5-5": _tok(6, 300, 30, 400)})
+    records = [dict(_record("A", 1, *tokens), campaign_id="camp"),
+               dict(_record("A", 2, *tokens, sessions=("s2",)), campaign_id="camp"),
+               dict(_record("L", 2, *tokens, sessions=("s3",)), campaign_id="camp")]
+    results = tmp_path / "results-camp.jsonl"
+    results.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    (tmp_path / "ledger-camp.jsonl").write_text("\n".join(json.dumps(
+        {"kind": "cloud_started", "dry_run": False, "at": 1791392445.0, "session_id": s, "role": "implementer"})
+        for s in ("s1", "s2", "s3")) + "\n")
+    doc = cb.analyse(results, streams_dir=streams)
+    assert doc["exploration"]["A"]["implementer"]["sessions"] == 2
+    assert doc["exploration_on_common_tasks"]["A"]["implementer"]["sessions"] == 1
+    assert doc["exploration_on_common_tasks"]["L"]["implementer"]["sessions"] == 1

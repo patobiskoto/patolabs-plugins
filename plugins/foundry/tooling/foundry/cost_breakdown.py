@@ -3,7 +3,10 @@
 Reads the committed ``results-*.jsonl`` / ``ledger-*.jsonl`` (and optionally ``report-*.json``) of a
 ``compare_exploration`` campaign and gives, per arm, the premium tokens by role, by token class and by
 model, unweighted (the sum the frozen rule uses) and weighted by a dated price grid
-(``pricing-breakdown-v1.json``). Optionally reads the raw cloud transcripts kept OFF the repository to count
+(``pricing-breakdown-v1.json``). The arms of a campaign need not have spent premium on the same tasks (an arm whose
+local exploration is contaminated spends nothing on that task): ``task_coverage`` says, per arm, how many tasks carry
+premium and which do not, and gives the arm totals restricted to the tasks where EVERY arm spent premium. An
+arm-to-arm reading of totals is only made on that common set, outside the frozen rule. Optionally reads the raw cloud transcripts kept OFF the repository to count
 the repository-exploration tool calls of each role. It runs no model, no ``claude``, no ``lms``, no campaign
 mode, recomputes no frozen verdict, and prints aggregates only (never a path, a command or an excerpt).
 
@@ -134,12 +137,26 @@ def _usd(value: Decimal) -> float:
     return float(round(value, 6))
 
 
-def _finish(parts: Sequence[Mapping[str, Decimal] | None], models_by_part: Sequence[Iterable[object]]) -> Any:
-    """Sum weighted cells; ``unavailable`` as soon as one cell has no price, naming ONLY the models of the
-    unpriced cells (a cell whose model is itself unresolved names every candidate model)."""
-    missing = sorted({str(m) for part, models in zip(parts, models_by_part) if part is None for m in models})
+def _unavailable(models: Iterable[str] = (), unresolved: Sequence[Mapping[str, Any]] = (), no_day: int = 0) -> Any:
+    """Why a weight is unavailable, each cause under its own key: ``models_without_price`` holds ONLY resolved
+    models that have no usable price on the session day; a cell whose model could not be resolved is counted under
+    ``unresolved_model_cells`` with its candidate models (one of which may well be priced); a cell without a session
+    day under ``cells_without_session_day``."""
+    return {"status": UNAVAILABLE, "models_without_price": sorted(set(models)),
+            "unresolved_model_cells": {
+                "count": len(unresolved),
+                "candidate_models": sorted({m for c in unresolved for m in c["models"] if isinstance(m, str)})},
+            "cells_without_session_day": no_day}
+
+
+def _finish(parts: Sequence[Mapping[str, Decimal] | None], cells: Sequence[Mapping[str, Any]]) -> Any:
+    """Sum weighted cells; ``unavailable`` as soon as one cell has no weight (see ``_unavailable``)."""
+    missing = [c for part, c in zip(parts, cells) if part is None]
     if missing:
-        return {"status": UNAVAILABLE, "models_without_price": missing}
+        resolved = [c for c in missing if c["model"] is not None]
+        return _unavailable((c["model"] for c in resolved if c["day"] is not None),
+                            [c for c in missing if c["model"] is None],
+                            sum(1 for c in resolved if c["day"] is None))
     total = {k: sum((p[k] for p in parts), Decimal(0)) for k in _PARTS}  # type: ignore[index]
     low = total["input"] + total["cached_input"] + total["cache_write_5m"] + total["output"]
     high = total["input"] + total["cached_input"] + total["cache_write_1h"] + total["output"]
@@ -243,8 +260,7 @@ def _share(part: int | Decimal, whole: int | Decimal) -> float | None:
 
 
 def _weighted_group(cells: Sequence[Mapping[str, Any]], grid: Mapping[str, Any]) -> Any:
-    return _finish([_cell_weight(c, grid) for c in cells],
-                   [c["models"] if c["model"] is None else [c["model"]] for c in cells])
+    return _finish([_cell_weight(c, grid) for c in cells], cells)
 
 
 def _tokens_view(vec: Mapping[str, int]) -> dict[str, int]:
@@ -295,7 +311,7 @@ def breakdown(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Mappi
             group = [c for c in mine if c["model"] == model]
             unresolved = [c for c in mine if c["model"] is None and model in c["models"]]
             models[model] = {"tokens": _tokens_view(vec),
-                             "weighted": ({"status": UNAVAILABLE, "models_without_price": [model]} if unresolved
+                             "weighted": (_unavailable(unresolved=unresolved) if unresolved
                                           else _weighted_group(group, grid))}
         total = _tokens_view(grand)
         for role in ROLES:
@@ -310,7 +326,51 @@ def breakdown(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Mappi
                                                      Decimal(str(weighted_all["total_usd"]["cache_write_all_1h"])))}
         arms[arm] = {"records": len(own), "tokens": total, "by_role": roles, "by_class": by_class,
                      "by_model": models, "weighted": weighted_all}
-    return {"arms": arms, "cells": cells}
+    return {"arms": arms, "cells": cells,
+            "tasks": {arm: sorted({r["task"]["pr"] for r in attempts if r["path"] == arm}) for arm in arms}}
+
+
+def _ratio(numerator: int | Decimal, denominator: int | Decimal) -> float | None:
+    return None if not denominator else float(round(Decimal(numerator) / Decimal(denominator), 4))
+
+
+def task_coverage(result: Mapping[str, Any], grid: Mapping[str, Any]) -> dict[str, Any]:
+    """On which tasks each arm spent premium, and the arm totals restricted to the tasks where EVERY arm did.
+
+    The totals of two arms compare only on the same tasks: an arm that spent nothing on a task (its local exploration
+    was contaminated, so no cloud session followed) would otherwise look cheaper by the whole task. The L over A
+    ratio given here is a ratio of totals on that common set: A READING OUTSIDE THE FROZEN RULE, not per accepted
+    task, decides nothing, and is not comparable to the threshold of a frozen rule."""
+    spent = {arm: {c["pr"] for c in result["cells"] if c["arm"] == arm} for arm in result["tasks"]}
+    common = set.intersection(*spent.values()) if spent else set()
+    arms: dict[str, Any] = {}
+    for arm, tasks in result["tasks"].items():
+        mine = [c for c in result["cells"] if c["arm"] == arm and c["pr"] in common]
+        arms[arm] = {
+            "tasks_with_a_record": len(tasks), "tasks_with_premium": len(spent[arm]),
+            "tasks_without_premium": sorted(set(tasks) - spent[arm]),
+            "on_common_tasks": {
+                "billing_tokens": sum(sum(c["tokens"][k] for k in CLASSES) for c in mine),
+                "billing_tokens_by_role": {
+                    role: sum(sum(c["tokens"][k] for k in CLASSES) for c in mine if c["role"] == role)
+                    for role in ROLES if role != "explorer"},
+                "weighted": _weighted_group(mine, grid) if mine else None}}
+    out: dict[str, Any] = {
+        "outside_the_frozen_rule": True,
+        "note": "arm totals compare only on the tasks where every arm spent premium; the ratio below is a ratio of "
+                "totals on that common set, not per accepted task, not decisional, not comparable to a frozen threshold",
+        "arms": arms, "tasks_with_premium_in_every_arm": sorted(common),
+        "arm_totals_cover_the_same_tasks": len({frozenset(s) for s in spent.values()}) <= 1}
+    if {"A", "L"} <= set(arms):
+        a, lo = arms["A"]["on_common_tasks"], arms["L"]["on_common_tasks"]
+        weighted: dict[str, Any] = {"status": UNAVAILABLE}
+        if a["weighted"] and lo["weighted"] and a["weighted"]["status"] == lo["weighted"]["status"] == "priced":
+            weighted = {bound: _ratio(Decimal(str(lo["weighted"]["total_usd"][bound])),
+                                      Decimal(str(a["weighted"]["total_usd"][bound])))
+                        for bound in ("cache_write_all_5m", "cache_write_all_1h")}
+        out["ratio_L_over_A_of_totals_on_common_tasks"] = {
+            "unweighted": _ratio(lo["billing_tokens"], a["billing_tokens"]), "weighted": weighted}
+    return out
 
 
 def check_against_report(result: Mapping[str, Any], report: Mapping[str, Any]) -> dict[str, Any]:
@@ -382,17 +442,21 @@ FILE_TOOLS = frozenset({"Read"})
 SEARCH_TOOLS = frozenset({"Grep", "Glob"})
 EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 _FIND_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"})
-_NULL_REDIRECT = re.compile(r"(?:\d?>>?|&>)\s*/dev/null")
-_REDIRECTS = frozenset({">", ">>", ">&", ">|", "&>", "<<", "<<<", "<<-"})
+_PUNCTUATION = ";&|<>()\n"
+# ``> /dev/null`` only: the device name must end there (``/dev/nullx`` or ``/dev/null/x`` is a file redirection)
+_NULL_REDIRECT = re.compile(r"(?:\d?>>?|&>)\s*/dev/null(?=[\s;&|<>()]|$)")
+# the ONLY punctuation tokens that separate two simple commands; any other one makes the line unreadable
+_SEPARATORS = frozenset({"&&", "||", ";", "|", "&", "|&"})
 
 
 def _bash_segments(command: str) -> list[list[str]] | None:
     """Simple commands of a shell line, or None when it cannot be read with certainty (substitution,
-    heredoc, redirection to a file, unbalanced quote): such a call is never counted as exploration."""
+    heredoc, redirection to a file, unbalanced quote, any punctuation token that is not an explicitly listed
+    command separator, e.g. ``&>>`` or ``;>``): such a call is never counted as exploration."""
     if "$(" in command or "`" in command:
         return None
     text = _NULL_REDIRECT.sub(" ", command)
-    lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|<>()\n")
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=_PUNCTUATION)
     lexer.whitespace, lexer.whitespace_split = " \t\r", True
     try:
         tokens = list(lexer)
@@ -409,9 +473,12 @@ def _bash_segments(command: str) -> list[list[str]] | None:
         if token == ">&":
             skip_target = True
             continue
-        if token in _REDIRECTS or set(token) <= set("<>") or token in {"(", ")"}:
+        if not token:  # an empty quoted argument
             return None
-        if token in {"&&", "||", ";", "|", "\n", "&", "|&"} or set(token) <= set("&|;\n") and token:
+        if set(token) <= set(_PUNCTUATION):  # also a quoted argument made only of these characters
+            # line breaks around a listed separator are neutral (``a &&\n b``); nothing else is accepted
+            if token.replace("\n", "") not in _SEPARATORS | {""}:
+                return None
             segments.append([])
             continue
         segments[-1].append(token)
@@ -427,18 +494,25 @@ def _command_name(segment: Sequence[str]) -> tuple[str, list[str]] | None:
     return rest[0].rsplit("/", 1)[-1], rest[1:]
 
 
-_SED_WRITE = re.compile(r"(?:^|[;{}\s])[\d$,]*w\s+\S|/[gpiI]*w\s+\S")
+_SED_WRITE = re.compile(r"(?:^|[;{}\s=])[\d$,]*w\s+\S|/[gpiI]*w\s+\S")
 
 
 def _writes_a_file(cmd: str, args: Sequence[str]) -> bool:
-    """Whether a command of the read/filter vocabulary can still write a file through one of its own options."""
-    if cmd == "sort":  # -o FILE / --output=FILE (also in a bundle of short options)
-        return any(a.startswith("--output") or (a.startswith("-") and not a.startswith("--") and "o" in a[1:])
-                   for a in args)
+    """Whether a command of the read/filter vocabulary can still write a file or run a program through one of its
+    own options."""
+    if cmd == "sort":  # -o FILE / --output=FILE (also in a bundle of short options); --compress-program runs one
+        return any(a.startswith(("--output", "--compress-program"))
+                   or (a.startswith("-") and not a.startswith("--") and "o" in a[1:]) for a in args)
     if cmd == "uniq":  # uniq INPUT OUTPUT
         return len([a for a in args if not a.startswith("-")]) > 1
-    if cmd == "sed":  # a ``w FILE`` command or ``s///w FILE`` flag in a script
-        return any(_SED_WRITE.search(a) for a in args if not a.startswith("-"))
+    if cmd == "sed":
+        # a ``w FILE`` command or ``s///w FILE`` flag in a script (also one glued to ``-e``), or a script FILE
+        # (``-f`` / ``--file``, also in a bundle of short options) whose commands cannot be read from the line
+        return any(_SED_WRITE.search(a) or _SED_WRITE.search(a[2:] if a.startswith("-e") else "")
+                   or a.startswith("--file")
+                   or (a.startswith("-") and not a.startswith("--") and "f" in a[1:]) for a in args)
+    if cmd == "rg":  # --pre COMMAND runs a program on every searched file
+        return any(a == "--pre" or a.startswith(("--pre=", "--pre-glob")) for a in args)
     return False
 
 
@@ -448,9 +522,11 @@ def classify_tool_use(name: str, tool_input: Mapping[str, Any] | None) -> str:
 
     A Bash call is ``explore_bash`` only when it is a pipeline/sequence of simple commands, at least one in
     ``EXPLORE_COMMANDS`` (cat, head, tail, sed -n, grep, rg, find without action, ls) and every other one in
-    ``NEUTRAL_COMMANDS`` (cd, pwd, wc, ...), with no command substitution, heredoc or file redirection, and no option of those commands that writes a file
-    (``sort -o``, ``uniq IN OUT``, ``sed w``/``s///w``, ``sed -i``, ``find -fprint``/``-delete``/``-exec``).
-    Anything unreadable is ``bash_other``: the count of exploration is a lower bound by construction."""
+    ``NEUTRAL_COMMANDS`` (cd, pwd, wc, ...), with no command substitution, heredoc or file redirection, and no option
+    of those commands that writes a file or runs a program (``sort -o``/``--compress-program``, ``uniq IN OUT``,
+    ``sed w``/``s///w``, ``sed -i``, ``sed -f``, ``rg --pre``, ``find -fprint``/``-delete``/``-exec``).
+    Anything unreadable is ``bash_other``: the count of exploration is a lower bound by construction. NOT covered:
+    the ``e`` command of GNU sed (it runs a program) is not detected."""
     if name in FILE_TOOLS:
         return "explore_read"
     if name in SEARCH_TOOLS:
@@ -557,8 +633,11 @@ def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Map
     The effect of an exploration result staying in the context of the later calls is NOT measured.
     Output tokens per call come from the host session logs when ``logs_dir`` is given, joined to the campaign stream
     on permitted fields only (model alias and the three input-side token counters; FOUNDRY-ADR-0015) and only when
-    the join is exact and unambiguous; otherwise, or if a counter is absent or does not add up to the session's final
-    counter, the attribution of that role is ``unavailable`` (never approximated). Without ``logs_dir`` the output is bounded (the stream's partial figure plus the session slack)."""
+    the join is exact and unambiguous; otherwise, or if any counter is absent (of a call, or of the session's final
+    result: an absent control never passes as a check), or does not add up to the session's final counter, or if the
+    session reports output without any API call, the attribution of that role is ``unavailable`` with its reason
+    (never approximated). Without ``logs_dir`` the output is bounded (the stream's partial figure plus the session
+    slack)."""
     keep = None if only_prs is None else set(only_prs)
     arm_of = {s: r["path"] for r in records if r.get("record_type") == "attempt" and not r.get("dry_run")
               and (keep is None or r["task"]["pr"] in keep) for s in r.get("cloud_sessions") or []}
@@ -595,6 +674,8 @@ def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Map
                 per_call_out, output_exact = [next(iter(host[k])) for k in keys], True
         elif total_out is None or any(v is None for v in partial):
             unavailable_reason = unavailable_reason or "output_absent"
+        elif not calls and total_out:  # output without any assistant message: no call to attribute it to
+            unavailable_reason = unavailable_reason or "output_without_api_call"
         a = acc.setdefault((arm, role), {
             "sessions": 0, "api_calls": 0, "tool_calls": Counter(), "calls_by_kind": Counter(),
             "sessions_output_exact": 0, "sessions_input_side_matches_result": 0, "input_side_unavailable": 0,
@@ -626,7 +707,8 @@ def exploration(records: Sequence[Mapping[str, Any]], sessions: Mapping[str, Map
                                       "models": [call["model"]]})
         check = [usage.get(u) for _, u in _INPUT_SIDE]
         if any(_count(v) is None for v in check) or unavailable_reason == "usage_absent":
-            a["input_side_unavailable"] += 1
+            a["input_side_unavailable"] += 1  # the control could not be made: nothing is attributed
+            unavailable_reason = unavailable_reason or "final_counter_absent"
         elif all(sums[k] == usage[u] for k, u in _INPUT_SIDE):
             a["sessions_input_side_matches_result"] += 1
         else:  # the per-call counters do not add up to the session's final counters: nothing is attributed
@@ -702,7 +784,8 @@ def apply_override(grid: Mapping[str, Any], spec: str) -> dict[str, Any]:
 
 def _document(records, sessions, price_grid, report, streams_dir, logs_dir, campaign_id) -> dict[str, Any]:
     result = breakdown(records, sessions, price_grid)
-    doc: dict[str, Any] = {"arms": result["arms"]}
+    doc: dict[str, Any] = {"arms": result["arms"], "task_coverage": task_coverage(result, price_grid)}
+    common = doc["task_coverage"]["tasks_with_premium_in_every_arm"]
     paired = None
     if report is not None:
         doc["totals_equal_committed_report"] = check_against_report(result, report)
@@ -714,6 +797,12 @@ def _document(records, sessions, price_grid, report, streams_dir, logs_dir, camp
         if paired is not None:
             doc["exploration_on_paired_set"] = exploration(
                 records, sessions, streams_dir, price_grid, campaign_id, logs_dir, paired["paired_tasks"])
+        # the arms of ``exploration`` cover unequal task sets: give the same counts on the common set too (it is the
+        # paired set above when the two are equal)
+        if not doc["task_coverage"]["arm_totals_cover_the_same_tasks"] and (
+                paired is None or paired["paired_tasks"] != common):
+            doc["exploration_on_common_tasks"] = exploration(
+                records, sessions, streams_dir, price_grid, campaign_id, logs_dir, common)
     return doc
 
 
