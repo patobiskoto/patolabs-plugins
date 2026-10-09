@@ -1620,3 +1620,12 @@ règle, et pondérée par la grille datée `pricing-breakdown-v1.json`), la lect
 décompte des appels de lecture / recherche des sessions cloud et le poids direct des appels purement d'exploration (sous l'hypothèse qu'ils ne coûtent rien ; ce n'est pas un plafond de l'effet d'une réduction). Options : `--results`, `--ledger`, `--report` (le code de sortie est 1 si les totaux
 recalculés diffèrent du rapport, ou si les comptes de tâches acceptées de la règle appariée du rapport diffèrent de ceux des enregistrements ; le fichier est alors quand même écrit, avec `accepted_counts_equal_records` faux ; le code 2 signale une entrée refusée), `--grid`, `--streams-dir`, `--session-logs-dir`, `--override-rate MODELE:CLE=VALEUR` (la même lecture refaite avec un tarif remplacé : sensibilité), `--out` (n'écrase jamais). Il ne lance ni `claude`, ni modèle, ni `lms`, ni mode de campagne, et ne recalcule aucun verdict.
 Résultats et méthode : [`pat-19-cost-breakdown-v1.md`](pat-19-cost-breakdown-v1.md).
+
+## Rejeu du cache de prompt « 1 heure » contre « 5 minutes » (PAT-132)
+
+Module séparé du lanceur, lecture seule : `python3 -m foundry.cache_ttl_replay` (`tooling/foundry/cache_ttl_replay.py`). Il relit les `ledger-*.jsonl`
+de campagnes jouées et les journaux de session de l'hôte (hors dépôt) et rend, par session, rôle, modèle et au total, le coût de liste réel
+(écritures « 1 heure ») et le coût simulé d'un cache « 5 minutes » sous deux lectures de l'écart entre requêtes (borne prudente, borne
+favorable), avec la distribution des écarts. Options : `--ledger` (répétable), `--session-logs-dir`, `--grid`, `--out` (n'écrase jamais) ; code de sortie
+0, ou 2 si une entrée est refusée. Il ne lance ni `claude`, ni modèle, ni appel réseau, ne modifie aucun journal et ne change aucun réglage
+du lanceur. Règle, résultats et limites : [`pat-19-cache-ttl-replay-v1.md`](pat-19-cache-ttl-replay-v1.md).
