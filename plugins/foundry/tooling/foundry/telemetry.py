@@ -41,7 +41,7 @@ SEVERITIES = ("info", "warning", "error", "blocking")
 KNOWN_MODELS = frozenset({
     "haiku-4.5", "haiku-4.5-20251001", "sonnet-5", "opus-5", "fable-5",
     "haiku", "sonnet", "opus", "fable",
-    "sonnet-5.5", "opus-5.5", "fable-5.1",
+    "sonnet-5.5", "opus-5.5", "fable-5.1", "haiku-5.5",
     "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol",
     "gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra",
 })

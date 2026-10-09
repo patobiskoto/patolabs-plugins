@@ -499,8 +499,10 @@ class RoutingPolicy:
             if haiku:
                 if target.effort not in (None, "low") or user.effort is not None:
                     raise RoutingConfigError(
-                        "Haiku 4.5 : effort rejeté, non applicable ; demandez le tier economy "
-                        "ou configurez ce modèle avec effort null, sans effort utilisateur."
+                        f"Haiku 4.5 : effort rejeté, non applicable (reçu : '{target.effort}', "
+                        f"source : {sources['effort']}) ; demandez le tier economy ou écrivez "
+                        f"explicitement \"effort\": null dans mappings.claude.{tier}, "
+                        "sans effort utilisateur."
                     )
                 if role in GATE_EFFORT_FLOORS:
                     raise RoutingConfigError("Haiku sans effort ne satisfait pas le plancher du gate.")

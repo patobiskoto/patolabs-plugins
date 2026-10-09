@@ -95,7 +95,8 @@ A repository may commit `.foundry/model-routing.json`:
     },
     "claude": {
       "economy": {
-        "model": "haiku-4.5"
+        "model": "haiku-4.5",
+        "effort": null
       }
     }
   }
@@ -1116,13 +1117,99 @@ match historical wildcard price rows, so absent new prices yield null/unavailabl
 No new price, cost claim, hook log reader, evidence pipeline or role authority is added.
 
 
+### PAT-125 Claude Haiku 5.5 (PAT-ADR-0016)
+
+Status at this revision: Haiku 5.5 is DECLARED; the `economy` default is unchanged
+(Haiku 4.5 / null, table above). PAT-ADR-0016 adopts `haiku-5.5` / `medium` on the Claude
+`economy` tier under the cheaper-candidate regime of FOUNDRY-ADR-0019 (list price per
+token only; no measured gain, bill or quota saving is claimed, and no benchmark, replay,
+comparison or effort matrix is run). The default changes only after the single bounded
+native compatibility trial of that ADR is recorded; the decision, the trial command and
+its result are in [`pat-125-haiku-55-promotion.md`](qualification/pat-125-haiku-55-promotion.md).
+
+Declaration. `haiku-5.5` / `claude-haiku-5-5` is a canonical version pin with its own
+effort scope `(claude, haiku-5.5, v1)`, levels `low`, `medium`, `high`, `xhigh`, `max`
+(`default-effort-scopes.json`), and one versioned profile per capability and effort:
+`routed-readonly-<effort>-haiku-5.5` and `routed-worker-<effort>-haiku-5.5`. Only
+`medium` is the profile PAT-ADR-0016 retains; the other four are declared, not
+qualified. Haiku 5.5 always needs an effort: null stays reserved for Haiku 4.5. Haiku
+4.5 and its `20251001` snapshot remain exact historical pins with effort not applicable
+and never become an alias of the latest version. The short alias `haiku` is not
+promoted: it keeps the effort-free generic profile, its unobserved version and
+`CLAUDE_ALIAS_VERSION_UNOBSERVED`. Passive telemetry accepts the `haiku-5.5` identity;
+the shipped offline price grid `pricing-v1.json` has no row for it, so its cost stays
+unknown, never zero.
+
+Minimum host version. `CLAUDE_MODEL_MIN_HOST_VERSION` (`routing_facades.py`) requires
+Claude Code 2.1.293 for the `haiku-5.5` pin, including a project `claude_models`
+translation to `claude-haiku-5-5`. The check runs where the profile is bound, in the
+`PreToolUse` routing hook (`claude_invocation_binding()`):
+
+- How the version is observed: `claude_host_version()` reads the top-level `version`
+  field of the last versioned record in the last mebibyte of the session transcript
+  named by the hook payload (`transcript_path`). The host writes that field on its own
+  records; nothing else of the transcript is parsed, kept or emitted. The environment
+  is deliberately not a source: a host started from another host's shell inherits that
+  host's variables, and, as read in the 2.1.293 host program (not measured from a live
+  hook), `AI_AGENT` is given to tool shells but not to hooks. No `claude` binary is
+  executed.
+- Observed below 2.1.293: the binding raises `RoutingConfigError`, the hook denies the
+  Agent call with a message naming the required and the observed version, and no
+  telemetry state is prepared. There is no fallback to Haiku 4.5, to the `haiku` alias
+  or to another tier, even when `FOUNDRY_CLAUDE_AVAILABLE_MODELS` lists them. Update
+  Claude Code, or map the tier explicitly to another model.
+- Not observable (no transcript path, unreadable file, no versioned record in the tail,
+  or a version that is not `X.Y.Z`): the version is `unknown`. The launch proceeds, the
+  hook context carries `host_version: {"required": "2.1.293", "observed": null,
+  "status": "unknown"}` and the `CLAUDE_HOST_VERSION_UNOBSERVED` warning; it is never
+  reported as conforming. Trade-off: an older host whose version cannot be read is not
+  stopped by Foundry and fails or not at the host/provider, loudly, as for an
+  unprobed model availability; refusing every unobserved host instead would deny the
+  tier on conforming hosts whenever the transcript is not readable. On an observed
+  conforming host the context carries `status: "conforming"`.
+- Limits: a session resumed after a host update reports the previous version until the
+  running host has written a record. `routing show`, `routing resolve`, `doctor` and the
+  headless DevHub/campaign runners (`claude --model ... --effort ...`) bind no profile
+  and observe no host version: they neither apply nor certify the minimum.
+
+Tier scope and rollback (applies once the default is promoted). The mapping is per
+tier: every non-gate role that falls back down to `economy` gets its target too.
+Reviewer and architect tier and effort floors, the `balanced`/`frontier`/`apex` tiers
+and the Codex defaults do not change.
+
+- Project rollback: write the incumbent explicitly in `.foundry/model-routing.json`,
+  `{"mappings": {"claude": {"economy": {"model": "haiku-4.5", "effort": null}}}}`.
+  It selects `routed-<capability>-none-haiku-4.5`, transmits no effort and carries no
+  host version requirement.
+- The same mapping WITHOUT the `effort` key inherits the tier's default effort
+  (`medium` once promoted), which Haiku 4.5 does not accept: resolution fails with
+  `Haiku 4.5 : effort rejeté, non applicable (reçu : 'medium', source : default)` and
+  the instruction to write `"effort": null` in `mappings.claude.economy`. It is not
+  silently read as "not applicable": resolution is field-aware and never guesses an
+  effort, the same rule that refuses a non-Haiku model-only override inheriting null.
+  A direct user request for `haiku-4.5` on a tier whose effort is not null fails the
+  same way; use the project mapping.
+- Product rollback: restore `DEFAULT_MAPPINGS["claude"]["economy"]` to Haiku 4.5 / null
+  by an ordinary Foundry PR; the `haiku-5.5` declaration stays.
+
+Both project forms and the restored default are covered offline by
+`tests/test_claude_haiku55.py`, which also runs them against the prepared default.
+
+Documentation status (PAT-125, R5): updated here for the `haiku-5.5` declaration and
+effort scope, `CLAUDE_MODEL_MIN_HOST_VERSION`, `claude_host_version()`, the hook context
+key `host_version`, the warning `CLAUDE_HOST_VERSION_UNOBSERVED`, the reworded Haiku 4.5
+effort refusal and the trial tool `foundry.claude_profile_trial`; R7 of the process
+contract carries the current-state summary. `claude_invocation_binding()` gains an
+optional `host_version` argument: internal, no caller-facing surface beyond the above.
+
+
 ### Reproducible source profile generation
 
 Run `python3 plugins/foundry/tooling/generate_claude_profiles.py` from the repository
 root after changing a declaration/template, then review the derived diff and reload
-through the normal plugin path. The 64 versioned profiles cover both capabilities,
-all five existing executable efforts for the six non-Haiku versions, and no-effort
-profiles for the two explicit Haiku IDs. This static inventory is not a native
+through the normal plugin path. The 74 versioned profiles cover both capabilities,
+all five existing executable efforts for the six non-Haiku versions and for Haiku 5.5,
+and no-effort profiles for the two explicit Haiku 4.5 IDs. This static inventory is not a native
 qualification matrix. There is no runtime generation, cache mutation, new router,
 role authority or provider invocation. The source drift test requires exact generated
 bytes; the launcher refuses missing/divergent preloaded profile bytes before claims.

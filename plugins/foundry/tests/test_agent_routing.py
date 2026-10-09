@@ -1199,7 +1199,7 @@ def _frontmatter(path):
 def test_agent_frontmatter_keeps_models_dynamic_and_effort_boundary_explicit():
     logical = {identity.lower() for identity in AGENT_IDENTITIES.values()}
     profiles = list((PLUGIN_ROOT / "agents").glob("routed-*.md"))
-    assert len(profiles) == 76
+    assert len(profiles) == 86
 
     for path in (PLUGIN_ROOT / "agents").glob("*.md"):
         frontmatter = _frontmatter(path)

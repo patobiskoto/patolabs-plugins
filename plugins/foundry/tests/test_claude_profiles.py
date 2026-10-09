@@ -48,7 +48,7 @@ GENERATED = claude_pin_profile_documents(ROOT)
 
 
 def test_generated_inventory_has_exact_source_drift_check():
-    assert len(GENERATED) == 64
+    assert len(GENERATED) == 74
     pinned = {path.stem for path in (ROOT / "agents").glob("routed-*.md")
               if re.search(r"(?m)^model:", path.read_text())}
     assert pinned == set(GENERATED)

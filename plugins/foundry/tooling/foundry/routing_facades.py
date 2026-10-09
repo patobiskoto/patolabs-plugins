@@ -73,7 +73,13 @@ _CLAUDE_MODEL_DECLARATION = (
     ("sonnet-5.5", "claude-sonnet-5-5", ("claude-sonnet-5-5",)),
     ("opus-5.5", "claude-opus-5-5", ("claude-opus-5-5",)),
     ("fable-5.1", "claude-fable-5-1", ("claude-fable-5-1",)),
+    ("haiku-5.5", "claude-haiku-5-5", ("claude-haiku-5-5",)),
 )
+# PAT-ADR-0016: minimum Claude Code host version of a declared pin. Below it the
+# binding fails closed; no other model, pin or alias is ever substituted.
+CLAUDE_MODEL_MIN_HOST_VERSION = {"haiku-5.5": (2, 1, 293)}
+_CLAUDE_HOST_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\Z")
+_TRANSCRIPT_TAIL_BYTES = 1 << 20
 _CLAUDE_MODEL_IDS = {canonical: alias for canonical, alias, _ in _CLAUDE_MODEL_DECLARATION}
 # Short aliases express version-dependent host intent, never a frozen version.
 CLAUDE_AGENT_MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")
@@ -920,15 +926,68 @@ def claude_pin_profile_documents(plugin_root) -> dict[str, str]:
     return result
 
 
-def claude_invocation_binding(route, capability: str, *, plugin_root, project_models=None) -> dict:
+def claude_host_version(transcript_path) -> str | None:
+    """Claude Code version the running host wrote on its last transcript record.
+
+    The hook payload names the session transcript, whose records each carry the
+    ``version`` of the host that wrote them. The environment is not a source: a
+    host started from another host's shell inherits that other host's variables.
+    Only the top-level ``version`` of the last versioned record in a bounded tail
+    is read; nothing else is parsed or kept. ``None`` means unknown, never conforming.
+    """
+    try:
+        with open(transcript_path, "rb") as handle:
+            start = max(0, handle.seek(0, os.SEEK_END) - _TRANSCRIPT_TAIL_BYTES)
+            handle.seek(start)
+            lines = handle.read().split(b"\n")
+    except (OSError, TypeError, ValueError):
+        return None
+    for raw in reversed(lines[1:] if start else lines):
+        if b'"version"' not in raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except ValueError:
+            continue
+        version = record.get("version") if isinstance(record, dict) else None
+        if isinstance(version, str) and _CLAUDE_HOST_VERSION.match(version):
+            return version
+    return None
+
+
+def claude_host_version_requirement(invocation_model: str, host_version: str | None) -> dict | None:
+    """Fail closed below a pin's minimum host version; an unobserved version stays unknown."""
+    canonical = next((canonical for canonical, wire, _ in _CLAUDE_MODEL_DECLARATION
+                      if wire == invocation_model), None)
+    minimum = CLAUDE_MODEL_MIN_HOST_VERSION.get(canonical)
+    if minimum is None:
+        return None
+    required = ".".join(str(part) for part in minimum)
+    observed = _CLAUDE_HOST_VERSION.match(host_version) if isinstance(host_version, str) else None
+    if observed is None:
+        return {"required": required, "observed": None, "status": "unknown"}
+    if tuple(int(part) for part in observed.groups()) < minimum:
+        raise RoutingConfigError(
+            f"modèle Claude '{invocation_model}' : Claude Code {required} ou supérieur requis "
+            f"(version hôte observée : {host_version}). Mettez à jour Claude Code, ou choisissez "
+            "explicitement un autre modèle dans le mapping projet (retour à Haiku 4.5 : "
+            '{"model": "haiku-4.5", "effort": null}). Aucun repli automatique.'
+        )
+    return {"required": required, "observed": host_version, "status": "conforming"}
+
+
+def claude_invocation_binding(
+    route, capability: str, *, plugin_root, project_models=None, host_version: str | None = None,
+) -> dict:
     """Bind pins to preloaded frontmatter; Agent.model accepts only short aliases."""
     model = claude_invocation_model(route.model, project_models=project_models)
     effort_parameters = claude_effort_parameters(route, invocation_model=model)
     effort = effort_parameters["transmitted"]
     if model in CLAUDE_AGENT_MODEL_ALIASES:
         return {"profile": f"routed-{capability}-{effort or 'none'}",
-                "agent_model": model, "transmitted_model": model,
+                "agent_model": model, "transmitted_model": model, "host_version": None,
                 "model_source": "agent_input", "effort_parameters": effort_parameters}
+    version_requirement = claude_host_version_requirement(model, host_version)
     name, expected = claude_pin_profile_text(model, capability, effort, plugin_root=plugin_root)
     try:
         actual = (Path(plugin_root) / "agents" / f"{name}.md").read_text(encoding="utf-8")
@@ -940,6 +999,7 @@ def claude_invocation_binding(route, capability: str, *, plugin_root, project_mo
     if actual != expected:
         raise RoutingConfigError(f"profil Claude épinglé divergent : {name} ; régénérez/rechargez le plugin.")
     return {"profile": name, "agent_model": None, "transmitted_model": model,
+            "host_version": version_requirement,
             "model_source": "profile_frontmatter", "effort_parameters": effort_parameters}
 
 
