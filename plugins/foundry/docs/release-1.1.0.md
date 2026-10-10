@@ -255,10 +255,12 @@ PAT-134) **launches a real native Claude Code session**: one `claude -p` parent 
 starts real model subagents (one scout in the default mode, two subagents in the cache
 mode), killed at twenty minutes. It is never offline. It runs on the host's
 authenticated account and therefore consumes that subscription; no API key is passed
-to it. It is run by hand, by the coordinator, under the maintainer's authorisations
-recorded in [pat-125-haiku-55-promotion.md](qualification/pat-125-haiku-55-promotion.md)
-and [pat-134-subagent-cache-1h.md](qualification/pat-134-subagent-cache-1h.md); the
-tests never launch it and use fakes only.
+to it. It is run by hand, by the coordinator. The pages
+[pat-125-haiku-55-promotion.md](qualification/pat-125-haiku-55-promotion.md) and
+[pat-134-subagent-cache-1h.md](qualification/pat-134-subagent-cache-1h.md) record on
+what basis each recorded run was made; for PAT-134 that basis is the maintainer's
+earlier agreement to a bench, as read by the coordinator, not an authorisation of that
+trial by name. The tests never launch it and use fakes only.
 It refuses an existing work directory or result file, so a path cannot be replayed.
 `--dry-run` prints the command and launches nothing; it creates nothing under the work
 directory. That is the current behaviour, since PAT-134: the sentence of the PAT-125
@@ -274,15 +276,28 @@ PAT-112, PAT-120, PAT-121, PAT-123, PAT-124, PAT-126, PAT-128) and the frozen pr
 v1 to v5 with their recorded results (PAT-109, PAT-110, PAT-114 to PAT-117, PAT-122,
 PAT-127). These are qualification instruments, not a product feature: 1.1.0 activates
 no local model, profile or default. **The launcher is not an offline tool, and it
-loads no model itself.** Its campaign modes drive a local model that must already be
-loaded (its preflight refuses when the expected model is not), and they launch real
-cloud sessions; the recorded campaigns did both. Loading is done outside the launcher,
+loads no model itself.** What it launches depends on the mode, and the
+per-mode behaviour is specified in
+[pat-19-launcher-v1.md](qualification/pat-19-launcher-v1.md): `screen` and
+`screen_exploration` run local attempts only and can start no cloud execution;
+`compare` and `compare_exploration` are the only modes that may start one
+(`CLOUD_MODES` in `tooling/foundry/local_first_runner.py`), and a `compare` run limited
+to the paths `A,B` needs no local model. A run that has a local arm drives a model that
+must already be loaded (the machine preflight refuses when the expected model is not).
+A separate verb, `native-sandbox-trial` (PAT-124), launches two real cloud executions.
+Of the recorded campaigns, `pat-19-screen-1` and `pat-19-xscreen-1` are recorded as
+run without cloud, and the v4 and v5 comparisons launched real cloud sessions (30 and
+74, as counted by the PAT-132 replay). Loading is done outside the launcher,
 by the operator: by hand, or by the operator scripts shipped for protocols v3, v4 and
 v5 (`docs/qualification/pat-19-v3-operator.sh`, `-v4-`, `-v5-`), which unload, run the
 pinned load command and then start the launcher, once per launch. The launcher is
-started by hand, directly or through those scripts. No Foundry skill, hook, agent
-profile or `foundry_cli.py` verb refers to it or to those scripts (established by a
-search of the package at this revision); its tests use fake arms only. The decision by
+started by hand, directly or through those scripts. A text search for `local_first` and
+`operator.sh` in `skills/`, `hooks/`, `agents/`, `examples/` and
+`tooling/foundry_cli.py` of this package, and in the repository's `scripts/`, `.github/`
+and `plugins/ship-ios/`, returns nothing at this revision: no skill, hook, agent
+profile, example or `foundry_cli.py` verb refers to the launcher or to those scripts.
+That is the result of a search, not a proof that nothing can reach it; its tests use
+fake arms only. The decision by
 use, recorded by PAT-130, is to
 keep the cloud for autonomous local implementation and for local read-only exploration
 (gain not demonstrated), and to abandon the one-call local compression track on this
@@ -381,7 +396,7 @@ run against 1.1.0 is claimed; that is a check of phase 4.
 3. **The tag is the named reference, not the delivery.** `foundry-v1.1.0` is placed on
    the exact merged commit, after the maintainer's explicit agreement on the content
    of this note. An unpushed tag or a branch is not that reference.
-4. **Verified installed, after the merge and an official update:** update through
+4. **Verified installed, after the merge, the tag and an official update:** update through
    each host's official manager, without editing any cache; reload or start a new session; read back the
    host binary and version actually used, the manager listing, the loaded plugin root,
    the source revision it resolved and both manifest versions at that root, then the

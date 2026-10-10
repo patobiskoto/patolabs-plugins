@@ -35,7 +35,8 @@ Code 2.1.293 minimum for the default `economy` tier, refused `economy` mappings,
 availability list, the unguarded cache field of the Sonnet 5.5 profiles, the guarded
 `State dropped` write on Linear), list what was merged since 1.0.0 and claim no gain.
 The [upgrade and rollback guide](docs/migration-1.1.0.md) gives the official update
-sequence on both hosts and the exact rollbacks.
+sequence on both hosts and the rollbacks, each as far as it is established (returning to
+1.0.0 through an official manager has no established command yet).
 
 ## Why
 

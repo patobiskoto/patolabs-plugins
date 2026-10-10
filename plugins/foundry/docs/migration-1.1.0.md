@@ -44,7 +44,10 @@ Retain a private snapshot of the non-secret configuration, the registry, the rep
 marker and the routing policy (including its absence) before replacing the package, as
 for 1.0.0. Credentials stay in their secret store. The shared Foundry state lives under
 `FOUNDRY_DATA` or `~/.config/foundry`, independently of any host plugin cache; package
-replacement does not migrate or rewrite it.
+replacement does not migrate or rewrite it. This restates the 1.0.0 guide
+([migration-1.0.0.md](migration-1.0.0.md): package replacement preserves the shared
+data, configuration, credentials, registry, receipts and routing state, and does not
+migrate project data); it has not been observed for an update from 1.0.0 to 1.1.0.
 
 ## Official upgrade
 
