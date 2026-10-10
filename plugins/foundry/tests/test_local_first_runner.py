@@ -1089,6 +1089,20 @@ def _interrupt_when_ready(pids, sig):
     return thread
 
 
+@pytest.fixture
+def sigint_not_inherited_as_ignored():
+    """A background job of a non-interactive shell (``cmd &``) starts with SIGINT ignored, and
+    ``execute_driver`` keeps an ignored SIGINT ignored, so the SIGINT case would never be
+    delivered. Give the test the usual disposition (Python's default handler) and put back
+    whatever was there."""
+    previous = signal.getsignal(signal.SIGINT)
+    if previous is signal.SIG_IGN:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, previous)
+
+
+@pytest.mark.usefixtures("sigint_not_inherited_as_ignored")
 @pytest.mark.parametrize("sig,expected", [(signal.SIGTERM, SystemExit), (signal.SIGINT, KeyboardInterrupt)])
 def test_B1_an_interrupted_execution_kills_the_whole_process_group(tmp_path, sig, expected):
     script, pids = tmp_path / "sleeper.py", tmp_path / "pids"
