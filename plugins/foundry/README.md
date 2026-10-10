@@ -509,6 +509,54 @@ pytest -q -m "not integration" tests  # pure-logic tests, no network; benchmark/
 pytest -q tests/test_routing_contract.py  # resolved host invocation + pilot contract
 ```
 
+The public suite (the exact selection the CI job `foundry` runs) can run in parallel
+with `pytest-xdist` (`pip install pytest-xdist`), one worker process per core:
+
+```
+pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not timing_sensitive" tests --ignore=tests/test_routing_contract.py
+pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture" tests
+```
+
+The second command runs, alone, the four tests marked `timing_sensitive` (declared in
+`pytest.ini`): three in `tests/test_local_scout.py` that assert a 0.5 s deadline, and
+`tests/test_local_first_runner.py::test_local_attempt_is_bounded_in_steps_when_the_stream_exposes_them`,
+which races a reader thread against a producer. One `-n 4` run failed that last test
+(200 steps seen, bound is below 200); 42 of 60 copies of it started at once on a loaded
+machine failed, 0 of 20 run alone failed. The other tests ran in parallel without a
+failure in the runs recorded in the PAT-142 pull request.
+
+Run it from a foreground shell. A background job of a non-interactive shell (`cmd &`)
+starts with SIGINT ignored, and `execute_driver` (`tooling/foundry/local_first_runner.py`)
+deliberately keeps an ignored SIGINT ignored, so
+`tests/test_local_first_runner.py::test_B1_an_interrupted_execution_kills_the_whole_process_group[2-KeyboardInterrupt]`
+fails there (reproduced in PAT-142: it fails in a `&` job and passes in the foreground;
+other causes of the failure reported earlier are not verified).
+
+Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tested in
+`scripts/test_ci_plan.py`), not by workflow expressions:
+
+- `ship-ios` and `catalogue` always run.
+- `foundry` runs on every push to `main`, on every pull request that changes at least one
+  file outside `plugins/ship-ios/`, and on any doubt (unknown event, diff unavailable or
+  empty). It is skipped only when every changed file is under `plugins/ship-ios/`; the
+  required check `foundry` then ends as `skipped`, which the merge gate accepts next to a
+  real success and refuses alone (FOUNDRY-ADR-0002; `ci_gate` in
+  `tooling/foundry/write.py`, tests
+  `test_ci_gate_neutral_and_skipped_pass_alongside_a_success` and
+  `test_ci_gate_all_skipped_is_not_proof` in `tests/test_pure.py`).
+- Release rule: a change is a release change, and runs everything even inside
+  `plugins/ship-ios/`, when it touches a plugin manifest
+  (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) or a marketplace catalogue
+  (`.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`). It is
+  derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0 and
+  1.1.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  the branch name is not used. The rule is deliberately broader than "version bumped": a
+  manifest edit that is not a release also runs everything (safe side).
+- `ship-ios` runs on `ubuntu-24.04`: its tests call Python, `git` and `ruby` (to evaluate
+  the Fastfile), and no test calls Xcode or a simulator. The job installs `ruby` with
+  `apt-get` only if the image lacks it. Not verified: whether the image has Ruby, which
+  version, and that the tests pass on Ubuntu; only a CI run shows it.
+
 Benchmark-campaign and proof-of-concept tests (evidence under `benchmarks/`) carry the
 `benchmark_campaign` marker and are excluded from the default run above. See
 [`docs/benchmark-campaign-tests.md`](docs/benchmark-campaign-tests.md) to replay them and

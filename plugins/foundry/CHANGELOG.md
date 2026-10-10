@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- PAT-142: CI speed, no change under `tooling/`. The `foundry` job runs the public suite
+  in parallel (`pytest -n auto`, `pytest-xdist` installed in the job); a new `plan` job
+  runs `scripts/ci_plan.py`, which skips the whole `foundry` job (check `skipped`) when a
+  pull request changes only `plugins/ship-ios/`, and runs everything on a push to `main`,
+  on a release change (a plugin manifest or marketplace catalogue is touched) and on any
+  doubt. `ship-ios` moves from `macos-14` to `ubuntu-24.04` (`ruby` installed if the image
+  lacks it). `ship-ios` and `catalogue` still always run. The expected runner of
+  `ship-ios` in `tests/test_youtrack_smoke.py` follows. Not verified here: CI durations,
+  runner core count, Ruby on the image. Documented in the Foundry README.
+
 - PAT-139 (PAT-ADR-0018): BEHAVIOUR CHANGE for every repository that uses the plugin.
   Rule R9 (b) of `AGENTS.md` / `CLAUDE.md` and the `merge-pr`, `intake` and `open-pr`
   skills now send the non-blocking review remarks deferred from the issues of an Epic to
